@@ -77,6 +77,11 @@ services:
       HARNESS_ACTORS_ENABLED: "true"
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
+      # Metrics (/dashboard/metrics, /tracer/derived-metrics/) is a deployment
+      # rollout flag, off by default (tracer/services/derived_metrics/feature_flag.py).
+      # Off, MetricsGate routes to /404 and the API 404s. The API and both workers
+      # that run metric activities (tasks_s/tasks_l, exact_aggregation) need it.
+      METRICS_ENABLED: "1"
   worker:
     # Async code evals use the same isolated executor as the playground.
     networks: [default, link-public]
@@ -93,6 +98,8 @@ services:
       INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       SLACK_API_URL: http://mock-slack:8080/api
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
+      # Metric activities re-check the rollout flag at execution (see backend).
+      METRICS_ENABLED: "1"
   # Keep explicit queue workers connected too when a profile selects them.
   # Their base YAML anchor is expanded before this overlay is merged.
   worker-default:
@@ -123,6 +130,8 @@ services:
       DJANGO_SETTINGS_MODULE: tfc.settings.e2e
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      # Metric calculation and snapshot activities run on exact_aggregation.
+      METRICS_ENABLED: "1"
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
     depends_on:
