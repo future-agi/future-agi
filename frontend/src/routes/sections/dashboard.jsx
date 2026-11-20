@@ -226,6 +226,9 @@ const IndividualExperimentSummary = lazyWithRetry(
 const PreviewScreen = lazyWithRetry(
   () => import("src/sections/develop-detail/AnnotationsTab/PreviewScreen"),
 );
+const SQLQueryView = lazyWithRetry(
+  () => import("src/sections/projects/SQLQuery/SQLQueryView"),
+);
 const ObserverWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/observe/ObserverWrapper"),
 );
@@ -483,6 +486,9 @@ const AgentsIndexRedirect = lazyWithRetry(
 );
 const ConnectedAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/ConnectedAgentsTab"),
+);
+const ConnectAgentPage = lazyWithRetry(
+  () => import("src/sections/agent-playground/connect/ConnectAgentPage"),
 );
 const PlaygroundAgentsTab = lazyWithRetry(
   () => import("src/sections/agent-playground/PlaygroundAgentsTab"),
@@ -742,8 +748,13 @@ export const dashboardRoutes = (
         </RoleProtection>
       ),
     },
+    // Old address of Connectors (was "Falcon AI Connectors"); keeps saved links working.
     {
       path: "falcon-ai-connectors",
+      element: <Navigate to="/dashboard/settings/connectors" replace />,
+    },
+    {
+      path: "connectors",
       element: (
         <RoleProtection
           allowedRoles={[
@@ -1172,14 +1183,16 @@ export const dashboardRoutes = (
         //   element: <LogsView />,
         // },
         {
+          path: "query",
+          element: <SQLQueryView />,
+        },
+        {
           path: "llm-tracing",
           element: <LLMTracingView />,
         },
         {
           path: "voice",
-          element: (
-            <EmptyContent title="Voice observability coming soon" />
-          ),
+          element: <EmptyContent title="Voice observability coming soon" />,
         },
         {
           path: "sessions",
@@ -1345,6 +1358,7 @@ export const dashboardRoutes = (
             { path: "playground", element: <PlaygroundAgentsTab /> },
           ],
         },
+        { path: "connect", element: <ConnectAgentPage /> },
         {
           path: "connected/:agentId",
           element: <AgentDetailLayout />,

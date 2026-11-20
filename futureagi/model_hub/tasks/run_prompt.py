@@ -318,9 +318,7 @@ def recover_stuck_run_prompts():
         stuck_prompts = RunPrompter.objects.filter(
             status=StatusType.RUNNING.value,
             updated_at__lt=threshold,
-        ).values_list("id", flat=True)[
-            :20
-        ]  # Process max 20 at a time
+        ).values_list("id", flat=True)[:20]  # Process max 20 at a time
 
         stuck_count = len(stuck_prompts)
         if stuck_count == 0:

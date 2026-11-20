@@ -1,38 +1,48 @@
 import { parseDotEnv } from "src/pages/dashboard/harness/dotenv";
 
 /**
- * Hosted providers' credential fields, each mapped to the alias the
- * create/preflight contract requires for that connector. A provider absent
- * here (the chat platforms other than Retell) sends no value, so its key is
- * dropped by redaction as before.
+ * Hosted providers' write-only fields, each mapped to the alias the
+ * create/preflight contract requires for that connector. LiveKit's routing
+ * check also carries the project URL and agent name under aliases, since they
+ * ride the same write-only channel. A provider absent here (the chat platforms
+ * other than Retell) sends no value, so its key is dropped by redaction as before.
  */
 const PROVIDER_SECRET_FIELDS = {
   vapi: { apiKey: "VAPI_API_KEY" },
   retell: { apiKey: "RETELL_API_KEY" },
   retell_chat: { apiKey: "RETELL_API_KEY" },
-  livekit: { apiKey: "LIVEKIT_API_KEY", apiSecret: "LIVEKIT_API_SECRET" },
+  livekit: {
+    apiKey: "LIVEKIT_API_KEY",
+    apiSecret: "LIVEKIT_API_SECRET",
+    verifyLivekitUrl: "LIVEKIT_URL",
+    verifyAgentName: "LIVEKIT_AGENT_NAME",
+  },
 };
 
 /**
  * Strip raw secrets before anything is persisted. `apiKey`, `apiSecret` and
  * `envText` carry plaintext credentials; keeping them out avoids leaking into
- * the zustand store / devtools. `secretFiles` is already `{name,size,secret_ref}`
- * (no contents) and `secret_refs` (staged file refs) is opaque, so both
- * survive.
+ * the zustand store / devtools. The routing check's other inputs and its
+ * preflight-only flag go too: they are used by that check alone and are not
+ * part of the build. `secretFiles` is already `{name,size,secret_ref}` (no
+ * contents) and `secret_refs` (staged file refs) is opaque, so both survive.
  */
 export function redactSource(source) {
   const safe = { ...(source ?? {}) };
   delete safe.apiKey;
   delete safe.apiSecret;
   delete safe.envText;
+  delete safe.verifyLivekitUrl;
+  delete safe.verifyAgentName;
+  delete safe.preflightOnlyCredentials;
   return safe;
 }
 
 /**
- * The raw `{ ALIAS: value }` credential map a source carries, BEFORE anything is
- * redacted:
- *  - a hosted provider's credential fields → their fixed aliases
- *    (VAPI_API_KEY / RETELL_API_KEY / LIVEKIT_API_KEY + LIVEKIT_API_SECRET)
+ * The raw `{ ALIAS: value }` map a source carries, BEFORE anything is redacted:
+ *  - a hosted provider's write-only fields → their fixed aliases
+ *    (VAPI_API_KEY / RETELL_API_KEY / LIVEKIT_API_KEY + LIVEKIT_API_SECRET, plus
+ *    LIVEKIT_URL + LIVEKIT_AGENT_NAME for LiveKit's phone routing check)
  *  - pasted `.env` contents → one alias per assignment (parsed with parseDotEnv)
  *
  * Sent write-only as `credential_values` with preflight and create; never
@@ -82,5 +92,9 @@ export async function prepareSourceForBuild(source) {
   const withRefs = Object.keys(fileRefs).length
     ? { ...source, secret_refs: fileRefs }
     : source;
-  return { draft: redactSource(withRefs), credentialValues };
+  return {
+    draft: redactSource(withRefs),
+    credentialValues,
+    buildCredentialValues: source?.preflightOnlyCredentials ? {} : credentialValues,
+  };
 }

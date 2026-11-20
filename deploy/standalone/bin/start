@@ -45,6 +45,7 @@ export GRANIAN_THREADS="${GRANIAN_THREADS:-2}"
 export GOOGLE_API_KEY="${GOOGLE_API_KEY:-}"
 # Empty: code-executor/server.py's default, 80,443.
 export CODE_EXECUTOR_EGRESS_PORTS="${CODE_EXECUTOR_EGRESS_PORTS:-}"
+export LINK_EVAL_ALLOWED_HOSTS="${LINK_EVAL_ALLOWED_HOSTS:-}"
 
 # Development (docker-compose.dev.yml, ./bin/dev): reload the API, and the
 # Temporal worker embedded in it, when code under /app/backend changes.
@@ -188,8 +189,10 @@ esac
 # The SPA reads its runtime settings (VITE_*) from config.js, written by the
 # frontend image's own generator. Unset, the SPA would call port 8000 whatever
 # BACKEND_PORT says; the default is given to the generator only, so the setup
-# checks still see what .env says.
+# checks still see what .env says. FRONTEND_CONFIG_ONLY skips the frontend
+# image's listener checks: nginx.conf here sets the listener.
 VITE_HOST_API="${VITE_HOST_API:-http://localhost:${BACKEND_PORT:-8000}}" \
-  CONFIG_PATH=/srv/frontend/config.js /opt/futureagi/bin/frontend-config true
+  CONFIG_PATH=/srv/frontend/config.js FRONTEND_CONFIG_ONLY=true \
+  /opt/futureagi/bin/frontend-config true
 
 exec supervisord -c /etc/futureagi/supervisord.conf

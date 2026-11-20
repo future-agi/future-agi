@@ -127,6 +127,11 @@ func ErrGuardrailBlocked(code, message string) *APIError {
 	return newAPIError(http.StatusForbidden, ErrTypeGuardrail, code, message)
 }
 
+// ErrGuardrailUnavailable distinguishes execution failures from content decisions.
+func ErrGuardrailUnavailable(message string) *APIError {
+	return newAPIError(http.StatusServiceUnavailable, "guardrail", "guardrail_unavailable", message)
+}
+
 // WriteError writes an OpenAI-compatible error JSON response.
 //
 // The message is redacted here as well as at construction. Most of this
@@ -135,6 +140,16 @@ func ErrGuardrailBlocked(code, message string) *APIError {
 // those never pass through newAPIError. Redacting at the boundary every
 // response leaves through needs no site to remember.
 func WriteError(w http.ResponseWriter, err *APIError) {
+	// Explicitly notify a guarded release boundary. It may replace an upstream
+	// error (which can quote uninspected content) with a safe terminal envelope.
+	// A raw WriteHeader(4xx/5xx) must never grant the same exemption.
+	if guarded, ok := w.(interface{ GuardrailError(*APIError) *APIError }); ok {
+		err = guarded.GuardrailError(err)
+	}
+	// A post-stage refusal must not replay the already completed provider call.
+	if err.Code == "guardrail_unavailable" {
+		w.Header().Set("x-should-retry", "false")
+	}
 	resp := ErrorResponse{
 		Error: ErrorDetail{
 			Message: RedactCredentials(err.Message),

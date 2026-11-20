@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -254,6 +255,9 @@ type decisionGatewayOptions struct {
 	includeBodies bool
 	config        func(cfg *config.Config, upstreamURL string)
 	orgs          map[string]*tenant.OrgConfig
+	// modelOverrides are the operator's model price overrides, shared by the
+	// cost plugin and GET /v1/decisions/models.
+	modelOverrides map[string]modeldb.ModelOverride
 }
 
 func defaultOrgA() *tenant.OrgConfig {
@@ -329,7 +333,7 @@ func newDecisionGateway(t *testing.T, opts decisionGatewayOptions) *decisionGate
 	}
 
 	g.keyStore = auth.NewKeyStore(cfg.Auth)
-	db := modeldb.New(modeldb.BundledModels, nil)
+	db := modeldb.New(modeldb.BundledModels, opts.modelOverrides)
 	g.logging = logging.New(config.RequestLoggingConfig{Enabled: true, IncludeBodies: opts.includeBodies, BufferSize: 64, Workers: 1}, g.tenants)
 	g.logging.SetFlusher(logging.NewLogFlusher(webhook.URL, "", time.Hour, 1000))
 	engine := pipeline.NewEngine(
@@ -341,7 +345,9 @@ func newDecisionGateway(t *testing.T, opts decisionGatewayOptions) *decisionGate
 		otelplugin.NewWithExporter(g.spans, 1.0, true),
 		g.observer,
 	)
-	g.srv = New(cfg, "", registry, engine, g.keyStore, nil, nil, nil, testModelDBPtr(), g.tenants, nil)
+	var dbPtr atomic.Pointer[modeldb.ModelDB]
+	dbPtr.Store(db)
+	g.srv = New(cfg, "", registry, engine, g.keyStore, nil, nil, nil, &dbPtr, g.tenants, nil)
 	g.srv.ready.Store(true)
 	t.Cleanup(func() { g.srv.Shutdown(context.Background()) })
 	return g
@@ -1209,9 +1215,22 @@ func TestDecisionPrefixStripping(t *testing.T) {
 		if got := g.upstream.sentModel(t); got != tt.sent {
 			t.Errorf("%s: vendor was sent %q, want %q", tt.model, got, tt.sent)
 		}
-		// Only the model changed; the rest is the caller's bytes.
+		// Other vendors preserve bytes; OpenRouter adds its routing policy.
 		_, sentBody := g.upstream.last()
-		if want := strings.Replace(decisionSysBody, `"typesafe/jev-latest"`, `"`+tt.sent+`"`, 1); sentBody != want {
+		want := strings.Replace(decisionSysBody, `"typesafe/jev-latest"`, `"`+tt.sent+`"`, 1)
+		if tt.provider == "openrouter" {
+			var expected map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(want), &expected); err != nil {
+				t.Fatal(err)
+			}
+			expected["provider"] = json.RawMessage(`{"allow_fallbacks":true,"require_parameters":true}`)
+			encoded, err := json.Marshal(expected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want = string(encoded)
+		}
+		if sentBody != want {
 			t.Errorf("%s: body =\n%s\nwant\n%s", tt.model, sentBody, want)
 		}
 	}

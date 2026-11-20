@@ -632,6 +632,46 @@ class TestMemberRoleUpdate:
 class TestMemberRemoval:
     """DELETE /accounts/organization/members/remove/ — removal flows."""
 
+    @pytest.mark.parametrize(
+        "user_id",
+        ["%2f../日本語", "not-a-uuid", "x" * 4096, {"id": "invalid"}, ["invalid"]],
+        ids=["encoded-unicode", "malformed", "oversized", "object", "array"],
+    )
+    @pytest.mark.parametrize(
+        "method, endpoint",
+        [("delete", "remove"), ("post", "role"), ("post", "reactivate")],
+    )
+    def test_malformed_member_id_is_bad_request(
+        self, owner_client, org, default_ws, user_id, method, endpoint
+    ):
+        """All member mutations reject malformed IDs before the UUID lookup."""
+        member = _make_user(
+            org,
+            "preserved@acme.com",
+            OrganizationRoles.MEMBER,
+            Level.MEMBER,
+            default_ws,
+        )
+        payload = {"user_id": user_id}
+        if endpoint == "role":
+            payload["org_level"] = Level.VIEWER
+        response = getattr(owner_client, method)(
+            f"/accounts/organization/members/{endpoint}/",
+            payload,
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response["Content-Type"].startswith("application/json")
+        assert "Traceback" not in response.content.decode()
+        membership = OrganizationMembership.no_workspace_objects.get(
+            user=member, organization=org
+        )
+        assert membership.is_active
+        assert membership.level_or_legacy == Level.MEMBER
+        assert WorkspaceMembership.no_workspace_objects.get(
+            user=member, workspace=default_ws
+        ).is_active
+
     def test_owner_removes_member(self, owner_client, org, default_ws):
         """Owner can remove a Member from the org."""
         member = _make_user(

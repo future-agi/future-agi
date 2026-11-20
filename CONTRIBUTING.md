@@ -63,19 +63,18 @@ troubleshooting.
 ### 3. Install git hooks
 
 ```bash
-# From repo root — installs husky hooks and lint-staged tooling.
+# From the repository root:
 yarn install
-
-# For Python hooks (black, isort, mypy, Django system checks):
-cd futureagi && make pre-commit-install
 ```
 
-On every commit, `lint-staged` auto-formats and lints the staged files:
+The root install sets Git’s `core.hooksPath` to `.husky/_`. On a non-merge commit,
+Husky runs the [lint-staged tasks](.lintstagedrc.cjs), including staged safety checks.
+It does not install or run `futureagi/.pre-commit-config.yaml`.
 
-- `frontend/src/**` → ESLint + Prettier
-- `futureagi/**/*.py` → `black`, `isort`, `mypy` (via pre-commit)
+- **Backend Python:** For staged `futureagi/**/*.py` files outside migrations, the [Python runner](scripts/lint-staged-python.sh) runs `ruff check --fix`, then `ruff format`. Install `uv` or `uvx` to run the CI-pinned Ruff. Offline, the runner can use `ruff` on `PATH` and warns that CI may differ. If no runner is available, the commit stops.
+- **Formatting:** Run `yarn --cwd frontend install` before staging files that need ESLint or Prettier. This includes frontend source and files formatted with the frontend copy of Prettier, such as Markdown, the root `package.json`, and GitHub workflow YAML.
 
-Branch names are validated on `git push`.
+On `git push`, Husky checks the destination name of each branch you create or update, even when you push from a detached `HEAD`.
 
 ### 4. Run tests
 
@@ -152,8 +151,8 @@ Framework integrations live in the `traceAI` SDK (separate repo). For Python: [g
 
 We follow:
 
-- **Python:** PEP 8 via Ruff + Black (line length 88)
-- **Imports:** `isort` with Black profile
+- **Python:** PEP 8 via Ruff: `ruff check` and `ruff format` (line length 88)
+- **Imports:** sorted by Ruff's isort rules (`I`)
 - **Types:** new code must pass `mypy` (we use a baseline for existing code)
 - **JS / TS:** ESLint (Airbnb) + Prettier
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`)

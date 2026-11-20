@@ -27,6 +27,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.DefaultRequestTimeout != 60*time.Second {
 		t.Errorf("default timeout = %v, want 60s", cfg.Server.DefaultRequestTimeout)
 	}
+	if cfg.Server.ReadHeaderTimeout != 5*time.Second {
+		t.Errorf("default read_header_timeout = %v, want 5s", cfg.Server.ReadHeaderTimeout)
+	}
+	if cfg.Server.MaxHeaderBytes != 1<<20 {
+		t.Errorf("default max_header_bytes = %d, want %d", cfg.Server.MaxHeaderBytes, 1<<20)
+	}
 	if cfg.Logging.Level != "info" {
 		t.Errorf("default log level = %q, want %q", cfg.Logging.Level, "info")
 	}
@@ -226,6 +232,54 @@ func TestValidate(t *testing.T) {
 			name: "valid provider",
 			modify: func(c *Config) {
 				c.Providers["test"] = ProviderConfig{BaseURL: "http://localhost", APIFormat: "openai"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "cors wildcard with credentials rejected",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"*"}
+			},
+			wantErr: true,
+		},
+		{
+			name: "cors explicit origins with credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"https://app.example.com"}
+			},
+			wantErr: false,
+		},
+		{
+			// The middleware treats an empty origin list as "*".
+			name: "cors empty origins with credentials rejected",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = nil
+			},
+			wantErr: true,
+		},
+		{
+			// Only a lone "*" is a wildcard in the middleware; in a list it is a
+			// literal entry that no browser Origin matches, so credentials are
+			// only ever sent to the listed origins.
+			name: "cors star inside an explicit list with credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowCredentials = true
+				c.CORS.AllowedOrigins = []string{"https://app.example.com", "*"}
+			},
+			wantErr: false,
+		},
+		{
+			name: "cors wildcard without credentials allowed",
+			modify: func(c *Config) {
+				c.CORS.Enabled = true
+				c.CORS.AllowedOrigins = []string{"*"}
 			},
 			wantErr: false,
 		},

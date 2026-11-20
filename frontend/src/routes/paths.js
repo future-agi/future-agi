@@ -45,7 +45,7 @@ export const paths = {
       workspaceIntegrationDetail: (workspaceId, id) =>
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
-      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
+      falconAIConnectors: `${ROOTS.DASHBOARD}/settings/connectors`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,
       usageSummary: `${ROOTS.DASHBOARD}/settings/usage-summary`,
       billing: `${ROOTS.DASHBOARD}/settings/billing`,
@@ -89,11 +89,6 @@ export const paths = {
       test: `${ROOTS.DASHBOARD}/simulate/test`,
       testCallDetails: (testId, executionId) =>
         `${ROOTS.DASHBOARD}/simulate/test/${testId}/${executionId}/call-details`,
-      harness: {
-        root: `${ROOTS.DASHBOARD}/simulate/harness`,
-        new: `${ROOTS.DASHBOARD}/simulate/harness/new`,
-        detail: (jobId) => `${ROOTS.DASHBOARD}/simulate/harness/${jobId}`,
-      },
       environments: {
         root: `${ROOTS.DASHBOARD}/simulate/environments`,
         templates: `${ROOTS.DASHBOARD}/simulate/environments/templates`,
@@ -128,6 +123,7 @@ export const paths = {
         root: `${ROOTS.DASHBOARD}/gateway/guardrails`,
         overview: `${ROOTS.DASHBOARD}/gateway/guardrails`,
         configuration: `${ROOTS.DASHBOARD}/gateway/guardrails/configuration`,
+        policies: `${ROOTS.DASHBOARD}/gateway/guardrails/policies`,
         analytics: `${ROOTS.DASHBOARD}/gateway/guardrails/analytics`,
         feedback: `${ROOTS.DASHBOARD}/gateway/guardrails/feedback`,
         playground: `${ROOTS.DASHBOARD}/gateway/guardrails/playground`,

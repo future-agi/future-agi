@@ -10,6 +10,8 @@ from agentic_eval.core.database import ch_vector
 from agentic_eval.core.embeddings import embedding_manager
 from conftest import _open_ch_test_native_client
 from model_hub.models.evals_metric import EvalTemplate, Feedback
+from model_hub.utils import optimization_feedback
+from model_hub.utils.optimization_feedback import DatasetFeedbackVectorDB
 
 
 @pytest.fixture
@@ -340,3 +342,152 @@ def test_rolled_back_delete_does_not_revoke_vectors(feedback_factory, deletion):
                 raise RuntimeError("rollback")
         client.assert_not_called()
     assert Feedback.objects.filter(pk=feedback_id).exists()
+
+
+@pytest.mark.integration
+def test_runtime_grounding_retains_feedback_and_tenant_scope(
+    feedback_factory, vector_manager, monkeypatch
+):
+    from evaluations.engine.params import prepare_run_params
+
+    feedback = feedback_factory(explanation="owning tenant correction")
+    embed_feedback(vector_manager, feedback)
+    # Deliberately give another tenant the same eval/item input shape. Retrieval
+    # must still exclude its feedback, even with workspace filtering disabled.
+    vector_manager.db_client.upsert_vector(
+        "feedbacks",
+        str(feedback.eval_template_id),
+        [1.0, 0.0],
+        {
+            "item_id": str(uuid.uuid4()),
+            "prompt": "What is the identifier?",
+            "response": "The identifier is ABC.",
+            "feedback_comment": "other tenant correction",
+            "feedback_value": "Passed",
+            "input_type": "text",
+            "organization_id": str(uuid.uuid4()),
+        },
+        ["item_id"],
+    )
+    template = feedback.eval_template
+    template.config = {
+        "eval_type_id": "AgentEvaluator",
+        "required_keys": ["prompt", "response"],
+        "optional_keys": ["reference_context"],
+    }
+    queries = []
+    monkeypatch.setattr(
+        embedding_manager.model_manager,
+        "text_model",
+        lambda text: queries.append(text) or [1.0, 0.0],
+    )
+    monkeypatch.setattr(embedding_manager, "EmbeddingManager", lambda: vector_manager)
+    inputs = {
+        "trace_context": {"id": "synthetic-trace"},
+        "prompt": "What is the identifier?",
+        "span_context": {"id": "synthetic-span"},
+        "response": "The identifier is ABC.",
+        "session_context": {"id": "synthetic-session"},
+        "ground_truth_blocks": [{"type": "text", "text": "runtime ground truth"}],
+    }
+    params = prepare_run_params(
+        inputs, template, organization_id=str(feedback.organization_id)
+    )
+    assert "owning tenant correction" in str(params["few_shots"])
+    assert "other tenant correction" not in str(params["few_shots"])
+    assert "runtime ground truth" not in str(params["few_shots"])
+    assert queries == [
+        "What is the identifier?",
+        "The identifier is ABC.",
+    ]
+    for key, value in inputs.items():
+        assert params[key] == value
+
+
+def test_dataset_feedback_search_without_eligible_rows_runs_no_query():
+    with patch(
+        "agentic_eval.core.database.ch_vector.clickhouse_driver.Client"
+    ) as client:
+        empty = DatasetFeedbackVectorDB([])
+        scoped = DatasetFeedbackVectorDB([str(uuid.uuid4())])
+        eval_id = str(uuid.uuid4())
+        assert empty.vector_similarity_search("feedbacks", [1.0], eval_id=eval_id) == []
+        assert (
+            scoped.vector_similarity_search("embeddings", [1.0], eval_id=eval_id) == []
+        )
+        assert scoped.vector_similarity_search("feedbacks", [1.0]) == []
+        assert (
+            scoped.vector_similarity_search_with_threshold(
+                "feedbacks", [1.0], dataset_id=eval_id, threshold=1.0
+            )
+            == []
+        )
+    client.return_value.execute.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("selection", ["own", "empty", "missing", "many", "batched"])
+def test_feedback_identity_filter_runs_before_ranking(
+    feedback_factory, vector_manager, monkeypatch, selection
+):
+    own = feedback_factory(explanation="selected correction")
+    others = [feedback_factory(explanation="other correction") for _ in range(11)]
+    # Other feedback matches the query exactly; the selected feedback is farther
+    # away but within the retrieval threshold. The 22 closer vectors fill each
+    # per-input LIMIT of 20, so the selection has to apply before ranking.
+    monkeypatch.setattr(
+        embedding_manager.model_manager,
+        "text_model",
+        lambda text: [0.8, 0.6] if text.startswith("Selected") else [1.0, 0.0],
+    )
+    for other in others:
+        embed_feedback(vector_manager, other)
+    vector_manager.data_formatter(
+        row_dict={
+            "feedback_id": str(own.id),
+            "prompt": "Selected identifier question?",
+            "response": "Selected identifier answer.",
+            "feedback_comment": own.explanation,
+            "feedback_value": own.value,
+        },
+        inputs_formater=["prompt", "response"],
+        insert=True,
+        eval_id=str(own.eval_template_id),
+        organization_id=str(own.organization_id),
+    )
+    identities = {
+        "own": [str(own.id)],
+        "empty": [],
+        "missing": [str(uuid.uuid4())],
+        "many": [str(uuid.uuid4()) for _ in range(1000)] + [str(own.id)],
+        "batched": [str(own.id)],
+    }[selection]
+    if selection == "batched":
+        # The selected feedback has two vectors: one search per vector row.
+        monkeypatch.setattr(optimization_feedback, "ID_BATCH_SIZE", 1)
+    original_client = vector_manager.db_client
+    vector_manager.db_client = DatasetFeedbackVectorDB(identities)
+    try:
+        examples = vector_manager.retrieve_avg_rag_based_examples(
+            eval_id=str(own.eval_template_id),
+            inputs=["What is the identifier?", "The identifier is ABC."],
+            input_cols=["prompt", "response"],
+            organization_id=str(own.organization_id),
+            top_k=1,
+        )
+    finally:
+        vector_manager.db_client.close()
+        vector_manager.db_client = original_client
+    if selection in ("empty", "missing"):
+        assert examples == []
+        return
+    context = str(
+        vector_manager.process_examples(
+            examples,
+            inputs=["prompt", "response"],
+            feedback_col_name="feedback_comment",
+            corrected_label_col_name="feedback_value",
+        )
+    )
+    assert "selected correction" in context
+    assert "other correction" not in context

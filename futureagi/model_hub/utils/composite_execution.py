@@ -18,6 +18,7 @@ from typing import Any
 
 from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate
 from model_hub.types import CompositeChildResult
+from tfc.utils.evaluation_denials import EvaluationDenied
 from model_hub.utils.composite_aggregation import (
     aggregate_error_localizers,
     aggregate_scores,
@@ -187,6 +188,18 @@ def _execute_child(
             weight=weight,
         )
 
+    except EvaluationDenied as denial:
+        logger.warning("Composite child evaluation denied: %s", denial.code)
+        return CompositeChildResult(
+            child_id=str(child_template.id),
+            child_name=child_template.name,
+            order=link.order,
+            status="failed",
+            error=denial.code,
+            reason=str(denial),
+            weight=weight,
+        )
+
     except Exception as e:  # noqa: BLE001
         from tfc.ee_gates import jev_error_message
 
@@ -224,6 +237,7 @@ def _log_composite_usage(
     try:
         from sdk.utils.helpers import _get_api_call_type
         from tfc.constants.api_calls import APICallStatusChoices
+
         try:
             from ee.usage.models.usage import APICallLog, APICallType
         except ImportError:

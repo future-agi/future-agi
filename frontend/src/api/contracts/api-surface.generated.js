@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1128,
+  endpointCount: 1180,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -285,11 +285,16 @@ export const API_SURFACE_CONTRACT = Object.freeze({
     integrations: {
       "/integrations/connections/": ["get", "post"],
       "/integrations/connections/validate/": ["post"],
+      "/integrations/connections/{connection_id}/repositories/": ["get"],
+      "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/":
+        ["get"],
       "/integrations/connections/{connection_id}/slack/channels/": ["get"],
       "/integrations/connections/{id}/": ["delete", "get", "patch", "put"],
       "/integrations/connections/{id}/pause/": ["post"],
       "/integrations/connections/{id}/resume/": ["post"],
       "/integrations/connections/{id}/sync_now/": ["post"],
+      "/integrations/github/install/": ["post"],
+      "/integrations/github/install/complete/": ["post"],
       "/integrations/slack/install/": ["post"],
       "/integrations/sync-logs/": ["get"],
       "/integrations/sync-logs/{id}/": ["get"],
@@ -640,6 +645,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/kb/supported-embedding-models": ["get"],
       "/model-hub/kb/supported_embedding_models/": ["get"],
       "/model-hub/kb/{id}/": ["delete", "get", "patch", "put"],
+      "/model-hub/kb/{id}/download-file/": ["get"],
       "/model-hub/knowledge-base/": ["delete", "get", "patch", "post"],
       "/model-hub/knowledge-base/files/": ["delete", "post"],
       "/model-hub/knowledge-base/get/": ["get"],
@@ -790,10 +796,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/agent-definitions/": ["delete", "get"],
       "/simulate/agent-definitions/create/": ["post"],
       "/simulate/agent-definitions/{agent_id}/": ["get"],
+      "/simulate/agent-definitions/{agent_id}/build-preflight/": ["get"],
       "/simulate/agent-definitions/{agent_id}/delete/": ["delete"],
       "/simulate/agent-definitions/{agent_id}/edit/": ["put"],
+      "/simulate/agent-definitions/{agent_id}/found-check/": ["post"],
       "/simulate/agent-definitions/{agent_id}/runs/": ["get"],
       "/simulate/agent-definitions/{agent_id}/versions/": ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/change/": ["post"],
       "/simulate/agent-definitions/{agent_id}/versions/create/": ["post"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/": ["get"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/activate/":
@@ -803,14 +812,38 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/call-executions/":
         ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/":
+        ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/":
+        ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/patches/":
+        ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/":
+        ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/":
+        ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/":
+        ["get"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/delete/": [
         "delete",
       ],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/": [
+        "post",
+      ],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/":
         ["get"],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/":
+        ["post"],
       "/simulate/agent-definitions/{agent_id}/versions/{version_id}/restore/": [
         "post",
       ],
+      "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/": [
+        "post",
+      ],
+      "/simulate/agents/connect/": ["post"],
+      "/simulate/agents/connect/availability/": ["get"],
+      "/simulate/agents/scan/": ["post"],
+      "/simulate/agents/scan/{scan_id}/": ["get"],
       "/simulate/api/agent-definition-operations/": ["get", "post"],
       "/simulate/api/agent-definition-operations/fetch_assistant_from_provider/":
         ["post"],
@@ -827,6 +860,11 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/agent-fix-engine/{id}/report/": ["post"],
       "/simulate/api/agent-fix-engine/{id}/source/": ["get"],
       "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": ["post"],
+      "/simulate/api/agent-fix-issues/": ["get", "post"],
+      "/simulate/api/agent-fix-issues/plan/": ["get"],
+      "/simulate/api/agent-fix-issues/{id}/": ["get"],
+      "/simulate/api/agent-fix-issues/{id}/run/": ["post"],
+      "/simulate/api/agent-fix-issues/{id}/stop/": ["post"],
       "/simulate/api/agent-fix-runs/": ["get", "post"],
       "/simulate/api/agent-fix-runs/launch-options/": ["get"],
       "/simulate/api/agent-fix-runs/{id}/": ["get"],
@@ -872,6 +910,18 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/call-executions/": ["get"],
       "/simulate/api/harness-environments/": ["get"],
       "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+      "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
+      "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/actor-validation/": ["post"],
+      "/simulate/api/harness-environments/{id}/actors/": ["get", "post"],
+      "/simulate/api/harness-environments/{id}/actors/{actor_id}/": [
+        "delete",
+        "get",
+        "put",
+      ],
+      "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
       "/simulate/api/harness-environments/{id}/compare/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
@@ -883,6 +933,19 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "delete",
         "patch",
       ],
+      "/simulate/api/harness-environments/{id}/evidence-imports/": [
+        "get",
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": [
+        "delete",
+        "get",
+      ],
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/files/": ["post"],
       "/simulate/api/harness-environments/{id}/nudges/": ["get"],
       "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": [
         "post",
@@ -895,6 +958,10 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/":
         ["post"],
       "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
+        ["post"],
+      "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/":
+        ["get"],
+      "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/":
         ["post"],
       "/simulate/api/harness-environments/{id}/verify/": ["post"],
       "/simulate/api/harness-environments/{id}/verify/{verify_id}/": ["get"],
@@ -1131,6 +1198,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/eval-task/list_eval_tasks_with_project_name/": ["get"],
       "/tracer/eval-task/mark_eval_tasks_deleted/": ["post"],
       "/tracer/eval-task/pause_eval_task/": ["post"],
+      "/tracer/eval-task/sampling_audit/": ["get"],
+      "/tracer/eval-task/sampling_preview/": ["post"],
       "/tracer/eval-task/unpause_eval_task/": ["post"],
       "/tracer/eval-task/update_eval_task/": ["patch"],
       "/tracer/eval-task/{id}/": ["delete", "get", "patch", "put"],
@@ -1265,6 +1334,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/replay-session/eval-configs/": ["get"],
       "/tracer/replay-session/{id}/": ["get"],
       "/tracer/replay-session/{id}/generate-scenario/": ["post"],
+      "/tracer/saved-sql-query/": ["get", "post"],
+      "/tracer/saved-sql-query/{id}/": ["delete", "get", "patch"],
+      "/tracer/saved-sql-query/{id}/add-widget/": ["post"],
       "/tracer/saved-views/": ["get", "post"],
       "/tracer/saved-views/reorder/": ["post"],
       "/tracer/saved-views/{id}/": ["delete", "get", "patch", "put"],
@@ -1276,6 +1348,14 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/tracer/shared/{token}/": ["get"],
       "/tracer/shared/{token}/sidebar/": ["get"],
       "/tracer/shared/{token}/traces/{trace_id}/": ["get"],
+      "/tracer/sql-query/": ["get"],
+      "/tracer/sql-query/catalog/": ["get"],
+      "/tracer/sql-query/estimate/": ["post"],
+      "/tracer/sql-query/run-saved/": ["post"],
+      "/tracer/sql-query/run/": ["post"],
+      "/tracer/sql-query/{id}/": ["get"],
+      "/tracer/sql-query/{id}/cancel/": ["post"],
+      "/tracer/sql-query/{id}/download/": ["get"],
       "/tracer/trace-annotation/get_annotation_values/": ["get"],
       "/tracer/trace-error-analysis/{trace_id}/": ["get"],
       "/tracer/trace-error-task/{project_id}/": ["get", "post"],
@@ -1678,11 +1758,16 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/health/": ["get"],
   "/integrations/connections/": ["get", "post"],
   "/integrations/connections/validate/": ["post"],
+  "/integrations/connections/{connection_id}/repositories/": ["get"],
+  "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/":
+    ["get"],
   "/integrations/connections/{connection_id}/slack/channels/": ["get"],
   "/integrations/connections/{id}/": ["delete", "get", "patch", "put"],
   "/integrations/connections/{id}/pause/": ["post"],
   "/integrations/connections/{id}/resume/": ["post"],
   "/integrations/connections/{id}/sync_now/": ["post"],
+  "/integrations/github/install/": ["post"],
+  "/integrations/github/install/complete/": ["post"],
   "/integrations/slack/install/": ["post"],
   "/integrations/sync-logs/": ["get"],
   "/integrations/sync-logs/{id}/": ["get"],
@@ -2011,6 +2096,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/kb/supported-embedding-models": ["get"],
   "/model-hub/kb/supported_embedding_models/": ["get"],
   "/model-hub/kb/{id}/": ["delete", "get", "patch", "put"],
+  "/model-hub/kb/{id}/download-file/": ["get"],
   "/model-hub/knowledge-base/": ["delete", "get", "patch", "post"],
   "/model-hub/knowledge-base/files/": ["delete", "post"],
   "/model-hub/knowledge-base/get/": ["get"],
@@ -2150,10 +2236,13 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/agent-definitions/": ["delete", "get"],
   "/simulate/agent-definitions/create/": ["post"],
   "/simulate/agent-definitions/{agent_id}/": ["get"],
+  "/simulate/agent-definitions/{agent_id}/build-preflight/": ["get"],
   "/simulate/agent-definitions/{agent_id}/delete/": ["delete"],
   "/simulate/agent-definitions/{agent_id}/edit/": ["put"],
+  "/simulate/agent-definitions/{agent_id}/found-check/": ["post"],
   "/simulate/agent-definitions/{agent_id}/runs/": ["get"],
   "/simulate/agent-definitions/{agent_id}/versions/": ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/change/": ["post"],
   "/simulate/agent-definitions/{agent_id}/versions/create/": ["post"],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/": ["get"],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/activate/": [
@@ -2164,14 +2253,41 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/call-executions/":
     ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/":
+    ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/":
+    ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/patches/":
+    ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": [
+    "get",
+  ],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/": [
+    "get",
+  ],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/":
+    ["get"],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/delete/": [
     "delete",
   ],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/": [
+    "post",
+  ],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/eval-summary/":
     ["get"],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/": [
+    "post",
+  ],
   "/simulate/agent-definitions/{agent_id}/versions/{version_id}/restore/": [
     "post",
   ],
+  "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/": [
+    "post",
+  ],
+  "/simulate/agents/connect/": ["post"],
+  "/simulate/agents/connect/availability/": ["get"],
+  "/simulate/agents/scan/": ["post"],
+  "/simulate/agents/scan/{scan_id}/": ["get"],
   "/simulate/api/agent-definition-operations/": ["get", "post"],
   "/simulate/api/agent-definition-operations/fetch_assistant_from_provider/": [
     "post",
@@ -2189,6 +2305,11 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/agent-fix-engine/{id}/report/": ["post"],
   "/simulate/api/agent-fix-engine/{id}/source/": ["get"],
   "/simulate/api/agent-fix-engine/{id}/v1/chat/completions": ["post"],
+  "/simulate/api/agent-fix-issues/": ["get", "post"],
+  "/simulate/api/agent-fix-issues/plan/": ["get"],
+  "/simulate/api/agent-fix-issues/{id}/": ["get"],
+  "/simulate/api/agent-fix-issues/{id}/run/": ["post"],
+  "/simulate/api/agent-fix-issues/{id}/stop/": ["post"],
   "/simulate/api/agent-fix-runs/": ["get", "post"],
   "/simulate/api/agent-fix-runs/launch-options/": ["get"],
   "/simulate/api/agent-fix-runs/{id}/": ["get"],
@@ -2236,6 +2357,16 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/call-executions/": ["get"],
   "/simulate/api/harness-environments/": ["get"],
   "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
+  "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
+  "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": ["post"],
+  "/simulate/api/harness-environments/{id}/actor-validation/": ["post"],
+  "/simulate/api/harness-environments/{id}/actors/": ["get", "post"],
+  "/simulate/api/harness-environments/{id}/actors/{actor_id}/": [
+    "delete",
+    "get",
+    "put",
+  ],
+  "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
   "/simulate/api/harness-environments/{id}/compare/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
@@ -2247,6 +2378,17 @@ export const API_SURFACE_PATHS = Object.freeze({
     "delete",
     "patch",
   ],
+  "/simulate/api/harness-environments/{id}/evidence-imports/": ["get", "post"],
+  "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/": [
+    "delete",
+    "get",
+  ],
+  "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/add/": [
+    "post",
+  ],
+  "/simulate/api/harness-environments/{id}/evidence-imports/{import_id}/draft/":
+    ["post"],
+  "/simulate/api/harness-environments/{id}/files/": ["post"],
   "/simulate/api/harness-environments/{id}/nudges/": ["get"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/answer/": ["post"],
   "/simulate/api/harness-environments/{id}/nudges/{nudge_id}/stop/": ["post"],
@@ -2256,6 +2398,10 @@ export const API_SURFACE_PATHS = Object.freeze({
     "post",
   ],
   "/simulate/api/harness-environments/{id}/runs/{execution_id}/evaluations/run/":
+    ["post"],
+  "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/":
+    ["get"],
+  "/simulate/api/harness-environments/{id}/scenarios/{scenario_key}/starting-records/rework/":
     ["post"],
   "/simulate/api/harness-environments/{id}/verify/": ["post"],
   "/simulate/api/harness-environments/{id}/verify/{verify_id}/": ["get"],
@@ -2480,6 +2626,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/eval-task/list_eval_tasks_with_project_name/": ["get"],
   "/tracer/eval-task/mark_eval_tasks_deleted/": ["post"],
   "/tracer/eval-task/pause_eval_task/": ["post"],
+  "/tracer/eval-task/sampling_audit/": ["get"],
+  "/tracer/eval-task/sampling_preview/": ["post"],
   "/tracer/eval-task/unpause_eval_task/": ["post"],
   "/tracer/eval-task/update_eval_task/": ["patch"],
   "/tracer/eval-task/{id}/": ["delete", "get", "patch", "put"],
@@ -2614,6 +2762,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/replay-session/eval-configs/": ["get"],
   "/tracer/replay-session/{id}/": ["get"],
   "/tracer/replay-session/{id}/generate-scenario/": ["post"],
+  "/tracer/saved-sql-query/": ["get", "post"],
+  "/tracer/saved-sql-query/{id}/": ["delete", "get", "patch"],
+  "/tracer/saved-sql-query/{id}/add-widget/": ["post"],
   "/tracer/saved-views/": ["get", "post"],
   "/tracer/saved-views/reorder/": ["post"],
   "/tracer/saved-views/{id}/": ["delete", "get", "patch", "put"],
@@ -2625,6 +2776,14 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/shared/{token}/": ["get"],
   "/tracer/shared/{token}/sidebar/": ["get"],
   "/tracer/shared/{token}/traces/{trace_id}/": ["get"],
+  "/tracer/sql-query/": ["get"],
+  "/tracer/sql-query/catalog/": ["get"],
+  "/tracer/sql-query/estimate/": ["post"],
+  "/tracer/sql-query/run-saved/": ["post"],
+  "/tracer/sql-query/run/": ["post"],
+  "/tracer/sql-query/{id}/": ["get"],
+  "/tracer/sql-query/{id}/cancel/": ["post"],
+  "/tracer/sql-query/{id}/download/": ["get"],
   "/tracer/trace-annotation/get_annotation_values/": ["get"],
   "/tracer/trace-error-analysis/{trace_id}/": ["get"],
   "/tracer/trace-error-task/{project_id}/": ["get", "post"],

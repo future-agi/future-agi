@@ -5,8 +5,12 @@ Utility functions for generating dynamic prompts for SimulatorAgent based on age
 import re
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
+import structlog
 from django.db import connection, models
+from django.db.models import F
+from django.db.models.functions import Cast
 
 from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
@@ -20,13 +24,61 @@ from simulate.utils.persona_filtering import (
 from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE
 
+logger = structlog.get_logger(__name__)
+
+
+def is_fix_check_run(test_execution_id: uuid.UUID) -> bool:
+    """Whether a fix started this run to check one of its versions. A check run is graded
+    only once its fix has a winner, and never by the error localizer. A deleted job is still
+    its fix's check run, as accrue_check_run_eval_cost counts it."""
+    return HostedHarnessJob.all_objects.filter(
+        test_execution_id=test_execution_id, fix_run__isnull=False
+    ).exists()
+
 
 def eval_source(test_execution_id: uuid.UUID, default: str = "simulate") -> str:
     """Where a call's evals are logged from: a fix's check runs have a source of their own."""
-    is_check_run = HostedHarnessJob.no_workspace_objects.filter(
-        test_execution_id=test_execution_id, fix_run__isnull=False
-    ).exists()
-    return FIX_CHECK_RUN_EVAL_SOURCE if is_check_run else default
+    return FIX_CHECK_RUN_EVAL_SOURCE if is_fix_check_run(test_execution_id) else default
+
+
+def accrue_check_run_eval_cost(test_execution_id, credits) -> None:
+    """Add what one platform eval of a fix's check run billed to that run, in billed US
+    dollars (a credit is $0.01). The eval has billed the organization already, so a failure
+    here is logged and the eval goes on."""
+    usd = (Decimal(str(credits or 0)) * Decimal("0.01")).quantize(Decimal("0.0001"))
+    if usd <= 0:
+        return
+    try:
+        HostedHarnessJob.all_objects.filter(
+            test_execution_id=test_execution_id, fix_run__isnull=False
+        ).update(fix_eval_cost_usd=F("fix_eval_cost_usd") + usd)
+    except Exception:
+        logger.exception(
+            "agent_fix_eval_cost_not_counted",
+            test_execution_id=str(test_execution_id),
+            usd=str(usd),
+        )
+
+
+def _unique_matching_calls(call_executions):
+    """Return each matching call once, read from the same database and order.
+
+    Search joins transcripts, so a call can repeat once rows are grouped. The
+    ids are read by running the incoming query as it is, not nested inside
+    another query, because the search adds raw SQL that names the table.
+    """
+    database = call_executions.db
+    call_ids = list(call_executions.order_by().values_list("pk", flat=True).distinct())
+    unique_calls = call_executions.model._base_manager.db_manager(database).filter(
+        pk__in=call_ids
+    )
+    query = call_executions.query
+    if query.order_by:
+        # The display fallback groups by the incoming created_at order too.
+        return unique_calls.order_by(*query.order_by)
+    if not query.default_ordering:
+        return unique_calls.order_by()
+    return unique_calls
 
 
 class TestExecutionUtils:
@@ -737,29 +789,35 @@ class TestExecutionUtils:
         self, call_executions, row_groups, group_keys, default_columns=None
     ):
         """Apply basic grouping using Django ORM"""
-        # Build group_by_fields from default_columns
-        group_by_fields = []
-
-        if default_columns:
+        call_executions = _unique_matching_calls(call_executions)
+        basic_fields = {
+            "timestamp": "created_at__date",
+            "status": "status",
+            "call_type": "call_type",
+            "callType": "call_type",
+            "scenario": "scenario__name",
+            "overall_score": "overall_score",
+            "overallScore": "overall_score",
+            "response_time": "response_time_ms",
+            "responseTime": "response_time_ms",
+        }
+        # Unrecognised ids in a mixed request are not grouping dimensions.
+        requested_fields = [
+            basic_fields[field] for field in row_groups if field in basic_fields
+        ]
+        if requested_fields:
+            group_by_fields = requested_fields
+            # Ordering by individual calls' created_at also groups by that timestamp.
+            call_executions = call_executions.order_by(*group_by_fields)
+        elif default_columns:
+            # Keep the display-based fallback when no requested group is recognised.
+            group_by_fields = []
             for column in default_columns:
                 column_id = column.get("id")
                 column_type = column.get("type", "")
 
-                # Map column IDs to Django field names. Accept both snake_case
-                # (canonical) and legacy camelCase ids so stored/legacy row_groups
-                # payloads still work.
-                if column_id == "timestamp":
-                    group_by_fields.append("created_at__date")
-                elif column_id == "status":
-                    group_by_fields.append("status")
-                elif column_id in ("call_type", "callType"):
-                    group_by_fields.append("call_type")
-                elif column_id == "scenario":
-                    group_by_fields.append("scenario__name")
-                elif column_id in ("overall_score", "overallScore"):
-                    group_by_fields.append("overall_score")
-                elif column_id in ("response_time", "responseTime"):
-                    group_by_fields.append("response_time_ms")
+                if isinstance(column_id, str) and column_id in basic_fields:
+                    group_by_fields.append(basic_fields[column_id])
                 elif column_type == "evaluation":
                     # For evaluation columns, we'll include them in annotations
                     continue
@@ -781,6 +839,18 @@ class TestExecutionUtils:
             ]
 
         if group_by_fields:
+
+            def nullable_chat_average(key, output_field):
+                lookup = f"conversation_metrics_data__{key}"
+                # PostgreSQL cannot cast a JSON null. AVG skips SQL NULL instead.
+                return models.Avg(
+                    models.Case(
+                        models.When(**{lookup: None}, then=None),
+                        default=Cast(lookup, output_field),
+                        output_field=output_field,
+                    )
+                )
+
             # Apply grouping with annotations for counts and chat metrics
             # Extract chat metrics from conversation_metrics_data JSONField
             call_executions = call_executions.values(*group_by_fields).annotate(
@@ -789,41 +859,33 @@ class TestExecutionUtils:
                 avg_response_time=models.Avg("response_time_ms"),
                 # Chat metrics from conversation_metrics_data JSONField
                 total_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__total_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 input_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__input_tokens"),
                         models.IntegerField(),
                     )
                 ),
                 output_tokens=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__output_tokens"),
                         models.IntegerField(),
                     )
                 ),
-                avg_latency_ms=models.Avg(
-                    models.Cast(
-                        models.F("conversation_metrics_data__avg_latency_ms"),
-                        models.IntegerField(),
-                    )
+                avg_latency_ms=nullable_chat_average(
+                    "avg_latency_ms", models.IntegerField()
                 ),
                 turn_count=models.Avg(
-                    models.Cast(
+                    Cast(
                         models.F("conversation_metrics_data__turn_count"),
                         models.IntegerField(),
                     )
                 ),
-                csat_score=models.Avg(
-                    models.Cast(
-                        models.F("conversation_metrics_data__csat_score"),
-                        models.FloatField(),
-                    )
-                ),
+                csat_score=nullable_chat_average("csat_score", models.FloatField()),
             )
 
             # Apply group_keys filtering if provided
@@ -834,7 +896,13 @@ class TestExecutionUtils:
                     if i < len(row_groups):
                         group_field = row_groups[i]
 
-                        if group_field == "timestamp":
+                        if group_key is None:
+                            # A null key names the bucket of calls without a value.
+                            if group_field in basic_fields:
+                                group_filter_conditions &= models.Q(
+                                    **{f"{basic_fields[group_field]}__isnull": True}
+                                )
+                        elif group_field == "timestamp":
                             group_filter_conditions &= models.Q(
                                 created_at__date=group_key
                             )

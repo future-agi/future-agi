@@ -1,5 +1,6 @@
 import { Box, Skeleton } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
+import "src/utils/ag-grid-setup";
 import React, { useMemo, useRef } from "react";
 import { ExperimentSummaryDefaultColDef } from "./tableConfig";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";

@@ -54,6 +54,27 @@ make test-shell          # Interactive test shell
 
 Under the hood, `make test` delegates to `bin/test`, which runs pytest with the local Python environment and starts dependencies in `docker-compose.test.yml` (Postgres, Redis, ClickHouse, and MinIO). See `bin/test --help` for lower-level options. The project name is fixed to `futureagi-test`; coordinate ownership before using it alongside another checkout.
 
+### Evaluator library (standalone pytest root)
+
+The backend shards exclude `agentic_eval`, which has its own settings bootstrap
+and pytest configuration. Run it from the **backend** working directory so that
+existing fixtures resolve their relative paths correctly:
+
+```bash
+cd futureagi
+uv sync --frozen --extra dev
+docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait
+uv run --no-sync python -m pytest \
+  -c agentic_eval/pytest.ini --confcutdir=agentic_eval agentic_eval -q -ra
+```
+
+The default selection excludes `live_llm`, `live_image`, `external`, and `network`
+tests; no provider credentials are needed. To inspect discovery without running
+tests, append `--collect-only`. Database cases use the test Postgres dependency,
+not a running application database. The `agentic-eval` job in `backend-ci.yml`
+runs this command with frozen dependencies, uploads its JUnit report, and feeds
+the required **Backend Tests Pass** gate. A collection error fails that job.
+
 ### Collector and deployment contracts
 
 Do **not** run the full collector suite on a shared host: it includes fixed-port
@@ -268,6 +289,51 @@ stay published and the chart is withheld; re-run the workflow from the tag
 (Use workflow from: `vX.Y.Z`, version `vX.Y.Z`) for a transient failure. A
 published version is never pushed again.
 
+### Helm GitOps controller acceptance
+
+`helm-ci.yml` has independent direct Helm, Argo CD and Flux kind lanes. The
+controller lanes run `deploy/tests/helm_gitops/acceptance.py` against pinned
+controller manifests in `pins.json`, not controller doubles. Run them only on
+an owned disposable CI/cloud host, with Docker, kind, kubectl, Helm 4, ORAS,
+cosign and the four source-built images (backend, frontend, fi-collector and
+agentcc-gateway) tagged identically. Never borrow a shared cluster or registry.
+
+```sh
+python3 -m pip install -r deploy/tests/helm_gitops/requirements.txt
+export PLAYWRIGHT_BROWSERS_PATH="$PWD/.gitops-browsers"
+python3 -m playwright install --with-deps chromium
+FAGI_GITOPS_DISPOSABLE=1 python3 -m deploy.tests.helm_gitops.acceptance \
+  --controller argo --image-tag ci --output /path/to/new/argo-evidence
+# Repeat with --controller flux and a different new output directory.
+```
+
+Each run owns a fresh kind cluster and loopback-only registry, creates private
+kubeconfig/Docker credentials directories and an ephemeral test signing key,
+then verifies their cleanup. HTTP registry access and test-key trust exist only
+in this fixture; production examples retain TLS and exact publisher identities.
+The application and bootstrap receive no Kubernetes API tokens. Flux's reconciler
+is checked for denied cluster/RBAC and cross-namespace Secret access.
+
+Cases include immutable digest selection after a tag moves, a missing artifact,
+wrong-key refusal (external cosign for Argo; Flux's actual source verifier), a real
+bootstrap followed by an injected failure, explicit pause/repair/resume, and a
+reviewed return to the earlier chart. Native PostgreSQL, ClickHouse and S3 witnesses,
+migration inventory, Secret hashes and PVC UIDs must remain unchanged. Chromium
+signs in through the real login form, completes first-login onboarding through the
+UI only on initial install, and renders the seeded profile after install, forward
+repair and rollback. Later logins must reach the retained profile without repeating
+onboarding. Evidence includes bounded status, native witnesses
+and screenshots, not auth tokens, private signing keys, kubeconfig or browser HAR.
+
+**Limits:** the synthetic chart versions all use the same current application
+source. This is controller/recovery-mechanics acceptance, not qualification of
+arbitrary cross-version migrations or data restore. Optional serving/code-executor,
+external datastore operators and full trace/evaluation browser flows are outside
+this fixture. It does not replace the `e2e/` product-flow suite. The independent
+`test_helm_release_preparation.py` uses tool doubles to test verification order and
+refusals; real publisher verification is a separate read-only check described in
+[the Kubernetes upgrade runbook](deploy/helm/futureagi/UPGRADING.md).
+
 ### Observed catalog integration (isolated dependencies)
 
 After confirming ports 18143, 19094 and 15543 are free and choosing a unique
@@ -333,7 +399,7 @@ Installed once per clone via `yarn install` at repo root (husky's `prepare` scri
 
 ### `pre-commit` (`.husky/pre-commit`)
 
-Runs `lint-staged` against files currently staged. For frontend paths that means ESLint auto-fix + Prettier; Python formatting runs separately via `make pre-commit-install` inside `futureagi/`.
+Runs `lint-staged` against files currently staged. For frontend paths that means ESLint auto-fix + Prettier; for Python under `futureagi/`, `scripts/lint-staged-python.sh` runs `ruff check --fix` and then `ruff format`.
 
 The hook auto-skips during `git merge` — merge-commit staging includes the entire merge diff, which makes linting every file pointless and slow.
 
