@@ -764,36 +764,30 @@ class AttachmentMediaView(AttachmentView):
         return attachment_media.private(HttpResponse(status=404))
 
 
-def _validated_writer_request(serializer, *, responses):
+def _invalid_control_body(_errors):
+    raise AttachmentError("invalid_request")
+
+
+def _authorized_control_writer(post):
     """The shared validator reads request.data; check the writer before entering it."""
 
-    def invalid(_errors):
-        raise AttachmentError("invalid_request")
+    @wraps(post)
+    def authorized(view, request, project_id):
+        writer, scope = view.writer(request, project_id)
+        broker.check_writer(writer, scope)
+        return post(view, request, project_id, writer=writer, scope=scope)
 
-    def decorate(post):
-        validated = validated_request(
-            request_serializer=serializer,
-            reject_unknown_fields=True,
-            validation_error_response=invalid,
-            responses=responses,
-        )(post)
-
-        @wraps(validated)
-        def authorized(view, request, project_id):
-            writer, scope = view.writer(request, project_id)
-            broker.check_writer(writer, scope)
-            return validated(view, request, project_id, writer=writer, scope=scope)
-
-        return authorized
-
-    return decorate
+    return authorized
 
 
 class AttachmentProviderRegistrationView(AttachmentView):
     """Product control route; not an addition to F01 import payloads."""
 
-    @_validated_writer_request(
-        AttachmentProviderRegistrationRequestSerializer,
+    @_authorized_control_writer
+    @validated_request(
+        request_serializer=AttachmentProviderRegistrationRequestSerializer,
+        reject_unknown_fields=True,
+        validation_error_response=_invalid_control_body,
         responses={201: AttachmentProviderRegistrationResponseSerializer},
     )
     def post(self, request, project_id, *, writer, scope):
@@ -855,8 +849,11 @@ class AttachmentProviderLookupView(AttachmentView):
 class AttachmentSourceEnvelopeView(AttachmentView):
     """Resolve a registered source to its sealed reference; never accept a URL."""
 
-    @_validated_writer_request(
-        AttachmentSourceEnvelopeRequestSerializer,
+    @_authorized_control_writer
+    @validated_request(
+        request_serializer=AttachmentSourceEnvelopeRequestSerializer,
+        reject_unknown_fields=True,
+        validation_error_response=_invalid_control_body,
         responses={200: AttachmentSourceEnvelopeResponseSerializer},
     )
     def post(self, request, project_id, *, writer, scope):
@@ -905,12 +902,44 @@ class AttachmentSourceEnvelopeView(AttachmentView):
         )
 
 
+class _VerifiedWebhookRequest:
+    """Validate the verifier's exact event, not a second parse of the request.
+
+    Keep the rest of the DRF request available to the common validator without
+    setting its private parser caches or attempting to rewind the raw stream.
+    """
+
+    def __init__(self, request, event):
+        self._original = request
+        self.data = event
+
+    def __getattr__(self, name):
+        return getattr(self._original, name)
+
+
+def _verified_livekit_request(post):
+    @wraps(post)
+    def verified(view, request):
+        from tracer.services.attachments import provider_recordings
+
+        raw = request._request.read(provider_recordings.WEBHOOK_MAX_BYTES + 1)
+        connection, event = provider_recordings.verify_livekit_webhook(
+            raw, request.headers.get("Authorization")
+        )
+        return post(
+            view, _VerifiedWebhookRequest(request, event), connection=connection
+        )
+
+    return verified
+
+
 class AttachmentLiveKitEventView(AttachmentView):
     parser_classes = (OctetStreamParser,)
 
-    # Documentation only: preserve authorization and raw-body parsing order.
-    @swagger_auto_schema(
-        request_body=AttachmentLiveKitEventRequestSerializer,
+    @_verified_livekit_request
+    @validated_request(
+        request_serializer=AttachmentLiveKitEventRequestSerializer,
+        validation_error_response=_invalid_control_body,
         responses={204: ""},  # Do not infer a response from the request schema.
         operation_description=(
             "Signed LiveKit provider JSON (at most 65536 original bytes). "
@@ -919,13 +948,10 @@ class AttachmentLiveKitEventView(AttachmentView):
             "Only matching registered egress events advance recording state."
         ),
     )
-    def post(self, request):
+    def post(self, request, *, connection):
         from tracer.services.attachments import provider_recordings
 
-        # Do not touch request.data: signature binds the exact original bytes.
-        body = request._request.read(provider_recordings.WEBHOOK_MAX_BYTES + 1)
-        connection, event = provider_recordings.verify_livekit_webhook(
-            body, request.headers.get("Authorization")
-        )
-        provider_recordings.process_livekit_event(connection, event)
+        # Extensions are signed, too: dispatch the verified event, never DRF's
+        # coerced/filtered serializer output or a reserialization of the body.
+        provider_recordings.process_livekit_event(connection, request.data)
         return empty_response(204)

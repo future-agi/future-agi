@@ -90,10 +90,7 @@ def body_schema(swagger, route):
 @pytest.mark.parametrize("route,view", ROUTES)
 def test_control_posts_document_validation_boundary(route, view):
     assert view.post._swagger_auto_schema["request_body"] is not None
-    if view is views.AttachmentLiveKitEventView:
-        assert not hasattr(view.post, "__wrapped__"), "verify the raw bytes first"
-    else:
-        assert view.post._swagger_auto_schema["runtime_request_validation"] is True
+    assert view.post._swagger_auto_schema["runtime_request_validation"] is True
 
 
 @pytest.mark.parametrize("route,view", ROUTES)
@@ -270,6 +267,8 @@ def test_ineligible_pending_receipt_advances_retry_without_opening_it(
 
 
 class RawRequest:
+    method = "POST"
+
     def __init__(self, body):
         self._request = io.BytesIO(body)
         self.headers = {"Authorization": "synthetic-token"}
@@ -282,7 +281,7 @@ class RawRequest:
 def test_webhook_passes_original_bytes_to_verifier_before_processing(monkeypatch):
     raw = b'{ "id": "event-1", "providerExtra": [1, 2] }\n'
     events = []
-    connection, event = object(), object()
+    connection, event = object(), {"id": "event-1", "providerExtra": [1, 2]}
 
     def verify(body, auth):
         assert body == raw
@@ -290,15 +289,25 @@ def test_webhook_passes_original_bytes_to_verifier_before_processing(monkeypatch
         events.append("verified")
         return connection, event
 
+    serializer = views.AttachmentLiveKitEventRequestSerializer
+    original_validate = serializer.to_internal_value
+
+    def validate(instance, data):
+        assert data is event and events == ["verified"]
+        events.append("validated")
+        return original_validate(instance, data)
+
+    monkeypatch.setattr(serializer, "to_internal_value", validate)
+
     def process(actual_connection, actual_event):
-        assert events == ["verified"]
+        assert events == ["verified", "validated"]
         assert actual_connection is connection and actual_event is event
         events.append("processed")
 
     monkeypatch.setattr(provider_recordings, "verify_livekit_webhook", verify)
     monkeypatch.setattr(provider_recordings, "process_livekit_event", process)
     response = views.AttachmentLiveKitEventView().post(RawRequest(raw))
-    assert events == ["verified", "processed"]
+    assert events == ["verified", "validated", "processed"]
     assert response.status_code == 204
 
 
@@ -369,6 +378,32 @@ def test_real_verifier_keeps_strict_json_after_signature(signed_webhook, raw):
     _, signed = signed_webhook
     with pytest.raises(AttachmentError):
         provider_recordings.verify_livekit_webhook(raw, signed(raw))
+
+
+def test_webhook_route_keeps_verifier_hash_check_before_serializer(
+    signed_webhook, monkeypatch
+):
+    _, sign = signed_webhook
+    raw = b'{"id":"event", "event":"room_started"}'
+    request = APIRequestFactory().post(
+        "/events",
+        raw + b" ",
+        content_type="application/webhook+json",
+        HTTP_AUTHORIZATION=sign(raw),
+    )
+    validate = Mock(
+        side_effect=AssertionError("unauthenticated body reached serializer")
+    )
+    process = Mock()
+    monkeypatch.setattr(
+        views.AttachmentLiveKitEventRequestSerializer, "to_internal_value", validate
+    )
+    monkeypatch.setattr(provider_recordings, "process_livekit_event", process)
+    with override_settings(FI_ATTACHMENTS_ENABLED=True):
+        response = views.AttachmentLiveKitEventView.as_view()(request)
+    assert response.status_code == 404
+    validate.assert_not_called()
+    process.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -556,3 +591,34 @@ def test_gateway_successes_document_bytes_not_error_documents():
         assert responses[status]["schema"] == {"type": "file"}
     for status in ("304", "404", "416", "429"):
         assert "schema" not in responses[status]
+
+
+@pytest.mark.parametrize(
+    "view",
+    [views.AttachmentProviderRegistrationView, views.AttachmentSourceEnvelopeView],
+)
+def test_ineligible_authenticated_writer_does_not_parse_control_body(view, monkeypatch):
+    monkeypatch.setattr(view, "writer", lambda *args: (object(), object()))
+
+    def reject(*args):
+        raise AttachmentError("policy_denied", 403)
+
+    monkeypatch.setattr(views.broker, "check_writer", reject)
+    with pytest.raises(AttachmentError, match="policy_denied"):
+        view().post(RawRequest(b"not json"), UID)
+
+
+def test_provider_lookup_generates_the_same_registration_document():
+    route = "tracer/v1/projects/<str:project_id>/attachments/provider-recordings/<str:registered_output_id>"
+    view = views.AttachmentProviderLookupView
+    pattern = path(route, view.as_view())
+    generator = OpenAPISchemaGenerator(
+        info=openapi.Info(title="Lookup contract", default_version="v1"),
+        patterns=[pattern],
+    )
+    schema = generator.get_schema(request=None, public=True).as_odict()
+    (operation,) = schema["paths"].values()
+    assert operation["get"]["responses"]["200"]["schema"] == {
+        "$ref": "#/definitions/AttachmentProviderRegistrationResponse"
+    }
+    test_runtime_route_declaration_matches_documented_control_view(route, view)

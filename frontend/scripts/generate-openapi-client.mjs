@@ -131,6 +131,8 @@ function normalizeHostStatusSpec(spec) {
       schemas: Object.fromEntries(
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
+          name === "AttachmentImportRequest" ||
+          name === "AttachmentImportResponse" ||
           name.startsWith("HostUpdateStatusResponse") ||
           name.startsWith("AgentVersion") ||
           name.startsWith("StoredAgent") ||

@@ -350,9 +350,8 @@ class AttachmentRecordingManifestSerializer(serializers.Serializer):
     duration_ms = serializers.IntegerField()
 
 
-# Product control requests are documentation-only. Their validators remain in
-# the views/provider service; do not apply these serializers to signed bytes.
-# These describe the existing controls, not the pending additive SDK seam.
+# Product control serializers run after writer authorization or raw-byte
+# webhook verification. The wire and provider checks still enforce provenance.
 _CONTROL_F01 = _attachment_wire._schema()["$defs"]
 
 
