@@ -25,15 +25,15 @@
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 690,
-    "direct_swagger_auto_schema_decorators": 265,
+    "runtime_backed_validated_request_decorators": 710,
+    "direct_swagger_auto_schema_decorators": 266,
     "doc_only_input_contract_decorators": 3,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [
     {
       "path": "futureagi/tracer/views/attachments.py",
-      "line": 764,
+      "line": 765,
       "class": "AttachmentProviderRegistrationView",
       "function": "post",
       "serializers": [
@@ -42,7 +42,7 @@
     },
     {
       "path": "futureagi/tracer/views/attachments.py",
-      "line": 830,
+      "line": 831,
       "class": "AttachmentSourceEnvelopeView",
       "function": "post",
       "serializers": [
@@ -51,7 +51,7 @@
     },
     {
       "path": "futureagi/tracer/views/attachments.py",
-      "line": 886,
+      "line": 887,
       "class": "AttachmentLiveKitEventView",
       "function": "post",
       "serializers": [
@@ -63,7 +63,7 @@
   "app_wide_doc_only_input_contract_decorators": [
     {
       "path": "futureagi/tracer/views/attachments.py",
-      "line": 764,
+      "line": 765,
       "class": "AttachmentProviderRegistrationView",
       "function": "post",
       "serializers": [
@@ -72,7 +72,7 @@
     },
     {
       "path": "futureagi/tracer/views/attachments.py",
-      "line": 830,
+      "line": 831,
       "class": "AttachmentSourceEnvelopeView",
       "function": "post",
       "serializers": [
@@ -81,7 +81,7 @@
     },
     {
       "path": "futureagi/tracer/views/attachments.py",
-      "line": 886,
+      "line": 887,
       "class": "AttachmentLiveKitEventView",
       "function": "post",
       "serializers": [

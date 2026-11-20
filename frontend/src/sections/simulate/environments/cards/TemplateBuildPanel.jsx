@@ -12,6 +12,9 @@ import { packStats } from "../helpers/packStats";
 import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { seedFromTemplate } from "../workspace/helpers/seedEnvState";
 import SectionCard from "../components/SectionCard";
+import ViewerLock from "../components/ViewerLock";
+import useSimulationAccess from "../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 import LocalScaffoldCard from "./LocalScaffoldCard";
 import {
   AGENT_STAT_VALUE,
@@ -41,6 +44,7 @@ export default function TemplateBuildPanel({ template, showName = false }) {
   const navigate = useNavigate();
   const [mode, setMode] = useState(BUILD_MODES.CLOUD);
   const adopt = useAdoptTemplate();
+  const { canEdit } = useSimulationAccess();
   const adoptEnvironment = useEnvironmentsStore((s) => s.adoptEnvironment);
   const patchEnvState = useEnvironmentsStore((s) => s.patchEnvState);
 
@@ -119,15 +123,17 @@ export default function TemplateBuildPanel({ template, showName = false }) {
               direction="row" alignItems="center" spacing={1.5}
               sx={{ px: 1.5, py: 1.5, borderTop: "1px solid", borderColor: "divider" }}
             >
-              <Button
-                variant="contained" color="primary"
-                onClick={handleAdopt}
-                disabled={adopt.isPending}
-                startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
-                sx={{ whiteSpace: "nowrap" }}
-              >
-                {TEMPLATE_ADOPT_LABEL}
-              </Button>
+              <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.create}>
+                <Button
+                  variant="contained" color="primary"
+                  onClick={handleAdopt}
+                  disabled={!canEdit || adopt.isPending}
+                  startIcon={<Iconify icon="solar:magic-stick-3-bold" width={16} />}
+                  sx={{ whiteSpace: "nowrap" }}
+                >
+                  {TEMPLATE_ADOPT_LABEL}
+                </Button>
+              </ViewerLock>
             </Stack>
           </SectionCard>
 

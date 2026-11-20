@@ -3239,6 +3239,7 @@ ROW_TYPES = {
     # (enabled=False), for a writer allowed to write to the workspace, never
     # for a read-only member. It refuses the reserved simulation project names.
     "tracer.AttachmentScope.project": USER_MADE,
+    "simulate.AgentDefinition.production_project": USER_MADE,
     "tracer.CustomEvalConfig.project": USER_MADE,
     "tracer.EndUser.project": TRACE_STORE_ROW,
     "tracer.ErrorFeedAlertRule.project": USER_MADE,
