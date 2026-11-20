@@ -569,9 +569,14 @@ def _names_actors(call_actors: object, scenario_docs: object) -> bool:
 
 def _actors_tab(contract_section: dict[str, Any] | None) -> ActorsTab | None:
     """Whether the Actors tab shows: editable where versioning keeps the cast's drafts, a read-only list where the
-    environment has actors without it, else not at all."""
-    from simulate.services.harness_versioning.versions import versioning_enabled
+    environment has actors without it, else not at all; never while actors are off."""
+    from simulate.services.harness_versioning.versions import (
+        actors_enabled,
+        versioning_enabled,
+    )
 
+    if not actors_enabled():
+        return None
     if versioning_enabled():
         return "edit"
     if contract_section and contract_section.get("call_actors"):

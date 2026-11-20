@@ -739,6 +739,18 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "`true` lets a run build and certify an environment bundle for a version combination that has none yet. `false` never builds a bundle: a run at the environment's default versions runs as before, a rerun whose versions have no ready bundle runs the defaults, and picking another combination with no ready bundle is refused, as is a default pair with no sealed bundle. Turn it on together with `HARNESS_VERSIONING_NUDGES_ENABLED`."
 
     [[part.section.row]]
+    keys = ["HARNESS_ACTORS_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` turns on actors and test conditions: the Actors tab and its editor, test conditions in the scenario editor, the World changes view on each call, and the harness authoring, playing and applying them. `false` hides and refuses all of it and tells the harness, in every job it sends, to author, play and apply none. Turn it on once the sandbox template carries an agent-learning-kit release that reads that switch."
+
+    [[part.section.row]]
+    keys = ["HARNESS_ACTORS_SHARE"]
+    default = "`0.15-0.25`"
+    setups = ["S", "D", "H"]
+    text = "While `HARNESS_ACTORS_ENABLED` is `true`, the default share of an environment's scenarios that include an actor, as `<min>-<max>`, each from 0 to 1 with min not above max; a request that names its own share wins. Any other value stops the backend at startup. Ignored while actors are off."
+
+    [[part.section.row]]
     keys = ["HARNESS_PARALLEL_SNAPSHOT_DIGESTS"]
     default = "empty: no image qualifies"
     setups = ["S", "D", "H"]
