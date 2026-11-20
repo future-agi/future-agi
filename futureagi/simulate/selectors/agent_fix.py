@@ -25,6 +25,7 @@ from django.db.models import (
     QuerySet,
     Subquery,
     Sum,
+    UUIDField,
     Value,
     When,
 )
@@ -984,8 +985,14 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         .annotate(
             number=Subquery(number),
             source_run_number=run_number("source_run__"),
-            retried=Exists(
-                AgentFixRun.no_workspace_objects.filter(retried_from=OuterRef("pk"))
+            retry_taken=Exists(
+                retries_taking_the_retry(
+                    Coalesce(
+                        OuterRef("retried_from_id"),
+                        OuterRef("pk"),
+                        output_field=UUIDField(),
+                    )
+                )
             ),
         )
         .select_related(
@@ -1123,14 +1130,33 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     return list(regressions)
 
 
+def retries_taking_the_retry(original: Any) -> QuerySet[AgentFixRun]:
+    """The retries of a failed fix that took its one retry: each that started, or still
+    waits to start. One that ended before it started (it could not be scheduled, or waited
+    too long for a slot) spent nothing, so the retry stays free."""
+    return AgentFixRun.no_workspace_objects.filter(
+        Q(started_at__isnull=False) | Q(state__in=AgentFixRun.ACTIVE_STATES),
+        retried_from=original,
+    )
+
+
+def was_the_retry(fix_run: AgentFixRun) -> bool:
+    """A retry that started, so it took its failed fix's one retry."""
+    return fix_run.retried_from_id is not None and fix_run.started_at is not None
+
+
 def is_retryable(fix_run: AgentFixRun) -> bool:
-    """A failed fix not started again yet, and not itself a retry. Whatever failed it, the
-    user may try once more, and only once: a retry that fails is not retried again. A fix
-    that came through fix_runs_for_read answers without a query."""
-    if fix_run.state != AgentFixRun.State.FAILED or fix_run.retried_from_id is not None:
+    """Whether Retry starts this failed fix again, or the one it retried when it never
+    started. Whatever failed it, the user may try once more, and only once: a retry that
+    started and fails is not retried again. A fix that came through fix_runs_for_read
+    answers without a query."""
+    if fix_run.state != AgentFixRun.State.FAILED or was_the_retry(fix_run):
         return False
-    retried = getattr(fix_run, "retried", None)
-    return not (fix_run.retries.exists() if retried is None else retried)
+    taken = getattr(fix_run, "retry_taken", None)
+    if taken is None:
+        original = fix_run.retried_from_id or fix_run.id
+        taken = retries_taking_the_retry(original).exists()
+    return not taken
 
 
 def fix_lineage(fix_run: AgentFixRun) -> list[Any]:
