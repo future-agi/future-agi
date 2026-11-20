@@ -17,6 +17,7 @@ from tfc.temporal.schedules.attachments import ATTACHMENT_SCHEDULES
 from tracer.models.attachment import (
     Attachment,
     AttachmentAuditEvent,
+    AttachmentBudget,
     AttachmentOccurrence,
     AttachmentOutbox,
     AttachmentScope,
@@ -121,10 +122,10 @@ def span_for(
     )
 
 
-def ready_upload(setup, monkeypatch, **overrides):
+def ready_upload(setup, monkeypatch, *, store=None, **overrides):
     scope, _ = setup
     upload, token, _, _ = initialized(setup, **overrides)
-    store = ImmutableStore()
+    store = store if store is not None else ImmutableStore()
     uploads.transfer(
         token,
         scope_id=scope.id,
@@ -233,17 +234,37 @@ def test_bound_occurrence_still_reads_25h_later_through_the_scheduled_jobs(
     assert not AttachmentOutbox.objects.filter(scope=scope, event="erase").exists()
 
 
+@pytest.mark.django_db(transaction=True)
 def test_unbound_occurrence_still_expires_after_the_24h_deadline(setup, monkeypatch):
     """Control: with no span the binder never binds, and the deadline holds."""
     scope, _ = setup
-    row = occurrence(setup, monkeypatch)
+    from django.db import connection
+
+    # The DB checks the actual wall clock, independently of the binder clock.
+    # Use a short real write lifetime and wait for its genuine cleanup horizon.
+    monkeypatch.setattr(uploads, "UPLOAD_SECONDS", 10)
+    store = ErasableStore()
+    upload, _ = ready_upload(setup, monkeypatch, store=store)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM (%s::timestamptz - clock_timestamp()))))",
+            [upload.cleanup_not_before],
+        )
+    row = upload.occurrence
     spans = Spans()
     assert control_plane.reconcile_tick(span_reader=spans)["pending"] == 1
+    assert store.objects
     _travel(monkeypatch, timedelta(hours=25))
-    swept, drained = _scheduled_tick(spans)
+    _, drained = _scheduled_tick(spans, store=store)
+    assert not drained.get(
+        "erase_done"
+    )  # The committed delete starts the write/drain horizon.
+    _travel(monkeypatch, timedelta(hours=1))
+    _, drained = _scheduled_tick(spans, store=store)
     row.refresh_from_db()
     assert row.bound_at is None and row.deleted_at is not None
     assert drained.get("erase_done") == 1, drained
+    assert not store.objects and upload.id in store.erased
 
 
 def test_binding_waits_without_any_sdk_retry(setup, monkeypatch):
@@ -266,14 +287,16 @@ def _travel(monkeypatch, delta):
     return later
 
 
-def _scheduled_tick(spans):
+def _scheduled_tick(spans, *, store=None):
     """The scheduled binder, lifecycle sweep and outbox drain, all rows due."""
     control_plane.reconcile_tick(span_reader=spans)
     swept = lifecycle.sweep()
     AttachmentOutbox.objects.filter(processed_at__isnull=True).update(
         available_at=timezone.now() - timedelta(seconds=1)
     )
-    return swept, lifecycle.drain_outbox(storage=ErasableStore())
+    return swept, lifecycle.drain_outbox(
+        storage=store if store is not None else ErasableStore()
+    )
 
 
 def _binds_without_a_reference(scope, row, refs, monkeypatch):
@@ -302,7 +325,11 @@ def _binds_without_a_reference(scope, row, refs, monkeypatch):
     assert "erase_done" not in drained, drained
     assert row.deleted_at is None
     assert not AttachmentOutbox.objects.filter(
-        scope=scope, upload__occurrence=row, event="erase"
+        scope=scope,
+        attachment=row.attachment,
+        upload__isnull=True,
+        processed_at__isnull=True,
+        event="erase",
     ).exists()
 
 
@@ -385,9 +412,7 @@ def test_negative_controls_never_bind(setup, monkeypatch, mutation, outcome):
         )
     elif mutation == "tail_dropped":
         span = None
-        AttachmentOccurrence.objects.filter(pk=row.pk).update(
-            created_at=timezone.now() - timedelta(hours=25)
-        )
+        _travel(monkeypatch, timedelta(hours=25))
     if span is not None:
         spans.put(scope.project_id, span)
     counts = control_plane.reconcile_tick(span_reader=spans)
@@ -403,7 +428,11 @@ def test_negative_controls_never_bind(setup, monkeypatch, mutation, outcome):
         scope=scope, entity_id=row.id, event="deletion", reason="retention"
     ).exists()
     assert AttachmentOutbox.objects.filter(
-        scope=scope, upload__occurrence=row, event="erase"
+        scope=scope,
+        attachment=row.attachment,
+        upload__isnull=True,
+        processed_at__isnull=True,
+        event="erase",
     ).exists()
 
 
@@ -427,7 +456,11 @@ def test_fences_and_disabled_scopes_are_not_bound(setup, monkeypatch):
     row.refresh_from_db()
     assert row.bound_at is None and row.deleted_at is not None
     assert AttachmentOutbox.objects.filter(
-        scope=scope, upload__occurrence=row, event="erase"
+        scope=scope,
+        attachment=row.attachment,
+        upload__isnull=True,
+        processed_at__isnull=True,
+        event="erase",
     ).exists()
     assert control_plane.reconcile_tick(span_reader=spans) == dict.fromkeys(
         ("bound", "pending", "rejected", "expired", "conflict"), 0
@@ -625,33 +658,40 @@ def test_read_path_refuses_what_binding_refused(setup, user, monkeypatch):
         )
 
 
-def test_binder_tombstone_locks_every_budget_shard_first(setup, monkeypatch):
-    """A rejected binding settles an upload of any shard under the scope lock.
+def test_binder_tombstone_never_locks_or_releases_capacity(setup, monkeypatch):
+    """Metadata rejection must not take a capacity lock under the scope lock.
 
-    So it takes the retention lock order: every global shard ascending, then
-    the organization and project rows, before the scope (#3945's sharding).
-    Calling the one-shard ``_lock_budgets(scope)`` here raised TypeError and
-    left the row unsettled.
+    The cleanup owner alone may settle after physical erasure. No shard, org or
+    project may lose a reservation or acquire an out-of-order lock in the binder.
     """
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    from tracer.services.attachments.capacity_db import BUDGET_FIELDS
+
     scope, _ = setup
-    row = occurrence(setup, monkeypatch)
+    upload, _ = ready_upload(setup, monkeypatch)
+    row = upload.occurrence
     spans = Spans()
     spans.put(scope.project_id, span_for(row, refs=[ref_for(row, direction="input")]))
-    locked, lock_budget = [], uploads._lock_budget
 
-    def recording(key):
-        locked.append(key)
-        return lock_budget(key)
+    def budgets():
+        return list(
+            AttachmentBudget.objects.order_by("key").values_list("key", *BUDGET_FIELDS)
+        )
 
-    monkeypatch.setattr(uploads, "_lock_budget", recording)
-    assert control_plane.reconcile_tick(span_reader=spans)["rejected"] == 1
-    expected = [f"global:{shard}" for shard in range(uploads.GLOBAL_SHARDS)] + [
-        f"org:{scope.organization_id}",
-        f"project:{scope.project_id}",
-    ]
-    assert locked[: len(expected)] == expected
+    before = budgets()
+    assert before and upload.reservation_settled_at is None
+    with CaptureQueriesContext(connection) as queries:
+        assert control_plane.reconcile_tick(span_reader=spans)["rejected"] == 1
+    assert all(AttachmentBudget._meta.db_table not in q["sql"] for q in queries)
+    assert budgets() == before
     row.refresh_from_db()
-    assert row.deleted_at is not None
+    upload.refresh_from_db()
+    assert row.deleted_at is not None and upload.reservation_settled_at is None
+    assert AttachmentOutbox.objects.filter(
+        scope=scope, attachment=row.attachment, event="erase", processed_at__isnull=True
+    ).exists()
 
 
 def test_aborted_or_erased_bytes_are_never_claimed(setup, monkeypatch):

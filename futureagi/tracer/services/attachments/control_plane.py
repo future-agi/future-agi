@@ -670,6 +670,11 @@ class ControlPlaneReader:
                 parent = occurrences.Parent(row.trace_id, row.span_id)
                 try:
                     state = occurrences.source_for(app_viewer, authority, scope, parent)
+                except AttachmentError:
+                    # An unavailable source cannot prove the absence of an alternative.
+                    complete = False
+                    continue
+                try:
                     occurrences.check_readable(row, scope, state, now)
                 except AttachmentError:
                     continue
@@ -679,7 +684,7 @@ class ControlPlaneReader:
                     AuthorizedStatus(
                         target=parents[(row.trace_id, row.span_id)],
                         reference=document["reference"],
-                        state=row.attachment.state,
+                        state=document["state"],
                         bound=True,
                         capture_complete=document["capture_complete"],
                         expires_at=expiry,

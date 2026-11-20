@@ -619,7 +619,7 @@ def test_full_manifest_not_truncated_to_metadata_page(service, monkeypatch):
     monkeypatch.setattr(
         service.v,
         "enrich_observations",
-        Mock(return_value=([(target, root["attachments"])], False)),
+        Mock(return_value=({target: root["attachments"]}, False)),
     )
     reader = NS(
         recording_manifest=Mock(return_value=data),

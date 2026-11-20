@@ -872,3 +872,38 @@ def test_partial_standalone_waits_without_requesting_blob_facts():
     projection = _real_voice_detail(reader)["recording_attachment"]
     assert projection["state"] == "waiting" and "manifest" not in projection
     reader.standalone_recording.assert_not_called()
+
+
+def test_parent_cutoff_cannot_establish_a_unique_call_recording():
+    from tracer.services.attachments.reads import MAX_PARENTS
+
+    reader = Mock()
+    reader.list_authorized.return_value = StatusPage(
+        [_status(ROOT, RECORDING)], complete=True
+    )
+    result = {
+        "project_id": C,
+        "observation_span": [{"trace_id": A, "id": ROOT}]
+        + [{"trace_id": A, "id": f"{i + 1:016x}"} for i in range(MAX_PARENTS)],
+    }
+    enrich_voice_detail(request=_voice_request(), result=result, reader=reader)
+    assert result["recording_attachment"] == {"state": "rejected"}
+    assert len(reader.list_authorized.call_args.args[1]) == MAX_PARENTS
+    reader.standalone_recording.assert_not_called()
+    reader.recording_manifest.assert_not_called()
+
+
+def test_projection_does_not_reuse_an_earlier_authorized_recording():
+    reader = Mock()
+    reader.list_authorized.return_value = StatusPage(
+        [_status(ROOT, RECORDING)], complete=True
+    )
+    reader.standalone_recording.return_value = WAV_FACTS
+    result = {"project_id": C, "observation_span": [{"trace_id": A, "id": ROOT}]}
+    enrich_voice_detail(request=_voice_request(), result=result, reader=reader)
+    assert result["recording_attachment"]["state"] == "ready"
+    reader.list_authorized.return_value = StatusPage([], complete=True)
+    enrich_voice_detail(request=_voice_request(), result=result, reader=reader)
+    assert "recording_attachment" not in result
+    assert "attachments" not in result["observation_span"][0]
+    reader.standalone_recording.assert_called_once()

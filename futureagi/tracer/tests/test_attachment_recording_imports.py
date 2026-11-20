@@ -165,6 +165,25 @@ def configure_recording_sources(scope, settings, monkeypatch):
 
     reader = Mock()
     reader.get.side_effect = get
+
+    def projected(span_ids, *, project_id, columns, trace_ids=None, **kwargs):
+        result = []
+        for span_id in span_ids:
+            span = get(span_id, project_id=project_id)
+            if span is not None and (
+                not trace_ids or str(uuid.UUID(str(span.trace_id))) in trace_ids
+            ):
+                result.append(
+                    {
+                        k: str(uuid.UUID(str(span.trace_id)))
+                        if k == "trace_id"
+                        else getattr(span, k, None)
+                        for k in columns
+                    }
+                )
+        return result
+
+    reader.list_by_ids.side_effect = projected
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: reader)
     import tfc.ee_gates
 

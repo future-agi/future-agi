@@ -38,10 +38,10 @@ def _enrich_parents(*, request, project_id, observations, reader):
     a trace read is not media permission.
     """
     if reader is None:
-        return [], False
+        return {}, False
     scope = _request_scope(request, project_id)
     if scope is None:
-        return [], False
+        return {}, False
     selected = [
         (observation, ReadTarget(scope, parent))
         for observation, parent in islice(observations, MAX_PARENTS)
@@ -56,7 +56,9 @@ def _enrich_parents(*, request, project_id, observations, reader):
         # No empty counts/placeholders for denied/unknown objects.
         if target in statuses:
             observation["attachments"] = statuses[target]
-    return [(target, statuses.get(target, ())) for _, target in selected], complete
+        else:
+            observation.pop("attachments", None)
+    return {target: statuses.get(target, ()) for _, target in selected}, complete
 
 
 def enrich_trace_detail(*, request, result, reader=None):
@@ -226,7 +228,7 @@ def _playable_standalone(manifest, occurrence_id):
         return False
 
 
-def _playable(manifest, occurrence_ids, recording_id):
+def _playable(manifest, occurrence_ids, recording_id, *, complete_page=True):
     """One finalized logical recording, with every segment authorized and ready.
 
     The F01 oracle checks codec/track shape, unique ordered segment identities,
@@ -236,12 +238,13 @@ def _playable(manifest, occurrence_ids, recording_id):
     """
     if not wire.is_valid("RecordingManifest", manifest):
         return False
+    visible = set(occurrence_ids)
+    timeline = {segment["occurrence_id"] for segment in manifest["segments"]}
     return (
         manifest["recording_id"] == recording_id
-        and bool(manifest["segments"])
-        and len(occurrence_ids) == len(set(occurrence_ids))
-        and {segment["occurrence_id"] for segment in manifest["segments"]}
-        == set(occurrence_ids)
+        and bool(visible)
+        and len(occurrence_ids) == len(visible)
+        and (visible == timeline if complete_page else visible <= timeline)
     )
 
 
@@ -262,6 +265,7 @@ def enrich_voice_detail(*, request, result, reader=None):
     plays through ``standalone_manifest``. No origin, URL or grant is
     projected.
     """
+    result.pop("recording_attachment", None)
     observations = result.get("observation_span") or []
     authorized, complete = enrich_observations(
         request=request,
@@ -270,7 +274,7 @@ def enrich_voice_detail(*, request, result, reader=None):
         reader=reader,
     )
     recordings = {}
-    for target, items in authorized:
+    for target, items in authorized.items():
         for item in items:
             reference = item["reference"]
             if (
@@ -295,7 +299,7 @@ def enrich_voice_detail(*, request, result, reader=None):
         not complete
         and reader.recording_is_unique(
             request,
-            tuple(dict.fromkeys(t for t, _ in authorized)),
+            tuple(authorized),
             recording_id=recording_id,
             occurrence_id=standalone_id,
         )
@@ -333,19 +337,16 @@ def enrich_voice_detail(*, request, result, reader=None):
             # only the bounded (64/parent) metadata page. A complete 120-part
             # recording therefore remains playable, while a denied later part
             # makes the reader return None. Never trim a manifest to this page.
-            playable = manifest is not None and _playable(
-                manifest,
-                [segment["occurrence_id"] for segment in manifest.get("segments", ())],
-                recording_id,
+            playable = (
+                manifest is not None
+                and _playable(
+                    manifest,
+                    [entry["reference"]["occurrence_id"] for entry in items],
+                    recording_id,
+                    complete_page=complete,
+                )
+                and (manifest["capture_complete"] or status == "partial")
             )
-            if playable:
-                visible = {entry["reference"]["occurrence_id"] for entry in items}
-                timeline = {
-                    segment["occurrence_id"] for segment in manifest["segments"]
-                }
-                playable = (
-                    visible == timeline if complete else visible <= timeline
-                ) and (manifest["capture_complete"] or status == "partial")
             if playable and manifest is not None:
                 # Stable anchor: database row order is not timeline order.
                 projection["occurrence_id"] = manifest["segments"][0]["occurrence_id"]
@@ -380,7 +381,7 @@ def enrich_voice_page(*, request, project_id, entries, reader=None):
                 continue
             yield root, parent
 
-    return _enrich_parents(
+    _enrich_parents(
         request=request,
         project_id=project_id,
         observations=parents(),

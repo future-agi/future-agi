@@ -428,9 +428,27 @@ def test_reused_span_id_binds_and_reads_both_exact_parents(setup, user, monkeypa
         s.target for s in reader.list_authorized(object(), targets, per_parent_limit=64)
     } == set(targets)
     backend.list_by_ids.assert_called_once()
+    monkeypatch.setattr(
+        authority.LiveAuthority, "session_is_live", lambda self, v: v == viewer
+    )
+    live = authority.LiveAuthority()
     for row in rows:
         parent = occurrences.Parent(row.trace_id, row.span_id)
-        assert base.LiveSession().source(viewer, scope, parent).parent == parent
+        assert live.source(viewer, scope, parent).parent == parent
+        assert (
+            occurrences.get_occurrence(viewer, live, row.client_id, parent, ready=True)[
+                0
+            ].pk
+            == row.pk
+        )
+        backend.list_by_ids.reset_mock()
+        items = occurrences.list_occurrences(viewer, live, trace_id=str(row.trace_id))[
+            "items"
+        ]
+        assert [item["reference"]["occurrence_id"] for item in items] == [
+            str(row.client_id)
+        ]
+        backend.list_by_ids.assert_called_once()
     table.pop()
     assert (
         base.LiveSession().source(
@@ -441,6 +459,16 @@ def test_reused_span_id_binds_and_reads_both_exact_parents(setup, user, monkeypa
     assert {
         s.target for s in reader.list_authorized(object(), targets, per_parent_limit=64)
     } == {targets[0]}
+    assert not occurrences.list_occurrences(
+        viewer, live, trace_id=str(rows[1].trace_id)
+    )["items"]
+    with pytest.raises(base.AttachmentError, match="not_found"):
+        occurrences.get_occurrence(
+            viewer,
+            live,
+            rows[1].client_id,
+            occurrences.Parent(rows[1].trace_id, rows[1].span_id),
+        )
 
 
 def test_reused_span_id_survives_repeated_orphan_sweeps(setup, monkeypatch):
@@ -453,7 +481,7 @@ def test_reused_span_id_survives_repeated_orphan_sweeps(setup, monkeypatch):
         spans = base.Spans()
         spans.put(scope.project_id, base.span_for(row))
         assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
-    _install_span_table(monkeypatch, rows)
+    _, backend = _install_span_table(monkeypatch, rows)
     now = base.timezone.now()
     for step in (2, 4):
         counts = lifecycle.sweep_orphans(
@@ -464,6 +492,16 @@ def test_reused_span_id_survives_repeated_orphan_sweeps(setup, monkeypatch):
         for row in rows:
             row.refresh_from_db()
             assert row.source_missing_since is None and row.deleted_at is None
+    checked = {row.pk: row.source_checked_at for row in rows}
+    backend.list_by_ids.side_effect = RuntimeError("reader unavailable")
+    assert lifecycle.sweep_orphans(
+        now=now + 6 * lifecycle.orphan_grace(),
+        pg_reader=lambda *_: pytest.fail("an unavailable reader is not a miss"),
+    ) == {"read_failed": 1}
+    for row in rows:
+        row.refresh_from_db()
+        assert row.source_checked_at == checked[row.pk]
+        assert row.source_missing_since is None and row.deleted_at is None
 
 
 def test_public_capture_completion_matches_both_enriched_forms(parity):

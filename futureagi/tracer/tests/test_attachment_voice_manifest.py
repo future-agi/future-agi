@@ -13,7 +13,11 @@ from types import SimpleNamespace
 import pytest
 from django.utils import timezone
 
-from tracer.models.attachment import AttachmentOccurrence, AttachmentState
+from tracer.models.attachment import (
+    AttachmentOccurrence,
+    AttachmentOutbox,
+    AttachmentState,
+)
 from tracer.services.attachments import (
     control_plane,
     manifests,
@@ -42,14 +46,25 @@ def _segment_bytes(duration_ms):
     return stream.getvalue()
 
 
-def _recording(setup, user, monkeypatch, durations, *, reject_last=False):
+def _recording(
+    setup, user, monkeypatch, durations, *, reject_last=False, leave_last_unbound=False
+):
     scope, _ = setup
     scope.record_audio, scope.policy_version = True, scope.policy_version + 1
     scope.save(update_fields=["record_audio", "policy_version"])
     session, _ = core.session(setup)
     recording_id = str(uuid.uuid4())
     rows, segments, start = [], [], 0
-    monkeypatch.setattr(validation, "sandbox_probe", probe)
+
+    def component_probe(path):
+        # Match the sandbox contract: parser rejection is terminal, an unavailable
+        # sandbox is retryable. Keep actual recognition of corrupt bytes.
+        try:
+            return probe(path)
+        except ValueError:
+            raise AttachmentError("validation_rejected", 422) from None
+
+    monkeypatch.setattr(validation, "sandbox_probe", component_probe)
     for index, duration in enumerate(durations):
         data = _segment_bytes(duration)
         corrupt = reject_last and index == len(durations) - 1
@@ -133,7 +148,15 @@ def _recording(setup, user, monkeypatch, durations, *, reject_last=False):
     # Actual SDK recording segments bind from their authenticated parent, even
     # when the native span does not carry fi.attachments references.
     spans.put(scope.project_id, components.span_for(rows[0], refs=[]))
-    assert control_plane.reconcile_tick(span_reader=spans)["bound"] == len(durations)
+    with monkeypatch.context() as binding:
+        if leave_last_unbound:
+            binding.setattr(control_plane, "PER_SCOPE_TICK_CAP", len(rows) - 1)
+        assert control_plane.reconcile_tick(span_reader=spans)["bound"] == len(
+            rows
+        ) - int(leave_last_unbound)
+    if leave_last_unbound:
+        rows[-1].refresh_from_db()
+        assert rows[-1].bound_at is None
     reader = components.Reader(components.viewer_for(scope, user), spans)
     request = SimpleNamespace(
         organization=scope.organization, workspace=scope.workspace
@@ -150,7 +173,12 @@ def _recording(setup, user, monkeypatch, durations, *, reject_last=False):
         return result
 
     # Fully uploaded and bound segments alone cannot imply SDK finalization.
-    incomplete = detail()["recording_attachment"]
+    prefix = detail()
+    incomplete = prefix["recording_attachment"]
+    assert all(
+        not item["capture_complete"]
+        for item in prefix["observation_span"][0]["attachments"]
+    )
     if reject_last:
         assert incomplete["state"] in ("waiting", "validating")
     else:
@@ -167,10 +195,15 @@ def _recording(setup, user, monkeypatch, durations, *, reject_last=False):
     assert recording.state == AttachmentState.PENDING
     if reject_last:
         assert detail()["recording_attachment"]["state"] == "validating"
-        with pytest.raises(AttachmentError):
-            validation.validate(upload.id, scope_id=scope.id, storage=store)
+        event = AttachmentOutbox.objects.get(upload=upload, event="validate")
+        assert validation.consume_validation(event.pk, storage=store)
         upload.refresh_from_db()
         assert upload.state == AttachmentState.REJECTED
+    if leave_last_unbound:
+        incomplete = detail()["recording_attachment"]
+        assert incomplete["state"] != "ready" and "manifest" not in incomplete
+        assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
+        assert detail()["recording_attachment"]["state"] == "ready"
     return body, rows, detail
 
 
@@ -217,8 +250,15 @@ def test_authority_fences_prevent_a_complete_voice_projection(
     setup, user, monkeypatch, fence
 ):
     _, rows, detail = _recording(
-        setup, user, monkeypatch, (30000, 6467), reject_last=fence == "rejected"
+        setup,
+        user,
+        monkeypatch,
+        (30000, 6467),
+        reject_last=fence == "rejected",
+        leave_last_unbound=fence == "unbound",
     )
+    if fence == "unbound":
+        return  # Exercised before the final immutable bind in _recording.
     if fence == "rejected":
         projection = detail()["recording_attachment"]
         assert projection["state"] != "ready"
@@ -239,8 +279,6 @@ def test_authority_fences_prevent_a_complete_voice_projection(
         row.deleted_at = timezone.now()
     elif fence == "expired":
         row.expires_at = timezone.now() - timedelta(seconds=1)
-    elif fence == "unbound":
-        row.bound_at = None
     elif fence == "blob_deleted":
         row.attachment.deleted_at = timezone.now()
         row.attachment.save(update_fields=["deleted_at"])
@@ -248,7 +286,6 @@ def test_authority_fences_prevent_a_complete_voice_projection(
     changed = {
         "deleted": "deleted_at",
         "expired": "expires_at",
-        "unbound": "bound_at",
     }.get(fence)
     if changed:
         row.save(update_fields=[changed])
@@ -283,4 +320,40 @@ def test_metadata_page_cannot_prove_recording_uniqueness(setup, user, monkeypatc
         if count == 1:
             assert result["recording_attachment"]["state"] == "ready"
         else:
-            assert result.get("recording_attachment", {}).get("occurrence_id") is None
+            assert result["recording_attachment"] == {"state": "rejected"}
+
+    # A failed read of the alternative is not proof it doesn't exist.
+    calls = 0
+
+    def unavailable_on_rescan(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("reader unavailable")
+        return spans(*args, **kwargs)
+
+    reader.span_reader = unavailable_on_rescan
+    enrich_voice_detail(request=request, result=result, reader=reader)
+    assert calls == 2 and result["recording_attachment"] == {"state": "rejected"}
+
+    # A known, revoked alternative grants no recording selection and does not
+    # suppress the authorized candidate. Each upload has its own capture session.
+    first, second = AttachmentOccurrence.objects.filter(scope=scope).order_by("id")
+    type(second.capture_session).objects.filter(pk=second.capture_session_id).update(
+        revoked_at=timezone.now()
+    )
+    reader.span_reader = spans
+    enrich_voice_detail(request=request, result=result, reader=reader)
+    assert result["recording_attachment"]["state"] == "ready"
+    assert result["recording_attachment"]["occurrence_id"] == str(first.client_id)
+
+
+def test_long_recording_stays_playable_when_metadata_page_is_short(
+    setup, user, monkeypatch
+):
+    body, _, detail = _recording(setup, user, monkeypatch, (1000, 1500))
+    monkeypatch.setattr(control_plane, "MAX_READ_ROWS", 1)
+    result = detail()
+    assert len(result["observation_span"][0]["attachments"]) == 1
+    assert result["recording_attachment"]["state"] == "ready"
+    assert result["recording_attachment"]["manifest"] == body
