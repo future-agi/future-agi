@@ -58,16 +58,17 @@ const { resetEnvironmentsStore } = await import(
   "../../store/useEnvironmentsStore"
 );
 
-const render = () => {
+const render = (props = {}) => {
   const onClose = vi.fn();
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  baseRender(
+  const view = baseRender(
     <QueryClientProvider client={client}>
-      <BuildEnvironmentDrawer open onClose={onClose} />
+      <BuildEnvironmentDrawer open onClose={onClose} {...props} />
     </QueryClientProvider>,
   );
+  onClose.unmount = view.unmount;
   return onClose;
 };
 
@@ -76,6 +77,7 @@ const connect = (name) =>
   fireEvent.click(screen.getByRole("button", { name: `Connect ${name}` }));
 
 beforeEach(() => {
+  sessionStorage.clear();
   resetEnvironmentsStore();
   preflightHarnessJob.mockReset();
   createHarnessJob.mockReset();
@@ -108,7 +110,9 @@ describe("BuildEnvironmentDrawer catalog", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Other ways 2/ }));
     expect(row("LiveKit project")).toBeInTheDocument();
     expect(row("Phone number")).toBeInTheDocument();
-    expect(screen.queryByRole("listitem", { name: "Agent endpoint" })).toBeNull();
+    expect(
+      screen.queryByRole("listitem", { name: "Agent endpoint" }),
+    ).toBeNull();
   });
 
   it("offers Connect only where the build API can build, named for the way", () => {
@@ -149,7 +153,9 @@ describe("BuildEnvironmentDrawer catalog", () => {
 
   it("hides Build from code", () => {
     render();
-    expect(screen.queryByRole("listitem", { name: "Build from code" })).toBeNull();
+    expect(
+      screen.queryByRole("listitem", { name: "Build from code" }),
+    ).toBeNull();
   });
 
   it("closes from its own close button", () => {
@@ -172,7 +178,7 @@ describe("BuildEnvironmentDrawer setup", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  it("has a back arrow to the list, and an X that closes the whole drawer", () => {
+  it("has a back arrow to the list, and an X that asks before closing", async () => {
     const onClose = render();
     connect("GitHub");
     fireEvent.click(
@@ -182,7 +188,78 @@ describe("BuildEnvironmentDrawer setup", () => {
     expect(onClose).not.toHaveBeenCalled();
     connect("GitHub");
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    const dialog = (
+      await screen.findByText("Discard this environment?")
+    ).closest("[role='dialog']");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText("Paste a repo link")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    const again = (
+      await screen.findByText("Discard this environment?")
+    ).closest("[role='dialog']");
+    fireEvent.click(within(again).getByRole("button", { name: "Discard" }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("says which way it is on, and reopens it with what was typed but no key", () => {
+    const onWayChange = vi.fn();
+    const first = render({ way: "", onWayChange });
+    fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms/ }));
+    connect("Vapi");
+    expect(onWayChange).toHaveBeenLastCalledWith("vapi");
+    fireEvent.change(screen.getByPlaceholderText("asst_9f2c…"), {
+      target: { value: "asst_kept" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("sk-…"), {
+      target: { value: "sk-never-saved" },
+    });
+    expect(JSON.stringify(sessionStorage)).not.toContain("sk-never-saved");
+    first.unmount();
+
+    render({ way: "vapi" });
+    expect(screen.getByPlaceholderText("asst_9f2c…")).toHaveValue("asst_kept");
+    expect(screen.getByPlaceholderText("sk-…")).toHaveValue("");
+  });
+
+  it("reopens GitHub on its details with the name, and asks for values again", () => {
+    sessionStorage.setItem(
+      "environments.build.github.form",
+      JSON.stringify({
+        picked: {
+          source: { repository: "acme/agent", ref: "main" },
+          entry: "agent.py",
+          envNames: ["ANTHROPIC_API_KEY"],
+          name: "acme",
+        },
+        form: {
+          name: "kept name",
+          extra: [],
+          egress: "",
+          secretFiles: [],
+          scenarioCount: 5,
+          observabilityEnabled: false,
+        },
+      }),
+    );
+    render({ way: "github" });
+    expect(screen.getByDisplayValue("kept name")).toBeInTheDocument();
+    expect(screen.getByText("acme/agent at main")).toBeInTheDocument();
+    expect(
+      screen.getByText("0 of 1 set", { exact: false }),
+    ).toBeInTheDocument();
+  });
+
+  it("starts a way afresh when it is picked from the list", () => {
+    sessionStorage.setItem(
+      "environments.build.vapi.form",
+      JSON.stringify({ id: "asst_stale" }),
+    );
+    render();
+    fireEvent.click(screen.getByRole("tab", { name: /Hosted platforms/ }));
+    connect("Vapi");
+    expect(screen.getByPlaceholderText("asst_9f2c…")).toHaveValue("");
   });
 
   it("opens a way's setup in the drawer, and its close goes back to the list", () => {

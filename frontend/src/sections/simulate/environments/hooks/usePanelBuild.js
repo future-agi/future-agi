@@ -10,6 +10,7 @@ import { useEnvironmentsStore } from "../store/useEnvironmentsStore";
 import { prepareSourceForBuild } from "./prepareSourceForBuild";
 import { clampParallelism } from "../parallelism.constants";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
+import { clearBuildDrafts } from "../buildDrawer/buildDraft";
 
 /**
  * The inline build machine shared by every Build environment drawer form. A
@@ -77,7 +78,8 @@ export default function usePanelBuild() {
       // Only the redacted draft is staged for build; the raw credentialValues
       // ride the preflight and create requests (write-only) and are never persisted.
       setPrepared(result.draft);
-      heldValues.current = result.buildCredentialValues ?? result.credentialValues;
+      heldValues.current =
+        result.buildCredentialValues ?? result.credentialValues;
       buildKey.current = harnessIdempotencyKey();
       preflight.mutate({
         draft: result.draft,
@@ -146,6 +148,7 @@ export default function usePanelBuild() {
             });
             return;
           }
+          clearBuildDrafts();
           navigate(paths.dashboard.simulate.environments.detail(envId));
         },
         // A create failure (e.g. the sandbox is unavailable) must surface, not

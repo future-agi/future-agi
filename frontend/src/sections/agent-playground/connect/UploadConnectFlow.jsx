@@ -37,15 +37,15 @@ const defaultName = (picked, folder) => folder?.name || picked?.name || "";
  * give it a name and its values, connect. The agent page then shows it being
  * read. A reload comes back to the same step; the upload is never sent twice.
  */
-export default function UploadConnectFlow({ onComplete }) {
+export default function UploadConnectFlow({ onComplete, draftKey }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const { role } = useAuthContext();
   const canConnect =
     !!RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
-  const keepsDraft = !onComplete;
+  const keepsDraft = !onComplete || !!draftKey;
   const [draft] = useState(
-    () => (keepsDraft && readConnectDraft(UPLOAD_SOURCE)) || {},
+    () => (keepsDraft && readConnectDraft(UPLOAD_SOURCE, draftKey)) || {},
   );
   const [folder, setFolder] = useState(draft.folder || null);
   const [uploading, setUploading] = useState(false);
@@ -66,11 +66,21 @@ export default function UploadConnectFlow({ onComplete }) {
     if (!keepsDraft) return;
     const next = { stage, folder, scanId, picked, manual, name, named };
     if (draftHasProgress(next)) {
-      saveConnectDraft(next, UPLOAD_SOURCE);
+      saveConnectDraft(next, UPLOAD_SOURCE, draftKey);
     } else {
-      clearConnectDraft(UPLOAD_SOURCE);
+      clearConnectDraft(UPLOAD_SOURCE, draftKey);
     }
-  }, [keepsDraft, stage, folder, scanId, picked, manual, name, named]);
+  }, [
+    keepsDraft,
+    draftKey,
+    stage,
+    folder,
+    scanId,
+    picked,
+    manual,
+    name,
+    named,
+  ]);
 
   const source = folder?.sourceId
     ? { kind: "archive", archive_artifact_id: folder.sourceId }
@@ -333,4 +343,5 @@ export default function UploadConnectFlow({ onComplete }) {
 
 UploadConnectFlow.propTypes = {
   onComplete: PropTypes.func,
+  draftKey: PropTypes.string,
 };

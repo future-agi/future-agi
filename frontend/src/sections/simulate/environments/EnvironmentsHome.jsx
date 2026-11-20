@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Box, Button, Stack, Tab, Tabs } from "@mui/material";
 import Iconify from "src/components/iconify";
 import PageHeader from "src/components/page-header";
@@ -10,6 +11,7 @@ import { useMyEnvironments } from "src/api/simulate-environments/environments";
 import { DEFAULT_PAGE_SIZE } from "./myEnvironments.constants";
 import PersonasTab from "./PersonasTab";
 import BuildEnvironmentDrawer from "./buildDrawer/BuildEnvironmentDrawer";
+import { BUILD_PARAM } from "./buildDrawer/buildDraft";
 import { ENTRY_TAB, ENVIRONMENTS_HEADER } from "./environmentOptions";
 
 const TAB_SX = {
@@ -55,15 +57,36 @@ function MyEnvironmentsLabel() {
 export default function EnvironmentsHome() {
   const { tab, setTab, opensBuild } = useEnvironmentsTab();
   const TabPanel = TAB_PANELS[tab];
-  const [buildOpen, setBuildOpen] = useState(opensBuild);
+  const [params, setParams] = useSearchParams();
+  const buildWay = params.get(BUILD_PARAM);
+
+  const setBuildWay = useCallback(
+    (next) =>
+      setParams(
+        (current) => {
+          const q = new URLSearchParams(current);
+          if (next === null) q.delete(BUILD_PARAM);
+          else q.set(BUILD_PARAM, next);
+          return q;
+        },
+        { replace: true },
+      ),
+    [setParams],
+  );
 
   // A link to the old Build tab opens the drawer over My Environments.
   useEffect(() => {
     if (!opensBuild) return;
-    setBuildOpen(true);
-    setTab(ENTRY_TAB.MY);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opensBuild]);
+    setParams(
+      (current) => {
+        const q = new URLSearchParams(current);
+        q.set("tab", ENTRY_TAB.MY);
+        q.set(BUILD_PARAM, q.get(BUILD_PARAM) || "");
+        return q;
+      },
+      { replace: true },
+    );
+  }, [opensBuild, setParams]);
 
   const onTabChange = (next) => {
     // Keeps the event the old Personas menu item fired.
@@ -106,7 +129,7 @@ export default function EnvironmentsHome() {
             variant="contained"
             color="primary"
             startIcon={<Iconify icon="solar:add-circle-linear" width={14} />}
-            onClick={() => setBuildOpen(true)}
+            onClick={() => setBuildWay("")}
           >
             Build environment
           </Button>
@@ -141,10 +164,12 @@ export default function EnvironmentsHome() {
         </Tabs>
       </Box>
 
-      <TabPanel onBuild={() => setBuildOpen(true)} />
+      <TabPanel onBuild={() => setBuildWay("")} />
       <BuildEnvironmentDrawer
-        open={buildOpen}
-        onClose={() => setBuildOpen(false)}
+        open={buildWay !== null}
+        way={buildWay}
+        onWayChange={setBuildWay}
+        onClose={() => setBuildWay(null)}
       />
     </Box>
   );

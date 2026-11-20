@@ -329,13 +329,15 @@ const defaultName = (picked, source) =>
  * find the agents in it, pick one, give it a name and its values, connect. The
  * agent page then shows it being read.
  */
-export default function GitHubConnectFlow({ outcome, onComplete }) {
+export default function GitHubConnectFlow({ outcome, onComplete, draftKey }) {
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
   const github = useGitHubConnection({ refetchOnWindowFocus: true });
   const connection = github.data;
-  const keepsDraft = !onComplete;
-  const [draft] = useState(() => (keepsDraft && readConnectDraft()) || {});
+  const keepsDraft = !onComplete || !!draftKey;
+  const [draft] = useState(
+    () => (keepsDraft && readConnectDraft(undefined, draftKey)) || {},
+  );
   const [mode, setMode] = useState(draft.mode || "app");
   const [repository, setRepository] = useState(draft.repository || null);
   const [branch, setBranch] = useState(draft.branch || "");
@@ -376,12 +378,13 @@ export default function GitHubConnectFlow({ outcome, onComplete }) {
     };
     if (!keepsDraft) return;
     if (draftHasProgress(next)) {
-      saveConnectDraft(next);
+      saveConnectDraft(next, undefined, draftKey);
     } else {
-      clearConnectDraft();
+      clearConnectDraft(undefined, draftKey);
     }
   }, [
     keepsDraft,
+    draftKey,
     mode,
     repository,
     branch,
@@ -763,4 +766,5 @@ export default function GitHubConnectFlow({ outcome, onComplete }) {
 GitHubConnectFlow.propTypes = {
   outcome: PropTypes.string,
   onComplete: PropTypes.func,
+  draftKey: PropTypes.string,
 };

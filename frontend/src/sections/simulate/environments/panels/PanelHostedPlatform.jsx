@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useEffect, useReducer } from "react";
+import { readBuildDraft, saveBuildDraft } from "../buildDrawer/buildDraft";
 import { Box, Stack, Typography } from "@mui/material";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import Field from "../components/Field";
@@ -52,17 +53,29 @@ function reducer(s, a) {
   return { ...s, [a.field]: value };
 }
 
-export default function PanelHostedPlatform({ platformByType, onBusyChange }) {
+const UNSAVED_FIELDS = ["key", "apiSecret"];
+
+const withoutSecrets = (form) =>
+  Object.fromEntries(
+    Object.entries(form).filter(([field]) => !UNSAVED_FIELDS.includes(field)),
+  );
+
+export default function PanelHostedPlatform({ platformByType, onBusyChange, draftKey }) {
   const lockedTypes = platformByType ? Object.keys(platformByType) : null;
-  const [form, dispatch] = useReducer(reducer, lockedTypes, (types) =>
-    types?.length
+  const [form, dispatch] = useReducer(reducer, lockedTypes, (types) => {
+    const start = types?.length
       ? {
           ...initial,
           agentType: types[0],
           platform: platformByType[types[0]],
         }
-      : initial,
-  );
+      : initial;
+    const saved = draftKey ? readBuildDraft(draftKey) : null;
+    return saved ? { ...start, ...withoutSecrets(saved) } : start;
+  });
+  useEffect(() => {
+    if (draftKey) saveBuildDraft(draftKey, withoutSecrets(form));
+  }, [draftKey, form]);
   const build = usePanelBuild();
   useEffect(() => {
     onBusyChange?.(build.committing);
@@ -403,4 +416,5 @@ export default function PanelHostedPlatform({ platformByType, onBusyChange }) {
 PanelHostedPlatform.propTypes = {
   platformByType: PropTypes.objectOf(PropTypes.string),
   onBusyChange: PropTypes.func,
+  draftKey: PropTypes.string,
 };
