@@ -411,7 +411,8 @@ jobs:
         with:
           context: frontend
           file: frontend/Dockerfile
-          build-args: VITE_SKILL_TRACES=on
+          # Skills cohorts test the trace UI; ordinary flows keep the production default.
+          build-args: VITE_SKILL_TRACES=${{ matrix.cohort && 'on' || 'off' }}
           load: true
           tags: futureagi/frontend:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:frontend
