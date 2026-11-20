@@ -133,6 +133,8 @@ function normalizeHostStatusSpec(spec) {
           name.startsWith("HostUpdateStatusResponse") ||
           // Busy pauses have no measured row count; both the pause and its rows can be null.
           name === "MetricCalculationPaused" ||
+          name.startsWith("AgentVersion") ||
+          name.startsWith("StoredAgent") ||
           // Every non-ready source state sends kind and the ids as explicit null.
           name === "EvalLogSourceNavigation" ||
           // A log row sends explicit null for ids its source does not have.
