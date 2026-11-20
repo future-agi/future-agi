@@ -6,6 +6,7 @@ reversed browser delivery, two tabs, eviction and player state need integration.
 """
 
 import io
+import sys
 import uuid
 from datetime import timedelta
 from unittest.mock import Mock
@@ -429,6 +430,9 @@ def test_cutover_is_gated_one_time_and_renamed_legacy_cookie_cannot_work(
             issued_through=cutoff.isoformat(),
             apply=True,
         )
+    monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
+    monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "cutover_attachment_media_sessions"])
     call_command("cutover_attachment_media_sessions", **args)
     assert (
         AttachmentMediaSession.objects.get(
@@ -578,6 +582,7 @@ def test_cutover_is_only_registered_as_an_explicit_operator_command(monkeypatch)
     monkeypatch.setenv("SERVICE_TYPE", "backend")
     assert not explicit_management_mutation_authorized(argv)
     monkeypatch.setenv("STARTUP_DB_MUTATION_MODE", "operator")
+    monkeypatch.setattr(sys, "argv", ["manage.py", "cutover_attachment_media_sessions"])
     assert not explicit_management_mutation_authorized(argv)
     monkeypatch.setenv("SERVICE_TYPE", "bootstrap")
     assert explicit_management_mutation_authorized(argv)
