@@ -127,7 +127,7 @@ def for_binding(
         if operation in ("admit", "write"):
             adapter.verify_readiness()
         return adapter
-    except Exception:
+    except Exception:  # noqa: BLE001 - provider boundary, fails closed
         # Provider/configuration exceptions may carry secrets or locators.
         raise AttachmentError("storage_unverified", 503) from None
 
@@ -186,7 +186,7 @@ def bind_for_admission(*, settings: object) -> UUID:
         return binding.id
     except AttachmentError:
         raise
-    except Exception:
+    except Exception:  # noqa: BLE001 - provider boundary, fails closed
         raise AttachmentError("storage_unverified", 503) from None
 
 

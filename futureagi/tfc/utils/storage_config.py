@@ -527,7 +527,7 @@ def _binding_values(binding, schema):
             ):
                 raise ValueError
         return values
-    except Exception:
+    except Exception:  # noqa: BLE001 - configuration boundary, fails closed
         raise StorageConfigurationError(
             "attachment_storage_binding_identity_invalid"
         ) from None
@@ -538,7 +538,7 @@ def _read_binding(binding_id, schema):
         raise StorageConfigurationError("attachment_storage_binding_identity_invalid")
     try:
         binding = schema.AttachmentStorageBinding.objects.get(pk=binding_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - configuration boundary, fails closed
         # Do not expose ORM parameters, provider configuration or raw errors.
         raise StorageConfigurationError(
             "attachment_storage_binding_unavailable"

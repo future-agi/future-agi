@@ -74,13 +74,13 @@ def test_canonical_probe_source_and_segment(media, tmp_path):
     source = tmp_path / "input.wav"
     wav(source, seconds=31)
     facts = media.sandbox.run("source", source, "audio/wav")
-    assert facts == dict(
-        mime_type="audio/wav",
-        sample_rate=16000,
-        channels=1,
-        frame_count=31 * 16000,
-        duration_ms=31000,
-    )
+    assert facts == {
+        "mime_type": "audio/wav",
+        "sample_rate": 16000,
+        "channels": 1,
+        "frame_count": 31 * 16000,
+        "duration_ms": 31000,
+    }
     limits = media.recordings.Limits(
         8 * 1024**2, 8 * 1024**2, 30000, 1024**3, 7200000, 1024**3
     )

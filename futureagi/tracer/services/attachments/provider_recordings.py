@@ -928,9 +928,8 @@ def dispatch_completed(*, limit=2, now=None):
                     dispatch_attempts=row.dispatch_attempts,
                 ).update(dispatch_due_at=None)
                 stats["denied"] += 1
-        except (
-            Exception
-        ):  # Retry cursor survives DB/transport/process failures; never log payloads.
+        except Exception:  # noqa: BLE001 - per-item retry boundary
+            # Retry cursor survives DB/transport/process failures; never log payloads.
             stats["deferred"] += 1
     return stats
 
@@ -1179,9 +1178,8 @@ def _try_pending(scope_id, connection_id, event_id):
         return apply_pending_completion(
             scope_id=scope_id, connection_id=connection_id, event_id=event_id
         )
-    except (
-        Exception
-    ):  # Durable claim retries transport/authority failures, no payload logging.
+    except Exception:  # noqa: BLE001 - per-item retry boundary
+        # Durable claim retries transport/authority failures, no payload logging.
         return None
 
 
@@ -1350,9 +1348,8 @@ def resume_pending_completions(*, limit=2, now=None):
                 now=now,
             )
             stats["applied" if row is not None else "deferred"] += 1
-        except (
-            Exception
-        ):  # Recovery is per receipt; never expose locator-bearing errors.
+        except Exception:  # noqa: BLE001 - per-item retry boundary
+            # Recovery is per receipt; never expose locator-bearing errors.
             stats["deferred"] += 1
     return stats
 

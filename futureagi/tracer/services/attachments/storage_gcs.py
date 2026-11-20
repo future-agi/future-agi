@@ -268,7 +268,7 @@ def _put_worker():
         finally:
             http.clear()
         sys.stdout.write(json.dumps(result))
-    except Exception:
+    except Exception:  # noqa: BLE001 - child entry point, fails closed
         # Provider errors/headers, credential values and tracebacks never escape.
         sys.stdout.write('{"error":true}')
         raise SystemExit(1) from None
@@ -370,7 +370,7 @@ class GCSPrivateMediaStorage:
             self._put_request = (
                 _bounded_put if http is None else getattr(http, "bounded_put", None)
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("storage_unverified", 503) from None
 
     @staticmethod
@@ -518,7 +518,7 @@ class GCSPrivateMediaStorage:
                     }
                 )
             return values
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("storage_unverified", 503) from None
 
     def _json_get(self, purpose, suffix="", query=None):
@@ -618,7 +618,7 @@ class GCSPrivateMediaStorage:
                     self._metadata(purpose, private=True)
             if operation in ("admit", "write"):
                 self.verify_readiness()
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("storage_unverified", 503) from None
 
     def _write_posture(self, purpose):
@@ -669,7 +669,7 @@ class GCSPrivateMediaStorage:
                 )
                 if not self._soft_deleted_absent(probe):
                     raise ValueError
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("storage_unverified", 503) from None
 
     def _encryption(self, purpose, headers):
@@ -752,7 +752,7 @@ class GCSPrivateMediaStorage:
             return hashlib.sha256(data).hexdigest()
         except AttachmentError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("storage_unverified", 503) from None
 
     def open_range(self, identity, *, start, end, expected_length):
@@ -764,7 +764,7 @@ class GCSPrivateMediaStorage:
                     identity, expected_length=expected_length, start=start, end=end
                 )
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("media_unavailable", 503) from None
 
     def _put(self, permit, stream, length, *, purpose, expected_sha256=None):
@@ -869,7 +869,7 @@ class GCSPrivateMediaStorage:
             return identity
         except AttachmentError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             # Includes timeout: no latest-generation recovery or automatic retry.
             raise AttachmentError("storage_unverified", 503) from None
 
@@ -883,7 +883,7 @@ class GCSPrivateMediaStorage:
             ):
                 raise ValueError
             snapshot.seek(0)
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("snapshot_changed", 409) from None
         return self._put(
             permit,
@@ -907,7 +907,7 @@ class GCSPrivateMediaStorage:
             if page.next_cursor is None and not self._soft_deleted_absent(locator):
                 raise ValueError
             return page
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("cleanup_unavailable", 503) from None
 
     def _list_live_versions(self, locator, *, cursor=None, limit=100):
@@ -991,7 +991,7 @@ class GCSPrivateMediaStorage:
                     raise ValueError
                 # A prefix neighbour sorts after the exact key: stop safely.
             return VersionPage(tuple(versions), (), next_cursor)
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("cleanup_unavailable", 503) from None
 
     def erase_version(self, identity):
@@ -1014,7 +1014,7 @@ class GCSPrivateMediaStorage:
             if not self._json_error(status, data, 404, "notFound"):
                 raise ValueError
             self._metadata(identity.purpose, private=False)
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("cleanup_unavailable", 503) from None
 
     def _delete_version(self, identity):
@@ -1042,7 +1042,7 @@ class GCSPrivateMediaStorage:
             else:
                 _close(response)
             raise ValueError
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise AttachmentError("cleanup_unavailable", 503) from None
 
     def _multipart(self, locator, *, delete):
@@ -1236,13 +1236,13 @@ class GCSPrivateMediaStorage:
             if not self._soft_deleted_absent(locator):
                 return EraseResult(False, True, "soft_deleted_pending", _now())
             return EraseResult(True, False, None, _now())
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             return EraseResult(False, True, "cleanup_unavailable", _now())
 
     def erase_upload(self, upload_id):
         try:
             upload_id = UUID(str(upload_id))
-        except Exception:
+        except ValueError:
             raise AttachmentError("cleanup_unavailable", 503) from None
         results = [
             self.erase_all_versions(

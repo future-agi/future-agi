@@ -47,7 +47,7 @@ def _scratch(settings, required):
             path, os.W_OK | os.X_OK
         ):
             raise ValueError
-    except Exception:
+    except Exception:  # noqa: BLE001 - filesystem boundary, fails closed
         raise AttachmentError("validation_unavailable", 503) from None
     finally:
         if fd is not None:

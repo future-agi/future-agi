@@ -198,7 +198,7 @@ def _put_child(pipe, adapter, permit, stream, length, digest):
         pipe.send((True, result.version))
     except _SnapshotMismatch:
         pipe.send((False, "snapshot_changed"))
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - worker process boundary, fails closed
         # Never serialize raw provider exceptions, credentials or response bodies.
         pipe.send((False, None))
     finally:
@@ -376,7 +376,7 @@ class S3PrivateMediaStorage:
                 cls._posture_client(config, posture_credentials),
                 posture_credentials,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise _error() from None
 
     @staticmethod
@@ -434,7 +434,7 @@ class S3PrivateMediaStorage:
             if operation != "erase":
                 for bucket in (self.quarantine_bucket, self.serving_bucket):
                     self._privacy(self.posture, bucket)
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise _error() from None
 
     def _full_posture(self, client, bucket, purpose):
@@ -498,7 +498,7 @@ class S3PrivateMediaStorage:
                 self._full_posture(
                     self.posture, getattr(self, purpose + "_bucket"), purpose
                 )
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise _error() from None
 
     def _target(self, locator):
@@ -629,7 +629,7 @@ class S3PrivateMediaStorage:
             if purpose == "serving":
                 raise AttachmentError("snapshot_changed", 409) from None
             raise _error() from None
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise _error() from None
 
     def put_quarantine(self, permit, stream, length):
@@ -702,7 +702,7 @@ class S3PrivateMediaStorage:
             return digest.hexdigest()
         except AttachmentError:
             raise
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise _error() from None
         finally:
             if body is not None:
@@ -731,7 +731,7 @@ class S3PrivateMediaStorage:
                 raise ValueError
             output.seek(0)
             return output
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise _error("media_unavailable") from None
         finally:
             if body is not None:
@@ -802,7 +802,7 @@ class S3PrivateMediaStorage:
             self._target(locator)
             self.verify_identity(operation="erase")
             return self._list(locator, cursor, limit)
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise _error("cleanup_unavailable") from None
 
     def _erase(self, identity):
@@ -835,7 +835,7 @@ class S3PrivateMediaStorage:
             self._target(identity)
             self.verify_identity(operation="erase")
             self._erase(identity)
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             raise _error("cleanup_unavailable") from None
 
     def _multipart(self, locator, budget, *, erase):
@@ -913,7 +913,7 @@ class S3PrivateMediaStorage:
                 None if empty else "cleanup_pending",
                 datetime.now(UTC),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - provider boundary, fails closed
             return EraseResult(False, True, "cleanup_unavailable", datetime.now(UTC))
 
     def erase_upload(self, upload_id):

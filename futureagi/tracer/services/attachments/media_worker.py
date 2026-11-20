@@ -644,7 +644,7 @@ def main(argv):
             import socket  # noqa: F401, PLC0415 - load the module before the filter
         decoding = operation is op_pcm or (operation is op_source and len(argv) > 5)
         if decoding:
-            global AV
+            global AV  # noqa: PLW0603 - sandbox child binds av before confinement
             import av
 
             av.logging.set_level(av.logging.PANIC)
