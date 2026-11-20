@@ -476,9 +476,12 @@ can publish the first manifest without replacing the useful per-version
 concurrency behavior.
 
 The workflow is checked out at the exact release tag before signing, so an
-existing pre-fix tag cannot run new bootstrap logic. If recovery is needed,
-first create a new recovery tag containing the fix, then run bootstrap from
-that tag.
+existing pre-fix tag cannot run new bootstrap logic. Bootstrap does not mutate
+or repair that old release: if recovery is needed, create a new patch release
+(for example, `v1.59.2`) whose tag contains this fix, build and publish that
+release's own images and chart, then run bootstrap from the new tag. The new
+release carries the application fix forward; its signed manifest is the first
+manual baseline.
 
 ### Supported installations
 

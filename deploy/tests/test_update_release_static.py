@@ -988,7 +988,7 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
                 context = {
                     "github.event_name": event,
                     "inputs.bootstrap": requested,
-                    "inputs.version": self.version,
+                    "inputs.version": INPUT_VERSION,
                 }
                 self.assertEqual(evaluate_workflow_expression(expression, context), expected)
                 self.assertEqual(step_env(self.doc, self.generate, step, context)["BOOTSTRAP_MODE"],
@@ -1009,7 +1009,7 @@ class UpdateManifestWorkflowTests(unittest.TestCase):
         self.assertIn("env.BOOTSTRAP_MODE != 'true'", qualified["if"])
         self.assertEqual(bootstrap["if"], "${{ env.BOOTSTRAP_MODE == 'true' }}")
         self.assertEqual(bootstrap["with"]["name"], "update-candidate")
-        self.assertIn("env.BOOTSTRAP_MODE == 'true'", proof["if"])
+        self.assertIn("env.BOOTSTRAP_MODE != 'true'", proof["if"])
         validate = one_step(self.publish, lambda s: s.get("name") == "Validate proof before signing")
         self.assertIn('os.environ.get("BOOTSTRAP_MODE", "false") == "true"', validate["run"])
         self.assertIn('require(validation is None', validate["run"])
@@ -2914,7 +2914,8 @@ class ReadmeTests(unittest.TestCase):
         self.assertIn("published, non-draft stable GitHub Release", self.text)
         self.assertIn("partial manifest/bundle pair", self.text)
         self.assertIn("existing pre-fix tag cannot run new bootstrap logic", self.text)
-        self.assertIn("new recovery tag containing the fix", self.text)
+        self.assertIn("new patch release", self.text)
+        self.assertIn("tag contains this fix", self.text)
 
     def test_files_it_points_at_exist(self):
         runtime = {f"{STATE_DIR}/", "deploy/.env.production", MANIFEST_ASSET, BUNDLE_ASSET, CONFIG_FILE,
