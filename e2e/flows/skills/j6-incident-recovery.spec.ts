@@ -42,6 +42,9 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
   const python = process.env.J6_APP_PYTHON;
   const wheels = process.env.J6_WHEELS;
   expect(python && wheels, 'Install the pinned SDK and application wheels on the cloud VM').toBeTruthy();
+  const provenancePath = process.env.J6_PROVENANCE;
+  if (!provenancePath) throw new Error('Supply the GCP registration manifest on the worker');
+  const provenance = JSON.parse(await readFile(provenancePath, 'utf8'));
   const author = actorOf(scopeActors.ownerA); // organization admin: lists reviewers and issues credentials
   // A second organization administrator: moving the protected production label needs a current administrator other than the author.
   const releaser = await (scopeActors as any).invite('releaser', 8, [scopeActors.ownerA.workspaceId]);
@@ -57,8 +60,8 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
     const seed = await prepareJ6Scenario({ apiUrl: E2E.apiUrl, appUrl: E2E.appUrl, author, reviewer, probe, guest, python: python!,
       projectDir: resolve(dir, 'project'), prefix, log: (line: string) => console.log(`[j6-prepare] ${line}`) });
     const outputDir = resolve(dir, 'observations');
-    const provenance = JSON.parse(await readFile(process.env.J6_PROVENANCE ?? '/dev/null', 'utf8').catch(() => 'null') ?? 'null');
     const { registration, provenance: filled } = await buildJ6Registration({ seed, provenance, wheelsDir: wheels!, guest, author, apiUrl: E2E.apiUrl });
+    if (process.env.SKILLS_GCP_CASE === '063') await testInfo.attach('registration-guest', { contentType: 'application/json', body: JSON.stringify({ status: 'registered', provenance: filled }) });
     await writeFile(resolve(dir, 'registration.json'), JSON.stringify(registration, null, 2), { mode: 0o600 });
     await writeFile(inputPath, JSON.stringify({ ...seed, outputDir, provenance: filled, python, guest: guest.describe(),
       actors: { author, reviewer }, appUrl: E2E.appUrl, apiUrl: E2E.apiUrl }), { mode: 0o600 });

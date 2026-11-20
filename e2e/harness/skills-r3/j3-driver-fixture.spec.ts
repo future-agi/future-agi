@@ -5,12 +5,14 @@ import { E2E } from '../../lib/env';
 
 // Prerequisite provisioning only. Not a @flow and not a measured complete job.
 // Private actor credentials stay on the owned VM; never fetch this output.
-test('J3 driver initial condition: three v1 parents over a v7 shared policy', async ({ request, scopeActors }) => {
+test('J3 driver initial condition: three v1 parents over a v7 shared policy', async ({ request, scopeActors }, testInfo) => {
   test.setTimeout(180_000);
   expect(process.platform).toBe('linux');
   const directory = process.env.J3_DRIVER_FIXTURE_DIR;
   const provenancePath = process.env.J3_PROVENANCE_PATH;
   if (!directory || !provenancePath) throw new Error('Private cloud-local fixture and provenance paths are required');
+  const provenance = JSON.parse(await readFile(provenancePath, 'utf8'));
+  expect(provenance?.product_head).toMatch(/^[a-f0-9]{40}$/);
   const owner = scopeActors.ownerA;
   const author = scopeActors.member;
   const prefix = `j3-benchmark-${Date.now().toString(36)}`;
@@ -42,9 +44,17 @@ test('J3 driver initial condition: three v1 parents over a v7 shared policy', as
     await api(author, 'POST', `contexts/${draft.context_id}/draft/publish/`, { ...ack, revision: saved.revision, review_fingerprint: saved.review_fingerprint, base_version: saved.base_version, note: 'Synthetic fixture initial condition, not measured work', acknowledge_warnings: true });
     parents.push({ id: draft.context_id, name });
   }
+  if (process.env.J3_COHORT !== 'cold') {
+    const inventory = await api(author, 'GET', `${leaves[0].id}/context-dependents/`);
+    expect(inventory.count).toBe(3);
+    for (const [index, parent] of parents.entries()) {
+      expect(inventory.results).toContainEqual(expect.objectContaining({ context_id: parent.id, context_version: 1, locked_version: 7,
+        requested: index === 2 ? { version: 7 } : { label: 'production' } }));
+    }
+  }
   const sha = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-  const provenance = JSON.parse(await readFile(provenancePath, 'utf8'));
   provenance.fixture_hash = sha({ leaves, parents, initialPolicyVersion: 7 });
+  if (process.env.SKILLS_GCP_CASE === 'j3') await testInfo.attach('registration-fixture', { contentType: 'application/json', body: JSON.stringify({ status: 'fixture', provenance }) });
   const actor = (value: typeof author) => ({ ...value.tokens, userId: value.userId, organizationId: value.organizationId, workspaceId: value.workspaceId });
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const issued = await owner.api.post<{ result: { api_key: string; secret_key: string } }>('/accounts/key/generate_secret_key/', { key_name: `${prefix}-sdk` });
