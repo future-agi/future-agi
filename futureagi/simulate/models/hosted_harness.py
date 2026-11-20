@@ -339,7 +339,9 @@ class HostedHarnessScenario(BaseModel):
         on_delete=models.SET_NULL,
         related_name="+",
     )
-    archive_reason = models.CharField(max_length=255, blank=True, default="")
+    archive_reason = models.CharField(
+        max_length=255, blank=True, default="", db_default=""
+    )
     archived_content = models.JSONField(null=True, blank=True)
     # The document's sources, plus each file source's stored resolution and matched digest.
     sources = models.JSONField(null=True, blank=True)
