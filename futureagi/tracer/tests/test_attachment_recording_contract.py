@@ -1,4 +1,4 @@
-"""Segment planning, manifests and F01 recording-import conformance (no DB)."""
+"""Segment planning, manifests and F01 recording-import conformance."""
 
 import copy
 import io
@@ -31,18 +31,6 @@ def override(base, changes):
     return copy.deepcopy(changes)
 
 
-def facts(source):
-    return imports.SourceFacts(
-        terminal_completed=source["terminal_completed"],
-        immutable=source["immutable"],
-        bounded_ranges=source["bounded_ranges"],
-        total_bytes=TABLE["base"]["request"]["recording"]["declared_bytes"]
-        if "declared_bytes" not in source
-        else source["declared_bytes"],
-        direction="mixed",
-    )
-
-
 def valid_recording_request(request):
     try:
         return imports.parse_request(request)
@@ -50,46 +38,48 @@ def valid_recording_request(request):
         raise AssertionError("fixture failed before the gate under test") from error
 
 
-def reserve_with_headroom(recording, limits, headroom):
-    """Replay the F01 budget-only variations at the current reservation boundary.
+def seed_headroom(v, importer, scenario, monkeypatch):
+    """Use a second admitted job for nonempty global, org and project ledgers."""
+    from django.db import transaction
 
-    Use nonempty synthetic counters so shortage exercises the aggregate check,
-    not an impossible absolute cap. Only fetching and saving rows is doubled;
-    the production floor, per-scope checks and counter arithmetic run unchanged.
-    """
-    from tracer.services.attachments import capacity_db
+    from tracer.services.attachments import capacity_db, provider_recordings
     from tracer.services.attachments.interfaces import ResourceVector
+    from tracer.tests.test_attachment_simplify_combined_review import (
+        make_envelope,
+        make_provider,
+    )
 
-    amount = capacity.whole_import_floor(
-        source_bytes=recording["declared_bytes"], output_scratch_bytes=limits.window
+    other = copy.copy(v)
+    other.envelope = make_envelope(v, v.envelope.source_bytes, v.envelope.duration_ms)
+    provider = make_provider(other, uuid.uuid4())
+    response, created = imports.submit(
+        importer,
+        scope_id=v.scope.id,
+        body=provider_recordings._dispatch_body(provider, v.session),
     )
-    scopes = ("global", "organization", "project")
-    caps = tuple(amount + ResourceVector(**headroom[scope]) for scope in scopes)
-    budgets = [
-        SimpleNamespace(
-            **dict(
-                zip(capacity_db.BUDGET_FIELDS, capacity_db._values(amount), strict=True)
-            ),
-            save=Mock(),
-        )
-        for _ in scopes
-    ]
-    job = SimpleNamespace(
-        **dict.fromkeys(capacity_db.OWNER_FIELDS, 0),
-        reservation_pool_key=capacity.IMPORT_POOL_KEY,
-        save=Mock(),
+    assert created
+    floor = capacity.whole_import_floor(
+        source_bytes=v.envelope.source_bytes,
+        output_scratch_bytes=imports.server_limits().window,
     )
-    with (
-        patch.object(capacity_db, "limits_for", return_value=caps),
-        patch.object(capacity_db, "_rows", return_value=budgets),
-    ):
-        try:
-            capacity_db._change(SimpleNamespace(scope_id=uuid.uuid4()), job, amount)
-        except AttachmentError as denied:
-            assert (denied.code, denied.status) == ("throttled", 429)
-            raise
-    assert capacity_db.owner_vector(job) == amount
-    assert all(capacity_db._budget_vector(row) == amount + amount for row in budgets)
+    caps = tuple(
+        floor + ResourceVector(**scenario["headroom"][level])
+        for level in ("global", "organization", "project")
+    )
+    monkeypatch.setattr(capacity_db, "limits_for", lambda **_: caps)
+
+    def counters():
+        with transaction.atomic():
+            locks = capacity_db.lock_capacity(
+                scope_id=v.scope.id, pool_keys=(capacity.IMPORT_POOL_KEY,)
+            )
+            return [
+                capacity_db._budget_vector(row)
+                for row in capacity_db._rows(locks, capacity.IMPORT_POOL_KEY)
+            ]
+
+    assert counters() == [floor] * 3
+    return response["job_id"], floor, counters
 
 
 def replay_range_responses(scenario):
@@ -152,43 +142,309 @@ def test_f01_range_transcript_reads_the_declared_source():
     )
 
 
-def run_case(case):
-    scenario = override(TABLE["base"], case["overrides"])
-    recording = scenario["request"]["recording"]
-    limits = recordings.Limits.from_wire(scenario["limits"])
-    if case["stage"] == "completion" and set(
-        case["overrides"].get("observation", {})
-    ) in (
-        {"reads"},
-        {"generation_matches"},
-    ):
-        return replay_range_responses(scenario)
-    if case["stage"] == "admission" and set(case["overrides"]) == {"headroom"}:
-        # Every other input is the pinned happy-path case. No fixture ID or
-        # expected verdict is used to manufacture a rejection.
-        valid_recording_request(scenario["request"])
-        return reserve_with_headroom(recording, limits, scenario["headroom"])
-    if case["stage"] == "admission":
-        source = dict(scenario["source"], declared_bytes=recording["declared_bytes"])
-        imports.admission_check(
-            recording=recording,
-            limits=limits,
-            headroom=scenario["headroom"],
-            source=facts(source),
+def uses_db(case):
+    if case["stage"] == "completion":
+        return set(case["overrides"].get("observation", {})) not in (
+            {"reads"},
+            {"generation_matches"},
         )
-    else:
-        imports.completion_check(
-            recording=recording, limits=limits, observation=scenario["observation"]
-        )
+    return True
 
 
-@pytest.mark.parametrize("case", TABLE["cases"], ids=lambda case: case["id"])
+@pytest.mark.parametrize(
+    "case",
+    [case for case in TABLE["cases"] if not uses_db(case)],
+    ids=lambda case: case["id"],
+)
 def test_f01_recording_import_fixture(case):
-    if case["valid"]:
-        run_case(case)
-    else:
-        with pytest.raises(AttachmentError):
-            run_case(case)
+    scenario = override(TABLE["base"], case["overrides"])
+    assert not case["valid"]
+    with pytest.raises(AttachmentError) as denied:
+        replay_range_responses(scenario)
+    assert (
+        denied.value.code
+        == {
+            "source-generation-changed": "snapshot_changed",
+            "range-not-honored-whole-body": "source_unavailable",
+            "range-gap": "validation_failed",
+            "range-declared-total-mismatch": "validation_failed",
+            "missing-final-range": "source_unavailable",
+        }[case["id"]]
+    )
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "case",
+    [case for case in TABLE["cases"] if uses_db(case)],
+    ids=lambda case: case["id"],
+)
+def test_f01_database_import(case, project, user, settings, tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tracer.models.attachment_recording import AttachmentImportJob
+    from tracer.services.attachments import storage
+    from tracer.services.attachments.authority import LiveAuthority
+    from tracer.tests.test_attachment_simplify_combined_review import (
+        make_provider,
+        make_values,
+    )
+
+    scenario = override(TABLE["base"], case["overrides"])
+    body = scenario["request"]
+    descriptor = body["recording"]
+    v = make_values(
+        project,
+        user,
+        settings,
+        tmp_path,
+        source_bytes=descriptor["declared_bytes"],
+        duration_ms=descriptor["declared_duration_ms"],
+    )
+    complete = scenario["source"]["terminal_completed"]
+    if "source" in case["overrides"] and complete:
+        # Completion must observe a pinned generation before submit can use a
+        # ProviderFile. Exercise the real metadata reader over fixture HTTP.
+        from tracer.services.attachments import provider_recordings, safe_fetch
+
+        headers = {
+            "Content-Type": "audio/wav",
+            "Content-Length": str(v.envelope.source_bytes),
+            "Accept-Ranges": "bytes"
+            if scenario["source"]["bounded_ranges"]
+            else "none",
+        }
+        if scenario["source"]["immutable"]:
+            headers["ETag"] = v.envelope.generation
+        transport = Mock()
+        transport.getresponse.return_value = SimpleNamespace(
+            status=200, getheader=headers.get
+        )
+        monkeypatch.setattr(safe_fetch.RangeSource, "_connection", lambda _: transport)
+        info = {
+            "fileResults": [
+                {
+                    "location": "https://storage.invalid/combined.wav",
+                    "size": v.envelope.source_bytes,
+                    "duration": v.envelope.duration_ms * 1000000,
+                }
+            ]
+        }
+        try:
+            complete = provider_recordings._completion_metadata(None, info) is not None
+        except AttachmentError as error:
+            assert error.code == "source_unavailable"
+            complete = False
+    provider = make_provider(
+        v,
+        uuid.UUID(descriptor["recording_id"]),
+        complete=complete,
+    )
+    # Only substitute the identities allocated by the real database fixture.
+    body["source"].update(
+        connection_id=str(provider.connection_id),
+        registered_output_id=str(provider.registered_output_id),
+    )
+    descriptor.update(
+        policy_version=str(v.scope.policy_version),
+        association={
+            "capture_session_id": str(v.session.client_id),
+            "correlation_nonce": str(v.session.correlation_nonce),
+            "parent": {"trace_id": v.trace.hex, "span_id": v.span},
+        },
+    )
+    settings.FI_ATTACHMENTS_RECORDING_LIMITS = scenario["limits"]
+    monkeypatch.setattr(storage, "bind_for_admission", lambda **_: v.binding.id)
+    monkeypatch.setattr(
+        LiveAuthority,
+        "source",
+        lambda *_: SimpleNamespace(
+            readable=True, expires_at=timezone.now() + timedelta(hours=2)
+        ),
+    )
+    importer = imports.Importer("user", user.id)
+    jobs = AttachmentImportJob.objects.filter(scope=v.scope)
+    has_budget = "headroom" in case["overrides"]
+    if has_budget:
+        prior_id, floor, counters = seed_headroom(v, importer, scenario, monkeypatch)
+        jobs = jobs.exclude(pk=prior_id)
+    if case["stage"] == "admission" and not case["valid"]:
+        with pytest.raises(AttachmentError) as denial:
+            imports.submit(importer, scope_id=v.scope.id, body=body)
+        if has_budget:
+            assert (denial.value.code, denial.value.status) == ("throttled", 429)
+            assert counters() == [floor] * 3
+        else:
+            assert denial.value.code == (
+                "source_unavailable"
+                if "source" in case["overrides"]
+                else "validation_failed"
+            )
+        assert not jobs.exists()
+        return
+    if descriptor["direction"] != provider.direction:
+        with pytest.raises(AttachmentError) as denial:
+            imports.submit(importer, scope_id=v.scope.id, body=body)
+        assert not case["valid"] and denial.value.code == "conflict"
+        assert not jobs.exists()
+        return
+    response, created = imports.submit(importer, scope_id=v.scope.id, body=body)
+    assert created
+    job = jobs.get(pk=response["job_id"])
+    assert job.recording.client_id == provider.recording_client_id
+    assert (job.source_byte_length, job.source_duration_ms) == (
+        descriptor["declared_bytes"],
+        descriptor["declared_duration_ms"],
+    )
+    if has_budget:
+        from tracer.services.attachments import capacity_db
+
+        assert capacity_db.owner_vector(job) == floor
+        assert counters() == [floor + floor] * 3
+    if case["stage"] == "completion":
+        if case["valid"]:
+            complete_vector(v, job, scenario, monkeypatch)
+            job.refresh_from_db()
+            assert job.state == "ready" and job.recording.manifest_revision == 1
+        else:
+            with pytest.raises(AttachmentError) as denial:
+                complete_vector(v, job, scenario, monkeypatch)
+            assert denial.value.code == COMPLETION_DENIALS[case["id"]]
+            job.refresh_from_db()
+            assert job.state != "ready" and job.recording.manifest_revision == 0
+
+
+COMPLETION_DENIALS = {
+    "source-length-mismatch--1": "snapshot_changed",
+    "source-length-mismatch-1": "snapshot_changed",
+    "actual-duration-mismatch": "snapshot_changed",
+    "segment-over-byte-limit": "snapshot_changed",
+    "segment-total-over-recording-budget": "too_large",
+    "negotiated-segment-size-enforced": "snapshot_changed",
+    "negotiated-upload-size-enforced": "snapshot_changed",
+    "negotiated-segment-duration-enforced": "snapshot_changed",
+    "missing-segment-size": "validation_failed",
+    "segment-over-duration-limit": "validation_failed",
+    "wrong-recording": "validation_failed",
+    "not-a-complete-manifest": "validation_failed",
+}
+
+
+def complete_vector(v, job, scenario, monkeypatch):
+    """Replay remote HEAD, decoder and object-store observations, not verdicts."""
+    from django.utils import timezone
+
+    from tracer.services.attachments import safe_fetch
+    from tracer.services.attachments.interfaces import (
+        ObjectIdentity,
+        StoredObject,
+        VerifiedAssetFacts,
+    )
+    from tracer.tests.test_attachment_simplify_combined_review import claim
+
+    observed = scenario["observation"]
+    fence = claim(v, job)
+    monkeypatch.setattr(
+        safe_fetch,
+        "inspect_metadata",
+        lambda _: (
+            job.source_generation,
+            observed["source_bytes"],
+            job.source_mime_type,
+        ),
+    )
+    monkeypatch.setattr(
+        safe_fetch.RangeSource,
+        "read_range",
+        lambda self, start, length, sink: sink.write(bytes(length)),
+    )
+    imports._remote_recheck(job, fence)
+    manifest = observed["manifest"]
+    rate, channels = manifest["sample_rate_hz"], manifest["channels"]
+    frames = (job.source_byte_length - 44) // (2 * channels)
+    limits = recordings.Limits.from_wire(scenario["limits"])
+    plans = recordings.plan_segments(
+        frame_count=frames, rate=rate, channels=channels, limits=limits
+    )
+    # The worker compares the decoder's observed duration and the aggregate
+    # planned size before opening its PCM stream. Replay those two preflights.
+    if (
+        observed["source_duration_ms"] != job.source_duration_ms
+        or sum(plan.byte_length for plan in plans) > job.recording_bytes
+    ):
+        monkeypatch.setattr(
+            sandbox,
+            "run",
+            lambda *_: {
+                "duration_ms": observed["source_duration_ms"],
+                "mime_type": job.source_mime_type,
+                "frame_count": frames,
+                "sample_rate": rate,
+                "channels": channels,
+            },
+        )
+        with sandbox.import_execution(job.id, fence.epoch) as directory:
+            imports._segment_source(
+                job, fence, SimpleNamespace(name="synthetic-source"), directory, None
+            )
+        pytest.fail("worker preflight did not reject the observation")
+    target = job.recording
+    target.sample_rate, target.channels = rate, channels
+    target.save(update_fields=["sample_rate", "channels"])
+    rows = []
+    # Wire occurrence IDs are opaque: translate the baseline IDs to the ones
+    # allocated by this job without repairing missing or malformed entries.
+    occurrence_ids = {}
+    baseline = TABLE["base"]["observation"]["manifest"]["segments"]
+    sizes = observed["segment_bytes"]
+    with sandbox.import_execution(job.id, fence.epoch):
+        for plan in plans:
+            row = imports._allocate(job, fence, plan, "a" * 64)
+            permit = imports.prepare_put(
+                job_id=job.id,
+                allocation_id=row.id,
+                allocation_kind="segment",
+                fence=fence,
+                purpose="serving",
+                now=timezone.now(),
+            )
+            identity = ObjectIdentity(
+                v.binding.id, "serving", row.storage_key, "fixture-v1"
+            )
+            facts = (
+                None
+                if plan.index >= len(sizes)
+                else VerifiedAssetFacts(
+                    StoredObject(identity, sizes[plan.index], row.sha256),
+                    "audio/wav",
+                    timezone.now(),
+                    rate,
+                    channels,
+                    plan.frame_count,
+                )
+            )
+            assert (
+                imports.record_put(
+                    job_id=job.id,
+                    allocation_id=row.id,
+                    allocation_kind="segment",
+                    permit=permit,
+                    identity=identity,
+                    facts=facts,
+                )
+                == "recorded"
+            )
+            rows.append(row.id)
+            if plan.index < len(baseline):
+                occurrence_ids[baseline[plan.index]["occurrence_id"]] = str(
+                    row.occurrence_client_id
+                )
+    for segment in manifest["segments"]:
+        original = segment["occurrence_id"]
+        segment["occurrence_id"] = occurrence_ids.get(original, original)
+    imports.publish(job_id=job.id, fence=fence, segment_ids=rows, manifest=manifest)
 
 
 def test_fixture_table_is_the_pinned_contract():

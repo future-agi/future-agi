@@ -200,6 +200,17 @@ jobs:
       fail-fast: false
       matrix:
         group: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.suite == 'attachment-deletion' && '[1]' || '[1,2,3,4,5,6,7,8,9,10]') }}
+        # Extra matrix entries get the same full service stack as the shards,
+        # but each gets its own named database and the full job time budget.
+        include:
+          - group: combined-review
+            module: test_attachment_simplify_combined_review
+            database: test_att_combined_review_ci
+            gate: ATT_COMBINED_REVIEW
+          - group: imports-review
+            module: test_attachment_simplify_review_imports_db
+            database: test_att_review_imports_ci
+            gate: ATT_REVIEW_IMPORTS
     defaults:
       run:
         working-directory: futureagi
@@ -335,6 +346,7 @@ jobs:
             up -d --wait --wait-timeout 180
 
       - name: Apply pinned sharding plan
+        if: matrix.module == ''
         uses: actions/download-artifact@v4
         with:
           name: test-durations-plan
@@ -343,8 +355,15 @@ jobs:
       - name: Run shard
         id: run-shard
         env:
+          ISOLATED_MODULE: ${{ matrix.module }}
+          ISOLATED_DB: ${{ matrix.database }}
+          ISOLATED_GATE: ${{ matrix.gate }}
           FOCUSED_ATTACHMENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'attachment-deletion' }}
         run: |
+          if [ -n "$ISOLATED_MODULE" ]; then
+            exec env "$ISOLATED_GATE=1" PG_TEST_DB="$ISOLATED_DB" CH_DATABASE="$ISOLATED_DB" CH25_DATABASE="$ISOLATED_DB" \
+              uv run pytest -q "tracer/tests/$ISOLATED_MODULE.py" --junitxml="junit-${{ matrix.group }}.xml"
+          fi
           if [ "$FOCUSED_ATTACHMENTS" = true ]; then
             # An opt-in diagnostic, never a substitute for the PR's full gate.
             uv run pytest -q -ra \
@@ -399,7 +418,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload timing data (dev pushes only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        if: matrix.module == '' && github.event_name == 'push' && github.ref == 'refs/heads/dev'
         uses: actions/upload-artifact@v4
         with:
           name: timing-data-${{ matrix.group }}

@@ -21,29 +21,10 @@ from uuid import uuid4
 import jwt
 import pytest
 
+from tracer.tests.attachment_source_clock import NOW
+from tracer.tests.attachment_source_clock import source_clock as source_clock
+
 BASE = Path(__file__).resolve().parents[1] / "services" / "attachments"
-# Explicit unit-test epoch, not collection-time wall clock. Only the three
-# freshly loaded service modules use this clock; Django setup and JWT validation
-# retain their own clocks. Each test gets a new clock and can advance it to prove
-# that the unchanged production expiry checks still deny access.
-NOW = datetime(2026, 1, 1, tzinfo=UTC)
-
-
-class SourceClock:
-    def __init__(self):
-        self.value = NOW
-
-    def now(self):
-        return self.value
-
-    def advance(self, delta):
-        assert delta >= timedelta(0)
-        self.value += delta
-
-
-@pytest.fixture
-def source_clock():
-    return SourceClock()
 
 
 class Query:
@@ -750,7 +731,8 @@ def test_bad_output_not_fetchable(modules, monkeypatch, results):
     inspect.assert_not_called()
 
 
-def test_dispatch_survives_capacity_failure_and_bool_return(modules, monkeypatch):
+@pytest.fixture
+def completed_registration(modules, monkeypatch):
     m = modules
     registrar = SimpleNamespace(kind="user", id=uuid4())
     scope_id, job_id = uuid4(), uuid4()
@@ -821,6 +803,20 @@ def test_dispatch_survives_capacity_failure_and_bool_return(modules, monkeypatch
     imports._check_registered_descriptor = Mock()
     imports._registered_job = Mock(return_value=None)
 
+    monkeypatch.setitem(sys.modules, imports.__name__, imports)
+    monkeypatch.setattr(
+        sys.modules["tracer.services.attachments"], "imports", imports, raising=False
+    )
+    return registrar, session, registration, job_id, imports
+
+
+def test_dispatch_survives_capacity_failure_and_bool_return(
+    modules, completed_registration
+):
+    m = modules
+    registrar, session, registration, job_id, imports = completed_registration
+    scope_id = session.scope_id
+
     def recover(candidate, caller):
         assert m.depth.value == 0 and candidate is registration
         assert caller == registrar and registration.import_job_id is None
@@ -849,10 +845,6 @@ def test_dispatch_survives_capacity_failure_and_bool_return(modules, monkeypatch
         return {"job_id": str(job_id)}, False
 
     imports.submit = submit
-    monkeypatch.setitem(sys.modules, imports.__name__, imports)
-    monkeypatch.setattr(
-        sys.modules["tracer.services.attachments"], "imports", imports, raising=False
-    )
     assert m.provider_recordings.dispatch_completed(now=NOW)["deferred"] == 1
     assert registration.import_job_id is None and registration.dispatch_due_at > NOW
     assert m.provider_recordings.dispatch_completed(now=NOW)["dispatched"] == 0
@@ -1244,17 +1236,18 @@ def test_watchdog_shuts_detached_http_response_socket(modules, monkeypatch):
     sock.close.assert_called_once()
 
 
-def test_lookup_document_contains_only_opaque_identifiers(modules):
-    registration = row(
-        connection_id=uuid4(),
-        registered_output_id=uuid4(),
-        provider_state="complete",
-        import_job_id=uuid4(),
+def test_lookup_document_contains_only_opaque_identifiers(
+    modules, completed_registration
+):
+    registrar, session, registration, job_id, imports = completed_registration
+    registration.import_job_id = job_id
+    imports._registered_job.return_value = row(id=job_id)
+    doc = modules.provider_recordings.registration_document(
+        registration, registrar=registrar, scope_id=session.scope_id
     )
-    doc = modules.provider_recordings.registration_document(registration)
-    assert set(doc) == {"source", "state", "job_id"}
     modules.wire.validate("ImportSource", doc["source"])
     assert "http" not in json.dumps(doc)
+    assert set(doc) == {"source", "state", "job_id"}
 
 
 def test_dns_timeout_is_bounded(modules):

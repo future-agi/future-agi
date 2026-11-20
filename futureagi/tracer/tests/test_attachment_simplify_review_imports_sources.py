@@ -10,8 +10,9 @@ from uuid import uuid4
 import pytest
 
 from tracer.tests import test_attachment_simplify_sources_control as shared
+from tracer.tests.attachment_source_clock import NOW
+from tracer.tests.attachment_source_clock import source_clock as source_clock
 from tracer.tests.test_attachment_simplify_sources_control import (
-    NOW,
     Query,
     row,
     setup_source,
@@ -201,6 +202,7 @@ def dispatch_setup(m, monkeypatch, code, status):
         scope_id=scope_id,
         provider_state="complete",
         import_job_id=None,
+        dispatch_mode="auto",
         dispatch_due_at=NOW,
         dispatch_attempts=0,
         expires_at=NOW + timedelta(minutes=5),
@@ -232,14 +234,21 @@ def dispatch_setup(m, monkeypatch, code, status):
         attempts.append(True)
         if len(attempts) == 1:
             raise m.contract.AttachmentError(code, status)
+        registration.import_job_id = job_id
+        registration.dispatch_due_at = None
         return {"job_id": str(job_id)}, False
 
+    imports.recover_auto_dispatch = lambda *_: None
     imports.submit = submit
     monkeypatch.setitem(sys.modules, imports.__name__, imports)
     monkeypatch.setattr(
         sys.modules["tracer.services.attachments"], "imports", imports, raising=False
     )
-    monkeypatch.setattr(m.provider_recordings, "_dispatch_body", lambda *args: {})
+    monkeypatch.setattr(
+        m.provider_recordings,
+        "registration_document",
+        lambda *args, **kwargs: {"import_request": {}},
+    )
     return registration, attempts, imports
 
 

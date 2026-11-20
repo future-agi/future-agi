@@ -4,6 +4,7 @@ Synthetic object/source facts test database invariants, not native IO or source
 HTTP authorization. No trigger, SQL, sandbox, or migration guard is disabled.
 """
 
+import os
 from datetime import timedelta
 from uuid import uuid4
 
@@ -32,7 +33,14 @@ from tracer.services.attachments.interfaces import (
     VerifiedAssetFacts,
 )
 
-pytestmark = [pytest.mark.django_db, pytest.mark.integration]
+pytestmark = [
+    pytest.mark.skipif(
+        os.environ.get("ATT_REVIEW_IMPORTS") != "1",
+        reason="runs in dedicated backend CI process",
+    ),
+    pytest.mark.django_db,
+    pytest.mark.integration,
+]
 
 
 @pytest.fixture

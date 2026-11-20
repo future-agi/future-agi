@@ -7,6 +7,7 @@ from end-to-end decoder qualification, which is executed separately.
 """
 
 import base64
+import os
 from datetime import timedelta
 from types import SimpleNamespace as NS
 from uuid import uuid4
@@ -18,52 +19,58 @@ from django.utils import timezone
 
 from tracer.models.attachment import (
     Attachment,
-    AttachmentScope,
-    CaptureSession,
-    AttachmentOccurrence,
-    AttachmentUpload,
     AttachmentAuditEvent,
+    AttachmentOccurrence,
+    AttachmentScope,
+    AttachmentUpload,
+    CaptureSession,
 )
 from tracer.models.attachment_recording import (
     AttachmentImportJob,
-    AttachmentRecording,
-    AttachmentRecordingSegment,
-    AttachmentSourceEnvelope,
-    AttachmentRecordingDerivative,
     AttachmentProviderConnection,
     AttachmentProviderRecording,
+    AttachmentRecording,
+    AttachmentRecordingDerivative,
+    AttachmentRecordingSegment,
+    AttachmentSourceEnvelope,
 )
 from tracer.models.attachment_storage import (
     AttachmentStorageBinding,
     binding_identity_sha256,
 )
 from tracer.services.attachments import (
+    accounting,
     capacity,
     capacity_db,
-    imports,
-    publication,
-    retention,
     derivatives,
-    recordings,
     envelopes,
+    imports,
+    recordings,
+    retention,
     source_providers,
-    accounting,
     validation,
 )
 from tracer.services.attachments.contract import AttachmentError
 from tracer.services.attachments.interfaces import (
+    EraseResult,
     ObjectIdentity,
+    ReservationOwner,
     ResourceVector,
+    SourceRef,
     StoredObject,
     VerifiedAssetFacts,
-    ReservationOwner,
-    EraseResult,
     VersionPage,
-    SourceRef,
 )
 from tracer.tests import test_attachment_simplify_review_imports_db as original_sql
 
-pytestmark = [pytest.mark.django_db(transaction=True), pytest.mark.integration]
+pytestmark = [
+    pytest.mark.skipif(
+        os.environ.get("ATT_COMBINED_REVIEW") != "1",
+        reason="runs in dedicated backend CI process",
+    ),
+    pytest.mark.django_db(transaction=True),
+    pytest.mark.integration,
+]
 
 
 @pytest.fixture
@@ -71,6 +78,25 @@ def values(project, user, settings, tmp_path, request):
     assert connection.vendor == "postgresql"
     assert connection.settings_dict["NAME"].startswith("test_att_combined_review_")
     assert settings.CLICKHOUSE["CH_DATABASE"] == connection.settings_dict["NAME"]
+    return make_values(
+        project,
+        user,
+        settings,
+        tmp_path,
+        redaction=getattr(request, "param", {}).get("redaction", False),
+    )
+
+
+def make_values(
+    project,
+    user,
+    settings,
+    tmp_path,
+    *,
+    redaction=False,
+    source_bytes=46,
+    duration_ms=1,
+):
     settings.FI_ATTACHMENTS_ENABLED = True
     settings.FI_ATTACHMENTS_WORK_DIR = str(tmp_path)
     settings.FI_ATTACHMENTS_ENVELOPE_KEYS = "fixture:" + base64.urlsafe_b64encode(
@@ -106,7 +132,7 @@ def values(project, user, settings, tmp_path, request):
         enabled=True,
         allow_import=True,
         record_audio=True,
-        require_media_redaction=getattr(request, "param", {}).get("redaction", False),
+        require_media_redaction=redaction,
     )
     session = CaptureSession.objects.create(
         scope=scope,
@@ -121,33 +147,37 @@ def values(project, user, settings, tmp_path, request):
         capture_policy={"enabled": True, "allow_import": True, "record_audio": True},
     )
     trace, span = uuid4(), "1234567890abcdef"
-    eid = envelopes.seal(
-        scope=scope,
-        url="https://storage.invalid/combined.wav",
-        creator_kind="user",
-        creator_id=user.id,
-        direction="mixed",
-        source_bytes=46,
-        source_expires_at=now + timedelta(minutes=5),
-        generation_kind="http_strong_etag",
-        generation='"fixture-v1"',
-        mime_type="audio/wav",
-        duration_ms=1,
-        trace_id=trace,
-        span_id=span,
-        capture_session_id=session.id,
-    )
-    envelope = AttachmentSourceEnvelope.objects.get(pk=eid)
-    return NS(
+    v = NS(
         scope=scope,
         session=session,
         binding=binding,
         user=user,
-        envelope=envelope,
         trace=trace,
         span=span,
         tmp_path=tmp_path,
     )
+    v.envelope = make_envelope(v, source_bytes, duration_ms)
+    return v
+
+
+def make_envelope(v, source_bytes, duration_ms):
+    eid = envelopes.seal(
+        scope=v.scope,
+        url="https://storage.invalid/combined.wav",
+        creator_kind="user",
+        creator_id=v.user.id,
+        direction="mixed",
+        source_bytes=source_bytes,
+        source_expires_at=timezone.now() + timedelta(minutes=5),
+        generation_kind="http_strong_etag",
+        generation='"fixture-v1"',
+        mime_type="audio/wav",
+        duration_ms=duration_ms,
+        trace_id=v.trace,
+        span_id=v.span,
+        capture_session_id=v.session.id,
+    )
+    return AttachmentSourceEnvelope.objects.get(pk=eid)
 
 
 def make_job(v, *, upload=None, ttl=None):
@@ -708,14 +738,7 @@ def test_actual_single_publish_receipt_is_atomic(values, monkeypatch, with_clean
         assert occurrence.deleted_at is None and occurrence.expires_at > timezone.now()
 
 
-@pytest.mark.parametrize("wire_kind", ["RemoteUrlEnvelope", "ProviderFile"])
-def test_provider_envelope_connection_lock_blocks_revocation_and_rejects_after(
-    values, wire_kind
-):
-    import psycopg
-
-    v = values
-    job = make_job(v)
+def make_provider(v, recording_id, *, complete=True):
     conn = AttachmentProviderConnection.objects.create(
         scope=v.scope,
         provider="livekit",
@@ -730,11 +753,11 @@ def test_provider_envelope_connection_lock_blocks_revocation_and_rejects_after(
         scope=v.scope,
         connection=conn,
         registered_output_id=uuid4(),
-        egress_id=str(uuid4()),
+        egress_id="EG_" + uuid4().hex,
         room_digest="0" * 64,
         registrar_kind="user",
         registrar_id=v.user.id,
-        recording_client_id=job.recording.client_id,
+        recording_client_id=recording_id,
         trace_id=v.trace,
         span_id=v.span,
         capture_session_client_id=v.session.client_id,
@@ -742,9 +765,11 @@ def test_provider_envelope_connection_lock_blocks_revocation_and_rejects_after(
         direction="mixed",
         expires_at=v.envelope.expires_at,
     )
+    if not complete:
+        return provider
     provider.provider_state = "complete"
-    provider.output_bytes = 46
-    provider.output_duration_ms = 1
+    provider.output_bytes = v.envelope.source_bytes
+    provider.output_duration_ms = v.envelope.duration_ms
     provider.output_envelope_id = v.envelope.id
     provider.source_generation_kind = v.envelope.generation_kind
     provider.source_generation = v.envelope.generation
@@ -766,6 +791,19 @@ def test_provider_envelope_connection_lock_blocks_revocation_and_rejects_after(
             "dispatch_due_at",
         ]
     )
+    return provider
+
+
+@pytest.mark.parametrize("wire_kind", ["RemoteUrlEnvelope", "ProviderFile"])
+def test_provider_envelope_connection_lock_blocks_revocation_and_rejects_after(
+    values, wire_kind
+):
+    import psycopg
+
+    v = values
+    job = make_job(v)
+    provider = make_provider(v, job.recording.client_id)
+    conn = provider.connection
     ref = (
         SourceRef("RemoteUrlEnvelope", v.envelope.id)
         if wire_kind == "RemoteUrlEnvelope"

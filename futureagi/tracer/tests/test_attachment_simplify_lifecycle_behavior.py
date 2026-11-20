@@ -213,6 +213,8 @@ def cleanup(monkeypatch, interfaces):
         storage_binding_id=uuid4(),
         deleted_at=NOW - timedelta(hours=2),
         state="deleted",
+        verified_blob_id=uuid4(),
+        verified_at=NOW - timedelta(hours=3),
         verified_storage_key="original/kept-historical",
         verified_storage_version="original-v1",
     )
@@ -252,7 +254,9 @@ def cleanup(monkeypatch, interfaces):
     transaction = NS(atomic=lambda: Atomic(connection))
     calls = []
     values = {
-        "AttachmentState": NS(DELETED="deleted"),
+        "AttachmentState": NS(
+            DELETED="deleted", FAILED="failed", REJECTED="rejected", EXPIRED="expired"
+        ),
         "connection": connection,
         "transaction": transaction,
         "ATTACHMENT_ERASE_HORIZON": timedelta(minutes=15, seconds=15),
@@ -264,6 +268,7 @@ def cleanup(monkeypatch, interfaces):
         "AttachmentUpload": NS(objects=Query([upload])),
     }
     names = {
+        "_unpublished_failure",
         "_cleanup_plan",
         "_writers_stopped",
         "_erase_originals",

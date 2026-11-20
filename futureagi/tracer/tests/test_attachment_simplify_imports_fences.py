@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace as NS
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -58,8 +58,12 @@ class Query:
                 if key.endswith("__in"):
                     if attr(row, key[:-4]) not in value:
                         return False
-                elif attr(row, key) != value:
-                    return False
+                else:
+                    actual = attr(row, key)
+                    if isinstance(actual, UUID) and isinstance(value, str):
+                        value = UUID(value)
+                    if actual != value:
+                        return False
             return True
 
         return Query([row for row in self.rows if matches(row)])
@@ -102,6 +106,9 @@ class Manager(Query):
 def model(name, **defaults):
     class Model(Row):
         def __init__(self, **values):
+            for key in ("client_id", "correlation_nonce"):
+                if isinstance(values.get(key), str):
+                    values[key] = UUID(values[key])
             super().__init__(**{**copy.deepcopy(defaults), **values})
 
     Model.__name__ = name
@@ -142,6 +149,7 @@ def lane(monkeypatch, tmp_path):
     )
     for name in (
         "Attachment",
+        "AttachmentOutbox",
         "AttachmentManifestRevision",
         "AttachmentOccurrence",
         "AttachmentScope",
@@ -520,13 +528,35 @@ def test_atomic_admission_target_and_neutral_transfer(lane, monkeypatch, whole):
     binding, counters, transfers = uuid4(), [], []
     monkeypatch.setattr(lane, "_admit_policy", lambda *_: None)
     monkeypatch.setattr(lane, "_lock_creator", lambda *_: None)
-    monkeypatch.setattr(lane, "_lock_source", lambda *_: None)
+    monkeypatch.setattr(lane, "_lock_source", lambda *_: (None, None, None))
+    # The fake ORM has no sealed-source store. Admission and replay still
+    # check the fingerprint, target and association against the same facts.
+    monkeypatch.setattr(lane, "_independent_replay_facts", lambda *_: facts)
+    depth = NS(in_atomic_block=False)
+
+    @contextmanager
+    def atomic():
+        previous, depth.in_atomic_block = depth.in_atomic_block, True
+        try:
+            yield
+        finally:
+            depth.in_atomic_block = previous
+
+    monkeypatch.setattr(lane.transaction, "get_connection", lambda: depth)
+    monkeypatch.setattr(lane.transaction, "atomic", atomic)
     source = types.ModuleType("tracer.services.attachments.source_providers")
+    source._envelope_provider = lambda *_: None
     source.resolve = lambda **_: facts
     source.revalidate = lambda **_: None
     ready = types.ModuleType("tracer.services.attachments.readiness")
     ready.require_new_admission = lambda **_: binding
-    ready.require_decoder = lambda *_: None
+    validation = types.ModuleType("tracer.services.attachments.validation")
+    validation.require_supported_plan = lambda mime: (
+        mime == "audio/wav" or pytest.fail(mime)
+    )
+    validation.require_decoder = lambda req: validation.require_supported_plan(
+        req.mime_type
+    )
     db = types.ModuleType("tracer.services.attachments.capacity_db")
     db.count_attempt = lambda **_: True
     db.lock_capacity = lambda **_: object()
@@ -558,7 +588,7 @@ def test_atomic_admission_target_and_neutral_transfer(lane, monkeypatch, whole):
         return lane.AttachmentUpload.objects.create(attachment=asset)
 
     uploads.initialize_import_locked = initialize
-    for module in (source, ready, db, uploads):
+    for module in (source, ready, db, uploads, validation):
         monkeypatch.setitem(sys.modules, module.__name__, module)
     response, created = lane.submit(importer, scope_id=scope.id, body=body)
     assert created is True
