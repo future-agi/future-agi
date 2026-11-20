@@ -23372,6 +23372,26 @@ export interface HarnessScenarioValidateResponseApi {
   message?: string;
 }
 
+export interface HarnessScenarioRunningValidationApi {
+  /**
+   * The default pair's validation still running, the one a Validate press returns; null when none.
+   * @minLength 1
+   */
+  job_id: string;
+  /** The cases it proves; null when it proves every case. */
+  scenario_keys: string[];
+  /**
+   * How many cases a Validate of the cases not yet proved would prove.
+   * @minimum 0
+   */
+  to_prove: number;
+  /**
+   * Why there is nothing to prove, when there is nothing.
+   * @minLength 1
+   */
+  message: string;
+}
+
 export interface HarnessScenarioArchiveApi {
   /** @maxLength 255 */
   reason?: string;

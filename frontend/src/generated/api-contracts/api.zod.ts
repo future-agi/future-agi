@@ -51070,6 +51070,41 @@ export const SimulateApiHarnessEnvironmentsValidateScenariosResponse =
   });
 
 /**
+ * The default pair's validation still running, so a page opened after it started follows it; and how many
+cases a Validate of those not yet proved would prove.
+ */
+export const SimulateApiHarnessEnvironmentsRunningValidationParams = zod.object(
+  {
+    id: zod.string(),
+  },
+);
+
+export const simulateApiHarnessEnvironmentsRunningValidationResponseToProveMin = 0;
+
+export const SimulateApiHarnessEnvironmentsRunningValidationResponse =
+  zod.object({
+    job_id: zod
+      .string()
+      .min(1)
+      .describe(
+        "The default pair's validation still running, the one a Validate press returns; null when none.",
+      ),
+    scenario_keys: zod
+      .array(zod.string().min(1))
+      .describe("The cases it proves; null when it proves every case."),
+    to_prove: zod
+      .number()
+      .min(simulateApiHarnessEnvironmentsRunningValidationResponseToProveMin)
+      .describe(
+        "How many cases a Validate of the cases not yet proved would prove.",
+      ),
+    message: zod
+      .string()
+      .min(1)
+      .describe("Why there is nothing to prove, when there is nothing."),
+  });
+
+/**
  * Take a scenario out of future runs, keeping its identity, runs and evidence.
  */
 export const SimulateApiHarnessEnvironmentsArchiveScenarioParams = zod.object({

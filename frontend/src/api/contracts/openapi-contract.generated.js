@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1170,
+  endpointCount: 1171,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29689,6 +29689,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           202: {
             $ref: "#/definitions/HarnessScenarioValidateResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/scenarios/validate/running/": {
+      get: {
+        operationId: "simulate_api_harness-environments_running_validation",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessScenarioRunningValidation",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -71285,6 +71302,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         truncated: {
           title: "Truncated",
           type: "boolean",
+        },
+      },
+    },
+    HarnessScenarioRunningValidation: {
+      required: ["job_id", "scenario_keys", "to_prove", "message"],
+      type: "object",
+      properties: {
+        job_id: {
+          title: "Job id",
+          description:
+            "The default pair's validation still running, the one a Validate press returns; null when none.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        scenario_keys: {
+          description: "The cases it proves; null when it proves every case.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        to_prove: {
+          title: "To prove",
+          description:
+            "How many cases a Validate of the cases not yet proved would prove.",
+          type: "integer",
+          minimum: 0,
+        },
+        message: {
+          title: "Message",
+          description: "Why there is nothing to prove, when there is nothing.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },

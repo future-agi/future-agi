@@ -691,6 +691,7 @@ import type {
   HarnessScenarioRecordsResponseApi,
   HarnessScenarioRestoreApi,
   HarnessScenarioRevisionsApi,
+  HarnessScenarioRunningValidationApi,
   HarnessScenarioValidateApi,
   HarnessScenarioValidateResponseApi,
   HarnessScenarioValidationStatusApi,
@@ -62441,6 +62442,52 @@ export const simulateApiHarnessEnvironmentsValidateScenarios = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessScenarioValidateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsRunningValidationResponse200 = {
+  data: HarnessScenarioRunningValidationApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsRunningValidationResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsRunningValidationResponseSuccess =
+  simulateApiHarnessEnvironmentsRunningValidationResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsRunningValidationResponseError =
+  simulateApiHarnessEnvironmentsRunningValidationResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsRunningValidationResponse =
+  | simulateApiHarnessEnvironmentsRunningValidationResponseSuccess
+  | simulateApiHarnessEnvironmentsRunningValidationResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunningValidationUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/scenarios/validate/running/`;
+};
+
+/**
+ * The default pair's validation still running, so a page opened after it started follows it; and how many
+cases a Validate of those not yet proved would prove.
+ */
+export const simulateApiHarnessEnvironmentsRunningValidation = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRunningValidationResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRunningValidationResponse>(
+    getSimulateApiHarnessEnvironmentsRunningValidationUrl(id),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
