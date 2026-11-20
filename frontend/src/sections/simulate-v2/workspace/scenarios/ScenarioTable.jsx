@@ -307,30 +307,31 @@ RowMenu.propTypes = {
 };
 
 /* A proposed scenario waits for someone to add it — the review step. */
-function ProposedTag({ row, onAction, locked }) {
+function ProposedTag({ row }) {
   if (!row.proposed) return null;
   return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={0.75}
-      sx={{ flexShrink: 0 }}
-    >
+    <Box sx={{ display: "flex", flexShrink: 0 }}>
       <ProposedBadge />
-      {onAction && !locked && (
-        <TextAction
-          onClick={(e) => {
-            e.stopPropagation();
-            onAction("approve", row);
-          }}
-        >
-          Add
-        </TextAction>
-      )}
-    </Stack>
+    </Box>
   );
 }
-ProposedTag.propTypes = {
+ProposedTag.propTypes = { row: PropTypes.object.isRequired };
+
+/* Add sits with the row's other actions, at the end of the row. */
+function AddAction({ row, onAction, locked }) {
+  if (!row.proposed || !onAction || locked) return null;
+  return (
+    <TextAction
+      onClick={(e) => {
+        e.stopPropagation();
+        onAction("approve", row);
+      }}
+    >
+      Add
+    </TextAction>
+  );
+}
+AddAction.propTypes = {
   row: PropTypes.object.isRequired,
   onAction: PropTypes.func,
   locked: PropTypes.bool,
@@ -480,6 +481,9 @@ export default function ScenarioTable({
   selectedIds,
   onSelectionChange,
   locked = false,
+  /* Inside a batch of proposals: its header already says where they came
+     from and that they're proposed, so the rows don't repeat it. */
+  inProposal = false,
 }) {
   /* Stored env labels read as major.minor ("v3" → "v2.1"). */
   const vl = (label) => (envState ? envLabelOf(env, envState, label) : label);
@@ -805,16 +809,16 @@ export default function ScenarioTable({
                           </Tooltip>
                         )}
                         {/* Where it came from — links back when there is somewhere to go. */}
-                        <SourceBadge
-                          scenario={row}
-                          env={env}
-                          envState={envState}
-                        />
-                        <ProposedTag
-                          row={row}
-                          onAction={onStateAction}
-                          locked={locked}
-                        />
+                        {!(inProposal && row.proposed) && (
+                          <>
+                            <SourceBadge
+                              scenario={row}
+                              env={env}
+                              envState={envState}
+                            />
+                            <ProposedTag row={row} />
+                          </>
+                        )}
                         {!adm.admitted && (
                           <Tooltip arrow title={`Set aside — ${adm.reason}`}>
                             <Box sx={{ display: "flex", flexShrink: 0 }}>
@@ -826,7 +830,9 @@ export default function ScenarioTable({
                             </Box>
                           </Tooltip>
                         )}
-                        {stateOf && (
+                        {/* Not proved is a given for a proposal — it's
+                            proved when it's added. */}
+                        {stateOf && !row.proposed && (
                           <Box
                             onClick={stop}
                             sx={{ display: "inline-flex", flexShrink: 0 }}
@@ -957,6 +963,11 @@ export default function ScenarioTable({
                       sx={{ ...cellSx, whiteSpace: "nowrap", pr: 1 }}
                       onClick={stop}
                     >
+                      <AddAction
+                        row={row}
+                        onAction={onStateAction}
+                        locked={locked}
+                      />
                       <RowMenu
                         row={row}
                         state={stateOf ? stateOf(row) : null}
@@ -979,6 +990,7 @@ export default function ScenarioTable({
 }
 
 ScenarioTable.propTypes = {
+  inProposal: PropTypes.bool,
   rows: PropTypes.array.isRequired,
   rowHeight: PropTypes.string,
   groups: PropTypes.array,

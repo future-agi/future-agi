@@ -2272,6 +2272,7 @@ export default function ScenariosStep({
               const containers = (
                 <BatchContainers
                   batches={batches}
+                  onAddAll={ro ? null : (rows) => approve(rows)}
                   summaryOf={(b) => {
                     /* The build's yield: what can run and why the rest
                        is held, in the same states as the rows. */

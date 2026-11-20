@@ -158,8 +158,12 @@ function BatchContainer({
   renderList,
   flash,
   summary = null,
+  onAddAll = null,
 }) {
   const [open, setOpen] = useState(true);
+  /* A batch of proposals: Add all lives on its header, once. */
+  const allProposed =
+    batch.rows.length > 0 && batch.rows.every((r) => r.proposed);
   return (
     <Box
       id={`batch-${batch.meta.batchId}`}
@@ -249,6 +253,17 @@ function BatchContainer({
           spacing={1.5}
           sx={{ ml: "auto" }}
         >
+          {allProposed && onAddAll && (
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              onClick={() => onAddAll(batch.rows)}
+              sx={{ flexShrink: 0 }}
+            >
+              {batch.rows.length === 1 ? "Add" : `Add all ${batch.rows.length}`}
+            </Button>
+          )}
           {/* The same Hide / Show control as the timeline (v1) — an outlined
             button that says how many it folds away. */}
           <Stack
@@ -309,7 +324,9 @@ function BatchContainer({
           <BatchBody
             batch={batch}
             view={view}
-            tableProps={tableProps}
+            tableProps={
+              allProposed ? { ...tableProps, inProposal: true } : tableProps
+            }
             renderList={renderList}
           />
         </Box>
@@ -326,6 +343,7 @@ BatchContainer.propTypes = {
   tableProps: PropTypes.object,
   renderList: PropTypes.func,
   flash: PropTypes.bool,
+  onAddAll: PropTypes.func,
 };
 
 export function BatchContainers({
@@ -337,6 +355,7 @@ export function BatchContainers({
   latestId,
   versionOf,
   summaryOf,
+  onAddAll,
 }) {
   return (
     <Stack spacing={2}>
@@ -355,6 +374,10 @@ export function BatchContainers({
           renderList={renderList}
           flash={flashId === b.meta.batchId}
           summary={summaryOf ? summaryOf(b) : null}
+          /* A trace draft is added only through its review. */
+          onAddAll={
+            onAddAll && !b.rows.some((r) => r.traceImport) ? onAddAll : null
+          }
         />
       ))}
     </Stack>
@@ -369,6 +392,7 @@ BatchContainers.propTypes = {
   flashId: PropTypes.string,
   latestId: PropTypes.string,
   versionOf: PropTypes.func,
+  onAddAll: PropTypes.func,
 };
 
 /* ── v9 · history panel ─────────────────────────────────────────────────── */
