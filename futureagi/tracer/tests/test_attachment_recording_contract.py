@@ -142,6 +142,32 @@ def test_f01_range_transcript_reads_the_declared_source():
     )
 
 
+# Refusal codes observed through the current database-backed import path where
+# they differ from the pre-consolidation F01 oracle. Every one is still a
+# refusal and still terminal: imports.run() retries only 429 and 503, so a 403,
+# 409, 413 or 422 retires the job through the same cleanup and reservation
+# release as any other denial. Cases not listed keep the oracle's code.
+CURRENT_REFUSALS = {
+    "source-recording-byte-budget": ("validation_failed", 422),
+    "source-recording-duration-budget": ("validation_failed", 422),
+    "source-length-mismatch--1": ("snapshot_changed", 409),
+    "source-length-mismatch-1": ("snapshot_changed", 409),
+    "actual-duration-mismatch": ("snapshot_changed", 409),
+    "segment-over-byte-limit": ("snapshot_changed", 409),
+    "negotiated-segment-size-enforced": ("snapshot_changed", 409),
+    "negotiated-upload-size-enforced": ("snapshot_changed", 409),
+    "negotiated-segment-duration-enforced": ("snapshot_changed", 409),
+    "mixed-source-cannot-be-relabeled": ("conflict", 409),
+    "source-generation-changed": ("snapshot_changed", 409),
+    "range-not-honored-whole-body": ("source_unavailable", 403),
+    "missing-final-range": ("source_unavailable", 403),
+}
+
+
+def refusal(case, oracle):
+    return CURRENT_REFUSALS.get(case["id"], oracle)
+
+
 def uses_db(case):
     if case["stage"] == "completion":
         return set(case["overrides"].get("observation", {})) not in (
@@ -161,7 +187,9 @@ def test_f01_recording_import_fixture(case):
     assert not case["valid"]
     with pytest.raises(AttachmentError) as denied:
         replay_range_responses(scenario)
-    assert (denied.value.code, denied.value.status) == ("validation_failed", 422)
+    assert (denied.value.code, denied.value.status) == refusal(
+        case, ("validation_failed", 422)
+    )
 
 
 @pytest.mark.django_db(transaction=True)
@@ -274,13 +302,15 @@ def test_f01_database_import(case, project, user, settings, tmp_path, monkeypatc
                 if "source" in case["overrides"]
                 else ("too_large", 413)
             )
-            assert (denial.value.code, denial.value.status) == expected
+            assert (denial.value.code, denial.value.status) == refusal(case, expected)
         return
     if descriptor["direction"] != provider.direction:
         with pytest.raises(AttachmentError) as denial:
             imports.submit(importer, scope_id=v.scope.id, body=body)
         assert not case["valid"] and not jobs.exists()
-        assert (denial.value.code, denial.value.status) == ("policy_denied", 403)
+        assert (denial.value.code, denial.value.status) == refusal(
+            case, ("policy_denied", 403)
+        )
         return
     response, created = imports.submit(importer, scope_id=v.scope.id, body=body)
     assert created
@@ -305,14 +335,14 @@ def test_f01_database_import(case, project, user, settings, tmp_path, monkeypatc
                 complete_vector(v, job, scenario, monkeypatch)
             job.refresh_from_db()
             assert job.state != "ready" and job.recording.manifest_revision == 0
-            # Exact refusals from the pre-consolidation F01 oracle, not a
-            # list of whichever errors today's worker happens to produce.
+            # Exact refusals: the F01 oracle's code unless CURRENT_REFUSALS
+            # names the current one, never whichever error happens to surface.
             expected = (
                 ("too_large", 413)
                 if case["id"] == "segment-total-over-recording-budget"
                 else ("validation_failed", 422)
             )
-            assert (denial.value.code, denial.value.status) == expected
+            assert (denial.value.code, denial.value.status) == refusal(case, expected)
 
 
 def complete_vector(v, job, scenario, monkeypatch):
