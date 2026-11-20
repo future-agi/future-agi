@@ -168,6 +168,7 @@ class Operation:
     def state_forwards(self,app,state):
         kind=type(self).__name__
         if kind=='CreateModel': state.models[(app,self.name.lower())]=model(self.node)
+        elif kind=='DeleteModel': del state.models[(app,self.name.lower())]
         elif kind in ('AddField','AlterField'): state.models[(app,self.model_name)].fields[self.name]=self.field
         elif kind=='RemoveField': state.models[(app,self.model_name)].fields.pop(self.name,None)
         elif kind=='RenameField':
@@ -181,7 +182,7 @@ class Operation:
 
 
 def operation_types():
-    kinds=('CreateModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
+    kinds=('CreateModel','DeleteModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
         'RemoveIndex','AddConstraint','RemoveConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
     result={kind:type(kind,(Operation,),{'__module__':'django.db.migrations.operations.fixtures'}) for kind in kinds}
     result['AddIndexConcurrently']=type('AddIndexConcurrently',(result['AddIndex'],),
@@ -260,6 +261,43 @@ def baseline_state(revision):
     return state
 
 
+def operation_nodes(sequence):
+    """Read direct calls and the literal AddField row expansion used by 0144."""
+    assert isinstance(sequence, ast.List)
+    for node in sequence.elts:
+        if not isinstance(node, ast.Starred):
+            assert isinstance(node, ast.Call)
+            yield node
+            continue
+        expansion = node.value
+        assert isinstance(expansion, ast.ListComp) and len(expansion.generators) == 1
+        loop = expansion.generators[0]
+        assert not loop.ifs and not loop.is_async and isinstance(loop.iter, ast.Tuple)
+        assert isinstance(loop.target, ast.Tuple) and len(loop.target.elts) == 2
+        assert all(isinstance(t, ast.Name) for t in loop.target.elts)
+        assert [t.id for t in loop.target.elts] == ['name', 'field']
+        call = expansion.elt
+        assert isinstance(call, ast.Call) and ast.unparse(call.func) == 'migrations.AddField'
+        assert not call.args and [kw.arg for kw in call.keywords] == ['model_name', 'name', 'field']
+        model_kw, name_kw, field_kw = call.keywords
+        assert isinstance(model_kw.value, ast.Constant) and isinstance(model_kw.value.value, str)
+        assert isinstance(name_kw.value, ast.Name) and name_kw.value.id == 'name'
+        assert isinstance(field_kw.value, ast.Name) and field_kw.value.id == 'field'
+        for pair in loop.iter.elts:
+            assert isinstance(pair, ast.Tuple) and len(pair.elts) == 2
+            name, value = pair.elts
+            assert isinstance(name, ast.Constant) and isinstance(name.value, str)
+            assert isinstance(value, ast.Call) and ast.unparse(value.func) in (
+                'models.CharField', 'models.DateTimeField', 'models.BinaryField')
+            assert not value.args and all(kw.arg is not None for kw in value.keywords)
+            for kw in value.keywords:
+                ast.literal_eval(kw.value)  # reject dynamic constructor arguments
+            bound = copy.deepcopy(call)
+            bound.keywords[1].value = name
+            bound.keywords[2].value = value
+            yield bound
+
+
 def pending_plan(identities,env):
     migrations={}
     for app,name in identities:
@@ -268,7 +306,7 @@ def pending_plan(identities,env):
         values={n.targets[0].id:n.value for n in cls.body if isinstance(n,ast.Assign)}
         dependencies=[ast.literal_eval(n) for n in values['dependencies'].elts if isinstance(n,ast.Tuple)]
         operations=[]
-        for node in values['operations'].elts:
+        for node in operation_nodes(values['operations']):
             if isinstance(node.func,ast.Name):
                 # The SQL migration imports this standard Django operation by
                 # name. Do not accept arbitrary custom operations as AddIndex.
@@ -333,6 +371,28 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                                 return_value='\n'.join(changed) + '\n'):
                             with self.assertRaises(AssertionError):
                                 self.assert_complete_inventory(revision, identities, count)
+
+    def test_delete_model_uses_prior_table_and_removes_only_named_state(self):
+        state = State()
+        state.models = {('tracer', key): SimpleNamespace(options={'db_table': key}, fields={})
+                        for key in ('prior', 'other')}
+        env = scope_environment(state)
+        op = env['migrations'].DeleteModel(ast.parse('DeleteModel(name="Prior")', mode='eval').body)
+        self.assertEqual(env['touched'](op, SimpleNamespace(app_label='tracer'), state),
+                         {('postgres', 'public.prior')})
+        op.state_forwards('tracer', state)
+        self.assertEqual(set(state.models), {('tracer', 'other')})
+
+    def test_literal_add_fields_preserve_order_and_constructor_options(self):
+        env = scope_environment(State())
+        migration = pending_plan([ATTACHMENT_ADDITIONS[-1]], env)[0]
+        fields = [(op.name, op.field) for op in migration.operations
+                  if isinstance(op, env['migrations'].AddField) and op.model_name == 'attachmentproviderevent']
+        self.assertEqual([name for name, _ in fields], ['pending_egress_id', 'pending_expires_at',
+                         'pending_due_at', 'pending_key_id', 'pending_nonce', 'pending_ciphertext'])
+        self.assertEqual(fields[-1][1].options['max_length'], ast.dump(ast.Constant(65552)))
+        with self.assertRaises(AssertionError):
+            list(operation_nodes(ast.parse('[*dynamic_operations()]', mode='eval').body))
 
     def test_sql_index_operations_have_explicit_state_table_scope(self):
         # The sampling layer retains SQL's concurrent-index scope regression.
