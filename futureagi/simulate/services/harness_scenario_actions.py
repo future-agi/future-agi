@@ -272,6 +272,8 @@ def validate_scenarios(
     from simulate.services.harness_versioning import validation
 
     keys = body.get("keys")
+    # The person named the cases (or all of them): those are proved again, proof or not, and the progress counts them.
+    asked = keys is not None or bool(body.get("reprove_all"))
     if keys is not None and (
         not isinstance(keys, list)
         or not keys
@@ -342,12 +344,72 @@ def validate_scenarios(
             state="unavailable", message=validation.UNAVAILABLE_REASON
         ), 200
     job = started.job
+    if asked and job is not None:
+        _mark_asked(job, keys)
     deadline = validation.check_deadline(job) if job is not None else None
     return ValidateAnswer(
         state="validating",
         job_id=str(job.id) if job is not None else None,
         deadline_at=deadline.isoformat() if deadline is not None else None,
     ), 202
+
+
+# On a validation the person scoped: its progress counts the cases it was asked to prove, as this job reaches them.
+PROVING_ASKED = "proving_asked"
+
+
+def _mark_asked(job: HostedHarnessJob, keys: list[str] | None) -> None:
+    """Mark the job as proving what was asked, when it proves exactly that (a check already running for another
+    scope keeps its own count)."""
+    metadata = (job.payload or {}).get("metadata") or {}
+    if (metadata.get("scenario_keys") or None) != (list(keys) if keys else None):
+        return
+    HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+        payload={**job.payload, "metadata": {**metadata, PROVING_ASKED: True}}
+    )
+    job.payload = {**job.payload, "metadata": {**metadata, PROVING_ASKED: True}}
+
+
+def _asked_progress(
+    environment: HostedHarnessJob, job: HostedHarnessJob
+) -> tuple[int, int]:
+    """How many of the cases a scoped validation was asked to prove it has reached, of how many: its keys, else every
+    case of the pair not archived. A case counts once its proof for this job's agent version was made by this job."""
+    from simulate.models import HarnessSuiteValidation
+    from simulate.services.harness_versioning.versions import OTHER_AGENTS, suite_cases
+
+    metadata = (job.payload or {}).get("metadata") or {}
+    scope = list(dict.fromkeys(metadata.get("scenario_keys") or []))
+    if not scope:
+        archived = set(
+            HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment, archived_at__isnull=False
+            ).values_list("scenario_key", flat=True)
+        )
+        scope = [
+            key for key, _, _ in suite_cases(job.suite_version) if key not in archived
+        ]
+    proofs = (
+        HarnessSuiteValidation.no_workspace_objects.filter(
+            suite_version_id=job.suite_version_id,
+            environment_version_id=job.environment_version_id,
+        )
+        .values_list("proofs", flat=True)
+        .first()
+    ) or {}
+
+    def reached(entry: object) -> bool:
+        if not isinstance(entry, Mapping):
+            return False
+        own = entry
+        if str(entry.get("agent_version_id")) != str(job.agent_version_id):
+            own = (entry.get(OTHER_AGENTS) or {}).get(str(job.agent_version_id)) or {}
+        return (
+            str(own.get("job_id")) == str(job.id)
+            and own.get("blocked_reason") != "validation_incomplete"
+        )
+
+    return sum(1 for key in scope if reached(proofs.get(key))), len(scope)
 
 
 def check_ending(job: HostedHarnessJob) -> tuple[Literal["unavailable", "failed"], str]:
@@ -387,6 +449,8 @@ def validation_status(environment: HostedHarnessJob, job_id: Any) -> ValidationS
         if state == "validating"
         else None
     )
+    if counted is None and metadata.get(PROVING_ASKED):
+        counted = _asked_progress(environment, job)
     if counted is None:
         needed, total = cases_to_prove(
             environment,

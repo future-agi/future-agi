@@ -168,6 +168,40 @@ def test_validate_one_key_keeps_other_proofs(auth_client, certified):
     assert set(REFUND_KEYS + LOOKUP_KEYS) <= set(proofs)
 
 
+def test_validating_one_proved_case_proves_it_again_and_counts_only_it(
+    auth_client, certified
+):
+    from simulate.services.harness_versioning.versions import record_proofs
+    from simulate.tests.test_harness_affected_scenarios import (
+        LOOKUP_KEYS,
+        PROVED,
+        REFUND_KEYS,
+    )
+
+    # Every case already holds a proof: the person asks for one again all the same.
+    record_proofs(
+        certified.suite_version,
+        certified.environment_version,
+        dict.fromkeys(REFUND_KEYS + LOOKUP_KEYS, PROVED),
+        None,
+    )
+    started = _post(auth_client, certified, {"keys": [REFUND_KEYS[0]]})
+    job = HostedHarnessJob.no_workspace_objects.get(id=started.json()["job_id"])
+    before = _get(auth_client, certified, job.id).json()
+    record_proofs(
+        certified.suite_version,
+        certified.environment_version,
+        {REFUND_KEYS[0]: PROVED},
+        job,
+    )
+    after = _get(auth_client, certified, job.id).json()
+
+    assert started.status_code == 202, started.content
+    assert job.payload["metadata"]["scenario_keys"] == [REFUND_KEYS[0]]
+    assert (before["proved"], before["total"]) == (0, 1)
+    assert (after["proved"], after["total"]) == (1, 1)
+
+
 def test_bad_key_is_refused(auth_client, certified):
     for keys in (["has space"], ["x;rm -rf /"], [], [f"k{n}" for n in range(51)]):
         refused = _post(auth_client, certified, {"keys": keys})
