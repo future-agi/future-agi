@@ -2252,6 +2252,17 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             ),
             row="tracer.MetricProjectRefresh",
         ),
+        "_verified_delete": filed(
+            ROW_DRIVEN,
+            why=(
+                "counts rows left after a privacy delete in one metric store, "
+                "including current-list span copies, under the caller's org, "
+                "project and generation predicate. Scheduled expiry, unpublished "
+                "replans and erasure scrubs call it; it never reads source spans "
+                "or admits the project for calculation"
+            ),
+            row="tracer.MetricProjectRefresh",
+        ),
         "finish_pending_expiry": filed(
             ROW_DRIVEN,
             why=(
