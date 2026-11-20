@@ -1932,6 +1932,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "CHSpanReader.trace_aggregate": _READS_THE_IDS_IT_IS_GIVEN,
         "CHSpanReader.trace_aggregate_with_stddev": _READS_THE_IDS_IT_IS_GIVEN,
         "CHSpanReader.trace_ids_for_span_ids": _READS_THE_IDS_IT_IS_GIVEN,
+        "CHSpanReader.trace_units": _READS_THE_IDS_IT_IS_GIVEN,
         "CHSpanReader.trace_session_ids_by_trace_ids": _READS_THE_IDS_IT_IS_GIVEN,
         "_dedup_sql": filed(
             BY_ID_ALONE,

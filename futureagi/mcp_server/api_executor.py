@@ -314,8 +314,14 @@ class DjangoAPIExecutor:
             status_code = getattr(response, "status_code", 500)
             try:
                 data = json.loads(response.content)
-            except (AttributeError, json.JSONDecodeError, TypeError):
+            except (AttributeError, TypeError, ValueError):  # Not JSON, or not text.
                 data = getattr(response, "content", None)
+                # A text body, such as an Epoch candidate's git patch, is the
+                # result itself: return its text, not the bytes' repr.
+                if isinstance(data, bytes) and response.get(
+                    "Content-Type", ""
+                ).startswith("text/"):
+                    data = data.decode(response.charset, errors="replace")
 
         if status_code >= 400:
             message = "Django API request failed"

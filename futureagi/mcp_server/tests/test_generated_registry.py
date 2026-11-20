@@ -11,7 +11,7 @@ from mcp_server.generated_registry import (
 def test_committed_generated_registry_loads_all_tools():
     registry = GeneratedToolRegistry.from_manifest()
 
-    assert registry.count() == 124
+    assert registry.count() == 141
     for name in ("run_sql", "get_sql_result", "cancel_sql", "get_sql_catalog"):
         assert registry.get(name).group == "observability"
     for name, group in [

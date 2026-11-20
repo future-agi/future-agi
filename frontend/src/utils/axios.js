@@ -1915,6 +1915,14 @@ export const endpoints = {
         { id, candidate_id: candidateId },
       ),
   },
+  // An epoch run from an Error Feed issue, before and after it launches.
+  agentFixIssues: {
+    list: () => apiPath("/simulate/api/agent-fix-issues/"),
+    plan: () => apiPath("/simulate/api/agent-fix-issues/plan/"),
+    detail: (id) => apiPath("/simulate/api/agent-fix-issues/{id}/", { id }),
+    run: (id) => apiPath("/simulate/api/agent-fix-issues/{id}/run/", { id }),
+    stop: (id) => apiPath("/simulate/api/agent-fix-issues/{id}/stop/", { id }),
+  },
   runResultsV3: {
     calls: (id) =>
       apiPath("/simulate/v3/test-executions/{test_execution_id}/calls/", {

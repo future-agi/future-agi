@@ -45,8 +45,8 @@ def required_tool(registry: GeneratedToolRegistry, name: str) -> GeneratedTool:
 
 def test_skills_registry_count_and_default_group():
     registry = GeneratedToolRegistry.from_manifest()
-    # dev's 111 generated tools plus the 13 Skills tools.
-    assert registry.count() == 124
+    # dev's 128 generated tools plus the 13 Skills tools.
+    assert registry.count() == 141
     assert {tool.name for tool in registry.list_by_groups(["skills"])} == SKILLS
     assert len(SKILL_READS) == 10 and len(SKILL_WRITES) == 3
     assert "skills" in TOOL_GROUPS and "skills" in DEFAULT_TOOL_GROUPS

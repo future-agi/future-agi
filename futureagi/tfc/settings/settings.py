@@ -1167,6 +1167,9 @@ AGENT_FIX_WORST_CASE_USD_PER_EVAL = os.getenv(
 # Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
 # cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.
 AGENT_FIX_MIN_FAILING_CASES = int(os.getenv("AGENT_FIX_MIN_FAILING_CASES", "12"))
+# Scenarios an environment's suite may hold from Error Feed issues: each one guards every
+# later epoch there, so Run Epoch from an issue asks for older ones to go first.
+AGENT_FIX_ISSUE_SCENARIOS_MAX = int(os.getenv("AGENT_FIX_ISSUE_SCENARIOS_MAX", "36"))
 # Models the engine may call through its fix's API; Future AGI pays for them. The list holds
 # the engine's planner, coder and reviewer, and the backups its profile moves to when one
 # loses a call.
