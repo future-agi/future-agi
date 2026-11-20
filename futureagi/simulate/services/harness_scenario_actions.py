@@ -380,7 +380,8 @@ def _asked_progress(
 
     metadata = (job.payload or {}).get("metadata") or {}
     scope = list(dict.fromkeys(metadata.get("scenario_keys") or []))
-    if not scope:
+    # A job with no suite version has no cases to count beyond any it names.
+    if not scope and job.suite_version is not None:
         archived = set(
             HostedHarnessScenario.no_workspace_objects.filter(
                 job=environment, archived_at__isnull=False

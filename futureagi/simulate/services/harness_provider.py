@@ -2843,7 +2843,7 @@ class HostedHarnessProvider:
                 delivered = push_scenarios_into_live_sandbox(job, suite)
                 if delivered:
                     receipts = [
-                        {**one, "outcome": "queued"}
+                        AmendReceipt(**{**one, "outcome": "queued"})
                         if one.get("outcome") == "applied"
                         else one
                         for one in receipts
