@@ -660,10 +660,12 @@ def _store_required_names(
 
     # Storing the document may have saved the payload (the prompt's own mark comes off),
     # so it is read again under the lock already held.
-    locked.refresh_from_db(fields=["agent_payload", "required_variable_names"])
+    locked.refresh_from_db(
+        fields=["agent_payload", "required_variable_names", "preflight_status"]
+    )
     names = reading_required_names(contract, locked.agent_payload or {})
     if isinstance(names, NoAnswer):
-        # No answer writes nothing: null stays null, a parent's copy keeps its mark.
+        # No answer writes nothing: null stays null, a parent's copy stays marked as one.
         log = logger.warning if names is NoAnswer.UNREADABLE else logger.info
         log(
             f"required_names_{names.value}",
@@ -671,7 +673,10 @@ def _store_required_names(
         )
         return
     required, own_payload = merge_required_names(
-        locked.required_variable_names, locked.agent_payload, names
+        locked.required_variable_names,
+        locked.agent_payload,
+        names,
+        pending=locked.preflight_status == Status.PENDING,
     )
     changes: dict[str, Any] = {
         "required_variable_names": required,

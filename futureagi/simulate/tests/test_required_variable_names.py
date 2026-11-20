@@ -161,6 +161,45 @@ def test_a_reading_that_names_no_process_keeps_the_parents_copy_and_its_mark(age
     assert _names(child) == ["CHILD_ONLY"]
 
 
+_COMPOSE_API = {"compose_file": "c.yaml", "service": "api"}
+
+
+@pytest.mark.usefixtures("storage")
+@pytest.mark.parametrize(
+    "runtime, expected",
+    [
+        # An entry for the selected process: every process's names, together.
+        (
+            {**_COMPOSE_API, "required_environment": {"api": ["A"], "worker": ["X"]}},
+            [
+                "A",
+                "X",
+            ],
+        ),
+        # No entry for it: another process's [] or names are no answer.
+        ({**_COMPOSE_API, "required_environment": {"redis": []}}, None),
+        ({"required_environment": {"worker": ["X"]}}, None),
+        # Neither a service nor "agent" says: any key answers.
+        ({"compose_file": "c.yaml", "required_environment": {"web": ["W"]}}, ["W"]),
+    ],
+)
+def test_only_an_entry_for_the_selected_process_is_an_answer(agent, runtime, expected):
+    version = _connect(agent, commit="null-column")
+    _, child = _child_with_parents_names(agent, parent_names=("PARENT_ONLY",))
+    contract = {"agent": {"name": "support"}, "runtime": runtime}
+
+    _store(version, agent, contract)
+    _store(child, agent, contract)
+
+    assert _names(version) == expected
+    if expected is None:
+        assert _names(child) == ["PARENT_ONLY"]
+        assert _payload(child)[REQUIRED_NAMES_FROM_PARENT] is True
+    else:
+        assert _names(child) == expected
+        assert _payload(child)[REQUIRED_NAMES_FROM_PARENT] is False
+
+
 def test_no_reading_leaves_the_names_unknown(agent):
     version = _connect(agent)
 
@@ -289,6 +328,19 @@ def test_a_name_the_run_supplies_is_not_listed(agent):
         {"required_environment": ["OPENAI_API_KEY"]},
         {"required_environment": {"agent": "OPENAI_API_KEY"}},
         {"required_environment": {"agent": [""]}},
+        # The scan path's bounds: a variable name, at most 128 characters, 200 names.
+        {"required_environment": {"agent": ["has space"]}},
+        {"required_environment": {"agent": ["x=y"]}},
+        {"required_environment": {"agent": ["a\nb"]}},
+        {"required_environment": {"agent": ["1STARTS_WITH_DIGIT"]}},
+        {"required_environment": {"agent": ["A" * 129]}},
+        {"required_environment": {"agent": [f"N{i}" for i in range(201)]}},
+        {
+            "required_environment": {
+                "agent": [f"A{i}" for i in range(150)],
+                "worker": [f"W{i}" for i in range(51)],
+            }
+        },
         {"required_environment": {"agent": ["A"]}, "interface": "http"},
         {"required_environment": {"agent": ["A"]}, "config_files": ["x"]},
         "not-a-runtime",
@@ -315,7 +367,7 @@ def test_version_one_takes_its_readings_names(agent):
     _store(version, agent, _contract("OPENAI_API_KEY"))
 
     assert _names(version) == ["OPENAI_API_KEY"]
-    assert REQUIRED_NAMES_FROM_PARENT not in _payload(version)
+    assert _payload(version)[REQUIRED_NAMES_FROM_PARENT] is False
 
 
 @pytest.mark.usefixtures("storage")
@@ -328,7 +380,7 @@ def test_a_child_replaces_its_parents_copy_at_its_own_reading(agent):
     _store(child, agent, _contract("CHILD_ONLY"))
 
     assert _names(child) == ["CHILD_ONLY"]
-    assert REQUIRED_NAMES_FROM_PARENT not in _payload(child)
+    assert _payload(child)[REQUIRED_NAMES_FROM_PARENT] is False
     assert _names(parent) == ["PARENT_ONLY"]
 
 
@@ -342,7 +394,7 @@ def test_a_child_with_its_parents_prompt_and_names_keeps_neither_flag(agent):
 
     payload = _payload(child)
     assert "prompt_from_parent" not in payload
-    assert REQUIRED_NAMES_FROM_PARENT not in payload
+    assert payload[REQUIRED_NAMES_FROM_PARENT] is False
     assert (
         AgentVersion.no_workspace_objects.get(id=child.id).description
         == (source_agent()["behaviour"][0]["instructions"])
@@ -448,7 +500,7 @@ def test_the_creation_check_replaces_a_parents_copy_and_takes_its_mark_off(
     )
 
     assert _names(child) == ["CHECK_ONLY"]
-    assert REQUIRED_NAMES_FROM_PARENT not in _payload(child)
+    assert _payload(child)[REQUIRED_NAMES_FROM_PARENT] is False
 
 
 @pytest.mark.usefixtures("storage")
@@ -491,6 +543,64 @@ def test_the_skipped_check_of_a_connected_agent_leaves_null_as_null(
     assert _missing(version) == []
 
 
+def _made_before_the_mark(version):
+    payload = dict(_payload(version))
+    payload.pop(REQUIRED_NAMES_FROM_PARENT, None)
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version=version
+    ).update(agent_payload=payload)
+
+
+@pytest.mark.usefixtures("storage")
+def test_a_copy_made_before_the_mark_is_replaced_by_its_first_reading(agent):
+    _, child = _child_with_parents_names(agent, parent_names=("PARENT_ONLY",))
+    _made_before_the_mark(child)
+    assert REQUIRED_NAMES_FROM_PARENT not in _payload(child)
+    assert _runtime(child).preflight_status == Status.PENDING
+
+    _store(child, agent, _contract("CHILD_ONLY"))
+
+    assert _names(child) == ["CHILD_ONLY"]
+    assert _payload(child)[REQUIRED_NAMES_FROM_PARENT] is False
+    # Its own now: a later writer adds.
+    _store(child, agent, _contract("LATER"), document_only=True)
+    assert _names(child) == ["CHILD_ONLY", "LATER"]
+
+
+@pytest.mark.usefixtures("storage")
+def test_the_creation_check_replaces_a_copy_made_before_the_mark(
+    agent, user, workspace, monkeypatch
+):
+    _, child = _child_with_parents_names(agent, parent_names=("PARENT_ONLY",))
+    _made_before_the_mark(child)
+    monkeypatch.setattr(
+        service, "create_agent_version", lambda *_args, **_kwargs: child
+    )
+
+    _create_environment(
+        user,
+        workspace,
+        CreationCheck(report={}, required_variable_names=["CHECK_ONLY"]),
+        "check-over-unmarked-copy",
+    )
+
+    assert _names(child) == ["CHECK_ONLY"]
+    assert _payload(child)[REQUIRED_NAMES_FROM_PARENT] is False
+
+
+@pytest.mark.usefixtures("storage")
+def test_a_list_a_check_wrote_before_the_mark_is_added_to(agent):
+    version = _connect(agent)
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version=version
+    ).update(required_variable_names=["CHECKED"], preflight_status=Status.PASSED)
+    assert REQUIRED_NAMES_FROM_PARENT not in _payload(version)
+
+    _store(version, agent, _contract("READ"), document_only=True)
+
+    assert _names(version) == ["CHECKED", "READ"]
+
+
 # --- the functions themselves -----------------------------------------------------
 
 
@@ -504,9 +614,44 @@ def test_the_skipped_check_of_a_connected_agent_leaves_null_as_null(
         ({"runtime": {"required_environment": {}}}, NoAnswer.NOT_GIVEN),
         ({"runtime": {"required_environment": {"agent": None}}}, NoAnswer.NOT_GIVEN),
         ({"runtime": {"required_environment": {"agent": []}}}, []),
+        # Only an entry for the selected process answers: as the kit counts it.
         (
             {"runtime": {"required_environment": {"agent": None, "worker": []}}},
-            [],
+            NoAnswer.NOT_GIVEN,
+        ),
+        ({"runtime": {"required_environment": {"worker": ["X"]}}}, NoAnswer.NOT_GIVEN),
+        (
+            {
+                "runtime": {
+                    "compose_file": "c.yaml",
+                    "service": "api",
+                    "required_environment": {"redis": []},
+                }
+            },
+            NoAnswer.NOT_GIVEN,
+        ),
+        (
+            {
+                "runtime": {
+                    "compose_file": "c.yaml",
+                    "service": "api",
+                    "required_environment": {"api": ["A"], "worker": ["X"]},
+                }
+            },
+            ["A", "X"],
+        ),
+        (
+            {
+                "runtime": {
+                    "compose_file": "c.yaml",
+                    "required_environment": {"web": ["W"]},
+                }
+            },
+            ["W"],
+        ),
+        (
+            {"runtime": {"service": "api", "required_environment": {"agent": ["A"]}}},
+            NoAnswer.NOT_GIVEN,
         ),
         # A name the run supplies is subtracted from an answer, which stays an answer.
         (
@@ -551,6 +696,14 @@ def test_the_names_are_read_from_the_contract(contract, expected):
     assert reading_required_names(contract, {}) == expected
 
 
+def test_names_at_the_scan_paths_bounds_are_read():
+    longest = "A" * 128
+    most = [f"N{i:03d}" for i in range(199)] + [longest]
+    contract = {"runtime": {"required_environment": {"agent": most}}}
+
+    assert reading_required_names(contract, {}) == sorted(most)
+
+
 def test_the_names_public_settings_meet_are_left_out():
     contract = _contract("LIVEKIT_URL", "OPENAI_API_KEY")
 
@@ -565,29 +718,57 @@ def test_the_names_public_settings_meet_are_left_out():
 
 
 @pytest.mark.parametrize(
-    "current, payload, names, expected, flag_removed",
+    "current, payload, names, pending, expected, payload_after",
     [
-        (None, {}, ["B", "A"], ["A", "B"], False),
-        (["P"], {REQUIRED_NAMES_FROM_PARENT: True, "x": 1}, ["A"], ["A"], True),
-        (["P"], {"x": 1}, ["A"], ["A", "P"], False),
-        (["A"], None, [], ["A"], False),
-        (None, {REQUIRED_NAMES_FROM_PARENT: True}, [], [], True),
+        (None, {}, ["B", "A"], True, ["A", "B"], {REQUIRED_NAMES_FROM_PARENT: False}),
+        (
+            ["P"],
+            {REQUIRED_NAMES_FROM_PARENT: True, "x": 1},
+            ["A"],
+            True,
+            ["A"],
+            {REQUIRED_NAMES_FROM_PARENT: False, "x": 1},
+        ),
+        (["P"], {REQUIRED_NAMES_FROM_PARENT: False}, ["A"], True, ["A", "P"], None),
+        (["A"], {REQUIRED_NAMES_FROM_PARENT: False}, [], False, ["A"], None),
+        (
+            None,
+            {REQUIRED_NAMES_FROM_PARENT: True},
+            [],
+            True,
+            [],
+            {REQUIRED_NAMES_FROM_PARENT: False},
+        ),
+        # Made before the mark: while pending the list can only be the parent's copy;
+        # after its check, it is the check's own.
+        (
+            ["P"],
+            {"x": 1},
+            ["A"],
+            True,
+            ["A"],
+            {REQUIRED_NAMES_FROM_PARENT: False, "x": 1},
+        ),
+        (
+            ["C"],
+            {"x": 1},
+            ["A"],
+            False,
+            ["A", "C"],
+            {REQUIRED_NAMES_FROM_PARENT: False, "x": 1},
+        ),
+        (["C"], None, [], False, ["C"], {REQUIRED_NAMES_FROM_PARENT: False}),
     ],
 )
 def test_the_first_own_writer_replaces_and_a_later_one_adds(
-    current, payload, names, expected, flag_removed
+    current, payload, names, pending, expected, payload_after
 ):
-    required, own_payload = merge_required_names(current, payload, names)
+    required, own_payload = merge_required_names(
+        current, payload, names, pending=pending
+    )
 
     assert required == expected
-    if flag_removed:
-        assert own_payload == {
-            key: value
-            for key, value in payload.items()
-            if key != REQUIRED_NAMES_FROM_PARENT
-        }
-    else:
-        assert own_payload is None
+    assert own_payload == payload_after
 
 
 # --- the fill command -------------------------------------------------------------
@@ -669,3 +850,45 @@ def test_the_command_fills_only_the_versions_it_is_given(agent):
 
     assert _names(other) == ["OPENAI_API_KEY"]
     assert _names(unknown) is None
+
+
+@pytest.mark.usefixtures("storage")
+def test_the_command_run_twice_fills_once(agent):
+    unknown, listed, _ = _versions_for_the_command(agent)
+    call_command("fill_required_variable_names", stdout=StringIO())
+    HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version=unknown
+    ).update(required_variable_names=["SINCE"])
+    out = StringIO()
+
+    call_command("fill_required_variable_names", stdout=out)
+
+    assert _names(unknown) == ["SINCE"]
+    assert _names(listed) == ["KEPT"]
+    assert "Filled 0 version(s)" in out.getvalue()
+
+
+@pytest.mark.usefixtures("storage")
+def test_a_row_filled_while_the_command_reads_its_contract_is_left_alone(
+    agent, monkeypatch
+):
+    from simulate.management.commands import fill_required_variable_names as command
+
+    unknown, _, _ = _versions_for_the_command(agent)
+    read = command.stored_version_contract
+
+    def read_then_filled_elsewhere(version_id):
+        contract = read(version_id)
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(
+            agent_version_id=version_id
+        ).update(required_variable_names=["FILLED_ELSEWHERE"])
+        return contract
+
+    monkeypatch.setattr(command, "stored_version_contract", read_then_filled_elsewhere)
+    out = StringIO()
+
+    call_command("fill_required_variable_names", stdout=out)
+
+    assert _names(unknown) == ["FILLED_ELSEWHERE"]
+    assert "Filled 0 version(s)" in out.getvalue()
+    assert "1 changed meanwhile." in out.getvalue()

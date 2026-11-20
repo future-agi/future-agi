@@ -75,7 +75,12 @@ class Command(BaseCommand):
             with transaction.atomic():
                 runtime = (
                     HarnessAgentVersionRuntime.no_workspace_objects.select_for_update()
-                    .only("id", "agent_payload", "required_variable_names")
+                    .only(
+                        "id",
+                        "agent_payload",
+                        "required_variable_names",
+                        "preflight_status",
+                    )
                     .get(id=runtime_id)
                 )
                 if runtime.required_variable_names is not None:
@@ -95,7 +100,11 @@ class Command(BaseCommand):
                     )
                     continue
                 required, own_payload = merge_required_names(
-                    None, runtime.agent_payload, names
+                    None,
+                    runtime.agent_payload,
+                    names,
+                    pending=runtime.preflight_status
+                    == HarnessAgentVersionRuntime.PreflightStatus.PENDING,
                 )
                 counts["filled"] += 1
                 self.stdout.write(

@@ -12,6 +12,7 @@ import copy
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -157,8 +158,9 @@ def version_credential_names(runtime: HarnessAgentVersionRuntime) -> list[str]:
     )
 
 
-# On a version whose required names are its parent's copy: the first writer of its own
-# replaces them, every later one adds.
+# Whose required names a version holds: True, its parent's copy (the next writer replaces
+# them); False, its own (a later writer adds). Absent on a version no writer has touched
+# since the mark began; see merge_required_names.
 REQUIRED_NAMES_FROM_PARENT = "required_names_from_parent"
 
 
@@ -210,6 +212,34 @@ def _names_the_run_supplies(runtime: Mapping[str, Any]) -> set[str]:
     return supplied
 
 
+# The bounds the scan path puts on names it takes from the sandbox
+# (FoundAgentSerializer.env_names): only a name the credentials form can save, and a list a
+# warning can carry.
+_VARIABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+MAX_VARIABLE_NAME_LENGTH = 128
+MAX_REQUIRED_NAMES = 200
+
+
+def _is_variable_name(name: Any) -> bool:
+    return (
+        isinstance(name, str)
+        and len(name) <= MAX_VARIABLE_NAME_LENGTH
+        and _VARIABLE_NAME.fullmatch(name) is not None
+    )
+
+
+def _selected_process(runtime: Mapping[str, Any]) -> str:
+    """The process the agent runs as, whose entry alone answers which settings it needs:
+    ``runtime.service``; else ``agent`` when there is no compose file; else "" (any key
+    answers). Mirrors the kit's ``_settings_unanswered`` (``fi.alk.harness.tools``), so a
+    reading the kit saves as unanswered is unanswered here too."""
+    service = runtime.get("service")
+    compose_file = runtime.get("compose_file")
+    return (service if isinstance(service, str) else "") or (
+        "" if compose_file else "agent"
+    )
+
+
 def reading_required_names(
     contract: Mapping[str, Any], agent: Mapping[str, Any]
 ) -> list[str] | NoAnswer:
@@ -217,24 +247,32 @@ def reading_required_names(
     ``runtime.required_environment``, whichever process reads it, less those the run supplies
     and those ``agent``'s public settings meet. Sorted.
 
-    ``[]`` only when a process is named with an empty list, the reading saying "none" in
-    so many words. A missing or empty section is no answer (``NOT_GIVEN``), and a section
-    of the wrong shape is ``UNREADABLE``: the caller writes nothing for either."""
+    Only an entry for the selected process (``_selected_process``) is an answer; then every
+    listed process's names are taken together, and ``[]`` means the reading said "none" in so
+    many words. A missing or empty section, or none for the selected process, is no answer
+    (``NOT_GIVEN``): another process's entry says nothing about the agent's. A section of the
+    wrong shape, a name that is not a variable name of at most 128 characters, or more than
+    200 names, is ``UNREADABLE``. The caller writes nothing for either."""
     try:
         runtime = _section(contract, "runtime")
         required = _section(runtime, "required_environment")
-        answered = False
+        listed: set[str] = set()
         names: set[str] = set()
-        for process_names in required.values():
+        for process, process_names in required.items():
             if process_names is None:
                 continue
-            if not isinstance(process_names, list) or not all(
-                isinstance(name, str) and name for name in process_names
+            if (
+                not isinstance(process_names, list)
+                or len(process_names) > MAX_REQUIRED_NAMES
+                or not all(_is_variable_name(name) for name in process_names)
             ):
                 raise ValueError("required_environment")
-            answered = True
+            listed.add(str(process))
             names.update(process_names)
-        if not answered:
+            if len(names) > MAX_REQUIRED_NAMES:
+                raise ValueError("required_environment")
+        selected = _selected_process(runtime)
+        if not (selected in listed if selected else listed):
             return NoAnswer.NOT_GIVEN
         names -= _names_the_run_supplies(runtime)
     except ValueError:
@@ -243,26 +281,30 @@ def reading_required_names(
 
 
 def merge_required_names(
-    current: list[str] | None, payload: Mapping[str, Any] | None, names: Iterable[str]
+    current: list[str] | None,
+    payload: Mapping[str, Any] | None,
+    names: Iterable[str],
+    *,
+    pending: bool,
 ) -> tuple[list[str], dict[str, Any] | None]:
     """A writer's ``names`` against a version's ``current`` list. The first writer of the
     version's own replaces a parent's copy (or the unknown, null); a later one adds.
 
-    Returns the list to store, and the payload to store when the parent's mark comes off
+    Without the mark (a version made before it), the list's origin decides: while the
+    version's check is ``pending``, nothing but its creation wrote a list, so it is the
+    parent's copy and is replaced; after, it is the check's own and is added to.
+
+    Returns the list to store, and the payload to store when the mark changes to "own"
     (None when the payload is unchanged)."""
     payload = payload or {}
-    if current is None or payload.get(REQUIRED_NAMES_FROM_PARENT):
-        own = None
-        if REQUIRED_NAMES_FROM_PARENT in payload:
-            own = {
-                key: value
-                for key, value in payload.items()
-                if key != REQUIRED_NAMES_FROM_PARENT
-            }
-        return sorted({str(name) for name in names}), own
-    return sorted(
-        {*(str(name) for name in current), *(str(name) for name in names)}
-    ), None
+    mark = payload.get(REQUIRED_NAMES_FROM_PARENT)
+    replace = current is None or mark is True or (mark is None and pending)
+    written = {str(name) for name in names}
+    if not replace:
+        written |= {str(name) for name in current or []}
+    if mark is False:
+        return sorted(written), None
+    return sorted(written), {**payload, REQUIRED_NAMES_FROM_PARENT: False}
 
 
 _RUN_AGENT_FIELDS = ("connector", "mode", "call_direction", "target_speaks_first")
@@ -3211,7 +3253,10 @@ def ensure_environment_agent(
     ):
         # A reading may have listed names already: the check adds its own, never erases.
         required, own_payload = merge_required_names(
-            runtime.required_variable_names, stored, check.required_variable_names
+            runtime.required_variable_names,
+            stored,
+            check.required_variable_names,
+            pending=True,
         )
         finished["required_variable_names"] = required
         if own_payload is not None:
