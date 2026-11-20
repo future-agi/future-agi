@@ -526,27 +526,47 @@ class RunningValidation(TypedDict):
     message: str | None
 
 
-def running_validation(environment: HostedHarnessJob) -> RunningValidation:
-    """The validation still running on the default pair, the one a Validate press would return, so a page opened
-    after it started follows it; and how many cases a Validate of those not yet proved would prove, saying why when
-    none."""
+def live_validation(environment: HostedHarnessJob) -> HostedHarnessJob | None:
+    """The validation still running on the environment's default pair, if any."""
     from simulate.models import HarnessAssembledBundle
     from simulate.services.harness_versioning import validation
 
     agent, environment_version, suite_version = resolve_versions(environment, {})
     if agent is None or environment_version is None or suite_version is None:
-        return RunningValidation(
-            job_id=None, scenario_keys=None, to_prove=0, message=None
-        )
+        return None
     bundles = HarnessAssembledBundle._base_manager.filter(
         job_id=environment.id,
         agent_version_id=agent.id,
         environment_version_id=environment_version.id,
         suite_version_id=suite_version.id,
     ).values_list("id", flat=True)
-    job = next(
+    return next(
         (one for one in map(validation.live_check, bundles) if one is not None), None
     )
+
+
+VALIDATION_RUNNING = (
+    "A validation of these scenarios is running. Wait for it to finish, then save."
+)
+
+
+def require_no_validation(environment: HostedHarnessJob) -> None:
+    """Refuse a Save while a validation of the default pair runs: the Save moves the defaults, and what the
+    validation proves would land on the versions it left behind."""
+    if live_validation(environment) is not None:
+        raise _error("validation_running", VALIDATION_RUNNING, 409)
+
+
+def running_validation(environment: HostedHarnessJob) -> RunningValidation:
+    """The validation still running on the default pair, the one a Validate press would return, so a page opened
+    after it started follows it; and how many cases a Validate of those not yet proved would prove, saying why when
+    none."""
+    agent, environment_version, suite_version = resolve_versions(environment, {})
+    if agent is None or environment_version is None or suite_version is None:
+        return RunningValidation(
+            job_id=None, scenario_keys=None, to_prove=0, message=None
+        )
+    job = live_validation(environment)
     needed, live = _to_prove(environment, agent, environment_version, suite_version)
     metadata = ((job.payload or {}).get("metadata") or {}) if job is not None else {}
     return RunningValidation(

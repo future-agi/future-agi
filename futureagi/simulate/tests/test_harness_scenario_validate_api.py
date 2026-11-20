@@ -202,6 +202,42 @@ def test_validating_one_proved_case_proves_it_again_and_counts_only_it(
     assert (after["proved"], after["total"]) == (1, 1)
 
 
+@pytest.mark.parametrize("candidates", [False, True])
+def test_save_is_refused_while_a_validation_of_the_default_pair_runs(
+    auth_client, certified, candidates
+):
+    def save(key):
+        body = {"idempotency_key": key}
+        if candidates:
+            body.update(
+                candidates={
+                    "environment_version_id": str(certified.environment_version_id),
+                    "suite_version_id": str(certified.suite_version_id),
+                },
+                name="Mid-validation save",
+            )
+        else:
+            body["drafts"] = [
+                {
+                    "piece": "suite",
+                    "expected_parent_id": str(certified.suite_version_id),
+                }
+            ]
+        return auth_client.post(
+            f"{BASE}/{certified.id}/drafts/save/", body, format="json"
+        )
+
+    before = save("save-before")
+    started = _post(auth_client, certified)
+    during = save("save-during")
+
+    assert started.status_code == 202, started.content
+    # With no validation running, the Save fails on something else: no draft, or no validated set.
+    assert before.json().get("error") != "validation_running"
+    assert (during.status_code, during.json()["error"]) == (409, "validation_running")
+    assert "Wait for it to finish" in during.json()["message"]
+
+
 def test_bad_key_is_refused(auth_client, certified):
     for keys in (["has space"], ["x;rm -rf /"], [], [f"k{n}" for n in range(51)]):
         refused = _post(auth_client, certified, {"keys": keys})

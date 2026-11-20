@@ -1553,6 +1553,9 @@ def save_drafts(
         first = next(piece for piece in DRAFT_PIECES if piece in pieces)
         require_idle(locked, first)
         require_no_fix_waiting(locked)
+        from simulate.services.harness_scenario_actions import require_no_validation
+
+        require_no_validation(locked)
         expected_review_digest = next(
             (
                 one.expected_review_digest
