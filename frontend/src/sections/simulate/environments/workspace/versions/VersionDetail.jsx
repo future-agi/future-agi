@@ -105,7 +105,15 @@ const isFirst = (version, siblings) =>
 export default function VersionDetail({ envId, piece, version, siblings }) {
   const [picked, setAgainst] = useState("");
   const { detail } = VERSIONS_COPY;
-  const others = siblings.filter((one) => one.id !== version.id);
+  // The version it was made from is the first choice, named there and not
+  // listed again.
+  const parent = siblings.find((one) => one.id === version.parentId);
+  const others = siblings.filter(
+    (one) => one.id !== version.id && one.id !== parent?.id,
+  );
+  const optionLabel = (one) =>
+    one.label ||
+    (one.status === "draft" ? detail.unsavedDraft : VERSIONS_COPY.unlabelled);
   // A compared version that a refresh removed falls back to the previous one.
   const against = others.some((one) => one.id === picked) ? picked : "";
   const first = !against && isFirst(version, siblings);
@@ -173,7 +181,7 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
         <Typography sx={{ typography: "s1", fontWeight: 500, flex: 1 }}>
           {detail.changes(`${VERSIONS_COPY.pieces[piece]} ${named(version)}`)}
         </Typography>
-        {others.length > 0 && (
+        {(parent || others.length > 0) && (
           <TextField
             select
             size="small"
@@ -186,10 +194,12 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
             InputLabelProps={{ shrink: true }}
             inputProps={{ "data-testid": "compare-with" }}
           >
-            <MenuItem value="">{detail.previous}</MenuItem>
+            <MenuItem value="">
+              {parent ? detail.previousNamed(named(parent)) : detail.previous}
+            </MenuItem>
             {others.map((one) => (
               <MenuItem key={one.id} value={one.id}>
-                {one.label || VERSIONS_COPY.unlabelled}
+                {optionLabel(one)}
               </MenuItem>
             ))}
           </TextField>

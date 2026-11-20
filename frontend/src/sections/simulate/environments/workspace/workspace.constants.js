@@ -239,6 +239,9 @@ export const VERSIONS_COPY = {
     changes: (label) => `What changed in ${label}`,
     compareWith: "Compared with",
     previous: "Its previous version",
+    // The version it was made from, named so it isn't listed twice.
+    previousNamed: (label) => `Its previous version (${label})`,
+    unsavedDraft: "Unsaved draft",
     first:
       "This is the first version, so there is nothing earlier to compare with.",
     noChange: "Nothing changed.",
@@ -247,7 +250,9 @@ export const VERSIONS_COPY = {
     loading: "Loading the changes",
     membersLoading: "Loading the scenarios in this version",
     loadError: "Couldn't load the changes.",
-    scenarios: (label, n) => `${n} scenario${n === 1 ? "" : "s"} in ${label}`,
+    // The whole version, which the comparison above doesn't change.
+    scenarios: (label, n) =>
+      n === 1 ? `The 1 scenario in ${label}` : `All ${n} scenarios in ${label}`,
     membersError: "Couldn't load the scenarios in this version.",
   },
   diff: {
@@ -269,6 +274,29 @@ export const VERSIONS_COPY = {
     scenariosAdded: "Scenarios added",
     scenariosRemoved: "Scenarios removed",
     scenariosChanged: "Scenarios changed",
+    // A scenario's fields as the server names them, in the scenario
+    // editor's words.
+    scenarioFields: {
+      name: "Name",
+      instruction: "What the caller wants",
+      use_case: "Use case",
+      branch: "Branch",
+      tests: "Passes when",
+      folder: "Folder",
+      persona: "Persona",
+      coverage: "Coverage",
+      sub_goals: "Sub-goals",
+      keywords: "Keywords",
+      background_noise: "Background noise",
+      max_turns: "Max turns",
+      actors: "Actors",
+      pre_run: "Pre-run steps",
+      history: "History",
+      starts_with: "Starts with",
+      faults: "Faults",
+      limits: "Limits",
+    },
+    fieldsChanged: (words) => `Changed: ${words.join(", ")}`,
     source: "Source changed",
     prompt: "Prompt changed",
     variables: "Variables",

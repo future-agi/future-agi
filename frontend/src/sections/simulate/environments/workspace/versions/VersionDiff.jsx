@@ -8,6 +8,12 @@ const list = (value) => (Array.isArray(value) ? value : []);
 // A changed actor comes as {id, name}; everything else as its name.
 const label = (one) =>
   one && typeof one === "object" ? String(one.name || one.id) : String(one);
+// A field the copy doesn't name yet still reads as words: "max_turns" → "Max turns".
+const fieldWord = (field) =>
+  COPY.scenarioFields[field] ||
+  String(field)
+    .replace(/_/g, " ")
+    .replace(/^./, (c) => c.toUpperCase());
 
 // One labelled group of names, e.g. "Added: lookup_order, refund".
 function NameLine({ label, names, tone }) {
@@ -130,32 +136,30 @@ function SuiteDiff({ diff }) {
               >
                 {one?.key ?? String(one)}
               </Box>
-              {one?.reason ? ` — ${one.reason}` : ""}
+              {one?.reason ? ` · ${one.reason}` : ""}
             </Typography>
           ))}
         </Stack>
       )}
       {changed.length > 0 && (
-        <Stack
-          spacing={0.5}
-          data-testid={`diff-group-${COPY.scenariosChanged}`}
-        >
+        <Stack spacing={1} data-testid={`diff-group-${COPY.scenariosChanged}`}>
           <Typography sx={{ typography: "s2", fontWeight: 500 }}>
             {COPY.scenariosChanged}
           </Typography>
           {changed.map(([key, fields]) => (
-            <Typography
-              key={key}
-              sx={{ typography: "s2", color: "text.secondary" }}
-            >
-              <Box
-                component="span"
-                sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}
+            <Box key={key}>
+              <Typography
+                sx={{
+                  typography: "s2",
+                  fontFamily: "ui-monospace, Menlo, monospace",
+                }}
               >
                 {key}
-              </Box>
-              {`: ${list(fields).join(", ")}`}
-            </Typography>
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {COPY.fieldsChanged(list(fields).map(fieldWord))}
+              </Typography>
+            </Box>
           ))}
         </Stack>
       )}

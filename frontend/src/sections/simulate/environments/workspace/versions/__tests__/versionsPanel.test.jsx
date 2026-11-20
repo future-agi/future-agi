@@ -372,17 +372,29 @@ describe("VersionsPanel", () => {
     expect(
       within(detail).getByText(/removed by manual edit/),
     ).toBeInTheDocument();
+    // Field names read in the scenario editor's words, not the server's keys.
     expect(
-      within(detail).getByText(": instruction, persona"),
+      within(detail).getByText("Changed: What the caller wants, Persona"),
     ).toBeInTheDocument();
-    expect(within(detail).getByText("2 scenarios in v2")).toBeInTheDocument();
+    // The list under the changes is the whole version, not the comparison.
+    expect(
+      within(detail).getByText("All 2 scenarios in v2"),
+    ).toBeInTheDocument();
     expect(within(detail).getByText("Refund request")).toBeInTheDocument();
     expect(within(detail).getByRole("table")).toHaveTextContent("billing");
   });
 
   it("compares against another version of the same piece", async () => {
     const user = userEvent.setup();
-    state.diffs["e2:e1"] = {
+    state.versions = {
+      ...VERSIONS,
+      environment: [
+        item({ id: "ed", label: null, status: "draft", parent_id: "e2" }),
+        ...VERSIONS.environment,
+        item({ id: "e0", label: "v0" }),
+      ],
+    };
+    state.diffs["e2:e0"] = {
       summary: "No contract, sub-goal or world change",
       diff: {
         contract: { tools: {}, rules: {}, use_cases: {}, fields: [] },
@@ -394,12 +406,16 @@ describe("VersionsPanel", () => {
     await user.click(row("environment", "v2"));
 
     await user.click(screen.getByRole("combobox", { name: "Compared with" }));
-    await user.click(screen.getByRole("option", { name: "v1" }));
+    // The previous version is named once, and a draft says it's unsaved.
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual(["Its previous version (v1)", "Unsaved draft", "v0"]);
+    await user.click(screen.getByRole("option", { name: "v0" }));
 
     expect(diffCalls.at(-1)).toEqual({
       piece: "environment",
       id: "e2",
-      against: "e1",
+      against: "e0",
       enabled: true,
     });
     expect(screen.getByText("Nothing changed.")).toBeInTheDocument();
@@ -472,7 +488,7 @@ describe("VersionsPanel", () => {
 
   it("lists the actors added and changed when only the cast changed", async () => {
     const user = userEvent.setup();
-    state.diffs["e2:e1"] = {
+    state.diffs["e2:"] = {
       summary: "2 actors added, 1 actor changed",
       diff: {
         contract: { tools: {}, rules: {}, use_cases: {}, fields: [] },
@@ -483,9 +499,6 @@ describe("VersionsPanel", () => {
     };
     render(<VersionsPanel env={ENV} />);
     await user.click(row("environment", "v2"));
-
-    await user.click(screen.getByRole("combobox", { name: "Compared with" }));
-    await user.click(screen.getByRole("option", { name: "v1" }));
 
     expect(screen.queryByText("Nothing changed.")).toBeNull();
     expect(screen.getByTestId("diff-group-Actors")).toHaveTextContent(
@@ -498,7 +511,7 @@ describe("VersionsPanel", () => {
 
   it("names each actor the server sends by id and name, never as an object", async () => {
     const user = userEvent.setup();
-    state.diffs["e2:e1"] = {
+    state.diffs["e2:"] = {
       summary: "1 actor added, 1 actor changed",
       diff: {
         contract: { tools: {}, rules: {}, use_cases: {}, fields: [] },
@@ -514,9 +527,6 @@ describe("VersionsPanel", () => {
     render(<VersionsPanel env={ENV} />);
     await user.click(row("environment", "v2"));
 
-    await user.click(screen.getByRole("combobox", { name: "Compared with" }));
-    await user.click(screen.getByRole("option", { name: "v1" }));
-
     const group = screen.getByTestId("diff-group-Actors");
     expect(group).toHaveTextContent("Added: Sam Rivera");
     expect(group).toHaveTextContent("Changed: manager");
@@ -525,7 +535,7 @@ describe("VersionsPanel", () => {
 
   it("says the actor changes are unknown when a version's cast cannot be read, not that nothing changed", async () => {
     const user = userEvent.setup();
-    state.diffs["e2:e1"] = {
+    state.diffs["e2:"] = {
       summary: "",
       diff: {
         contract: { tools: {}, rules: {}, use_cases: {}, fields: [] },
@@ -536,9 +546,6 @@ describe("VersionsPanel", () => {
     };
     render(<VersionsPanel env={ENV} />);
     await user.click(row("environment", "v2"));
-
-    await user.click(screen.getByRole("combobox", { name: "Compared with" }));
-    await user.click(screen.getByRole("option", { name: "v1" }));
 
     expect(
       screen.getByText(/Actors of one of these versions aren't known/),
@@ -709,17 +716,18 @@ describe("VersionsPanel", () => {
 
   it("falls back to the previous version when the compared one disappears", async () => {
     const user = userEvent.setup();
-    state.diffs["e2:e1"] = ENV_DIFF;
+    state.versions = {
+      ...VERSIONS,
+      environment: [...VERSIONS.environment, item({ id: "e0", label: "v0" })],
+    };
+    state.diffs["e2:e0"] = ENV_DIFF;
     const { rerender } = render(<VersionsPanel env={ENV} />);
     await user.click(row("environment", "v2"));
     await user.click(screen.getByRole("combobox", { name: "Compared with" }));
-    await user.click(screen.getByRole("option", { name: "v1" }));
-    expect(diffCalls.at(-1)).toMatchObject({ id: "e2", against: "e1" });
+    await user.click(screen.getByRole("option", { name: "v0" }));
+    expect(diffCalls.at(-1)).toMatchObject({ id: "e2", against: "e0" });
 
-    state.versions = {
-      ...VERSIONS,
-      environment: [VERSIONS.environment[0], item({ id: "e0", label: "v0" })],
-    };
+    state.versions = VERSIONS;
     rerender(<VersionsPanel env={ENV} />);
 
     expect(diffCalls.at(-1)).toMatchObject({ id: "e2", against: undefined });
@@ -834,7 +842,7 @@ describe("VersionsPanel", () => {
     render(<VersionsPanel env={ENV} />);
     await user.click(row("suite", "Unnumbered version"));
     expect(
-      screen.getByText("1 scenario in Unnumbered version"),
+      screen.getByText("The 1 scenario in Unnumbered version"),
     ).toBeInTheDocument();
     expect(screen.queryByText(/null/)).toBeNull();
   });
