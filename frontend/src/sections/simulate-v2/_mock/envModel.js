@@ -495,15 +495,20 @@ export const heldFixed = (a, b, env, envState) => {
 export const SCENARIO_STATES = {
   /* Clarified plan: Draft → Validated → Active, or Blocked / Archived.
      Re-check and outdated are drafts again until re-validated. */
-  valid: { label: "Validated", note: "every required check ran and passed" },
+  /* Words from the 20 Nov handover call: a scenario is Active (proved and
+     saved), Not proved (won't run until it is), Kept as written or Archived. */
+  valid: { label: "Active", note: "proved and saved — it runs" },
   recheck: {
-    label: "Draft",
-    note: "re-check — a rule or sub-goal changed on it",
+    label: "Not proved",
+    note: "a rule or sub-goal changed on it — validate it again",
   },
-  outdated: { label: "Draft", note: "rewrite — it no longer stages" },
+  outdated: { label: "Not proved", note: "it no longer stages — rewrite it" },
   retired: { label: "Retired", note: "no longer applies" },
   new: { label: "New", note: "added since this version" },
-  blocked: { label: "Blocked", note: "fix what failed, then validate" },
+  blocked: {
+    label: "Not proved",
+    note: "its proof failed — fix what failed, then validate",
+  },
 };
 
 export const scenarioStateOf = (row, status, versions = []) => {

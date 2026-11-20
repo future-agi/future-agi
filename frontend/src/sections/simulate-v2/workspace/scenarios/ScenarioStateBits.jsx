@@ -33,20 +33,29 @@ import {
   Outdated · Stale · Archived — with the detail on hover.
 */
 
+/* One mark per state people see: Not proved has one icon whatever the
+   reason (the reason is on hover). */
+const NOT_PROVED = "solar:shield-warning-linear";
 const ICON = {
   valid: "solar:check-circle-linear",
-  recheck: "solar:refresh-linear",
+  active: "solar:check-circle-linear",
+  kept: "solar:document-text-linear",
+  recheck: NOT_PROVED,
+  outdated: NOT_PROVED,
+  blocked: NOT_PROVED,
+  stale: NOT_PROVED,
+  draft: NOT_PROVED,
   archived: "solar:archive-linear",
-  stale: "solar:clock-circle-linear",
 };
 const MUTED = new Set(["archived", "later"]);
 /* In the table a state is one icon; the label and why stay on hover. */
 const ROW_ICON = {
-  draft: "solar:pen-2-linear",
-  recheck: "solar:refresh-linear",
-  outdated: "solar:danger-triangle-linear",
-  blocked: "solar:forbidden-circle-linear",
-  stale: "solar:clock-circle-linear",
+  draft: NOT_PROVED,
+  recheck: NOT_PROVED,
+  outdated: NOT_PROVED,
+  blocked: NOT_PROVED,
+  stale: NOT_PROVED,
+  kept: "solar:document-text-linear",
   archived: "solar:archive-linear",
   later: "solar:history-linear",
   active: "solar:check-circle-linear",

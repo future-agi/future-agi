@@ -163,7 +163,8 @@ const COLUMNS = [
 function StatusCell({ state }) {
   if (state?.back && (state.id === "valid" || state.id === "active"))
     return <BackMark back={state.back} />;
-  if (!state || state.id === "valid") return null;
+  /* Active is the normal case — no mark; only states that ask for something. */
+  if (!state || state.id === "valid" || state.id === "active") return null;
   return <StateChip state={state} iconOnly />;
 }
 

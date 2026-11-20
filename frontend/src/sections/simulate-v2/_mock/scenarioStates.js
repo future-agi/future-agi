@@ -42,9 +42,18 @@ export const STATE_TONE = { outdated: "#DC2626" };
 /* The states this tab adds to the doc's. */
 export const EXTRA_STATES = {
   archived: { label: "Archived", note: "kept in the set, not run or counted" },
-  stale: { label: "Blocked", note: "an agent change removed a tool it needs" },
-  /* Validated and in an active suite (Groups → Suites). */
-  active: { label: "Active", note: "validated, in a suite that runs" },
+  stale: {
+    label: "Not proved",
+    note: "an agent change removed a tool it needs",
+  },
+  /* Proved and saved, in a suite too. */
+  active: { label: "Active", note: "proved and saved — it runs" },
+  /* Saved without a proof — the check couldn't run. It runs, labelled. A
+     proof that ran and failed is never this; it stays Not proved. */
+  kept: {
+    label: "Kept as written",
+    note: "saved without a proof — it runs, but nothing showed its checks can catch a wrong answer",
+  },
   /* Viewing an older environment version: added after it. Not a state the
      filter offers — "new" is a compare band, not a scenario state. */
   later: {
@@ -55,14 +64,10 @@ export const EXTRA_STATES = {
 
 /* The filter's state choices, in the doc's order. */
 export const STATE_CHOICES = [
-  ...new Set([
-    SCENARIO_STATES.recheck.label,
-    SCENARIO_STATES.valid.label,
-    EXTRA_STATES.active.label,
-    SCENARIO_STATES.blocked.label,
-    EXTRA_STATES.stale.label,
-    EXTRA_STATES.archived.label,
-  ]),
+  EXTRA_STATES.active.label,
+  SCENARIO_STATES.recheck.label,
+  EXTRA_STATES.kept.label,
+  EXTRA_STATES.archived.label,
 ];
 
 /** Archived by hand — or retired before v7, which reads the same. */
@@ -148,10 +153,24 @@ export const ruleChangesOnFlow = (row, { env, envState, tools } = {}) => {
  * agentLabel }.
  */
 export const scenarioStateFor = (row, status, ctx = {}) => {
-  const state = baseStateFor(row, status, ctx);
+  const base = baseStateFor(row, status, ctx);
+  /* Never proved, but saved and still runnable: Kept as written. */
+  const state =
+    base.id === "recheck" &&
+    base.canRun !== false &&
+    !row?.provedAt &&
+    !(row?.provedOn || []).length
+      ? { ...base, id: "kept", ...EXTRA_STATES.kept }
+      : base;
   /* Blocked on an earlier agent version, and its tool is back: say so on
      the row, with the history it kept. */
-  if (!["valid", "active", "recheck"].includes(state.id) || !ctx.agentLabel || !ctx.env || !ctx.envState) return state;
+  if (
+    !["valid", "active", "recheck"].includes(state.id) ||
+    !ctx.agentLabel ||
+    !ctx.env ||
+    !ctx.envState
+  )
+    return state;
   const back = backForAgentOf(row, ctx.agentLabel, ctx.env, ctx.envState);
   return back ? { ...state, back } : state;
 };
@@ -174,7 +193,7 @@ const baseStateFor = (row, status, ctx = {}) => {
   if (row?.proposed && !row?.blocked) {
     return {
       id: "draft",
-      label: "Draft",
+      label: "Not proved",
       note: "proposed — review it before it joins",
       canRun: false,
       correct: null,

@@ -490,10 +490,11 @@ export default function ScenariosStep({
   const proofCounts = live.reduce(
     (c, r) => {
       if (r.proposed) return c;
+      /* The same states the chips show, so the line and the rows agree. */
       const id = stateOf(r).id;
       if (id === "valid" || id === "active") c.proved += 1;
-      else if (!r.provedAt && !(r.provedOn || []).length) c.kept += 1;
-      else c.notProved += 1;
+      else if (id === "kept") c.kept += 1;
+      else if (id !== "archived") c.notProved += 1;
       return c;
     },
     { proved: 0, kept: 0, notProved: 0 },
@@ -581,6 +582,8 @@ export default function ScenariosStep({
        Needs attention = Outdated, Stale, or Re-check that isn't mid-build. */
     const st = stateOf(r);
     ids.push(st.label);
+    /* A rule or file it cites changed (Karthik's Source changed filter). */
+    if (st.ruleChange || r.outdatedBy) ids.push("Source changed");
     if (r.proposed) ids.push("Proposed");
     if (needsReview(st)) ids.push("Needs attention");
     if (proofStatus(r, env, viewState).edited) ids.push("Edited");
@@ -708,7 +711,13 @@ export default function ScenariosStep({
         value: "status",
         label: "State",
         type: "enum",
-        choices: [...STATE_CHOICES, "Needs attention", "Edited", "Proposed"],
+        choices: [
+          ...STATE_CHOICES,
+          "Source changed",
+          "Needs attention",
+          "Edited",
+          "Proposed",
+        ],
       },
       {
         value: "persona",
@@ -1598,7 +1607,7 @@ export default function ScenariosStep({
           {
             label: "Review",
             primary: true,
-            onClick: () => setFilters({ status: ["Draft", "Blocked"] }),
+            onClick: () => setFilters({ status: ["Not proved"] }),
           },
           !ro &&
             review.reprovable.length > 0 && {
@@ -2129,8 +2138,7 @@ export default function ScenariosStep({
                   No baseline yet
                 </Typography>
                 <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                  The first run is the baseline epochs are measured
-                  against.
+                  The first run is the baseline epochs are measured against.
                 </Typography>
               </Box>
               <AlsoRunIn
