@@ -4881,8 +4881,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         from tracer.services.clickhouse.v2.query_builders.observe_usage import (
             ObserveTraceListQueryBuilderV2,
         )
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2,
+        )
 
         list_sort = validated_data.get("sort_params") or []
+        # Typed as the shared base, as the former conditional expression inferred it.
+        builder: TraceListQueryBuilderV2
         if list_sort == LATENCY_DESC:
             builder = RuntimeLatencyQueryBuilderV2(
                 project_id=None if org_scope else str(project_id),
