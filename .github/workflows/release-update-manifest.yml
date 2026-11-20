@@ -485,7 +485,7 @@ jobs:
           assert os.environ["GITHUB_REF"] == "refs/tags/" + target["version"]
           proof = root / PROOF_ASSET
           validation = target.get("compatibility", {}).get("validation")
-          if os.environ["BOOTSTRAP"] == "true":
+          if os.environ.get("BOOTSTRAP", "false") == "true":
               # Bootstrap is the deliberate first signed manifest: it may omit
               # only compatibility evidence and must remain the existing
               # uncertified/manual candidate. No proof may be attached. Use
