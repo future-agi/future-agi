@@ -22,6 +22,7 @@ import { changeCount } from "./changeCount";
 import { SCENARIOS_COPY } from "../scenarios/scenarios.constants";
 import { draftSaveRequests } from "./draftSave";
 import ReviewChangesDrawer from "./ReviewChangesDrawer";
+import { useRunningScenarioValidation } from "src/api/harness/scenarios";
 import {
   useDraftsValidation,
   validationStateNote,
@@ -88,6 +89,12 @@ export default function DraftBar({
   const staleId = useId();
   const busyId = useId();
   const holdId = useId();
+  const runningId = useId();
+  // A Save moves the defaults: never while a validation of them runs (the server refuses it too).
+  const running = useRunningScenarioValidation(enabled ? env?.id : null, {
+    follow: true,
+  });
+  const validationRunning = Boolean(running.data?.job_id);
 
   // A refusal is about the drafts it was sent for, so it goes when they
   // change. draft_changed stays: it asks to review the drafts it refetched.
@@ -129,7 +136,13 @@ export default function DraftBar({
     validating;
   const staleReason = drafts.stale ? staleText(drafts) : null;
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
-  const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
+  const saveReasons = [
+    staleReason && staleId,
+    validationRunning && runningId,
+    ...holdReasons,
+  ].filter(Boolean);
+  // Validating the changes may run beside a validation of the saved scenarios; only the Save waits for it.
+  const validateReasons = saveReasons.filter((id) => id !== runningId);
 
   const onValidate = () => {
     discard.reset();
@@ -219,8 +232,8 @@ export default function DraftBar({
       <Button
         size="small"
         variant="contained"
-        disabled={saveReasons.length > 0 || pending}
-        aria-describedby={saveReasons.join(" ") || undefined}
+        disabled={validateReasons.length > 0 || pending}
+        aria-describedby={validateReasons.join(" ") || undefined}
         onClick={onValidate}
       >
         {COPY.validate}
@@ -258,11 +271,7 @@ export default function DraftBar({
           {latest.updatedAt &&
             ` — ${COPY.lastEdited(latest.lastEditedBy, relativeTime(latest.updatedAt))}`}
         </Typography>
-        <Button
-          size="small"
-          color="inherit"
-          onClick={() => setReviewing(true)}
-        >
+        <Button size="small" color="inherit" onClick={() => setReviewing(true)}>
           {COPY.viewChanges}
         </Button>
         <Button
@@ -325,6 +334,15 @@ export default function DraftBar({
           sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
         >
           {COPY.busy}
+        </Typography>
+      )}
+      {validationRunning && (
+        <Typography
+          id={runningId}
+          data-testid="save-waits-on-validation"
+          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+        >
+          {COPY.errors.validation_running}
         </Typography>
       )}
       {rebuilding && (

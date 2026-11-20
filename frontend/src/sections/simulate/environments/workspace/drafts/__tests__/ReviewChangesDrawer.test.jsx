@@ -35,13 +35,21 @@ const flow = vi.hoisted(() => ({
 vi.mock("../useDraftsValidation", () => ({
   validationStateNote: () => null,
   useDraftsValidation: () => ({
-    drafts: { pieces: ["environment"], candidates: { environmentVersionId: "c1" }, validation: null },
+    drafts: {
+      pieces: ["environment"],
+      candidates: { environmentVersionId: "c1" },
+      validation: null,
+    },
     canSaveValidated: flow.canSaveValidated,
     validating: flow.validating,
     startValidation: flow.startValidation,
     validate: { error: flow.validateError },
     saveValidated: { mutate: flow.saveMutate, error: null },
   }),
+}));
+const runningValidation = vi.hoisted(() => ({ data: undefined }));
+vi.mock("src/api/harness/scenarios", () => ({
+  useRunningScenarioValidation: () => runningValidation,
 }));
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -114,6 +122,7 @@ describe("ReviewChangesDrawer", () => {
     flow.validateError = null;
     flow.startValidation.mockReset();
     flow.saveMutate.mockClear();
+    runningValidation.data = undefined;
   });
 
   it("sends each decision for that change", async () => {
@@ -282,6 +291,17 @@ describe("ReviewChangesDrawer", () => {
     );
     expect(onSaved).toHaveBeenCalledWith({ name: "Q3 orders" });
     expect(enqueueSnackbar).toHaveBeenCalled();
+  });
+
+  it("holds Save while a validation of the scenarios runs", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    runningValidation.data = { job_id: "validation-1" };
+    state.review = review([change({ decision: "accepted" })]);
+    renderDrawer();
+    const save = screen.getByRole("button", { name: /^Save/ });
+    expect(save).toHaveAttribute("aria-disabled", "true");
+    await user.click(save);
+    expect(flow.saveMutate).not.toHaveBeenCalled();
   });
 
   it("validates the accepted changes first, before Save is offered", async () => {

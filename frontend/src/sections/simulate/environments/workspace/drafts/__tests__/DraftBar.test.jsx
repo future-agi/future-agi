@@ -20,6 +20,10 @@ const discardReset = vi.fn();
 // The review drawer has its own tests; the bar only opens it.
 const reviewDrawer = vi.hoisted(() => vi.fn(() => null));
 vi.mock("../ReviewChangesDrawer", () => ({ default: reviewDrawer }));
+const runningValidation = vi.hoisted(() => ({ data: undefined }));
+vi.mock("src/api/harness/scenarios", () => ({
+  useRunningScenarioValidation: () => runningValidation,
+}));
 vi.mock("src/api/simulate-environments/versions", async () => {
   const actual = await vi.importActual(
     "src/api/simulate-environments/versions",
@@ -98,6 +102,7 @@ const discardButton = () =>
   screen.getByRole("button", { name: DRAFTS_COPY.discard });
 
 beforeEach(() => {
+  runningValidation.data = undefined;
   state.drafts = both();
   state.save = {};
   state.discard = {};
@@ -142,6 +147,22 @@ describe("DraftBar", () => {
       ],
       { onSuccess: expect.any(Function) },
     );
+  });
+
+  it("keeps Save off while a validation of the scenarios runs, saying to wait, and frees it after", async () => {
+    runningValidation.data = { job_id: "validation-1" };
+    const { rerender } = render(<DraftBar env={ENV} />);
+    const reason = DRAFTS_COPY.errors.validation_running;
+    expect(screen.getByTestId("save-waits-on-validation")).toHaveTextContent(
+      reason,
+    );
+    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAccessibleDescription(reason);
+
+    runningValidation.data = { job_id: null };
+    rerender(<DraftBar env={ENV} />);
+    expect(saveButton()).toBeEnabled();
+    expect(screen.queryByTestId("save-waits-on-validation")).toBeNull();
   });
 
   it("keeps Save off with the reason in view when the drafts are out of date", async () => {

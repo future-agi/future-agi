@@ -641,6 +641,8 @@ export const DRAFTS_COPY = {
   },
   discardError: "Couldn't discard the changes. Try again in a moment.",
   errors: {
+    validation_running:
+      "A validation of these scenarios is running. Wait for it to finish, then save.",
     draft_changed:
       "Someone changed these edits a moment ago; review them and save again",
     chat_working:

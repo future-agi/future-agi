@@ -23,6 +23,7 @@ import {
   useDraftsValidation,
   validationStateNote,
 } from "./useDraftsValidation";
+import { useRunningScenarioValidation } from "src/api/harness/scenarios";
 import ChangeRow from "./ChangeRow";
 import FailedChange, { DismissedChanges } from "./FailedChange";
 import HeldButton from "./HeldButton";
@@ -97,6 +98,10 @@ export default function ReviewChangesDrawer({
   // Save goes through Validate: the accepted changes are built and checked, then the checked versions are saved.
   const validation = useDraftsValidation(env?.id, { enabled: open });
   const discardDrafts = useDiscardDraft(env?.id);
+  // A Save moves the defaults: never while a validation of them runs.
+  const running = useRunningScenarioValidation(open ? env?.id : null, {
+    follow: true,
+  });
   const [name, setName] = useState("");
   const [discarding, setDiscarding] = useState(false);
   const [announced, setAnnounced] = useState("");
@@ -164,6 +169,8 @@ export default function ReviewChangesDrawer({
   else if (counts.undecided) saveReason = COPY.saveWaiting(counts.undecided);
   else if (!counts.accepted) saveReason = COPY.saveAllRejected;
   else if (validation.validating) saveReason = DRAFTS_COPY.validating;
+  else if (validation.canSaveValidated && running.data?.job_id)
+    saveReason = DRAFTS_COPY.errors.validation_running;
   // The server's refusal, in its words: a change another needs was rejected, or the review moved.
   const refused =
     decide.error || validation.validate.error || validation.saveValidated.error;

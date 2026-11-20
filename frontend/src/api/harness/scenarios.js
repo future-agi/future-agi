@@ -146,11 +146,15 @@ export const runningValidationKey = (jobId) => [
  * The default pair's validation still running, so a page opened after it started (another page, a reload) follows
  * it instead of offering a second Validate; and how many cases a Validate of those not yet proved would prove.
  */
-export function useRunningScenarioValidation(jobId) {
+export function useRunningScenarioValidation(jobId, { follow = false } = {}) {
   return useQuery({
     queryKey: runningValidationKey(jobId),
     queryFn: () => getHarnessRunningValidation(jobId),
     enabled: Boolean(jobId),
+    // `follow`: read again while one runs, so what waits on it (a Save) frees itself when it ends.
+    refetchInterval: follow
+      ? (query) => (query.state.data?.job_id ? 5000 : false)
+      : false,
     meta: { errorHandled: true },
   });
 }
