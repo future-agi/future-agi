@@ -139,7 +139,7 @@ export default function DraftBar({
   const onSave = () => {
     discard.reset();
     save.mutate(draftSaveRequests(drafts), {
-      // Saving never activates an unvalidated case: it is saved as Draft and does not run.
+      // Saving never activates an unvalidated case: it is saved as Not proved and does not run.
       onSuccess: (saved) => {
         const drafted = saved?.not_active?.length ?? 0;
         if (drafted)

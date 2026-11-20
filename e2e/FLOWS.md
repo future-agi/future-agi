@@ -3635,7 +3635,7 @@
 
 **Backend state verified:**
 
-- the list reads Active, Kept as written and Draft "Not validated on these versions yet."
+- the list reads Active, Kept as written and Not proved "Not validated on these versions yet."
 - the archived case appears only under lifecycle=archived
 - lifecycle_counts reads 1 proved, 1 kept as written, 1 not proved
 - readiness holds back the unproved case for not_validated and the archived one for scenario_archived
@@ -3643,7 +3643,7 @@
 **Browser observations:**
 
 - the counts line reads "1 proved · 1 kept as written · 1 not proved"
-- the rows carry Active, Kept as written and Draft badges
+- the rows carry Active, Kept as written and Not proved badges
 
 ### SIM-E2E-038 — a reviewed draft saves only the accepted change, and only through Validate
 

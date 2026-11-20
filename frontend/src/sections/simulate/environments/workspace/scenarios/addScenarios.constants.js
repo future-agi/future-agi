@@ -5,9 +5,9 @@
 export const ADD_COPY = {
   title: "Add scenarios",
   subtitle:
-    "Your agent's scenarios are already here. These routes ask the builder to write more; each new case starts as Draft.",
+    "Your agent's scenarios are already here. These routes ask the builder to write more; each new case starts as Not proved.",
   writing:
-    "The builder is writing these cases. They appear as Draft on the Scenarios tab.",
+    "The builder is writing these cases. They appear as Not proved on the Scenarios tab.",
   cancel: "Cancel",
   submit: "Write scenarios",
   count: "How many",

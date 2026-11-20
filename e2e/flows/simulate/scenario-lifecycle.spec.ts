@@ -31,12 +31,12 @@ test('SIM-E2E-037: each scenario shows its lifecycle and only validated cases ru
               + '(e2e/lib/harness_environment_seed.py proofs and archived options)',
             'read the Scenarios list with its lifecycle', 'read the archived cases through the filter',
             'read the cases readiness holds back (GET capabilities/cases?bucket=blocked)', 'open the Scenarios tab'],
-    backendChecks: ['the list reads Active, Kept as written and Draft "Not validated on these versions yet."',
+    backendChecks: ['the list reads Active, Kept as written and Not proved "Not validated on these versions yet."',
                     'the archived case appears only under lifecycle=archived',
                     'lifecycle_counts reads 1 proved, 1 kept as written, 1 not proved',
                     'readiness holds back the unproved case for not_validated and the archived one for scenario_archived'],
     browserChecks: ['the counts line reads "1 proved · 1 kept as written · 1 not proved"',
-                    'the rows carry Active, Kept as written and Draft badges'],
+                    'the rows carry Active, Kept as written and Not proved badges'],
   }),
 }, async ({ actor, page }, testInfo) => {
   test.setTimeout(240_000);
@@ -78,6 +78,6 @@ test('SIM-E2E-037: each scenario shows its lifecycle and only validated cases ru
       .toHaveText('1 proved · 1 kept as written · 1 not proved', { timeout: UI_READY });
     await expect(page.getByTestId('lifecycle-badge').filter({ hasText: 'Active' })).toHaveCount(1);
     await expect(page.getByTestId('lifecycle-badge').filter({ hasText: 'Kept as written' })).toHaveCount(1);
-    await expect(page.getByTestId('lifecycle-badge').filter({ hasText: 'Draft' })).toHaveCount(1);
+    await expect(page.getByTestId('lifecycle-badge').filter({ hasText: 'Not proved' })).toHaveCount(1);
   }, { timeout: UI_READY });
 });

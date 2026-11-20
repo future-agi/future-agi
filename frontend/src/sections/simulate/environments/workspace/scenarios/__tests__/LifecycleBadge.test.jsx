@@ -8,7 +8,7 @@ const row = (lifecycle) => ({ id: "r1", lifecycle });
 
 describe("LifecycleBadge", () => {
   it.each([
-    ["draft", "Draft"],
+    ["draft", "Not proved"],
     ["validated", "Validated"],
     ["active", "Active"],
     ["kept_as_written", "Kept as written"],

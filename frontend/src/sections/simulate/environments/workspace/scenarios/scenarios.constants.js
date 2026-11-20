@@ -49,7 +49,8 @@ export const SCENARIOS_COPY = {
     not_proved: notProved = 0,
   }) => `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
   lifecycle: {
-    draft: "Draft",
+    // The state `draft` in the API: a case with no proof of its own yet.
+    draft: "Not proved",
     validated: "Validated",
     active: "Active",
     kept_as_written: "Kept as written",
@@ -82,7 +83,7 @@ export const SCENARIOS_COPY = {
   activateNothing: "Nothing to save: these versions are not unsaved changes.",
   lifecycleFilters: [
     { value: "", label: "All" },
-    { value: "draft", label: "Draft" },
+    { value: "draft", label: "Not proved" },
     { value: "validated", label: "Validated" },
     { value: "active", label: "Active" },
     { value: "kept_as_written", label: "Kept as written" },
@@ -111,10 +112,10 @@ export const SCENARIOS_COPY = {
   archiveTitle: "Archive this scenario?",
   archiveReason: "Reason (optional)",
   archived: "Archived. It no longer runs.",
-  restored: "Restored as a draft. Validate and save to run it.",
+  restored: "Restored as Not proved. Validate and save to run it.",
   restoredLive: "Restored. It runs again.",
   draftChanged: "The environment was edited elsewhere; reload and try again.",
-  savedAsDraft: (n) => `${n} cases saved as Draft; validate them to run them`,
+  savedAsDraft: (n) => `${n} cases saved as Not proved; validate them to run them`,
   noSources: "No source recorded (written before sources were required).",
   assumption: "Assumption",
   sourcesTitle: "Sources",
