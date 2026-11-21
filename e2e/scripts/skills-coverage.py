@@ -144,11 +144,11 @@ def failure_summary(report):
 JOURNEY_RUNNER = "blacksmith-8vcpu-ubuntu-2404"
 
 
-def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha, expected, run_id):
-    if not re.fullmatch(r"\d+", str(run_id or "")):
-        raise ValueError("The Actions run that produced the registered results is required")
-    if not all(re.fullmatch(r"[a-f0-9]{64}", value) for value in (pair_sha, sdk_sha, application_sha)):
-        raise ValueError("Invalid producer digest")
+ALL_JOURNEYS = ("j3", "j4", "056", "057", "058", "059", "063")
+
+
+def journey_cases(expected):
+    """Each registered journey's required run key and the record statuses it must report."""
     cases = {case: ((f"campaign-registered-{case}", f"SKILLS-E2E-{case}"), {"campaign": "registered"})
              for case in ("056", "057", "058", "059")}
     cases["063"] = (("registered-recovery", "SKILLS-E2E-063"), {"guest": "registered"})
@@ -157,6 +157,24 @@ def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha
                   and run[1].startswith(f"harness/skills-r3/{name}-driver")]
         cases[name] = (run, {"configured": "completed"} if name == "j3" else
                        {"cold": "completed", "configured": "completed"})
+    return cases
+
+
+def selected_journeys(journeys):
+    selected = json.loads(journeys) if isinstance(journeys, str) else list(journeys)
+    if (not isinstance(selected, list) or len(set(selected)) != len(selected)
+            or not set(selected) <= set(ALL_JOURNEYS)):
+        raise ValueError("Unknown or duplicated registered journey selection")
+    return set(selected)
+
+
+def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha, expected, run_id, journeys=ALL_JOURNEYS):
+    if not re.fullmatch(r"\d+", str(run_id or "")):
+        raise ValueError("The Actions run that produced the registered results is required")
+    journeys = selected_journeys(journeys)
+    if not all(re.fullmatch(r"[a-f0-9]{64}", value) for value in (pair_sha, sdk_sha, application_sha)):
+        raise ValueError("Invalid producer digest")
+    cases = {case: value for case, value in journey_cases(expected).items() if case in journeys}
     seen = set()
     for path in directory.rglob("*.json"):
         data = json.loads(path.read_text())
@@ -184,10 +202,16 @@ def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha
     return seen
 
 
-def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_sha=None, application_sha=None, run_id=None):
+def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_sha=None, application_sha=None, run_id=None,
+              journeys=ALL_JOURNEYS):
     expected = required_runs()
-    seen = (registered_passes(registered, commit, sdk, pair_sha, sdk_sha, application_sha, expected, run_id)
-            if registered is not None else set())
+    seen = set()
+    if registered is not None:
+        # Journeys this change did not select are not required on this run; dev
+        # pushes and nightly runs select all seven.
+        chosen = selected_journeys(journeys)
+        seen = registered_passes(registered, commit, sdk, pair_sha, sdk_sha, application_sha, expected, run_id, chosen)
+        expected = expected - {key for case, (key, _) in journey_cases(expected).items() if case not in chosen}
     cohorts = {cohort for cohort, _ in expected}
     received = set()
     for path in directory.rglob("*.json"):
@@ -214,14 +238,15 @@ def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_s
     print(f"{len(seen)} required Skills executions passed on {commit}")
 
 
-def reconcile_verified(directory, registered, pair, commit, sdk, traceai, pair_sha, sdk_sha, application_sha, run_id=None):
+def reconcile_verified(directory, registered, pair, commit, sdk, traceai, pair_sha, sdk_sha, application_sha, run_id=None,
+                       journeys=ALL_JOURNEYS):
     verifier = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'stack/verify-skill-packages.py'))
     artifacts = verifier['verify'](pair, pair_sha, {'product': commit, 'sdk': sdk, 'traceai': traceai})
     verifier['verify_sums'](pair, artifacts)
     wheel = artifacts['sdk_python']['sha256']
     if wheel != sdk_sha:
         raise ValueError('Verified SDK wheel differs from the independent producer digest')
-    reconcile(directory, commit, registered, sdk, pair_sha, wheel, application_sha, run_id)
+    reconcile(directory, commit, registered, sdk, pair_sha, wheel, application_sha, run_id, journeys)
 
 
 if __name__ == "__main__":
@@ -248,6 +273,7 @@ if __name__ == "__main__":
     p.add_argument("--sdk-sha", required=True)
     p.add_argument("--application-sha", required=True)
     p.add_argument("--run-id", required=True, help="Actions run whose Blacksmith journeys produced the results")
+    p.add_argument("--journeys", required=True, help="JSON list of the registered journeys this run selected")
     args = parser.parse_args()
     try:
         if args.cmd == "summary":
@@ -269,6 +295,6 @@ if __name__ == "__main__":
             args.out.write_text(json.dumps(receipt) + "\n")
         else:
             reconcile_verified(args.directory, args.registered, args.pair, args.commit, args.sdk, args.traceai,
-                               args.pair_sha, args.sdk_sha, args.application_sha, args.run_id)
+                               args.pair_sha, args.sdk_sha, args.application_sha, args.run_id, args.journeys)
     except (OSError, ValueError, KeyError) as exc:
         sys.exit(str(exc))

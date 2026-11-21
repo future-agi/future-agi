@@ -996,9 +996,13 @@ with no topology declared is checked against its own targets API.
 `e2e-ci.yml` calls `skills-e2e-journeys.yml` **in the same Actions run**, after
 both package producers succeed. Each of the seven cases runs on its own
 ephemeral `blacksmith-8vcpu-ubuntu-2404` runner (8 vCPU, 32 GB, 160 GB disk), all
-seven in parallel. The runner verifies the pair against the producer digest and
+seven in parallel. On a pull request, only the journeys the change can affect
+run (`journeys` in the `changes` job of `e2e-ci.yml`): a change to shared Skills
+code, the stack or these workflows runs all seven, a journey-only change runs
+that journey, and an unrelated change runs none. Pushes to dev and main, merge
+groups and nightly runs always run all seven. The runner verifies the pair against the producer digest and
 the exact tested SHA; 063 also verifies the application wheel instead of
-rebuilding it. The aggregate requires the following seven first-attempt receipts:
+rebuilding it. The aggregate requires a first-attempt receipt for each selected case:
 
 | Case | Stack | Evidence required |
 | --- | --- | --- |

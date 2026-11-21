@@ -10,6 +10,8 @@ on:
       traceai: {required: true, type: string}
       pair_sha256: {required: true, type: string}
       application_sha256: {required: true, type: string}
+      # JSON list of the journeys this change selects (all seven off pull requests).
+      journeys: {required: true, type: string}
 
 permissions:
   contents: read
@@ -24,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        journey: [j3, j4, '056', '057', '058', '059', '063']
+        journey: ${{ fromJSON(inputs.journeys) }}
     env:
       JOURNEY: ${{ matrix.journey }}
       RUNNER_LABEL: blacksmith-8vcpu-ubuntu-2404

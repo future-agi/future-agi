@@ -57,6 +57,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend || steps.always.outputs.frontend }}
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
       stacks: ${{ steps.stacks.outputs.stacks }}
+      journeys: ${{ steps.journeys.outputs.journeys }}
     steps:
       - name: Validate host update fallibility opt-in
         if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
@@ -98,6 +99,40 @@ jobs:
               - '.github/workflows/skills-e2e-journeys.yml'
               - '.github/scripts/resolve-sdk-test-ref.py'
               - '.github/scripts/test_resolve_sdk_test_ref.py'
+            # Registered Skills journeys (Blacksmith runners, paid per minute) run on a
+            # PR only when the change can affect them; dev pushes and nightly run all.
+            skills_shared:
+              - 'futureagi/**/*skill*'
+              - 'futureagi/**/*skill*/**'
+              - 'futureagi/tracer/services/clickhouse/v2/schema/039_skill_attribution.sql'
+              - 'frontend/src/**/*kill*'
+              - 'frontend/src/**/*kill*/**'
+              - 'e2e/lib/skills-r3/**'
+              - 'e2e/benchmarks/context-hub/**'
+              - 'e2e/harness/skills-r3/qualification-contract.json'
+              - 'e2e/scripts/skills-journey-*'
+              - 'e2e/scripts/skills-coverage.*'
+              - 'e2e/scripts/test_skills_coverage.py'
+              - 'e2e/stack/**'
+              - 'e2e/package.json'
+              - 'e2e/yarn.lock'
+              - 'e2e/playwright.config.ts'
+              - 'bin/e2e'
+              - '.github/workflows/e2e-ci.yml'
+              - '.github/workflows/skills-e2e-journeys.yml'
+            journey_j3:
+              - 'e2e/**/j3*'
+              - 'e2e/**/j3*/**'
+            journey_j4:
+              - 'e2e/**/j4*'
+              - 'e2e/**/j4*/**'
+            journey_j5:
+              - 'e2e/**/j5*'
+              - 'e2e/**/j5*/**'
+              - 'bin/context-campaign.mjs'
+            journey_j6:
+              - 'e2e/**/j6*'
+              - 'e2e/**/j6*/**'
       - id: always
         if: github.event_name != 'pull_request'
         run: |
@@ -127,6 +162,25 @@ jobs:
             *) stacks='["distributed"]' ;;
           esac
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
+      - id: journeys
+        env:
+          EVENT: ${{ github.event_name }}
+          SHARED: ${{ steps.filter.outputs.skills_shared }}
+          J3: ${{ steps.filter.outputs.journey_j3 }}
+          J4: ${{ steps.filter.outputs.journey_j4 }}
+          J5: ${{ steps.filter.outputs.journey_j5 }}
+          J6: ${{ steps.filter.outputs.journey_j6 }}
+        run: |
+          # Fail safe: every non-PR event and any shared Skills change runs all seven.
+          if [ "$EVENT" != pull_request ] || [ "$SHARED" = true ]; then
+            journeys='["j3","j4","056","057","058","059","063"]'
+          else
+            journeys=$(jq -cn --arg j3 "$J3" --arg j4 "$J4" --arg j5 "$J5" --arg j6 "$J6" \
+              '[(if $j3 == "true" then "j3" else empty end), (if $j4 == "true" then "j4" else empty end),
+                (if $j5 == "true" then ("056","057","058","059") else empty end), (if $j6 == "true" then "063" else empty end)]')
+          fi
+          echo "journeys=$journeys" >> "$GITHUB_OUTPUT"
+          echo "Registered Skills journeys for this run: $journeys"
 
   flow-catalog:
     needs: changes
@@ -836,7 +890,7 @@ jobs:
   skills-journeys:
     needs: [changes, skill-packages, application-wheels]
     if: >-
-      needs.changes.outputs.any == 'true' &&
+      needs.changes.outputs.any == 'true' && needs.changes.outputs.journeys != '[]' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
@@ -846,6 +900,7 @@ jobs:
       traceai: ${{ needs.skill-packages.outputs.traceai }}
       pair_sha256: ${{ needs.skill-packages.outputs.pair_sha256 }}
       application_sha256: ${{ needs.application-wheels.outputs.sha256 }}
+      journeys: ${{ needs.changes.outputs.journeys }}
 
   e2e-tests:
     name: E2E Tests Pass
@@ -860,7 +915,8 @@ jobs:
         run: |
           jq -e '.changes.result == "success" and
             (if .changes.outputs.any == "true" then
-              ([.e2e.result,.skills.result,."skill-packages".result,."application-wheels".result,."campaign-executor".result,."skills-journeys".result,."flow-catalog".result] | all(. == "success"))
+              ([.e2e.result,.skills.result,."skill-packages".result,."application-wheels".result,."campaign-executor".result,."flow-catalog".result] | all(. == "success")) and
+              (if .changes.outputs.journeys == "[]" then ."skills-journeys".result == "skipped" else ."skills-journeys".result == "success" end)
             elif .changes.outputs.any == "false" then
               ([.e2e.result,.skills.result,."skill-packages".result,."application-wheels".result,."campaign-executor".result,."skills-journeys".result,."flow-catalog".result] | all(. == "skipped"))
             else false end)' <<< "$NEEDS"
@@ -897,7 +953,9 @@ jobs:
           APP_SHA: ${{ needs.application-wheels.outputs.sha256 }}
           PAIR_SHA: ${{ needs.skill-packages.outputs.pair_sha256 }}
           SDK_SHA: ${{ needs.skill-packages.outputs.sdk_sha256 }}
+          JOURNEYS: ${{ needs.changes.outputs.journeys }}
         run: |
+          mkdir -p "$RUNNER_TEMP/skills-journeys"
           python3 -I e2e/scripts/skills-coverage.py reconcile "$RUNNER_TEMP/skill-passes" "$GITHUB_SHA" \
-            --registered "$RUNNER_TEMP/skills-journeys" --run-id "$GITHUB_RUN_ID" --pair "$RUNNER_TEMP/skill-pair" --sdk "$SDK_COMMIT" \
+            --registered "$RUNNER_TEMP/skills-journeys" --run-id "$GITHUB_RUN_ID" --journeys "$JOURNEYS" --pair "$RUNNER_TEMP/skill-pair" --sdk "$SDK_COMMIT" \
             --traceai "$TRACEAI_COMMIT" --pair-sha "$PAIR_SHA" --sdk-sha "$SDK_SHA" --application-sha "$APP_SHA"

@@ -87,6 +87,31 @@ class RequiredCoverage(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Invalid or incomplete'):
                 check()
 
+    def test_only_selected_journeys_are_required_and_others_are_rejected(self):
+        commit, sdk = 'a' * 40, 'b' * 40
+        pair, wheel, application = 'c' * 64, 'd' * 64, 'e' * 64
+        expected = coverage['required_runs']()
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            records = [dict(name='guest', status='registered', product_head=commit, sdk_commit=sdk,
+                            environment='blacksmith', runner='blacksmith-8vcpu-ubuntu-2404', run_id='42',
+                            package_hashes=[wheel, application])]
+            path = folder / 'skills-journey-063' / '063.json'
+            path.parent.mkdir()
+            path.write_text(json.dumps(dict(case='063', sha=commit, passed=True, count=1, environment='blacksmith',
+                                            runner='blacksmith-8vcpu-ubuntu-2404', run_id='42',
+                                            pair_sha256=pair, records=records)))
+            check = coverage['registered_passes']
+            self.assertEqual(len(check(folder, commit, sdk, pair, wheel, application, expected, '42', ['063'])), 1)
+            # A result for a journey this change did not select is not silently counted.
+            with self.assertRaisesRegex(ValueError, 'Unexpected registered result'):
+                check(folder, commit, sdk, pair, wheel, application, expected, '42', ['j3'])
+            # Nothing selected and nothing produced is a valid, empty selection.
+            self.assertEqual(check(Path(tmp) / 'none', commit, sdk, pair, wheel, application, expected, '42', []), set())
+            for bad in ('["063","063"]', '["j9"]', '{"j3": true}'):
+                with self.assertRaisesRegex(ValueError, 'journey selection'):
+                    check(folder, commit, sdk, pair, wheel, application, expected, '42', bad)
+
     def test_aggregate_rejects_old_schema_or_missing_provenance_before_counting_passes(self):
         commit, sdk, traceai = ('a' * 40, 'b' * 40, 'c' * 40)
         sources = {'product': commit, 'sdk': sdk, 'traceai': traceai}
