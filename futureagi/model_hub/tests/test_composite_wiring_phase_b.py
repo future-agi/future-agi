@@ -420,8 +420,11 @@ class TestExecuteCompositeChildrenSync:
         assert outcome.aggregate_score == pytest.approx(0.8, abs=1e-6)
 
     @pytest.mark.requires_ee
+    @pytest.mark.parametrize(
+        "pricing_source", [None, "available_models", "default", "fallback"]
+    )
     def test_composite_child_billing_uses_token_pricing_when_cost_is_zero(
-        self, composite_parent, organization, workspace, monkeypatch
+        self, composite_parent, organization, workspace, monkeypatch, pricing_source
     ):
         from ee.usage.services.config import BillingConfig
         import model_hub.views.utils.evals as evals_module
@@ -434,7 +437,7 @@ class TestExecuteCompositeChildrenSync:
         captured = []
 
         class FakeEvalInstance:
-            cost = {"total_cost": 0}
+            cost = {"total_cost": 0, "pricing_source": pricing_source}
             token_usage = {
                 "prompt_tokens": 1341,
                 "completion_tokens": 150,
@@ -503,6 +506,13 @@ class TestExecuteCompositeChildrenSync:
         assert output["output"] == 0.7
         assert captured
         event = captured[0]
+        if pricing_source:
+            assert float(event.properties["raw_cost_usd"]) == pytest.approx(0.0005)
+            assert event.properties["pricing_source"] == pricing_source
+            assert event.amount == pytest.approx(
+                BillingConfig.get().calculate_ai_credits(0.0005)
+            )
+            return
         assert event.properties["raw_cost_usd"] == "0.012001"
         assert event.properties["llm_cost_usd"] == "0.011501"
         assert event.properties["reported_llm_cost_usd"] == "0"
