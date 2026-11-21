@@ -6,13 +6,15 @@ name: Python lint
 # scripts/check_python_lint_delta.py. S608 (SQL built from strings) only warns.
 #
 # The check to require is "Python Lint Pass". Every candidate runs both jobs,
-# including stacked PRs, retargets and merge groups. A description-only edit
-# neither cancels the candidate run nor publishes a replacement required name.
+# including stacked PRs, retargets, merge groups and dev/main landings. A description-only
+# edit neither cancels the candidate run nor publishes a replacement required name.
 
 on:
   pull_request:
     # edited: a stacked PR moved to another base branch gets a new baseline.
     types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [dev, main]
   merge_group:
     types: [checks_requested]
 
@@ -20,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: python-lint-${{ github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
+  group: python-lint-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
   cancel-in-progress: true
 
 env:
@@ -36,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}
           fetch-depth: 1
           persist-credentials: false
       - uses: actions/setup-python@v5
@@ -44,7 +46,7 @@ jobs:
           python-version: "3.11"
       - name: Verify self-test checkout
         env:
-          EXPECTED: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          EXPECTED: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}
         run: test "$(git rev-parse HEAD)" = "$EXPECTED"
       - name: Install ruff for head self-tests
         run: |
@@ -79,7 +81,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # The PR head, not the merge commit, so annotation lines match the diff.
-          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}
           fetch-depth: 1
           persist-credentials: false
       - uses: actions/setup-python@v5
@@ -87,16 +89,21 @@ jobs:
           python-version: "3.11"
       - name: Report new violations
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'push' && github.event.before) }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}
         run: |
           set -euo pipefail
           trusted_ref=$BASE_SHA
+          # Branch creation has no previous tree/policy. Never silently use HEAD.
+          if [[ $GITHUB_EVENT_NAME == push && ( -z $trusted_ref || $trusted_ref =~ ^0+$ ) ]]; then
+            echo "::error::Push has no before SHA; cannot establish a trusted lint baseline."
+            exit 1
+          fi
           for sha in "$trusted_ref" "$HEAD_SHA"; do
             [[ $sha =~ ^[0-9a-f]{40}$ && ! $sha =~ ^0+$ ]]
           done
           [[ $(git rev-parse HEAD) == "$HEAD_SHA" ]]
-          if [[ $GITHUB_EVENT_NAME == merge_group ]]; then [[ $HEAD_SHA == "$GITHUB_SHA" ]]; fi
+          if [[ $GITHUB_EVENT_NAME == merge_group || $GITHUB_EVENT_NAME == push ]]; then [[ $HEAD_SHA == "$GITHUB_SHA" ]]; fi
           if [[ $(git rev-parse --is-shallow-repository) == true ]]; then
             git fetch -q --no-tags --depth=32 origin "$trusted_ref" "$HEAD_SHA"
             # An ancestor proves the base directly. In a diverged history a
@@ -109,7 +116,10 @@ jobs:
           fi
           base=$(git merge-base --all "$trusted_ref" "$HEAD_SHA")
           [[ $base =~ ^[0-9a-f]{40}$ ]]
-          if [[ $GITHUB_EVENT_NAME == merge_group ]]; then [[ $base == "$trusted_ref" ]]; fi
+          if [[ $GITHUB_EVENT_NAME == merge_group || $GITHUB_EVENT_NAME == push ]]; then
+            # A rewritten branch cannot substitute an older common ancestor for before.
+            [[ $base == "$trusted_ref" ]] || { echo "::error::Event base is not an ancestor of head."; exit 1; }
+          fi
           # Take the gate AND its Ruff pin from the same base-branch commit.
           # Head self-tests run in a different job; an upgrade must not run the
           # old gate with the new Ruff, or let a PR change its own judging gate.

@@ -1,39 +1,17 @@
 #!/usr/bin/env python3
 """A cached dump of pytest's freshly migrated test database, for Backend CI.
 
-Every pytest shard used to spend about six minutes on one serial `migrate`. A
-shard now restores a dump of that result when one exists for exactly its
-inputs, and one job per run still migrates from zero as the control:
-
-    key      the cache key for this checkout: a hash of every migration file
-             and of the other inputs that decide the migrated schema. A
-             different key means no dump, and the shard migrates as before.
-    dump     writes the schema and the list of applied migrations, gzipped.
-    restore  loads a dump into an empty database in one transaction. Any
-             error fails the job; nothing falls back to a partial database.
-    compare  the control: a cached dump must equal a fresh migrate, or the
-             run fails.
-
-The dump holds the schema and the rows of django_migrations, and no other
-row. That is deliberate:
-
-- pytest (--reuse-db) runs Django's `migrate` on the restored database. It
-  finds every migration applied, applies nothing, and then sends post_migrate,
-  which seeds content types, permissions and the applications' own reference
-  rows from the code under test. Nothing seeded is ever stale.
-- Rows a data migration wrote are not carried. A shard already loses them at
-  its first transactional test, which truncates every table, so no test can
-  depend on them.
-- Seed rows can come from configuration that is not public, and a cache of a
-  public repository is readable by any pull request. A schema is not.
-
-Standard library only, so it runs before any dependency is installed.
+Only schema and the migration ledger are transferable. The fresh producer also
+checks the data a restore + pytest-django setup actually reconstruct, in a
+second disposable database. Non-equivalent recipes migrate locally; test order
+or eventual transactional truncation is not evidence of seed parity.
 """
 
 import argparse
 import difflib
 import gzip
 import hashlib
+import re
 import shutil
 import subprocess
 import sys
@@ -41,28 +19,16 @@ from pathlib import Path
 
 # Raise this to stop using every existing dump, for example after `compare`
 # reports that a cached dump no longer equals a fresh migrate.
-VERSION = 1
-
+VERSION = 2
+# Reserved for a completed comparison of two valid, different dumps. Ordinary
+# tool failures (including an unexpected Python exception) must not mean drift.
+COMPARE_DIFFERENT = 3
 ROOT = Path(__file__).resolve().parents[2]
-
-# What decides the migrated schema of pytest's database (tfc.settings.test,
-# docker-compose.test.yml). Tracked files only: the key must not move with a
-# virtualenv or a __pycache__ beside the migrations.
-INPUTS = [
-    ":(glob)futureagi/**/migrations/**",
-    "futureagi/uv.lock",
-    "futureagi/tfc/settings",
-    "futureagi/conftest.py",
-    "futureagi/pytest.ini",
-    "futureagi/docker-compose.test.yml",
-    "futureagi/.ci/db_dump.py",
-    "futureagi/.ci/migrated_db.py",
-]
-# The private package that internal runs check out. The test settings do not
-# install its application, so it should not change the schema; the key still
-# keeps the two kinds of checkout apart, so neither can restore the other's dump.
+# A migration can import any helper or read a fixture outside migrations/.
+# Hash the candidate tree (not the commit, branch name or untracked .venv).
+INPUTS = ["."]
 OVERLAY = "futureagi/ee/cloud"
-
+LEDGER = "COPY public.django_migrations (id, app, name, applied) FROM stdin;"
 # pg_dump ends each of the two parts of a dump with this line.
 COMPLETE = "-- PostgreSQL database dump complete"
 PARTS = 2
@@ -83,17 +49,19 @@ def _git(cwd, *args):
     ).stdout
 
 
-def cache_key(root=ROOT):
-    """The cache key for the checkout at `root`."""
-    digest = hashlib.sha256(f"{VERSION}\n".encode())
-    for spec in INPUTS:
-        # Mode, blob id and path of every tracked file under the pathspec.
-        listed = _git(root, "ls-files", "-s", "-z", "--", spec)
-        if not listed:
-            raise DumpError(f"key input {spec!r} matches no tracked file")
-        digest.update(spec.encode() + b"\n" + listed)
-    overlay = (Path(root) / OVERLAY / ".git").exists()
-    digest.update(b"overlay\n" if overlay else b"no overlay\n")
+def cache_key(root, runtime):
+    """Exact tree, overlay revision (including worktree checkouts), and tools."""
+    if not runtime.strip():
+        raise DumpError("missing runtime fingerprint")
+    digest = hashlib.sha256(f"{VERSION}\0{runtime}\0".encode())
+    digest.update(_git(root, "ls-tree", "-z", "HEAD", "--", *INPUTS))
+    overlay = Path(root) / OVERLAY
+    if overlay.exists():
+        if not (overlay / ".git").exists():
+            raise DumpError("overlay is present without checkout metadata")
+        digest.update(b"overlay\0" + _git(overlay, "rev-parse", "--verify", "HEAD"))
+    else:
+        digest.update(b"public-only")
     return f"migrated-db-pytest-v{VERSION}-{digest.hexdigest()[:40]}"
 
 
@@ -114,39 +82,37 @@ def read_dump(path):
     return text
 
 
-def normalise(text):
-    """The dump as written, except what differs between two correct migrates.
-
-    That is three things: the row values of django_migrations (each row stamps
-    the time it was applied), kept as a count; pg_dump's two version comments;
-    and its per-dump \\restrict token. Every other line is compared verbatim,
-    comments and blank lines included, because a line of a function body or of
-    a multi-line default can look like either.
-    """
+def normalise(text, *, identities=None):
+    """Compare exact migration identities, not their wall-clock timestamps."""
     out = []
     rows = None
+    seen = False
     for line in text.split("\n"):
         if rows is not None:
             if line == "\\.":
-                out.append(f"<{rows} rows>")
+                if not rows or len(set(rows)) != len(rows):
+                    raise DumpError("missing or duplicate migration identity")
+                if identities is not None:
+                    identities.extend(sorted(rows))
+                out.extend(sorted(rows))
+                out.append(line)
                 rows = None
             else:
-                rows += 1
+                fields = line.split("\t")
+                if len(fields) != 4 or not all(fields):
+                    raise DumpError("invalid migration ledger row")
+                rows.append("\t".join(fields[1:3]))
             continue
-        if line.startswith(
-            (
-                "-- Dumped from database version",
-                "-- Dumped by pg_dump version",
-                "\\restrict ",
-                "\\unrestrict ",
-            )
-        ):
+        if line.startswith(("\\restrict ", "\\unrestrict ")):
             continue
         out.append(line)
         if line.startswith("COPY ") and line.endswith(" FROM stdin;"):
-            rows = 0
-    if rows is not None:
-        raise DumpError("a COPY block has no end")
+            if line != LEDGER or seen:
+                raise DumpError("unexpected data in schema and migration ledger dump")
+            rows = []
+            seen = True
+    if rows is not None or not seen:
+        raise DumpError("missing or unfinished migration ledger")
     return out
 
 
@@ -184,7 +150,7 @@ def dump(path, user, database, prefix):
                 shutil.copyfileobj(proc.stdout, out)
             if proc.returncode != 0:
                 raise DumpError(f"pg_dump exited {proc.returncode}")
-    read_dump(partial)
+    normalise(read_dump(partial))
     partial.replace(path)
 
 
@@ -211,7 +177,8 @@ def _psql(prefix, user, database, *args, stdin=None):
 
 def restore(path, user, database, prefix):
     """Load the dump at `path` into the empty `database`, or raise."""
-    read_dump(path)  # refuse an incomplete file before touching the database
+    expected = []
+    normalise(read_dump(path), identities=expected)  # before touching the database
     count = "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog', 'information_schema')"
     before = _psql(prefix, user, database, "-At", "-c", count)
     if before.returncode != 0 or before.stdout.strip() != b"0":
@@ -235,20 +202,72 @@ def restore(path, user, database, prefix):
         database,
         "-At",
         "-c",
-        "SELECT count(*) FROM django_migrations",
+        "COPY (SELECT app, name FROM public.django_migrations) TO STDOUT",
     )
-    if applied.returncode != 0 or int(applied.stdout.strip() or 0) == 0:
-        raise DumpError("the restored database records no applied migration")
-    return int(applied.stdout.strip())
+    actual = applied.stdout.decode("utf-8").removesuffix("\n").split("\n")
+    if applied.returncode or sorted(actual) != expected:
+        raise DumpError("the restored migration identities do not match the dump")
+    return len(expected)
+
+
+def seed_digest(user, database, prefix):
+    """Private comparison only. No seed value, per-row hash or data dump is saved.
+
+    Compare every other table (including unknown tables) and all sequence state.
+    Physical COPY order and random psql restriction tokens are not data. Even a
+    volatile value makes this recipe cold-only unless proven reconstructible.
+    """
+    output = subprocess.run(
+        [
+            *prefix,
+            "pg_dump",
+            "-U",
+            user,
+            "--data-only",
+            "--no-owner",
+            "--no-privileges",
+            "--exclude-table=public.django_migrations",
+            database,
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        timeout=120,
+    ).stdout
+    return fingerprint_rows(output)
+
+
+def fingerprint_rows(output):
+    digest = hashlib.sha256()
+    rows = None
+    complete = False
+    for line in output.split(b"\n"):
+        if rows is not None:
+            if line != b"\\.":
+                rows.append(hashlib.sha256(line).digest())
+                continue
+            for row in sorted(rows):
+                digest.update(row)
+            rows = None
+        elif line.startswith(b"COPY ") and line.endswith(b" FROM stdin;"):
+            rows = []
+        elif re.fullmatch(rb"\\(?:un)?restrict [A-Za-z0-9]+", line):
+            continue
+        elif line == COMPLETE.encode():
+            complete = True
+        digest.update(line + b"\n")
+    if rows is not None or not complete:
+        raise DumpError("incomplete seed comparison")
+    return digest.hexdigest()
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("key")
-    for name in ("dump", "restore"):
+    commands.add_parser("key").add_argument("runtime")
+    for name in ("dump", "restore", "seed-digest"):
         sub = commands.add_parser(name)
-        sub.add_argument("path")
+        if name != "seed-digest":
+            sub.add_argument("path")
         sub.add_argument("user")
         sub.add_argument("database")
         # REMAINDER, not "+": the prefix carries options of its own
@@ -262,11 +281,13 @@ def main(argv=None):
     sub.add_argument("cached")
     sub.add_argument("fresh")
     args = parser.parse_args(argv)
-    if args.command in ("dump", "restore") and not args.prefix:
+    if args.command in ("dump", "restore", "seed-digest") and not args.prefix:
         parser.error("a command prefix is required")
     try:
         if args.command == "key":
-            _say(cache_key())
+            _say(cache_key(ROOT, args.runtime))
+        elif args.command == "seed-digest":
+            _say(seed_digest(args.user, args.database, args.prefix))
         elif args.command == "dump":
             dump(args.path, args.user, args.database, args.prefix)
             _say(f"dumped the schema of {args.database} to {args.path}")
@@ -278,13 +299,13 @@ def main(argv=None):
         else:
             difference = compare(args.cached, args.fresh)
             if difference:
-                _say("\n".join(difference[:200]))
+                # SQL defaults or functions may contain non-public configuration.
                 _say(
                     "::error title=Cached database dump differs from a fresh migrate::"
                     "Something outside the key's inputs changed the migrated schema. "
                     "Raise VERSION in futureagi/.ci/db_dump.py in this pull request so no job restores the old dump."
                 )
-                return 1
+                return COMPARE_DIFFERENT
             _say(
                 "the cached dump equals a fresh migrate: same schema, same applied migrations"
             )

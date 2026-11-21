@@ -159,6 +159,7 @@ class ProducerIdentityTest(unittest.TestCase):
             }
         )
         env = {
+            "GITHUB_EVENT_NAME": "pull_request",
             "GITHUB_RUN_ID": "100",
             "GITHUB_REPOSITORY": "fixture/repo",
             "GITHUB_SHA": "c" * 40,
@@ -216,6 +217,14 @@ class ProducerIdentityTest(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()),
         ):
             checker.verify_run()
+            with patch.dict(os.environ, GITHUB_EVENT_NAME="merge_group"):
+                with self.assertRaisesRegex(ValueError, "missing producer"):
+                    checker.verify_run()
+                for job in jobs:
+                    job["name"] = "backend / " + job["name"]
+                checker.verify_run()
+                for job in jobs:
+                    job["name"] = job["name"].removeprefix("backend / ")
             for field, invalid in (
                 ("attempt", 1),
                 ("sha", "stale"),
@@ -368,11 +377,11 @@ class WorkflowTest(unittest.TestCase):
                 }
             )
 
-            def passed(needs=needs, required="true"):
+            def passed(needs=needs):
                 return (
                     subprocess.run(
                         ["bash", "-ec", script],
-                        env={**os.environ, "NEEDS": json.dumps(needs), "RECEIPTS_REQUIRED": required},
+                        env={**os.environ, "NEEDS": json.dumps(needs)},
                         capture_output=True,
                     ).returncode
                     == 0
@@ -387,24 +396,11 @@ class WorkflowTest(unittest.TestCase):
                     needs[job]["result"] = wrong
                     self.assertFalse(passed(), (job, wrong))
                 needs[job]["result"] = previous
-            # A failed qualification is visible on the control run. The old
-            # collection check remains required even before promotion.
-            needs["terminal-parity"]["result"] = "failure"
-            self.assertEqual(passed(required="false"), selected)
-            self.assertFalse(passed(required=""))
-            needs["collection"]["result"] = "failure"
-            self.assertFalse(passed(required="false"))
-            needs["terminal-parity"]["result"] = needs["collection"]["result"] = wanted
             for flag in needs["changes"]["outputs"]:
                 previous = needs["changes"]["outputs"][flag]
                 needs["changes"]["outputs"][flag] = ""
                 self.assertFalse(passed(), flag)
                 needs["changes"]["outputs"][flag] = previous
-
-    def test_the_record_is_not_an_input_of_the_database_dump_key(self):
-        # conftest.py and pytest.ini are key inputs; the plugin is loaded with -p instead.
-        dump = load("db_dump")
-        self.assertFalse(any("collected_ids" in spec for spec in dump.INPUTS))
 
 
 if __name__ == "__main__":

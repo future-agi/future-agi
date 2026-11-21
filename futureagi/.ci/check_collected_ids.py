@@ -150,6 +150,8 @@ def verify_run():
     wanted = {f"collected-ids-{leg['suite']}-{leg['group']}": leg for leg in legs}
     if not wanted or len(wanted) != len(legs):
         raise ValueError("empty or duplicated matrix")
+    # Queue runs call backend-ci through the explicitly named reusable job.
+    prefix = "backend / " if os.environ["GITHUB_EVENT_NAME"] == "merge_group" else ""
     jobs = {}
     for job in pages(root + "/jobs?filter=all&per_page=100", "jobs"):
         name = job["name"]
@@ -174,7 +176,10 @@ def verify_run():
         ):
             leg = wanted[artifact["name"]]
             suite, group = leg["suite"], leg["group"]
-            job = jobs[f"{leg['name']} shard {group}"]
+            name = f"{prefix}{leg['name']} shard {group}"
+            if name not in jobs:
+                raise ValueError(f"missing producer job {name!r}")
+            job = jobs[name]
             receipt, rows, collection, inventory = result
             if (
                 job["conclusion"] != "success"

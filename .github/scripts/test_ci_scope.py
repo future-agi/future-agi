@@ -79,6 +79,8 @@ class CandidateScope(unittest.TestCase):
         for path in [
             "INSTALLATION.md",
             ".github/scripts/ci_scope.py",
+            ".github/scripts/resolve-sdk-test-ref.py",
+            ".github/scripts/test_resolve_sdk_test_ref.py",
             "api_contracts/new.json",
             "futureagi/tfc/temporal/test.py",
             "futureagi/app/models/agent_definition.py",
@@ -229,12 +231,20 @@ class CandidateScope(unittest.TestCase):
         changes = workflow.split("  changes:\n")[1].split("\n  update-safety:")[0]
         self.assertNotIn("test_ci_scope.py", changes)
         self.assertIn('.["policy-self-test"].result == "success"', workflow)
-        token_steps = [step for step in workflow.split("      - ") if "secrets.EE_REPO_READ_TOKEN" in step]
-        self.assertEqual(len(token_steps), 2)
+        steps = workflow.split("\n      - ")
+        token_steps = [s for s in steps if "secrets.EE_REPO_READ_TOKEN" in s or "with: *ee_checkout" in s]
+        self.assertEqual(len(token_steps), 3)  # cold producer, shards, independent control
+        guards = [next(line.strip() for line in s.splitlines() if line.startswith("        if:"))
+                  for s in token_steps]
+        self.assertCountEqual(guards, [
+            "if: inputs.backend_cold_fanout && env.IS_INTERNAL_RUN == 'true'",
+            "if: env.IS_INTERNAL_RUN == 'true'",
+            "if: needs.plan.outputs.cold_control != 'success' && env.IS_INTERNAL_RUN == 'true'",
+        ])
         for step in token_steps:
-            self.assertIn("if: env.IS_INTERNAL_RUN == 'true'", step)
             self.assertRegex(step, r"uses: future-agi/future-agi/\.github/actions/checkout-ee@[a-f0-9]{40}\n")
-        self.assertEqual(workflow.count("IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}"), 2)
+        self.assertIn("IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}", workflow)
+        self.assertEqual(workflow.count("env: *backend_database_env"), 2)
 
     def test_loader_uses_base_policy_and_bootstraps_conservatively(self):
         driver = bootstrap("backend-ci.yml")

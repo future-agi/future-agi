@@ -301,7 +301,7 @@ class WorkflowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text()
 
-    def test_the_workflow_has_no_paths_or_branches_filter(self):
+    def test_prs_have_no_paths_or_branches_filter(self):
         on = top_level_block(self.text, "on")
         self.assertRegex(on, r"(?m)^  pull_request:\s*$")
         self.assertRegex(
@@ -311,7 +311,13 @@ class WorkflowTests(unittest.TestCase):
         # Python changes, and a required check that never starts never passes.
         self.assertNotRegex(on, r"(?m)^\s*(paths|paths-ignore)\s*:")
         # Stacked PRs into feature branches get the check too.
-        self.assertNotRegex(on, r"(?m)^\s*(branches|branches-ignore)\s*:")
+        pull_request = re.search(r"(?ms)^  pull_request:\n(.*?)(?=^  \S|\Z)", on)[1]
+        self.assertNotRegex(pull_request, r"(?m)^\s*(branches|branches-ignore)\s*:")
+        self.assertIn("  push:\n    branches: [dev, main]", on)
+        head = "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}"
+        self.assertEqual(self.text.count("ref: " + head), 2)
+        self.assertIn("EXPECTED: " + head, self.text)
+        self.assertIn("HEAD_SHA: " + head, self.text)
 
     def test_the_workflow_reports_on_a_merge_group(self):
         # A merge queue waits for every required check on the merge-group
@@ -352,7 +358,7 @@ class WorkflowTests(unittest.TestCase):
         # and a PR that edits the gate must not be judged by its own edit.
         ruff = job_block(self.text, "ruff-delta")
         self.assertIn(
-            "BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}",
+            "BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'push' && github.event.before) }}",
             ruff,
         )
         self.assertNotIn("origin/${", ruff)
@@ -1839,6 +1845,38 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
         result = self.run_step("Report new violations", base_sha=incompatible)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Upgrade the target branch lint gate", result.stdout)
+
+    def test_protected_push_delta_drives_required_verdict(self):
+        self.base()
+        self.write("futureagi/app/mod.py", 'value = 1\nprint("new")\n')
+        bad_landing = self.commit()
+        self.write("notes", "no new lint since the last landing\n")
+        self.commit()
+        summary = run_script(job_block(WORKFLOW.read_text(), "python-lint-pass"))
+        for baseline, reason in (
+            (self.base_sha, "title=ruff T201"),
+            ("0" * 40, "no before SHA"),
+            ("", "no before SHA"),
+            (bad_landing, "No new violations"),
+        ):
+            with self.subTest(baseline=baseline):
+                # A rerun gets a fresh provisioning directory.
+                with tempfile.TemporaryDirectory(dir=self.tmp.name) as runner:
+                    self.runner = Path(runner)
+                    delta = self.run_step(
+                        "Report new violations", event="push", base_sha=baseline
+                    )
+                self.assertIn(reason, delta.stdout, delta.stderr)
+                verdict = subprocess.run(
+                    ["bash", "-ec", summary],
+                    env={
+                        **os.environ,
+                        "SELF_TEST": "success",
+                        "RUFF": "success" if delta.returncode == 0 else "failure",
+                    },
+                    capture_output=True,
+                )
+                self.assertEqual(verdict.returncode == 0, reason == "No new violations")
 
     def test_advanced_remote_cannot_change_the_event_base(self):
         self.base()

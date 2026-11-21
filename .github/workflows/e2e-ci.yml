@@ -31,12 +31,9 @@ permissions:
   contents: read
 
 concurrency:
-  # Pushes to dev share one group and never cancel: the running run finishes
-  # (its e2e-cache writes feed PR, Standalone CI and release builds), the newest
-  # push waits, and GitHub cancels any older one still waiting. Pushes to main
-  # keep one group per commit. A newer push to a pull request cancels its
-  # running run; schedule, merge_group and dispatch group by ref as before.
-  group: e2e-ci-${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' && 'dev-push' || github.sha) || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
+  # Every landing needs its own verdict, even if several arrive while one runs.
+  # Only the independent cache publisher coalesces pending pushes.
+  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -194,9 +191,7 @@ jobs:
         # stack and runs its share of the spec files (E2E_SHARD below). Work
         # that runs once per stack runs on the last shard (E2E_LAST_SHARD):
         # the flow catalog check and the SDK live suites. The last shard,
-        # because the longest spec file always goes to shard 1. On a push
-        # every shard writes the registry cache; they build the same images,
-        # so the writes are equal.
+        # because the longest spec file always goes to shard 1.
         shard: ${{ fromJSON(needs.changes.outputs.shards) }}
     runs-on: ubuntu-latest
     # One job is the image builds, the stack boot and the suite; the unsharded
@@ -206,7 +201,7 @@ jobs:
     timeout-minutes: 155
     permissions:
       contents: read
-      packages: write # ghcr build-cache: read on PRs, written on pushes
+      packages: read # The push-only cache publisher has its own token.
     env:
       # bin/e2e and lib/managed-mock.ts pick the stack from this.
       E2E_STACK: ${{ matrix.stack }}
@@ -227,6 +222,8 @@ jobs:
       E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Tag for the images built below
         # Standalone runs the tag e2e/stack/standalone-e2e.env names
@@ -248,21 +245,12 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: ghcr login (cache writes on trusted pushes only)
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: ghcr login (cache reads on internal PRs and the Standalone leg)
-        # Fork PRs get no token and read anonymously, which works only once the
-        # e2e-cache package is made public — a one-time manual step in the org's
-        # package settings. Until then forks build cold.
+      - name: ghcr login for read-only cache imports
+        # Fork PRs and queue groups do not log in; they build cold if the
+        # cache package cannot be read anonymously.
         if: >-
-          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
-          || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+          || github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -288,8 +276,8 @@ jobs:
           tags: futureagi/future-agi:${{ env.IMAGE_TAG }}
           cache-from: |
             type=registry,ref=${{ env.CACHE_REPO }}:backend
+            ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim', env.CACHE_REPO) || '' }}
             ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Add E2E-only fixtures and telemetry isolation to backend image
         if: env.BUILD_BACKEND == 'true'
@@ -309,7 +297,6 @@ jobs:
           load: true
           tags: futureagi/code-executor:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:code-executor
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:code-executor,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Select the source-built executor in both stacks
         run: echo "CODE_EXECUTOR_VERSION=$IMAGE_TAG" >> "$GITHUB_ENV"
@@ -323,7 +310,6 @@ jobs:
           load: true
           tags: futureagi/fi-collector:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:fi-collector
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:fi-collector,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Build frontend image from PR code
         if: env.BUILD_FRONTEND == 'true'
@@ -334,7 +320,6 @@ jobs:
           load: true
           tags: futureagi/frontend:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:frontend
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:frontend,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Add local editor assets to the E2E frontend
         if: env.BUILD_FRONTEND == 'true'
@@ -355,7 +340,6 @@ jobs:
           load: true
           tags: futureagi/agentcc-gateway:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:gateway
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:gateway,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Assemble futureagi/standalone from those images
         if: matrix.stack == 'standalone'
@@ -577,6 +561,7 @@ jobs:
         id: sdk-ref
         if: ${{ !cancelled() && steps.boot.outcome == 'success' && env.E2E_LAST_SHARD == 'true' }}
         env:
+          QUEUE_BASE_REF: ${{ github.event.merge_group.base_ref }}
           SDK_REF_INPUT: ${{ inputs.sdk-ref }}
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
           BASE_REF: ${{ github.base_ref || github.ref_name }}
@@ -588,6 +573,7 @@ jobs:
         if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           repository: future-agi/futureagi-sdk
           ref: ${{ steps.sdk-ref.outputs.ref }}
           path: futureagi-sdk
@@ -741,6 +727,8 @@ jobs:
       E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
