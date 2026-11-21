@@ -45,6 +45,13 @@ Object permissions remain bucket-scoped: the purpose-specific HMAC identity
 lists and deletes object generations and lists and aborts multipart uploads.
 The posture identity also needs `storage.objects.get` and `storage.objects.list`
 to verify that no soft-deleted data remains before releasing cleanup charges.
+Enable soft delete on both buckets with a retention period of **7–90 days**
+(GCS default: 7 days). GCS retains deleted generations until their individual
+`hardDeleteTime`; they cannot be purged early. The cleanup workers keep capacity
+charged and retry on their normal schedule. They release it only after a fresh
+successful listing proves no retained copy of the exact key remains, not just
+because the retention window elapsed. Disabling soft delete or losing listing
+permission can leave cleanup pending even when the live listing is empty.
 
 ## Lifecycle schedules
 

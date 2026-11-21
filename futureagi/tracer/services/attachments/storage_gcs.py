@@ -15,7 +15,7 @@ No provisioning, SDK discovery, token refresh, OAuth minting or JSON writes.
 Cleanup reads the bound bucket's JSON metadata with supplied read-only OAuth
 before using its purpose-specific HMAC credentials. It checks incarnation, not
 current admission policy. A DELETE acknowledgement alone never releases cleanup
-charges: retained absence must be proven even after soft delete is disabled.
+charges: the retained-generation listing must affirm absence.
 
 PUT runs in a short-lived, supervised interpreter: killing a Python thread does
 not stop an accepted socket write. Only the bounded data request runs there;
@@ -612,15 +612,23 @@ class GCSPrivateMediaStorage:
     def _write_posture(self, purpose):
         data = self._metadata(purpose, private=True)
         key = getattr(self._binding, f"{purpose}_encryption_key_identity")
+        policy = data.get("softDeletePolicy")
+        if not isinstance(policy, dict):
+            raise ValueError
+        duration = policy.get("retentionDurationSeconds")
+        # The JSON API encodes int64 as decimal strings. Never coerce a bool,
+        # float, whitespace, or a missing policy into a valid retention period.
+        if isinstance(duration, str) and re.fullmatch(r"[1-9][0-9]{0,6}", duration):
+            duration = int(duration)
         if (
-            data.get("versioning", {}).get("enabled") is not True
+            type(duration) is not int
+            or not 7 * 86400 <= duration <= 90 * 86400
+            or data.get("versioning", {}).get("enabled") is not True
             or data.get("encryption", {}).get("defaultKmsKeyName", "") != key
             or data.get("cors")
             or data.get("retentionPolicy")
             or data.get("defaultEventBasedHold") is True
             or data.get("objectRetention", {}).get("mode") == "Enabled"
-            or data.get("softDeletePolicy", {}).get("retentionDurationSeconds")
-            not in (None, "0", 0)
             or data.get("storageClass")
             not in ("STANDARD", "NEARLINE", "COLDLINE", "ARCHIVE")
         ):
@@ -644,14 +652,17 @@ class GCSPrivateMediaStorage:
                 raise ValueError
         if not noncurrent or not multipart:
             raise ValueError
+        # Observational only: effectiveTime is not proof of a bucket's history.
+        return {
+            "retention_seconds": duration,
+            "has_effective_time": bool(policy.get("effectiveTime")),
+        }
 
     def verify_readiness(self):
         try:
             for purpose in ("quarantine", "serving"):
                 self._write_posture(purpose)
-                # A current zero policy is not sufficient: verify that cleanup
-                # can either enumerate retained generations or prove it never
-                # applied. This read-only probe creates no object or policy.
+                # Prove the read-only identity can enumerate retained copies.
                 probe = ObjectLocator(
                     self.binding_id, purpose, "__attachment_posture_probe__"
                 )
@@ -990,15 +1001,14 @@ class GCSPrivateMediaStorage:
         """
         try:
             self._delete_version(identity)
-            self._metadata(identity.purpose, private=False)
+            if not self._soft_deleted_absent(identity, generation=identity.version):
+                raise ValueError
             status, data = self._json_get(
                 identity.purpose,
                 "/o/" + quote(identity.key, safe="~"),
                 {"generation": identity.version, "softDeleted": "true"},
             )
-            # objects.get (unlike objects.list) has no documented requirement
-            # for a current soft-delete policy. A retained object or any error
-            # except a structured notFound remains pending. No expiry guesses.
+            # Keep the independent, exact-generation notFound check as well.
             if not self._json_error(status, data, 404, "notFound"):
                 raise ValueError
             self._metadata(identity.purpose, private=False)
@@ -1115,47 +1125,16 @@ class GCSPrivateMediaStorage:
             )
         )
 
-    @staticmethod
-    def _initial_no_soft_delete(data):
-        """Provider evidence of NEVER enabled, not just currently disabled.
-
-        bucket-metadata documents metageneration=1 at creation, increasing on
-        each metadata update. Together with an explicit zero initial policy this
-        rules out historical enable/disable cycles for the verified incarnation.
-        Missing/changed revisions, missing policy and effectiveTime alone do not
-        establish history. No 90-day timer: expiry is not observed absence.
-        https://cloud.google.com/storage/docs/bucket-metadata
-        https://cloud.google.com/storage/docs/disable-soft-delete
-        """
-        policy = data.get("softDeletePolicy")
-        return (
-            data.get("metageneration") == "1"
-            and isinstance(policy, dict)
-            and type(policy.get("retentionDurationSeconds")) in (str, int)
-            and policy["retentionDurationSeconds"] in ("0", 0)
-            and not data.get("softDeleteTime")
-            and not data.get("hardDeleteTime")
-        )
-
-    def _soft_deleted_absent(self, locator):
-        # Query even when disabled now: retained generations outlive policy
-        # changes. Only unchanged INITIAL no-policy metadata explains the
-        # documented invalidArgument as absence; every unknown history stays
-        # pending. Re-read after the response so a policy race cannot pass.
-        before = self._metadata(locator.purpose, private=False)
+    def _soft_deleted_absent(self, locator, *, generation=None):
+        # Only successful bounded enumeration can prove absence. Neither a 400,
+        # bucket metadata nor the passage of hardDeleteTime is deletion proof.
+        self._metadata(locator.purpose, private=False)
         token, seen = None, set()
         for _ in range(MAX_PAGES):
             query = {"prefix": locator.key, "maxResults": "100", "softDeleted": "true"}
             if token is not None:
                 query["pageToken"] = token
             status, page = self._json_get(locator.purpose, "/o", query)
-            if self._json_error(status, page, 400, "invalidArgument"):
-                if token is not None or not self._initial_no_soft_delete(before):
-                    raise ValueError
-                after = self._metadata(locator.purpose, private=False)
-                if not self._initial_no_soft_delete(after):
-                    raise ValueError
-                return True
             if (
                 status != 200
                 or page.get("kind") != "storage#objects"
@@ -1173,8 +1152,9 @@ class GCSPrivateMediaStorage:
                 ):
                     raise ValueError
                 if item["name"] == locator.key:
-                    _generation(item.get("generation"))
-                    return False
+                    retained = _generation(item.get("generation"))
+                    if generation is None or generation == retained:
+                        return False
             token = page.get("nextPageToken")
             if token is None:
                 self._metadata(locator.purpose, private=False)
@@ -1239,10 +1219,17 @@ class GCSPrivateMediaStorage:
                 ObjectLocator(self.binding_id, "serving", f"original/{upload_id}")
             ),
         ]
-        empty = all(result.empty for result in results)
-        return EraseResult(
-            empty, not empty, None if empty else "cleanup_pending", _now()
-        )
+        reasons = {result.reason for result in results if not result.empty}
+        if reasons:
+            reason = (
+                "soft_deleted_pending"
+                if reasons == {"soft_deleted_pending"}
+                else "cleanup_pending"
+            )
+            if "cleanup_unavailable" in reasons:
+                reason = "cleanup_unavailable"
+            return EraseResult(False, True, reason, _now())
+        return EraseResult(True, False, None, _now())
 
 
 if __name__ == "__main__":

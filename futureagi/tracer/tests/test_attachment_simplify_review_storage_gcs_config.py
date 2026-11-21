@@ -8,7 +8,7 @@ bucket-metadata,disable-soft-delete}. No policy changes, credentials or cloud IO
 import io
 import json
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 from uuid import uuid4
@@ -107,8 +107,10 @@ class NativeHTTP:
         self.b, self.calls, self.responses = b, [], []
         self.live = {(KEY, "101"), (KEY, "102"), (KEY + "-neighbor", "103")}
         self.soft, self.uploads = set(), set()
+        self.soft_delete_time = datetime.now(UTC)
+        self.hard_delete_time = self.soft_delete_time + timedelta(days=7)
         self.version_pages, self.upload_pages, self.soft_pages = [], [], []
-        self.list_error = error(400, "invalidArgument")
+        self.list_error = error(400, "invalid")
         self.exact_override = None
         self.retain_deletes = False
         self.after_list = lambda: None
@@ -129,7 +131,10 @@ class NativeHTTP:
                 },
                 "versioning": {"enabled": True},
                 "storageClass": "STANDARD",
-                "softDeletePolicy": {"retentionDurationSeconds": "0"},
+                "softDeletePolicy": {
+                    "retentionDurationSeconds": "604800",
+                    "effectiveTime": CREATED.isoformat(),
+                },
                 "lifecycle": {
                     "rule": [
                         {
@@ -213,7 +218,12 @@ class NativeHTTP:
                         {
                             "kind": "storage#objects",
                             "items": [
-                                {"name": k, "generation": v}
+                                {
+                                    "name": k,
+                                    "generation": v,
+                                    "softDeleteTime": self.soft_delete_time.isoformat(),
+                                    "hardDeleteTime": self.hard_delete_time.isoformat(),
+                                }
                                 for k, v in sorted(self.soft)
                                 if k.startswith(query["prefix"])
                             ],
@@ -337,7 +347,7 @@ def test_v1_encoded_keys_generation_pagination(native):
     assert second.next_cursor is None
 
 
-def test_initial_no_policy_400_completes_all_and_multipart(native):
+def test_successful_list_completes_all_and_multipart(native):
     adapter, http, b = native
     http.upload_pages = [
         http.upload_page(b.serving_bucket, [(KEY, "a/+1")], (KEY, "a/+1")),
@@ -352,9 +362,10 @@ def test_initial_no_policy_400_completes_all_and_multipart(native):
     assert all(r.closed for r in http.responses)
 
 
-@pytest.mark.parametrize("revision", [None, "2", "999", 1, True, "01"])
+@pytest.mark.parametrize("revision", [None, "1", "2", "999", 1, True, "01"])
 def test_disabled_unknown_history_never_complete(native, revision):
     adapter, http, b = native
+    http.meta["serving"]["softDeletePolicy"] = {"retentionDurationSeconds": "0"}
     http.meta["serving"]["metageneration"] = revision
     http.soft.add((KEY, "7"))
     result = adapter.erase_all_versions(loc(b))
@@ -367,6 +378,8 @@ def test_disabled_unknown_history_never_complete(native, revision):
     [
         {},
         error(400, "badRequest"),
+        error(400, "invalid"),
+        error(400, "invalidArgument"),
         error(403, "invalidArgument"),
         {"error": {"code": 400, "errors": []}},
         {
@@ -379,12 +392,14 @@ def test_disabled_unknown_history_never_complete(native, revision):
 )
 def test_arbitrary_400_not_absence(native, payload):
     adapter, http, b = native
+    http.meta["serving"]["softDeletePolicy"] = {"retentionDurationSeconds": "0"}
     http.list_error = payload
     assert not adapter.erase_all_versions(loc(b)).empty
 
 
 def test_policy_revision_race_never_complete(native):
     adapter, http, b = native
+    http.meta["serving"]["softDeletePolicy"] = {"retentionDurationSeconds": "0"}
     http.after_list = lambda: http.meta["serving"].update(metageneration="3")
     assert not adapter.erase_all_versions(loc(b)).empty
 
@@ -394,6 +409,14 @@ def test_no_policy_field_is_not_never_enabled_evidence(native):
     http.meta["serving"].pop("softDeletePolicy")
     http.soft_pages = [(400, error(400, "invalidArgument"))]
     assert not adapter.erase_all_versions(loc(b)).empty
+
+
+def test_enabled_admission_refuses_unavailable_probe(native):
+    adapter, http, _ = native
+    http.soft_pages = [(400, error(400, "invalid"))]
+    with pytest.raises(AttachmentError, match="storage_unverified"):
+        adapter.verify_readiness()
+    assert all(method == "GET" for method, _, _, _ in http.calls)
 
 
 def test_400_mid_pagination_never_complete(native):
@@ -444,6 +467,8 @@ def test_exact_delete_retained_pending_on_first_call_and_retry(native):
     )
     pending(adapter.erase_version, identity(b))
     http.soft.remove((KEY, "101"))
+    pending(adapter.erase_version, identity(b))  # Disabled list still fails closed.
+    http.meta["serving"]["softDeletePolicy"] = {"retentionDurationSeconds": "604800"}
     assert adapter.erase_version(identity(b)) is None
     assert (KEY, "102") in http.live
 
@@ -494,11 +519,12 @@ def test_incarnation_mismatch_blocks_delete(native):
 def test_admission_refuses_unprovable_cleanup_history(native):
     adapter, http, b = native
     http.meta["serving"]["metageneration"] = "9"
+    http.meta["serving"]["softDeletePolicy"] = {"retentionDurationSeconds": "0"}
     with pytest.raises(AttachmentError, match="storage_unverified"):
         adapter.verify_readiness()
 
 
-def test_admission_initial_zero_policy_has_real_non_stub_path(native):
+def test_admission_enabled_policy_has_real_non_stub_path(native):
     adapter, http, b = native
     adapter.verify_readiness()
     assert all(method == "GET" for method, _, _, _ in http.calls)
@@ -733,5 +759,6 @@ def test_unknown_history_terminal_page_never_certifies_orphan_settlement(native)
     adapter, http, b = native
     http.live = {(KEY, "102")}
     http.meta["serving"]["metageneration"] = "9"
+    http.meta["serving"]["softDeletePolicy"] = {"retentionDurationSeconds": "0"}
     pending(adapter.list_versions, loc(b))
     assert http.live == {(KEY, "102")}

@@ -85,7 +85,10 @@ def metadata(b, purpose):
         },
         "versioning": {"enabled": True},
         "storageClass": "STANDARD",
-        "softDeletePolicy": {"retentionDurationSeconds": "0"},
+        "softDeletePolicy": {
+            "retentionDurationSeconds": "604800",
+            "effectiveTime": CREATED.isoformat(),
+        },
         "lifecycle": {
             "rule": [
                 {
@@ -495,7 +498,13 @@ def test_read_identity_and_privacy_change_refused(setup, field, value):
         ("retentionPolicy", {"retentionPeriod": "1"}),
         ("defaultEventBasedHold", True),
         ("objectRetention", {"mode": "Enabled"}),
-        ("softDeletePolicy", {"retentionDurationSeconds": "604800"}),
+        ("softDeletePolicy", {"retentionDurationSeconds": "0"}),
+        ("softDeletePolicy", {}),
+        ("softDeletePolicy", None),
+        ("softDeletePolicy", {"retentionDurationSeconds": 604799}),
+        ("softDeletePolicy", {"retentionDurationSeconds": "7776001"}),
+        ("softDeletePolicy", {"retentionDurationSeconds": 604800.0}),
+        ("softDeletePolicy", {"retentionDurationSeconds": True}),
         ("lifecycle", {"rule": []}),
         (
             "lifecycle",
@@ -526,6 +535,23 @@ def test_readiness_valid_and_no_posture_writes(setup):
             for _, url, _ in http.calls
         )
     assert all(method == "GET" for method, _, _ in http.calls)
+
+
+@pytest.mark.parametrize("duration", [604800, "7776000"])
+def test_enabled_policy_evidence_is_not_a_history_test(setup, duration):
+    adapter, http, _ = setup
+    policy = http.meta["quarantine"]["softDeletePolicy"]
+    policy["retentionDurationSeconds"] = duration
+    for present in (True, False):
+        if not present:
+            del policy["effectiveTime"]
+        assert adapter._write_posture("quarantine") == {
+            "retention_seconds": int(duration),
+            "has_effective_time": present,
+        }
+        adapter.verify_readiness()
+    del http.meta["quarantine"]["softDeletePolicy"]
+    assert_error("storage_unverified", adapter.verify_readiness)
 
 
 def test_expired_posture_never_refreshes(setup, monkeypatch):
@@ -971,7 +997,9 @@ def test_soft_deleted_or_unverifiable_absence_pending(setup, soft):
     http.soft_pages = [soft]
     result = s.erase_all_versions(ObjectLocator(b.id, "serving", "original/test"))
     assert not result.empty and result.retryable
-    assert result.reason in ("soft_deleted_pending", "cleanup_unavailable")
+    assert result.reason == (
+        "soft_deleted_pending" if soft[0] == 200 else "cleanup_unavailable"
+    )
     # Physical exact cleanup happened even though completion could not be proven.
     assert not http.objects
 

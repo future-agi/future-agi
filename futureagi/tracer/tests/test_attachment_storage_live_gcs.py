@@ -32,18 +32,22 @@ from tracer.models.attachment_storage import (
 )
 from tracer.services.attachments import storage_gcs as gcs
 from tracer.services.attachments.contract import AttachmentError
-from tracer.services.attachments.interfaces import ObjectLocator, PutPermit
+from tracer.services.attachments.interfaces import (
+    ObjectLocator,
+    PutPermit,
+    StoragePurpose,
+)
 from tracer.services.attachments.storage import bind_for_admission, for_binding
 
-_PURPOSES = ("quarantine", "serving")
-_REFS = {
+_PURPOSES: tuple[StoragePurpose, ...] = ("quarantine", "serving")
+_CREDENTIAL_REFS = {
     "quarantine": {
         "access_key_ref": "ATTQ_GCS_ID",
         "secret_key_ref": "ATTQ_GCS_SECRET",
     },
     "serving": {"access_key_ref": "ATTS_GCS_ID", "secret_key_ref": "ATTS_GCS_SECRET"},
-    "posture_credential_ref": "gcs.qual.ro",
 }
+_REFS = {**_CREDENTIAL_REFS, "posture_credential_ref": "gcs.qual.ro"}
 _REQUIRED = (
     "ATTQUAL_PROJECT_ID",
     "ATTQUAL_PROJECT_NUMBER",
@@ -60,7 +64,7 @@ _REQUIRED = (
         for p in _PURPOSES
         for k in ("BUCKET", "ACCESS_KEY_ENV", "SECRET_KEY_ENV")
     ),
-    *(name for p in _PURPOSES for name in _REFS[p].values()),
+    *(name for p in _PURPOSES for name in _CREDENTIAL_REFS[p].values()),
 )
 pytestmark = [
     pytest.mark.external,
@@ -85,7 +89,7 @@ def enrollment(settings, monkeypatch):
         os.environ["ATTQUAL_PROJECT_ID"],
         os.environ["ATTQUAL_PROJECT_NUMBER"],
     )
-    expected = {
+    expected: dict[str, object] = {
         "provider": "gcs",
         "endpoint": "https://storage.googleapis.com",
         "region": "us-central1",
@@ -100,7 +104,7 @@ def enrollment(settings, monkeypatch):
             if (
                 os.getenv(prefix + key.upper())
                 or os.environ[prefix + key.upper() + "_ENV"]
-                != _REFS[purpose][key + "_ref"]
+                != _CREDENTIAL_REFS[purpose][key + "_ref"]
             ):
                 pytest.fail(
                     "expected dedicated qualification credential reference",
@@ -147,11 +151,41 @@ def _require_empty(erase, locator):
     assert (result.empty, result.retryable, result.reason) == (True, False, None)
 
 
-def _versions(erase, locator, *, limit=100):
+def _retained(erase, locator):
+    # Independent JSON evidence, not the adapter's boolean absence result.
+    copies = {}
+    tokens: set[str] = set()
+    query = {"prefix": locator.key, "maxResults": "1", "softDeleted": "true"}
+    while True:
+        status, page = erase._json_get(locator.purpose, "/o", query)
+        assert status == 200 and page["kind"] == "storage#objects"
+        for item in page.get("items", []):
+            assert item["name"].startswith(locator.key)
+            if item["name"] != locator.key:
+                continue
+            version = item["generation"]
+            assert version not in copies
+            hard_delete = datetime.fromisoformat(item["hardDeleteTime"])
+            assert (
+                datetime.fromisoformat(item["softDeleteTime"])
+                <= datetime.now(UTC)
+                < hard_delete
+            )
+            copies[version] = item["hardDeleteTime"]
+        if "nextPageToken" not in page:
+            return copies
+        token = page["nextPageToken"]
+        assert token and token not in tokens and len(tokens) < 10
+        tokens.add(token)
+        query["pageToken"] = token
+
+
+def _versions(erase, locator, *, limit=100, live_only=False):
     versions, cursors, cursor = [], set(), None
     # Every exact test key has at most two versions and one neighbor.
     for _ in range(10):
-        page = erase.list_versions(locator, cursor=cursor, limit=limit)
+        list_page = erase._list_live_versions if live_only else erase.list_versions
+        page = list_page(locator, cursor=cursor, limit=limit)
         assert not page.delete_markers and len(page.versions) <= limit
         for identity in page.versions:
             _check_identity(locator, identity)
@@ -179,8 +213,11 @@ class _Run:
         self.prefix = prefix
         self.manifest = manifest
         self.cleanup = cleanup
-        self.horizon = 0
-        self.write = for_binding(binding_id, operation="write")
+        self.expected: dict[ObjectLocator, set[str]] = {}
+        self.horizon = 0.0
+        write = for_binding(binding_id, operation="write")
+        assert isinstance(write, gcs.GCSPrivateMediaStorage)
+        self.write = write
         self.read = for_binding(binding_id, operation="read")
         self.erase = for_binding(binding_id, operation="erase")
 
@@ -188,8 +225,29 @@ class _Run:
         locator = ObjectLocator(self.binding_id, purpose, self.prefix + name)
         # Register all exact keys before dispatch, including failed and ambiguous PUTs.
         self.record(purpose=purpose, key=locator.key)
-        self.cleanup.callback(_require_empty, self.erase, locator)
+        self.expected[locator] = set()
+        self.cleanup.callback(self.cleanup_key, locator)
         return locator
+
+    def remember(self, locator, identity):
+        _check_identity(locator, identity)
+        self.expected[locator].add(identity.version)
+        self.record(
+            purpose=locator.purpose, key=locator.key, generation=identity.version
+        )
+        return identity
+
+    def cleanup_key(self, locator):
+        result = self.erase.erase_all_versions(locator)
+        copies = _retained(self.erase, locator)
+        # Record actuals even on a failed run (e.g. a write with a lost reply).
+        self.record(purpose=locator.purpose, key=locator.key, retained=copies)
+        assert set(copies) == self.expected[locator]
+        assert _versions(self.erase, locator, live_only=True) == []
+        expected = (
+            (False, True, "soft_deleted_pending") if copies else (True, False, None)
+        )
+        assert (result.empty, result.retryable, result.reason) == expected
 
     def record(self, **fields):
         self.manifest.write(
@@ -217,8 +275,7 @@ class _Run:
                 expected_length=len(data),
                 expected_sha256=_digest(data),
             )
-        _check_identity(locator, identity)
-        return identity
+        return self.remember(locator, identity)
 
     def seed_successor(self, locator, old, data):
         """Fixture-only conditional replacement; the production writer stays create-only."""
@@ -257,7 +314,7 @@ class _Run:
         successor = replace(old, version=response["headers"]["x-goog-generation"])
         _check_identity(locator, successor)
         assert successor != old
-        return successor
+        return self.remember(locator, successor)
 
 
 @pytest.fixture(scope="session")
@@ -287,6 +344,7 @@ def live(enrollment, settings, run_id):
             # Preflight both identities before ANY data write. Do not issue a delete if
             # an allegedly fresh canary turns out to contain a generation.
             for purpose in _PURPOSES:
+                run.record(purpose=purpose, posture=run.write._write_posture(purpose))
                 probe = ObjectLocator(binding_id, purpose, prefix + "empty-canary")
                 assert _versions(run.erase, probe) == []
                 _require_empty(run.erase, probe)
@@ -296,7 +354,10 @@ def live(enrollment, settings, run_id):
                 # An ambiguous PUT may have outlived its response. No retry and no
                 # cleanup until all registered writer deadlines have passed.
                 time.sleep(max(0, run.horizon - time.time()))
-        run.record(cleanup="complete")  # Not written if ANY cleanup callback failed.
+        run.record(
+            cleanup="verified",
+            settlement="pending" if any(run.expected.values()) else "empty",
+        )  # Not written if ANY cleanup callback failed.
 
 
 def _digest(data):
@@ -340,7 +401,7 @@ def test_quarantine_snapshot_promote_range(live):
         expected_length=len(data),
         expected_sha256=digest,
     )
-    _check_identity(serving, dest)
+    live.remember(serving, dest)
     _snapshot(live, dest, data)
     with live.read.open_range(
         dest, start=2, end=6, expected_length=len(data)
@@ -367,22 +428,40 @@ def test_generation_pinning_and_create_only(live):
         live.read.snapshot(replace(old, version=missing), BytesIO(), expected_length=3)
 
 
-def test_erase_exact_then_all_with_retained_absence(live):
+def test_retained_cleanup_on_both_buckets(live):
+    # Qualify settlement independently of the snapshot/read path. A failure in
+    # playback must not conceal the provider's physical cleanup disposition.
+    for purpose in _PURPOSES:
+        locator = live.locator(purpose, "retained")
+        old = live.put(locator, b"old")
+        current = live.seed_successor(locator, old, b"new")
+        assert set(_versions(live.erase, locator, limit=1)) == {old, current}
+        for _ in range(2):
+            live.cleanup_key(locator)
+        assert set(_retained(live.erase, locator)) == {old.version, current.version}
+
+
+def test_erase_exact_then_all_with_retained_generations(live):
     for purpose in _PURPOSES:
         locator = live.locator(purpose, "erase")
         neighbor = live.locator(purpose, "erase-neighbor")
         old = live.put(locator, b"old")
         current = live.seed_successor(locator, old, b"new")
         sentinel = live.put(neighbor, b"keep")
-        live.erase.erase_version(old)
-        assert _versions(live.erase, locator) == [current]
+        with pytest.raises(AttachmentError) as exc:
+            live.erase.erase_version(old)
+        assert exc.value.code == "cleanup_unavailable"
+        assert set(_retained(live.erase, locator)) == {old.version}
+        with pytest.raises(AttachmentError) as exc:
+            _versions(live.erase, locator)
+        assert exc.value.code == "cleanup_unavailable"
+        assert _versions(live.erase, locator, live_only=True) == [current]
         with pytest.raises(AttachmentError):
             live.read.snapshot(old, BytesIO(), expected_length=3)
         _snapshot(live, current, b"new")
         _snapshot(live, sentinel, b"keep")
         for _ in range(2):
-            _require_empty(live.erase, locator)
-            assert _versions(live.erase, locator) == []
+            live.cleanup_key(locator)
         _snapshot(live, sentinel, b"keep")
 
 
@@ -391,7 +470,7 @@ def test_refuses_drifted_posture(enrollment, settings, monkeypatch, drift):
     # Wrap only the first successful quarantine metadata response AFTER discovery.
     # Count subsequent calls: an unrelated later readiness failure must not pass.
     original = gcs.GCSPrivateMediaStorage._json_get
-    calls = []
+    calls: list[tuple[str, str, int]] = []
 
     def metadata(adapter, purpose, suffix="", query=None):
         status, data = original(adapter, purpose, suffix, query)

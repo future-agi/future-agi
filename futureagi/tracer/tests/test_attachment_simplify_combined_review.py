@@ -924,8 +924,17 @@ def test_real_gcs_adapter_pending_receipts_preserve_sql_charge(values, monkeypat
     )
     upload.refresh_from_db()
     assert upload.reservation_settled_at is None
-    # Synthetic transport changes only: model a later true physical-absence
-    # response. This is not a native bucket mutation or historical proof claim.
+    # Retry after the advertised hardDeleteTime. Elapsed time alone is not
+    # settlement evidence: a still-listed copy must continue to hold U.
+    after_window = http.hard_delete_time + timedelta(seconds=1)
+    monkeypatch.setattr(timezone, "now", lambda: after_window)
+    monkeypatch.setattr(gcs_fixture.g, "_now", lambda: after_window)
+    assert not retention._erase_asset(
+        attachment_id=asset.id, scope_id=v.scope.id, now=after_window, storage=adapter
+    )
+    upload.refresh_from_db()
+    assert upload.reservation_settled_at is None and upload.cleanup_checked_at is None
+    # Simulate GCS actually expiring the retained copies on the next poll.
     http.soft.clear()
     assert retention._erase_asset(
         attachment_id=asset.id, scope_id=v.scope.id, now=timezone.now(), storage=adapter
