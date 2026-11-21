@@ -142,7 +142,7 @@ def evidence_settings(settings, tmp_path, monkeypatch):
     cache.clear()
     evidence_store._recent.clear()
     evidence_store._checked_buckets.clear()
-    monkeypatch.setattr(evidence_store, "_gcs_client", None)
+    evidence_store._evidence_gcs_client.cache_clear()
     # Sweeps only when a test says so: a bucket's sweep would otherwise run
     # on a thread that may outlive the test's fakes.
     monkeypatch.setattr(evidence_store, "_swept_at", time.time() + 3600)

@@ -45,6 +45,7 @@ is the backstop. No customer content is stored in the database.
 from __future__ import annotations
 
 import contextlib
+import functools
 import gzip
 import hashlib
 import io
@@ -158,31 +159,26 @@ def _gcs_keys() -> tuple[str, str]:
     )
 
 
-_gcs_client = None
-
-
+@functools.cache
 def _evidence_gcs_client():
     """A GCS client for the evidence bucket when the platform's own storage
     is elsewhere. The region is always "auto": never looked up, because the
     bucket's ``storage.objectAdmin`` grant does not allow reading its
     location, and never ``MINIO_REGION``, which names the platform's own
     storage region (an S3 region on a deployment still on S3)."""
-    global _gcs_client
-    if _gcs_client is None:
-        from minio import Minio
+    from minio import Minio
 
-        from tfc.utils.storage_client import storage_http_client
+    from tfc.utils.storage_client import storage_http_client
 
-        access_key, secret_key = _gcs_keys()
-        _gcs_client = Minio(
-            "storage.googleapis.com",
-            access_key=access_key,
-            secret_key=secret_key,
-            region="auto",
-            secure=True,
-            http_client=storage_http_client(),
-        )
-    return _gcs_client
+    access_key, secret_key = _gcs_keys()
+    return Minio(
+        "storage.googleapis.com",
+        access_key=access_key,
+        secret_key=secret_key,
+        region="auto",
+        secure=True,
+        http_client=storage_http_client(),
+    )
 
 
 def _storage_client():
