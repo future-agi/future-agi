@@ -225,6 +225,12 @@ jobs:
             ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
           cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
 
+      - name: Verify release boundary and build the local attachment byte store
+        if: env.BUILD_BACKEND == 'true' && matrix.stack == 'distributed'
+        run: |
+          docker run --rm --network none --entrypoint python "futureagi/future-agi:$IMAGE_TAG" -c 'from importlib.util import find_spec; assert find_spec("e2e_attachment_storage") is None and find_spec("tfc.settings.e2e") is None'
+          docker build --target attachments-s3 -t "futureagi-e2e-attachments-s3:$IMAGE_TAG" -f e2e/stack/backend/Dockerfile .
+
       - name: Add E2E-only fixtures and telemetry isolation to backend image
         if: env.BUILD_BACKEND == 'true'
         run: >
@@ -343,7 +349,7 @@ jobs:
               peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
               peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-minio
               property-catalog-kafka property-catalog-topic-init
-              property-catalog-runtime-volume-init)
+              property-catalog-runtime-volume-init attachments-s3 attachments-origin)
           fi
           attempt_log=$(mktemp)
           trap 'rm -f "$attempt_log"' EXIT

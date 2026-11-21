@@ -45,6 +45,8 @@ export const resetAllUserStores = () => {
     ["prompt", resetPromptState],
     ["graph-builder", () => resetUserStore("graph-builder")],
     ["develop-detail", resetDevelopDetailStates],
+    // In-memory attachment media-session handles (non-secret selectors).
+    ["attachment-media", () => resetUserStore("attachment-media")],
   ];
 
   for (const [name, reset] of resets) {

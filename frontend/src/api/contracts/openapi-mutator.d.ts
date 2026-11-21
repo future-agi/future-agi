@@ -10,6 +10,9 @@ export declare function apiMutator<
     status: number;
     headers: ApiResponseHeaders;
   },
->(url: string, options: RequestInit): Promise<TResponse>;
+>(
+  url: string,
+  options: RequestInit & { responseType?: "blob" },
+): Promise<TResponse>;
 
 export default apiMutator;

@@ -7,6 +7,12 @@ on:
     branches: [dev, main]
   merge_group:
   workflow_dispatch:
+    inputs:
+      suite:
+        description: Test selection (PR and push gates always run the full suite)
+        type: choice
+        default: full
+        options: [full, attachment-deletion]
 
 permissions:
   contents: read
@@ -31,7 +37,7 @@ env:
   METRICS_SPLITS: "16"
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
   # adds its suite's term (futureagi/.ci/test_backend_ci_output.py pins this).
-  PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker"
+  PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker and not attachment_load"
 
 jobs:
   changes:
@@ -171,6 +177,7 @@ jobs:
         # when that suite is due. An absent leg leaves no check, so say which.
         env:
           METRICS: ${{ steps.filter.outputs.metrics || steps.always.outputs.metrics }}
+          FOCUSED_ATTACHMENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'attachment-deletion' }}
         run: |
           set -euo pipefail
           legs() { # suite, check name, marker term, timeout minutes, shard count
@@ -179,15 +186,25 @@ jobs:
               '[{suite: $suite, name: $name, markers: $markers, timeout: $timeout,
                  splits: $n, group: range(1; $n + 1)}]'
           }
-          main=$(legs main pytest "not metrics" 45 "$SPLITS")
+          main=$(legs main pytest "not metrics" 60 "$SPLITS")
           metrics='[]'
-          if [ "$METRICS" = true ]; then
+          if [ "$FOCUSED_ATTACHMENTS" = true ]; then
+            main=$(legs main pytest "not metrics" 60 1)
+          elif [ "$METRICS" = true ]; then
             metrics=$(legs metrics metrics metrics 50 "$METRICS_SPLITS")
             echo "::notice::Metrics suite scheduled: metrics shard 1-$METRICS_SPLITS"
           else
             echo "::notice::Metrics suite not scheduled: no Metrics-related path changed"
           fi
-          echo "matrix=$(jq -nc --argjson a "$main" --argjson b "$metrics" '{include: ($a + $b)}')" >> "$GITHUB_OUTPUT"
+          # These unsharded modules need their own database, gate and time budget.
+          attachments='[
+            {"group":"combined-review", "module":"test_attachment_simplify_combined_review",
+             "database":"test_att_combined_review_ci", "gate":"ATT_COMBINED_REVIEW"},
+            {"group":"imports-review", "module":"test_attachment_simplify_review_imports_db",
+             "database":"test_att_review_imports_ci", "gate":"ATT_REVIEW_IMPORTS"}
+          ]'
+          echo "matrix=$(jq -nc --argjson a "$main" --argjson b "$metrics" --argjson c "$attachments" \
+            '{include: ($a + $b + ($c | map(. + {name:"pytest", suite:"attachments", timeout:60})))}')" >> "$GITHUB_OUTPUT"
 
   update-safety:
     name: OSS migrations and unattended update safety
@@ -407,6 +424,22 @@ jobs:
       - name: Install ffmpeg, ffprobe and xmlsec1 from bounded Ubuntu cache
         run: bash .ci/install-test-packages.sh /tmp/futureagi-backend-ci-apt
 
+      - name: Allow the attachment decoder sandbox to create user namespaces
+        # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor.
+        # Grant them to /usr/bin/bwrap only (the same per-application allowance
+        # production media workers need); the global restriction stays on and
+        # the product's bubblewrap/prlimit confinement is unchanged.
+        run: |
+          sudo tee /etc/apparmor.d/bwrap-attachment-sandbox >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap-attachment-sandbox /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-attachment-sandbox
+          bwrap --ro-bind / / --unshare-all --die-with-parent true
+
       - name: Fetch this run's pinned Temporal archive
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -429,6 +462,7 @@ jobs:
             up -d --wait --wait-timeout 180
 
       - name: Apply pinned sharding plan
+        if: matrix.module == ''
         uses: actions/download-artifact@v4
         with:
           name: test-durations-plan
@@ -437,10 +471,34 @@ jobs:
       - name: Run shard
         id: run-shard
         env:
+          ISOLATED_MODULE: ${{ matrix.module }}
+          ISOLATED_DB: ${{ matrix.database }}
+          ISOLATED_GATE: ${{ matrix.gate }}
+          FOCUSED_ATTACHMENTS: ${{ github.event_name == 'workflow_dispatch' && inputs.suite == 'attachment-deletion' }}
           SUITE: ${{ matrix.suite }}
           SUITE_MARKERS: ${{ matrix.markers }}
           SUITE_SPLITS: ${{ matrix.splits }}
         run: |
+          if [ -n "$ISOLATED_MODULE" ]; then
+            # The service creates only test_tfc; these modules assert their own ClickHouse database.
+            curl -sS --fail --max-time 30 "http://127.0.0.1:${FI_CH_TEST_SIDECAR_HTTP_PORT}/" \
+              --data-binary "CREATE DATABASE IF NOT EXISTS ${ISOLATED_DB}"
+            exec env "$ISOLATED_GATE=1" PG_TEST_DB="$ISOLATED_DB" CH_DATABASE="$ISOLATED_DB" CH25_DATABASE="$ISOLATED_DB" \
+              uv run pytest -q -ra "tracer/tests/$ISOLATED_MODULE.py" --junitxml="junit-${{ matrix.group }}.xml"
+          fi
+          if [ "$FOCUSED_ATTACHMENTS" = true ]; then
+            # An opt-in diagnostic, never a substitute for the PR's full gate.
+            uv run pytest -q -ra \
+              tracer/tests/test_attachment_session_deletion.py \
+              tracer/tests/test_attachment_session_delete_integration.py \
+              tracer/tests/test_attachment_lifecycle.py \
+              tracer/tests/test_trace_session.py \
+              tracer/tests/test_trace_session_delete_scope.py \
+              tracer/tests/test_analysis_retention_locks.py \
+              tracer/tests/test_analysis_retention.py \
+              --junitxml=junit-${{ matrix.group }}.xml
+            exit $?
+          fi
           set +e
           # pytest.ini adds -v; -q restores compact module progress. Verbose
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
@@ -462,6 +520,16 @@ jobs:
           fi
           exit $code
 
+      - name: Lint focused attachment deletion changes
+        if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.suite == 'attachment-deletion' }}
+        run: |
+          uvx --from ruff==0.17.3 ruff check \
+            tracer/services/attachments/authority.py \
+            tracer/services/attachments/lifecycle.py \
+            tracer/services/attachments/session_deletion.py \
+            tracer/tests/test_attachment_session_deletion.py \
+            tracer/tests/test_attachment_session_delete_integration.py
+
       - name: Upload JUnit results
         # Skip when the shard never ran: a missing-file error here would bury
         # the real failure (EE checkout, service health, dependency install).
@@ -474,7 +542,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload timing data (dev pushes only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        if: matrix.module == '' && github.event_name == 'push' && github.ref == 'refs/heads/dev'
         uses: actions/upload-artifact@v4
         with:
           name: timing-data-${{ matrix.suite }}-${{ matrix.group }}
@@ -781,6 +849,70 @@ jobs:
             *) echo "::error::Docker Hub answered HTTP ${code}; re-run the job"; exit 1 ;;
           esac
 
+
+  attachment-schema-isolated:
+    name: Attachment schema qualification
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_tfc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_tfc"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      PG_HOST: 127.0.0.1
+      PG_PORT: "5432"
+      PG_USER: test_user
+      PG_PASSWORD: test_password
+      PG_DB: test_tfc
+      PYTHONHASHSEED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+      - name: Install decoder sandbox and its per-app user namespace policy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap
+          sudo tee /etc/apparmor.d/bwrap-attachment-sandbox >/dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap-attachment-sandbox /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap-attachment-sandbox
+          bwrap --ro-bind / / --unshare-all --die-with-parent true
+      - name: Install backend dependencies
+        run: uv sync --frozen --all-extras
+      - name: Run isolated schema review module
+        env:
+          ATT_SCHEMA_REVIEW_ISOLATED: "1"
+          PG_TEST_DB_PREFIX: test_att_review_schema_ci_
+        run: uv run pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_simplify_review_schema_postgres.py -q
+      - name: Run completed import binding module
+        env:
+          ATT_SCHEMA_REVIEW_ISOLATED: "1"
+          PG_TEST_DB_PREFIX: test_att_import_binding_
+        run: uv run pytest -c /dev/null --noconftest -p no:django tracer/tests/test_attachment_completed_import_binding_postgres.py -q
+
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
     needs:
@@ -789,6 +921,7 @@ jobs:
         update-safety,
         plan,
         test,
+        attachment-schema-isolated,
         saml-multiworker,
         agentic-eval,
         slim-smoke,

@@ -262,6 +262,34 @@ from the four component images already built with that tag. The managed-mock ins
 (`lib/managed-mock.ts`) checks the Standalone stack against its own spec
 (`lib/managed-mock-standalone.ts`). The Distributed-only background attestation is skipped there.
 
+### Attachments on the Distributed stack (`OBS-E2E-066`)
+
+The Distributed overlay runs trace attachments end to end; the Standalone stack does not, and the
+flow skips there. `docker-compose.e2e.yml` sets `FI_ATTACHMENTS_ENABLED=true` (and the private
+storage settings) on `postgres-schema-bootstrap`, `backend` and `worker`, so the binding,
+outbox-drain and lifecycle schedules are registered and drained; `e2e.env` sets the same flag for
+`fi-collector`. It adds:
+
+- `attachments-s3` — the versioned object store (moto) for this flow. Only the E2E image's
+  settings select its adapter. Both bucket resource identities start with `e2e-double://`;
+  the wire protocol is S3, but a pass does not qualify AWS or MinIO. The bootstrap creates
+  private, versioned buckets. The service uses HTTPS with a certificate for `attachments-s3`;
+  only its public certificate enters the app image. No ambient AWS endpoint redirects the application.
+  The fixture verifies the SHA-256 of the received body even when the SDK sends only the digest
+  header. The app uses its normal supervised PUT and exact-version HEAD.
+  Moto is in-memory. Recreating it alone does not reset PostgreSQL: old binding identities
+  and in-flight reservations can outlive the fixture. Use a fresh paired test stack for an
+  independent run; do not edit admission counters or historical bindings.
+- `attachments-origin` — Caddy on `https://localhost:23443` (`E2E.attachmentsAppUrl`), the
+  `FI_ATTACHMENTS_MEDIA_ORIGIN`. Media sessions and the gateway are https and same-origin with the
+  app, so it sends the attachment paths to the backend and everything else to the SPA. Its
+  certificate comes from Caddy's internal CA; the flow sets `ignoreHTTPSErrors`.
+- The API and worker have separate mode-0700 scratch mounts owned by the image runtime UID.
+  Bubblewrap must be able to traverse this directory to bind its input file. The validation worker runs
+  the production bubblewrap sandbox; import and derivative jobs use the seccomp decoder.
+- `POST /tracer/e2e/attachment-scope/` (test image only) — the operator opt-in. The product has no
+  API, UI or command that enables a project's attachment scope.
+
 ### The live observed-catalog backfill harness (`harness/catalog-backfill.spec.ts`)
 
 `lib/catalog-lifecycle.ts` drives the real `fi-observed-catalog-backfill` binary against a running

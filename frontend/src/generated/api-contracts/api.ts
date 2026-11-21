@@ -259,6 +259,27 @@ import type {
   AppsmithPasswordUpdateResponseApi,
   AppsmithUserCreateResponseApi,
   AssignItemsApi,
+  AttachmentBootstrapRequestApi,
+  AttachmentBootstrapResponseApi,
+  AttachmentCompleteRequestApi,
+  AttachmentEmptyRequestApi,
+  AttachmentErrorApi,
+  AttachmentImportRequestApi,
+  AttachmentImportResponseApi,
+  AttachmentImportStatusResponseApi,
+  AttachmentLinkRequestApi,
+  AttachmentOccurrenceApi,
+  AttachmentOccurrencePageApi,
+  AttachmentProviderRegistrationRequestApi,
+  AttachmentProviderRegistrationResponseApi,
+  AttachmentRecordingManifestApi,
+  AttachmentResolveRequestApi,
+  AttachmentResolveResponseApi,
+  AttachmentSourceEnvelopeRequestApi,
+  AttachmentSourceEnvelopeResponseApi,
+  AttachmentStatusResponseApi,
+  AttachmentUploadRequestApi,
+  AttachmentUploadResponseApi,
   AutoReloadSettingsRequestApi,
   AutoReloadSettingsResponseApi,
   AutoReloadUpdateResponseApi,
@@ -423,6 +444,7 @@ import type {
   DeepAnalysisApiResponseApi,
   DeepAnalysisBodyApi,
   DeepAnalysisDispatchApiResponseApi,
+  DeleteAttachmentOccurrenceParams,
   DeleteEvalConfigResponseApi,
   DeleteEvalTemplateApi,
   DeleteUserApi,
@@ -812,6 +834,7 @@ import type {
   LicenseActionRequestApi,
   LicenseGrantApi,
   LinearTeamsResponseApi,
+  ListAttachmentOccurrencesParams,
   LiteLLMModelVoicesResponseApi,
   LitellmApi,
   LiveKitCallConfigResponseApi,
@@ -1159,6 +1182,7 @@ import type {
   RateLimitDetailResponseApi,
   RateLimitListResponseApi,
   RateLimitMutationResponseApi,
+  ReadRecordingManifestParams,
   RecordTraceNotificationsRequestApi,
   RecordTraceNotificationsResponseApi,
   RecoveryCodesRegenerateApi,
@@ -93197,6 +93221,319 @@ export const tracerUsersGetCodeExampleList = async (
   );
 };
 
+export type exchangeAttachmentMediaSessionResponse204 = {
+  data: string;
+  status: 204;
+};
+
+export type exchangeAttachmentMediaSessionResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type exchangeAttachmentMediaSessionResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type exchangeAttachmentMediaSessionResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type exchangeAttachmentMediaSessionResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type exchangeAttachmentMediaSessionResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type exchangeAttachmentMediaSessionResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type exchangeAttachmentMediaSessionResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type exchangeAttachmentMediaSessionResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    204 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type exchangeAttachmentMediaSessionResponseSuccess =
+  exchangeAttachmentMediaSessionResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type exchangeAttachmentMediaSessionResponseError = (
+  | exchangeAttachmentMediaSessionResponse400
+  | exchangeAttachmentMediaSessionResponse401
+  | exchangeAttachmentMediaSessionResponse403
+  | exchangeAttachmentMediaSessionResponse404
+  | exchangeAttachmentMediaSessionResponse409
+  | exchangeAttachmentMediaSessionResponse413
+  | exchangeAttachmentMediaSessionResponse429
+  | exchangeAttachmentMediaSessionResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type exchangeAttachmentMediaSessionResponse =
+  | exchangeAttachmentMediaSessionResponseSuccess
+  | exchangeAttachmentMediaSessionResponseError;
+
+export const getExchangeAttachmentMediaSessionUrl = () => {
+  return `/tracer/v1/attachment-media-sessions`;
+};
+
+export const exchangeAttachmentMediaSession = async (
+  attachmentEmptyRequestApi: AttachmentEmptyRequestApi,
+  options?: RequestInit,
+): Promise<exchangeAttachmentMediaSessionResponse> => {
+  return apiMutator<exchangeAttachmentMediaSessionResponse>(
+    getExchangeAttachmentMediaSessionUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentEmptyRequestApi),
+    },
+  );
+};
+
+export type getAttachmentMediaResponse200 = {
+  data: Blob;
+  status: 200;
+};
+
+export type getAttachmentMediaResponse206 = {
+  data: Blob;
+  status: 206;
+};
+
+export type getAttachmentMediaResponse304 = {
+  data: void;
+  status: 304;
+};
+
+export type getAttachmentMediaResponse404 = {
+  data: void;
+  status: 404;
+};
+
+export type getAttachmentMediaResponse416 = {
+  data: void;
+  status: 416;
+};
+
+export type getAttachmentMediaResponse429 = {
+  data: void;
+  status: 429;
+};
+
+export type getAttachmentMediaResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 206 | 304 | 404 | 416 | 429>;
+};
+
+export type getAttachmentMediaResponseSuccess = (
+  | getAttachmentMediaResponse200
+  | getAttachmentMediaResponse206
+) & {
+  headers: ApiResponseHeaders;
+};
+export type getAttachmentMediaResponseError = (
+  | getAttachmentMediaResponse304
+  | getAttachmentMediaResponse404
+  | getAttachmentMediaResponse416
+  | getAttachmentMediaResponse429
+  | getAttachmentMediaResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type getAttachmentMediaResponse =
+  | getAttachmentMediaResponseSuccess
+  | getAttachmentMediaResponseError;
+
+export const getGetAttachmentMediaUrl = (
+  mediaSessionId: string,
+  occurrenceId: string,
+  grantId: string,
+) => {
+  return `/tracer/v1/attachment-media/${mediaSessionId}/${occurrenceId}/${grantId}`;
+};
+
+/**
+ * Cookie-authenticated byte gateway. Errors carry no body.
+ */
+export const getAttachmentMedia = async (
+  mediaSessionId: string,
+  occurrenceId: string,
+  grantId: string,
+  options?: RequestInit,
+): Promise<getAttachmentMediaResponse> => {
+  return apiMutator<getAttachmentMediaResponse>(
+    getGetAttachmentMediaUrl(mediaSessionId, occurrenceId, grantId),
+    {
+      ...options,
+      method: "GET",
+      responseType: "blob",
+    },
+  );
+};
+
+export type bootstrapAttachmentSessionResponse200 = {
+  data: AttachmentBootstrapResponseApi;
+  status: 200;
+};
+
+export type bootstrapAttachmentSessionResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type bootstrapAttachmentSessionResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type bootstrapAttachmentSessionResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type bootstrapAttachmentSessionResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type bootstrapAttachmentSessionResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type bootstrapAttachmentSessionResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type bootstrapAttachmentSessionResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type bootstrapAttachmentSessionResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type bootstrapAttachmentSessionResponseSuccess =
+  bootstrapAttachmentSessionResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type bootstrapAttachmentSessionResponseError = (
+  | bootstrapAttachmentSessionResponse400
+  | bootstrapAttachmentSessionResponse401
+  | bootstrapAttachmentSessionResponse403
+  | bootstrapAttachmentSessionResponse404
+  | bootstrapAttachmentSessionResponse409
+  | bootstrapAttachmentSessionResponse413
+  | bootstrapAttachmentSessionResponse429
+  | bootstrapAttachmentSessionResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type bootstrapAttachmentSessionResponse =
+  | bootstrapAttachmentSessionResponseSuccess
+  | bootstrapAttachmentSessionResponseError;
+
+export const getBootstrapAttachmentSessionUrl = () => {
+  return `/tracer/v1/attachment-sessions`;
+};
+
+export const bootstrapAttachmentSession = async (
+  attachmentBootstrapRequestApi: AttachmentBootstrapRequestApi,
+  idempotencyKey: string,
+  options?: RequestInit,
+): Promise<bootstrapAttachmentSessionResponse> => {
+  if (typeof idempotencyKey !== "string" || !idempotencyKey.trim()) {
+    throw new TypeError("Idempotency-Key is required");
+  }
+  const headers = new Headers(options?.headers);
+  headers.set("Content-Type", "application/json");
+  headers.set("Idempotency-Key", idempotencyKey);
+  return apiMutator<bootstrapAttachmentSessionResponse>(
+    getBootstrapAttachmentSessionUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers,
+      body: JSON.stringify(attachmentBootstrapRequestApi),
+    },
+  );
+};
+
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 204>;
+};
+
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponseSuccess =
+  tracerV1AttachmentsProvidersLivekitEventsCreateResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponseError =
+  tracerV1AttachmentsProvidersLivekitEventsCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerV1AttachmentsProvidersLivekitEventsCreateResponse =
+  | tracerV1AttachmentsProvidersLivekitEventsCreateResponseSuccess
+  | tracerV1AttachmentsProvidersLivekitEventsCreateResponseError;
+
+export const getTracerV1AttachmentsProvidersLivekitEventsCreateUrl = () => {
+  return `/tracer/v1/attachments/providers/livekit/events`;
+};
+
+/**
+ * Signed LiveKit provider JSON (at most 65536 original bytes). The Authorization JWT signature and SHA-256 body claim are verified before strict JSON decoding; never normalize or reserialize the body. Only matching registered egress events advance recording state.
+ */
+export const tracerV1AttachmentsProvidersLivekitEventsCreate = async (
+  tracerV1AttachmentsProvidersLivekitEventsCreateBody: Blob,
+  options?: RequestInit,
+): Promise<tracerV1AttachmentsProvidersLivekitEventsCreateResponse> => {
+  return apiMutator<tracerV1AttachmentsProvidersLivekitEventsCreateResponse>(
+    getTracerV1AttachmentsProvidersLivekitEventsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...options?.headers,
+      },
+      body: JSON.stringify(tracerV1AttachmentsProvidersLivekitEventsCreateBody),
+    },
+  );
+};
+
 export type tracerV1HealthListResponse200 = {
   data: OTLPHealthResponseApi;
   status: 200;
@@ -93241,6 +93578,1394 @@ export const tracerV1HealthList = async (
     ...options,
     method: "GET",
   });
+};
+
+export type importAttachmentResponse202 = {
+  data: AttachmentImportResponseApi;
+  status: 202;
+};
+
+export type importAttachmentResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type importAttachmentResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type importAttachmentResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type importAttachmentResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type importAttachmentResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type importAttachmentResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type importAttachmentResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type importAttachmentResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    202 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type importAttachmentResponseSuccess = importAttachmentResponse202 & {
+  headers: ApiResponseHeaders;
+};
+export type importAttachmentResponseError = (
+  | importAttachmentResponse400
+  | importAttachmentResponse401
+  | importAttachmentResponse403
+  | importAttachmentResponse404
+  | importAttachmentResponse409
+  | importAttachmentResponse413
+  | importAttachmentResponse429
+  | importAttachmentResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type importAttachmentResponse =
+  | importAttachmentResponseSuccess
+  | importAttachmentResponseError;
+
+export const getImportAttachmentUrl = (projectId: string) => {
+  return `/tracer/v1/projects/${projectId}/attachments/imports`;
+};
+
+/**
+ * A write capability never reaches this route (``principal.identity``
+accepts app sessions and API keys only). The source is an opaque
+envelope or a registered provider output: no URL, path or credential
+is ever in the body. Admission (scope ``allow_import`` plus deny-wins
+privacy, exact policy and deletion generation, atomic reservations)
+runs before any byte is read; the worker does the transfer.
+
+Both canonical forms use metadata-only source resolution before owner
+capacity reservation. They share the same original-identity checks.
+ * @summary Admit a completed-recording import with ORIGINAL credentials only.
+ */
+export const importAttachment = async (
+  projectId: string,
+  attachmentImportRequestApi: AttachmentImportRequestApi,
+  options?: RequestInit,
+): Promise<importAttachmentResponse> => {
+  return apiMutator<importAttachmentResponse>(
+    getImportAttachmentUrl(projectId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentImportRequestApi),
+    },
+  );
+};
+
+export type getAttachmentImportStatusResponse200 = {
+  data: AttachmentImportStatusResponseApi;
+  status: 200;
+};
+
+export type getAttachmentImportStatusResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type getAttachmentImportStatusResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type getAttachmentImportStatusResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type getAttachmentImportStatusResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type getAttachmentImportStatusResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type getAttachmentImportStatusResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type getAttachmentImportStatusResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type getAttachmentImportStatusResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type getAttachmentImportStatusResponseSuccess =
+  getAttachmentImportStatusResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type getAttachmentImportStatusResponseError = (
+  | getAttachmentImportStatusResponse400
+  | getAttachmentImportStatusResponse401
+  | getAttachmentImportStatusResponse403
+  | getAttachmentImportStatusResponse404
+  | getAttachmentImportStatusResponse409
+  | getAttachmentImportStatusResponse413
+  | getAttachmentImportStatusResponse429
+  | getAttachmentImportStatusResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type getAttachmentImportStatusResponse =
+  | getAttachmentImportStatusResponseSuccess
+  | getAttachmentImportStatusResponseError;
+
+export const getGetAttachmentImportStatusUrl = (
+  projectId: string,
+  jobId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/imports/${jobId}/status`;
+};
+
+export const getAttachmentImportStatus = async (
+  projectId: string,
+  jobId: string,
+  options?: RequestInit,
+): Promise<getAttachmentImportStatusResponse> => {
+  return apiMutator<getAttachmentImportStatusResponse>(
+    getGetAttachmentImportStatusUrl(projectId, jobId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type listAttachmentOccurrencesResponse200 = {
+  data: AttachmentOccurrencePageApi;
+  status: 200;
+};
+
+export type listAttachmentOccurrencesResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type listAttachmentOccurrencesResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type listAttachmentOccurrencesResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type listAttachmentOccurrencesResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type listAttachmentOccurrencesResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type listAttachmentOccurrencesResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type listAttachmentOccurrencesResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type listAttachmentOccurrencesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type listAttachmentOccurrencesResponseSuccess =
+  listAttachmentOccurrencesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type listAttachmentOccurrencesResponseError = (
+  | listAttachmentOccurrencesResponse400
+  | listAttachmentOccurrencesResponse401
+  | listAttachmentOccurrencesResponse403
+  | listAttachmentOccurrencesResponse404
+  | listAttachmentOccurrencesResponse409
+  | listAttachmentOccurrencesResponse413
+  | listAttachmentOccurrencesResponse429
+  | listAttachmentOccurrencesResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type listAttachmentOccurrencesResponse =
+  | listAttachmentOccurrencesResponseSuccess
+  | listAttachmentOccurrencesResponseError;
+
+export const getListAttachmentOccurrencesUrl = (
+  projectId: string,
+  params: ListAttachmentOccurrencesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/v1/projects/${projectId}/attachments/occurrences?${stringifiedParams}`
+    : `/tracer/v1/projects/${projectId}/attachments/occurrences`;
+};
+
+export const listAttachmentOccurrences = async (
+  projectId: string,
+  params: ListAttachmentOccurrencesParams,
+  options?: RequestInit,
+): Promise<listAttachmentOccurrencesResponse> => {
+  return apiMutator<listAttachmentOccurrencesResponse>(
+    getListAttachmentOccurrencesUrl(projectId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type linkAttachmentOccurrenceResponse201 = {
+  data: AttachmentOccurrenceApi;
+  status: 201;
+};
+
+export type linkAttachmentOccurrenceResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type linkAttachmentOccurrenceResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type linkAttachmentOccurrenceResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type linkAttachmentOccurrenceResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type linkAttachmentOccurrenceResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type linkAttachmentOccurrenceResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type linkAttachmentOccurrenceResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type linkAttachmentOccurrenceResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    201 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type linkAttachmentOccurrenceResponseSuccess =
+  linkAttachmentOccurrenceResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type linkAttachmentOccurrenceResponseError = (
+  | linkAttachmentOccurrenceResponse400
+  | linkAttachmentOccurrenceResponse401
+  | linkAttachmentOccurrenceResponse403
+  | linkAttachmentOccurrenceResponse404
+  | linkAttachmentOccurrenceResponse409
+  | linkAttachmentOccurrenceResponse413
+  | linkAttachmentOccurrenceResponse429
+  | linkAttachmentOccurrenceResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type linkAttachmentOccurrenceResponse =
+  | linkAttachmentOccurrenceResponseSuccess
+  | linkAttachmentOccurrenceResponseError;
+
+export const getLinkAttachmentOccurrenceUrl = (projectId: string) => {
+  return `/tracer/v1/projects/${projectId}/attachments/occurrences`;
+};
+
+export const linkAttachmentOccurrence = async (
+  projectId: string,
+  attachmentLinkRequestApi: AttachmentLinkRequestApi,
+  options?: RequestInit,
+): Promise<linkAttachmentOccurrenceResponse> => {
+  return apiMutator<linkAttachmentOccurrenceResponse>(
+    getLinkAttachmentOccurrenceUrl(projectId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentLinkRequestApi),
+    },
+  );
+};
+
+export type deleteAttachmentOccurrenceResponse204 = {
+  data: string;
+  status: 204;
+};
+
+export type deleteAttachmentOccurrenceResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type deleteAttachmentOccurrenceResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type deleteAttachmentOccurrenceResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type deleteAttachmentOccurrenceResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type deleteAttachmentOccurrenceResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type deleteAttachmentOccurrenceResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type deleteAttachmentOccurrenceResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type deleteAttachmentOccurrenceResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    204 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type deleteAttachmentOccurrenceResponseSuccess =
+  deleteAttachmentOccurrenceResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type deleteAttachmentOccurrenceResponseError = (
+  | deleteAttachmentOccurrenceResponse400
+  | deleteAttachmentOccurrenceResponse401
+  | deleteAttachmentOccurrenceResponse403
+  | deleteAttachmentOccurrenceResponse404
+  | deleteAttachmentOccurrenceResponse409
+  | deleteAttachmentOccurrenceResponse413
+  | deleteAttachmentOccurrenceResponse429
+  | deleteAttachmentOccurrenceResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type deleteAttachmentOccurrenceResponse =
+  | deleteAttachmentOccurrenceResponseSuccess
+  | deleteAttachmentOccurrenceResponseError;
+
+export const getDeleteAttachmentOccurrenceUrl = (
+  projectId: string,
+  occurrenceId: string,
+  params: DeleteAttachmentOccurrenceParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/v1/projects/${projectId}/attachments/occurrences/${occurrenceId}?${stringifiedParams}`
+    : `/tracer/v1/projects/${projectId}/attachments/occurrences/${occurrenceId}`;
+};
+
+export const deleteAttachmentOccurrence = async (
+  projectId: string,
+  occurrenceId: string,
+  params: DeleteAttachmentOccurrenceParams,
+  options?: RequestInit,
+): Promise<deleteAttachmentOccurrenceResponse> => {
+  return apiMutator<deleteAttachmentOccurrenceResponse>(
+    getDeleteAttachmentOccurrenceUrl(projectId, occurrenceId, params),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse201 = {
+  data: AttachmentProviderRegistrationResponseApi;
+  status: 201;
+};
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 201>;
+  };
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseSuccess =
+  tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseError =
+  tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse =
+  | tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseSuccess
+  | tracerV1ProjectsAttachmentsProviderRecordingsCreateResponseError;
+
+export const getTracerV1ProjectsAttachmentsProviderRecordingsCreateUrl = (
+  projectId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/provider-recordings`;
+};
+
+/**
+ * Product control route; not an addition to F01 import payloads.
+ */
+export const tracerV1ProjectsAttachmentsProviderRecordingsCreate = async (
+  projectId: string,
+  attachmentProviderRegistrationRequestApi: AttachmentProviderRegistrationRequestApi,
+  options?: RequestInit,
+): Promise<tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse> => {
+  return apiMutator<tracerV1ProjectsAttachmentsProviderRecordingsCreateResponse>(
+    getTracerV1ProjectsAttachmentsProviderRecordingsCreateUrl(projectId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentProviderRegistrationRequestApi),
+    },
+  );
+};
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponse200 = {
+  data: AttachmentProviderRegistrationResponseApi;
+  status: 200;
+};
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponseSuccess =
+  tracerV1ProjectsAttachmentsProviderRecordingsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponseError =
+  tracerV1ProjectsAttachmentsProviderRecordingsReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerV1ProjectsAttachmentsProviderRecordingsReadResponse =
+  | tracerV1ProjectsAttachmentsProviderRecordingsReadResponseSuccess
+  | tracerV1ProjectsAttachmentsProviderRecordingsReadResponseError;
+
+export const getTracerV1ProjectsAttachmentsProviderRecordingsReadUrl = (
+  projectId: string,
+  registeredOutputId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/provider-recordings/${registeredOutputId}`;
+};
+
+export const tracerV1ProjectsAttachmentsProviderRecordingsRead = async (
+  projectId: string,
+  registeredOutputId: string,
+  options?: RequestInit,
+): Promise<tracerV1ProjectsAttachmentsProviderRecordingsReadResponse> => {
+  return apiMutator<tracerV1ProjectsAttachmentsProviderRecordingsReadResponse>(
+    getTracerV1ProjectsAttachmentsProviderRecordingsReadUrl(
+      projectId,
+      registeredOutputId,
+    ),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type readRecordingManifestResponse200 = {
+  data: AttachmentRecordingManifestApi;
+  status: 200;
+};
+
+export type readRecordingManifestResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type readRecordingManifestResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type readRecordingManifestResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type readRecordingManifestResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type readRecordingManifestResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type readRecordingManifestResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type readRecordingManifestResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type readRecordingManifestResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type readRecordingManifestResponseSuccess =
+  readRecordingManifestResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type readRecordingManifestResponseError = (
+  | readRecordingManifestResponse400
+  | readRecordingManifestResponse401
+  | readRecordingManifestResponse403
+  | readRecordingManifestResponse404
+  | readRecordingManifestResponse409
+  | readRecordingManifestResponse413
+  | readRecordingManifestResponse429
+  | readRecordingManifestResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type readRecordingManifestResponse =
+  | readRecordingManifestResponseSuccess
+  | readRecordingManifestResponseError;
+
+export const getReadRecordingManifestUrl = (
+  projectId: string,
+  recordingId: string,
+  params: ReadRecordingManifestParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/v1/projects/${projectId}/attachments/recordings/${recordingId}/manifest?${stringifiedParams}`
+    : `/tracer/v1/projects/${projectId}/attachments/recordings/${recordingId}/manifest`;
+};
+
+export const readRecordingManifest = async (
+  projectId: string,
+  recordingId: string,
+  params: ReadRecordingManifestParams,
+  options?: RequestInit,
+): Promise<readRecordingManifestResponse> => {
+  return apiMutator<readRecordingManifestResponse>(
+    getReadRecordingManifestUrl(projectId, recordingId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type updateRecordingManifestResponse204 = {
+  data: string;
+  status: 204;
+};
+
+export type updateRecordingManifestResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type updateRecordingManifestResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type updateRecordingManifestResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type updateRecordingManifestResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type updateRecordingManifestResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type updateRecordingManifestResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type updateRecordingManifestResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type updateRecordingManifestResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    204 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type updateRecordingManifestResponseSuccess =
+  updateRecordingManifestResponse204 & {
+    headers: ApiResponseHeaders;
+  };
+export type updateRecordingManifestResponseError = (
+  | updateRecordingManifestResponse400
+  | updateRecordingManifestResponse401
+  | updateRecordingManifestResponse403
+  | updateRecordingManifestResponse404
+  | updateRecordingManifestResponse409
+  | updateRecordingManifestResponse413
+  | updateRecordingManifestResponse429
+  | updateRecordingManifestResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type updateRecordingManifestResponse =
+  | updateRecordingManifestResponseSuccess
+  | updateRecordingManifestResponseError;
+
+export const getUpdateRecordingManifestUrl = (
+  projectId: string,
+  recordingId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/recordings/${recordingId}/manifest`;
+};
+
+export const updateRecordingManifest = async (
+  projectId: string,
+  recordingId: string,
+  attachmentRecordingManifestApi: AttachmentRecordingManifestApi,
+  options?: RequestInit,
+): Promise<updateRecordingManifestResponse> => {
+  return apiMutator<updateRecordingManifestResponse>(
+    getUpdateRecordingManifestUrl(projectId, recordingId),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentRecordingManifestApi),
+    },
+  );
+};
+
+export type resolveAttachmentOccurrencesResponse200 = {
+  data: AttachmentResolveResponseApi;
+  status: 200;
+};
+
+export type resolveAttachmentOccurrencesResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type resolveAttachmentOccurrencesResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type resolveAttachmentOccurrencesResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type resolveAttachmentOccurrencesResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type resolveAttachmentOccurrencesResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type resolveAttachmentOccurrencesResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type resolveAttachmentOccurrencesResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type resolveAttachmentOccurrencesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type resolveAttachmentOccurrencesResponseSuccess =
+  resolveAttachmentOccurrencesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type resolveAttachmentOccurrencesResponseError = (
+  | resolveAttachmentOccurrencesResponse400
+  | resolveAttachmentOccurrencesResponse401
+  | resolveAttachmentOccurrencesResponse403
+  | resolveAttachmentOccurrencesResponse404
+  | resolveAttachmentOccurrencesResponse409
+  | resolveAttachmentOccurrencesResponse413
+  | resolveAttachmentOccurrencesResponse429
+  | resolveAttachmentOccurrencesResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type resolveAttachmentOccurrencesResponse =
+  | resolveAttachmentOccurrencesResponseSuccess
+  | resolveAttachmentOccurrencesResponseError;
+
+export const getResolveAttachmentOccurrencesUrl = (projectId: string) => {
+  return `/tracer/v1/projects/${projectId}/attachments/resolve`;
+};
+
+export const resolveAttachmentOccurrences = async (
+  projectId: string,
+  attachmentResolveRequestApi: AttachmentResolveRequestApi,
+  options?: RequestInit,
+): Promise<resolveAttachmentOccurrencesResponse> => {
+  return apiMutator<resolveAttachmentOccurrencesResponse>(
+    getResolveAttachmentOccurrencesUrl(projectId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentResolveRequestApi),
+    },
+  );
+};
+
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse200 = {
+  data: AttachmentSourceEnvelopeResponseApi;
+  status: 200;
+};
+
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseSuccess =
+  tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseError =
+  tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse =
+  | tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseSuccess
+  | tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponseError;
+
+export const getTracerV1ProjectsAttachmentsSourceEnvelopesCreateUrl = (
+  projectId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/source-envelopes`;
+};
+
+/**
+ * Resolve a registered source to its sealed reference; never accept a URL.
+ */
+export const tracerV1ProjectsAttachmentsSourceEnvelopesCreate = async (
+  projectId: string,
+  attachmentSourceEnvelopeRequestApi: AttachmentSourceEnvelopeRequestApi,
+  options?: RequestInit,
+): Promise<tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse> => {
+  return apiMutator<tracerV1ProjectsAttachmentsSourceEnvelopesCreateResponse>(
+    getTracerV1ProjectsAttachmentsSourceEnvelopesCreateUrl(projectId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentSourceEnvelopeRequestApi),
+    },
+  );
+};
+
+export type initializeAttachmentUploadResponse201 = {
+  data: AttachmentUploadResponseApi;
+  status: 201;
+};
+
+export type initializeAttachmentUploadResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type initializeAttachmentUploadResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type initializeAttachmentUploadResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type initializeAttachmentUploadResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type initializeAttachmentUploadResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type initializeAttachmentUploadResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type initializeAttachmentUploadResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type initializeAttachmentUploadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    201 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type initializeAttachmentUploadResponseSuccess =
+  initializeAttachmentUploadResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type initializeAttachmentUploadResponseError = (
+  | initializeAttachmentUploadResponse400
+  | initializeAttachmentUploadResponse401
+  | initializeAttachmentUploadResponse403
+  | initializeAttachmentUploadResponse404
+  | initializeAttachmentUploadResponse409
+  | initializeAttachmentUploadResponse413
+  | initializeAttachmentUploadResponse429
+  | initializeAttachmentUploadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type initializeAttachmentUploadResponse =
+  | initializeAttachmentUploadResponseSuccess
+  | initializeAttachmentUploadResponseError;
+
+export const getInitializeAttachmentUploadUrl = (projectId: string) => {
+  return `/tracer/v1/projects/${projectId}/attachments/uploads`;
+};
+
+export const initializeAttachmentUpload = async (
+  projectId: string,
+  attachmentUploadRequestApi: AttachmentUploadRequestApi,
+  options?: RequestInit,
+): Promise<initializeAttachmentUploadResponse> => {
+  return apiMutator<initializeAttachmentUploadResponse>(
+    getInitializeAttachmentUploadUrl(projectId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentUploadRequestApi),
+    },
+  );
+};
+
+export type abortAttachmentUploadResponse200 = {
+  data: AttachmentStatusResponseApi;
+  status: 200;
+};
+
+export type abortAttachmentUploadResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type abortAttachmentUploadResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type abortAttachmentUploadResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type abortAttachmentUploadResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type abortAttachmentUploadResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type abortAttachmentUploadResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type abortAttachmentUploadResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type abortAttachmentUploadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type abortAttachmentUploadResponseSuccess =
+  abortAttachmentUploadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type abortAttachmentUploadResponseError = (
+  | abortAttachmentUploadResponse400
+  | abortAttachmentUploadResponse401
+  | abortAttachmentUploadResponse403
+  | abortAttachmentUploadResponse404
+  | abortAttachmentUploadResponse409
+  | abortAttachmentUploadResponse413
+  | abortAttachmentUploadResponse429
+  | abortAttachmentUploadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type abortAttachmentUploadResponse =
+  | abortAttachmentUploadResponseSuccess
+  | abortAttachmentUploadResponseError;
+
+export const getAbortAttachmentUploadUrl = (
+  projectId: string,
+  uploadId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/uploads/${uploadId}/abort`;
+};
+
+export const abortAttachmentUpload = async (
+  projectId: string,
+  uploadId: string,
+  attachmentCompleteRequestApi: AttachmentCompleteRequestApi,
+  options?: RequestInit,
+): Promise<abortAttachmentUploadResponse> => {
+  return apiMutator<abortAttachmentUploadResponse>(
+    getAbortAttachmentUploadUrl(projectId, uploadId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentCompleteRequestApi),
+    },
+  );
+};
+
+export type completeAttachmentUploadResponse202 = {
+  data: AttachmentStatusResponseApi;
+  status: 202;
+};
+
+export type completeAttachmentUploadResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type completeAttachmentUploadResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type completeAttachmentUploadResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type completeAttachmentUploadResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type completeAttachmentUploadResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type completeAttachmentUploadResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type completeAttachmentUploadResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type completeAttachmentUploadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    202 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type completeAttachmentUploadResponseSuccess =
+  completeAttachmentUploadResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type completeAttachmentUploadResponseError = (
+  | completeAttachmentUploadResponse400
+  | completeAttachmentUploadResponse401
+  | completeAttachmentUploadResponse403
+  | completeAttachmentUploadResponse404
+  | completeAttachmentUploadResponse409
+  | completeAttachmentUploadResponse413
+  | completeAttachmentUploadResponse429
+  | completeAttachmentUploadResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type completeAttachmentUploadResponse =
+  | completeAttachmentUploadResponseSuccess
+  | completeAttachmentUploadResponseError;
+
+export const getCompleteAttachmentUploadUrl = (
+  projectId: string,
+  uploadId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/uploads/${uploadId}/complete`;
+};
+
+export const completeAttachmentUpload = async (
+  projectId: string,
+  uploadId: string,
+  attachmentCompleteRequestApi: AttachmentCompleteRequestApi,
+  options?: RequestInit,
+): Promise<completeAttachmentUploadResponse> => {
+  return apiMutator<completeAttachmentUploadResponse>(
+    getCompleteAttachmentUploadUrl(projectId, uploadId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(attachmentCompleteRequestApi),
+    },
+  );
+};
+
+export type streamAttachmentContentResponse200 = {
+  data: AttachmentStatusResponseApi;
+  status: 200;
+};
+
+export type streamAttachmentContentResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type streamAttachmentContentResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type streamAttachmentContentResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type streamAttachmentContentResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type streamAttachmentContentResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type streamAttachmentContentResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type streamAttachmentContentResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type streamAttachmentContentResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type streamAttachmentContentResponseSuccess =
+  streamAttachmentContentResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type streamAttachmentContentResponseError = (
+  | streamAttachmentContentResponse400
+  | streamAttachmentContentResponse401
+  | streamAttachmentContentResponse403
+  | streamAttachmentContentResponse404
+  | streamAttachmentContentResponse409
+  | streamAttachmentContentResponse413
+  | streamAttachmentContentResponse429
+  | streamAttachmentContentResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type streamAttachmentContentResponse =
+  | streamAttachmentContentResponseSuccess
+  | streamAttachmentContentResponseError;
+
+export const getStreamAttachmentContentUrl = (
+  projectId: string,
+  uploadId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/uploads/${uploadId}/content`;
+};
+
+export const streamAttachmentContent = async (
+  projectId: string,
+  uploadId: string,
+  streamAttachmentContentBody: Blob,
+  options?: RequestInit,
+): Promise<streamAttachmentContentResponse> => {
+  return apiMutator<streamAttachmentContentResponse>(
+    getStreamAttachmentContentUrl(projectId, uploadId),
+    {
+      ...options,
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        ...options?.headers,
+      },
+      body: streamAttachmentContentBody,
+    },
+  );
+};
+
+export type attachmentUploadStatusResponse200 = {
+  data: AttachmentStatusResponseApi;
+  status: 200;
+};
+
+export type attachmentUploadStatusResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type attachmentUploadStatusResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type attachmentUploadStatusResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type attachmentUploadStatusResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type attachmentUploadStatusResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type attachmentUploadStatusResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type attachmentUploadStatusResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type attachmentUploadStatusResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type attachmentUploadStatusResponseSuccess =
+  attachmentUploadStatusResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type attachmentUploadStatusResponseError = (
+  | attachmentUploadStatusResponse400
+  | attachmentUploadStatusResponse401
+  | attachmentUploadStatusResponse403
+  | attachmentUploadStatusResponse404
+  | attachmentUploadStatusResponse409
+  | attachmentUploadStatusResponse413
+  | attachmentUploadStatusResponse429
+  | attachmentUploadStatusResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type attachmentUploadStatusResponse =
+  | attachmentUploadStatusResponseSuccess
+  | attachmentUploadStatusResponseError;
+
+export const getAttachmentUploadStatusUrl = (
+  projectId: string,
+  uploadId: string,
+) => {
+  return `/tracer/v1/projects/${projectId}/attachments/uploads/${uploadId}/status`;
+};
+
+export const attachmentUploadStatus = async (
+  projectId: string,
+  uploadId: string,
+  options?: RequestInit,
+): Promise<attachmentUploadStatusResponse> => {
+  return apiMutator<attachmentUploadStatusResponse>(
+    getAttachmentUploadStatusUrl(projectId, uploadId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
 };
 
 export type usageAdminCustomPlanListResponse200 = {

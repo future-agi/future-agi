@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { generate } from "orval";
+import { attachmentTransport } from "./attachment-client.mjs";
 import prettier from "prettier";
 
 import {
@@ -184,6 +185,8 @@ function normalizeHostStatusSpec(spec) {
       schemas: Object.fromEntries(
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
+          name === "AttachmentImportRequest" ||
+          name === "AttachmentImportResponse" ||
           name.startsWith("HostUpdateStatusResponse") ||
           // Busy pauses have no measured row count; both the pause and its rows can be null.
           name === "MetricCalculationPaused" ||
@@ -479,7 +482,7 @@ async function runGeneration(schemaPath) {
     "headers: ApiResponseHeaders",
     "Axios response headers",
   );
-  fs.writeFileSync(apiOutputPath, api);
+  fs.writeFileSync(apiOutputPath, attachmentTransport(api));
 
   const promptConfigNullableFields = Object.entries(
     swagger.definitions.PromptConfig.properties,

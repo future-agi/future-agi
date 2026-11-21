@@ -15,6 +15,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -61,7 +62,39 @@ const (
 	// observationTypeUnknown is the fallback for an absent/unrecognized span
 	// kind — mirrors Python get_observation_type, which returns "unknown".
 	observationTypeUnknown = "unknown"
+
+	// The LiveKit SDK marks no conversation root. A call's true root is
+	// `job_entrypoint` when tracing is set up before the job starts, or
+	// `agent_session` when it is set up inside the entrypoint (the LiveKit
+	// README Quick Start, with no job_entrypoint span). With attachments
+	// enabled, an untyped, parentless span of either name carrying
+	// `lk.job_id` is the call's conversation root, so a LiveKit call with a
+	// recording is listed in Voice. Mirrors Python
+	// tracer.utils.otel.resolve_observation_type.
+	liveKitJobIDKey             = "lk.job_id"
+	observationTypeConversation = "conversation"
 )
+
+// liveKitJobRootNames are the span names a LiveKit call's root can carry.
+var liveKitJobRootNames = map[string]struct{}{"job_entrypoint": {}, "agent_session": {}}
+
+// attachmentsEnabled mirrors Django's FI_ATTACHMENTS_ENABLED (default off):
+// with it unset the converter's output is unchanged.
+var attachmentsEnabled = strings.ToLower(os.Getenv("FI_ATTACHMENTS_ENABLED")) == "true"
+
+// liveKitJobRoot reports an untyped LiveKit job root that is a Voice call.
+func liveKitJobRoot(observationType, parentID, name string, attrsStr map[string]string) bool {
+	return attachmentsEnabled &&
+		observationType == observationTypeUnknown &&
+		parentID == "" &&
+		isLiveKitJobRootName(name) &&
+		attrsStr[liveKitJobIDKey] != ""
+}
+
+func isLiveKitJobRootName(name string) bool {
+	_, ok := liveKitJobRootNames[name]
+	return ok
+}
 
 // knownObservationTypes mirrors ObservationSpan.OBSERVATION_SPAN_TYPES; the
 // read layer filters LOWERCASE, so store lowercased + validated.
@@ -454,6 +487,9 @@ func spanToRow(
 	observationType := resolveObservationType(attrsStr)
 	if observationType == observationTypeUnknown && fromOpenRouter {
 		observationType = openRouterUntypedSpanType
+	}
+	if liveKitJobRoot(observationType, parentID, span.Name(), attrsStr) {
+		observationType = observationTypeConversation
 	}
 
 	// Inputs/outputs: the first non-empty content key in inputContentKeys /

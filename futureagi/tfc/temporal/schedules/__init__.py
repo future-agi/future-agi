@@ -11,6 +11,10 @@ Pattern:
 """
 
 # Config (no temporalio)
+from tfc.temporal.schedules.attachment_lifecycle import (
+    ATTACHMENT_LIFECYCLE_SCHEDULES,
+)
+from tfc.temporal.schedules.attachments import ATTACHMENT_SCHEDULES
 from tfc.temporal.schedules.billing import BILLING_SCHEDULES
 from tfc.temporal.schedules.config import ScheduleConfig
 from tfc.temporal.schedules.demo_seeding import DEMO_SEEDING_SCHEDULES
@@ -46,6 +50,9 @@ ALL_SCHEDULES = [
     *OUTBOX_CDC_SCHEDULES,
     *SAML_SCHEDULES,
     *SQL_WORKBENCH_SCHEDULES,
+    # Empty unless FI_ATTACHMENTS_ENABLED=true.
+    *ATTACHMENT_SCHEDULES,
+    *ATTACHMENT_LIFECYCLE_SCHEDULES,
 ]
 
 # Manager functions

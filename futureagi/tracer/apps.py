@@ -8,7 +8,11 @@ class SdkConfig(AppConfig):
     def ready(self):
         # Import all model modules so Django discovers them.
         # Required for cross-app FK resolution (model_hub → tracer).
+        from django.conf import settings
+
         from tracer.models import (
+            attachment,  # noqa: F401
+            attachment_recording,  # noqa: F401
             custom_eval_config,  # noqa: F401
             dashboard,  # noqa: F401
             derived_metric,  # noqa: F401
@@ -46,3 +50,12 @@ class SdkConfig(AppConfig):
         )
 
         register_deletion_hooks()
+
+        if getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
+            from tracer.services.attachments.cache_config import verify_admission_cache
+
+            # Shared admission is a process prerequisite, storage is not. Each new
+            # admission calls require_new_admission; historical work resolves its
+            # persisted binding only after selecting its owner. Invalid default B
+            # must not prevent an enabled worker from erasing historical binding A.
+            verify_admission_cache(settings)

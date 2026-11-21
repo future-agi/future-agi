@@ -201,3 +201,53 @@ def test_an_unreadable_saml_switch_refuses_to_load(value):
     loaded = _load_production_saml_switch(SAML_LOGIN_ENABLED=value)
     assert loaded.returncode != 0
     assert "SAML_LOGIN_ENABLED" in loaded.stderr
+
+
+_ATTACHMENT_NUMBERS = {
+    "FI_ATTACHMENTS_TRANSFER_SECONDS": (120, 30),
+    "FI_ATTACHMENTS_IMPORT_BYTES_PER_SECOND": (8388608, 4096),
+    "FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT": (50, 75),
+    "FI_ATTACHMENTS_BIND_LOOKBACK_HOURS": (48, 96),
+    "FI_ATTACHMENTS_AUDIT_RETENTION_DAYS": (400, 420),
+    "FI_ATTACHMENTS_ORPHAN_GRACE_HOURS": (24, 72),
+}
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_attachment_numbers_from_production_settings(enabled):
+    values = {
+        name: str(configured) if enabled else "invalid"
+        for name, (_, configured) in _ATTACHMENT_NUMBERS.items()
+    }
+    loaded = _load_settings(
+        _ATTACHMENT_NUMBERS,
+        DJANGO_SETTINGS_MODULE="tfc.settings.settings",
+        FI_ATTACHMENTS_ENABLED=str(enabled).lower(),
+        FI_ATTACHMENTS_BINDING_ACCESS="not-json",
+        **values,
+    )
+    assert loaded.returncode == 0, loaded.stderr
+    expected = [pair[int(enabled)] for pair in _ATTACHMENT_NUMBERS.values()]
+    assert list(map(int, loaded.stdout.splitlines()[-1].split())) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "invalid"),
+    [
+        ("FI_ATTACHMENTS_TRANSFER_SECONDS", "invalid"),
+        ("FI_ATTACHMENTS_IMPORT_BYTES_PER_SECOND", "0"),
+        ("FI_ATTACHMENTS_IMPORT_GLOBAL_PERCENT", "101"),
+        ("FI_ATTACHMENTS_BIND_LOOKBACK_HOURS", "876001"),
+        ("FI_ATTACHMENTS_AUDIT_RETENTION_DAYS", "36501"),
+        ("FI_ATTACHMENTS_ORPHAN_GRACE_HOURS", "0"),
+    ],
+)
+def test_invalid_enabled_attachment_number_refuses_startup(name, invalid):
+    loaded = _load_settings(
+        [name],
+        DJANGO_SETTINGS_MODULE="tfc.settings.settings",
+        FI_ATTACHMENTS_ENABLED="true",
+        **{name: invalid},
+    )
+    assert loaded.returncode != 0
+    assert f"{name} must be" in loaded.stderr

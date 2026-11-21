@@ -92,56 +92,78 @@ def test_raw_collector_insert_defaults_generation_and_retry_preserves_fence(
     assert Project.with_simulation.using("default").filter(id=project_id).count() == 1
 
 
-@pytest.mark.django_db(transaction=True)
-def test_forward_default_migration_preserves_existing_generations(
-    organization, workspace, observe_project
-):
-    executor = MigrationExecutor(connection)
-    original_targets = executor.loader.graph.leaf_nodes()
-    project_id = observe_project.id
-    try:
-        executor.migrate([PREVIOUS])
-        assert _database_default() == (None, "NO")
-        Project.with_simulation.using("default").filter(id=project_id).update(
-            analysis_source_generation=17
-        )
-        untouched = Project.with_simulation.using("default").create(
-            organization=organization,
-            workspace=workspace,
-            name="existing-zero-generation",
-            trace_type="observe",
-            model_type="GenerativeLLM",
-        )
-        before = dict(
-            Project.with_simulation.using("default")
-            .filter(id__in=[project_id, untouched.id])
-            .values_list("id", "analysis_source_generation")
-        )
-        assert before == {project_id: 17, untouched.id: 0}
-        # Pin the actual old-schema failure rather than merely inspecting the
-        # field: the database rejects the exact collector insert with 23502.
-        with pytest.raises(IntegrityError) as failure, transaction.atomic():
-            _collector_project(organization, workspace, "collector-upgrade")
-        cause = failure.value.__cause__
-        assert getattr(cause, "sqlstate", getattr(cause, "pgcode", None)) == "23502"
+@pytest.fixture
+def historical_database():
+    from django.db import connections
+    from psycopg import sql
 
-        executor.loader.build_graph()
-        executor.migrate([CURRENT])
-        default, nullable = _database_default()
-        assert default is not None and nullable == "NO"
-        after = dict(
-            Project.with_simulation.using("default")
-            .filter(id__in=before)
-            .values_list("id", "analysis_source_generation")
+    shared = connections["default"]
+    historical = shared.copy()
+    name = f"test_generation_{uuid.uuid4().hex}"
+    historical.settings_dict["NAME"] = name
+    with shared.cursor() as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        try:
+            connections["default"] = historical
+            yield historical
+        finally:
+            connections["default"] = shared
+            historical.close()
+            admin.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))
+    executor = MigrationExecutor(shared)
+    assert executor.migration_plan(executor.loader.graph.leaf_nodes()) == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_forward_default_migration_preserves_existing_generations(historical_database):
+    executor = MigrationExecutor(historical_database)
+    apps = executor.migrate([PREVIOUS]).apps
+    organization = apps.get_model("accounts", "Organization").objects.create(
+        name="Generation"
+    )
+    user = apps.get_model("accounts", "User").objects.create(
+        email="collector@example.invalid", organization=organization
+    )
+    workspace = apps.get_model("accounts", "Workspace").objects.create(
+        name="default", organization=organization, created_by=user
+    )
+    projects = apps.get_model("tracer", "Project")._base_manager.using("default")
+    project_id = projects.create(
+        organization=organization,
+        workspace=workspace,
+        name="collector",
+        trace_type="observe",
+        model_type="GenerativeLLM",
+    ).id
+    assert _database_default() == (None, "NO")
+    projects.filter(id=project_id).update(analysis_source_generation=17)
+    untouched = projects.create(
+        organization=organization,
+        workspace=workspace,
+        name="existing-zero-generation",
+        trace_type="observe",
+        model_type="GenerativeLLM",
+    )
+    before = dict(
+        projects.filter(id__in=[project_id, untouched.id]).values_list(
+            "id", "analysis_source_generation"
         )
-        assert after == before
-        new_id = _collector_project(organization, workspace, "collector-upgrade")
-        assert (
-            Project.with_simulation.using("default")
-            .get(id=new_id)
-            .analysis_source_generation
-            == 0
-        )
-    finally:
-        executor.loader.build_graph()
-        executor.migrate(original_targets)
+    )
+    assert before == {project_id: 17, untouched.id: 0}
+    # Pin the actual old-schema failure rather than merely inspecting the
+    # field: the database rejects the exact collector insert with 23502.
+    with pytest.raises(IntegrityError) as failure, transaction.atomic():
+        _collector_project(organization, workspace, "collector-upgrade")
+    cause = failure.value.__cause__
+    assert getattr(cause, "sqlstate", getattr(cause, "pgcode", None)) == "23502"
+
+    executor.loader.build_graph()
+    executor.migrate([CURRENT])
+    default, nullable = _database_default()
+    assert default is not None and nullable == "NO"
+    after = dict(
+        projects.filter(id__in=before).values_list("id", "analysis_source_generation")
+    )
+    assert after == before
+    new_id = _collector_project(organization, workspace, "collector-upgrade")
+    assert projects.get(id=new_id).analysis_source_generation == 0

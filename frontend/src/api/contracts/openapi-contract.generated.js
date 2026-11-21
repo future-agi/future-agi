@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1204,
+  endpointCount: 1222,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -45990,6 +45990,125 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/tracer/v1/attachment-media-sessions": {
+      post: {
+        operationId: "exchangeAttachmentMediaSession",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentEmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          204: {
+            type: "string",
+            maxLength: 0,
+            "x-nullable": true,
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/attachment-media/{media_session_id}/{occurrence_id}/{grant_id}":
+      {
+        get: {
+          operationId: "getAttachmentMedia",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            200: {
+              type: "file",
+            },
+            206: {
+              type: "file",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/attachment-sessions": {
+      post: {
+        operationId: "bootstrapAttachmentSession",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentBootstrapRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentBootstrapResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/attachments/providers/livekit/events": {
+      post: {
+        operationId: "tracer_v1_attachments_providers_livekit_events_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentLiveKitEventRequest",
+        },
+        queryParameters: {},
+        responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/tracer/v1/health": {
       get: {
         operationId: "tracer_v1_health_list",
@@ -46003,6 +46122,632 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/ApiTextErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/imports": {
+      post: {
+        operationId: "importAttachment",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentImportRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/AttachmentImportResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/imports/{job_id}/status": {
+      get: {
+        operationId: "getAttachmentImportStatus",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentImportStatusResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/occurrences": {
+      get: {
+        operationId: "listAttachmentOccurrences",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          trace_id: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          span_id: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          cursor: {
+            required: false,
+            schema: {
+              type: "string",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentOccurrencePage",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "linkAttachmentOccurrence",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentLinkRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AttachmentOccurrence",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}":
+      {
+        delete: {
+          operationId: "deleteAttachmentOccurrence",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            trace_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+            span_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+          },
+          responses: {
+            204: {
+              type: "string",
+              maxLength: 0,
+              "x-nullable": true,
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/projects/{project_id}/attachments/provider-recordings": {
+      post: {
+        operationId:
+          "tracer_v1_projects_attachments_provider-recordings_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentProviderRegistrationRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AttachmentProviderRegistrationResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/provider-recordings/{registered_output_id}":
+      {
+        get: {
+          operationId:
+            "tracer_v1_projects_attachments_provider-recordings_read",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: false,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AttachmentProviderRegistrationResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/projects/{project_id}/attachments/recordings/{recording_id}/manifest":
+      {
+        get: {
+          operationId: "readRecordingManifest",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            trace_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+            span_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AttachmentRecordingManifest",
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+        put: {
+          operationId: "updateRecordingManifest",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/AttachmentRecordingManifest",
+          },
+          queryParameters: {},
+          responses: {
+            204: {
+              type: "string",
+              maxLength: 0,
+              "x-nullable": true,
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/projects/{project_id}/attachments/resolve": {
+      post: {
+        operationId: "resolveAttachmentOccurrences",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentResolveRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentResolveResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/source-envelopes": {
+      post: {
+        operationId: "tracer_v1_projects_attachments_source-envelopes_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentSourceEnvelopeRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentSourceEnvelopeResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/uploads": {
+      post: {
+        operationId: "initializeAttachmentUpload",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentUploadRequest",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AttachmentUploadResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/abort": {
+      post: {
+        operationId: "abortAttachmentUpload",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AttachmentCompleteRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentStatusResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/complete":
+      {
+        post: {
+          operationId: "completeAttachmentUpload",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/AttachmentCompleteRequest",
+          },
+          queryParameters: {},
+          responses: {
+            202: {
+              $ref: "#/definitions/AttachmentStatusResponse",
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/content":
+      {
+        put: {
+          operationId: "streamAttachmentContent",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: {
+            type: "string",
+            format: "binary",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AttachmentStatusResponse",
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/tracer/v1/projects/{project_id}/attachments/uploads/{upload_id}/status": {
+      get: {
+        operationId: "attachmentUploadStatus",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AttachmentStatusResponse",
+          },
+          400: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          401: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          403: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          404: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          409: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          413: {
+            $ref: "#/definitions/AttachmentError",
+          },
+          429: {
+            $ref: "#/definitions/AttachmentError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -58475,6 +59220,1772 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["add", "set", "remove"],
           default: "add",
+        },
+      },
+    },
+    AttachmentBootstrapRequest: {
+      required: [
+        "schema_versions",
+        "project_name",
+        "project_type",
+        "capture_session_id",
+        "correlation_nonce",
+      ],
+      type: "object",
+      properties: {
+        schema_versions: {
+          type: "array",
+          items: {
+            type: "integer",
+            maximum: 65535,
+            minimum: 1,
+          },
+          maxItems: 8,
+          minItems: 1,
+        },
+        project_name: {
+          title: "Project name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        project_type: {
+          title: "Project type",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+        },
+        capture_session_id: {
+          title: "Capture session id",
+          type: "string",
+          format: "uuid",
+        },
+        correlation_nonce: {
+          title: "Correlation nonce",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentBootstrapResponse: {
+      required: [
+        "schema_version",
+        "scope",
+        "capture_session_id",
+        "policy",
+        "limits",
+        "expires_at",
+        "transfer_modes",
+      ],
+      type: "object",
+      properties: {
+        schema_version: {
+          title: "Schema version",
+          type: "integer",
+        },
+        scope: {
+          $ref: "#/definitions/AttachmentScope",
+        },
+        capture_session_id: {
+          title: "Capture session id",
+          type: "string",
+          format: "uuid",
+        },
+        policy: {
+          $ref: "#/definitions/AttachmentPolicy",
+        },
+        limits: {
+          $ref: "#/definitions/AttachmentLimits",
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        transfer_modes: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AttachmentCompleteRequest: {
+      required: ["policy_version", "deletion_generation"],
+      type: "object",
+      properties: {
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deletion_generation: {
+          title: "Deletion generation",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    AttachmentEmptyRequest: {
+      type: "object",
+      properties: {},
+    },
+    AttachmentError: {
+      required: ["code", "request_id"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          enum: [
+            "queued",
+            "disabled",
+            "bootstrap_pending",
+            "policy_denied",
+            "credential_scope_unsupported",
+            "source_unavailable",
+            "unsampled",
+            "too_large",
+            "queue_full",
+            "unsupported_version",
+            "endpoint_unconfigured",
+            "scope_unresolved",
+            "correlation_unavailable",
+            "redaction_unavailable",
+            "recording_disabled",
+            "binding_pending",
+            "not_found",
+            "conflict",
+            "throttled",
+            "validation_failed",
+            "expired",
+            "deleted",
+            "incomplete",
+            "ready",
+          ],
+        },
+        request_id: {
+          title: "Request id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentImportRequest: {
+      required: ["source"],
+      type: "object",
+      properties: {
+        mode: {
+          title: "Mode",
+          type: "string",
+          enum: ["completed_recording"],
+        },
+        recording: {
+          $ref: "#/definitions/AttachmentCompletedRecordingImport",
+        },
+        upload: {
+          $ref: "#/definitions/AttachmentUploadRequest",
+        },
+        source: {
+          title: "Source",
+          type: "object",
+          "x-oneOf": [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "envelope_id"],
+              properties: {
+                kind: {
+                  enum: ["RemoteUrlEnvelope"],
+                },
+                envelope_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "connection_id", "registered_output_id"],
+              properties: {
+                kind: {
+                  enum: ["ProviderFile"],
+                },
+                connection_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+                registered_output_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+              },
+            },
+          ],
+        },
+      },
+      additionalProperties: false,
+      "x-oneOf": [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["upload", "source"],
+          properties: {
+            upload: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "schema_version",
+                "attachment_id",
+                "occurrence_id",
+                "association",
+                "policy_version",
+                "deletion_generation",
+                "mime_type",
+                "modality",
+                "direction",
+                "source_kind",
+                "declared_bytes",
+              ],
+              properties: {
+                schema_version: {
+                  enum: [1],
+                },
+                attachment_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+                occurrence_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+                association: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "capture_session_id",
+                    "correlation_nonce",
+                    "parent",
+                  ],
+                  properties: {
+                    capture_session_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                    correlation_nonce: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                    parent: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: ["trace_id", "span_id"],
+                      properties: {
+                        trace_id: {
+                          type: "string",
+                          "x-oneOf": [
+                            {
+                              pattern: "^(?!0{32}$)[0-9a-f]{32}$",
+                              maxLength: 32,
+                            },
+                            {
+                              type: "string",
+                              pattern:
+                                "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              maxLength: 36,
+                            },
+                          ],
+                        },
+                        span_id: {
+                          type: "string",
+                          pattern: "^(?!0{16}$)[0-9a-f]{16}$",
+                          maxLength: 16,
+                        },
+                      },
+                    },
+                  },
+                },
+                policy_version: {
+                  type: "string",
+                  pattern: "^[a-zA-Z0-9_-]{1,128}$",
+                  maxLength: 128,
+                },
+                deletion_generation: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 9007199254740991,
+                },
+                mime_type: {
+                  enum: [
+                    "audio/wav",
+                    "audio/ogg",
+                    "audio/mpeg",
+                    "audio/mp4",
+                    "audio/webm",
+                    "audio/flac",
+                    "audio/L16",
+                    "image/png",
+                    "image/jpeg",
+                    "image/webp",
+                    "video/mp4",
+                    "video/webm",
+                    "application/pdf",
+                    "application/octet-stream",
+                  ],
+                },
+                modality: {
+                  enum: ["audio", "image", "video", "document", "file"],
+                },
+                direction: {
+                  enum: ["input", "output", "mixed"],
+                },
+                source_kind: {
+                  enum: [
+                    "Bytes",
+                    "Blob",
+                    "RemoteUrl",
+                    "LocalFile",
+                    "OwnedRecordingFile",
+                    "ProviderFile",
+                  ],
+                },
+                purpose: {
+                  enum: [
+                    "conversation_recording",
+                    "turn_recording",
+                    "model_input",
+                    "model_output",
+                    "tool_result",
+                    "computer_screenshot",
+                    "diagnostic",
+                    "document",
+                  ],
+                },
+                declared_bytes: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 52428800,
+                },
+                message_index: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 65535,
+                },
+                part_index: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 65535,
+                },
+                recording_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+                segment_index: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 65535,
+                },
+                conversation_id: {
+                  type: "string",
+                  pattern: "^[a-zA-Z0-9_-]{1,128}$",
+                  maxLength: 128,
+                },
+                turn_id: {
+                  type: "string",
+                  pattern: "^[a-zA-Z0-9_-]{1,128}$",
+                  maxLength: 128,
+                },
+                tool_call_id: {
+                  type: "string",
+                  pattern: "^[a-zA-Z0-9_-]{1,128}$",
+                  maxLength: 128,
+                },
+              },
+              dependentRequired: {
+                recording_id: ["segment_index"],
+                segment_index: ["recording_id"],
+              },
+              allOf: [
+                {
+                  if: {
+                    properties: {
+                      modality: {
+                        enum: ["audio"],
+                      },
+                    },
+                  },
+                  then: {
+                    properties: {
+                      mime_type: {
+                        enum: [
+                          "audio/wav",
+                          "audio/ogg",
+                          "audio/mpeg",
+                          "audio/mp4",
+                          "audio/webm",
+                          "audio/flac",
+                          "audio/L16",
+                        ],
+                      },
+                    },
+                  },
+                },
+                {
+                  if: {
+                    properties: {
+                      modality: {
+                        enum: ["image"],
+                      },
+                    },
+                  },
+                  then: {
+                    properties: {
+                      mime_type: {
+                        enum: ["image/png", "image/jpeg", "image/webp"],
+                      },
+                    },
+                  },
+                },
+                {
+                  if: {
+                    properties: {
+                      modality: {
+                        enum: ["video"],
+                      },
+                    },
+                  },
+                  then: {
+                    properties: {
+                      mime_type: {
+                        enum: ["video/mp4", "video/webm"],
+                      },
+                    },
+                  },
+                },
+                {
+                  if: {
+                    properties: {
+                      modality: {
+                        enum: ["document"],
+                      },
+                    },
+                  },
+                  then: {
+                    properties: {
+                      mime_type: {
+                        enum: ["application/pdf"],
+                      },
+                    },
+                  },
+                },
+                {
+                  if: {
+                    properties: {
+                      modality: {
+                        enum: ["file"],
+                      },
+                    },
+                  },
+                  then: {
+                    properties: {
+                      mime_type: {
+                        enum: ["application/octet-stream"],
+                      },
+                    },
+                  },
+                },
+                {
+                  if: {
+                    properties: {
+                      modality: {
+                        enum: ["image"],
+                      },
+                    },
+                  },
+                  then: {
+                    properties: {
+                      declared_bytes: {
+                        maximum: 20971520,
+                      },
+                    },
+                  },
+                },
+                {
+                  if: {
+                    required: ["recording_id"],
+                  },
+                  then: {
+                    properties: {
+                      declared_bytes: {
+                        maximum: 8388608,
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+            source: {
+              "x-oneOf": [
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["kind", "envelope_id"],
+                  properties: {
+                    kind: {
+                      enum: ["RemoteUrlEnvelope"],
+                    },
+                    envelope_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                  },
+                },
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["kind", "connection_id", "registered_output_id"],
+                  properties: {
+                    kind: {
+                      enum: ["ProviderFile"],
+                    },
+                    connection_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                    registered_output_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode", "recording", "source"],
+          properties: {
+            mode: {
+              enum: ["completed_recording"],
+            },
+            recording: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "schema_version",
+                "association",
+                "policy_version",
+                "deletion_generation",
+                "mime_type",
+                "direction",
+                "source_kind",
+                "recording_id",
+                "modality",
+                "declared_bytes",
+                "declared_duration_ms",
+              ],
+              properties: {
+                schema_version: {
+                  enum: [1],
+                },
+                association: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "capture_session_id",
+                    "correlation_nonce",
+                    "parent",
+                  ],
+                  properties: {
+                    capture_session_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                    correlation_nonce: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                    parent: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: ["trace_id", "span_id"],
+                      properties: {
+                        trace_id: {
+                          type: "string",
+                          "x-oneOf": [
+                            {
+                              pattern: "^(?!0{32}$)[0-9a-f]{32}$",
+                              maxLength: 32,
+                            },
+                            {
+                              type: "string",
+                              pattern:
+                                "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              maxLength: 36,
+                            },
+                          ],
+                        },
+                        span_id: {
+                          type: "string",
+                          pattern: "^(?!0{16}$)[0-9a-f]{16}$",
+                          maxLength: 16,
+                        },
+                      },
+                    },
+                  },
+                },
+                policy_version: {
+                  type: "string",
+                  pattern: "^[a-zA-Z0-9_-]{1,128}$",
+                  maxLength: 128,
+                },
+                deletion_generation: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 9007199254740991,
+                },
+                mime_type: {
+                  enum: [
+                    "audio/wav",
+                    "audio/ogg",
+                    "audio/mpeg",
+                    "audio/mp4",
+                    "audio/webm",
+                    "audio/flac",
+                    "audio/L16",
+                  ],
+                },
+                direction: {
+                  enum: ["input", "output", "mixed"],
+                },
+                source_kind: {
+                  enum: ["ProviderFile", "RemoteUrl"],
+                },
+                recording_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+                modality: {
+                  enum: ["audio"],
+                },
+                declared_bytes: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 1073741824,
+                },
+                declared_duration_ms: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 7200000,
+                },
+              },
+              description:
+                "Admission for a new completed audio recording, not an upload or segment. Exact source length and ceil-to-millisecond duration are required. Server produces bounded segments; no whole-source occurrence is readable. Negotiated limits and atomic reservations also apply.",
+            },
+            source: {
+              "x-oneOf": [
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["kind", "envelope_id"],
+                  properties: {
+                    kind: {
+                      enum: ["RemoteUrlEnvelope"],
+                    },
+                    envelope_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                  },
+                },
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["kind", "connection_id", "registered_output_id"],
+                  properties: {
+                    kind: {
+                      enum: ["ProviderFile"],
+                    },
+                    connection_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                    registered_output_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+    AttachmentImportResponse: {
+      required: ["job_id", "state"],
+      type: "object",
+      properties: {
+        mode: {
+          title: "Mode",
+          type: "string",
+          enum: ["completed_recording"],
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+        upload_id: {
+          title: "Upload id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+        recording_id: {
+          title: "Recording id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["importing"],
+        },
+      },
+      additionalProperties: false,
+      "x-oneOf": [
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["job_id", "upload_id", "state"],
+          properties: {
+            job_id: {
+              type: "string",
+              pattern:
+                "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              maxLength: 36,
+            },
+            upload_id: {
+              type: "string",
+              pattern:
+                "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              maxLength: 36,
+            },
+            state: {
+              enum: ["importing"],
+            },
+          },
+        },
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["mode", "job_id", "recording_id", "state"],
+          properties: {
+            mode: {
+              enum: ["completed_recording"],
+            },
+            job_id: {
+              type: "string",
+              pattern:
+                "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              maxLength: 36,
+            },
+            recording_id: {
+              type: "string",
+              pattern:
+                "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              maxLength: 36,
+            },
+            state: {
+              enum: ["importing"],
+            },
+          },
+        },
+      ],
+    },
+    AttachmentImportStatusResponse: {
+      required: ["job_id", "state", "reason"],
+      type: "object",
+      properties: {
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "pending_upload",
+            "importing",
+            "validating",
+            "ready",
+            "failed",
+            "rejected",
+            "expired",
+            "deleted",
+          ],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: [
+            "queued",
+            "disabled",
+            "bootstrap_pending",
+            "policy_denied",
+            "credential_scope_unsupported",
+            "source_unavailable",
+            "unsampled",
+            "too_large",
+            "queue_full",
+            "unsupported_version",
+            "endpoint_unconfigured",
+            "scope_unresolved",
+            "correlation_unavailable",
+            "redaction_unavailable",
+            "recording_disabled",
+            "binding_pending",
+            "not_found",
+            "conflict",
+            "throttled",
+            "validation_failed",
+            "expired",
+            "deleted",
+            "incomplete",
+            "ready",
+          ],
+        },
+      },
+    },
+    AttachmentLinkRequest: {
+      required: [
+        "source_occurrence_id",
+        "source_parent",
+        "target_parent",
+        "occurrence_id",
+        "policy_version",
+        "deletion_generation",
+      ],
+      type: "object",
+      properties: {
+        source_occurrence_id: {
+          title: "Source occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        source_parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+        target_parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deletion_generation: {
+          title: "Deletion generation",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
+    AttachmentLiveKitEventRequest: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description:
+            "Processing requires a nonempty event ID of at most 64 characters.",
+          type: "string",
+          minLength: 1,
+        },
+        event: {
+          title: "Event",
+          description:
+            "Only egress_started, egress_updated and egress_ended are processed; other signed events are acknowledged.",
+          type: "string",
+          minLength: 1,
+        },
+        egressInfo: {
+          $ref: "#/definitions/AttachmentLiveKitEgressInfo",
+        },
+      },
+      additionalProperties: true,
+    },
+    AttachmentOccurrence: {
+      required: [
+        "reference",
+        "scope",
+        "parent",
+        "state",
+        "binding",
+        "capture_complete",
+        "policy_version",
+        "deletion_generation",
+        "expires_at",
+      ],
+      type: "object",
+      properties: {
+        reference: {
+          $ref: "#/definitions/AttachmentReference",
+        },
+        scope: {
+          $ref: "#/definitions/AttachmentScope",
+        },
+        parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "pending_upload",
+            "importing",
+            "validating",
+            "ready",
+            "failed",
+            "rejected",
+            "expired",
+            "deleted",
+          ],
+        },
+        binding: {
+          title: "Binding",
+          type: "string",
+          enum: ["pending", "bound"],
+        },
+        capture_complete: {
+          title: "Capture complete",
+          type: "boolean",
+        },
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deletion_generation: {
+          title: "Deletion generation",
+          type: "integer",
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        recording_id: {
+          title: "Recording id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentOccurrencePage: {
+      required: ["items", "next_cursor"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentOccurrence",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AttachmentProviderRegistrationRequest: {
+      required: [
+        "connection_id",
+        "egress_id",
+        "room_name",
+        "recording_id",
+        "association",
+        "direction",
+      ],
+      type: "object",
+      properties: {
+        connection_id: {
+          title: "Connection id",
+          type: "string",
+          format: "uuid",
+        },
+        egress_id: {
+          title: "Egress id",
+          type: "string",
+          pattern: "^EG_[A-Za-z0-9]{1,61}$",
+          minLength: 1,
+        },
+        room_name: {
+          title: "Room name",
+          type: "string",
+          maxLength: 256,
+          minLength: 1,
+        },
+        recording_id: {
+          title: "Recording id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+        association: {
+          $ref: "#/definitions/AttachmentControlAssociation",
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+          enum: ["input", "output", "mixed"],
+        },
+        dispatch_mode: {
+          title: "Dispatch mode",
+          type: "string",
+          enum: ["auto", "sdk_explicit"],
+          default: "auto",
+        },
+      },
+      additionalProperties: false,
+    },
+    AttachmentProviderRegistrationResponse: {
+      required: ["state", "dispatch_mode", "binding", "source"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "registered",
+            "active",
+            "ending",
+            "complete",
+            "failed",
+            "aborted",
+            "limit_reached",
+          ],
+        },
+        dispatch_mode: {
+          title: "Dispatch mode",
+          type: "string",
+          enum: ["auto", "sdk_explicit"],
+        },
+        binding: {
+          $ref: "#/definitions/AttachmentProviderBinding",
+        },
+        import_request: {
+          title: "Import request",
+          type: "object",
+          additionalProperties: false,
+          required: ["mode", "recording", "source"],
+          properties: {
+            mode: {
+              enum: ["completed_recording"],
+            },
+            recording: {
+              type: "object",
+              additionalProperties: false,
+              required: [
+                "schema_version",
+                "association",
+                "policy_version",
+                "deletion_generation",
+                "mime_type",
+                "direction",
+                "source_kind",
+                "recording_id",
+                "modality",
+                "declared_bytes",
+                "declared_duration_ms",
+              ],
+              properties: {
+                schema_version: {
+                  enum: [1],
+                },
+                association: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: [
+                    "capture_session_id",
+                    "correlation_nonce",
+                    "parent",
+                  ],
+                  properties: {
+                    capture_session_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                    correlation_nonce: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                    parent: {
+                      type: "object",
+                      additionalProperties: false,
+                      required: ["trace_id", "span_id"],
+                      properties: {
+                        trace_id: {
+                          type: "string",
+                          "x-oneOf": [
+                            {
+                              pattern: "^(?!0{32}$)[0-9a-f]{32}$",
+                              maxLength: 32,
+                            },
+                            {
+                              type: "string",
+                              pattern:
+                                "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                              maxLength: 36,
+                            },
+                          ],
+                        },
+                        span_id: {
+                          type: "string",
+                          pattern: "^(?!0{16}$)[0-9a-f]{16}$",
+                          maxLength: 16,
+                        },
+                      },
+                    },
+                  },
+                },
+                policy_version: {
+                  type: "string",
+                  pattern: "^[a-zA-Z0-9_-]{1,128}$",
+                  maxLength: 128,
+                },
+                deletion_generation: {
+                  type: "integer",
+                  minimum: 0,
+                  maximum: 9007199254740991,
+                },
+                mime_type: {
+                  enum: [
+                    "audio/wav",
+                    "audio/ogg",
+                    "audio/mpeg",
+                    "audio/mp4",
+                    "audio/webm",
+                    "audio/flac",
+                    "audio/L16",
+                  ],
+                },
+                direction: {
+                  enum: ["input", "output", "mixed"],
+                },
+                source_kind: {
+                  enum: ["ProviderFile", "RemoteUrl"],
+                },
+                recording_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+                modality: {
+                  enum: ["audio"],
+                },
+                declared_bytes: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 1073741824,
+                },
+                declared_duration_ms: {
+                  type: "integer",
+                  minimum: 1,
+                  maximum: 7200000,
+                },
+              },
+              description:
+                "Admission for a new completed audio recording, not an upload or segment. Exact source length and ceil-to-millisecond duration are required. Server produces bounded segments; no whole-source occurrence is readable. Negotiated limits and atomic reservations also apply.",
+            },
+            source: {
+              "x-oneOf": [
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["kind", "envelope_id"],
+                  properties: {
+                    kind: {
+                      enum: ["RemoteUrlEnvelope"],
+                    },
+                    envelope_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                  },
+                },
+                {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["kind", "connection_id", "registered_output_id"],
+                  properties: {
+                    kind: {
+                      enum: ["ProviderFile"],
+                    },
+                    connection_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                    registered_output_id: {
+                      type: "string",
+                      pattern:
+                        "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                      maxLength: 36,
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+        source: {
+          $ref: "#/definitions/AttachmentProviderFile",
+        },
+      },
+      additionalProperties: false,
+      "x-allOf": [
+        {
+          if: {
+            properties: {
+              state: {
+                enum: ["complete"],
+              },
+            },
+          },
+          then: {
+            required: ["import_request"],
+          },
+          else: {
+            not: {
+              "x-anyOf": [
+                {
+                  required: ["import_request"],
+                },
+                {
+                  required: ["job_id"],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    },
+    AttachmentRecordingManifest: {
+      required: [
+        "schema_version",
+        "recording_id",
+        "timebase",
+        "sample_format",
+        "sample_rate_hz",
+        "channels",
+        "codec",
+        "container",
+        "layout",
+        "tracks",
+        "segments",
+        "gaps",
+        "playout",
+        "capture_complete",
+        "duration_ms",
+      ],
+      type: "object",
+      properties: {
+        schema_version: {
+          title: "Schema version",
+          type: "integer",
+        },
+        recording_id: {
+          title: "Recording id",
+          type: "string",
+          format: "uuid",
+        },
+        timebase: {
+          title: "Timebase",
+          type: "string",
+          minLength: 1,
+        },
+        sample_format: {
+          title: "Sample format",
+          type: "string",
+          minLength: 1,
+        },
+        sample_rate_hz: {
+          title: "Sample rate hz",
+          type: "integer",
+        },
+        channels: {
+          title: "Channels",
+          type: "integer",
+        },
+        codec: {
+          title: "Codec",
+          type: "string",
+          minLength: 1,
+        },
+        container: {
+          title: "Container",
+          type: "string",
+          minLength: 1,
+        },
+        layout: {
+          title: "Layout",
+          type: "string",
+          enum: ["mixed", "stereo", "separate_tracks"],
+        },
+        tracks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentTrack",
+          },
+        },
+        segments: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentSegment",
+          },
+        },
+        gaps: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentGap",
+          },
+        },
+        playout: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentPlayout",
+          },
+        },
+        capture_complete: {
+          title: "Capture complete",
+          type: "boolean",
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "integer",
+        },
+      },
+    },
+    AttachmentResolveRequest: {
+      required: ["items"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentResolveItem",
+          },
+        },
+      },
+    },
+    AttachmentResolveResponse: {
+      required: ["items"],
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentResolveResult",
+          },
+        },
+      },
+    },
+    AttachmentSourceEnvelopeRequest: {
+      required: ["source"],
+      type: "object",
+      properties: {
+        source: {
+          title: "Source",
+          type: "object",
+          "x-oneOf": [
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "envelope_id"],
+              properties: {
+                kind: {
+                  enum: ["RemoteUrlEnvelope"],
+                },
+                envelope_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+              },
+            },
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["kind", "connection_id", "registered_output_id"],
+              properties: {
+                kind: {
+                  enum: ["ProviderFile"],
+                },
+                connection_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+                registered_output_id: {
+                  type: "string",
+                  pattern:
+                    "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                  maxLength: 36,
+                },
+              },
+            },
+          ],
+        },
+      },
+      additionalProperties: false,
+    },
+    AttachmentSourceEnvelopeResponse: {
+      required: ["source"],
+      type: "object",
+      properties: {
+        registration: {
+          $ref: "#/definitions/AttachmentProviderRegistrationResponse",
+        },
+        source: {
+          $ref: "#/definitions/AttachmentOpaqueEnvelope",
+        },
+      },
+      additionalProperties: false,
+    },
+    AttachmentStatusResponse: {
+      required: ["upload_id", "state", "reason"],
+      type: "object",
+      properties: {
+        upload_id: {
+          title: "Upload id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "pending_upload",
+            "importing",
+            "validating",
+            "ready",
+            "failed",
+            "rejected",
+            "expired",
+            "deleted",
+          ],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: [
+            "queued",
+            "disabled",
+            "bootstrap_pending",
+            "policy_denied",
+            "credential_scope_unsupported",
+            "source_unavailable",
+            "unsampled",
+            "too_large",
+            "queue_full",
+            "unsupported_version",
+            "endpoint_unconfigured",
+            "scope_unresolved",
+            "correlation_unavailable",
+            "redaction_unavailable",
+            "recording_disabled",
+            "binding_pending",
+            "not_found",
+            "conflict",
+            "throttled",
+            "validation_failed",
+            "expired",
+            "deleted",
+            "incomplete",
+            "ready",
+          ],
+        },
+      },
+    },
+    AttachmentUploadRequest: {
+      required: [
+        "schema_version",
+        "attachment_id",
+        "occurrence_id",
+        "association",
+        "policy_version",
+        "deletion_generation",
+        "mime_type",
+        "modality",
+        "direction",
+        "source_kind",
+        "declared_bytes",
+      ],
+      type: "object",
+      properties: {
+        schema_version: {
+          title: "Schema version",
+          type: "integer",
+        },
+        attachment_id: {
+          title: "Attachment id",
+          type: "string",
+          format: "uuid",
+        },
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        association: {
+          $ref: "#/definitions/AttachmentAssociation",
+        },
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deletion_generation: {
+          title: "Deletion generation",
+          type: "integer",
+          minimum: 0,
+        },
+        mime_type: {
+          title: "Mime type",
+          type: "string",
+          enum: [
+            "audio/wav",
+            "audio/ogg",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/webm",
+            "audio/flac",
+            "audio/L16",
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "video/mp4",
+            "video/webm",
+            "application/pdf",
+            "application/octet-stream",
+          ],
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["audio", "image", "video", "document", "file"],
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+          enum: ["input", "output", "mixed"],
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: [
+            "Bytes",
+            "Blob",
+            "RemoteUrl",
+            "LocalFile",
+            "OwnedRecordingFile",
+            "ProviderFile",
+          ],
+        },
+        purpose: {
+          title: "Purpose",
+          type: "string",
+          enum: [
+            "conversation_recording",
+            "turn_recording",
+            "model_input",
+            "model_output",
+            "tool_result",
+            "computer_screenshot",
+            "diagnostic",
+            "document",
+          ],
+        },
+        declared_bytes: {
+          title: "Declared bytes",
+          type: "integer",
+          maximum: 52428800,
+          minimum: 1,
+        },
+        message_index: {
+          title: "Message index",
+          type: "integer",
+        },
+        part_index: {
+          title: "Part index",
+          type: "integer",
+        },
+        recording_id: {
+          title: "Recording id",
+          type: "string",
+          format: "uuid",
+        },
+        segment_index: {
+          title: "Segment index",
+          type: "integer",
+        },
+        conversation_id: {
+          title: "Conversation id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        turn_id: {
+          title: "Turn id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        tool_call_id: {
+          title: "Tool call id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    AttachmentUploadResponse: {
+      required: [
+        "upload_id",
+        "attachment_id",
+        "occurrence_id",
+        "state",
+        "reserved_bytes",
+        "expires_at",
+        "transfer_mode",
+        "write_capability",
+      ],
+      type: "object",
+      properties: {
+        upload_id: {
+          title: "Upload id",
+          type: "string",
+          format: "uuid",
+        },
+        attachment_id: {
+          title: "Attachment id",
+          type: "string",
+          format: "uuid",
+        },
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        reserved_bytes: {
+          title: "Reserved bytes",
+          type: "integer",
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+        transfer_mode: {
+          title: "Transfer mode",
+          type: "string",
+          minLength: 1,
+        },
+        write_capability: {
+          title: "Write capability",
+          type: "string",
+          maxLength: 4096,
+          minLength: 1,
         },
       },
     },
@@ -102532,6 +105043,732 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AttachmentLimits: {
+      required: [
+        "max_upload_bytes",
+        "segment_bytes",
+        "segment_duration_ms",
+        "recording_bytes",
+        "recording_duration_ms",
+        "active_transfers",
+        "active_recordings",
+        "reserved_bytes",
+        "validation_jobs",
+        "initializations_per_minute",
+        "links_per_minute",
+        "upload_bytes_per_second",
+        "playback_bytes_per_second",
+        "transfer_timeout_seconds",
+        "grant_ttl_seconds",
+        "revocation_check_seconds",
+      ],
+      type: "object",
+      properties: {
+        max_upload_bytes: {
+          title: "Max upload bytes",
+          type: "integer",
+        },
+        segment_bytes: {
+          title: "Segment bytes",
+          type: "integer",
+        },
+        segment_duration_ms: {
+          title: "Segment duration ms",
+          type: "integer",
+        },
+        recording_bytes: {
+          title: "Recording bytes",
+          type: "integer",
+        },
+        recording_duration_ms: {
+          title: "Recording duration ms",
+          type: "integer",
+        },
+        active_transfers: {
+          title: "Active transfers",
+          type: "integer",
+        },
+        active_recordings: {
+          title: "Active recordings",
+          type: "integer",
+        },
+        reserved_bytes: {
+          title: "Reserved bytes",
+          type: "integer",
+        },
+        validation_jobs: {
+          title: "Validation jobs",
+          type: "integer",
+        },
+        initializations_per_minute: {
+          title: "Initializations per minute",
+          type: "integer",
+        },
+        links_per_minute: {
+          title: "Links per minute",
+          type: "integer",
+        },
+        upload_bytes_per_second: {
+          title: "Upload bytes per second",
+          type: "integer",
+        },
+        playback_bytes_per_second: {
+          title: "Playback bytes per second",
+          type: "integer",
+        },
+        transfer_timeout_seconds: {
+          title: "Transfer timeout seconds",
+          type: "integer",
+        },
+        grant_ttl_seconds: {
+          title: "Grant ttl seconds",
+          type: "integer",
+        },
+        revocation_check_seconds: {
+          title: "Revocation check seconds",
+          type: "integer",
+        },
+      },
+    },
+    AttachmentPolicy: {
+      required: [
+        "version",
+        "enabled",
+        "allowed_sources",
+        "allowed_modalities",
+        "require_media_redaction",
+        "require_metadata_removal",
+        "allow_unredacted_media_with_text_pii",
+        "record_audio",
+        "record_video",
+      ],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        enabled: {
+          title: "Enabled",
+          type: "boolean",
+        },
+        allowed_sources: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: [
+              "Bytes",
+              "Blob",
+              "RemoteUrl",
+              "LocalFile",
+              "OwnedRecordingFile",
+              "ProviderFile",
+            ],
+          },
+        },
+        allowed_modalities: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["audio", "image", "video", "document", "file"],
+          },
+        },
+        require_media_redaction: {
+          title: "Require media redaction",
+          type: "boolean",
+        },
+        require_metadata_removal: {
+          title: "Require metadata removal",
+          type: "boolean",
+        },
+        allow_unredacted_media_with_text_pii: {
+          title: "Allow unredacted media with text pii",
+          type: "boolean",
+        },
+        record_audio: {
+          title: "Record audio",
+          type: "boolean",
+        },
+        record_video: {
+          title: "Record video",
+          type: "boolean",
+        },
+      },
+    },
+    AttachmentScope: {
+      required: ["organization_id", "workspace_id", "project_id"],
+      type: "object",
+      properties: {
+        organization_id: {
+          title: "Organization id",
+          type: "string",
+          format: "uuid",
+        },
+        workspace_id: {
+          title: "Workspace id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentCompletedRecordingImport: {
+      required: [
+        "schema_version",
+        "association",
+        "policy_version",
+        "deletion_generation",
+        "mime_type",
+        "direction",
+        "source_kind",
+        "recording_id",
+        "modality",
+        "declared_bytes",
+        "declared_duration_ms",
+      ],
+      type: "object",
+      properties: {
+        schema_version: {
+          title: "Schema version",
+          type: "integer",
+          maximum: 1,
+          minimum: 1,
+        },
+        association: {
+          $ref: "#/definitions/AttachmentControlAssociation",
+        },
+        policy_version: {
+          title: "Policy version",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        deletion_generation: {
+          title: "Deletion generation",
+          type: "integer",
+          minimum: 0,
+        },
+        mime_type: {
+          title: "Mime type",
+          type: "string",
+          enum: [
+            "audio/wav",
+            "audio/ogg",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/webm",
+            "audio/flac",
+            "audio/L16",
+          ],
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+          enum: ["input", "output", "mixed"],
+        },
+        source_kind: {
+          title: "Source kind",
+          type: "string",
+          enum: ["ProviderFile", "RemoteUrl"],
+        },
+        recording_id: {
+          title: "Recording id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["audio"],
+        },
+        declared_bytes: {
+          title: "Declared bytes",
+          type: "integer",
+          maximum: 1073741824,
+          minimum: 1,
+        },
+        declared_duration_ms: {
+          title: "Declared duration ms",
+          type: "integer",
+          maximum: 7200000,
+          minimum: 1,
+        },
+      },
+    },
+    AttachmentParent: {
+      required: ["trace_id", "span_id"],
+      type: "object",
+      properties: {
+        trace_id: {
+          title: "Trace id",
+          type: "string",
+          maxLength: 36,
+          minLength: 1,
+        },
+        span_id: {
+          title: "Span id",
+          type: "string",
+          maxLength: 16,
+          minLength: 1,
+        },
+      },
+    },
+    AttachmentLiveKitEgressInfo: {
+      type: "object",
+      properties: {
+        egressId: {
+          title: "Egressid",
+          type: "string",
+          minLength: 1,
+        },
+        roomName: {
+          title: "Roomname",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          "x-anyOf": [
+            {
+              type: "string",
+            },
+            {
+              type: "integer",
+            },
+          ],
+          description:
+            "LiveKit EGRESS_* enum name or numeric enum value (0 through 6); unknown states do not advance a registration.",
+        },
+        updatedAt: {
+          title: "Updatedat",
+          type: "integer",
+          "x-anyOf": [
+            {
+              type: "integer",
+            },
+            {
+              type: "string",
+              pattern: "^[0-9]+$",
+              maxLength: 20,
+            },
+          ],
+        },
+        endedAt: {
+          title: "Endedat",
+          type: "integer",
+          "x-anyOf": [
+            {
+              type: "integer",
+            },
+            {
+              type: "string",
+              pattern: "^[0-9]+$",
+              maxLength: 20,
+            },
+          ],
+        },
+        fileResults: {
+          description:
+            "Completion requires exactly one result; other shapes do not publish an output.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/AttachmentLiveKitFileResult",
+          },
+        },
+      },
+      additionalProperties: true,
+    },
+    AttachmentReference: {
+      required: [
+        "attachment_id",
+        "occurrence_id",
+        "direction",
+        "modality",
+        "mime_type",
+      ],
+      type: "object",
+      properties: {
+        attachment_id: {
+          title: "Attachment id",
+          type: "string",
+          format: "uuid",
+        },
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+          enum: ["input", "output", "mixed"],
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["audio", "image", "video", "document", "file"],
+        },
+        mime_type: {
+          title: "Mime type",
+          type: "string",
+          enum: [
+            "audio/wav",
+            "audio/ogg",
+            "audio/mpeg",
+            "audio/mp4",
+            "audio/webm",
+            "audio/flac",
+            "audio/L16",
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "video/mp4",
+            "video/webm",
+            "application/pdf",
+            "application/octet-stream",
+          ],
+        },
+        purpose: {
+          title: "Purpose",
+          type: "string",
+          enum: [
+            "conversation_recording",
+            "turn_recording",
+            "model_input",
+            "model_output",
+            "tool_result",
+            "computer_screenshot",
+            "diagnostic",
+            "document",
+          ],
+        },
+        message_index: {
+          title: "Message index",
+          type: "integer",
+          maximum: 65535,
+          minimum: 0,
+        },
+        part_index: {
+          title: "Part index",
+          type: "integer",
+          maximum: 65535,
+          minimum: 0,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "assistant", "tool", "system", "unknown"],
+        },
+        channel: {
+          title: "Channel",
+          type: "integer",
+          maximum: 31,
+          minimum: 0,
+        },
+        conversation_id: {
+          title: "Conversation id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        turn_id: {
+          title: "Turn id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        tool_call_id: {
+          title: "Tool call id",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    AttachmentControlAssociation: {
+      required: ["capture_session_id", "correlation_nonce", "parent"],
+      type: "object",
+      properties: {
+        capture_session_id: {
+          title: "Capture session id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+        correlation_nonce: {
+          title: "Correlation nonce",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+        parent: {
+          $ref: "#/definitions/AttachmentControlParent",
+        },
+      },
+      additionalProperties: false,
+    },
+    AttachmentProviderBinding: {
+      required: ["provider", "egress_id", "room_digest"],
+      type: "object",
+      properties: {
+        provider: {
+          title: "Provider",
+          type: "string",
+          enum: ["livekit"],
+        },
+        egress_id: {
+          title: "Egress id",
+          type: "string",
+          pattern: "^EG_[A-Za-z0-9]{1,61}$",
+          minLength: 1,
+        },
+        room_digest: {
+          title: "Room digest",
+          type: "string",
+          pattern: "^[0-9a-f]{64}$",
+          minLength: 1,
+        },
+      },
+      additionalProperties: false,
+    },
+    AttachmentProviderFile: {
+      required: ["kind", "connection_id", "registered_output_id"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["ProviderFile"],
+        },
+        connection_id: {
+          title: "Connection id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+        registered_output_id: {
+          title: "Registered output id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+      },
+      additionalProperties: false,
+    },
+    AttachmentGap: {
+      required: ["start_ms", "duration_ms", "reason"],
+      type: "object",
+      properties: {
+        start_ms: {
+          title: "Start ms",
+          type: "integer",
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "integer",
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+        track_id: {
+          title: "Track id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentPlayout: {
+      required: ["start_ms", "duration_ms", "evidence"],
+      type: "object",
+      properties: {
+        start_ms: {
+          title: "Start ms",
+          type: "integer",
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "integer",
+        },
+        evidence: {
+          title: "Evidence",
+          type: "string",
+          enum: ["generated", "played", "unknown", "truncated"],
+        },
+      },
+    },
+    AttachmentSegment: {
+      required: ["occurrence_id", "index", "start_ms", "duration_ms"],
+      type: "object",
+      properties: {
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        index: {
+          title: "Index",
+          type: "integer",
+        },
+        start_ms: {
+          title: "Start ms",
+          type: "integer",
+        },
+        duration_ms: {
+          title: "Duration ms",
+          type: "integer",
+        },
+        track_id: {
+          title: "Track id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AttachmentTrack: {
+      required: ["track_id", "channels", "direction", "role"],
+      type: "object",
+      properties: {
+        track_id: {
+          title: "Track id",
+          type: "string",
+          format: "uuid",
+        },
+        channels: {
+          type: "array",
+          items: {
+            type: "integer",
+          },
+        },
+        direction: {
+          title: "Direction",
+          type: "string",
+          enum: ["input", "output", "mixed"],
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "assistant", "mixed", "unknown"],
+        },
+      },
+    },
+    AttachmentResolveItem: {
+      required: ["occurrence_id", "parent", "representation"],
+      type: "object",
+      properties: {
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+        representation: {
+          title: "Representation",
+          type: "string",
+          enum: ["original", "playable", "channel", "peaks", "thumbnail"],
+        },
+        channel: {
+          title: "Channel",
+          type: "integer",
+          maximum: 31,
+          minimum: 0,
+        },
+      },
+    },
+    AttachmentResolveResult: {
+      required: ["occurrence_id", "status"],
+      type: "object",
+      properties: {
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "ready",
+            "not_found",
+            "pending",
+            "failed",
+            "expired",
+            "deleted",
+          ],
+        },
+        gateway_path: {
+          title: "Gateway path",
+          type: "string",
+          maxLength: 230,
+          minLength: 1,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    AttachmentOpaqueEnvelope: {
+      required: ["kind", "envelope_id"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["RemoteUrlEnvelope"],
+        },
+        envelope_id: {
+          title: "Envelope id",
+          type: "string",
+          format: "uuid",
+          pattern:
+            "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          maxLength: 36,
+        },
+      },
+      additionalProperties: false,
+    },
+    AttachmentAssociation: {
+      required: ["capture_session_id", "correlation_nonce", "parent"],
+      type: "object",
+      properties: {
+        capture_session_id: {
+          title: "Capture session id",
+          type: "string",
+          format: "uuid",
+        },
+        correlation_nonce: {
+          title: "Correlation nonce",
+          type: "string",
+          format: "uuid",
+        },
+        parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+      },
+    },
     AutoReloadSettingsData: {
       required: [
         "autoreload_enabled",
@@ -130485,6 +133722,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
         },
       },
+    },
+    AttachmentLiveKitFileResult: {
+      description:
+        "Completion requires exactly one result; other shapes do not publish an output.",
+      type: "object",
+      properties: {
+        location: {
+          title: "Location",
+          description:
+            "Only a signed completion can select this locator; host approval and metadata/revision checks still apply.",
+          type: "string",
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          description: "Bytes; completion requires 1 through 1073741824.",
+          type: "integer",
+          "x-anyOf": [
+            {
+              type: "integer",
+            },
+            {
+              type: "string",
+              pattern: "^[0-9]+$",
+              maxLength: 20,
+            },
+          ],
+        },
+        duration: {
+          title: "Duration",
+          description:
+            "Nanoseconds; completion requires 1 through 7200000000000.",
+          type: "integer",
+          "x-anyOf": [
+            {
+              type: "integer",
+            },
+            {
+              type: "string",
+              pattern: "^[0-9]+$",
+              maxLength: 20,
+            },
+          ],
+        },
+      },
+      additionalProperties: true,
+    },
+    AttachmentControlParent: {
+      required: ["trace_id", "span_id"],
+      type: "object",
+      properties: {
+        trace_id: {
+          type: "string",
+          maxLength: 36,
+          pattern:
+            "(?:^(?!0{32}$)[0-9a-f]{32}$)|(?:^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$)",
+          "x-oneOf": [
+            {
+              type: "string",
+              pattern: "^(?!0{32}$)[0-9a-f]{32}$",
+              maxLength: 32,
+            },
+            {
+              type: "string",
+              pattern:
+                "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              maxLength: 36,
+            },
+          ],
+        },
+        span_id: {
+          type: "string",
+          pattern: "^(?!0{16}$)[0-9a-f]{16}$",
+          maxLength: 16,
+        },
+      },
+      additionalProperties: false,
     },
     AutomationRuleScope: {
       type: "object",

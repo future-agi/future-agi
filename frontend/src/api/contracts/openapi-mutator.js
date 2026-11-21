@@ -16,12 +16,13 @@ const headersToObject = (headers) => {
 };
 
 export const apiMutator = async (url, options) => {
-  const { body, headers, method, signal } = options;
+  const { body, headers, method, signal, responseType } = options;
   const data = parseJsonBody(body);
   const headerObject = headersToObject(headers);
   const config =
-    signal || headerObject
+    signal || headerObject || responseType
       ? {
+          ...(responseType ? { responseType } : {}),
           ...(signal ? { signal } : {}),
           ...(headerObject ? { headers: headerObject } : {}),
         }

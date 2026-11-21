@@ -1,4 +1,9 @@
 import { test, expect, ScopeUserInfo } from '../lib/scope-actors';
+import { E2E } from '../lib/env';
+import type { BrowserContext } from '@playwright/test';
+
+// Identity self-tests inspect credentials in memory; attach only sanitized IDs.
+test.use({ trace: 'off', video: 'off' });
 
 // tracer/serializers/project.py:15 and views/project.py:310,527.
 const PROJECTS = '/tracer/project/list_projects/';
@@ -170,3 +175,99 @@ test('H1 UI: isolated contexts retain actor and workspace headers through reload
     }
     await testInfo.attach('scope-browser-headers', { contentType: 'application/json', body: JSON.stringify(observations) });
   });
+
+// H1 attachment extension: 90s provisioning + 2*UI_READY + 30s ordinary API/PG.
+// Browser qualification needs the managed HTTPS stack; no synthetic memberships.
+test.describe('H1 attachment identities', () => {
+  test('H1 same-user two-org: HTTPS contexts, foreign control and real removal',
+    async ({ browser, scopeActors: scopes, scopeProbe: probe }, testInfo) => {
+      test.setTimeout(240_000);
+      const originalKeys = scopes.owners.map(owner => [owner.organizationId, owner.apiKey, owner.secretKey]);
+      const { a, b, foreign } = await scopes.provisionTwoOrganizationMember();
+      expect(a.userId).toBe(b.userId);
+      expect(a.organizationId).not.toBe(b.organizationId);
+      expect(a.workspaceId).not.toBe(b.workspaceId);
+      expect(a.tokens === b.tokens).toBe(true);
+      expect('apiKey' in a || 'apiKey' in b).toBe(false);
+      expect(scopes.owners.slice(0, 2).every((owner, i) =>
+        [owner.organizationId, owner.apiKey, owner.secretKey].every((v, j) => v === originalKeys[i][j]))).toBe(true);
+
+      const memberships = () => probe.pg<{ user_id: string; organization_id: string }>(
+        `SELECT user_id, organization_id FROM accounts_organization_membership
+         WHERE user_id = ANY($1::uuid[]) AND organization_id = ANY($2::uuid[])
+           AND is_active AND NOT deleted ORDER BY organization_id`,
+        [[a.userId, foreign.userId], [a.organizationId, b.organizationId]]);
+      const expectedBoth = [a, b].map(actor => ({ user_id: a.userId, organization_id: actor.organizationId }))
+        .sort((x, y) => x.organization_id.localeCompare(y.organization_id));
+      if (process.env.E2E_H1_REMOVE_SECOND_MEMBERSHIP === '1') {
+        // One-sided fallibility: remove B but keep the two-org oracle unchanged.
+        expect((await scopes.send(scopes.ownerB, 'DELETE', '/accounts/organization/members/remove/',
+          { user_id: a.userId })).status).toBe(200);
+      }
+      expect(await memberships()).toEqual(expectedBoth); // Foreign must have ZERO rows in either org.
+      const linked = await probe.pg<{ organization_id: string; workspace_id: string }>(
+        `SELECT o.organization_id, w.workspace_id FROM accounts_workspacemembership w
+         JOIN accounts_organization_membership o ON o.id = w.organization_membership_id AND o.user_id = w.user_id
+         WHERE w.user_id = $1 AND o.is_active AND NOT o.deleted AND w.is_active AND NOT w.deleted
+         ORDER BY w.workspace_id`, [a.userId]);
+      expect(linked).toEqual([
+        { organization_id: a.organizationId, workspace_id: a.workspaceId },
+        { organization_id: a.organizationId, workspace_id: scopes.emptyWorkspace.id },
+        { organization_id: b.organizationId, workspace_id: b.workspaceId },
+      ].sort((x, y) => x.workspace_id.localeCompare(y.workspace_id)));
+
+      const contexts: BrowserContext[] = [];
+      try {
+        for (const actor of [a, b]) {
+          await test.step('Explicit HTTPS context retains the same user and selected scope', async () => {
+            const context = await scopes.openContext(browser, actor,
+              { appUrl: E2E.attachmentsAppUrl, ignoreHTTPSErrors: true });
+            contexts.push(context);
+            const page = await context.newPage();
+            const userReply = page.waitForResponse(r => new URL(r.url()).pathname === '/accounts/user-info/', { timeout: UI_READY });
+            const listReply = page.waitForResponse(r => new URL(r.url()).pathname === PROJECTS, { timeout: UI_READY });
+            await page.goto('/dashboard/observe', { timeout: UI_READY });
+            const [user, list] = await Promise.all([userReply, listReply]);
+            expect(user.status()).toBe(200);
+            const info = await user.json() as ScopeUserInfo;
+            expect(info.id).toBe(a.userId); expect(info.organization.id).toBe(actor.organizationId);
+            expect(list.status()).toBe(200);
+            const sent = await list.request().allHeaders();
+            expect(sent.authorization === `Bearer ${a.tokens.access}`).toBe(true);
+            expect(sent['x-organization-id']).toBe(actor.organizationId);
+            expect(sent['x-workspace-id']).toBe(actor.workspaceId);
+            await expect(page.getByText('Welcome to Observe', { exact: true })).toBeVisible();
+          }, { timeout: UI_READY });
+        }
+      } finally { for (const context of contexts) await context.close(); }
+
+      interface Organizations { result: { organizations: { id: string }[] } }
+      const orgs = async (actor: typeof a) => {
+        const response = await scopes.send<Organizations>(actor, 'GET', '/accounts/organizations/');
+        expect(response.status).toBe(200);
+        return response.body.result.organizations.map(org => org.id).sort();
+      };
+      expect(await orgs(a)).toEqual([a.organizationId, b.organizationId].sort());
+      expect(await orgs(foreign)).toEqual([foreign.organizationId]);
+      // No invalid-header fallback can masquerade as denial: use the actual
+      // membership-checking organization switch endpoint, then inspect memberships.
+      for (const actor of [a, b]) {
+        expect((await scopes.send(foreign, 'POST', '/accounts/organizations/switch/',
+          { organization_id: actor.organizationId })).status).toBe(403);
+      }
+      const removed = await scopes.send<{ result: { user_id: string } }>(scopes.ownerB, 'DELETE',
+        '/accounts/organization/members/remove/', { user_id: a.userId });
+      expect(removed.status).toBe(200);
+      expect(removed.body.result.user_id).toBe(a.userId);
+      expect(await memberships()).toEqual([{ user_id: a.userId, organization_id: a.organizationId }]);
+      expect(await orgs(a)).toEqual([a.organizationId]);
+      expect((await scopes.send(a, 'POST', '/accounts/organizations/switch/',
+        { organization_id: b.organizationId })).status).toBe(403);
+      const survivor = await scopes.send<ScopeUserInfo>(a, 'GET', '/accounts/user-info/');
+      expect(survivor.status).toBe(200);
+      expect(survivor.body.id).toBe(a.userId);
+      expect(survivor.body.organization.id).toBe(a.organizationId);
+      await testInfo.attach('h1-two-org-identities', { contentType: 'application/json',
+        body: JSON.stringify({ ...scopes.evidence(), linked, afterRemoval: await memberships() }) });
+    });
+});

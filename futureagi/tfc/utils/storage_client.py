@@ -11,89 +11,32 @@ URL routing:
          while browser-facing URLs use MINIO_URL (e.g. http://localhost:9005).
 """
 
-import ipaddress
 import json
 import os
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import urlparse
 
-import certifi
-import idna
 import structlog
 import urllib3
 from minio import Minio
-from requests.utils import (
-    get_auth_from_url,
-    get_environ_proxies,
-    prepend_scheme_if_needed,
-    select_proxy,
+
+from tfc.utils.storage_config import (
+    _parse_endpoint as _parse_endpoint,
+)
+from tfc.utils.storage_config import (
+    _split_endpoint as _split_endpoint,
+)
+from tfc.utils.storage_config import (
+    resolve_media_credentials,
+    resolve_storage_config,
+)
+from tfc.utils.storage_config import (
+    storage_http_client as _storage_http_client,
 )
 
 logger = structlog.get_logger(__name__)
 
 STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "s3").lower()
 _client = None
-
-
-_ENDPOINT_ERROR = "Storage endpoint must be a host[:port] or an HTTP(S) URL"
-
-
-def _split_endpoint(raw_endpoint: str):
-    """(urlsplit result, whether a scheme was given) for an endpoint setting.
-
-    Surrounding whitespace is not part of the setting: a value read from a
-    secret file or a YAML block scalar ends in a newline.
-    """
-    endpoint = raw_endpoint.strip() if isinstance(raw_endpoint, str) else ""
-    if not endpoint or any(c.isspace() for c in endpoint):
-        raise ValueError(_ENDPOINT_ERROR)
-    has_scheme = "://" in endpoint
-    return urlsplit(endpoint if has_scheme else "//" + endpoint), has_scheme
-
-
-def _parse_endpoint(raw_endpoint: str) -> tuple[str, bool | None]:
-    """Parse a storage authority, optionally prefixed by HTTP(S).
-
-    A bare host:port is not a URL scheme. Only the authority is used: anything
-    after it (a trailing slash, a path prefix, a query or fragment) is
-    ignored, as it always was. Minio addresses buckets at the endpoint's root,
-    and generated object URLs are path-style at the root of MINIO_URL's
-    authority, the shape tfc.utils.storage.is_own_storage_url recognises.
-    Reject what cannot name a usable authority (an empty host, credentials,
-    a scheme other than HTTP(S), a bad port) rather than deferring it to the
-    first network request. Never include configuration in the error.
-    """
-    error = _ENDPOINT_ERROR
-    try:
-        parsed, has_scheme = _split_endpoint(raw_endpoint)
-        if (
-            (has_scheme and parsed.scheme not in ("http", "https"))
-            or not parsed.hostname
-            or parsed.username is not None
-            or parsed.password is not None
-            or parsed.netloc.endswith(":")
-            or parsed.port == 0
-        ):
-            raise ValueError(error)
-        host = parsed.hostname
-        if ":" in host:
-            ipaddress.IPv6Address(host)
-            host = f"[{host}]"
-        else:
-            # Public MinIO hosts may be internationalized even when the SDK
-            # connects to an ASCII internal endpoint. Validate the IDNA form;
-            # the SDK connection and server_reachable_url's host comparison use
-            # it. Generated object URLs keep the configured form instead (see
-            # _configured_authority).
-            if not host.isascii():
-                host = idna.encode(host, uts46=True).decode("ascii")
-            if any(c not in "abcdefghijklmnopqrstuvwxyz0123456789-._" for c in host):
-                raise ValueError(error)
-            if not host.strip("."):
-                raise ValueError(error)
-    except ValueError:
-        raise ValueError(error) from None
-    authority = f"{host}:{parsed.port}" if parsed.port is not None else host
-    return authority, parsed.scheme == "https" if has_scheme else None
 
 
 def _configured_authority(raw_endpoint: str) -> tuple[str, bool | None]:
@@ -123,121 +66,24 @@ def public_base_url(raw_endpoint: str) -> str:
     return f"{parsed.scheme}://{base}" if has_scheme else base
 
 
-def _is_loopback(host: str | None) -> bool:
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def _environment_proxy(url: str) -> str | None:
-    """The proxy the environment names for url, or None to connect directly.
-
-    It is picked the way requests picks it: HTTPS_PROXY or HTTP_PROXY by the
-    URL's scheme, then ALL_PROXY, in either case. The request goes direct when
-    NO_PROXY names its host or a domain suffix of it (optionally with its
-    port), its IPv4 address or a CIDR range holding it, or is exactly "*".
-    Unlike requests, loopback is always direct, as in Go's proxy selection:
-    no proxy can reach this machine's loopback, where Standalone runs MinIO.
-    """
-    if _is_loopback(urlparse(url).hostname):
-        return None
-    proxy = select_proxy(url, get_environ_proxies(url))
-    return prepend_scheme_if_needed(proxy, "http") if proxy else None
-
-
-class _EnvironmentProxyPoolManager(urllib3.PoolManager):
-    """Sends each request through the proxy the environment names for its URL.
-
-    Minio's own transport ignores HTTP_PROXY and NO_PROXY. The choice is made
-    per request because Minio does not always connect to the configured
-    endpoint: on AWS it connects to <bucket>.s3.<region>.amazonaws.com, and
-    NO_PROXY has to match that host, as it does for requests.
-    """
-
-    def __init__(self, **connection_pool_kw):
-        super().__init__(**connection_pool_kw)
-        self._through: dict[str, urllib3.ProxyManager] = {}
-
-    def urlopen(self, method, url, redirect=True, **kw):
-        proxy = _environment_proxy(url)
-        if proxy is None:
-            return super().urlopen(method, url, redirect=redirect, **kw)
-        return self._proxy_manager(proxy).urlopen(method, url, redirect=redirect, **kw)
-
-    def _proxy_manager(self, proxy: str) -> urllib3.ProxyManager:
-        if proxy not in self._through:
-            username, password = get_auth_from_url(proxy)
-            auth = f"{username}:{password}" if username else None
-            # setdefault, so threads racing on the first request share one.
-            self._through.setdefault(
-                proxy,
-                urllib3.ProxyManager(
-                    proxy,
-                    proxy_headers=auth and urllib3.make_headers(proxy_basic_auth=auth),
-                    **self.connection_pool_kw,
-                ),
-            )
-        return self._through[proxy]
-
-    def clear(self):
-        super().clear()
-        for manager in self._through.values():
-            manager.clear()
-
-
 def storage_http_client() -> urllib3.PoolManager:
-    # Minio's settings for its own transport (minio.api.Minio.__init__), so the
-    # proxy changes only the route: the same timeouts, retries and trusted CAs.
-    return _EnvironmentProxyPoolManager(
-        timeout=urllib3.Timeout(connect=300, read=300),
-        maxsize=10,
-        cert_reqs="CERT_REQUIRED",
-        ca_certs=os.environ.get("SSL_CERT_FILE") or certifi.where(),
-        retries=urllib3.Retry(
-            total=5, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504]
-        ),
-    )
+    # Preserve ordinary media's existing timeouts, retries and proxy/CA policy.
+    return _storage_http_client(connect_timeout=300, read_timeout=300, retries=5)
 
 
 def get_storage_client() -> Minio:
-    """Return a Minio client pointing at S3, MinIO, or GCS."""
+    """Return the ordinary-media client; never use it for private attachments."""
     global _client
     if _client is not None:
         return _client
-
-    if STORAGE_BACKEND == "gcs":
-        _client = Minio(
-            "storage.googleapis.com",
-            access_key=os.getenv("GCS_HMAC_ACCESS_KEY", ""),
-            secret_key=os.getenv("GCS_HMAC_SECRET_KEY", ""),
-            region=os.getenv("MINIO_REGION") or "auto",
-            secure=True,
-            http_client=storage_http_client(),
-        )
-        return _client
-
-    raw_endpoint = os.getenv("S3_ENDPOINT") or os.getenv(
-        "S3_ENDPOINT_URL", "s3.amazonaws.com"
-    )
-    host, scheme_hint = _parse_endpoint(raw_endpoint)
-
-    secure_env = os.getenv("S3_SECURE")
-    if secure_env is not None:
-        secure = secure_env.lower() == "true"
-    elif scheme_hint is not None:
-        secure = scheme_hint
-    else:
-        secure = STORAGE_BACKEND == "s3"
-
+    config = resolve_storage_config(backend=STORAGE_BACKEND)
+    credentials = resolve_media_credentials(STORAGE_BACKEND)
     _client = Minio(
-        host,
-        access_key=os.getenv("S3_ACCESS_KEY") or os.getenv("AWS_ACCESS_KEY_ID", ""),
-        secret_key=os.getenv("S3_SECRET_KEY") or os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-        region=os.getenv("S3_REGION") or os.getenv("AWS_DEFAULT_REGION", ""),
-        secure=secure,
+        config.endpoint,
+        access_key=credentials.access_key,
+        secret_key=credentials.secret_key,
+        region=config.region,
+        secure=config.secure,
         http_client=storage_http_client(),
     )
     return _client

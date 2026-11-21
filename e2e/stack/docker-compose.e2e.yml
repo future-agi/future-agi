@@ -1,4 +1,24 @@
 # Overlay on docker-compose.distributed.yml (the distributed topology) for the futureagi-e2e stack.
+# Attachments (OBS-E2E-066): backend and worker serve F01 uploads into a
+# native-S3 double and play them back through the https app origin below.
+x-e2e-attachments-env: &e2e-attachments-env
+  FI_ATTACHMENTS_ENABLED: "true"
+  FI_ATTACHMENTS_MEDIA_ORIGIN: https://localhost:23443
+  FI_ATTACHMENTS_STORAGE_REGION: us-east-1
+  FI_ATTACHMENTS_QUARANTINE_BUCKET: e2e-attachments-quarantine
+  FI_ATTACHMENTS_SERVING_BUCKET: e2e-attachments-serving
+  # Fixed test-only values for the moto double; they authorize nothing real.
+  FI_ATTACHMENTS_QUARANTINE_ACCESS_KEY: e2e-attachments-quarantine
+  FI_ATTACHMENTS_QUARANTINE_SECRET_KEY: e2e-attachments-quarantine-secret
+  FI_ATTACHMENTS_SERVING_ACCESS_KEY: e2e-attachments-serving
+  FI_ATTACHMENTS_SERVING_SECRET_KEY: e2e-attachments-serving-secret
+  # Private decoder scratch (DEPLOY.md: required when enabled). Each container
+  # gets its own tmpfs below, owned by the Distributed image runtime user (root) with mode 0700.
+  FI_ATTACHMENTS_WORK_DIR: /var/lib/futureagi-attachments
+# tmpfs is not a docker "Mount", so backend and worker keep the managed-mock
+# application mount contract (e2e/lib/managed-mock.ts validateApplicationMounts).
+x-e2e-attachments-scratch: &e2e-attachments-scratch
+  - /var/lib/futureagi-attachments:uid=0,gid=0,mode=0700,size=2g
 services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
@@ -13,6 +33,18 @@ services:
       SQL_MAX_IDLE_CONNS: "2"
       SQL_VIS_MAX_CONNS: "2"
       SQL_VIS_MAX_IDLE_CONNS: "1"
+  postgres-schema-bootstrap:
+    # This one-shot job registers the Temporal schedules. The attachment
+    # binding, outbox-drain and lifecycle schedules exist only when it sees the
+    # flag (tfc/temporal/schedules/attachments.py, attachment_lifecycle.py),
+    # and with the flag on, tracer/apps.py verifies the private storage first.
+    environment:
+      <<: *e2e-attachments-env
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+    depends_on:
+      attachments-storage-bootstrap:
+        condition: service_completed_successfully
   # A live process is not namespace readiness; the one-shot must not race it.
   peerdb-temporal:
     healthcheck:
@@ -35,9 +67,12 @@ services:
         condition: service_healthy
       sql-workbench-bootstrap:
         condition: service_completed_successfully
+      attachments-storage-bootstrap:
+        condition: service_completed_successfully
       metrics-schema-bootstrap:
         condition: service_completed_successfully
     restart: "no"
+    tmpfs: *e2e-attachments-scratch
     # Replace the production outbox: the ONLY application mount permitted by
     # managed-mock is this public, read-only status directory (never the worker).
     # bin/e2e creates the default directory when no override is supplied.
@@ -79,6 +114,7 @@ services:
       HARNESS_ACTORS_ENABLED: "true"
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
+      <<: *e2e-attachments-env
       # Metrics (/dashboard/metrics, /tracer/derived-metrics/) is a deployment
       # rollout flag, off by default (tracer/services/derived_metrics/feature_flag.py).
       # Off, MetricsGate routes to /404 and the API 404s. The API and both workers
@@ -90,6 +126,7 @@ services:
     restart: "no"
     # Keep the worker mount-free for the managed-mock attestation as well.
     volumes: !reset []
+    tmpfs: *e2e-attachments-scratch
     environment:
       HARNESS_VERSIONING_ENABLED: "true"
       HARNESS_ACTORS_ENABLED: "true"
@@ -102,7 +139,19 @@ services:
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
       # Metric activities re-check the rollout flag at execution (see backend).
       METRICS_ENABLED: "1"
+      <<: *e2e-attachments-env
+    # The worker runs the attachment validate drain (tasks_s), whose bubblewrap
+    # sandbox creates namespaces and mounts a private /proc. Docker's default
+    # seccomp/AppArmor profiles and masked /proc paths forbid both, so this
+    # worker gets what DEPLOY.md asks of a tasks_s host; nothing else changes.
+    cap_add: [SYS_ADMIN]
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - systempaths=unconfined
     depends_on:
+      attachments-storage-bootstrap:
+        condition: service_completed_successfully
       metrics-schema-bootstrap:
         condition: service_completed_successfully
   # Keep explicit queue workers connected too when a profile selects them.
@@ -250,6 +299,36 @@ services:
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
   fi-property-catalog-consumer:
     image: futureagi/fi-collector:${E2E_FI_COLLECTOR_VERSION:-latest}
+  attachments-s3:
+    # Native-S3 double for the private attachment buckets (versioning, SSE,
+    # public-access block, ownership controls, lifecycle, conditional PUT).
+    image: futureagi-e2e-attachments-s3:${FUTURE_AGI_VERSION:-latest}
+    pull_policy: never
+    restart: "no"
+  attachments-storage-bootstrap:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}
+    entrypoint: ["python", "/app/backend/bootstrap_attachments_storage.py"]
+    restart: "no"
+    mem_limit: 256m
+    cpus: 0.5
+    environment:
+      FUTURE_AGI_E2E_FIXTURE: attachments-storage
+      <<: *e2e-attachments-env
+    depends_on:
+      attachments-s3:
+        condition: service_started
+  attachments-origin:
+    # https://localhost:23443: the app origin attachment playback needs.
+    image: caddy:2.8.4-alpine
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    volumes:
+      - ./e2e/stack/attachments/Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "127.0.0.1:23443:23443"
+    depends_on:
+      - frontend
+      - backend
+    restart: "no"
   peerdb-init:
     environment:
       # Root compose never passes the flag to peerdb-init, so the setup script
@@ -276,10 +355,6 @@ services:
   # Literal values, not ${...} defaults: a value exported in the caller's shell
   # takes precedence over the env file, and these services must keep sending
   # telemetry registration to loopback. The services above set the same pair.
-  postgres-schema-bootstrap:
-    environment:
-      FUTURE_AGI_TELEMETRY_DISABLED: "true"
-      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
   clickhouse-native-bootstrap:
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"

@@ -1316,6 +1316,7 @@ const TraceDetailDrawerV2 = ({
                   }}
                 >
                   <SpanDetailPane
+                    conversationTree={data?.observation_spans}
                     entry={selectedSpanData}
                     allSpans={spans}
                     traceStartTime={
@@ -1401,6 +1402,7 @@ const TraceDetailDrawerV2 = ({
               >
                 {selectedSpanData ? (
                   <SpanDetailPane
+                    conversationTree={data?.observation_spans}
                     entry={selectedSpanData}
                     allSpans={spans}
                     traceStartTime={

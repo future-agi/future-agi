@@ -1,4 +1,4 @@
-"""Complete 108/113-pending-migration inventory and A9 scope regressions, without Django.
+"""Complete 120/125-pending-migration inventory and A9 scope regressions, without Django.
 
 Run the shipped touched()/inbound() resolver against AST-derived operation and
 ModelState doubles. No migration module, RunPython, SQL or app is executed.
@@ -141,7 +141,21 @@ METRICS_ADDITIONS = (
     ('tracer','0141_metric_refresh_busy_guard'),
     ('tracer','0142_merge_metrics_and_eval_put_back'),
 )
-LATEST = BASELINE_ADDITIONS + METRICS_ADDITIONS
+ATTACHMENT_ADDITIONS = (
+    ('tracer','0136_attachment_control_records'),
+    ('tracer','0137_attachment_fences'),
+    ('tracer','0138_attachment_binding_claims'),
+    ('tracer','0139_attachment_recordings'),
+    ('tracer','0140_attachment_value_expansion'),
+    ('tracer','0141_attachment_value_backfill'),
+    ('tracer','0142_attachment_value_fences'),
+    ('tracer','0143_attachment_value_contraction'),
+    ('tracer','0144_attachment_completed_import_binding'),
+    ('tracer','0145_attachment_import_schedule'),
+    ('tracer','0146_attachment_derivative_dispatch_index'),
+    ('tracer','0147_merge_attachments_and_metrics'),
+)
+LATEST = BASELINE_ADDITIONS + METRICS_ADDITIONS + ATTACHMENT_ADDITIONS
 FLOOR_ONLY = (
     ('simulate','0099_harness_versioning'),('simulate','0100_agent_fix'),
     ('simulate','0101_agent_fix_candidate_override'),
@@ -224,6 +238,7 @@ class Operation:
     def state_forwards(self,app,state):
         kind=type(self).__name__
         if kind=='CreateModel': state.models[(app,self.name.lower())]=model(self.node)
+        elif kind=='DeleteModel': del state.models[(app,self.name.lower())]
         elif kind in ('AddField','AlterField'): state.models[(app,self.model_name)].fields[self.name]=self.field
         elif kind=='RemoveField': state.models[(app,self.model_name)].fields.pop(self.name,None)
         elif kind=='RenameField':
@@ -237,7 +252,7 @@ class Operation:
 
 
 def operation_types():
-    kinds=('CreateModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
+    kinds=('CreateModel','DeleteModel','AddField','AlterField','RemoveField','RenameField','AddIndex',
         'RemoveIndex','AddConstraint','RemoveConstraint','RunPython','RunSQL','SeparateDatabaseAndState')
     result={kind:type(kind,(Operation,),{'__module__':'django.db.migrations.operations.fixtures'}) for kind in kinds}
     result['AddIndexConcurrently']=type('AddIndexConcurrently',(result['AddIndex'],),
@@ -316,6 +331,43 @@ def baseline_state(revision):
     return state
 
 
+def attachment_operation_nodes(sequence):
+    """Read direct calls and the literal AddField row expansion used by 0144."""
+    assert isinstance(sequence, ast.List)
+    for node in sequence.elts:
+        if not isinstance(node, ast.Starred):
+            assert isinstance(node, ast.Call)
+            yield node
+            continue
+        expansion = node.value
+        assert isinstance(expansion, ast.ListComp) and len(expansion.generators) == 1
+        loop = expansion.generators[0]
+        assert not loop.ifs and not loop.is_async and isinstance(loop.iter, ast.Tuple)
+        assert isinstance(loop.target, ast.Tuple) and len(loop.target.elts) == 2
+        assert all(isinstance(t, ast.Name) for t in loop.target.elts)
+        assert [t.id for t in loop.target.elts] == ['name', 'field']
+        call = expansion.elt
+        assert isinstance(call, ast.Call) and ast.unparse(call.func) == 'migrations.AddField'
+        assert not call.args and [kw.arg for kw in call.keywords] == ['model_name', 'name', 'field']
+        model_kw, name_kw, field_kw = call.keywords
+        assert isinstance(model_kw.value, ast.Constant) and isinstance(model_kw.value.value, str)
+        assert isinstance(name_kw.value, ast.Name) and name_kw.value.id == 'name'
+        assert isinstance(field_kw.value, ast.Name) and field_kw.value.id == 'field'
+        for pair in loop.iter.elts:
+            assert isinstance(pair, ast.Tuple) and len(pair.elts) == 2
+            name, value = pair.elts
+            assert isinstance(name, ast.Constant) and isinstance(name.value, str)
+            assert isinstance(value, ast.Call) and ast.unparse(value.func) in (
+                'models.CharField', 'models.DateTimeField', 'models.BinaryField')
+            assert not value.args and all(kw.arg is not None for kw in value.keywords)
+            for kw in value.keywords:
+                ast.literal_eval(kw.value)  # reject dynamic constructor arguments
+            bound = copy.deepcopy(call)
+            bound.keywords[1].value = name
+            bound.keywords[2].value = value
+            yield bound
+
+
 def operation_nodes(nodes):
     """Expand literal operation comprehensions as AST data, never Python code."""
     class Substitute(ast.NodeTransformer):
@@ -362,7 +414,9 @@ def pending_plan(identities,env):
         values={n.targets[0].id:n.value for n in cls.body if isinstance(n,ast.Assign)}
         dependencies=[ast.literal_eval(n) for n in values['dependencies'].elts if isinstance(n,ast.Tuple)]
         operations=[]
-        for node in operation_nodes(values['operations'].elts):
+        nodes = (attachment_operation_nodes(values['operations']) if (app, name) in ATTACHMENT_ADDITIONS
+                 else operation_nodes(values['operations'].elts))
+        for node in nodes:
             if isinstance(node.func,ast.Name):
                 # The SQL migration imports this standard Django operation by
                 # name. Do not accept arbitrary custom operations as AddIndex.
@@ -400,10 +454,11 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
     def test_complete_latest_and_floor_inventory(self):
         self.assertEqual(len(SQL_ADDITIONS),8)
         self.assertEqual(len(SAMPLING_ADDITIONS),10)
+        self.assertEqual(len(ATTACHMENT_ADDITIONS),12)
         self.assertEqual(len(METRICS_ADDITIONS),29)
         self.assertTrue(set(BASELINE_ADDITIONS).isdisjoint(METRICS_ADDITIONS))
         self.assertTrue(set(SQL_ADDITIONS).isdisjoint(SAMPLING_ADDITIONS))
-        for revision,identities,count in ((REVISIONS[1],LATEST,108),(REVISIONS[0],LATEST+FLOOR_ONLY,113)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,120),(REVISIONS[0],LATEST+FLOOR_ONLY,125)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
 
@@ -411,13 +466,13 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         # Preserve the SQL-layer negative controls when adding sampling's graph.
         # Same-count replacement must fail just as an extra or missing file does.
         unknown = 'futureagi/tracer/migrations/9999_unreviewed_migration.py'
-        for revision, identities, count in ((REVISIONS[1], LATEST, 108),
-                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 113)):
+        for revision, identities, count in ((REVISIONS[1], LATEST, 120),
+                                            (REVISIONS[0], LATEST + FLOOR_ONLY, 125)):
             paths = subprocess.check_output(['git', '-C', str(ROOT), 'diff',
                 '--name-only', '--diff-filter=A', revision, 'HEAD', '--',
                 'futureagi/**/migrations/*.py'], text=True).splitlines()
             self.assert_complete_inventory(revision, identities, count)
-            for app, name in SQL_ADDITIONS + SAMPLING_ADDITIONS + METRICS_ADDITIONS:
+            for app, name in SQL_ADDITIONS + SAMPLING_ADDITIONS + METRICS_ADDITIONS + ATTACHMENT_ADDITIONS:
                 missing = 'futureagi/' + app + '/migrations/' + name + '.py'
                 self.assertIn(missing, paths)
                 without = [path for path in paths if path != missing]
@@ -429,6 +484,28 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                                 return_value='\n'.join(changed) + '\n'):
                             with self.assertRaises(AssertionError):
                                 self.assert_complete_inventory(revision, identities, count)
+
+    def test_delete_model_uses_prior_table_and_removes_only_named_state(self):
+        state = State()
+        state.models = {('tracer', key): SimpleNamespace(options={'db_table': key}, fields={})
+                        for key in ('prior', 'other')}
+        env = scope_environment(state)
+        op = env['migrations'].DeleteModel(ast.parse('DeleteModel(name="Prior")', mode='eval').body)
+        self.assertEqual(env['touched'](op, SimpleNamespace(app_label='tracer'), state),
+                         {('postgres', 'public.prior')})
+        op.state_forwards('tracer', state)
+        self.assertEqual(set(state.models), {('tracer', 'other')})
+
+    def test_literal_add_fields_preserve_order_and_constructor_options(self):
+        env = scope_environment(State())
+        migration = pending_plan([('tracer', '0144_attachment_completed_import_binding')], env)[0]
+        fields = [(op.name, op.field) for op in migration.operations
+                  if isinstance(op, env['migrations'].AddField) and op.model_name == 'attachmentproviderevent']
+        self.assertEqual([name for name, _ in fields], ['pending_egress_id', 'pending_expires_at',
+                         'pending_due_at', 'pending_key_id', 'pending_nonce', 'pending_ciphertext'])
+        self.assertEqual(fields[-1][1].options['max_length'], ast.dump(ast.Constant(65552)))
+        with self.assertRaises(AssertionError):
+            list(attachment_operation_nodes(ast.parse('[*dynamic_operations()]', mode='eval').body))
 
     def test_sql_index_operations_have_explicit_state_table_scope(self):
         # The sampling layer retains SQL's concurrent-index scope regression.
@@ -450,7 +527,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
         with mock.patch.object(subprocess,'check_output',return_value=paths+
                 'futureagi/tracer/migrations/9999_unexpected.py\n'):
             with self.assertRaises(AssertionError):
-                self.assert_complete_inventory(REVISIONS[1],LATEST,108)
+                self.assert_complete_inventory(REVISIONS[1],LATEST,120)
 
     def test_sampling_layer_has_exact_table_scopes(self):
         expected={
@@ -499,7 +576,7 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 self.assertEqual(list(p.select_reference_registry(registry,[row],plan=plan)),[])
 
     def test_complete_latest_and_floor_including_unique_lookup_inbound_edges(self):
-        for revision,identities,count in ((REVISIONS[1],LATEST,108),(REVISIONS[0],LATEST+FLOOR_ONLY,113)):
+        for revision,identities,count in ((REVISIONS[1],LATEST,120),(REVISIONS[0],LATEST+FLOOR_ONLY,125)):
             with self.subTest(revision=revision):
                 self.assert_complete_inventory(revision,identities,count)
                 # Keep the complete gate fail-closed on undeclared Metrics operations.

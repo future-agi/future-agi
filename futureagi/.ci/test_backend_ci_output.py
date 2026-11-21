@@ -60,7 +60,7 @@ class MetricsShardTest(unittest.TestCase):
         changes = self.workflow.split("  changes:\n", 1)[1].split(
             "\n  update-safety:", 1
         )[0]
-        self.assertIn('legs main pytest "not metrics" 45 "$SPLITS"', changes)
+        self.assertIn('legs main pytest "not metrics" 60 "$SPLITS"', changes)
         self.assertIn('legs metrics metrics metrics 50 "$METRICS_SPLITS"', changes)
         self.assertIn("            metrics:\n", changes)
         job = self.workflow.split("  test:\n", 1)[1].split("\n  saml-multiworker:", 1)[
