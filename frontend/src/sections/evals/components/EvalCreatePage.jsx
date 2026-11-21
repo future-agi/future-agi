@@ -130,6 +130,14 @@ const EVAL_TAGS = [
   },
 ];
 
+const EVAL_TAG_VALUES = new Set(EVAL_TAGS.map((tag) => tag.value));
+
+// A typed tag is trimmed, and skipped when blank or already selected.
+const addCustomTag = (tags, input) => {
+  const tag = input.trim();
+  return !tag || tags.includes(tag) ? tags : [...tags, tag];
+};
+
 const extractSelectedTools = (tools) => {
   if (Array.isArray(tools)) return tools;
   if (tools && typeof tools === "object") {
@@ -265,6 +273,8 @@ const EvalCreatePage = () => {
   const errorLocalizerActive =
     errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   const [tags, setTags] = useState([]);
+  const [customTagInput, setCustomTagInput] = useState("");
+  const customTags = tags.filter((tag) => !EVAL_TAG_VALUES.has(tag));
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [templateFormat, setTemplateFormat] = useState("mustache");
@@ -400,7 +410,7 @@ const EvalCreatePage = () => {
                 config.error_localizer_enabled ||
                 false,
             );
-            setTags(d.eval_tags || []);
+            setTags(d.tags || d.eval_tags || []);
             setTemplateFormat(
               d.template_format || config.template_format || "mustache",
             );
@@ -631,7 +641,8 @@ const EvalCreatePage = () => {
         name: name.trim(),
         ...buildUpdatePayload(),
         description: description || null,
-        tags,
+        // Include a tag still in the field, not yet confirmed with Enter.
+        tags: addCustomTag(tags, customTagInput),
         publish: true,
       });
       publishedRef.current = true;
@@ -648,6 +659,7 @@ const EvalCreatePage = () => {
     name,
     description,
     tags,
+    customTagInput,
     buildUpdatePayload,
     updateDraft,
     enqueueSnackbar,
@@ -1289,6 +1301,48 @@ const EvalCreatePage = () => {
                         );
                       })}
                     </Box>
+                    {customTags.length > 0 && (
+                      <Box
+                        sx={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 0.75,
+                          mt: 1,
+                        }}
+                      >
+                        {customTags.map((tag) => (
+                          <Chip
+                            key={tag}
+                            icon={
+                              <Iconify icon="solar:tag-linear" width={14} />
+                            }
+                            label={tag}
+                            size="small"
+                            variant="filled"
+                            onDelete={() =>
+                              setTags((prev) => prev.filter((t) => t !== tag))
+                            }
+                          />
+                        ))}
+                      </Box>
+                    )}
+                    <TextField
+                      fullWidth
+                      size="small"
+                      placeholder="Type your own tag and press Enter"
+                      value={customTagInput}
+                      onChange={(e) => setCustomTagInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" || e.nativeEvent.isComposing) {
+                          return;
+                        }
+                        e.preventDefault();
+                        setTags((prev) => addCustomTag(prev, customTagInput));
+                        setCustomTagInput("");
+                      }}
+                      inputProps={{ "aria-label": "Custom tag" }}
+                      sx={{ mt: 1 }}
+                    />
                   </Box>
                 </>
               ) : (
