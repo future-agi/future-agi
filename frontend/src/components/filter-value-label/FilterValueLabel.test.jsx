@@ -31,7 +31,12 @@ const { mockState, hookSpy } = vi.hoisted(() => ({
 vi.mock("src/hooks/useDashboards", () => ({
   useDashboardFilterValues: (args) => {
     hookSpy(args);
-    return { queryIdentity: args.propertyId, ...mockState.current };
+    const { isLoading, isFetchingNextPage } = mockState.current;
+    return {
+      queryIdentity: args.propertyId,
+      fetchStatus: isLoading || isFetchingNextPage ? "fetching" : "idle",
+      ...mockState.current,
+    };
   },
 }));
 
@@ -284,6 +289,21 @@ describe("FilterValueLabel", () => {
     isFetchingNextPage: false,
     fetchNextPage,
   });
+
+  it.each(["fetching", "paused"])(
+    "does not dispatch a continuation while a refetch is %s",
+    (fetchStatus) => {
+      const fetchNextPage = vi.fn();
+      const filter = { ...baseFilter, value: ["p1"] };
+      mockState.current = { ...unresolvedChain(fetchNextPage), fetchStatus };
+      const { rerender } = renderLabel(filter);
+      expect(fetchNextPage).not.toHaveBeenCalled();
+
+      mockState.current.fetchStatus = "idle";
+      rerender(<FilterValueLabel filter={filter} source="traces" />);
+      expect(fetchNextPage).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it.each([true, false])(
     "follows cursor-only settlements without repeating a read (resolves: %s)",

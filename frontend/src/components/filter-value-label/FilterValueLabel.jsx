@@ -35,6 +35,7 @@ export default function FilterValueLabel({
     options,
     queryIdentity,
     isLoading,
+    fetchStatus,
     continuationKey,
     hasNextPage,
     fetchNextPage,
@@ -88,25 +89,18 @@ export default function FilterValueLabel({
   useEffect(() => {
     // A fast fetch can settle without rendering a fetching state. Drive the
     // next read from the actual cursor, at most once per cursor for this chip.
+    // With cancelRefetch: false, a busy query joins its existing request. Wait
+    // for an idle query so a remount refetch doesn't spend this cursor's read.
     if (
       canReadMore &&
-      !isLoading &&
-      !isFetchingNextPage &&
+      fetchStatus === "idle" &&
       continuationReads.current.cursor !== continuationKey
     ) {
       continuationReads.current.cursor = continuationKey;
       continuationReads.current.count += 1;
-      // Chips sharing one query must not cancel each other's page read.
-      void fetchNextPage?.({ cancelRefetch: false });
+      void fetchNextPage({ cancelRefetch: false });
     }
-  }, [
-    budgetKey,
-    canReadMore,
-    continuationKey,
-    isLoading,
-    isFetchingNextPage,
-    fetchNextPage,
-  ]);
+  }, [budgetKey, canReadMore, continuationKey, fetchStatus, fetchNextPage]);
   const isResolving =
     hasValue &&
     !labelsAreValues &&

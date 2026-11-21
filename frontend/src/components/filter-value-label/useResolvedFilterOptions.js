@@ -199,6 +199,7 @@ export function useResolvedFilterOptions(
   return {
     options,
     isLoading,
+    fetchStatus: valueQuery.fetchStatus,
     isError: valueQuery.isError,
     queryIdentity: valueQuery.queryIdentity,
     queryReadState: valueQuery.queryReadState,
