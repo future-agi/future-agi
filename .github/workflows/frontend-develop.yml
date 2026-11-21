@@ -22,7 +22,8 @@ concurrency:
 jobs:
   # Quality checks and the whole test suite, once. `test:run` is every test:
   # `test:unit` and `test:integration` only filter the same files by test name,
-  # so running all three ran most tests three times.
+  # so running all three ran most tests three times. No coverage here: see the
+  # coverage job for why the verdict must not come from a coverage run.
   quality-and-tests:
     runs-on: ubuntu-latest
     defaults:
@@ -51,13 +52,44 @@ jobs:
         run: yarn type-check
 
       - name: Run all tests
-        run: yarn test:run --coverage --reporter=verbose
+        run: yarn test:run --reporter=verbose
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+  # Coverage of the whole suite, on pushes and manual runs. Not on pull
+  # requests: quality-and-tests holds the verdict there, and a coverage run
+  # cannot be trusted with it. With coverage on, vitest converts the coverage
+  # on its main thread after the last test (70 to 105 seconds here). Past its
+  # 60-second worker RPC limit it exits 1 with every test passed. So this job
+  # fails only when no coverage file was written.
+  coverage:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: "yarn"
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Run all tests with coverage
+        run: |
+          yarn test:run --coverage || echo "::warning::vitest exited $? in the coverage run; quality-and-tests holds the verdict on the tests"
+          test -s coverage/lcov.info
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
-        if: always()
         with:
           file: ./frontend/coverage/lcov.info
           flags: develop-branch
