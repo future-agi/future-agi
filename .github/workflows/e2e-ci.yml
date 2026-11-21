@@ -170,9 +170,13 @@ jobs:
           J4: ${{ steps.filter.outputs.journey_j4 }}
           J5: ${{ steps.filter.outputs.journey_j5 }}
           J6: ${{ steps.filter.outputs.journey_j6 }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
-          # Fail safe: every non-PR event and any shared Skills change runs all seven.
-          if [ "$EVENT" != pull_request ] || [ "$SHARED" = true ]; then
+          # Fork PRs never run paid runners; dev pushes and nightly runs cover their journeys.
+          # Fail safe otherwise: every non-PR event and any shared Skills change runs all seven.
+          if [ "$FORK" = true ]; then
+            journeys='[]'
+          elif [ "$EVENT" != pull_request ] || [ "$SHARED" = true ]; then
             journeys='["j3","j4","056","057","058","059","063"]'
           else
             journeys=$(jq -cn --arg j3 "$J3" --arg j4 "$J4" --arg j5 "$J5" --arg j6 "$J6" \
