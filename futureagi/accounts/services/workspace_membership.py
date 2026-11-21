@@ -37,7 +37,7 @@ def resolve_org_membership(user, organization):
     )
 
 
-def ensure_org_membership(user, organization, *, invited_by=None):
+def ensure_org_membership(user, organization, *, invited_by=None, level=None):
     """Return an active ``OrganizationMembership``, creating a minimal one if absent.
 
     Enforces the invariant "a workspace member belongs to the org" at the single
@@ -48,13 +48,31 @@ def ensure_org_membership(user, organization, *, invited_by=None):
     was deliberately removed from the org), it is NOT resurrected — ``None`` is
     returned and the caller leaves the FK NULL. New rows are created at the
     minimal ``Viewer`` level, which grants org membership without global
-    workspace access (that requires ``>= ADMIN``).
+    workspace access (that requires ``>= ADMIN``). A caller that has already
+    decided the level (an invite capped at the inviter's own) passes ``level``;
+    it applies only to a row created here, never to an existing one.
     """
     if user is None or organization is None:
         return None
 
     from tfc.constants.levels import Level
     from tfc.constants.roles import OrganizationRoles
+
+    if level is None:
+        role, level = OrganizationRoles.MEMBER_VIEW_ONLY, Level.VIEWER
+    else:
+        role = Level.to_org_string(level)
+
+    # A pair whose only rows were removed (soft-deleted, as a cancelled
+    # invitation leaves them) gets no new row either. The unique constraint
+    # covers only rows with deleted=False, so get_or_create alone would create
+    # one next to them; the base manager also reads removed rows.
+    pair = {"user": user, "organization": organization}
+    if (
+        not OrganizationMembership.no_workspace_objects.filter(**pair).exists()
+        and OrganizationMembership._base_manager.filter(**pair).exists()
+    ):
+        return None
 
     # The (user, organization) unique constraint (WHERE deleted=False) guarantees
     # at most one non-deleted row, so get_or_create resolves to exactly that row.
@@ -65,8 +83,8 @@ def ensure_org_membership(user, organization, *, invited_by=None):
         user=user,
         organization=organization,
         defaults={
-            "role": OrganizationRoles.MEMBER_VIEW_ONLY,
-            "level": Level.VIEWER,
+            "role": role,
+            "level": level,
             "invited_by": invited_by,
             "is_active": True,
         },
