@@ -151,7 +151,8 @@ def _merge_track_view(lk, tenant, identity, fields, merged):
     if isinstance(prior, dict):
         origins.extend(
             {k: receipt.get(k) for k in ("call_id", "egress_id")}
-            for receipt in prior.values() if isinstance(receipt, dict)
+            for receipt in prior.values()
+            if isinstance(receipt, dict)
         )
     for origin in origins:
         # Upgrade only explicitly bound whole maps or matching per-kind receipts.
@@ -163,10 +164,13 @@ def _merge_track_view(lk, tenant, identity, fields, merged):
                 "source": {**tenant, **origin},
                 "tracks": _source_tracks(lk, tenant, origin, fields),
             }
-            receipts.update({k: _TrackReceipt(**origin, url=v) for k, v in previous.items()})
+            receipts.update(
+                {k: _TrackReceipt(**origin, url=v) for k, v in previous.items()}
+            )
     if merged:
         history[identity["egress_id"]] = {
-            "source": {**tenant, **identity}, "tracks": merged,
+            "source": {**tenant, **identity},
+            "tracks": merged,
         }
     if history:
         updated["recording_history"] = history
@@ -935,7 +939,11 @@ class LivekitService(VoiceServiceBlueprint):
         if provider_data.get("recording_scope", scope) != scope:
             return RecordingUrls(
                 recording_fields_persisted=True,
-                error={"code": "recording_source_changed", "message": "Recording scope changed.", "tracks": []},
+                error={
+                    "code": "recording_source_changed",
+                    "message": "Recording scope changed.",
+                    "tracks": [],
+                },
             )
         tracks = _source_tracks(provider_data, tenant, identity, fields)
         if (
@@ -990,7 +998,8 @@ class LivekitService(VoiceServiceBlueprint):
 
         def intent_binding(complete):
             return {
-                **tenant, **identity,
+                **tenant,
+                **identity,
                 "version": 1,
                 "recording": complete,
                 "room": call.service_provider_call_id,
@@ -1007,13 +1016,22 @@ class LivekitService(VoiceServiceBlueprint):
             if not isinstance(payload, dict):
                 return None
             key = payload.pop("key", None)
-            if payload == intent_binding(complete) and isinstance(key, str) and key.strip():
+            if (
+                payload == intent_binding(complete)
+                and isinstance(key, str)
+                and key.strip()
+            ):
                 return key
             return None
 
         async def persist(
-            *, cleanup_tracks=None, cleanup_error=None, reuse_confirmation=False,
-            prepare_key=None, expected_intent=None, discovery_failed=False,
+            *,
+            cleanup_tracks=None,
+            cleanup_error=None,
+            reuse_confirmation=False,
+            prepare_key=None,
+            expected_intent=None,
+            discovery_failed=False,
         ):
             # Only the read/compare/update is retried. Never hold a row lock
             # over LiveKit, S3, or the activity's subsequent cost lookup.
@@ -1037,7 +1055,10 @@ class LivekitService(VoiceServiceBlueprint):
                         and (
                             _verified_tracks(lk, identity, fields) != cleanup_tracks
                             or current_map != cleanup_tracks
-                            or (expected_intent is not None and lk.get(intent_field) != expected_intent)
+                            or (
+                                expected_intent is not None
+                                and lk.get(intent_field) != expected_intent
+                            )
                             or (
                                 reuse_confirmation
                                 and lk.get("recording_cleanup_success")
@@ -1077,10 +1098,14 @@ class LivekitService(VoiceServiceBlueprint):
                 if cleanup_tracks is None:
                     updated = _merge_track_view(lk, tenant, identity, fields, merged)
                     if (
-                        not confirmed and merged.keys() == fields.keys() and object_key
+                        not confirmed
+                        and merged.keys() == fields.keys()
+                        and object_key
                         and not verified_intent_key(lk.get(intent_field), merged)
                     ):
-                        updated[intent_field] = signer.sign_object({**intent_binding(merged), "key": object_key})
+                        updated[intent_field] = signer.sign_object(
+                            {**intent_binding(merged), "key": object_key}
+                        )
                     if not confirmed:
                         updated.pop("recording_cleanup_success", None)
                     missing = {
@@ -1101,7 +1126,9 @@ class LivekitService(VoiceServiceBlueprint):
                         error = prior_error
                 elif confirmed:
                     error = None  # A later timeout cannot undo a confirmed deletion.
-                elif discovery_failed and verified_intent_key(lk.get(intent_field), cleanup_tracks):
+                elif discovery_failed and verified_intent_key(
+                    lk.get(intent_field), cleanup_tracks
+                ):
                     # Discovery raced a peer's prepare. Return its verified token
                     # for one delete, not a confirmation or a stale lookup error.
                     return RecordingUrls(
@@ -1110,7 +1137,9 @@ class LivekitService(VoiceServiceBlueprint):
                 elif prepare_key is not None:
                     updated["recording_scope"] = scope
                     if not verified_intent_key(lk.get(intent_field), merged):
-                        updated[intent_field] = signer.sign_object({**intent_binding(merged), "key": prepare_key})
+                        updated[intent_field] = signer.sign_object(
+                            {**intent_binding(merged), "key": prepare_key}
+                        )
                 elif cleanup_error is None:
                     updated["recording_cleanup_success"] = confirmation
                 else:
@@ -1283,11 +1312,16 @@ class LivekitService(VoiceServiceBlueprint):
                 )
                 error = failure
             return await persist(
-                cleanup_tracks=complete, cleanup_error=error, expected_intent=token,
+                cleanup_tracks=complete,
+                cleanup_error=error,
+                expected_intent=token,
             )
 
         if tracks.keys() == fields.keys():
-            if saved == tracks and _verified_tracks(provider_data, identity, fields) == tracks:
+            if (
+                saved == tracks
+                and _verified_tracks(provider_data, identity, fields) == tracks
+            ):
                 return await cleanup(provider_data)
             object_key = None
             restored = await persist()

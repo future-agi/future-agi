@@ -17,7 +17,10 @@ from simulate.models import (
 )
 from simulate.selectors.call_transcripts import with_speakers
 from simulate.serializers.chat_message import ChatMessageSerializer
-from simulate.services.call_provider import call_agent_provider, public_provider_call_data
+from simulate.services.call_provider import (
+    call_agent_provider,
+    public_provider_call_data,
+)
 from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.test_execution_utils import canonical_scenario_column_name
 from tracer.models.observability_provider import ProviderChoices
@@ -161,7 +164,9 @@ class _PublicCallDataSerializer(serializers.ModelSerializer):
     def to_representation(self, instance):
         result = super().to_representation(instance)
         if "provider_call_data" in result:
-            result["provider_call_data"] = public_provider_call_data(result["provider_call_data"])
+            result["provider_call_data"] = public_provider_call_data(
+                result["provider_call_data"]
+            )
         return result
 
 

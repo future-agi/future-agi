@@ -445,7 +445,9 @@ def test_retry_does_not_reuse_another_recording_source():
     assert retry.error["tracks"] == ["assistant", "customer", "mono", "stereo"]
     stored = call.provider_call_data[PROVIDER_KEY]
     assert stored["recording"] == first.provider_call_data[PROVIDER_KEY]["recording"]
-    assert all(r["egress_id"] == "EG_1" for r in stored["verified_recording_tracks"].values())
+    assert all(
+        r["egress_id"] == "EG_1" for r in stored["verified_recording_tracks"].values()
+    )
     assert "EG_2" not in stored["recording_history"]
     assert "recording_cleanup_success" not in stored
     assert call.recording_url is None and call.stereo_recording_url is None

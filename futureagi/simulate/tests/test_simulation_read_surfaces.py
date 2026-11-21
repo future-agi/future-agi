@@ -259,7 +259,10 @@ def test_private_livekit_state_is_not_call_response_data(auth_client, simulation
     from simulate.serializers.test_execution import CallExecutionSnapshotSerializer
 
     call = simulation_tree["call_execution"]
-    tracks = {k: f"https://media.example/{k}" for k in ("combined", "stereo", "assistant", "customer")}
+    tracks = {
+        k: f"https://media.example/{k}"
+        for k in ("combined", "stereo", "assistant", "customer")
+    }
     visible = {
         "recording": tracks,
         "recording_source": {"call_id": str(call.pk), "egress_id": "current"},
@@ -268,7 +271,9 @@ def test_private_livekit_state_is_not_call_response_data(auth_client, simulation
     }
     private = {
         "recording_cleanup_intent": "synthetic-raw-key-only-in-intent",
-        "recording_history": {"old": {"tracks": {"assistant": "https://archive.example/old-only"}}},
+        "recording_history": {
+            "old": {"tracks": {"assistant": "https://archive.example/old-only"}}
+        },
         "recording_scope": {"workspace_id": "synthetic-private-scope"},
     }
     other = {"recording_history": "other-provider-public-field"}
@@ -278,24 +283,39 @@ def test_private_livekit_state_is_not_call_response_data(auth_client, simulation
     call.simulation_call_type = CallExecution.SimulationCallType.VOICE
     call.save(update_fields=["provider_call_data", "simulation_call_type"])
     snapshot = CallExecutionSnapshot.objects.create(
-        call_execution=call, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
-        status=call.status, provider_call_data=copy.deepcopy(stored),
+        call_execution=call,
+        rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
+        status=call.status,
+        provider_call_data=copy.deepcopy(stored),
     )
 
-    listing = auth_client.get("/simulate/api/call-executions/", {"test_execution_id": str(call.test_execution_id)})
+    listing = auth_client.get(
+        "/simulate/api/call-executions/",
+        {"test_execution_id": str(call.test_execution_id)},
+    )
     detail = auth_client.get(f"/simulate/call-executions/{call.pk}/")
     for response in (listing, detail):
         assert response.status_code == 200
-        for sentinel in ("synthetic-raw-key-only-in-intent", "archive.example/old-only", "synthetic-private-scope"):
+        for sentinel in (
+            "synthetic-raw-key-only-in-intent",
+            "archive.example/old-only",
+            "synthetic-private-scope",
+        ):
             assert sentinel not in response.content.decode()
     row = next(x for x in listing.json()["results"] if x["id"] == str(call.pk))
     assert row["provider_call_data"] == expected
     body = detail.json()
     assert all(body["recordings"][k] == url for k, url in tracks.items())
     assert body["attributes"]["raw_log"] == visible
-    assert CallExecutionSnapshotSerializer(snapshot).data["provider_call_data"] == expected
-    assert snapshot.provider_call_data == stored  # even the cached instance is unchanged
-    item = SimpleNamespace(source_type=QueueItemSourceType.CALL_EXECUTION.value, call_execution=call)
+    assert (
+        CallExecutionSnapshotSerializer(snapshot).data["provider_call_data"] == expected
+    )
+    assert (
+        snapshot.provider_call_data == stored
+    )  # even the cached instance is unchanged
+    item = SimpleNamespace(
+        source_type=QueueItemSourceType.CALL_EXECUTION.value, call_execution=call
+    )
     assert resolve_source_content(item)["provider_call_data"] == expected
     assert call.provider_call_data == stored
     call.refresh_from_db()

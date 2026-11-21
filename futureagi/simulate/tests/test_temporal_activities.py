@@ -1480,7 +1480,8 @@ class TestFetchAndPersistCallResultActivity:
         )
         result = await io.run()
         assert result.success and result.recording_error["tracks"] == (
-            ["assistant", "customer", "mono", "stereo"] if timeout
+            ["assistant", "customer", "mono", "stereo"]
+            if timeout
             else ["assistant", "customer", "mono"]
         )
         io.delete.assert_not_called()
@@ -1492,18 +1493,23 @@ class TestFetchAndPersistCallResultActivity:
         assert history["EG_1"]["tracks"] == first
         for egress, entry in history.items():
             assert entry["source"] == {
-                "organization_id": str(organization.pk), "workspace_id": str(workspace.pk),
-                "call_id": str(call_execution.pk), "egress_id": egress,
+                "organization_id": str(organization.pk),
+                "workspace_id": str(workspace.pk),
+                "call_id": str(call_execution.pk),
+                "egress_id": egress,
             }
         assert history.get("EG_2", {}).get("tracks", {}) == second
-        detail = await sync_to_async(CallExecutionDetailSerializer().get_recordings)(call_execution)
+        detail = await sync_to_async(CallExecutionDetailSerializer().get_recordings)(
+            call_execution
+        )
         inputs = await sync_to_async(_build_transcript_data)(call_execution)
         for kind in first:
             url = lk["recording"][kind]
             receipt = lk["verified_recording_tracks"][kind]
             assert receipt == {
                 "call_id": str(call_execution.pk),
-                "egress_id": "EG_2" if kind in second else "EG_1", "url": url,
+                "egress_id": "EG_2" if kind in second else "EG_1",
+                "url": url,
             }
             assert detail[kind] == url
             if kind in ("assistant", "customer"):
@@ -1523,7 +1529,10 @@ class TestFetchAndPersistCallResultActivity:
 
         async def interleave(query, **changes):
             lk = (changes.get("provider_call_data") or {}).get("livekit", {})
-            if not produced and (lk.get("recording_source") or {}).get("egress_id") == "EG_2":
+            if (
+                not produced
+                and (lk.get("recording_source") or {}).get("egress_id") == "EG_2"
+            ):
                 produced.update(lk["recording"])
                 io.poll.return_value = None
                 failed = await io.run()
@@ -1553,12 +1562,17 @@ class TestFetchAndPersistCallResultActivity:
         from simulate.serializers.test_execution import CallExecutionDetailSerializer
 
         io = recording_activity
-        legacy = {k: f"https://legacy/{k}" for k in ("combined", "stereo", "assistant", "customer")}
+        legacy = {
+            k: f"https://legacy/{k}"
+            for k in ("combined", "stereo", "assistant", "customer")
+        }
         lk = call_execution.provider_call_data["livekit"]
         lk.update(recording=legacy, recording_files=["untrusted/file.ogg"])
         await CallExecution.objects.filter(pk=call_execution.pk).aupdate(
             provider_call_data=call_execution.provider_call_data,
-            recording_url=None, stereo_recording_url=None, recording_available=False,
+            recording_url=None,
+            stereo_recording_url=None,
+            recording_available=False,
         )
         result = await io.run()
         assert result.success and result.recording_error is None
@@ -1568,14 +1582,19 @@ class TestFetchAndPersistCallResultActivity:
         await call_execution.arefresh_from_db()
         lk = call_execution.provider_call_data["livekit"]
         tracks = lk["recording_history"]["EG_1"]["tracks"]
-        assert tracks == lk["recording"] and not set(legacy.values()).intersection(tracks.values())
+        assert tracks == lk["recording"] and not set(legacy.values()).intersection(
+            tracks.values()
+        )
         assert call_execution.recording_available
         assert call_execution.recording_url == tracks["combined"]
         assert call_execution.stereo_recording_url == tracks["stereo"]
         serializer = CallExecutionDetailSerializer()
         detail = await sync_to_async(serializer.get_recordings)(call_execution)
         assert all(detail[k] == v for k, v in tracks.items())
-        assert serializer.fields["audio_url"].get_attribute(call_execution) == tracks["combined"]
+        assert (
+            serializer.fields["audio_url"].get_attribute(call_execution)
+            == tracks["combined"]
+        )
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
@@ -1583,6 +1602,7 @@ class TestFetchAndPersistCallResultActivity:
         self, call_execution, recording_activity
     ):
         import asyncio
+
         from django.db.models.query import QuerySet
 
         io = recording_activity
@@ -1611,28 +1631,51 @@ class TestFetchAndPersistCallResultActivity:
         assert [c.args[1] for c in io.delete.call_args_list] == ["raw/one.ogg"] * 2
         await call_execution.arefresh_from_db()
         after = call_execution.provider_call_data["livekit"]
-        assert after["recording_cleanup_success"]["recording"] == before["recording"] == after["recording"]
-        assert playback == (call_execution.recording_url, call_execution.stereo_recording_url)
+        assert (
+            after["recording_cleanup_success"]["recording"]
+            == before["recording"]
+            == after["recording"]
+        )
+        assert playback == (
+            call_execution.recording_url,
+            call_execution.stereo_recording_url,
+        )
         assert call_execution.recording_available
 
-    @pytest.mark.parametrize("outcome", ["empty", "lookup_error", "error_cas", "contention", "changed_map", "unsigned"])
+    @pytest.mark.parametrize(
+        "outcome",
+        ["empty", "lookup_error", "error_cas", "contention", "changed_map", "unsigned"],
+    )
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
-    async def test_pending_listing_rechecks_peer_intent(self, call_execution, recording_activity, outcome):
+    async def test_pending_listing_rechecks_peer_intent(
+        self, call_execution, recording_activity, outcome
+    ):
         import asyncio
+
         from django.db.models.query import QuerySet
 
         io = recording_activity
-        tracks = {k: f"https://media/{k}" for k in ("combined", "stereo", "assistant", "customer")}
+        tracks = {
+            k: f"https://media/{k}"
+            for k in ("combined", "stereo", "assistant", "customer")
+        }
         lk = call_execution.provider_call_data["livekit"]
-        lk.update(recording=tracks, recording_source={"call_id": str(call_execution.pk), "egress_id": "EG_1"})
+        lk.update(
+            recording=tracks,
+            recording_source={"call_id": str(call_execution.pk), "egress_id": "EG_1"},
+        )
         await call_execution.asave(update_fields=["provider_call_data"])
         objects = {"raw/one.ogg"}
         io.delete.side_effect = lambda _config, key: objects.discard(key)
         update = QuerySet.aupdate
 
         async def interrupt_confirmation(query, **changes):
-            if changes.get("provider_call_data", {}).get("livekit", {}).get("recording_cleanup_success"):
+            if (
+                changes.get("provider_call_data", {})
+                .get("livekit", {})
+                .get("recording_cleanup_success")
+            ):
                 assert not objects
                 raise asyncio.CancelledError
             return await update(query, **changes)
@@ -1646,7 +1689,9 @@ class TestFetchAndPersistCallResultActivity:
                     await io.run()
             await call_execution.arefresh_from_db()
             pending = call_execution.provider_call_data["livekit"]
-            assert pending["recording_cleanup_intent"] and not pending.get("recording_cleanup_success")
+            assert pending["recording_cleanup_intent"] and not pending.get(
+                "recording_cleanup_success"
+            )
             if outcome == "changed_map":
                 pending["recording"]["customer"] = "https://media/replacement"
             elif outcome == "unsigned":
@@ -1692,7 +1737,9 @@ class TestFetchAndPersistCallResultActivity:
             assert misses == 3 and io.api.egress.list_egress.await_count == 1
             io.delete.assert_not_called()
             assert result.recording_error["code"] == "recording_source_changed"
-            assert not stored.get("recording_error") and not stored.get("recording_cleanup_success")
+            assert not stored.get("recording_error") and not stored.get(
+                "recording_cleanup_success"
+            )
             return
         assert io.api.egress.list_egress.await_count == 2
         if outcome in ("changed_map", "unsigned"):
@@ -1712,13 +1759,17 @@ class TestFetchAndPersistCallResultActivity:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
-    async def test_delete_ack_cannot_confirm_a_changed_map(self, call_execution, recording_activity):
+    async def test_delete_ack_cannot_confirm_a_changed_map(
+        self, call_execution, recording_activity
+    ):
         io = recording_activity
 
         def replace_customer_before_ack(_config, _key):
             current = CallExecution.objects.get(pk=call_execution.pk)
             lk = current.provider_call_data["livekit"]
-            assert lk["recording_cleanup_intent"] and not lk.get("recording_cleanup_success")
+            assert lk["recording_cleanup_intent"] and not lk.get(
+                "recording_cleanup_success"
+            )
             url = "https://media/peer-customer"
             lk["recording"]["customer"] = lk["customer_recording_url"] = url
             lk["verified_recording_tracks"]["customer"]["url"] = url
@@ -1728,7 +1779,10 @@ class TestFetchAndPersistCallResultActivity:
         io.delete.side_effect = replace_customer_before_ack
         result = await io.run()
         io.delete.assert_called_once()
-        assert result.success and result.recording_error["code"] == "recording_source_changed"
+        assert (
+            result.success
+            and result.recording_error["code"] == "recording_source_changed"
+        )
         await call_execution.arefresh_from_db()
         lk = call_execution.provider_call_data["livekit"]
         assert "recording_cleanup_success" not in lk
@@ -2033,7 +2087,9 @@ class TestFetchAndPersistCallResultActivity:
             assert intermediate[0] is None
         else:
             assert intermediate[0]["code"] == "recording_cleanup_failed"
-        assert delete.call_args_list == [((service.config, "raw/one.ogg"), {})] * (1 if peer_succeeds else 2)
+        assert delete.call_args_list == [((service.config, "raw/one.ogg"), {})] * (
+            1 if peer_succeeds else 2
+        )
         await call_execution.arefresh_from_db()
         stored = call_execution.provider_call_data["livekit"]
         assert stored["recording_source"] == source and stored["recording"] == tracks
@@ -2209,7 +2265,9 @@ class TestFetchAndPersistCallResultActivity:
                 )
             )
 
-        if phase in ("upload", "cleanup") or (phase == "handoff" and split == "partial"):
+        if phase in ("upload", "cleanup") or (
+            phase == "handoff" and split == "partial"
+        ):
             delete.assert_not_called()
         else:
             delete.assert_called_once_with(service.config, "raw/one.ogg")
