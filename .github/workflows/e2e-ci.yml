@@ -39,6 +39,11 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # The suite runs as this many matrix legs per stack, split by measured time
+  # (e2e/lib/shard.ts). The report job proves the legs together ran every test
+  # exactly once. Raise it only with measurements: each leg pays the fixed cost
+  # of building, pulling and booting a stack.
+  E2E_SHARDS: "4"
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
@@ -56,6 +61,8 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend || steps.always.outputs.frontend }}
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
       stacks: ${{ steps.stacks.outputs.stacks }}
+      shards: ${{ steps.shards.outputs.shards }}
+      shard_total: ${{ steps.shards.outputs.total }}
     steps:
       - name: Validate host update fallibility opt-in
         if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
@@ -123,21 +130,36 @@ jobs:
             *) stacks='["distributed"]' ;;
           esac
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
+      - id: shards
+        env:
+          FALLIBILITY: ${{ github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility }}
+        run: |
+          total=$E2E_SHARDS
+          # The fallibility proof follows the whole suite inside one job.
+          if [ "$FALLIBILITY" = true ]; then total=1; fi
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+          echo "shards=[$(seq -s, 1 "$total")]" >> "$GITHUB_OUTPUT"
 
   e2e:
-    name: e2e (${{ matrix.stack }})
+    name: e2e (${{ matrix.stack }}, ${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }})
     needs: changes
     if: needs.changes.outputs.any == 'true'
     strategy:
-      # A labelled PR runs both legs; one failing must not cancel the other.
+      # One failing leg must not cancel the others: a labelled PR runs both
+      # stacks, and every shard's result is part of the report job's proof.
       fail-fast: false
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
+        # Each shard builds the images from the registry cache, boots its own
+        # stack and runs its share of the spec files (E2E_SHARD below). Steps
+        # that need to run once per stack run on shard 1: the flow catalog
+        # check and the SDK live suites. On a push every shard writes the
+        # registry cache; they build the same images, so the writes are equal.
+        shard: ${{ fromJSON(needs.changes.outputs.shards) }}
     runs-on: ubuntu-latest
-    # Image builds (~20 min), the Playwright suite (~70 min and growing with
-    # the flow catalog) and the SDK live suites run in this one job. Dev runs
-    # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
-    # DASH-E2E-017 waits out the 30-minute metric settle on one worker; its own
+    # One job is the image builds, the stack boot and the suite; the unsharded
+    # job (a fallibility dispatch) also runs the whole suite. DASH-E2E-017
+    # waits out the 30-minute metric settle on one worker; its own
     # test.setTimeout ceiling is 65 min, so 89 + 65 = 154 if it lands last.
     timeout-minutes: 155
     permissions:
@@ -401,6 +423,7 @@ jobs:
           key: playwright-${{ hashFiles('e2e/yarn.lock') }}
 
       - name: Flow catalog is current
+        if: matrix.shard == 1
         working-directory: e2e
         run: yarn catalog:check
 
@@ -426,6 +449,9 @@ jobs:
 
       - name: Run E2E suite
         id: suite
+        env:
+          # This leg's share of the spec files (e2e/lib/shard.ts).
+          E2E_SHARD: ${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }}
         run: bin/e2e test
 
       - name: Prove host update assertion fallibility
@@ -461,16 +487,30 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: redis-diagnostics-${{ matrix.stack }}
+          name: redis-diagnostics-${{ matrix.stack }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/redis-diagnostics/redis-diagnostics.json
           retention-days: 3
           if-no-files-found: warn
 
-      - name: Upload report
-        if: ${{ !cancelled() }}
+      - name: Upload blob report
+        # The report job merges every shard's blob into one report and checks
+        # that the shards ran the whole suite. A leg that never reached the
+        # suite has no blob; the report job then names its tests as missing.
+        if: ${{ !cancelled() && steps.suite.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
+          name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}
+          path: e2e/blob-report
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Upload report
+        # This leg's own report, right away, when its suite failed. The merged
+        # report of all legs comes from the report job.
+        if: ${{ !cancelled() && steps.suite.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.stack }}-shard-${{ matrix.shard }}
           path: e2e/playwright-report
           retention-days: 7
           # A job that dies before the suite runs has no report; the real
@@ -485,9 +525,10 @@ jobs:
       # Resolve a full SDK commit with the required live suites. Explicit refs
       # fail closed; defaults lacking the harness use the pinned bootstrap from
       # SDK PR #35. Both suites still run after Playwright on a booted stack.
+      # Shard 1 only: every later SDK step runs only when this one succeeded.
       - name: Resolve the futureagi-sdk ref
         id: sdk-ref
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && matrix.shard == 1 }}
         env:
           SDK_REF_INPUT: ${{ inputs.sdk-ref }}
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
@@ -581,7 +622,7 @@ jobs:
         if: failure() && steps.boot.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: backend-lifecycle-${{ matrix.stack }}
+          name: backend-lifecycle-${{ matrix.stack }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/backend-lifecycle
           retention-days: 7
           if-no-files-found: warn
@@ -594,9 +635,81 @@ jobs:
           bin/e2e ps
           bin/e2e logs --tail 200
 
+  report:
+    # One report for all shards of a stack, and the proof that sharding dropped
+    # nothing: every test an unsharded listing names must have exactly one
+    # result across the shards (e2e/scripts/shard-report.mjs). It runs when a
+    # shard failed too, so the merged report shows the failure.
+    name: e2e report (${{ matrix.stack }})
+    needs: [changes, e2e]
+    if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: e2e
+    env:
+      E2E_STACK: ${{ matrix.stack }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: e2e/yarn.lock
+
+      - name: Install harness
+        run: yarn install --frozen-lockfile
+
+      - name: Download the shards' blob reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: blob-report-${{ matrix.stack }}-*
+          path: e2e/all-blob-reports
+          merge-multiple: true
+
+      - name: Merge the shards into one report
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: merged-report.json
+          PLAYWRIGHT_HTML_OPEN: never
+        run: npx playwright merge-reports --reporter html,json all-blob-reports
+
+      - name: List the unsharded suite
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: listed-suite.json
+        run: npx playwright test --list --reporter json > /dev/null
+
+      - name: The shards ran every test exactly once
+        run: node scripts/shard-report.mjs parity --listed listed-suite.json --merged merged-report.json
+
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
+          path: e2e/playwright-report
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload the merged results (input for scripts/shard-report.mjs durations)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-merged-results-${{ matrix.stack }}
+          path: |
+            e2e/merged-report.json
+            e2e/listed-suite.json
+          retention-days: 7
+          if-no-files-found: warn
+
   e2e-tests:
     name: E2E Tests Pass
-    needs: [changes, e2e]
+    needs: [changes, e2e, report]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
