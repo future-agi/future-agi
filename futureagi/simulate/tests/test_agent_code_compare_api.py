@@ -1,5 +1,4 @@
-from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from rest_framework import status
@@ -235,13 +234,11 @@ def test_a_file_past_the_line_cap_is_too_large_without_being_diffed(
 
 
 def _past_the_budget_after_the_first_file():
-    # Replace only the compare service's clock. Patching time.monotonic itself
-    # also feeds this sequence to any other code that reads the clock during
-    # the request, which shifts the deadline away from the first file.
-    clock = SimpleNamespace(
-        monotonic=Mock(side_effect=[0.0] + [DIFF_BUDGET_SECONDS + 1] * 10)
+    return patch.object(
+        agent_code_compare.time,
+        "monotonic",
+        side_effect=[0.0] + [DIFF_BUDGET_SECONDS + 1] * 10,
     )
-    return patch.object(agent_code_compare, "time", clock)
 
 
 def test_files_past_the_time_budget_wait_for_load_and_the_summary_is_not_kept(
@@ -294,8 +291,10 @@ def test_a_patch_batch_past_the_time_budget_stops_diffing(
 ):
     older, newer = _pair(
         agent,
-        {"agents/support/a.py": "a = 1\n", "agents/support/b.py": "b = 1\n"},
-        {"agents/support/a.py": "a = 2\n", "agents/support/b.py": "b = 2\n"},
+        # Contents differ from the sibling budget test: patches are cached by blob,
+        # so a shared pair could be served from that test's cache entry.
+        {"agents/support/a.py": "a = 3\n", "agents/support/b.py": "b = 3\n"},
+        {"agents/support/a.py": "a = 4\n", "agents/support/b.py": "b = 4\n"},
     )
 
     with _past_the_budget_after_the_first_file():
