@@ -185,6 +185,8 @@ function normalizeHostStatusSpec(spec) {
         Object.entries(spec.components?.schemas || {}).map(([name, schema]) => [
           name,
           name.startsWith("HostUpdateStatusResponse") ||
+          // Busy pauses have no measured row count; both the pause and its rows can be null.
+          name === "MetricCalculationPaused" ||
           name.startsWith("AgentVersion") ||
           name.startsWith("StoredAgent") ||
           // Every non-ready source state sends kind and the ids as explicit null.

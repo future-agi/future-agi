@@ -14,9 +14,13 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace
 from tfc.constants.roles import OrganizationRoles, RoleMapping
 from tfc.utils.base_model import BaseModel
+from tracer.services.derived_metrics.pg_response_hooks import (
+    PgResponseManagerMixin,
+    pg_response_save,
+)
 
 
-class CustomUserManager(BaseUserManager):
+class CustomUserManager(PgResponseManagerMixin, BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         if not email:
             raise ValueError("The Email field must be set")
@@ -115,6 +119,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Set only by tfc.utils.email_unsubscribe, the one writer of email opt-outs.
     _writes_email_optouts = False
 
+    @pg_response_save
     def save(self, *args, **kwargs):
         """Keep the stored email opt-outs whenever ``config`` is written.
 
@@ -128,7 +133,8 @@ class User(AbstractBaseUser, PermissionsMixin):
 
         from tfc.utils.email_unsubscribe import USER_CONFIG_KEY
 
-        db = kwargs.get("using") or self._state.db or "default"
+        positional_using = args[2] if len(args) > 2 else None
+        db = kwargs.get("using") or positional_using or self._state.db or "default"
         with transaction.atomic(using=db):
             stored = (
                 type(self)

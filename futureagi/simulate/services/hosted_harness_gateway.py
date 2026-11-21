@@ -84,6 +84,7 @@ from simulate.services.hosted_harness_diagnostics import (
 )
 from simulate.services.hosted_sandbox import (
     SandboxCommandRequest,
+    SandboxCommandStep,
     SandboxConflictError,
     SandboxFileNotFoundError,
     SandboxLaunchSpec,
@@ -2587,8 +2588,9 @@ class HostedHarnessGateway:
             # Preserve the validated environment bundle with the authored inputs.
             # Later simulation Runs restore this exact snapshot instead of
             # regenerating or re-authoring the environment.
+            # umask 077: the archive holds every case, and /tmp is readable by every user.
             packed = sandbox.process.exec(
-                "cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
+                "umask 077; cd /work/authoring && tar -czf /tmp/authoring.tar.gz "
                 "--exclude=__pycache__ --exclude=./cost.json .",
                 timeout=180,
             )
@@ -2987,41 +2989,58 @@ class HostedHarnessGateway:
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )
             )
-            if certify:
-                bundle_command = bundle_cache.certify_command()
-            elif assembled is not None:
-                bundle_command = (
-                    bundle_cache.source_check_command(assembled.source_digest)
-                    + bundle_command
+            # The two agent-learning-kit entrypoints, and certify, run the suite's customer
+            # processes: only those steps may run each as its own OS user. Extend, the bundle
+            # author and the copies between them run as the sandbox user, without that means.
+            steps = [
+                SandboxCommandStep(
+                    "if [ ! -f /work/authoring/contract.json ]; then "
+                    "python -m fi.alk.harness.hosted_authoring_entrypoint "
+                    "/work/job.json --source /work/source --output /work/authoring "
+                    + (
+                        "--await-harness "
+                        if harness_builds
+                        else f"--adjustments {_ADJUSTMENTS_PATH} "
+                    )
+                    + provider_profile_args
+                    + (
+                        f"--seed-contract {_SEED_CONTRACT_PATH} "
+                        if seed_contract is not None
+                        else ""
+                    )
+                    + "; fi",
+                    harness=True,
                 )
+            ]
+            if extend_command:
+                steps.append(SandboxCommandStep(extend_command))
+            if certify:
+                steps.extend(bundle_cache.certify_steps())
+            else:
+                source_check = (
+                    bundle_cache.source_check_command(assembled.source_digest)
+                    if assembled is not None
+                    else ""
+                )
+                if source_check:
+                    steps.append(SandboxCommandStep(source_check.removesuffix(" && ")))
+                steps.append(SandboxCommandStep(bundle_command))
+            steps.append(
+                SandboxCommandStep(
+                    "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
+                    "--source /work/source --output /work/artifacts",
+                    harness=True,
+                )
+            )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
-                    command=(
-                        "if [ ! -f /work/authoring/contract.json ]; then "
-                        "python -m fi.alk.harness.hosted_authoring_entrypoint "
-                        "/work/job.json --source /work/source --output /work/authoring "
-                        + (
-                            "--await-harness "
-                            if harness_builds
-                            else f"--adjustments {_ADJUSTMENTS_PATH} "
-                        )
-                        + provider_profile_args
-                        + (
-                            f"--seed-contract {_SEED_CONTRACT_PATH} "
-                            if seed_contract is not None
-                            else ""
-                        )
-                        + "; fi && "
-                        + ((extend_command + " && ") if extend_command else "")
-                        + bundle_command
-                        + " && "
-                        "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
-                        "--source /work/source --output /work/artifacts"
-                    ),
+                    command=" && ".join(step.command for step in steps),
                     env=authoring_exports,
                     run_async=True,
                     suppress_input_echo=True,
+                    # The suite's held-back cases sit in this sandbox; the agent must not read them.
+                    steps=tuple(steps),
                 ),
             )
             sandbox.fs.upload_file(
@@ -3174,8 +3193,11 @@ class HostedHarnessGateway:
                 if overlay is not None
                 else ""
             )
+            # The builder writes held-back scenarios here, after the entrypoint's lock-down ran:
+            # only the harness's own user may read them.
             + "mkdir -p /work/authoring && "
             "chown -R svc-control:svc-control /work/authoring && "
+            "chmod -R go-rwx /work/authoring && "
             f"chmod 0600 {_CHAT_CAPABILITIES_PATH} {_CHAT_POLICY_PATH}",
             timeout=60,
         )
@@ -3216,6 +3238,7 @@ class HostedHarnessGateway:
                 # Settings go in the environment, never on the command line a process listing shows.
                 env=chat_exports,
                 command=(
+                    "umask 077 && "
                     "python -m fi.alk.harness.hosted_chat_entrypoint "
                     "--job /work/job.json --source /work/source "
                     "--workspace /work/authoring "
@@ -4136,7 +4159,7 @@ class HostedHarnessGateway:
         ):
             try:
                 packed = sandbox.process.exec(
-                    "cd /work/authoring && "
+                    "umask 077; cd /work/authoring && "
                     "[ -f contract.json ] && [ -d scenarios ] && "
                     "tar -czf /tmp/authoring-rerun.tar.gz "
                     "--exclude=__pycache__ --exclude=./cost.json .",
@@ -4293,7 +4316,7 @@ class HostedHarnessGateway:
             str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
         )
         packed = sandbox.process.exec(
-            "test -d /work/outbound-spool && "
+            "umask 077; test -d /work/outbound-spool && "
             "tar -czf /tmp/offline-outbound.tar.gz -C /work outbound-spool",
             timeout=120,
         )
