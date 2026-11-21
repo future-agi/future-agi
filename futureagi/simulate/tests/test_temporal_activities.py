@@ -1455,6 +1455,7 @@ class TestFetchAndPersistCallResultActivity:
         # Simulate the upgrade from a valid single map. Its recorded source,
         # not the egress currently advertised by the webhook, identifies E1.
         lk.pop("recording_history", None)
+        lk.pop("recording_scope", None)
         lk["egress_id"] = io.info.egress_id = "EG_2"
         io.info.file_results[0].filename = "raw/two.ogg"
         await call.asave(update_fields=["provider_call_data"])
@@ -1465,7 +1466,7 @@ class TestFetchAndPersistCallResultActivity:
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
     async def test_rollover_preserves_unreplaced_tracks(
-        self, call_execution, recording_activity, timeout
+        self, call_execution, recording_activity, timeout, organization, workspace
     ):
         from simulate.serializers.test_execution import CallExecutionDetailSerializer
         from simulate.temporal.activities.xl import _build_transcript_data
@@ -1489,6 +1490,11 @@ class TestFetchAndPersistCallResultActivity:
         assert lk["recording"] == {**first, **second}
         history = lk["recording_history"]
         assert history["EG_1"]["tracks"] == first
+        for egress, entry in history.items():
+            assert entry["source"] == {
+                "organization_id": str(organization.pk), "workspace_id": str(workspace.pk),
+                "call_id": str(call_execution.pk), "egress_id": egress,
+            }
         assert history.get("EG_2", {}).get("tracks", {}) == second
         detail = await sync_to_async(CallExecutionDetailSerializer().get_recordings)(call_execution)
         inputs = await sync_to_async(_build_transcript_data)(call_execution)
@@ -1608,6 +1614,30 @@ class TestFetchAndPersistCallResultActivity:
         assert after["recording_cleanup_success"]["recording"] == before["recording"] == after["recording"]
         assert playback == (call_execution.recording_url, call_execution.stereo_recording_url)
         assert call_execution.recording_available
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_delete_ack_cannot_confirm_a_changed_map(self, call_execution, recording_activity):
+        io = recording_activity
+
+        def replace_customer_before_ack(_config, _key):
+            current = CallExecution.objects.get(pk=call_execution.pk)
+            lk = current.provider_call_data["livekit"]
+            assert lk["recording_cleanup_intent"] and not lk.get("recording_cleanup_success")
+            url = "https://media/peer-customer"
+            lk["recording"]["customer"] = lk["customer_recording_url"] = url
+            lk["verified_recording_tracks"]["customer"]["url"] = url
+            lk["recording_history"]["EG_1"]["tracks"]["customer"] = url
+            current.save(update_fields=["provider_call_data"])
+
+        io.delete.side_effect = replace_customer_before_ack
+        result = await io.run()
+        io.delete.assert_called_once()
+        assert result.success and result.recording_error["code"] == "recording_source_changed"
+        await call_execution.arefresh_from_db()
+        lk = call_execution.provider_call_data["livekit"]
+        assert "recording_cleanup_success" not in lk
+        assert lk["recording"]["customer"] == "https://media/peer-customer"
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
