@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -18,6 +19,7 @@ import {
   readDurations,
   shardTestMatch,
 } from "../lib/shard.ts";
+import { grepInvertPattern } from "../lib/quarantine.ts";
 import { checkParity, fileDurations } from "./shard-report.mjs";
 
 const flat = (groups) => groups.flat().sort();
@@ -357,4 +359,134 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
   assert.deepEqual(jobs["e2e-tests"].needs, ["changes", "e2e", "report"]);
   assert.equal(jobs["e2e-tests"].name, "E2E Tests Pass");
   assert.equal(jobs["e2e-tests"].if, "always()");
+});
+
+test("the E2E gate passes only on a green suite with its report, or when nothing was needed", () => {
+  const gate = workflow().jobs["e2e-tests"].steps[0];
+  assert.deepEqual(gate.env, {
+    CHANGES: "${{ needs.changes.result }}",
+    E2E_NEEDED: "${{ needs.changes.outputs.any }}",
+    E2E: "${{ needs.e2e.result }}",
+    REPORT: "${{ needs.report.result }}",
+  });
+  const cases = [
+    // changes, e2e needed, e2e, report, passes
+    ["success", "true", "success", "success", true],
+    ["success", "false", "skipped", "skipped", true],
+    // A skipped report job is a suite without its parity proof.
+    ["success", "true", "success", "skipped", false],
+    ["success", "true", "success", "failure", false],
+    ["success", "true", "success", "cancelled", false],
+    ["success", "true", "failure", "success", false],
+    ["success", "true", "cancelled", "skipped", false],
+    ["success", "true", "skipped", "skipped", false],
+    ["success", "false", "success", "success", false],
+    ["success", "", "skipped", "skipped", false],
+    ["failure", "", "skipped", "skipped", false],
+    ["cancelled", "true", "success", "success", false],
+    ["skipped", "false", "skipped", "skipped", false],
+  ];
+  for (const [CHANGES, E2E_NEEDED, E2E, REPORT, passes] of cases) {
+    // The shell that runs a step's script.
+    const run = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-eo", "pipefail", "-c", gate.run],
+      {
+        encoding: "utf8",
+        env: { PATH: process.env.PATH, CHANGES, E2E_NEEDED, E2E, REPORT },
+      },
+    );
+    assert.equal(
+      run.status === 0,
+      passes,
+      `${CHANGES}/${E2E_NEEDED}/${E2E}/${REPORT}: ${run.stdout}`,
+    );
+  }
+});
+
+test("the report job requires proof that the once-per-stack steps ran and passed", () => {
+  const jobs = workflow().jobs;
+  const step = (job, name) => job.steps.find((entry) => entry.name === name);
+  // The record names the three steps by their real outcomes.
+  const record = step(jobs.e2e, "Record the once-per-stack steps");
+  assert.equal(
+    record.if,
+    "${{ !cancelled() && env.E2E_LAST_SHARD == 'true' }}",
+  );
+  assert.deepEqual(record.env, {
+    CATALOG: "${{ steps.catalog.outcome }}",
+    SDK_PYTHON: "${{ steps.sdk-python.outcome }}",
+    SDK_TYPESCRIPT: "${{ steps.sdk-typescript.outcome }}",
+  });
+  assert.equal(step(jobs.e2e, "Flow catalog is current").id, "catalog");
+  assert.equal(step(jobs.e2e, "Python SDK live suite").id, "sdk-python");
+  assert.equal(
+    step(jobs.e2e, "TypeScript SDK live suite").id,
+    "sdk-typescript",
+  );
+  const upload = step(jobs.e2e, "Upload the once-per-stack record");
+  assert.equal(upload.with.name, "once-per-stack-${{ matrix.stack }}");
+  assert.equal(upload.with["if-no-files-found"], "error");
+  // A missing record fails the download; a record with a skip fails the check.
+  const download = step(jobs.report, "Download the once-per-stack record");
+  assert.equal(download.with.name, "once-per-stack-${{ matrix.stack }}");
+  assert.equal(download.if, undefined);
+  const check = step(
+    jobs.report,
+    "The flow catalog check and the SDK suites ran and passed",
+  );
+  assert.equal(check.if, undefined);
+  const dir = mkdtempSync(path.join(tmpdir(), "e2e-once-test-"));
+  try {
+    mkdirSync(path.join(dir, "once-per-stack"));
+    const outcomes = (catalog, python, typescript) => ({
+      flow_catalog_check: catalog,
+      python_sdk_suite: python,
+      typescript_sdk_suite: typescript,
+    });
+    for (const [content, passes] of [
+      [outcomes("success", "success", "success"), true],
+      [outcomes("success", "skipped", "success"), false],
+      [outcomes("skipped", "skipped", "skipped"), false],
+      [outcomes("success", "success", "failure"), false],
+      [{ flow_catalog_check: "success" }, false],
+      [{}, false],
+    ]) {
+      writeFileSync(
+        path.join(dir, "once-per-stack", "record.json"),
+        JSON.stringify(content),
+      );
+      const run = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-eo", "pipefail", "-c", check.run],
+        { cwd: dir, encoding: "utf8" },
+      );
+      assert.equal(run.status === 0, passes, JSON.stringify(content));
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("one run uses one date for the quarantine filter", () => {
+  const jobs = workflow().jobs;
+  for (const job of [jobs.e2e, jobs.report]) {
+    assert.equal(
+      job.env.E2E_QUARANTINE_TODAY,
+      "${{ needs.changes.outputs.today }}",
+    );
+  }
+  const saved = { ...process.env };
+  try {
+    delete process.env.E2E_INCLUDE_QUARANTINED;
+    process.env.E2E_LIVE_LLM = "1";
+    process.env.E2E_QUARANTINE_TODAY = "2026-11-21";
+    // The committed file decides the pattern; with no entry there is none.
+    const pattern = grepInvertPattern();
+    assert.ok(pattern === undefined || pattern instanceof RegExp);
+    process.env.E2E_QUARANTINE_TODAY = "tomorrow";
+    assert.throws(() => grepInvertPattern(), /E2E_QUARANTINE_TODAY/);
+  } finally {
+    process.env = saved;
+  }
 });

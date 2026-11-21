@@ -635,8 +635,13 @@ test has no result in any shard, ran in two shards, never started, or when a sha
 the listing does not have. Quarantined and `@live-llm` flows are out of both sides.
 
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
-SDK live suites. The last shard, because the longest spec file always goes to shard 1. A manual
-run with `host_update_fallibility` stays unsharded.
+SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
+uploads a record of those steps' outcomes, and the `report` job fails without a record that says
+all of them passed, so they cannot be skipped on every shard unseen. A manual run with
+`host_update_fallibility` stays unsharded.
+
+`E2E Tests Pass` passes in two cases only: every shard and the `report` job succeeded, or the
+`changes` job found nothing that needs the suite. A skipped `report` job does not pass.
 
 To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
 artifact of a green run and regenerate the recorded times:

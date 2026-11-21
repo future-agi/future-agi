@@ -60,7 +60,9 @@ export function checkParity(listed, merged, specFiles) {
     missing: [...expectedKeys].filter((key) => !seen.has(key)).sort(),
     // Reported by a shard but not in the listing.
     extra: [...seen.keys()].filter((key) => !expectedKeys.has(key)).sort(),
-    // Listed and reported, but it never started (a shard stopped early).
+    // Listed and reported, but it never started: a shard stopped early, or
+    // an earlier test of a serial group failed (the real failure is then in
+    // that shard's own log).
     notRun: [...seen]
       .filter(([, entries]) => entries.every((spec) => spec.results === 0))
       .map(([key]) => key)
