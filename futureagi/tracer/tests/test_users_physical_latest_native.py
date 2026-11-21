@@ -6,6 +6,8 @@ six-key physical and relation fixtures, never a configured service database.
 """
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
@@ -268,6 +270,24 @@ def test_native_users_population_activity_order_aliases_and_null_pages(
             limit=2, window_start=WINDOW, window_end=END
         )
     )
+    # Replaying every version of the admitted identities also admits the new
+    # owner of "reassigned". The seeded page returns candidates, not published
+    # matches. Run the manager's exact attribute replay against the same RMT.
+    assert [item["end_user_id"] for item in narrowed] == [uid(10), uid(20)]
+    manager = UsersListManager(
+        organization_id=PROJECT,
+        project_id=None if workspace else PROJECT,
+        allowed_project_ids=[PROJECT, OTHER_PROJECT] if workspace else [PROJECT],
+        requested_columns=[],
+        attribute_keys=["agent.duration_s"],
+        filters=target.filters,
+    )
+    with patch("tracer.services.users_list_manager.V2AnalyticsQueryService") as service:
+        service.return_value.execute_ch_query.side_effect = lambda sql, params, **_: (
+            SimpleNamespace(data=execute(sql, params))
+        )
+        manager._read_span_attributes(narrowed, None, start_date=WINDOW, end_date=END)
+    narrowed = [item for item in narrowed if manager._row_matches_filters(item)]
     assert [item["end_user_id"] for item in narrowed] == [uid(10)]
     assert narrowed[0]["total_cost"] == 2
     assert datetime.fromisoformat(narrowed[0]["last_active"]) == START + timedelta(

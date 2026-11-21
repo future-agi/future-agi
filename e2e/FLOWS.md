@@ -2192,7 +2192,7 @@
 
 **Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end
 
-**Spec:** `flows/observe/list-pagination.spec.ts:220`
+**Spec:** `flows/observe/list-pagination.spec.ts:193`
 
 **Tags:** —
 
@@ -2215,7 +2215,7 @@
 
 **Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation
 
-**Spec:** `flows/observe/list-pagination.spec.ts:446`
+**Spec:** `flows/observe/list-pagination.spec.ts:419`
 
 **Tags:** —
 
@@ -2235,7 +2235,7 @@
 
 **Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1
 
-**Spec:** `flows/observe/list-pagination.spec.ts:538`
+**Spec:** `flows/observe/list-pagination.spec.ts:511`
 
 **Tags:** —
 
@@ -2254,7 +2254,7 @@
 
 **Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists
 
-**Spec:** `flows/observe/list-pagination.spec.ts:592`
+**Spec:** `flows/observe/list-pagination.spec.ts:565`
 
 **Tags:** —
 
@@ -2274,7 +2274,7 @@
 
 **Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it
 
-**Spec:** `flows/observe/list-pagination.spec.ts:671`
+**Spec:** `flows/observe/list-pagination.spec.ts:644`
 
 **Tags:** —
 
@@ -2282,8 +2282,8 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10 (Next enabled)
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. capture the Next label's DOM node and watch the pager subtree for ~1.5s
+3. capture the Next label's DOM node and observe it while alternating row heights for ~1.5s
+4. verify each row-height change re-renders the pager ancestor (INT-06)
 5. confirm the node is never removed from the DOM and stays connected
 
 **Backend state verified:**
@@ -2294,7 +2294,7 @@
 
 **Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render
 
-**Spec:** `flows/observe/list-pagination.spec.ts:737`
+**Spec:** `flows/observe/list-pagination.spec.ts:698`
 
 **Tags:** —
 
@@ -2302,10 +2302,10 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. install capture-phase pointer/click counters on the pager root
-5. press-dwell-release on Next and confirm the page advanced with pointerdown === click === 1
-6. repeat the same dwell-click on Back
+3. install capture-phase pointer/click counters on the pager root
+4. hold Next down while changing row heights and verifying the ancestor re-renders, then release
+5. confirm the page advanced with one press, release and click
+6. repeat the same dwell-click on Back and confirm the pager returns to page 1
 
 **Backend state verified:**
 
@@ -2315,7 +2315,7 @@
 
 **Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position
 
-**Spec:** `flows/observe/list-pagination.spec.ts:806`
+**Spec:** `flows/observe/list-pagination.spec.ts:761`
 
 **Tags:** —
 
@@ -2355,7 +2355,7 @@
 
 **Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced
 
-**Spec:** `flows/observe/list-pagination.spec.ts:846`
+**Spec:** `flows/observe/list-pagination.spec.ts:801`
 
 **Tags:** —
 
@@ -2375,7 +2375,7 @@
 
 **Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on
 
-**Spec:** `flows/observe/list-pagination.spec.ts:933`
+**Spec:** `flows/observe/list-pagination.spec.ts:888`
 
 **Tags:** —
 
