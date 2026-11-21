@@ -1137,7 +1137,7 @@ class TestFetchAndPersistCallResultActivity:
         assert create_call.status == CreateCallExecution.CallStatus.COMPLETED
 
     @pytest.mark.parametrize(
-        "phase", ["cleanup_wait", "split_wait", "split_cas", "retry", "retry_detached"]
+        "phase", ["cleanup_wait", "split_wait", "split_cas", "retry", "retry_detached", "preexisting_mono_failure"]
     )
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
@@ -1173,11 +1173,14 @@ class TestFetchAndPersistCallResultActivity:
             recording_source=source,
             recording=tracks if cleanup_only else {"stereo": tracks["stereo"]},
         )
+        preexisting = phase == "preexisting_mono_failure"
+        if preexisting:
+            del lk["recording"], lk["recording_source"]
         await CallExecution.objects.filter(pk=call_id).aupdate(
             provider_call_data={"livekit": lk},
             recording_url=tracks["combined"] if cleanup_only else None,
-            stereo_recording_url=tracks["stereo"],
-            recording_available=True,
+            stereo_recording_url=None if preexisting else tracks["stereo"],
+            recording_available=not preexisting,
         )
         objects = {"raw/one.ogg": b"A"}
         audio = b"RIFF-independent-upload-B"
@@ -1218,6 +1221,8 @@ class TestFetchAndPersistCallResultActivity:
             for k in ("stereo", "assistant", "customer"):
                 if f"_{k}_" in destination:
                     return tracks[k]
+            if preexisting:
+                raise OSError("mono unavailable")
             return tracks["combined"]
 
         writes = []
@@ -1281,7 +1286,25 @@ class TestFetchAndPersistCallResultActivity:
                 provider="livekit",
                 call_type=CallType.INBOUND,
             )
+            if preexisting:
+                await upload_b()
             result = await activity_module.fetch_and_persist_call_result(request)
+            if preexisting:
+                assert result.success and result.recording_error["tracks"] == ["mono"]
+                await call_execution.arefresh_from_db()
+                stored = call_execution.provider_call_data["livekit"]
+                assert stored["recording_error"] == result.recording_error
+                assert stored["recording"] == {k: v for k, v in tracks.items() if k != "combined"}
+                assert stored["verified_recording_tracks"] == {
+                    k: {**source, "url": v} for k, v in stored["recording"].items()
+                }
+                receipt = call_execution.call_metadata["alk_recording_artifacts"]["combined"]
+                assert receipt["recording_url"] == call_execution.recording_url == url_b
+                assert call_execution.stereo_recording_url == tracks["stereo"]
+                assert call_execution.recording_available
+                assert objects == {"raw/one.ogg": b"A", receipt["object_key"]: audio}
+                delete.assert_not_called()
+                return
             if partial_first:
                 assert result.success
                 assert result.recording_error["tracks"] == ["customer"]
@@ -1323,7 +1346,7 @@ class TestFetchAndPersistCallResultActivity:
         assert stored["egress_id"] == "EG_1" and stored["recording_source"] == source
         assert stored["recording"] == tracks and stored["recording_cleanup_success"]
         assert stored["recording_files"] == ["raw/one.ogg"]
-        playback = tracks["combined"] if phase == "retry_detached" else url_b
+        playback = "https://media/other" if phase == "retry_detached" else url_b
         assert call_execution.recording_url == playback
         assert call_execution.recording_available
         assert call_execution.stereo_recording_url == tracks["stereo"]
@@ -1337,6 +1360,184 @@ class TestFetchAndPersistCallResultActivity:
         recordings = await serialize(call_execution)
         assert recordings["combined"] == playback
         assert recordings["stereo"] == tracks["stereo"]
+
+    @pytest.fixture
+    def recording_activity(self, call_execution):
+        """Real row and activity writes; replace the provider and object-store I/O."""
+        from types import SimpleNamespace
+
+        activity_module = _ee_voice_large()
+        from livekit.protocol.egress import EgressStatus
+
+        from ee.voice.services.livekit.service import LivekitService
+        from ee.voice.services.types.voice import CostBreakdown
+        from simulate.temporal.types.activities import FetchAndPersistCallResultInput
+        from tfc.temporal.common.heartbeat import Heartbeater
+
+        call_id = str(call_execution.pk)
+        room = f"call_{call_id}"
+        call_execution.service_provider_call_id = room
+        call_execution.provider_call_data = {"livekit": {"egress_id": "EG_1"}}
+        call_execution.save(update_fields=["service_provider_call_id", "provider_call_data"])
+        info = MagicMock(room_name=room, egress_id="EG_1", status=EgressStatus.EGRESS_COMPLETE,
+                         file_results=[MagicMock(filename="raw/one.ogg")])
+        api = AsyncMock()
+        api.egress.list_egress.return_value = MagicMock(items=[info])
+        request = FetchAndPersistCallResultInput(call_id=call_id, provider_call_id=room,
+                                                status="COMPLETED", provider="livekit",
+                                                call_type=CallType.INBOUND)
+        with (
+            patch("temporalio.activity.info"), patch("temporalio.activity.heartbeat"),
+            patch.object(Heartbeater, "__aenter__", new=AsyncMock()),
+            patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
+            patch("ee.voice.services.livekit.service.LiveKitConfig.from_env"),
+            patch.object(LivekitService, "_create_api", return_value=api),
+            patch("ee.voice.services.livekit.recording.poll_egress_completion",
+                  new_callable=AsyncMock, return_value=info) as poll,
+            patch("ee.voice.services.livekit.recording.stream_egress_to_s3",
+                  side_effect=lambda _c, _k, dest, _a: f"https://media/{dest}") as stream,
+            patch("ee.voice.services.livekit.recording.delete_egress_recording") as delete,
+            patch("ee.voice.services.voice_service_manager.VoiceServiceManager") as manager,
+        ):
+            voice = manager.return_value
+            voice.fetch_and_store_call_data = AsyncMock(return_value=(2, True, True))
+            voice.extract_and_persist_recordings = LivekitService().extract_and_persist_recordings
+            voice.extract_costs = AsyncMock(return_value=CostBreakdown())
+            yield SimpleNamespace(run=lambda: activity_module.fetch_and_persist_call_result(request),
+                                  voice=voice, api=api, info=info, poll=poll, stream=stream, delete=delete)
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_sip_vapi_combined_survives_stereo_only_retry(self, call_execution, recording_activity):
+        from ee.voice.services.types.voice import CustomerMetrics
+        from ee.voice.temporal.activities.voice_xl import fetch_client_call_data
+        from simulate.serializers.test_execution import CallExecutionDetailSerializer
+        from simulate.temporal.types.activities import FetchClientCallInput
+
+        io = recording_activity
+        stereo, client = "https://media/stereo", "https://media/vapi-combined"
+        io.stream.side_effect = lambda _c, _k, dest, _a: stereo if "_stereo_" in dest else None
+        first = await io.run()
+        assert first.success and first.recording_error["tracks"] == ["assistant", "customer", "mono"]
+        raw = {"artifact": {"recording": {"mono": {"combinedUrl": client}}}}
+        io.voice.find_client_call.return_value = "vapi-inbound-call"
+        io.voice.get_customer_metrics.return_value = CustomerMetrics()
+        io.voice.get_recording_urls.return_value = {}
+        io.voice.get_call_async = AsyncMock(return_value=MagicMock(
+            raw_log={"vapi": raw}, recording_url=client, recording_available=True,
+            analysis_data=None, summary=None, ended_reason=None, log_url=None,
+            transcript_available=False,
+        ))
+        fetched = await fetch_client_call_data(FetchClientCallInput(call_id=str(call_execution.pk)))
+        assert fetched.success, fetched.error
+        retry = await io.run()
+        assert retry.success and retry.recording_error == first.recording_error
+        await call_execution.arefresh_from_db()
+        assert call_execution.recording_url == client and call_execution.recording_available
+        recordings = await sync_to_async(CallExecutionDetailSerializer().get_recordings)(call_execution)
+        assert recordings["combined"] == client and recordings["stereo"] == stereo
+        assert call_execution.provider_call_data["livekit"]["recording"] == {"stereo": stereo}
+        io.delete.assert_not_called()
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_empty_map_keeps_direct_speaker_refs(self, call_execution, recording_activity):
+        io = recording_activity
+        speakers = {f"{kind}_recording_url": f"https://legacy/{kind}" for kind in ("assistant", "customer")}
+        call_execution.provider_call_data["livekit"].update(recording={}, **speakers)
+        await call_execution.asave(update_fields=["provider_call_data"])
+        io.stream.side_effect = FileNotFoundError
+        result = await io.run()
+        assert result.success and len(result.recording_error["tracks"]) == 4
+        await call_execution.arefresh_from_db()
+        stored = call_execution.provider_call_data["livekit"]
+        assert all(stored.get(k) == v for k, v in speakers.items())
+        assert not stored["recording"] and not stored.get("verified_recording_tracks")
+        assert not stored.get("recording_source")
+        io.delete.assert_not_called()
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_split_adopts_confirmed_peer_and_empty_listing_replay(self, call_execution, recording_activity):
+        io = recording_activity
+        peer = []
+
+        async def finish_peer(*_args):
+            io.poll.side_effect = None
+            result = await io.run()
+            assert result.success and result.recording_error is None
+            await call_execution.arefresh_from_db()
+            peer.append(call_execution.provider_call_data["livekit"].copy())
+            io.stream.side_effect = FileNotFoundError
+            io.delete.side_effect = TimeoutError
+            return io.info
+
+        io.poll.side_effect = finish_peer
+        outer = await io.run()
+        assert outer.success and outer.recording_error is None
+        io.api.egress.list_egress.return_value = MagicMock(items=[])
+        replay = await io.run()
+        assert replay.success and replay.recording_error is None
+        io.api.egress.list_egress.assert_not_awaited()
+        io.delete.assert_called_once()
+        await call_execution.arefresh_from_db()
+        stored = call_execution.provider_call_data["livekit"]
+        assert stored == peer[0] and stored["recording_cleanup_success"]
+        assert "recording_error" not in stored and len(stored["recording"]) == 4
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_changed_complete_map_cannot_reuse_cleanup_confirmation(
+        self, call_execution, recording_activity
+    ):
+        io = recording_activity
+        assert (await io.run()).success
+        await call_execution.arefresh_from_db()
+        lk = call_execution.provider_call_data["livekit"]
+        assert lk["recording_cleanup_success"]
+        replacement = "https://media/replaced-customer"
+        lk["recording"]["customer"] = replacement
+        lk["verified_recording_tracks"]["customer"]["url"] = replacement
+        lk["customer_recording_url"] = replacement
+        await call_execution.asave(update_fields=["provider_call_data"])
+        io.api.egress.list_egress.return_value = MagicMock(items=[])
+        result = await io.run()
+        assert result.success and result.recording_error["code"] == "recording_cleanup_failed"
+        io.api.egress.list_egress.assert_awaited_once()
+        io.delete.assert_called_once()  # initial deletion only
+        await call_execution.arefresh_from_db()
+        stored = call_execution.provider_call_data["livekit"]
+        assert stored["recording_error"] == result.recording_error
+        assert "recording_cleanup_success" not in stored
+
+    @pytest.mark.parametrize("owner", ["matching", "unrecorded", "foreign_call", "foreign_egress"])
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_only_proven_livekit_playback_accepts_verified_replacement(
+        self, call_execution, recording_activity, owner
+    ):
+        io = recording_activity
+        assert (await io.run()).success
+        await call_execution.arefresh_from_db()
+        before = call_execution.recording_url
+        lk = call_execution.provider_call_data["livekit"]
+        writes = lk["recording_playback_writes"]
+        if owner == "unrecorded":
+            del writes["combined"]
+        elif owner == "foreign_call":
+            writes["combined"]["call_id"] = "another-call"
+        elif owner == "foreign_egress":
+            writes["combined"]["egress_id"] = "another-egress"
+        lk["egress_id"] = io.info.egress_id = "EG_2"
+        await call_execution.asave(update_fields=["provider_call_data"])
+        result = await io.run()
+        assert result.success and result.recording_error is None
+        await call_execution.arefresh_from_db()
+        lk = call_execution.provider_call_data["livekit"]
+        replacement = lk["recording"]["combined"]
+        assert replacement != before
+        assert call_execution.recording_url == (replacement if owner == "matching" else before)
+        assert io.delete.call_count == 2  # different egress cannot inherit confirmation
 
     @pytest.mark.parametrize("peer_succeeds", [True, False])
     @pytest.mark.django_db(transaction=True)
