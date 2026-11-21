@@ -82,6 +82,7 @@ class AddRowsFromExistingView(APIView):
             data = request.validated_data
             source_dataset_id = data.get("source_dataset_id")
             column_mapping = data.get("column_mapping")
+            num_rows = data.get("num_rows")
 
             if source_dataset_id == dataset_id:
                 return self._gm.bad_request(
@@ -170,6 +171,10 @@ class AddRowsFromExistingView(APIView):
             new_rows_count = Row.objects.filter(
                 dataset=source_dataset, deleted=False
             ).count()
+            # Without num_rows every source row is imported; with it, only the
+            # first num_rows by order.
+            if num_rows is not None:
+                new_rows_count = min(new_rows_count, num_rows)
             if log_and_deduct_cost_for_resource_request is not None:
                 call_log_row = log_and_deduct_cost_for_resource_request(
                     getattr(request, "organization", None) or request.user.organization,
@@ -208,8 +213,8 @@ class AddRowsFromExistingView(APIView):
             batch_size = 1000
             current_order = max_order + 1
 
-            for i in range(0, source_rows.count(), batch_size):
-                batch_rows = source_rows[i : i + batch_size]
+            for i in range(0, new_rows_count, batch_size):
+                batch_rows = source_rows[i : min(i + batch_size, new_rows_count)]
                 new_rows = []
                 new_cells = []
                 row_id_mapping = {}
@@ -273,7 +278,7 @@ class AddRowsFromExistingView(APIView):
             return self._gm.success_response(
                 {
                     "message": "Rows Imported successfully",
-                    "rows_added": source_rows.count(),
+                    "rows_added": new_rows_count,
                 }
             )
 

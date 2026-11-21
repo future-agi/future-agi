@@ -63431,6 +63431,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             format: "uuid",
           },
         },
+        num_rows: {
+          title: "Num rows",
+          type: "integer",
+          minimum: 1,
+        },
       },
     },
     DatasetAddRowsRequest: {
