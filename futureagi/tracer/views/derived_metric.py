@@ -13,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import ERROR_TYPE_BY_STATUS, ApiErrorType
 from tracer.models.derived_metric import (
     DerivedMetric,
     DerivedMetricRun,
@@ -88,6 +89,21 @@ def _enqueue(run):
     transaction.on_commit(enqueue)
 
 
+def _metric_error(code, message, *, status_code, retryable, **extra):
+    """The common error envelope; ``code``, ``message`` and ``retryable`` stay as before."""
+    return Response(
+        {
+            "type": ERROR_TYPE_BY_STATUS.get(status_code, ApiErrorType.API_ERROR).value,
+            "code": code,
+            "detail": message,
+            "message": message,
+            "retryable": retryable,
+            **extra,
+        },
+        status=status_code,
+    )
+
+
 class MetricViewSet(viewsets.GenericViewSet):
     def initial(self, request, *args, **kwargs):
         # Hide every recipe/run action, including OPTIONS, before permissions,
@@ -98,34 +114,32 @@ class MetricViewSet(viewsets.GenericViewSet):
 
     def handle_exception(self, exc):
         if isinstance(exc, service.MetricUnavailableError):
-            return Response(
-                {
-                    "code": exc.code,
-                    "message": exc.message,
-                    "retryable": True,
-                    **({"value_mode": exc.value_mode} if exc.value_mode else {}),
-                    **(
-                        {"calculated_through": exc.calculated_through.isoformat()}
-                        if exc.calculated_through
-                        else {}
-                    ),
-                    **({"reason": exc.reason} if exc.reason else {}),
-                },
-                status=503,
+            return _metric_error(
+                exc.code,
+                exc.message,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                retryable=True,
+                **({"value_mode": exc.value_mode} if exc.value_mode else {}),
+                **(
+                    {"calculated_through": exc.calculated_through.isoformat()}
+                    if exc.calculated_through
+                    else {}
+                ),
+                **({"reason": exc.reason} if exc.reason else {}),
             )
         if isinstance(exc, service.SnapshotNotSupportedError):
-            return Response(
-                {
-                    "code": "snapshot_not_supported",
-                    "message": str(exc),
-                    "retryable": False,
-                },
-                status=400,
+            return _metric_error(
+                "snapshot_not_supported",
+                str(exc),
+                status_code=status.HTTP_400_BAD_REQUEST,
+                retryable=False,
             )
         if isinstance(exc, service.PreviewSupersededError):
-            return Response(
-                {"code": "preview_superseded", "message": str(exc), "retryable": False},
-                status=409,
+            return _metric_error(
+                "preview_superseded",
+                str(exc),
+                status_code=status.HTTP_409_CONFLICT,
+                retryable=False,
             )
         if isinstance(exc, FormulaError):
             return super().handle_exception(ValidationError({"definition": str(exc)}))
@@ -138,13 +152,11 @@ class MetricViewSet(viewsets.GenericViewSet):
         if isinstance(exc, APIException | Http404 | DjangoPermissionDenied):
             return super().handle_exception(exc)
         structlog.get_logger(__name__).exception("derived_metric_api_unavailable")
-        return Response(
-            {
-                "code": "metric_unavailable",
-                "message": "Metric data is temporarily unavailable. Retry or reduce the window.",
-                "retryable": True,
-            },
-            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        return _metric_error(
+            "metric_unavailable",
+            "Metric data is temporarily unavailable. Retry or reduce the window.",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            retryable=True,
         )
 
 

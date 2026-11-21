@@ -526,7 +526,9 @@ class CompleteUsagePendingIntersectionTests(unittest.TestCase):
                 tables=[dict(engine=e,table=t) for e,t in sorted(tables)]))
         identities_in_order=[dict(app_label=m.app_label,name=m.name) for m in plan]
         selected=p.select_reference_registry(registry,scopes,plan=identities_in_order)
-        expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog'}
+        # simulate 0116 adds the evidence import's relation to the issue it came from.
+        expected={'tracer_trace','tracer_observation_span','tracer_eval_task','usage_apicalllog',
+            'tracer_trace_error_group'}
         if revision==REVISIONS[0]: expected|={'tracer_error_cluster_traces','tracer_eval_logger','tracer_trace_error_group'}
         self.assertEqual({row['table'] for row in selected},expected)
         self.assertTrue(all(row['database']=='postgres' for row in selected))
