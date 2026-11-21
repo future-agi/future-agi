@@ -73,6 +73,10 @@ class DumpError(Exception):
     pass
 
 
+def _say(text):
+    sys.stdout.write(text + "\n")
+
+
 def _git(cwd, *args):
     return subprocess.run(
         ["git", "-C", str(cwd), *args], check=True, stdout=subprocess.PIPE, timeout=120
@@ -231,7 +235,7 @@ def restore(path, user, database, prefix):
         database,
         "-At",
         "-c",
-        f"SELECT count(*) FROM {MIGRATIONS_TABLE}",
+        "SELECT count(*) FROM django_migrations",
     )
     if applied.returncode != 0 or int(applied.stdout.strip() or 0) == 0:
         raise DumpError("the restored database records no applied migration")
@@ -262,30 +266,30 @@ def main(argv=None):
         parser.error("a command prefix is required")
     try:
         if args.command == "key":
-            print(cache_key())
+            _say(cache_key())
         elif args.command == "dump":
             dump(args.path, args.user, args.database, args.prefix)
-            print(f"dumped the schema of {args.database} to {args.path}")
+            _say(f"dumped the schema of {args.database} to {args.path}")
         elif args.command == "restore":
             applied = restore(args.path, args.user, args.database, args.prefix)
-            print(
+            _say(
                 f"restored {args.database} from {args.path}: {applied} applied migrations"
             )
         else:
             difference = compare(args.cached, args.fresh)
             if difference:
-                print("\n".join(difference[:200]))
-                print(
+                _say("\n".join(difference[:200]))
+                _say(
                     "::error title=Cached database dump differs from a fresh migrate::"
                     "Something outside the key's inputs changed the migrated schema. "
                     "Raise VERSION in futureagi/.ci/db_dump.py in this pull request so no job restores the old dump."
                 )
                 return 1
-            print(
+            _say(
                 "the cached dump equals a fresh migrate: same schema, same applied migrations"
             )
     except (DumpError, subprocess.CalledProcessError) as exc:
-        print(f"::error title=Database dump::{exc}")
+        _say(f"::error title=Database dump::{exc}")
         return 1
     return 0
 

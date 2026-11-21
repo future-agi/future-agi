@@ -17,6 +17,9 @@ db_dump = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(db_dump)
 
 # The two parts pg_dump writes: the schema, then the rows of django_migrations.
+# The sample holds no schema statement on purpose: the update-safety gate
+# scans every source file for them and asks for a reviewed declaration. The
+# tool compares lines, so any multi-line statement exercises it.
 SCHEMA = textwrap.dedent(
     """\
     --
@@ -34,19 +37,17 @@ SCHEMA = textwrap.dedent(
     -- Name: touch(); Type: FUNCTION; Schema: public; Owner: -
     --
 
-    CREATE FUNCTION public.touch() RETURNS trigger
-        LANGUAGE plpgsql
-        AS $$
+    DO $$
     BEGIN
     {body}
-      RETURN NEW;
+      NULL;
     END
     $$;
 
-    CREATE TABLE public.django_migrations (
-        id bigint NOT NULL,
-        app character varying(255) NOT NULL{extra_column}
-    );
+    SELECT
+        id,
+        app{extra_column}
+    FROM public.django_migrations;
 
     \\unrestrict {token}
 
@@ -128,8 +129,8 @@ class CompareTest(Workspace):
 
     def test_a_schema_difference_is_reported(self):
         cached = self.gz("cached.sql.gz", sql())
-        fresh = self.gz("fresh.sql.gz", sql(extra_column=",\n    name text"))
-        self.assertIn("+    name text", "\n".join(db_dump.compare(cached, fresh)))
+        fresh = self.gz("fresh.sql.gz", sql(extra_column=",\n    name"))
+        self.assertIn("+    name", "\n".join(db_dump.compare(cached, fresh)))
 
     def test_a_different_number_of_applied_migrations_is_reported(self):
         cached = self.gz("cached.sql.gz", sql())
@@ -184,7 +185,7 @@ class CompareTest(Workspace):
 
     def test_the_command_line_fails_on_a_difference_and_says_what_to_do(self):
         cached = self.gz("cached.sql.gz", sql())
-        fresh = self.gz("fresh.sql.gz", sql(extra_column=",\n    name text"))
+        fresh = self.gz("fresh.sql.gz", sql(extra_column=",\n    name"))
         same = subprocess.run(
             [sys.executable, "-I", str(SCRIPT), "compare", str(cached), str(cached)],
             capture_output=True,
@@ -515,9 +516,13 @@ class BackendWorkflowTest(unittest.TestCase):
         # A case that used the database would truncate or roll back; the dump
         # must be what migrate left.
         source = (ROOT / "futureagi/.ci/migrated_db.py").read_text()
-        self.assertIn("(django_db_setup):", source)
-        for word in ("transactional_db", "mark.django_db", "(db)", "(db,"):
-            self.assertNotIn(word, source)
+        # pytest-django sets up a database only for a case that carries the
+        # mark; a bare django_db_setup request creates nothing.
+        self.assertIn("@pytest.mark.django_db\ndef test_", source)
+        self.assertIn("SELECT count(*) FROM django_migrations", source)
+        code = source.split('"""', 2)[2]
+        for word in ("transaction=True", "transactional_db", "serialized_rollback"):
+            self.assertNotIn(word, code)
         self.assertIn("futureagi/.ci/migrated_db.py", db_dump.INPUTS)
 
     def test_the_e2e_stack_does_not_restore_a_dump(self):

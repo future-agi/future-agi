@@ -49,7 +49,7 @@ def merge(plan, shards):
 
 def main(argv):
     if len(argv) < 3:
-        print(__doc__, file=sys.stderr)
+        sys.stderr.write(__doc__)
         return 2
     documents = []
     for path in argv[1:]:
@@ -59,23 +59,21 @@ def main(argv):
             isinstance(value, (int, float)) and not isinstance(value, bool)
             for value in document.values()
         ):
-            print(f"{path}: not a test-to-seconds object", file=sys.stderr)
+            sys.stderr.write(f"{path}: not a test-to-seconds object\n")
             return 1
         documents.append(document)
     merged, measured = merge(documents[0], documents[1:])
     if not measured:
-        print(
-            "no shard reported a measured time; refusing to write the plan back as new timings",
-            file=sys.stderr,
+        sys.stderr.write(
+            "no shard reported a measured time; refusing to write the plan back as new timings\n"
         )
         return 1
     # pytest-split's own layout: sorted keys, four-space indent.
     json.dump(merged, sys.stdout, indent=4, sort_keys=True)
     sys.stdout.write("\n")
-    print(
+    sys.stderr.write(
         f"{measured} tests measured in {len(documents) - 1} shard files; kept {len(merged)} of "
-        f"{MIN_SECONDS}s or more, {sum(merged.values()) / 60:.1f} test-minutes",
-        file=sys.stderr,
+        f"{MIN_SECONDS}s or more, {sum(merged.values()) / 60:.1f} test-minutes\n"
     )
     return 0
 
