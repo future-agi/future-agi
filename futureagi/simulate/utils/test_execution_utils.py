@@ -789,7 +789,10 @@ class TestExecutionUtils:
         self, call_executions, row_groups, group_keys, default_columns=None
     ):
         """Apply basic grouping using Django ORM"""
-        call_executions = _unique_matching_calls(call_executions)
+        # Search marks its transcript join distinct. Grouping it directly would
+        # count transcript rows, but ordinary call queries need no ID round trip.
+        if call_executions.query.distinct:
+            call_executions = _unique_matching_calls(call_executions)
         basic_fields = {
             "timestamp": "created_at__date",
             "status": "status",
