@@ -7,6 +7,7 @@ collected from ``futureagi/tracer/tests/integration/`` resolve these fixtures.
 import uuid
 
 import pytest
+from conftest import _open_ch_test_native_client
 from django.conf import settings
 from django.test import override_settings
 
@@ -56,26 +57,19 @@ class _CHDriverAdapter:
 
 @pytest.fixture(scope="session")
 def ch_client():
-    """Client to the test ClickHouse container (native protocol, port 19000).
+    """Client to the explicitly named test ClickHouse sidecar.
 
     The wrapper exposes a ``.command()`` method so the rest of the suite can
-    pretend it's talking to the clickhouse_connect HTTP client.
+    pretend it's talking to the clickhouse_connect HTTP client. The shared
+    opener refuses unnamed and forwarded general ports before connecting, and
+    verifies the sidecar replica macro before this fixture can issue DDL.
     """
-    try:
-        from clickhouse_driver import Client
-    except ImportError:
-        pytest.skip("clickhouse-driver not installed")
     ch = settings.CLICKHOUSE
-    try:
-        native = Client(
-            host=ch.get("CH_HOST", "localhost"),
-            port=int(ch.get("CH_PORT", "19000")),
-            user=ch.get("CH_USERNAME", "default"),
-            password=ch.get("CH_PASSWORD", ""),
-        )
-        native.execute("SELECT 1")
-    except Exception as exc:
-        pytest.skip(f"ClickHouse not reachable for integration tests: {exc}")
+    native = _open_ch_test_native_client(
+        owned_database=ch["CH_DATABASE"],
+        user=ch.get("CH_USERNAME", "default"),
+        password=ch.get("CH_PASSWORD", ""),
+    )
     try:
         yield _CHDriverAdapter(native)
     finally:
