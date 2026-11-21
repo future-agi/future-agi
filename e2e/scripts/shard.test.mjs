@@ -20,7 +20,11 @@ import {
   shardTestMatch,
 } from "../lib/shard.ts";
 import { grepInvertPattern } from "../lib/quarantine.ts";
-import { checkParity, fileDurations } from "./shard-report.mjs";
+import {
+  checkParity,
+  fileDurations,
+  readRuntimeSkips,
+} from "./shard-report.mjs";
 
 const flat = (groups) => groups.flat().sort();
 
@@ -239,15 +243,33 @@ test("the committed durations split the real spec files into CI shards of simila
 
 // --- parity ---------------------------------------------------------------
 
-const spec = (file, line, title, results) => ({
+// A result is a duration (the test passed) or a status ("skipped", "failed").
+// The id is Playwright's: a hash of the file and the title, not of the line.
+const spec = (file, line, title, results, test = {}) => ({
+  id: `id-${file}-${title}`,
   title,
   file,
   line,
   column: 1,
   tests: [
-    { results: results.map((duration) => ({ status: "passed", duration })) },
+    {
+      projectName: "chromium",
+      expectedStatus: "passed",
+      annotations: [],
+      results: results.map((result) =>
+        typeof result === "number"
+          ? { status: "passed", duration: result }
+          : { status: result, duration: 0 },
+      ),
+      ...test,
+    },
   ],
 });
+// How Playwright lists a test that its file or a condition skips before the run.
+const DECLARED_SKIP = {
+  expectedStatus: "skipped",
+  annotations: [{ type: "skip", description: "opt-in" }],
+};
 const report = (...specs) => ({
   suites: [
     {
@@ -312,6 +334,131 @@ test("parity names a test that no shard ran, ran twice, never started or was not
   assert.equal(checkParity(report(), report(), FILES).ok, false);
 });
 
+test("a test that skips itself at run time is not a test that ran", () => {
+  const one = spec("flows/a.spec.ts", 3, "one", [1]);
+  const three = spec("flows/b.spec.ts", 3, "one", [1]);
+  // Playwright gives a self-skipped test one result, with status "skipped".
+  const merged = report(
+    one,
+    spec("flows/a.spec.ts", 9, "two", ["skipped"], DECLARED_SKIP),
+    three,
+  );
+  const result = checkParity(listed, merged, FILES);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.problems.skippedAtRunTime, ["flows/a.spec.ts:9 two"]);
+  assert.equal(result.executed, 2);
+  // Allowed by name for this stack: the gate passes and still says so.
+  const allowed = checkParity(listed, merged, FILES, ["two"]);
+  assert.equal(allowed.ok, true);
+  assert.deepEqual(allowed.allowedRuntimeSkips, ["flows/a.spec.ts:9 two"]);
+  assert.deepEqual(allowed.staleAllowances, []);
+  assert.equal(checkParity(listed, merged, FILES, ["three"]).ok, false);
+  // A failed test ran its body; the shard's own result carries the failure.
+  const failed = report(
+    one,
+    spec("flows/a.spec.ts", 9, "two", ["failed"]),
+    three,
+  );
+  assert.equal(checkParity(listed, failed, FILES).ok, true);
+});
+
+test("a skip the listing already declares needs no allowance", () => {
+  const declared = spec("flows/a.spec.ts", 9, "two", [], DECLARED_SKIP);
+  const listedWithSkip = report(listed.suites[0].specs[0], declared, {
+    ...listed.suites[0].suites[0].specs[1],
+  });
+  const merged = report(
+    spec("flows/a.spec.ts", 3, "one", [1]),
+    spec("flows/a.spec.ts", 9, "two", ["skipped"], DECLARED_SKIP),
+    spec("flows/b.spec.ts", 3, "one", [1]),
+  );
+  const result = checkParity(listedWithSkip, merged, FILES);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.declaredSkips, ["flows/a.spec.ts:9 two"]);
+  assert.deepEqual(result.allowedRuntimeSkips, []);
+  assert.equal(result.executed, 2);
+});
+
+test("an allowance for a test that ran its body is reported as out of date", () => {
+  const merged = report(
+    spec("flows/a.spec.ts", 3, "one", [1]),
+    spec("flows/a.spec.ts", 9, "two", [1]),
+    spec("flows/b.spec.ts", 3, "one", [1]),
+  );
+  const result = checkParity(listed, merged, FILES, ["two"]);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.staleAllowances, ["two"]);
+});
+
+test("a test keeps its identity when its line moves, and loses it when its title changes", () => {
+  // The listing comes from the report job's checkout and the results from the
+  // shards': Playwright's id ties them, not the line and column.
+  const moved = report(
+    spec("flows/a.spec.ts", 30, "one", [1]),
+    spec("flows/a.spec.ts", 90, "two", [1]),
+    spec("flows/b.spec.ts", 30, "one", [1]),
+  );
+  assert.equal(checkParity(listed, moved, FILES).ok, true);
+  const renamed = checkParity(
+    listed,
+    report(
+      spec("flows/a.spec.ts", 3, "one", [1]),
+      spec("flows/a.spec.ts", 9, "TWO", [1]),
+      spec("flows/b.spec.ts", 3, "one", [1]),
+    ),
+    FILES,
+  );
+  assert.deepEqual(renamed.problems.missing, ["flows/a.spec.ts:9 two"]);
+  assert.deepEqual(renamed.problems.extra, ["flows/a.spec.ts:9 TWO"]);
+  // The same file and title in two projects are two tests.
+  const twoProjects = (results) => ({
+    ...spec("flows/a.spec.ts", 3, "one", []),
+    tests: ["chromium", "webkit"].map((projectName) => ({
+      projectName,
+      expectedStatus: "passed",
+      annotations: [],
+      results: results.map((duration) => ({ status: "passed", duration })),
+    })),
+  });
+  const both = checkParity(
+    report(twoProjects([])),
+    report(twoProjects([1])),
+    FILES,
+  );
+  assert.deepEqual([both.ok, both.listed, both.executed], [true, 2, 2]);
+});
+
+test("the run-time skip list is strict, and every committed entry is complete", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "runtime-skips-"));
+  const file = path.join(dir, "skips.json");
+  const good = { id: "X-E2E-001", stack: "standalone", reason: "why" };
+  try {
+    for (const bad of [
+      "{",
+      "{}",
+      JSON.stringify([{ ...good, reason: " " }]),
+      JSON.stringify([{ ...good, stack: "both" }]),
+      JSON.stringify([{ stack: "standalone", reason: "why" }]),
+    ]) {
+      writeFileSync(file, bad);
+      assert.throws(() => readRuntimeSkips(file), bad);
+    }
+    writeFileSync(file, JSON.stringify([good]));
+    assert.deepEqual(readRuntimeSkips(file), [good]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  const committed = readRuntimeSkips();
+  const names = committed.map((entry) => `${entry.stack} ${entry.id}`);
+  assert.equal(new Set(names).size, names.length, "an entry is listed twice");
+  // A skip that is not by design names the ticket that removes it.
+  for (const entry of committed)
+    assert.ok(
+      entry.issue || /by design/.test(entry.reason),
+      JSON.stringify(entry),
+    );
+});
+
 // --- workflow wiring ---------------------------------------------------------
 
 const workflow = () =>
@@ -348,7 +495,10 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
     /env\.E2E_LAST_SHARD == 'true'/,
   );
   // The parity proof cannot be skipped or softened, and the gate waits for it.
-  const parity = step(jobs.report, "The shards ran every test exactly once");
+  const parity = step(
+    jobs.report,
+    "Every listed test has one result, and no test skipped itself unlisted",
+  );
   assert.equal(parity.if, undefined);
   assert.match(parity.run, /shard-report\.mjs parity/);
   assert.ok(jobs.report.steps.every((entry) => !entry["continue-on-error"]));
@@ -407,6 +557,10 @@ test("the E2E gate passes only on a green suite with its report, or when nothing
 test("the report job requires proof that the once-per-stack steps ran and passed", () => {
   const jobs = workflow().jobs;
   const step = (job, name) => job.steps.find((entry) => entry.name === name);
+  // What the report job of a re-run downloads from the first attempt must
+  // outlive the days in which a failed run is still re-run.
+  for (const name of ["Upload blob report", "Upload the once-per-stack record"])
+    assert.ok(step(jobs.e2e, name).with["retention-days"] >= 14, name);
   // The record names the three steps by their real outcomes.
   const record = step(jobs.e2e, "Record the once-per-stack steps");
   assert.equal(

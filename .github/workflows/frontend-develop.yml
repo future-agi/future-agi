@@ -8,9 +8,12 @@ on:
       - ".github/workflows/frontend-develop.yml"
   pull_request:
     # Every base branch, so stacked PRs into feature branches get CI too.
+    # Every path of frontend-feature.yml is here: that pipeline skips its
+    # unit tests while a pull request is open, because this one runs them.
     paths:
       - "frontend/**"
       - ".github/workflows/frontend-develop.yml"
+      - ".github/workflows/frontend-feature.yml"
   workflow_dispatch:
 
 concurrency:

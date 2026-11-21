@@ -28,9 +28,10 @@ env:
   # measured at about 368 test-minutes; its two longest cases run about 19
   # minutes each against the real pass deadline, which bounds every shard.
   # The main suite was measured at about 196 test-minutes (dev, 21 Nov 2026),
-  # so 24 legs carry about 8 minutes of tests each, on top of about 5.5
-  # minutes that every leg pays (dependency install, and pytest collecting
-  # the whole suite before it deselects).
+  # so 24 legs carry about 8 minutes of tests each, on top of what every leg
+  # pays whatever its share: 2 to 3 minutes before its test step (measured:
+  # dependency install and service start), and inside that step pytest
+  # collecting the whole suite before it deselects.
   SPLITS: "24"
   METRICS_SPLITS: "16"
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
@@ -412,7 +413,8 @@ jobs:
 
       - name: Restore the migrated database (exact key hit only)
         # Saves the shard its own six-minute migrate. On a miss this step does
-        # not run and the next step migrates from zero. A failed restore fails
+        # not run and the next step migrates from zero, then rebuilds the
+        # database from its own dump. A failed restore fails
         # the job: nothing falls back to a half-loaded database. The dump is
         # the schema and the list of applied migrations. pytest (--reuse-db)
         # then runs Django's migrate on it, which applies nothing and sends
@@ -427,9 +429,15 @@ jobs:
         # A step of its own, before the shard's pytest run, so no test's
         # recorded time includes the migrate: the recorded times become the
         # next sharding plan. .ci/migrated_db.py sets the database up and runs
-        # no test against it.
+        # no test against it. The shard then replaces the database by a restore
+        # of its own dump: a restored database holds no row a data migration
+        # wrote, and every shard must start from the same state whether a
+        # dump was cached or not.
         if: steps.db-dump.outputs.cache-hit != 'true'
-        run: uv run pytest .ci/migrated_db.py -q
+        run: |
+          uv run pytest .ci/migrated_db.py -q
+          python3 -I .ci/db_dump.py rebuild "$RUNNER_TEMP/own-db/dump.sql.gz" test_user test_tfc_test \
+            docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
 
       - name: Apply pinned sharding plan
         uses: actions/download-artifact@v4
@@ -443,11 +451,14 @@ jobs:
           SUITE: ${{ matrix.suite }}
           SUITE_MARKERS: ${{ matrix.markers }}
           SUITE_SPLITS: ${{ matrix.splits }}
-          # .ci/collected_ids.py records every test id this shard collected;
-          # the "collection" job fails the run when two shards differ.
+          # .ci/collected_ids.py records every test id this shard collected
+          # and every one it kept; the "collection" job fails the run when two
+          # shards collected differently or kept the same test.
           PYTHONPATH: .ci
-          COLLECTED_IDS_FILE: ${{ runner.temp }}/collected-ids.txt
+          COLLECTED_IDS_FILE: ${{ runner.temp }}/shard-ids/collected-ids.txt
+          SELECTED_IDS_FILE: ${{ runner.temp }}/shard-ids/selected-ids.txt
         run: |
+          mkdir -p "$RUNNER_TEMP/shard-ids"
           set +e
           # pytest.ini adds -v; -q restores compact module progress. Verbose
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
@@ -485,8 +496,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: collected-ids-${{ matrix.suite }}-${{ matrix.group }}
-          path: ${{ runner.temp }}/collected-ids.txt
-          retention-days: 3
+          path: ${{ runner.temp }}/shard-ids
+          # As long as a failed run can be re-run and inspected.
+          retention-days: 14
           overwrite: true
           # A shard that died before it collected has none; the collection
           # job counts the records and fails on a missing one.
@@ -584,10 +596,14 @@ jobs:
     # The from-zero migrate of every run, and the source of the dump the pytest
     # shards restore. A shard skips its own migrate only when a dump exists for
     # exactly this checkout's inputs (.ci/db_dump.py key). This job never
-    # restores: it always migrates an empty database. On a cache miss it saves
-    # the schema it got. On a hit it compares the cached dump with its fresh
-    # migrate and fails on any difference, so a dump that no longer matches
-    # cannot keep passing. The SAML job migrates from zero as well.
+    # restores a cached dump: it always migrates an empty database. On a cache
+    # miss it saves the schema it got. On a hit it compares the cached dump
+    # with its fresh migrate (schema, and applied migrations by name) and
+    # fails on any difference, so a dump that no longer matches cannot keep
+    # passing. It also measures what a restore loses: it rebuilds its database
+    # from its own dump, starts pytest on it, and fails when a table holds
+    # fewer rows than after the migrate and .ci/migration-seeded-tables.json
+    # does not list it. The SAML job migrates from zero as well.
     name: Fresh migrate and database dump
     needs: changes
     if: needs.changes.outputs.backend == 'true'
@@ -648,10 +664,29 @@ jobs:
         # start from a database that is already there.
         run: uv run pytest .ci/migrated_db.py --create-db -q
 
-      - name: Dump the fresh database
+      - name: Tables that hold rows after the fresh migrate
         run: |
-          python3 -I .ci/db_dump.py dump "$RUNNER_TEMP/fresh-db/dump.sql.gz" test_user test_tfc_test \
+          python3 -I .ci/db_dump.py tables "$RUNNER_TEMP/fresh-db/tables.txt" test_user test_tfc_test \
             docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
+
+      - name: Dump the fresh database and rebuild it from the dump
+        # The dump is of the fresh migrate. The database is then what a shard
+        # gets: the dump, restored.
+        run: |
+          python3 -I .ci/db_dump.py rebuild "$RUNNER_TEMP/fresh-db/dump.sql.gz" test_user test_tfc_test \
+            docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
+
+      - name: Start pytest on the rebuilt database
+        # A shard's start-up: migrate applies nothing and post_migrate reseeds.
+        run: uv run pytest .ci/migrated_db.py -q
+
+      - name: Tables that hold rows after the restore
+        run: |
+          python3 -I .ci/db_dump.py tables "$RUNNER_TEMP/fresh-db/restored-tables.txt" test_user test_tfc_test \
+            docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
+
+      - name: A restore empties only the tables that are listed
+        run: python3 -I .ci/db_dump.py seeded "$RUNNER_TEMP/fresh-db/tables.txt" "$RUNNER_TEMP/fresh-db/restored-tables.txt"
 
       - name: Keep the fresh dump for inspection
         # The schema of the test database and its list of applied migrations;
@@ -937,7 +972,7 @@ jobs:
     # never, with every job green. Each shard records what it collected
     # (.ci/collected_ids.py) and this job compares the records. It runs
     # whenever the shards ran, and the gate fails if it did not succeed then.
-    name: Every shard collected the same tests
+    name: Every shard collected the same tests and kept its own
     needs: [changes, test]
     if: ${{ !cancelled() && needs.test.result != 'skipped' }}
     runs-on: ubuntu-latest
@@ -950,7 +985,7 @@ jobs:
         with:
           pattern: collected-ids-*
           path: ${{ runner.temp }}/collected
-      - name: Compare the shards' collection records
+      - name: Compare the shards' collection and selection records
         env:
           SHARDS: ${{ needs.changes.outputs.shards }}
         run: |

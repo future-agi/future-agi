@@ -85,7 +85,9 @@ jobs:
       - name: Is a pull request open for this branch?
         # The pull request pipeline (frontend-develop.yml) runs every test on
         # each push to an open pull request, so the unit tests here would run
-        # the same tests a second time. If the lookup fails, run them.
+        # the same tests a second time. That holds because its pull_request
+        # paths include every path of this workflow
+        # (futureagi/.ci/test_frontend_pipelines.py). If the lookup fails, run them.
         id: pr
         env:
           GH_TOKEN: ${{ github.token }}

@@ -9,7 +9,11 @@ in two shards and another in none. Each shard records what it collected, in
 collection order, and check_collected_ids.py fails the run when two records
 differ.
 
-    PYTHONPATH=.ci COLLECTED_IDS_FILE=ids.txt pytest -p collected_ids ...
+It also records the tests the shard kept after -m and pytest-split, so the
+check can show that no test is in two shards' shares. Neither record says a
+test ran: that is the shard's JUnit report.
+
+    PYTHONPATH=.ci COLLECTED_IDS_FILE=ids.txt SELECTED_IDS_FILE=kept.txt pytest -p collected_ids ...
 """
 
 import hashlib
@@ -38,3 +42,10 @@ def pytest_collection_modifyitems(items):
     path = os.environ.get("COLLECTED_IDS_FILE")
     if path:
         record((item.nodeid for item in items), path)
+
+
+def pytest_collection_finish(session):
+    # After every plugin has deselected: what this process will run.
+    path = os.environ.get("SELECTED_IDS_FILE")
+    if path:
+        record((item.nodeid for item in session.items), path)

@@ -637,16 +637,27 @@ runners in November 2026:
 - With four shards a shard took 36 to 48 minutes, because one flow waited out a 30-minute product
   default.
 - That flow now gives its own project a five-minute settle (`lib/metric-settle.ts`). It asserts
-  that the value is reported as not final while the conversations are open, and that it becomes
-  final no earlier than five minutes after their last arrival. A backend unit test pins the
-  30-minute default.
+  that the value is reported as not final while the conversations are open, and that its own poll
+  first sees the final value no earlier than five minutes after their last arrival, less 15
+  seconds (one 10-second poll interval and 5 seconds of clock tolerance). It reads when the test
+  saw the value, not when the product published it. A backend unit test pins the 30-minute default.
 - With six shards a shard takes about 20 to 30 minutes, 11 to 15 of them fixed cost (the boot
   alone varied from 7 to 11), and `E2E Tests Pass` reports a little over 30 minutes after the push.
 
 **Parity is a gate, not an assumption.** The `report` job lists the suite without `E2E_SHARD` and
 compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
 test has no result in any shard, ran in two shards, never started, or when a shard reported a test
-the listing does not have. Quarantined and `@live-llm` flows are out of both sides.
+the listing does not have. Tests are matched by Playwright's own test id and project, not by line
+number. Quarantined and `@live-llm` flows are out of both sides.
+
+**A skip is not a run.** A test counts as run only when its one result is not a skip. The job
+prints three numbers: tests that ran their body, tests the listing already skips (opt-in flows
+and flows a stack does not have), and tests that skipped themselves while they ran. The last kind
+fails the job unless `.runtime-skips.json` names the test for that stack, with a reason and, when
+the skip is not by design, the ticket that removes it. Each such test also gets a warning on the
+run. To add an entry: `{ "id": "<flow id or title text>", "stack": "distributed" | "standalone",
+"reason": "...", "issue": "..." }`. When the test runs its body again the job warns that the entry
+is out of date; remove it then.
 
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
 SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard

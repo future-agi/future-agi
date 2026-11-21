@@ -11,8 +11,15 @@ inputs, and one job per run still migrates from zero as the control:
     dump     writes the schema and the list of applied migrations, gzipped.
     restore  loads a dump into an empty database in one transaction. Any
              error fails the job; nothing falls back to a partial database.
-    compare  the control: a cached dump must equal a fresh migrate, or the
-             run fails.
+    rebuild  dumps a database, drops it and restores it from that dump. A
+             shard with no cached dump runs it after its own migrate, so
+             every shard starts from the same state, hit or miss.
+    compare  the control: a cached dump must equal a fresh migrate (the same
+             schema, the same applied migrations by name), or the run fails.
+    tables   writes the tables that hold rows, with their row counts.
+    seeded   the control for rows: every table must hold the same number of
+             rows after a fresh migrate and after a restore, except the ones
+             migration-seeded-tables.json names with a reason.
 
 The dump holds the schema and the rows of django_migrations, and no other
 row. That is deliberate:
@@ -21,9 +28,11 @@ row. That is deliberate:
   finds every migration applied, applies nothing, and then sends post_migrate,
   which seeds content types, permissions and the applications' own reference
   rows from the code under test. Nothing seeded is ever stale.
-- Rows a data migration wrote are not carried. A shard already loses them at
-  its first transactional test, which truncates every table, so no test can
-  depend on them.
+- Rows a data migration wrote are not carried, so a restored database lacks
+  them. Which tables that empties is measured on every run (`seeded`) and
+  listed in migration-seeded-tables.json; a new one fails the run until
+  someone decides about it. A shard that migrated from zero lost those rows
+  anyway at its first transactional test, which truncates every table.
 - Seed rows can come from configuration that is not public, and a cache of a
   public repository is readable by any pull request. A schema is not.
 
@@ -34,6 +43,8 @@ import argparse
 import difflib
 import gzip
 import hashlib
+import json
+import re
 import shutil
 import subprocess
 import sys
@@ -67,6 +78,18 @@ OVERLAY = "futureagi/ee/cloud"
 COMPLETE = "-- PostgreSQL database dump complete"
 PARTS = 2
 MIGRATIONS_TABLE = "django_migrations"
+COPY = re.compile(r"COPY (\S+) \((.*)\) FROM stdin;")
+
+# Tables a data migration fills, which a restored database therefore holds
+# empty. Each entry is a decision with its reason.
+SEEDED = Path(__file__).with_name("migration-seeded-tables.json")
+# Every table of the public schema with its exact row count, one per line.
+ROW_COUNTS = (
+    "SELECT c.relname || ' ' || (xpath('/row/n/text()', query_to_xml("
+    "format('SELECT count(*) AS n FROM %I.%I', n.nspname, c.relname), false, true, '')))[1]::text "
+    "FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace "
+    "WHERE c.relkind = 'r' AND n.nspname = 'public' ORDER BY 1"
+)
 
 
 class DumpError(Exception):
@@ -117,21 +140,26 @@ def read_dump(path):
 def normalise(text):
     """The dump as written, except what differs between two correct migrates.
 
-    That is three things: the row values of django_migrations (each row stamps
-    the time it was applied), kept as a count; pg_dump's two version comments;
-    and its per-dump \\restrict token. Every other line is compared verbatim,
-    comments and blank lines included, because a line of a function body or of
-    a multi-line default can look like either.
+    That is three things: the id and the time of each django_migrations row
+    (kept as the sorted `app name` pairs, so two dumps with the same number of
+    different migrations differ); pg_dump's two version comments; and its
+    per-dump \\restrict token. Every other line is compared verbatim, comments
+    and blank lines included, because a line of a function body or of a
+    multi-line default can look like either.
     """
     out = []
     rows = None
+    columns = None
     for line in text.split("\n"):
         if rows is not None:
-            if line == "\\.":
-                out.append(f"<{rows} rows>")
-                rows = None
+            if line != "\\.":
+                rows.append(line)
+                continue
+            if columns is None:
+                out.append(f"<{len(rows)} rows>")
             else:
-                rows += 1
+                out.extend(sorted(_applied(row, columns) for row in rows))
+            rows = None
             continue
         if line.startswith(
             (
@@ -143,11 +171,29 @@ def normalise(text):
         ):
             continue
         out.append(line)
-        if line.startswith("COPY ") and line.endswith(" FROM stdin;"):
-            rows = 0
+        copy = COPY.fullmatch(line)
+        if copy:
+            rows = []
+            columns = None
+            if copy.group(1).split(".")[-1] == MIGRATIONS_TABLE:
+                names = [name.strip() for name in copy.group(2).split(",")]
+                if "app" not in names or "name" not in names:
+                    raise DumpError(f"{MIGRATIONS_TABLE} has no app and name column")
+                columns = (len(names), names.index("app"), names.index("name"))
     if rows is not None:
         raise DumpError("a COPY block has no end")
     return out
+
+
+def _applied(row, columns):
+    """One django_migrations row as `<applied> app name`."""
+    width, app, name = columns
+    fields = row.split("\t")
+    if len(fields) != width:
+        raise DumpError(
+            f"a {MIGRATIONS_TABLE} row has {len(fields)} fields, not {width}"
+        )
+    return f"<applied> {fields[app]} {fields[name]}"
 
 
 def compare(cached, fresh):
@@ -242,11 +288,110 @@ def restore(path, user, database, prefix):
     return int(applied.stdout.strip())
 
 
+def rebuild(path, user, database, prefix):
+    """Replace `database` by a restore of its own dump, written to `path`.
+
+    What a restored database is, made from a database that was migrated here:
+    the schema and the applied migrations, and no other row.
+    """
+    dump(path, user, database, prefix)
+    for command in ("dropdb", "createdb"):
+        done = subprocess.run([*prefix, command, "-U", user, database], check=False)
+        if done.returncode != 0:
+            raise DumpError(f"{command} {database} exited {done.returncode}")
+    return restore(path, user, database, prefix)
+
+
+def populated(user, database, prefix):
+    """{table: rows} for every table of `database` that holds a row."""
+    listed = _psql(prefix, user, database, "-At", "-c", ROW_COUNTS)
+    if listed.returncode != 0:
+        raise DumpError(f"cannot count the rows of {database}")
+    counts = {}
+    for line in listed.stdout.decode().splitlines():
+        table, rows = line.rsplit(" ", 1)
+        if int(rows):
+            counts[table] = int(rows)
+    if MIGRATIONS_TABLE not in counts:
+        raise DumpError(f"{database} records no applied migration")
+    return counts
+
+
+def read_counts(path):
+    counts = {}
+    for line in Path(path).read_text().splitlines():
+        table, rows = line.rsplit(" ", 1)
+        counts[table] = int(rows)
+    if MIGRATIONS_TABLE not in counts:
+        raise DumpError(f"{path}: no {MIGRATIONS_TABLE} row count; not a table list")
+    return counts
+
+
+def read_seeded(path=SEEDED):
+    """{table: reason} of the tables a restore is allowed to leave empty."""
+    try:
+        entries = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as exc:
+        raise DumpError(f"{path}: not a readable list ({exc})") from exc
+    allowed = {}
+    for entry in entries if isinstance(entries, list) else [None]:
+        table = entry.get("table") if isinstance(entry, dict) else None
+        reason = entry.get("reason") if isinstance(entry, dict) else None
+        if not (
+            isinstance(table, str)
+            and table
+            and isinstance(reason, str)
+            and reason.strip()
+        ):
+            raise DumpError(f"{path}: each entry needs a table and a reason: {entry!r}")
+        if table in allowed:
+            raise DumpError(f"{path}: {table} is listed twice")
+        allowed[table] = reason
+    return allowed
+
+
+def seeded(fresh, restored, allowed):
+    """Compares the row count of every table after a fresh migrate and after a restore.
+
+    Returns (problems, notes). A problem is a table whose two counts differ
+    without an entry in `allowed`: it went empty, or it kept only the rows
+    that post_migrate reseeds. Equal counts are not equal rows; a count is
+    what this can say without the rows leaving the database.
+    """
+    problems = []
+    notes = []
+    for table in sorted(set(fresh) | set(restored)):
+        before, after = fresh.get(table, 0), restored.get(table, 0)
+        if before == after:
+            continue
+        if table in allowed:
+            notes.append(
+                f"{table}: {before} rows after a fresh migrate, {after} after a restore (allowed: {allowed[table]})"
+            )
+        elif before > after:
+            problems.append(
+                f"{table} holds {before} rows after a fresh migrate and {after} after a restore. "
+                "A data migration seeds it and nothing reseeds it. Decide: add it to "
+                "futureagi/.ci/migration-seeded-tables.json with the reason no test needs those rows, "
+                "or reseed it after a restore (a post_migrate handler)."
+            )
+        else:
+            problems.append(
+                f"{table} holds {after} rows after a restore and {before} after a fresh migrate."
+            )
+    for table in sorted(allowed):
+        if fresh.get(table, 0) == restored.get(table, 0):
+            notes.append(
+                f"{table} is in migration-seeded-tables.json but holds {fresh.get(table, 0)} rows in both states; its entry is out of date"
+            )
+    return problems, notes
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("key")
-    for name in ("dump", "restore"):
+    for name in ("dump", "restore", "rebuild", "tables"):
         sub = commands.add_parser(name)
         sub.add_argument("path")
         sub.add_argument("user")
@@ -261,8 +406,11 @@ def main(argv=None):
     sub = commands.add_parser("compare")
     sub.add_argument("cached")
     sub.add_argument("fresh")
+    sub = commands.add_parser("seeded")
+    sub.add_argument("fresh")
+    sub.add_argument("restored")
     args = parser.parse_args(argv)
-    if args.command in ("dump", "restore") and not args.prefix:
+    if args.command in ("dump", "restore", "rebuild", "tables") and not args.prefix:
         parser.error("a command prefix is required")
     try:
         if args.command == "key":
@@ -274,6 +422,37 @@ def main(argv=None):
             applied = restore(args.path, args.user, args.database, args.prefix)
             _say(
                 f"restored {args.database} from {args.path}: {applied} applied migrations"
+            )
+        elif args.command == "rebuild":
+            applied = rebuild(args.path, args.user, args.database, args.prefix)
+            _say(
+                f"rebuilt {args.database} from its own dump at {args.path}: "
+                f"{applied} applied migrations, and no other row"
+            )
+        elif args.command == "tables":
+            counts = populated(args.user, args.database, args.prefix)
+            out = Path(args.path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(
+                "".join(f"{table} {rows}\n" for table, rows in sorted(counts.items()))
+            )
+            _say(f"{len(counts)} tables of {args.database} hold rows:")
+            _say(out.read_text().rstrip("\n"))
+        elif args.command == "seeded":
+            problems, notes = seeded(
+                read_counts(args.fresh), read_counts(args.restored), read_seeded()
+            )
+            for note in notes:
+                _say(note)
+            for problem in problems:
+                _say(
+                    f"::error title=A restored test database lacks seeded rows::{problem}"
+                )
+            if problems:
+                return 1
+            _say(
+                "every table holds the same number of rows after a restore as after a fresh migrate, "
+                "except the tables listed above"
             )
         else:
             difference = compare(args.cached, args.fresh)

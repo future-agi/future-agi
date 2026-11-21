@@ -1,0 +1,10 @@
+[
+  {
+    "table": "falcon_ai_skill",
+    "reason": "Seeded by a data migration (the built-in skills). No test reads the pre-seeded rows: the tests create their own or call the migration function first. Kept out of the dump, which lives in a cache that any pull request can read."
+  },
+  {
+    "table": "usage_planentitlement",
+    "reason": "Seeded by a data migration (plan entitlements). No test reads the pre-seeded rows: the tests mock the manager or create their own. Kept out of the dump, which lives in a cache that any pull request can read."
+  }
+]

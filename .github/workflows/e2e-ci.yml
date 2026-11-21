@@ -521,7 +521,9 @@ jobs:
         with:
           name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}
           path: e2e/blob-report
-          retention-days: 3
+          # The report job of a later re-run of failed shards needs the blob
+          # of every shard, so it lives as long as a run is re-run.
+          retention-days: 14
           # A re-run of this one leg replaces its earlier blob; the report job
           # then merges it with the other legs' blobs from the first attempt.
           overwrite: true
@@ -651,7 +653,7 @@ jobs:
         with:
           name: once-per-stack-${{ matrix.stack }}
           path: ${{ runner.temp }}/once-per-stack/record.json
-          retention-days: 3
+          retention-days: 14
           overwrite: true
           if-no-files-found: error
 
@@ -737,7 +739,9 @@ jobs:
           PLAYWRIGHT_JSON_OUTPUT_NAME: listed-suite.json
         run: npx playwright test --list --reporter json > /dev/null
 
-      - name: The shards ran every test exactly once
+      - name: Every listed test has one result, and no test skipped itself unlisted
+        # A skip counts only when the listing declares it or
+        # e2e/.runtime-skips.json allows it for this stack.
         run: node scripts/shard-report.mjs parity --listed listed-suite.json --merged merged-report.json
 
       - name: Download the once-per-stack record

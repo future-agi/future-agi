@@ -907,10 +907,15 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_update_static_gate_has_backend_and_bootstrap_triggers(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text()
+        # A push is filtered at the trigger. A pull request always starts the
+        # workflow, and its jobs follow the same list in the `changes` job.
         triggers = text.split("permissions:", 1)[0]
+        relevant = text.split("            relevant:\n", 1)[1].split("      - id: update-code\n", 1)[0]
         for path in ('"futureagi/**"', '"bin/lib/**"', '"scripts/check_update_safety.py"'):
-            self.assertEqual(triggers.count(path), 2)
+            self.assertEqual(triggers.count(path), 1)
+            self.assertEqual(relevant.count(path), 1)
         job = text.split("  safety:\n", 1)[1].split("\n  unit:", 1)[0]
+        self.assertIn("    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}\n", job)
         self.assertIn("--static --base", job)
         self.assertNotIn("up -d", job)
 
