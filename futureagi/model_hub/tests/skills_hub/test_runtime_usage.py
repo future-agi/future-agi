@@ -1,6 +1,6 @@
 """Core runtime reads; cloud-only Postgres/ClickHouse validation.
 
-Integrate ST5 migration 028 and ST6's live-row compiler before this suite.
+Integrate ST5 migration 039 and ST6's live-row compiler before this suite.
 These tests do not certify the not-yet-wired HTTP projections or eval reads.
 """
 

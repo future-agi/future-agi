@@ -124,7 +124,7 @@ def test_schema_is_auto_discovered_and_does_not_backfill_during_boot():
         is None
     )
     assert executable.count("ENGINE = ReplacingMergeTree(_version, is_deleted)") == 2
-    # Skill scope stays in span attributes: 028 must not alter the spans table.
+    # Skill scope stays in span attributes: 039 must not alter the spans table.
     assert re.search(r"\bALTER\s+TABLE\s+spans\b", executable, re.I) is None
     assert "skill_version_ids" not in executable
     assert "PROJECTION by_trace" in executable

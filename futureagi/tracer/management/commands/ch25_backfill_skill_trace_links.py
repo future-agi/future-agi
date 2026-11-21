@@ -5,7 +5,7 @@ Example (end is exclusive)::
     python manage.py ch25_backfill_skill_trace_links \
         --start-date 2026-11-01 --end-date 2026-11-02 --project-id <UUID>
 
-Both projections are read from the immutable 028 migration, so backfills and
+Both projections are read from the immutable 039 migration, so backfills and
 live inserts cannot silently disagree. Original _version and tombstones are
 kept: retries, overlap with live traffic and a partially completed run are safe
 for readers using FINAL (or argMax followed by the deletion predicate). No
@@ -25,7 +25,7 @@ from tracer.services.clickhouse.v2 import get_v2_config
 
 SCHEMA_PATH = (
     Path(__file__).resolve().parents[2]
-    / "services/clickhouse/v2/schema/028_skill_attribution.sql"
+    / "services/clickhouse/v2/schema/039_skill_attribution.sql"
 )
 TARGETS = ("skill_trace_links", "skill_load_failures")
 MAX_DAYS = 31
@@ -43,7 +43,7 @@ def load_projections() -> dict[str, str]:
             sql,
         )
         if match is None:
-            raise CommandError(f"Missing {target} projection in migration 028")
+            raise CommandError(f"Missing {target} projection in migration 039")
         projections[target] = match.group(1).strip()
     return projections
 

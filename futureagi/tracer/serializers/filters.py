@@ -123,7 +123,9 @@ STANDARD_FILTER_LIST_SCHEMA = deepcopy(FILTER_LIST_SCHEMA)
 _standard_item = STANDARD_FILTER_LIST_SCHEMA["items"]["properties"]
 del _standard_item["group"]
 _standard_item["filter_config"]["properties"]["col_type"]["description"] = (
-    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+    "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, "
+    "ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an "
+    "authorized native-list context."
 )
 FILTER_LIST_QUERY_PARAM_SCHEMA = {
     "type": "string",
@@ -647,6 +649,16 @@ class FilterItemField(serializers.JSONField):
             for key in ("column_id", "property_id")
         )
         if is_metric or has_metric_identity:
+            # Correlation groups and the SKILL family are Skills-only; a metric
+            # identity must not ride on either, stored or live.
+            if "group" in value:
+                raise serializers.ValidationError(
+                    "group is supported only for SKILL filters."
+                )
+            if config.get("col_type") == "SKILL":
+                raise serializers.ValidationError(
+                    "SKILL filters cannot carry a metric field identity."
+                )
             from tracer.services.derived_metrics.predicates import (
                 MetricFilterError,
                 validate_metric_filter_structure,

@@ -513,7 +513,7 @@ def inspect_native(
 
 
 def inspect_skill_extension(client, database, migration, *, require_receipt=True):
-    """Verify the selected 028 extension, not just its receipt. Never run DDL."""
+    """Verify the selected 039 extension, not just its receipt. Never run DDL."""
     targets = ("skill_trace_links", "skill_load_failures")
     objects = ("schema_versions", *targets, *(f"{name}_mv" for name in targets))
     params = {"database": database, "names": objects}

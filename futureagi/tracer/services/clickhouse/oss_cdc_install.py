@@ -456,7 +456,7 @@ def run(
 
             if with_skill_schema or require_skill_schema:
                 skill_schema = apply_schema.SchemaFile.from_path(
-                    native._ROOT / "028_skill_attribution.sql"
+                    native._ROOT / "039_skill_attribution.sql"
                 )
                 allowed.update(
                     packaged(

@@ -1,4 +1,4 @@
--- Code generated from 028_skill_attribution.sql by go generate; DO NOT EDIT.
+-- Code generated from 039_skill_attribution.sql by go generate; DO NOT EDIT.
 WITH
 formatQuerySingleLine(concat($mv$SELECT project_id, trace_id, id AS span_id, start_time,
        attrs_string['fi.skill.id']                         AS skill_id,

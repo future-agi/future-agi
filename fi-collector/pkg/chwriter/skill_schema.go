@@ -29,7 +29,7 @@ const skillSchemaSHA = "ad2619673601e7df807bd62fe6ba0117e24b8f50e911c05c182ec0d2
 var skillSchemaProbe = skillViewSelects + `SELECT count() = 6
     AND (SELECT count() FROM system.databases WHERE name = currentDatabase() AND engine IN ('Atomic', 'Ordinary')) = 1
     AND (SELECT argMax(sha256, applied_at) FROM schema_versions
-         WHERE filename = '028_skill_attribution.sql' AND notes IN ('schema-topology/v1/local', '')) = '` + skillSchemaSHA + `'
+         WHERE filename = '039_skill_attribution.sql' AND notes IN ('schema-topology/v1/local', '')) = '` + skillSchemaSHA + `'
 FROM system.tables WHERE database = currentDatabase() AND (
     (name = 'schema_versions' AND engine = 'MergeTree') OR
     (name = 'spans' AND engine = 'ReplacingMergeTree'

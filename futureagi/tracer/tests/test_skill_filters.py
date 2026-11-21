@@ -177,6 +177,28 @@ def test_latest_state_partitions_keep_complete_group_as_residual():
         partition_trace_filter_plans([skill("in_scope", VERSION)])
 
 
+def test_skill_filters_with_a_metric_identity_are_rejected_by_the_compiler():
+    # Direct compiler callers must not route a metric identity around the
+    # metric family's own validation by labelling it SKILL.
+    for key in ("property_id", "column_id"):
+        item = skill("name", "refund")
+        item[key] = "metric_field:11111111-1111-4111-8111-111111111111"
+        with pytest.raises(UnsupportedFilterShapeError, match="metric field identity"):
+            compile_filters([item])
+
+
+def test_closed_sampling_snapshot_limits_skill_evidence_to_admitted_spans():
+    # A child load arriving after the snapshot is absent from sampling_source,
+    # so it must not make an earlier root qualify on a repeat read.
+    sampled, _ = compile_filters([skill("name", "refund")], table="sampling_source")
+    assert (
+        "(project_id, trace_id, id) IN (SELECT project_id, trace_id, id FROM sampling_source)"
+        in sampled
+    )
+    live, _ = compile_filters([skill("name", "refund")])
+    assert "FROM sampling_source" not in live
+
+
 def test_in_scope_is_span_only_and_does_not_need_projected_array():
     with pytest.raises(UnsupportedFilterShapeError):
         compile_filters([skill("in_scope", VERSION)])

@@ -12,17 +12,17 @@ import (
 	"testing"
 )
 
-var writeSkillSelects = flag.Bool("write-skill-selects", false, "regenerate the embedded 028 view SELECTs")
+var writeSkillSelects = flag.Bool("write-skill-selects", false, "regenerate the embedded 039 view SELECTs")
 
 func TestSkillSchemaReceiptMatchesPackagedMigration(t *testing.T) {
-	b, err := os.ReadFile("../../../futureagi/tracer/services/clickhouse/v2/schema/028_skill_attribution.sql")
+	b, err := os.ReadFile("../../../futureagi/tracer/services/clickhouse/v2/schema/039_skill_attribution.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprintf("%x", sha256.Sum256(b)) != skillSchemaSHA {
 		t.Fatal("startup probe must match the packaged migration")
 	}
-	// This is a projection of exactly two known 028 declarations, not a SQL
+	// This is a projection of exactly two known 039 declarations, not a SQL
 	// rewriter. Fail generation if the migration no longer has this shape.
 	var expressions []string
 	for _, view := range []struct{ table, alias string }{
@@ -35,19 +35,19 @@ func TestSkillSchemaReceiptMatchesPackagedMigration(t *testing.T) {
 		const source = "\nFROM spans\nWHERE "
 		if !found || !end || strings.Count(migration, header) != 1 || !strings.HasPrefix(body, "SELECT ") ||
 			strings.ContainsAny(body, ";$") || strings.Count(body, source) != 1 {
-			t.Fatalf("unexpected 028 definition of %s", view.table)
+			t.Fatalf("unexpected 039 definition of %s", view.table)
 		}
 		// Heredocs preserve every byte of the packaged projections and filters.
 		qualified := strings.Replace(body, source, "\nFROM $mv$, currentDatabase(), $mv$.spans\nWHERE ", 1)
 		expressions = append(expressions, "formatQuerySingleLine(concat($mv$"+qualified+"$mv$)) AS "+view.alias)
 	}
-	want := "-- Code generated from 028_skill_attribution.sql by go generate; DO NOT EDIT.\nWITH\n" + strings.Join(expressions, ",\n") + "\n"
+	want := "-- Code generated from 039_skill_attribution.sql by go generate; DO NOT EDIT.\nWITH\n" + strings.Join(expressions, ",\n") + "\n"
 	if *writeSkillSelects {
 		if err := os.WriteFile("skill_view_selects.sql", []byte(want), 0644); err != nil {
 			t.Fatal(err)
 		}
 	} else if skillViewSelects != want {
-		t.Fatal("embedded SELECTs differ from 028: run go generate ./pkg/chwriter")
+		t.Fatal("embedded SELECTs differ from 039: run go generate ./pkg/chwriter")
 	}
 }
 

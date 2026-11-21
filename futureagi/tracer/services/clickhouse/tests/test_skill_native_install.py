@@ -54,7 +54,7 @@ def installer(topology):
 
     # Extract the actual native stage call, including its options, from the
     # shipping Python entrypoint. Execute it with the real installer bindings,
-    # not a hand-written `--files 028` or a fake installer.
+    # not a hand-written `--files 039` or a fake installer.
     if topology == "standalone":
         path = ROOT / "deploy/standalone/bin/bootstrap.py"
         method = "main"
@@ -147,7 +147,7 @@ def test_native_stage_fresh_and_retry(topology):
             assert query("SELECT count() FROM skill_trace_links FINAL") == [(1,)]
             packaged = (
                 ROOT
-                / "futureagi/tracer/services/clickhouse/v2/schema/028_skill_attribution.sql"
+                / "futureagi/tracer/services/clickhouse/v2/schema/039_skill_attribution.sql"
             )
             # No unrelated schema file or duplicate receipt on re-entry.
             assert query(

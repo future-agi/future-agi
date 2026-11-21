@@ -545,7 +545,7 @@ Temporal workers also wait for migrations.
 The collector can answer `/healthz` before ClickHouse bootstrap finishes. On
 both install paths its OTLP endpoints refuse valid exports with HTTP 503 and
 `Retry-After`, or gRPC `UNAVAILABLE`, until the writer's own ClickHouse database
-has the local 028 receipt and both attached attribution views match the packaged
+has the local 039 receipt and both attached attribution views match the packaged
 SELECTs and destinations. A retained receipt does not vouch for a modified view.
 No rejected span is queued or written. Keep SDK retries enabled. This is a startup barrier for a single
 local ClickHouse target, not continuous schema monitoring: quiesce writers for

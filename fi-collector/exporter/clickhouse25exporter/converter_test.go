@@ -272,12 +272,12 @@ func newSkillCHFixture(t *testing.T) skillCHFixture {
 	t.Cleanup(func() { sql("default", "DROP DATABASE IF EXISTS "+database+" SYNC") })
 	var receipt string
 	views := map[string]string{}
-	for _, filename := range []string{"002_spans_v2.sql", "013_attributes_extra_as_string.sql", "028_skill_attribution.sql"} {
+	for _, filename := range []string{"002_spans_v2.sql", "013_attributes_extra_as_string.sql", "039_skill_attribution.sql"} {
 		contents, err := os.ReadFile(filepath.Join("..", "..", "..", "futureagi", "tracer", "services", "clickhouse", "v2", "schema", filename))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if filename == "028_skill_attribution.sql" {
+		if filename == "039_skill_attribution.sql" {
 			receipt = fmt.Sprintf("%x", sha256.Sum256(contents))
 		}
 		// These three fixed migrations contain no semicolons or comment
@@ -359,7 +359,7 @@ func TestCollectorRetainedSkillViews(t *testing.T) {
 	f := newSkillCHFixture(t)
 	exec := func(statement string) { f.sql(statement) }
 	exec("CREATE TABLE schema_versions (filename String, sha256 FixedString(64), applied_at DateTime DEFAULT now(), notes String) ENGINE = MergeTree ORDER BY filename")
-	exec("INSERT INTO schema_versions (filename, sha256, notes) VALUES ('028_skill_attribution.sql', '" + f.receipt + "', 'schema-topology/v1/local')")
+	exec("INSERT INTO schema_versions (filename, sha256, notes) VALUES ('039_skill_attribution.sql', '" + f.receipt + "', 'schema-topology/v1/local')")
 	exec("CREATE TABLE other_spans AS spans")
 	exec("CREATE TABLE other_links AS skill_trace_links")
 	exec("ALTER TABLE spans ADD COLUMN `na me` String")

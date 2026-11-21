@@ -809,6 +809,22 @@ def test_live_retention_expired_units_remain_no_value_after_purge(
     } == expected
 
 
+def test_metric_filters_never_carry_skill_groups_or_the_skill_family(metadata):
+    # Skills correlation groups and the SKILL family stay Skills-only, both for
+    # stored saved-view filters and for scoped list requests.
+    grouped = {**chip(metadata), "group": 1}
+    as_skill = chip(metadata)
+    as_skill["filter_config"]["col_type"] = "SKILL"
+    for item, message in (
+        (grouped, "group is supported only for SKILL filters"),
+        (as_skill, "SKILL filters cannot carry a metric field identity"),
+    ):
+        with pytest.raises(serializers.ValidationError, match=message):
+            validate_persisted_filter_list([json.loads(json.dumps(item))])
+        with pytest.raises(serializers.ValidationError, match=message):
+            FilterListField().run_validation([json.loads(json.dumps(item))])
+
+
 def test_persisted_filters_are_checked_structurally_when_opted_in(metadata):
     item = chip(metadata, value="Resolved")
     stored = json.loads(json.dumps([item]))

@@ -1849,12 +1849,26 @@ class ClickHouseFilterBuilder:
             if self.query_mode == self.QUERY_MODE_TRACE
             else ""
         )
+        from tracer.services.clickhouse.query_builders.session_list import (
+            ResolvedSpanSource,
+        )
+
+        # A closed sampling snapshot admits only spans whose latest state arrived
+        # before it. Skill evidence must come from those same spans, so a late
+        # child load cannot change an already closed sample.
+        snapshot = (
+            " AND (project_id, trace_id, id) IN "
+            f"(SELECT project_id, trace_id, id FROM {ResolvedSpanSource.SAMPLING.value})"
+            if self.table == ResolvedSpanSource.SAMPLING.value
+            else ""
+        )
         return (
             "SELECT project_id, trace_id, id, max(_version) AS live_version "
             "FROM spans WHERE "
             + self._project_scope_predicate()
             + f" AND {self._skill_window_bounds()}"
             + candidate
+            + snapshot
             + " GROUP BY project_id, trace_id, id HAVING argMax(is_deleted, _version) = 0"
         )
 
@@ -2138,6 +2152,15 @@ class ClickHouseFilterBuilder:
         conditions: list[str] = []
         self._params = {}
         self._param_counter = 0
+        for f in filters:
+            if is_skill_filter(f) and any(
+                str(f.get(key) or "").startswith("metric_field:")
+                for key in ("column_id", "columnId", "property_id")
+            ):
+                # Metric identities are validated only on the metric path.
+                raise _unsupported_filter_shape(
+                    "SKILL filters cannot carry a metric field identity"
+                )
         conditions.extend(self._build_skill_conditions(filters))
 
         for f in filters:

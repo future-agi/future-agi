@@ -223,7 +223,7 @@ def test_old_parts_and_bounded_backfill_through_schema_applier(monkeypatch):
         client = _open_ch_test_http_client(database=database)
         try:
             ensure_versions_table(client)
-            # The real pre-028 spans layout, without unrelated dictionary/MV dependencies.
+            # The real pre-039 spans layout, without unrelated dictionary/MV dependencies.
             for filename in ("002_spans_v2.sql", "013_attributes_extra_as_string.sql"):
                 apply_file(
                     client,
@@ -285,7 +285,7 @@ def test_old_parts_and_bounded_backfill_through_schema_applier(monkeypatch):
                 ).result_rows
             )
             assert old_lists == {historical["id"]: [VERSION], ordinary["id"]: []}
-            # 028 never alters or mutates spans.
+            # 039 never alters or mutates spans.
             assert client.query(span_mutations).result_rows[0][0] == mutations_before
             monkeypatch.setattr(
                 backfill.Command,
