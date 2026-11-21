@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { mapVersionToFormConfig } from "../promptVersionUtils";
+import { getDefaultValues } from "../../AgentBuilder/NodeDrawer/nodeFormUtils";
+import { NODE_TYPES } from "../constants";
 
 // A version object as returned by /model-hub/prompt-history-executions/ —
 // snake_case wire shape (the axios layer does not camelize responses).
@@ -83,7 +85,43 @@ describe("mapVersionToFormConfig", () => {
     expect(cfg.modelConfig.model).toBe("");
     expect(cfg.modelConfig.modelDetail).toEqual({});
     expect(cfg.outputFormat).toBe("string");
+    expect(cfg.templateFormat).toBe("mustache");
     // A system and a user message are always injected.
     expect(cfg.messages.map((m) => m.role)).toEqual(["system", "user"]);
+  });
+
+  describe("template format of an imported prompt (#2075)", () => {
+    const jinjaVersion = {
+      ...apiVersion,
+      prompt_config_snapshot: {
+        ...apiVersion.prompt_config_snapshot,
+        configuration: {
+          ...apiVersion.prompt_config_snapshot.configuration,
+          template_format: "jinja",
+        },
+      },
+    };
+
+    it("maps template_format from the snapshot configuration", () => {
+      expect(mapVersionToFormConfig(jinjaVersion).templateFormat).toBe("jinja");
+    });
+
+    it("keeps a Jinja prompt as Jinja when the node drawer opens", () => {
+      const importedNode = {
+        id: "node-1",
+        type: NODE_TYPES.LLM_PROMPT,
+        data: {
+          label: "imported_prompt",
+          config: { prompt_template_id: "pt-1", prompt_version_id: null },
+          _initialConfig: {
+            prompt_template_id: "pt-1",
+            prompt_version_id: jinjaVersion.id,
+            ...mapVersionToFormConfig(jinjaVersion),
+          },
+        },
+      };
+
+      expect(getDefaultValues(importedNode).templateFormat).toBe("jinja");
+    });
   });
 });

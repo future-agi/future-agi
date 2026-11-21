@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import useAddNodeOptimistic from "../useAddNodeOptimistic";
 import { useAgentPlaygroundStore } from "../../../store";
+import { mapVersionToFormConfig } from "../../../utils/promptVersionUtils";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -178,6 +179,113 @@ describe("useAddNodeOptimistic", () => {
     expect(returnValue).toEqual({
       nodeId: "node-123",
       position: { x: 100, y: 200 },
+    });
+  });
+
+  it("draft path: sends the imported prompt's template_format to addNodeApi (#2075)", async () => {
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
+    mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    await act(async () => {
+      await result.current.addNode({
+        ...defaultPayload,
+        config: {
+          prompt_template_id: "pt-1",
+          prompt_version_id: "pv-1",
+          templateFormat: "jinja",
+          messages: [
+            {
+              id: "m-1",
+              role: "user",
+              content: [{ type: "text", text: "{{ topic }}" }],
+            },
+          ],
+        },
+      });
+    });
+
+    expect(addNodeApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          prompt_template: expect.objectContaining({
+            template_format: "jinja",
+          }),
+        }),
+      }),
+    );
+  });
+
+  describe("draft path: response format of an imported prompt (#2075)", () => {
+    // A Prompt Playground prompt saved with a custom response schema stores
+    // the whole schema object as configuration.response_format.
+    const customSchema = {
+      id: "6f1c2a9e-0b7d-4c55-9a3e-2f8d1b4c7e10",
+      name: "Answer",
+      schema: {
+        type: "object",
+        properties: { answer: { type: "string" } },
+        required: ["answer"],
+      },
+    };
+
+    const importedConfig = (responseFormat) => ({
+      prompt_template_id: "pt-1",
+      prompt_version_id: "pv-1",
+      ...mapVersionToFormConfig({
+        id: "pv-1",
+        prompt_config_snapshot: {
+          messages: [
+            { role: "user", content: [{ type: "text", text: "{{topic}}" }] },
+          ],
+          configuration: { model: "gpt-4o", response_format: responseFormat },
+        },
+      }),
+    });
+
+    async function addImportedNode(responseFormat) {
+      mockEnsureDraft.mockResolvedValue("existing-draft");
+      mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
+      mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+
+      const { result } = renderHook(() => useAddNodeOptimistic());
+
+      await act(async () => {
+        await result.current.addNode({
+          ...defaultPayload,
+          config: importedConfig(responseFormat),
+        });
+      });
+    }
+
+    it("sends the selected custom response schema to addNodeApi", async () => {
+      await addImportedNode(customSchema);
+
+      expect(addNodeApi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            prompt_template: expect.objectContaining({
+              response_format: customSchema,
+            }),
+          }),
+        }),
+      );
+    });
+
+    it("sends a JSON response format to addNodeApi", async () => {
+      await addImportedNode("json");
+
+      expect(addNodeApi).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            prompt_template: expect.objectContaining({
+              response_format: "json",
+            }),
+          }),
+        }),
+      );
     });
   });
 
