@@ -531,7 +531,9 @@ class TestAddToSuite:
         assert drafted.scenario_key in keys
         assert EvidenceImportCase.objects.get(id=drafted.id).status == "added"
 
-    @pytest.mark.parametrize("gate", ["validate_before_save", "validation_running"])
+    @pytest.mark.parametrize(
+        "gate", ["validate_before_save", "validation_running", "run_in_progress"]
+    )
     def test_where_a_save_cannot_be_made_now_the_cases_wait_in_the_unsaved_changes(
         self, environment, cases, storage, user, gate
     ):
@@ -539,13 +541,24 @@ class TestAddToSuite:
 
         drafted, _blocked = _landed(environment, cases, storage)
         suite_before = environment.suite_version_id
-        patched = (
-            patch.object(drafts, "validation_available", return_value=True)
-            if gate == "validate_before_save"
-            else patch.object(
+        patched = {
+            "validate_before_save": lambda: patch.object(
+                drafts, "validation_available", return_value=True
+            ),
+            "validation_running": lambda: patch.object(
                 harness_scenario_actions, "live_validation", return_value=object()
-            )
-        )
+            ),
+            # Refused inside the Save itself, after the cases were written: the Save alone is undone.
+            "run_in_progress": lambda: patch.object(
+                drafts,
+                "require_idle",
+                side_effect=HostedHarnessError(
+                    "environment_busy",
+                    "The environment is being built or extended",
+                    status_code=409,
+                ),
+            ),
+        }[gate]()
         with (
             _certifies(),
             patched,
