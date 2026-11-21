@@ -26,6 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -637,6 +638,7 @@ class CreateRunTestView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("create a test run")
     @validated_request(
         request_serializer=CreateRunTestSerializer,
         responses={
@@ -982,6 +984,7 @@ class RunTestExecutionView(APIView):
             self._test_executor = TestExecutor()
         return self._test_executor
 
+    @viewer_denied("start a paid run")
     @validated_request(
         request_serializer=ExecuteRunTestSerializer,
         responses={
@@ -1360,6 +1363,7 @@ class TestExecutionCancelView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("cancel a run")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
@@ -1876,13 +1880,16 @@ def _flat_kpi_evals(
     values: dict[tuple[str, str, str], object], system_keys: set[str]
 ) -> dict[str, object]:
     """Keep each binding's preferred key unless a system KPI or another eval owns it."""
-    natural = {name for name, _, _ in values}
-    if len(natural) == len(values) and natural.isdisjoint(system_keys):
-        return {name: value for (name, _, _), value in values.items()}
 
     def project(key: str) -> str:
         # Run detail's canonicalKeys hides the underscore-to-camel projection of each key.
         return re.sub(r"_([a-z0-9])", lambda match: match[1].upper(), key)
+
+    natural = {name for name, _, _ in values}
+    # A name equal to another name's projection (tier1 for tier_1) would be hidden.
+    hidden = {project(key) for key in natural if project(key) != key} & natural
+    if len(natural) == len(values) and natural.isdisjoint(system_keys) and not hidden:
+        return {name: value for (name, _, _), value in values.items()}
 
     reserved = natural | system_keys
     reserved_projections = {project(key) for key in reserved}
@@ -1892,7 +1899,7 @@ def _flat_kpi_evals(
     for metric in sorted(values, key=lambda m: (priority[m[2]], m[1], m[0])):
         name, binding_id, _ = metric
         key = name
-        if key in used:
+        if key in used or key in hidden:
             key = f"{name}__{binding_id}"
             while (
                 key in reserved
@@ -2927,15 +2934,28 @@ class TestExecutionDetailView(APIView):
                 start = (page - 1) * page_size
                 end = start + page_size
                 paginated_calls = call_executions[start:end]
+                # Mirrors the dispatch in _apply_grouping. Basic groups keep the
+                # request in their links; scenario dataset groups keep bare links.
+                basic_grouping = not any(
+                    field.startswith("scenario_") and "dataset" in field
+                    for field in row_groups
+                )
+
+                def page_link(number):
+                    if not basic_grouping:
+                        return f"?page={number}"
+                    params = request.query_params.copy()
+                    params["page"] = str(number)
+                    return f"?{params.urlencode()}"
 
                 # Create a custom paginated response for grouped results
                 return Response(
                     {
                         "count": len(call_executions),
                         "next": (
-                            f"?page={page + 1}" if end < len(call_executions) else None
+                            page_link(page + 1) if end < len(call_executions) else None
                         ),
-                        "previous": f"?page={page - 1}" if page > 1 else None,
+                        "previous": page_link(page - 1) if page > 1 else None,
                         "results": paginated_calls,
                         "total_pages": (len(call_executions) + page_size - 1)
                         // page_size,

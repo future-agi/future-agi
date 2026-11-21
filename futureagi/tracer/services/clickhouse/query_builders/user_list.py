@@ -1318,6 +1318,68 @@ class UserListQueryBuilder(BaseQueryBuilder):
             return f"{alias}.project_id IN %(project_ids)s"
         return f"{alias}.project_id = %(project_id)s"
 
+    def _curated_user_ctes(self) -> str:
+        """Canonical curated membership and labels, shared by exact admissions."""
+        resolved_curated_eu = resolved_id_expr("eu.end_user_id", "eu_remap")
+        empty_scope_filter = "AND 0 = 1" if self.empty_scope else ""
+        canonical_search_filter = (
+            "WHERE positionCaseInsensitive(user_id, %(search)s) > 0"
+            if self.search
+            else ""
+        )
+        end_user_filter = (
+            "AND eu.end_user_id = toUUID(%(end_user_id)s)" if self.end_user_id else ""
+        )
+        candidate_end_user_filter = (
+            "HAVING end_user_id IN %(candidate_end_user_ids)s"
+            if self.candidate_end_user_ids
+            else ""
+        )
+        candidate_curated_filter = (
+            "AND eu.end_user_id IN %(candidate_scan_end_user_ids)s"
+            if self.candidate_end_user_ids
+            else ""
+        )
+        return f"""
+        filtered_end_users_raw AS (
+            SELECT
+                eu.project_id,
+                eu.end_user_id,
+                eu.user_id,
+                eu.user_id_type,
+                eu.user_id_hash,
+                eu.first_seen,
+                eu.version
+            FROM end_users AS eu FINAL
+            WHERE eu.organization_id = toUUID(%(org_id)s)
+              AND eu.is_deleted = 0
+              AND notEmpty(eu.user_id)
+              AND {self._project_predicate("eu")}
+              {empty_scope_filter}
+              {candidate_curated_filter}
+              {end_user_filter}
+        ),
+        filtered_end_users AS (
+            SELECT
+                {resolved_curated_eu} AS end_user_id,
+                argMax(eu.user_id, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id,
+                argMax(eu.user_id_type, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id_type,
+                argMax(eu.user_id_hash, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id_hash,
+                min(eu.first_seen) AS first_seen,
+                argMax(eu.project_id, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS project_id
+            FROM filtered_end_users_raw AS eu
+            LEFT JOIN eu_survivor_map AS eu_remap
+                ON eu.end_user_id = eu_remap.any_id
+            GROUP BY end_user_id
+            {candidate_end_user_filter}
+        ),
+        searched_end_users AS (
+            SELECT *
+            FROM filtered_end_users
+            {canonical_search_filter}
+        )
+        """.strip()
+
     def _candidate_page_ctes(
         self,
         *,
@@ -1362,25 +1424,6 @@ class UserListQueryBuilder(BaseQueryBuilder):
         output_where, output_params = self._output_where()
         self.params.update(output_params)
 
-        empty_scope_filter = "AND 0 = 1" if self.empty_scope else ""
-        canonical_search_filter = (
-            "WHERE positionCaseInsensitive(user_id, %(search)s) > 0"
-            if self.search
-            else ""
-        )
-        end_user_filter = (
-            "AND eu.end_user_id = toUUID(%(end_user_id)s)" if self.end_user_id else ""
-        )
-        candidate_end_user_filter = (
-            "HAVING end_user_id IN %(candidate_end_user_ids)s"
-            if self.candidate_end_user_ids
-            else ""
-        )
-        candidate_curated_filter = (
-            "AND eu.end_user_id IN %(candidate_scan_end_user_ids)s"
-            if self.candidate_end_user_ids
-            else ""
-        )
         final_filter = f"WHERE {output_where}" if output_where else ""
         if label_witness:
             self.params.update(label_witness_params or {})
@@ -1429,7 +1472,6 @@ class UserListQueryBuilder(BaseQueryBuilder):
             self.params.update(finite_map_params)
         else:
             eu_map = survivor_map_subquery("end_user_id_remap")
-        resolved_curated_eu = resolved_id_expr("eu.end_user_id", "eu_remap")
         resolved_latest_eu = resolved_id_expr("latest_end_user_id", "span_eu_remap")
         scalar_ctes = ""
         candidate_span_filter = (
@@ -1640,43 +1682,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         ctes = f"""
         eu_survivor_map AS ({eu_map}),
         {scalar_ctes}
-        filtered_end_users_raw AS (
-            SELECT
-                eu.project_id,
-                eu.end_user_id,
-                eu.user_id,
-                eu.user_id_type,
-                eu.user_id_hash,
-                eu.first_seen,
-                eu.version
-            FROM end_users AS eu FINAL
-            WHERE eu.organization_id = toUUID(%(org_id)s)
-              AND eu.is_deleted = 0
-              AND notEmpty(eu.user_id)
-              AND {self._project_predicate("eu")}
-              {empty_scope_filter}
-              {candidate_curated_filter}
-              {end_user_filter}
-        ),
-        filtered_end_users AS (
-            SELECT
-                {resolved_curated_eu} AS end_user_id,
-                argMax(eu.user_id, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id,
-                argMax(eu.user_id_type, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id_type,
-                argMax(eu.user_id_hash, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS user_id_hash,
-                min(eu.first_seen) AS first_seen,
-                argMax(eu.project_id, tuple(eu.end_user_id = {resolved_curated_eu}, eu.version)) AS project_id
-            FROM filtered_end_users_raw AS eu
-            LEFT JOIN eu_survivor_map AS eu_remap
-                ON eu.end_user_id = eu_remap.any_id
-            GROUP BY end_user_id
-            {candidate_end_user_filter}
-        ),
-        searched_end_users AS (
-            SELECT *
-            FROM filtered_end_users
-            {canonical_search_filter}
-        ),
+        {self._curated_user_ctes()},
         {usage_ctes},
         base_rows AS (
             SELECT

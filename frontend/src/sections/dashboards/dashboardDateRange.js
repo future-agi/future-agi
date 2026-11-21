@@ -96,6 +96,83 @@ export function resolveInitialTimeRange(savedTimeRange, urlPreset) {
   };
 }
 
+// Dashboard Date/epoch-millisecond inputs retain their existing precision. Wire
+// timestamps, unlike Date, carry Python/DRF's microseconds (extra digits truncate,
+// never round). Do not use the span-reference parser: it accepts only zoned
+// six-digit strings, whereas dashboard inputs also include Dates and date-only
+// values. BigInt avoids losing precision for dates outside Number's safe us range.
+const epochMicroseconds = (value) => {
+  let normalized = value;
+  let subMillisecond = 0n;
+  if (typeof value === "string") {
+    const match = value.match(
+      /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?(Z|[+-]\d{2}(?::?\d{2})?)?)?$/,
+    );
+    if (!match) return null;
+    const [, year, month, day, hour, minute, second, fraction = "", zone = ""] =
+      match;
+    const leap = +year % 4 === 0 && (+year % 100 !== 0 || +year % 400 === 0);
+    const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if (
+      +year < 1 ||
+      +month < 1 ||
+      +month > 12 ||
+      +day < 1 ||
+      +day > days[+month - 1] ||
+      +hour > 23 ||
+      +minute > 59 ||
+      +second > 59
+    )
+      return null;
+    if (hour != null) {
+      let offset = zone;
+      if (/^[+-]\d{2}$/.test(offset)) offset += ":00";
+      if (/^[+-]\d{4}$/.test(offset))
+        offset = `${offset.slice(0, 3)}:${offset.slice(3)}`;
+      if (
+        offset &&
+        offset !== "Z" &&
+        (+offset.slice(1, 3) > 23 || +offset.slice(4) > 59)
+      )
+        return null;
+      const micros = fraction.padEnd(6, "0").slice(0, 6);
+      normalized = `${year}-${month}-${day}T${hour}:${minute}:${second || "00"}.${micros.slice(0, 3)}${offset}`;
+      subMillisecond = BigInt(micros.slice(3));
+    }
+  } else if (!(value instanceof Date) && typeof value !== "number") {
+    return null;
+  }
+  const milliseconds = new Date(normalized).getTime();
+  return Number.isFinite(milliseconds)
+    ? BigInt(milliseconds) * 1000n + subMillisecond
+    : null;
+};
+
+/** A saved run contributes one observation at window_end, included at BOTH boundaries.
+ * Missing dates, mixed metrics and unavailable reads are not evidence of exclusion.
+ */
+export function isPinnedWindowExcluded(config, range, savedRun) {
+  if (!range || config?.metrics?.length !== 1) return false;
+  const metric = config.metrics[0];
+  if (metric.type !== "derived_metric" || !metric.derived_run_id) return false;
+  if (savedRun && savedRun.id !== metric.derived_run_id) return false;
+  const dates = [
+    savedRun ? savedRun.window_start : config.time_range?.custom_start,
+    savedRun ? savedRun.window_end : config.time_range?.custom_end,
+    range.start,
+    range.end,
+  ];
+  if (dates.some((value) => value == null || value === "")) return false;
+  const [savedStart, savedEnd, start, end] = dates.map(epochMicroseconds);
+  if (
+    [savedStart, savedEnd, start, end].some((value) => value == null) ||
+    savedStart >= savedEnd ||
+    start > end
+  )
+    return false;
+  return savedEnd < start || savedEnd > end;
+}
+
 export function toTimeRangePayload(range) {
   if (!range?.start || !range?.end) return null;
   return { custom_start: range.start, custom_end: range.end };

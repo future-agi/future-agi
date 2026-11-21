@@ -1,4 +1,8 @@
+from uuid import UUID
+
 from django.conf import settings
+from django.db import transaction
+from django.utils import timezone
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import ProviderCredentials
@@ -253,3 +257,68 @@ def resolve_stored_api_key(
             return None
 
     return key
+
+
+def _soft_delete(ids: list[UUID]) -> tuple[int, int]:
+    now = timezone.now()
+    agents_deleted = AgentDefinition.objects.filter(id__in=ids).update(
+        deleted=True, deleted_at=now, updated_at=now
+    )
+    versions_deleted = AgentVersion.objects.filter(agent_definition_id__in=ids).update(
+        deleted=True, deleted_at=now, updated_at=now
+    )
+    return agents_deleted, versions_deleted
+
+
+def delete_agent(organization, agent_id) -> tuple[int, int]:
+    """Soft-delete one of the organization's agents and its versions. Refuses,
+    deleting nothing, while an environment still tests it; the agent is locked so
+    an environment can't bind to it in between."""
+    from simulate.services.agent_overview import environment_counts
+    from simulate.services.hosted_harness import HostedHarnessError
+
+    with transaction.atomic():
+        agent = (
+            AgentDefinition.objects.select_for_update(of=("self",))
+            .filter(id=agent_id, organization=organization, deleted=False)
+            .only("id", "agent_name")
+            .first()
+        )
+        if agent is None:
+            return 0, 0
+        total = environment_counts([agent.id]).get(agent.id, 0)
+        if total:
+            raise HostedHarnessError(
+                "agent_in_use",
+                f"{agent.agent_name} is tested by {total} environment"
+                f"{'s' if total != 1 else ''}. Delete those environments first.",
+                status_code=409,
+            )
+        return _soft_delete([agent.id])
+
+
+def delete_agents(organization, agent_ids) -> tuple[int, int, list[UUID]]:
+    """Soft-delete the organization's agents that no environment tests, with their
+    versions, and skip the rest; returns the skipped ids in the order asked. The
+    agents are locked so an environment can't bind to one in between."""
+    from simulate.services.agent_overview import environment_counts
+
+    with transaction.atomic():
+        agents = list(
+            AgentDefinition.objects.select_for_update(of=("self",))
+            .filter(id__in=agent_ids, organization=organization, deleted=False)
+            .only("id")
+            .order_by("id")
+        )
+        counts = environment_counts([agent.id for agent in agents])
+        found = {agent.id for agent in agents}
+        skipped = [
+            agent_id
+            for agent_id in dict.fromkeys(agent_ids)
+            if agent_id in found and counts.get(agent_id)
+        ]
+        ids = [agent.id for agent in agents if not counts.get(agent.id)]
+        if not ids:
+            return 0, 0, skipped
+        agents_deleted, versions_deleted = _soft_delete(ids)
+    return agents_deleted, versions_deleted, skipped

@@ -790,3 +790,34 @@ def test_all_optional_fresh_tables_have_final_no_ttl_but_retained_ttl_is_untouch
             include_dashboard_rollup=True,
         )
     assert (client.tables, client.writes) == before
+
+
+def test_current_fact_opt_in_adds_only_packaged_immutable_tables():
+    client = MemoryClient(include_current_lists=True)
+    created = native.bootstrap_native(
+        client, database=DATABASE, include_current_lists=True
+    )
+    assert set(created) == set(DEFAULT_NAMES) | {
+        "list_current_root_facts",
+        "list_current_members",
+        "list_current_user_activity",
+    }
+    for name in (
+        "list_current_root_facts",
+        "list_current_members",
+        "list_current_user_activity",
+    ):
+        ddl = client.definitions[name]
+        assert "ReplacingMergeTree(_version)" in ddl
+        assert "generation, attempt_id" in ddl
+        assert "TTL" not in cdc._table(ddl)[2]
+    assert (
+        native.inspect_native(client, database=DATABASE, include_current_lists=True)
+        == ()
+    )
+
+
+@pytest.mark.parametrize("value", [1, "true", None])
+def test_current_fact_bootstrap_option_requires_explicit_boolean(value):
+    with pytest.raises(native.NativeBootstrapError):
+        native.native_definitions(DATABASE, include_current_lists=value)

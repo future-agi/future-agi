@@ -70,9 +70,10 @@ describe("variations", () => {
     ).toBeNull();
   });
 
-  it("says a fix from too few cases can only end with Limited validation", () => {
+  it("says a fix from too few cases can end with Limited validation at best", () => {
+    // Nothing held back ends weaker still: Proven on the targets only.
     const tail =
-      "With fewer than 6 failing cases it can only end with Limited validation";
+      "With fewer than 6 failing cases it can end with Limited validation at best";
     expect(variationsNote(5, FLOOR, "archive")).toMatch(
       new RegExp(`${tail}\\.$`),
     );

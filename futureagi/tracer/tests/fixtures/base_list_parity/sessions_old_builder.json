@@ -1,0 +1,102 @@
+{
+  "baseline_commit": "9fc537515",
+  "window_start": "2026-10-20T12:00:00+00:00",
+  "window_end": "2026-10-21T12:00:00+00:00",
+  "sessions": [
+    "10000000-0000-4000-8000-000000000001",
+    "10000000-0000-4000-8000-000000000002",
+    "10000000-0000-4000-8000-000000000003",
+    "10000000-0000-4000-8000-000000000004"
+  ],
+  "rows": [
+    {
+      "span": "a-old",
+      "trace": "trace-old",
+      "session_index": 0,
+      "offset_seconds": -172800,
+      "version": 1,
+      "input": "outside window"
+    },
+    {
+      "span": "a-first",
+      "trace": "trace-first",
+      "session_index": 0,
+      "offset_seconds": 0,
+      "version": 2,
+      "input": "first",
+      "cost": 0.125
+    },
+    {
+      "span": "a-last",
+      "trace": "trace-last",
+      "session_index": 0,
+      "offset_seconds": 7200,
+      "version": 3,
+      "input": "last",
+      "cost": 0.375
+    },
+    {
+      "span": "a-child",
+      "trace": "trace-first",
+      "session_index": 0,
+      "offset_seconds": 1,
+      "version": 4,
+      "parent_span_id": "a-first",
+      "observation_type": "llm",
+      "cost": 0.5,
+      "total_tokens": 12,
+      "prompt_tokens": 7,
+      "completion_tokens": 5
+    },
+    {
+      "span": "moved",
+      "trace": "trace-moved",
+      "session_index": 1,
+      "offset_seconds": 30,
+      "version": 5,
+      "input": "old owner"
+    },
+    {
+      "span": "moved",
+      "trace": "trace-moved",
+      "session_index": 2,
+      "offset_seconds": 30,
+      "version": 6,
+      "input": "new owner"
+    },
+    {
+      "span": "deleted",
+      "trace": "trace-deleted",
+      "session_index": 3,
+      "offset_seconds": 60,
+      "version": 7,
+      "input": "deleted"
+    },
+    {
+      "span": "deleted",
+      "trace": "trace-deleted",
+      "session_index": 3,
+      "offset_seconds": 60,
+      "version": 8,
+      "is_deleted": 1,
+      "input": "deleted"
+    },
+    {
+      "span": "exclusive-end",
+      "trace": "trace-end",
+      "session_index": 3,
+      "offset_seconds": 86400,
+      "version": 9,
+      "input": "outside exclusive end"
+    }
+  ],
+  "expected_session_indices": [
+    2,
+    0
+  ],
+  "hash_contract": "Both entry points execute against these fixed rows. Structural SHA256 canonicalizes UTC microseconds and UUID strings, preserving row order; a separate SHA256 covers exact float.hex values without rounding. No SQL prototype hash is used as an application receipt.",
+  "expected_page_zero_hashes": {
+    "structural_sha256": "bd46bd4d16cca8eb1f530cee6fc680a2470f6f391d73ec6da5cb9ba065b601e5",
+    "float_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+  }
+}

@@ -1,0 +1,15 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+/* Palette from the silver star logo: charcoal + aluminium. Status colours only mean pass/fail. */
+body.dark{--bg:#1a1c1f;--surface:#222428;--surface2:#2a2d32;--line:#383b41;--fg:#eceef1;--fg2:#a3a8b0;--fg3:#7d828a;
+  --silver1:#f1f2f4;--silver2:#9aa0a8;--pass:#7cbf95;--passbg:rgba(124,191,149,.13);--fail:#e88a73;--failbg:rgba(232,138,115,.13);--hold:#d8b26a;--holdbg:rgba(216,178,106,.13);--icon:invert(.92)}
+body.light{--bg:#f5f6f8;--surface:#ffffff;--surface2:#f0f1f4;--line:#d9dce1;--fg:#1b1d21;--fg2:#555b64;--fg3:#7a8089;
+  --silver1:#9aa0a8;--silver2:#3d4148;--pass:#2c7a51;--passbg:rgba(44,122,81,.10);--fail:#b84a33;--failbg:rgba(184,74,51,.09);--hold:#8a6418;--holdbg:rgba(138,100,24,.10);--icon:none}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased;font-feature-settings:"ss02"}
+.root{background:var(--bg);border-radius:18px;border:1px solid var(--line)}
+.code{font-family:'IBM Plex Mono',monospace}
+.h{font-size:33px;font-weight:600;letter-spacing:-.018em;line-height:1.12}
+.lede{font-size:16px;line-height:1.55;color:var(--fg2);max-width:58ch}
+.tag{display:inline-block;white-space:nowrap;border-radius:5px;padding:2px 8px;font-size:12px;font-weight:500}
+.pass{color:var(--pass);background:var(--passbg)}.fail{color:var(--fail);background:var(--failbg)}.hold{color:var(--hold);background:var(--holdbg)}
+.plain{color:var(--fg2);background:var(--surface2)}
