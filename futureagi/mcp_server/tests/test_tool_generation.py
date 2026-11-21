@@ -19,7 +19,7 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 111
+    assert manifest["tool_count"] == 128
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
@@ -91,6 +91,12 @@ def test_open_world_hint_is_reviewed_catalog_metadata():
         "create_eval_task",
         "update_eval_task",
         "resume_eval_task",
+        "run_debug_failures",
+        "draft_evidence_import",
+        "launch_epoch",
+        "retry_epoch",
+        # Opens a pull request on the agent's GitHub repository.
+        "open_epoch_candidate_pull_request",
     }
     # Pausing stops work; it never reaches a provider.
     assert tools["pause_eval_task"]["annotations"]["openWorldHint"] is False
