@@ -330,15 +330,18 @@ test("GW-E2E-024: model-only edit of stored negative concurrency preserves inher
     limit: number,
     expectedModels: string[],
     status = 200,
+    keyboard = false,
   ) => {
-    const pending = page.waitForResponse(
-      (r) =>
-        new URL(r.url()).pathname.endsWith(UPDATE_PROVIDER) &&
-        r.request().method() === "POST",
-      { timeout: UI_READY },
-    );
-    await dialog.getByRole("button", { name: button, exact: true }).click();
-    const r = await pending;
+    const submit = dialog.getByRole("button", { name: button, exact: true });
+    const [r] = await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          new URL(r.url()).pathname.endsWith(UPDATE_PROVIDER) &&
+          r.request().method() === "POST",
+        { timeout: UI_READY },
+      ),
+      keyboard ? submit.press("Enter") : submit.click(),
+    ]);
     const wire = r.request().postDataJSON() as { name: string; config: Limits };
     const safe = {
       name: wire.name,
@@ -453,7 +456,8 @@ test("GW-E2E-024: model-only edit of stored negative concurrency preserves inher
       "Explicit zero persists",
       async () => {
         await field.fill("0");
-        await save("Save Changes", 0, models);
+        // The rejection toast can cover the button; keyboard activation is still available.
+        await save("Save Changes", 0, models, 200, true);
       },
       { timeout: UI_READY },
     );
