@@ -254,6 +254,31 @@
 - unassigned and deleted item navigation returns real 403 and 404 while the UI offers persistent queue recovery
 - score corrections resolve disagreements; label removal retains historical agreement until all 54 synthetic label scores are deleted, then refetch closes the already-open popup
 
+### ANNOT-E2E-007 — queue managers widen item data columns while selection and actions stay fixed
+
+**Goal:** A queue manager widens the data columns of a queue's item list to read them, while the selection and row-action columns stay fixed and selecting an item or backing out of removal leaves the queue item and its source row untouched
+
+**Spec:** `flows/annotations/queue-items-column-resize.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a numeric label, a one-row synthetic dataset with a minted cell, an active manual queue and one dataset-row item through public APIs
+2. open the queue item list at 1440x900 and wait for the seeded row
+3. see resize handles on Preview and Source but not on selection or Actions, which measure 44 and 60 px
+4. drag the Preview and Source header edges wider; column order and the fixed columns stay unchanged
+5. tick and untick the seeded row and see Remove Selected (1) appear and go
+6. open Remove item on the row, cancel the dialog and still see the row with 1 of 1 items
+7. reload and see the seeded row still listed
+
+**Backend state verified:**
+
+- PG model_hub_queueitem row is unchanged after select, remove-cancel and reload: not deleted, same queue, dataset row, status and updated_at
+- PG model_hub_row and model_hub_cell keep the seeded order, minted value, deleted=false and updated_at
+- items API the grid calls returns exactly the seeded item with its dataset_row preview, and the grid Preview cell reads that exact text
+- the browser sends no DELETE for the item and no POST to items/bulk-remove/
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password
