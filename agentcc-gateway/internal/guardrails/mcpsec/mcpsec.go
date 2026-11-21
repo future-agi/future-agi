@@ -26,7 +26,7 @@ var injectionPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\|\s*sh\b`),
 	regexp.MustCompile(`(?i)\bdrop\s+table\b`),
 	regexp.MustCompile(`(?i)\bdelete\s+from\b`),
-	regexp.MustCompile(`<script[^>]*>`),
+	regexp.MustCompile(`(?i)<script[^>]*>`),
 }
 
 // toolRateCounter tracks per-tool call counts in time buckets for rate limiting.
