@@ -72,7 +72,7 @@ const EndChatNode = ({ id, data, isConnectable }) => {
             : theme.palette.red[600],
         }}
       />
-      <NodeHeader type="endChat" title={data?.name} />
+      <NodeHeader id={id} type="endChat" title={data?.name} />
       <Box>
         <Typography typography="s1" fontWeight="fontWeightMedium">
           Message
