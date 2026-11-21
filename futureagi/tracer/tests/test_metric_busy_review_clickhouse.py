@@ -196,6 +196,9 @@ def test_dense_native_nonprogress_pauses_then_reduced_work_resumes_exactly_once(
         deps, truth = _seed(
             writer, scope, now - timedelta(hours=2), 8000, label="stalled"
         )
+    # The stall must not depend on runner speed: leave only 40 s of each real
+    # 540 s pass for work, so 8,000 owners cannot finish on fast hardware either.
+    settings.METRICS_PASS_SOFT_MARGIN_SECONDS = 500
     captures = []
     for number in range(busy_guard.max_yields()):
         (reservation,) = admission.reserve_projects()
@@ -221,6 +224,7 @@ def test_dense_native_nonprogress_pauses_then_reduced_work_resumes_exactly_once(
         assert bool(state.paused_reason) == (number + 1 == busy_guard.max_yields())
     assert state.paused_reason == "too_busy"
     assert not admission.reserve_projects()
+    settings.METRICS_PASS_SOFT_MARGIN_SECONDS = refresh.DEFAULT_PASS_SOFT_MARGIN_SECONDS
     # A real workload reduction: remove 24 conversation definitions. The span
     # and remaining conversation metric still include EVERY original owner.
     for definition in definitions[1:-1]:
