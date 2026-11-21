@@ -1,59 +1,12 @@
 import { JsonViewer } from "@textea/json-viewer";
 import React, { useState, useMemo, memo } from "react";
 import PropTypes from "prop-types";
-import Image from "src/components/image";
-import { defineDataType } from "@textea/json-viewer";
-import { Dialog, DialogContent, useTheme } from "@mui/material";
+import { useTheme } from "@mui/material";
 import { jsonToDisplayString } from "src/utils/utils";
 import { useDebounce } from "src/hooks/use-debounce";
 import FormSearchField from "../FormSearchField/FormSearchField";
+import { mediaValueTypes } from "./media-value-types";
 import _ from "lodash";
-
-const MiniImageRender = (props) => {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <Image
-        width={150}
-        src={props.value}
-        alt={props.value}
-        style={{ display: "inline-block" }}
-        onClick={() => setOpen(true)}
-      />
-      <Dialog
-        open={open}
-        onClose={() => setOpen(false)}
-        maxWidth={false}
-        PaperProps={{ sx: { maxWidth: 960 } }}
-      >
-        <DialogContent
-          sx={{
-            bgcolor: "background.paper",
-          }}
-        >
-          <img src={props.value} alt="full" style={{ width: "100%" }} />
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-};
-
-MiniImageRender.propTypes = {
-  value: PropTypes.string,
-};
-
-const imageType = defineDataType({
-  is: (value) => {
-    if (typeof value !== "string") return false;
-    try {
-      const isBase64 = value.startsWith("data:image");
-      return isBase64;
-    } catch {
-      return false;
-    }
-  },
-  Component: MiniImageRender,
-});
 
 // Custom comparison function using lodash isEqual
 const arePropsEqual = (prevProps, nextProps) => {
@@ -169,7 +122,7 @@ const CustomJsonViewer = ({
       collapseStringsAfterLength={1000}
       highlightUpdates={false}
       editable={false}
-      valueTypes={[imageType]}
+      valueTypes={mediaValueTypes}
       // this set same as Typography s1 as it is used for normal text
       sx={{ fontSize: "12px", lineHeight: "22px" }}
       {...rest}
