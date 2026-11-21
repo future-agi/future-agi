@@ -9,7 +9,7 @@ import NodeHeader from "./NodeHeader";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import ActionButtons from "../ActionButtons";
-import { getNodeColors } from "../common";
+import { getNodeColors, NODE_ACTIONS_CLASS_NAME } from "../common";
 
 const ConversationNode = ({ data, isConnectable, id }) => {
   const deleteNode = useGraphStore((state) => state.deleteNode);
@@ -23,8 +23,6 @@ const ConversationNode = ({ data, isConnectable, id }) => {
     activeNodeId === id,
     NODE_TYPES.CONVERSATION,
   );
-
-  const uniqueClassName = `conversation-node-${id}`;
 
   const theme = useTheme();
 
@@ -57,13 +55,7 @@ const ConversationNode = ({ data, isConnectable, id }) => {
           "&:hover": {
             borderColor: hoverBorderColor,
           },
-          [`&:hover .add-node-${id}`]: {
-            opacity: 1,
-          },
-          [`&:hover .add-node-border-${id}`]: {
-            opacity: 1,
-          },
-          [`&:hover .${uniqueClassName}`]: {
+          [`&:hover .${NODE_ACTIONS_CLASS_NAME}`]: {
             opacity: 1,
           },
         }}
@@ -84,6 +76,8 @@ const ConversationNode = ({ data, isConnectable, id }) => {
         <NodeHeader
           type="conversation"
           title={data?.name}
+          nodeId={id}
+          editable={data?.editMode}
           badge={
             data?.isStart ? (
               <Label color="primary" variant="soft">
@@ -145,10 +139,11 @@ const ConversationNode = ({ data, isConnectable, id }) => {
               gap: 1,
               flexDirection: "column",
             }}
-            className={uniqueClassName}
+            className={NODE_ACTIONS_CLASS_NAME}
           >
             <ShowComponent condition={!data?.isStart}>
               <ActionButtons
+                aria-label="Delete node"
                 onClick={handleDelete}
                 icon={
                   <SvgColor
@@ -159,8 +154,9 @@ const ConversationNode = ({ data, isConnectable, id }) => {
               />
             </ShowComponent>
             <ActionButtons
+              aria-label="Duplicate node"
               sx={{ opacity: 0 }}
-              className={uniqueClassName}
+              className={NODE_ACTIONS_CLASS_NAME}
               onClick={handleDuplicate}
               icon={
                 <SvgColor
