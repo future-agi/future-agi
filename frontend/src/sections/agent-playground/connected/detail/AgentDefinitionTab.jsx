@@ -10,10 +10,11 @@ import {
 } from "src/api/agents/agentDetail";
 import { useAuthContext } from "src/auth/hooks";
 import CustomTooltip from "src/components/tooltip";
+import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { sourceLabel } from "../connectedAgentLabels";
-import { Card, LineSkeleton } from "./bits";
+import { LineSkeleton } from "./bits";
 import { MONO } from "./format";
 import {
   factsOf,
@@ -38,19 +39,13 @@ function DefinitionRow({ row }) {
       direction="row"
       alignItems="flex-start"
       spacing={2}
-      sx={{
-        px: 1.5,
-        py: 0.75,
-        borderTop: "1px solid",
-        borderColor: "divider",
-        "&:first-of-type": { borderTop: "none" },
-      }}
+      sx={{ px: 1.5, py: 0.25 }}
     >
       <Typography
         sx={{
-          typography: "s1",
+          typography: "s2",
           color: "text.subtitle",
-          width: 150,
+          width: 128,
           flexShrink: 0,
           lineHeight: "24px",
         }}
@@ -98,27 +93,25 @@ function DefinitionRow({ row }) {
                 fontFamily: row.mono ? MONO : undefined,
                 ...(row.multiline && {
                   whiteSpace: "pre-wrap",
-                  ...(!expanded && {
-                    display: "-webkit-box",
-                    WebkitLineClamp: 6,
-                    WebkitBoxOrient: "vertical",
-                    overflow: "hidden",
-                  }),
+                  // Four lines until opened, by height so it holds for any text.
+                  ...(!expanded && { maxHeight: 96, overflow: "hidden" }),
                 }),
               }}
             >
               {row.value}
             </Typography>
-            {row.multiline && String(row.value).split("\n").length > 6 && (
-              <Button
-                size="small"
-                color="inherit"
-                onClick={() => setExpanded((v) => !v)}
-                sx={{ typography: "s2", minWidth: 0, px: 0.5, mt: 0.25 }}
-              >
-                {expanded ? "Show less" : "Show the whole prompt"}
-              </Button>
-            )}
+            {row.multiline &&
+              (String(row.value).split("\n").length > 4 ||
+                String(row.value).length > 320) && (
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() => setExpanded((v) => !v)}
+                  sx={{ typography: "s2", minWidth: 0, px: 0.5, mt: 0.25 }}
+                >
+                  {expanded ? "Show less" : "Show the whole prompt"}
+                </Button>
+              )}
           </>
         )}
       </Box>
@@ -127,6 +120,59 @@ function DefinitionRow({ row }) {
 }
 
 DefinitionRow.propTypes = { row: PropTypes.object.isRequired };
+
+// The prompt, read like a document: its own panel, six lines until opened.
+function PromptPanel({ row }) {
+  const [open, setOpen] = useState(false);
+  const text = String(row.value || "");
+  const long = text.split("\n").length > 6 || text.length > 480;
+  if (!text.trim()) return null;
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
+        px: 2,
+        py: 1.5,
+      }}
+    >
+      <Typography sx={{ typography: "s2", color: "text.subtitle", mb: 0.5 }}>
+        {row.label}
+      </Typography>
+      <Typography
+        sx={{
+          typography: "s1",
+          lineHeight: "24px",
+          whiteSpace: "pre-wrap",
+          ...(!open && long && { maxHeight: 144, overflow: "hidden" }),
+        }}
+      >
+        {text}
+      </Typography>
+      {long && (
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          onClick={() => setOpen((v) => !v)}
+          endIcon={
+            <Iconify
+              icon={open ? "eva:chevron-up-fill" : "eva:chevron-down-fill"}
+              width={16}
+            />
+          }
+          sx={{ mt: 1 }}
+        >
+          {open ? "Show less" : "Show the whole prompt"}
+        </Button>
+      )}
+    </Box>
+  );
+}
+
+PromptPanel.propTypes = { row: PropTypes.object.isRequired };
 
 // A loading row in the shape of DefinitionRow: label column, then the value.
 const SKELETON_VALUES = [72, 96, 180, "70%"];
@@ -178,27 +224,12 @@ const Note = ({ children, tone }) => (
 
 Note.propTypes = { children: PropTypes.node, tone: PropTypes.string };
 
-const Section = ({ title, rows, note, loading, children }) => (
-  <Card title={title}>
-    {loading
-      ? SKELETON_VALUES.slice(0, 2).map((value) => (
-          <DefinitionRowSkeleton key={value} value={value} />
-        ))
-      : rows?.map((row) => <DefinitionRow key={row.label} row={row} />)}
-    {!loading && !rows?.length && !children && (
-      <Note>{note ?? "Nothing recorded for this version"}</Note>
-    )}
-    {!loading && children}
-  </Card>
-);
-
-Section.propTypes = {
-  title: PropTypes.node.isRequired,
-  rows: PropTypes.array,
-  note: PropTypes.string,
-  loading: PropTypes.bool,
-  children: PropTypes.node,
-};
+// A row with nothing in it: listed once as "Not set: …", not as its own row.
+const EMPTY_VALUES = new Set(["", "—", "-", "None", "None yet"]);
+const isEmptyRow = (row) =>
+  !row.items?.length &&
+  !row.node &&
+  (row.value == null || EMPTY_VALUES.has(String(row.value).trim()));
 
 /**
  * Definition: what we hold for the selected version, read-only. Identity,
@@ -235,7 +266,11 @@ export default function AgentDefinitionTab() {
     isError && !version ? "Couldn't load this version" : undefined;
   const factRows = (rows) => (version ? rows : []);
 
-  let configuration;
+  // What the configuration holds: its rows, a provenance note, or (when
+  // there's nothing to show) one message in their place.
+  let configRows = [];
+  let configNote = null;
+  let configuration = null;
   if (!versionId) {
     configuration = <Note>No definition stored for this version</Note>;
   } else if (isError && !version) {
@@ -245,11 +280,9 @@ export default function AgentDefinitionTab() {
       <Note>{stored.error?.message || "Couldn't load the stored Agent"}</Note>
     );
   } else if (details) {
-    configuration = (
+    configRows = storedAgentRows(details);
+    configNote = (
       <>
-        {storedAgentRows(details).map((row) => (
-          <DefinitionRow key={row.label} row={row} />
-        ))}
         <Note>
           {details.origin === "reading"
             ? `Read from the code on ${format(new Date(details.storedAt), "dd-MM-yyyy")} · SDK ${details.sdkVersion}`
@@ -266,12 +299,9 @@ export default function AgentDefinitionTab() {
   } else if (isCode) {
     configuration = <Note>No definition stored for this version</Note>;
   } else {
-    const rows = hostedConfigurationRows(facts);
-    configuration = rows.length ? (
-      rows.map((row) => <DefinitionRow key={row.label} row={row} />)
-    ) : (
-      <Note>No definition stored for this version</Note>
-    );
+    configRows = hostedConfigurationRows(facts);
+    if (!configRows.length)
+      configuration = <Note>No definition stored for this version</Note>;
   }
 
   const envs = environments.data ?? [];
@@ -325,8 +355,8 @@ export default function AgentDefinitionTab() {
             <span>
               <Button
                 size="small"
-                variant="outlined"
-                color="inherit"
+                variant="contained"
+                color="primary"
                 disabled={!canEdit}
                 onClick={() => setConnecting(true)}
               >
@@ -381,8 +411,31 @@ export default function AgentDefinitionTab() {
     },
   ];
 
+  // Prompt first, tools under it, everything else in one two-column table.
+  const isPrompt = (row) => !!row.multiline;
+  const isTools = (row) => String(row.label).startsWith("Tools");
+  const promptRow = configRows.find(isPrompt);
+  const toolsRow = configRows.find(isTools);
+  const seen = new Set();
+  const detailRows = [
+    ...configRows.filter((row) => !isPrompt(row) && !isTools(row)),
+    ...factRows(sourceRows(facts, { isCode })),
+    // The name is the page title, so it isn't repeated here.
+    ...factRows(identityRows(facts)).filter((row) => row.label !== "Name"),
+    ...factRows(reachRows(facts)),
+    ...(agent ? links : []),
+  ].filter((row) => {
+    // Type is in both the configuration and the identity: show it once.
+    const key = `${row.label}|${row.node ? "" : String(row.value ?? row.items)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const shownDetails = detailRows.filter((row) => !isEmptyRow(row));
+  const unsetDetails = detailRows.filter(isEmptyRow).map((row) => row.label);
+
   return (
-    <Stack spacing={3}>
+    <Stack spacing={2}>
       <Stack direction="row" alignItems="center" spacing={1}>
         <Typography sx={{ typography: "s2", color: "text.secondary" }}>
           Definition of
@@ -402,37 +455,54 @@ export default function AgentDefinitionTab() {
           {readFrom ? `Read-only · read from ${readFrom}` : "Read-only"}
         </Typography>
       </Stack>
-      <Section
-        title="Identity"
-        loading={loading}
-        note={factsNote}
-        rows={factRows(identityRows(facts))}
-      />
-      <Section
-        title="Source"
-        loading={loading}
-        note={factsNote}
-        rows={factRows(sourceRows(facts, { isCode }))}
-      />
-      <Section
-        title="Reach"
-        loading={loading}
-        note={factsNote}
-        rows={factRows(reachRows(facts))}
-      />
-      <Card title="Configuration">
-        {loading
-          ? SKELETON_VALUES.map((value) => (
-              <DefinitionRowSkeleton key={value} value={value} />
-            ))
-          : configuration}
-      </Card>
+      {loading ? (
+        SKELETON_VALUES.map((value) => (
+          <DefinitionRowSkeleton key={value} value={value} />
+        ))
+      ) : (
+        <>
+          {configuration}
+          {factsNote && <Note>{factsNote}</Note>}
+          {promptRow && <PromptPanel row={promptRow} />}
+          {toolsRow && !isEmptyRow(toolsRow) && (
+            <Box sx={{ mx: -1.5 }}>
+              <DefinitionRow row={toolsRow} />
+            </Box>
+          )}
+          {/* Every other field, as one dense two-column table. */}
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                md: "repeat(2, minmax(0, 1fr))",
+              },
+              columnGap: 4,
+              borderTop: "1px solid",
+              borderColor: "divider",
+              pt: 1,
+              mx: -1.5,
+            }}
+          >
+            {shownDetails.map((row) => (
+              <DefinitionRow key={row.label} row={row} />
+            ))}
+          </Box>
+          {(unsetDetails.length > 0 || configNote) && (
+            <Box sx={{ mx: -1.5, mt: -1 }}>
+              {unsetDetails.length > 0 && (
+                <Note>{`Not set: ${unsetDetails.join(", ")}`}</Note>
+              )}
+              {configNote}
+            </Box>
+          )}
+        </>
+      )}
       {agent ? (
         <ObservabilityToggle agent={agent} />
       ) : (
         <ObservabilityToggleSkeleton />
       )}
-      <Section title="Links" loading={!agent} rows={links} />
       {isCode && versionId && (
         <CodeCard
           agentId={agentId}
