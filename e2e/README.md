@@ -51,6 +51,14 @@ That image also supplies its own Error Feed entitlement in E2E-only settings; ne
 present in the product image. The E2E API and worker share a test-only integration encryption key
 so the worker can decrypt the connection created during OAuth.
 
+`PROMPT-E2E-002` inspects synthetic saved prompt results, not live inference. Its
+`POST /model-hub/e2e/saved-prompt/` fixture exists only in the E2E backend image and
+accepts a uniquely named prompt, never caller-supplied prices or sources. It stores
+three fixed usage cases through the real cost calculator: an unknown-model estimate,
+zero catalog usage, and positive catalog usage. The flow reads PostgreSQL and the
+normal detail/comparison APIs, then checks the saved UI. It does not call the gateway
+or reconcile amounts against provider invoices.
+
 Eval results, annotation scores and the dataset/simulation dashboards reach ClickHouse **only**
 through the PeerDB mirrors — Django writes those rows to Postgres alone. That is why PeerDB is part
 of the stack and why anything asserting on them needs a CDC-sized poll budget.

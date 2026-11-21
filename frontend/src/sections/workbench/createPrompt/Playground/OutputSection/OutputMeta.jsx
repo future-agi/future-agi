@@ -1,4 +1,5 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Tooltip, Typography } from "@mui/material";
+import { formatModelCost, modelCostSourceLabel } from "src/utils/model-cost";
 import React from "react";
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
@@ -42,17 +43,14 @@ const OutputMeta = ({ metadata }) => {
           value={`${metadata?.responseTime?.toFixed(2)}s`}
         />
       </ShowComponent>
-      <ShowComponent
-        condition={
-          metadata?.responseTime !== null &&
-          metadata?.responseTime !== undefined
-        }
-      >
-        <OutputMetaItem
-          icon="solar:dollar-minimalistic-linear"
-          value={metadata?.cost < 0.1 ? `<0.1` : `${metadata?.cost}`}
-        />
-      </ShowComponent>
+      <Tooltip title={modelCostSourceLabel(metadata?.pricingSource)}>
+        <Box component="span">
+          <OutputMetaItem
+            icon="solar:dollar-minimalistic-linear"
+            value={formatModelCost(metadata?.cost, metadata?.pricingSource)}
+          />
+        </Box>
+      </Tooltip>
       <ShowComponent
         condition={
           metadata?.tokens !== null && metadata?.responseTime !== undefined
