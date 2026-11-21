@@ -7,6 +7,17 @@
  */
 import nunjucks from "nunjucks";
 
+// Names in a default jinja2.Environment's globals. find_undeclared_variables()
+// never reports these, so they are not inputs.
+const JINJA_GLOBALS = new Set([
+  "cycler",
+  "dict",
+  "joiner",
+  "lipsum",
+  "namespace",
+  "range",
+]);
+
 /**
  * Extract top-level input variable names from a Jinja2 template string.
  *
@@ -36,25 +47,40 @@ function _walk(node, declared, used) {
   if (!node) return;
 
   switch (node.typename) {
-    case "For":
-      // Collect loop target variables (e.g. "item" in "for item in items")
-      if (node.name) _collectTargets(node.name, declared);
-      // Walk the iterable expression (e.g. "items")
+    case "For": {
+      // The iterable (e.g. "items") is read in the enclosing scope.
       _walk(node.arr, declared, used);
-      // "loop" is Jinja2's implicit loop variable (loop.index, loop.first, etc.)
-      declared.add("loop");
-      _walk(node.body, declared, used);
+      // The loop target, "loop" and anything set in the body only exist
+      // inside the loop, so the body gets its own copy of the scope.
+      const loopScope = new Set(declared);
+      if (node.name) _collectTargets(node.name, loopScope);
+      loopScope.add("loop");
+      _walk(node.body, loopScope, used);
+      // {% else %} runs when the iterable is empty, outside the loop scope.
+      _walk(node.else_, new Set(declared), used);
       return;
+    }
     case "Set":
-      // {% set x = expr %} — x is local, expr may reference inputs
-      if (node.targets)
+      if (node.value) {
+        // {% set x = expr %}: expr is read before x is assigned, so
+        // {% set x = x + 1 %} still needs x as an input.
+        _walk(node.value, declared, used);
         node.targets.forEach((t) => _collectTargets(t, declared));
-      if (node.value) _walk(node.value, declared, used);
-      _walk(node.body, declared, used);
+      } else {
+        // {% set x %}...{% endset %}: x is local from the start and the
+        // block body has its own scope.
+        node.targets.forEach((t) => _collectTargets(t, declared));
+        _walk(node.body, new Set(declared), used);
+      }
+      return;
+    case "KeywordArgs":
+      // f(key=value): "key" names a parameter, only the value can use inputs.
+      node.children.forEach((pair) => _walk(pair.value, declared, used));
       return;
     case "Symbol":
-      // A variable reference — if not declared locally, it's an input
-      if (!declared.has(node.value)) used.add(node.value);
+      // A variable reference is an input unless it is local or a global.
+      if (!declared.has(node.value) && !JINJA_GLOBALS.has(node.value))
+        used.add(node.value);
       return;
     case "LookupVal":
       // obj.field or obj["key"] — only the root (obj) matters
