@@ -2,6 +2,7 @@
 
 import gzip
 import importlib.util
+import json
 import pathlib
 import subprocess
 import sys
@@ -155,8 +156,6 @@ STUB = textwrap.dedent(
 
 class RestoreAndDumpTest(Workspace):
     def stub(self, **plan):
-        import json
-
         script = self.dir / "stub.py"
         script.write_text(STUB)
         state = self.dir / "state.json"

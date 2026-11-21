@@ -27,7 +27,9 @@ env:
   # changes and on every push (see the changes job). The Metrics suite was
   # measured at about 368 test-minutes; its two longest cases run about 19
   # minutes each against the real pass deadline, which bounds every shard.
-  SPLITS: "10"
+  # The main suite was measured at about 196 test-minutes (dev, 21 Nov 2026),
+  # so 16 legs carry about 12 minutes of tests each.
+  SPLITS: "16"
   METRICS_SPLITS: "16"
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
   # adds its suite's term (futureagi/.ci/test_backend_ci_output.py pins this).
@@ -264,7 +266,9 @@ jobs:
   plan:
     # Pins one durations snapshot per run so re-runs shard identically —
     # a floating cache can move a failed test to a shard that never
-    # re-runs, turning the gate green without re-executing it.
+    # re-runs, turning the gate green without re-executing it. The snapshot
+    # is the newest one the timings job saved on a dev push, or the committed
+    # .test_durations when there is none.
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
@@ -415,6 +419,13 @@ jobs:
           db=(docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db)
           "${db[@]}" createdb -U test_user test_tfc_test
           python3 -I .ci/db_dump.py restore "$RUNNER_TEMP/migrated-db/dump.sql.gz" test_user test_tfc_test "${db[@]}"
+
+      - name: Migrate the test database from zero (no dump for this key)
+        # A step of its own, before the shard's pytest run, so no test's
+        # recorded time includes the migrate: the recorded times become the
+        # next sharding plan. The pytest-django path, as in the from-zero job.
+        if: steps.db-dump.outputs.cache-hit != 'true'
+        run: uv run pytest saml2_auth/tests/test_multiworker.py -m multiworker --create-db -q
 
       - name: Apply pinned sharding plan
         uses: actions/download-artifact@v4
@@ -851,6 +862,43 @@ jobs:
               ;;
             *) echo "::error::Docker Hub answered HTTP ${code}; re-run the job"; exit 1 ;;
           esac
+
+  timings:
+    # Each shard of a dev push records its tests' times (--store-durations).
+    # This job merges them into one .test_durations and saves it under the
+    # cache key the plan job restores, so the next runs split on fresh times.
+    # Without it the committed file was the only input and went stale. Not a
+    # dependency of "Backend Tests Pass": a failure here costs balance, not
+    # correctness, and it still turns this run red.
+    name: Save test timings (dev pushes)
+    needs: [plan, test]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch this run's sharding plan
+        uses: actions/download-artifact@v4
+        with:
+          name: test-durations-plan
+          path: ${{ runner.temp }}/timings/plan
+      - name: Fetch the shards' timing files
+        # One directory per shard. A shard that failed uploaded none; its
+        # tests keep the plan's times.
+        uses: actions/download-artifact@v4
+        with:
+          pattern: timing-data-*
+          path: ${{ runner.temp }}/timings/shards
+      - name: Merge into one .test_durations
+        run: |
+          python3 -I futureagi/.ci/merge_test_durations.py \
+            "$RUNNER_TEMP/timings/plan/.test_durations" \
+            "$RUNNER_TEMP"/timings/shards/*/.test_durations > futureagi/.test_durations
+      - name: Save for the next runs' plan
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: futureagi/.test_durations
+          key: test-durations-${{ github.run_id }}
 
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check

@@ -167,11 +167,13 @@ def dump(path, user, database, prefix):
         "--no-privileges",
         database,
     ]
-    with gzip.open(partial, "wb") as out:
-        proc = subprocess.Popen(command, stdout=subprocess.PIPE)
+    with (
+        gzip.open(partial, "wb") as out,
+        subprocess.Popen(command, stdout=subprocess.PIPE) as proc,
+    ):
         shutil.copyfileobj(proc.stdout, out)
-        if proc.wait() != 0:
-            raise DumpError(f"pg_dump exited {proc.returncode}")
+    if proc.returncode != 0:
+        raise DumpError(f"pg_dump exited {proc.returncode}")
     read_dump(partial)
     partial.replace(path)
 
