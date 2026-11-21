@@ -181,6 +181,8 @@ export const REVIEW_REFUSALS = Object.freeze({
   draft_changed: { status: 409, details: ["piece"] },
   draft_stale: { status: 409, details: ["piece"] },
   review_stale: { status: 409, details: ["changes"] },
+  // Some changes are decided and others not, and the request came without the review's digest.
+  review_in_progress: { status: 409 },
   review_undecided: { status: 409, details: ["changes"] },
   change_depends_on_rejected: { status: 409, details: ["pairs"] },
   idempotency_key_reused: { status: 409 },
