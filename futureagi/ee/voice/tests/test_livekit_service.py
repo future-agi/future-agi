@@ -957,7 +957,8 @@ class TestRecordingSpeakerTracks:
         call = MagicMock()
         call.provider_call_data = {PROVIDER_KEY: {"egress_id": "EG_1"}}
         call.asave = AsyncMock()
-        egress_info = MagicMock()
+        call.service_provider_call_id = "call_call-1"
+        egress_info = MagicMock(egress_id="EG_1", room_name="call_call-1")
         egress_info.status = EgressStatus.EGRESS_COMPLETE
         egress_info.file_results = [MagicMock(filename="raw/room.mp3")]
         cuts = {}
@@ -966,11 +967,19 @@ class TestRecordingSpeakerTracks:
             cuts[s3_key.rsplit("_", 2)[-2]] = ffargs
             return f"https://media/{s3_key}"
 
+        async def update_fields(**changes):
+            for field, value in changes.items():
+                setattr(call, field, value)
+            return 1
+
         with (
             patch(
                 "simulate.models.test_execution.CallExecution.objects.aget",
                 new=AsyncMock(return_value=call),
             ),
+            patch(
+                "simulate.models.test_execution.CallExecution.objects.filter"
+            ) as filtered,
             patch.object(livekit_service, "_create_api", return_value=AsyncMock()),
             patch(
                 "ee.voice.services.livekit.recording.poll_egress_completion",
@@ -982,6 +991,7 @@ class TestRecordingSpeakerTracks:
             ),
             patch("ee.voice.services.livekit.recording.delete_egress_recording"),
         ):
+            filtered.return_value.aupdate = AsyncMock(side_effect=update_fields)
             result = asyncio.run(
                 livekit_service.extract_and_persist_recordings("call-1")
             )
