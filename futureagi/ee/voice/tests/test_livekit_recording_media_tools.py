@@ -335,7 +335,8 @@ def test_retry_after_raw_deletion_returns_persisted_tracks():
     )
     missing_raw.assert_not_called()
     delete.assert_called_once_with(Bucket="livekit-egress", Key="raw/room.ogg")
-    assert second == first and second.error is None
+    _assert_returned_tracks(second, first.provider_call_data[PROVIDER_KEY]["recording"])
+    assert second.error is None
 
 
 def test_complete_map_saved_before_cleanup_survives_worker_stop():
@@ -415,8 +416,7 @@ def test_cleanup_replay_rejects_foreign_egress_result(response_id, response_room
     assert result.error["code"] == "recording_cleanup_failed"
 
 
-@pytest.mark.parametrize("changed", ["egress_id", "call_id"])
-def test_retry_does_not_reuse_another_recording_source(changed):
+def test_retry_does_not_reuse_another_recording_source():
     from ee.voice.services.livekit.service import PROVIDER_KEY
 
     first, _, _, _ = _extract(
@@ -424,10 +424,7 @@ def test_retry_does_not_reuse_another_recording_source(changed):
         stream=lambda _c, _k, dest, _a: f"https://old/{dest}",
     )
     data = first.provider_call_data
-    if changed == "egress_id":
-        data[PROVIDER_KEY]["egress_id"] = "EG_2"
-    else:
-        data[PROVIDER_KEY]["recording_source"]["call_id"] = "other-call"
+    data[PROVIDER_KEY]["egress_id"] = "EG_2"
     retry, call, delete, _ = _extract(data, stream=MagicMock(side_effect=OSError))
     delete.assert_not_called()
     assert retry.error["tracks"] == ["assistant", "customer", "mono", "stereo"]
@@ -452,8 +449,26 @@ def test_unattributed_legacy_links_are_preserved_but_not_used_for_a_new_failure(
 
 
 @pytest.mark.parametrize("incoming_egress", [None, "EG_2"])
-def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
+@pytest.mark.parametrize(
+    "source_fields",
+    [
+        {},
+        {"recording_source": None},
+        {"recording_source": {}},
+        {"recording_source": "EG_1"},
+        {"recording_source": {"call_id": "call-1"}},
+        {"recording_source": {"egress_id": "EG_1"}},
+        {"recording_source": {"call_id": 1, "egress_id": "EG_1"}},
+        {"recording_source": {"call_id": "other-call", "egress_id": "EG_1"}},
+        {"recording_source": {"call_id": "call-1", "egress_id": 1}},
+        {"recording_source": {"call_id": "call-1", "egress_id": " "}},
+    ],
+)
+def test_feeder_retry_preserves_completed_preupgrade_call(
+    incoming_egress, source_fields
+):
     import asyncio
+    from copy import deepcopy
     from unittest.mock import AsyncMock
 
     from ee.voice.services.livekit.service import PROVIDER_KEY
@@ -480,6 +495,7 @@ def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
         provider_call_data={
             PROVIDER_KEY: {
                 "egress_id": "EG_1",
+                **source_fields,
                 "recording": saved.copy(),
                 "assistant_recording_url": saved["assistant"],
                 "customer_recording_url": saved["customer"],
@@ -495,7 +511,9 @@ def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
         feeder_data["egress_id"] = incoming_egress
     with (
         patch.object(CallExecution.objects, "aget", new=AsyncMock(return_value=call)),
+        patch.object(CallExecution.objects, "filter") as writes,
         patch.object(CallTranscript.objects, "filter") as transcripts,
+        patch("ee.voice.services.livekit.recording.stream_egress_to_s3") as stream,
         patch.object(service, "_create_api") as api,
         patch("ee.voice.services.livekit.recording.delete_egress_recording") as delete,
     ):
@@ -509,7 +527,10 @@ def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
             )
         )
         call.asave.reset_mock()
+        snapshot = deepcopy(call.provider_call_data)
         result = asyncio.run(service.extract_and_persist_recordings("call-1"))
+        writes.assert_not_called()
+        stream.assert_not_called()
         api.assert_not_called()
         delete.assert_not_called()
         call.asave.assert_not_awaited()
@@ -527,5 +548,7 @@ def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
     )
     bucket = call.provider_call_data[PROVIDER_KEY]
     assert bucket["egress_id"] == (incoming_egress or "EG_1")
-    assert "recording_source" not in bucket and "recording_error" not in bucket
+    assert call.provider_call_data == snapshot
+    assert call.recording_url == saved["combined"]
+    assert call.stereo_recording_url == saved["stereo"]
     assert call.recording_available and serializer.get_recordings(call) == before

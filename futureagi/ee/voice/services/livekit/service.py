@@ -769,10 +769,6 @@ class LivekitService(VoiceServiceBlueprint):
         )
         egress_id = provider_data.get("egress_id")
 
-        if not egress_id:
-            logger.warning("livekit_no_egress_id", call_id=call_id_str)
-            return RecordingUrls(recording_fields_persisted=True)
-
         # fetch_and_store_call_data may already have replaced egress_id. Bind
         # the outputs to their source independently of that mutable field.
         identity = {"call_id": call_id_str, "egress_id": egress_id}
@@ -784,8 +780,17 @@ class LivekitService(VoiceServiceBlueprint):
         }
         tracks = {}
         saved = provider_data.get("recording")
+        source = provider_data.get("recording_source")
+        valid_source = (
+            isinstance(source, dict)
+            and set(source) == {"call_id", "egress_id"}
+            and source["call_id"] == call_id_str
+            and bool(call_id_str.strip())
+            and isinstance(source["egress_id"], str)
+            and bool(source["egress_id"].strip())
+        )
         if (
-            "recording_source" not in provider_data
+            not valid_source
             and isinstance(saved, dict)
             and all(isinstance(saved.get(k), str) and saved[k].strip() for k in fields)
         ):
@@ -802,9 +807,10 @@ class LivekitService(VoiceServiceBlueprint):
                     "tracks": [],  # no split was attempted
                 },
             )
-        if provider_data.get("recording_source") == identity and isinstance(
-            saved, dict
-        ):
+        if not isinstance(egress_id, str) or not egress_id.strip():
+            logger.warning("livekit_no_egress_id", call_id=call_id_str)
+            return RecordingUrls(recording_fields_persisted=True)
+        if source == identity and isinstance(saved, dict):
             for name in fields:
                 url = saved.get(name)
                 if isinstance(url, str) and url.strip():
@@ -832,7 +838,9 @@ class LivekitService(VoiceServiceBlueprint):
         upload_keys: dict[str, str] = {}
         failures: dict[str, Exception] = {}
 
-        async def persist(*, cleanup_tracks=None, cleanup_error=None):
+        async def persist(
+            *, cleanup_tracks=None, cleanup_error=None, observed_success=None
+        ):
             # Only the read/compare/update is retried. Never hold a row lock
             # over LiveKit, S3, or the activity's subsequent cost lookup.
             while True:
@@ -881,6 +889,8 @@ class LivekitService(VoiceServiceBlueprint):
                 if cleanup_tracks is None:
                     if "recording_source" not in lk and current_map:
                         updated["unattributed_recording"] = current_map
+                    if not bound or current_map != merged:
+                        updated.pop("recording_cleanup_success", None)
                     updated.update(recording_source=identity, recording=merged)
                     for name in ("assistant", "customer"):
                         if name in merged:
@@ -893,6 +903,26 @@ class LivekitService(VoiceServiceBlueprint):
                         if ("combined" if name == "mono" else name) not in merged
                     }
                     error = _recording_error(missing) if missing else None
+                    prior_error = lk.get("recording_error")
+                    if (
+                        not missing
+                        and bound
+                        and current_map == merged
+                        and isinstance(prior_error, dict)
+                        and prior_error.get("code") == "recording_cleanup_failed"
+                    ):
+                        error = prior_error
+                elif cleanup_error is None:
+                    # Only a confirmed DeleteObject advances the success token.
+                    # A completed split alone does not prove cleanup succeeded.
+                    updated["recording_cleanup_success"] = uuid.uuid4().hex
+                elif (
+                    lk.get("recording_cleanup_success")
+                    and lk["recording_cleanup_success"] != observed_success
+                ):
+                    # Another delete succeeded after this attempt's snapshot.
+                    # Keep the current outcome, including any subsequent failure.
+                    error = lk.get("recording_error")
                 if error:
                     updated["recording_error"] = error
                 else:
@@ -934,7 +964,7 @@ class LivekitService(VoiceServiceBlueprint):
                 result.provider_call_data = changes.get("provider_call_data", data)
                 return result
 
-        async def cleanup(saved_tracks, object_key=None):
+        async def cleanup(snapshot, object_key=None):
             error = None
             try:
                 if object_key is None:
@@ -968,10 +998,14 @@ class LivekitService(VoiceServiceBlueprint):
                     "message": "Tracks are available; raw recording cleanup could not be confirmed.",
                     "tracks": [],
                 }
-            return await persist(cleanup_tracks=saved_tracks, cleanup_error=error)
+            return await persist(
+                cleanup_tracks=snapshot["recording"],
+                cleanup_error=error,
+                observed_success=snapshot.get("recording_cleanup_success"),
+            )
 
         if tracks.keys() == fields.keys():
-            return await cleanup(saved_tracks=saved)
+            return await cleanup(provider_data)
 
         # 1. Stop egress (it stays ACTIVE until explicitly stopped), then poll
         lkapi = self._create_api()
@@ -1106,7 +1140,7 @@ class LivekitService(VoiceServiceBlueprint):
             upload_keys[name] = destination
 
         result = await persist()
-        if result.error:
+        if result.error and result.error["code"] != "recording_cleanup_failed":
             logger.warning(
                 "livekit_egress_cleanup_skipped",
                 call_id=call_id_str,
@@ -1115,9 +1149,7 @@ class LivekitService(VoiceServiceBlueprint):
                 code=result.error["code"],
             )
         else:
-            result = await cleanup(
-                result.provider_call_data[PROVIDER_KEY]["recording"], object_key
-            )
+            result = await cleanup(result.provider_call_data[PROVIDER_KEY], object_key)
 
         logger.info(
             "livekit_recordings_processed",

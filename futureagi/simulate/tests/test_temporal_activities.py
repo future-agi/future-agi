@@ -1136,6 +1136,77 @@ class TestFetchAndPersistCallResultActivity:
         await sync_to_async(create_call.refresh_from_db)()
         assert create_call.status == CreateCallExecution.CallStatus.COMPLETED
 
+    @pytest.mark.parametrize("peer_succeeds", [True, False])
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_overlapping_cleanup_keeps_confirmed_delete(
+        self, call_execution, peer_succeeds
+    ):
+        _ee_voice_large()
+        from livekit.protocol.egress import EgressStatus
+
+        from ee.voice.services.livekit.service import LivekitService
+
+        call_id = str(call_execution.pk)
+        source = {"call_id": call_id, "egress_id": "EG_1"}
+        tracks = {
+            k: f"https://media/{k}"
+            for k in ("combined", "stereo", "assistant", "customer")
+        }
+        await CallExecution.objects.filter(pk=call_id).aupdate(
+            provider_call_data={
+                "livekit": {
+                    "egress_id": "EG_1",
+                    "recording_source": source,
+                    "recording": tracks,
+                }
+            }
+        )
+        info = MagicMock(
+            room_name=f"call_{call_id}",
+            egress_id="EG_1",
+            status=EgressStatus.EGRESS_COMPLETE,
+            file_results=[MagicMock(filename="raw/one.ogg")],
+        )
+        response = MagicMock(items=[info])
+        outer, peer = AsyncMock(), AsyncMock()
+        peer.egress.list_egress.return_value = response
+        intermediate = []
+
+        async def finish_peer_before_outer(_request):
+            result = await service.extract_and_persist_recordings(call_id)
+            intermediate.append(result.error)
+            return response
+
+        outer.egress.list_egress.side_effect = finish_peer_before_outer
+        with (
+            patch("ee.voice.services.livekit.service.LiveKitConfig.from_env"),
+            patch.object(LivekitService, "_create_api", side_effect=[outer, peer]),
+            patch(
+                "ee.voice.services.livekit.recording.delete_egress_recording",
+                side_effect=(
+                    [None, TimeoutError()] if peer_succeeds else [TimeoutError(), None]
+                ),
+            ) as delete,
+        ):
+            service = LivekitService()
+            result = await service.extract_and_persist_recordings(call_id)
+
+        assert len(intermediate) == 1
+        if peer_succeeds:
+            assert intermediate[0] is None
+        else:
+            assert intermediate[0]["code"] == "recording_cleanup_failed"
+        assert delete.call_args_list == [((service.config, "raw/one.ogg"), {})] * 2
+        await call_execution.arefresh_from_db()
+        stored = call_execution.provider_call_data["livekit"]
+        assert stored["recording_source"] == source and stored["recording"] == tracks
+        assert stored["recording_cleanup_success"]
+        assert "recording_error" not in stored and result.error is None
+        assert call_execution.recording_url == tracks["combined"]
+        assert call_execution.stereo_recording_url == tracks["stereo"]
+        assert call_execution.recording_available
+
     @pytest.mark.parametrize(
         ("phase", "split", "delete_fails"),
         [
@@ -1317,6 +1388,8 @@ class TestFetchAndPersistCallResultActivity:
             assert result.recording_error is None
         await call_execution.arefresh_from_db()
         stored = call_execution.provider_call_data["livekit"]
+        if phase == "cleanup":
+            assert "recording_cleanup_success" not in stored
         if phase == "same-source":
             expected = {
                 **old,
