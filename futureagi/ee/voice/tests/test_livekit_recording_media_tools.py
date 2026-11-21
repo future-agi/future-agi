@@ -181,8 +181,7 @@ def test_any_failed_track_keeps_the_raw_recording_without_its_error_text():
     assert result.assistant_recording_url.endswith("_assistant_recording.mp3")
     assert result.error == {
         "code": "recording_split_failed",
-        "message": "Some call recording tracks could not be created. The raw "
-        "recording is kept.",
+        "message": "Some call recording tracks could not be created.",
         "tracks": ["customer"],
     }
     assert "internal-bucket" not in str(call.provider_call_data)
@@ -247,3 +246,78 @@ def test_interrupted_input_is_not_reported_as_a_successful_split():
         pytest.raises(RuntimeError, match="Incomplete egress recording input"),
     ):
         recording.stream_egress_to_s3(MagicMock(), "source", "dest", ["-ac", "1"])
+
+
+def test_retry_completes_with_complementary_track_successes():
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+
+    def partial(_config, _key, destination, _args):
+        return None if "_assistant_" in destination else f"https://first/{destination}"
+
+    first, _, delete, _ = _extract({PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=partial)
+    delete.assert_not_called()
+    assert first.error["tracks"] == ["assistant"]
+
+    def remaining(_config, _key, destination, _args):
+        assert "_assistant_" in destination
+        return f"https://second/{destination}"
+
+    second, call, delete, _ = _extract(first.provider_call_data, stream=remaining)
+    assert second.error is None
+    assert second.customer_recording_url == first.customer_recording_url
+    assert second.recording_url == first.recording_url
+    assert second.stereo_recording_url == first.stereo_recording_url
+    assert second.assistant_recording_url.startswith("https://second/")
+    assert "recording_error" not in call.provider_call_data[PROVIDER_KEY]
+    delete.assert_called_once()
+
+
+def test_retry_after_raw_deletion_returns_persisted_tracks():
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+
+    first, _, delete, _ = _extract(
+        {PROVIDER_KEY: {"egress_id": "EG_1"}},
+        stream=lambda _c, _k, dest, _a: f"https://media/{dest}",
+    )
+    delete.assert_called_once()
+    missing_raw = MagicMock(side_effect=FileNotFoundError)
+    second, _, delete, _ = _extract(first.provider_call_data, stream=missing_raw)
+    missing_raw.assert_not_called()
+    delete.assert_not_called()
+    assert second == first
+
+
+@pytest.mark.parametrize("changed", ["egress_id", "call_id"])
+def test_retry_does_not_reuse_another_recording_source(changed):
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+
+    first, _, _, _ = _extract(
+        {PROVIDER_KEY: {"egress_id": "EG_1"}},
+        stream=lambda _c, _k, dest, _a: f"https://old/{dest}",
+    )
+    data = first.provider_call_data
+    if changed == "egress_id":
+        data[PROVIDER_KEY]["egress_id"] = "EG_2"
+    else:
+        data[PROVIDER_KEY]["recording_source"]["call_id"] = "other-call"
+    retry, call, delete, _ = _extract(data, stream=MagicMock(side_effect=OSError))
+    delete.assert_not_called()
+    assert retry.error["tracks"] == ["assistant", "customer", "mono", "stereo"]
+    assert data[PROVIDER_KEY]["recording"] == {}
+    assert "https://old/" not in str(data)
+    assert call.recording_url is None and call.stereo_recording_url is None
+    assert not call.recording_available
+
+
+def test_unattributed_legacy_links_are_preserved_but_not_used_for_a_new_failure():
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+
+    saved = {"combined": "https://media/legacy"}
+    result, _, delete, _ = _extract(
+        {PROVIDER_KEY: {"egress_id": "EG_1", "recording": saved}},
+        stream=MagicMock(side_effect=FileNotFoundError),
+    )
+    delete.assert_not_called()
+    assert result.recording_url is None
+    assert result.error["tracks"] == ["assistant", "customer", "mono", "stereo"]
+    assert result.provider_call_data[PROVIDER_KEY]["unattributed_recording"] == saved

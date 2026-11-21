@@ -75,8 +75,7 @@ def _recording_error(failures: dict[str, Exception]) -> dict[str, Any]:
             }
     return {
         "code": RECORDING_SPLIT_FAILED,
-        "message": "Some call recording tracks could not be created. The raw "
-        "recording is kept.",
+        "message": "Some call recording tracks could not be created.",
         "tracks": sorted(failures),
     }
 
@@ -773,6 +772,28 @@ class LivekitService(VoiceServiceBlueprint):
             logger.warning("livekit_no_egress_id", call_id=call_id_str)
             return result
 
+        # fetch_and_store_call_data may already have replaced egress_id. Bind
+        # the outputs to their source independently of that mutable field.
+        identity = {"call_id": call_id_str, "egress_id": egress_id}
+        fields = {
+            "stereo": "stereo_recording_url",
+            "combined": "recording_url",
+            "assistant": "assistant_recording_url",
+            "customer": "customer_recording_url",
+        }
+        tracks = {}
+        saved = provider_data.get("recording")
+        if provider_data.get("recording_source") == identity and isinstance(saved, dict):
+            for name, field in fields.items():
+                url = saved.get(name)
+                if isinstance(url, str) and url.strip():
+                    tracks[name] = url
+                    setattr(result, field, url)
+        if tracks.keys() == fields.keys():
+            # Cleanup follows persistence, so the raw object may already be gone.
+            result.provider_call_data = call.provider_call_data
+            return result
+
         # 1. Stop egress (it stays ACTIVE until explicitly stopped), then poll
         lkapi = self._create_api()
         try:
@@ -809,9 +830,8 @@ class LivekitService(VoiceServiceBlueprint):
                     getattr(egress_info, "error_code", None) if egress_info else None
                 ),
             )
-            return result
-
-        if not egress_info.file_results:
+            object_key = None
+        elif not egress_info.file_results:
             logger.warning(
                 "livekit_egress_no_file_results",
                 call_id=call_id_str,
@@ -819,14 +839,14 @@ class LivekitService(VoiceServiceBlueprint):
                 status=egress_info.status,
                 error=str(egress_info.error),
             )
-            return result
-
-        object_key = egress_info.file_results[0].filename
+            object_key = None
+        else:
+            object_key = egress_info.file_results[0].filename
         loop = asyncio.get_running_loop()
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        s3_prefix = f"call-recordings/{call_id_str}/{ts}"
+        s3_prefix = f"call-recordings/{call_id_str}/{egress_id}/{ts}"
 
-        # 2. Stream all 4 tracks concurrently (each reads from S3 independently).
+        # 2. Stream missing tracks concurrently (each reads from S3 independently).
         #    return_exceptions=True so one failure doesn't cancel the others.
         track_specs = [
             ("stereo", f"{s3_prefix}_stereo_recording.mp3", None),
@@ -847,15 +867,23 @@ class LivekitService(VoiceServiceBlueprint):
             ),
         ]
 
-        results = await asyncio.gather(
-            *(
-                loop.run_in_executor(
-                    None, stream_egress_to_s3, self.config, object_key, s3_key, ffargs
-                )
-                for _, s3_key, ffargs in track_specs
-            ),
-            return_exceptions=True,
-        )
+        track_specs = [
+            spec
+            for spec in track_specs
+            if ("combined" if spec[0] == "mono" else spec[0]) not in tracks
+        ]
+        if object_key:
+            results = await asyncio.gather(
+                *(
+                    loop.run_in_executor(
+                        None, stream_egress_to_s3, self.config, object_key, s3_key, ffargs
+                    )
+                    for _, s3_key, ffargs in track_specs
+                ),
+                return_exceptions=True,
+            )
+        else:
+            results = [ValueError("No completed egress source") for _ in track_specs]
 
         failures: dict[str, Exception] = {}
         for (track_name, _, _), outcome in zip(track_specs, results):
@@ -863,7 +891,9 @@ class LivekitService(VoiceServiceBlueprint):
                 outcome, Exception
             ):
                 raise outcome
-            if not isinstance(outcome, Exception) and not outcome:
+            if not isinstance(outcome, Exception) and not (
+                isinstance(outcome, str) and outcome.strip()
+            ):
                 outcome = ValueError("Recording upload returned no URL")
             if isinstance(outcome, Exception):
                 failures[track_name] = outcome
@@ -886,36 +916,24 @@ class LivekitService(VoiceServiceBlueprint):
                         exc_info=outcome,
                     )
                 continue
-            if track_name == "stereo":
-                result.stereo_recording_url = outcome
-            elif track_name == "mono":
-                result.recording_url = outcome
-            elif track_name == "assistant":
-                result.assistant_recording_url = outcome
-            elif track_name == "customer":
-                result.customer_recording_url = outcome
+            name = "combined" if track_name == "mono" else track_name
+            tracks[name] = outcome
+            setattr(result, fields[name], outcome)
 
-        # 6. Store recording URLs in provider_call_data.
-        # Individual keys for internal use, plus a "recording" dict with the
-        # standard keys (stereo/assistant/customer/combined) that the
-        # CallExecutionDetailSerializer.get_recordings() returns to the frontend.
         existing_data = call.provider_call_data or {}
         lk_data = existing_data.get(PROVIDER_KEY, {})
-        if result.assistant_recording_url:
-            lk_data["assistant_recording_url"] = result.assistant_recording_url
-        if result.customer_recording_url:
-            lk_data["customer_recording_url"] = result.customer_recording_url
-
-        recording_dict: dict[str, str] = {}
-        if result.stereo_recording_url:
-            recording_dict["stereo"] = result.stereo_recording_url
-        if result.assistant_recording_url:
-            recording_dict["assistant"] = result.assistant_recording_url
-        if result.customer_recording_url:
-            recording_dict["customer"] = result.customer_recording_url
-        if result.recording_url:
-            recording_dict["combined"] = result.recording_url
-        lk_data["recording"] = recording_dict
+        source_changed = lk_data.get("recording_source") != identity
+        if "recording_source" not in lk_data and isinstance(saved, dict) and saved:
+            # Pre-identity records cannot safely fill missing tracks. Preserve
+            # their links for recovery without presenting them as this egress.
+            lk_data["unattributed_recording"] = saved
+        lk_data["recording_source"] = identity
+        lk_data["recording"] = tracks
+        for name in ("assistant", "customer"):
+            if name in tracks:
+                lk_data[fields[name]] = tracks[name]
+            else:
+                lk_data.pop(fields[name], None)
         recording_error = _recording_error(failures) if failures else None
         if recording_error:
             result.error = recording_error
@@ -925,7 +943,18 @@ class LivekitService(VoiceServiceBlueprint):
 
         existing_data[PROVIDER_KEY] = lk_data
         call.provider_call_data = existing_data
-        await call.asave(update_fields=["provider_call_data"])
+        update_fields = ["provider_call_data"]
+        if source_changed:
+            # These denormalized columns must not retain the previous source.
+            call.recording_url = result.recording_url
+            call.stereo_recording_url = result.stereo_recording_url
+            call.recording_available = bool(
+                result.recording_url or result.stereo_recording_url
+            )
+            update_fields.extend(
+                ["recording_url", "stereo_recording_url", "recording_available"]
+            )
+        await call.asave(update_fields=update_fields)
         # The activity saves provider_call_data again from its own copy of
         # the call, read before this method ran; hand it this one so the
         # tracks and any recording_error are what it writes.
@@ -936,7 +965,7 @@ class LivekitService(VoiceServiceBlueprint):
         # missing tracks from once the cause is fixed.
         if recording_error:
             logger.warning(
-                "livekit_egress_kept",
+                "livekit_egress_cleanup_skipped",
                 call_id=call_id_str,
                 object_key=object_key,
                 failed_tracks=recording_error["tracks"],
