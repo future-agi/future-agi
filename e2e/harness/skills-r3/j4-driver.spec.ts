@@ -20,7 +20,7 @@ const COHORTS = (process.env.J4_COHORTS || 'cold,configured').split(',') as Arra
 
 test('J4 registered driver retains honest cold and configured reports', async ({ scopeActors, request }, testInfo) => {
   test.setTimeout(3_600_000); // Two cohorts, each with a 25-minute child budget.
-  if (process.env.SKILLS_GCP_CASE === 'j4') expect(COHORTS).toEqual(['cold', 'configured']);
+  if (process.env.SKILLS_JOURNEY_CASE === 'j4') expect(COHORTS).toEqual(['cold', 'configured']);
   const root = resolve(import.meta.dirname, '../../..');
   const output = resolve(process.env.J4_MEASUREMENT_DIR || '/tmp/j4-evidence/measurement');
   await mkdir(output, { recursive: true });
@@ -150,7 +150,7 @@ test('J4 registered driver retains honest cold and configured reports', async ({
         expect.soft(report, `${cohort} registered report`).toBeTruthy();
         if (!report) continue;
         await writeFile(resolve(output, `${cohort}.json`), JSON.stringify(report, null, 2));
-        if (process.env.SKILLS_GCP_CASE === 'j4') await testInfo.attach(`registration-${cohort}`, { contentType: 'application/json', body: JSON.stringify({
+        if (process.env.SKILLS_JOURNEY_CASE === 'j4') await testInfo.attach(`registration-${cohort}`, { contentType: 'application/json', body: JSON.stringify({
           status: report.status, provenance: report.provenance,
         }) });
         // Keep a failed report and still exercise the second cohort.

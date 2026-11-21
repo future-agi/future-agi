@@ -95,7 +95,7 @@ jobs:
               - 'bin/uninstall'
               - 'scripts/reclaim-runner-disk.sh'
               - '.github/workflows/e2e-ci.yml'
-              - '.github/workflows/skills-e2e-gcp.yml'
+              - '.github/workflows/skills-e2e-journeys.yml'
               - '.github/scripts/resolve-sdk-test-ref.py'
               - '.github/scripts/test_resolve_sdk_test_ref.py'
       - id: always
@@ -833,15 +833,14 @@ jobs:
     env: *stack-env
     steps: *stack-steps
 
-  skills-gcp:
+  skills-journeys:
     needs: [changes, skill-packages, application-wheels]
     if: >-
       needs.changes.outputs.any == 'true' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
-      id-token: write
-    uses: ./.github/workflows/skills-e2e-gcp.yml
+    uses: ./.github/workflows/skills-e2e-journeys.yml
     with:
       sdk: ${{ needs.skill-packages.outputs.sdk }}
       traceai: ${{ needs.skill-packages.outputs.traceai }}
@@ -850,7 +849,7 @@ jobs:
 
   e2e-tests:
     name: E2E Tests Pass
-    needs: [changes, e2e, skill-packages, application-wheels, skills, campaign-executor, skills-gcp, flow-catalog]
+    needs: [changes, e2e, skill-packages, application-wheels, skills, campaign-executor, skills-journeys, flow-catalog]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -861,9 +860,9 @@ jobs:
         run: |
           jq -e '.changes.result == "success" and
             (if .changes.outputs.any == "true" then
-              ([.e2e.result,.skills.result,."skill-packages".result,."application-wheels".result,."campaign-executor".result,."skills-gcp".result,."flow-catalog".result] | all(. == "success"))
+              ([.e2e.result,.skills.result,."skill-packages".result,."application-wheels".result,."campaign-executor".result,."skills-journeys".result,."flow-catalog".result] | all(. == "success"))
             elif .changes.outputs.any == "false" then
-              ([.e2e.result,.skills.result,."skill-packages".result,."application-wheels".result,."campaign-executor".result,."skills-gcp".result,."flow-catalog".result] | all(. == "skipped"))
+              ([.e2e.result,.skills.result,."skill-packages".result,."application-wheels".result,."campaign-executor".result,."skills-journeys".result,."flow-catalog".result] | all(. == "skipped"))
             else false end)' <<< "$NEEDS"
       - uses: actions/checkout@v4
         if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
@@ -885,8 +884,8 @@ jobs:
         uses: actions/download-artifact@v4
         if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
         with:
-          pattern: skills-gcp-*
-          path: ${{ runner.temp }}/skills-gcp
+          pattern: skills-journey-*
+          path: ${{ runner.temp }}/skills-journeys
       - name: Check required-coverage controls
         if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
         run: python3 -I e2e/scripts/test_skills_coverage.py
@@ -900,5 +899,5 @@ jobs:
           SDK_SHA: ${{ needs.skill-packages.outputs.sdk_sha256 }}
         run: |
           python3 -I e2e/scripts/skills-coverage.py reconcile "$RUNNER_TEMP/skill-passes" "$GITHUB_SHA" \
-            --registered "$RUNNER_TEMP/skills-gcp" --pair "$RUNNER_TEMP/skill-pair" --sdk "$SDK_COMMIT" \
+            --registered "$RUNNER_TEMP/skills-journeys" --run-id "$GITHUB_RUN_ID" --pair "$RUNNER_TEMP/skill-pair" --sdk "$SDK_COMMIT" \
             --traceai "$TRACEAI_COMMIT" --pair-sha "$PAIR_SHA" --sdk-sha "$SDK_SHA" --application-sha "$APP_SHA"

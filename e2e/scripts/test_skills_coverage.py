@@ -40,15 +40,16 @@ class RequiredCoverage(unittest.TestCase):
                 names = ['cold', 'configured'] if case == 'j4' else ['configured'] if journey else ['guest' if case == '063' else 'campaign']
                 records = [dict(name=n, status='completed' if journey else 'registered', product_head=commit, sdk_commit=sdk,
                                 package_hashes=[wheel, application] if case == '063' else [wheel]) for n in names]
-                path = folder / ('skills-gcp-' + case) / (case + '.json')
+                path = folder / ('skills-journey-' + case) / (case + '.json')
                 path.parent.mkdir()
-                path.write_text(json.dumps(dict(case=case, sha=commit, passed=True, count=1, environment='gcp',
-                                                project='fagi-omega-staging', pair_sha256=pair, records=records)))
+                path.write_text(json.dumps(dict(case=case, sha=commit, passed=True, count=1, environment='blacksmith',
+                                                runner='blacksmith-8vcpu-ubuntu-2404', run_id='42',
+                                                pair_sha256=pair, records=records)))
             def check():
-                return coverage['registered_passes'](folder, commit, sdk, pair, wheel, application, coverage['required_runs']())
+                return coverage['registered_passes'](folder, commit, sdk, pair, wheel, application, coverage['required_runs'](), '42')
             self.assertEqual(len(check()), 7)
             for case in ('j3', 'j4'):
-                path = folder / f'skills-gcp-{case}/{case}.json'
+                path = folder / f'skills-journey-{case}/{case}.json'
                 original = path.read_text()
                 data = json.loads(original)
                 if case == 'j3':
@@ -59,7 +60,7 @@ class RequiredCoverage(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Invalid or incomplete'):
                     check()
                 path.write_text(original)
-            path = folder / 'skills-gcp-063/063.json'
+            path = folder / 'skills-journey-063/063.json'
             data = json.loads(path.read_text())
             for bad in (['f' * 64, application], [wheel, 'f' * 64]):
                 data['records'][0]['package_hashes'] = bad
@@ -67,6 +68,12 @@ class RequiredCoverage(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'Wrong wheel'):
                     check()
             data['records'][0]['package_hashes'] = [wheel, application]
+            # Only this run's own Blacksmith journeys count; a GCP-labelled or
+            # another run's result is not evidence for this commit.
+            for field, bad in (('environment', 'gcp'), ('run_id', '43'), ('runner', 'ubuntu-latest')):
+                path.write_text(json.dumps({**data, field: bad}))
+                with self.assertRaisesRegex(ValueError, 'Invalid or incomplete'):
+                    check()
             data['pair_sha256'] = 'f' * 64
             path.write_text(json.dumps(data))
             with self.assertRaisesRegex(ValueError, 'Invalid or incomplete'):

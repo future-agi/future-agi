@@ -141,7 +141,7 @@ def failure_summary(report):
 # These cases are executed on registered GCP workers, not a hosted runner
 # claiming a GCP environment. Their reporter checks the exact Playwright test,
 # expected status and single attempt before emitting its allowlisted result.
-def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha, expected):
+def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha, expected, run_id=None):
     if not all(re.fullmatch(r"[a-f0-9]{64}", value) for value in (pair_sha, sdk_sha, application_sha)):
         raise ValueError("Invalid producer digest")
     cases = {case: ((f"campaign-registered-{case}", f"SKILLS-E2E-{case}"), {"campaign": "registered"})
@@ -156,12 +156,14 @@ def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha
     for path in directory.rglob("*.json"):
         data = json.loads(path.read_text())
         case = data["case"]
-        if case not in cases or path.stem != case or path.parent.name != f"skills-gcp-{case}":
+        if case not in cases or path.stem != case or path.parent.name != f"skills-journey-{case}":
             raise ValueError("Unexpected registered result")
         key, statuses = cases[case]
         records = data["records"]
         if (key in seen or data["sha"] != commit or data["passed"] is not True or data["count"] != 1
-                or data["pair_sha256"] != pair_sha or data["environment"] != "gcp" or data["project"] != "fagi-omega-staging"
+                or data["pair_sha256"] != pair_sha or data["environment"] != "blacksmith"
+                or not re.fullmatch(r"blacksmith-\d+vcpu-ubuntu-\d{4}", data.get("runner", ""))
+                or not re.fullmatch(r"\d+", data.get("run_id", "")) or (run_id is not None and data["run_id"] != run_id)
                 or len(records) != len(statuses) or {r["name"]: r["status"] for r in records} != statuses
                 or not all(r["product_head"] == commit and r["sdk_commit"] == sdk for r in records)):
             raise ValueError(f"Invalid or incomplete registered result: {key}")
@@ -176,9 +178,10 @@ def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha
     return seen
 
 
-def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_sha=None, application_sha=None):
+def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_sha=None, application_sha=None, run_id=None):
     expected = required_runs()
-    seen = registered_passes(registered, commit, sdk, pair_sha, sdk_sha, application_sha, expected) if registered is not None else set()
+    seen = (registered_passes(registered, commit, sdk, pair_sha, sdk_sha, application_sha, expected, run_id)
+            if registered is not None else set())
     cohorts = {cohort for cohort, _ in expected}
     received = set()
     for path in directory.rglob("*.json"):
@@ -205,14 +208,14 @@ def reconcile(directory, commit, registered=None, sdk=None, pair_sha=None, sdk_s
     print(f"{len(seen)} required Skills executions passed on {commit}")
 
 
-def reconcile_verified(directory, registered, pair, commit, sdk, traceai, pair_sha, sdk_sha, application_sha):
+def reconcile_verified(directory, registered, pair, commit, sdk, traceai, pair_sha, sdk_sha, application_sha, run_id=None):
     verifier = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'stack/verify-skill-packages.py'))
     artifacts = verifier['verify'](pair, pair_sha, {'product': commit, 'sdk': sdk, 'traceai': traceai})
     verifier['verify_sums'](pair, artifacts)
     wheel = artifacts['sdk_python']['sha256']
     if wheel != sdk_sha:
         raise ValueError('Verified SDK wheel differs from the independent producer digest')
-    reconcile(directory, commit, registered, sdk, pair_sha, wheel, application_sha)
+    reconcile(directory, commit, registered, sdk, pair_sha, wheel, application_sha, run_id)
 
 
 if __name__ == "__main__":
@@ -238,6 +241,7 @@ if __name__ == "__main__":
     p.add_argument("--pair-sha", required=True)
     p.add_argument("--sdk-sha", required=True)
     p.add_argument("--application-sha", required=True)
+    p.add_argument("--run-id", required=True, help="Actions run whose Blacksmith journeys produced the results")
     args = parser.parse_args()
     try:
         if args.cmd == "summary":
@@ -259,6 +263,6 @@ if __name__ == "__main__":
             args.out.write_text(json.dumps(receipt) + "\n")
         else:
             reconcile_verified(args.directory, args.registered, args.pair, args.commit, args.sdk, args.traceai,
-                               args.pair_sha, args.sdk_sha, args.application_sha)
+                               args.pair_sha, args.sdk_sha, args.application_sha, args.run_id)
     except (OSError, ValueError, KeyError) as exc:
         sys.exit(str(exc))

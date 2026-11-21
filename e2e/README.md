@@ -991,28 +991,26 @@ interpreter, then verifies the installed lock. Case 021 checks the disabled
 runtime UI on distributed and the enabled UI on native; an attached backend
 with no topology declared is checked against its own targets API.
 
-### Registered Skills journeys on GCP
+### Registered Skills journeys on Blacksmith runners
 
-`e2e-ci.yml` calls the protected `skills-e2e-gcp.yml` workflow **in the same
-Actions run**, after both package producers succeed. Applicable internal PRs,
-merge groups, pushes, schedules and dispatches use the same handoff. Each
-worker verifies the pair against the producer digest and the exact tested SHA;
-063 also verifies the application wheel instead of rebuilding it. The aggregate
-requires the following seven first-attempt receipts:
+`e2e-ci.yml` calls `skills-e2e-journeys.yml` **in the same Actions run**, after
+both package producers succeed. Each of the seven cases runs on its own
+ephemeral `blacksmith-8vcpu-ubuntu-2404` runner (8 vCPU, 32 GB, 160 GB disk), all
+seven in parallel. The runner verifies the pair against the producer digest and
+the exact tested SHA; 063 also verifies the application wheel instead of
+rebuilding it. The aggregate requires the following seven first-attempt receipts:
 
 | Case | Stack | Evidence required |
 | --- | --- | --- |
 | SKILLS-E2E-056 | Standalone, campaigns on | Protected CLI refuses without Checkpoint P; no counts or campaign writes |
-| SKILLS-E2E-057, 058, 059 | Standalone, campaigns on, one VM per ID | Native Codex against loopback; cold adoption, recurring rollout and recovery each complete separately. No Checkpoint P or real-GitHub claim |
+| SKILLS-E2E-057, 058, 059 | Standalone, campaigns on, one runner per ID | Native Codex against loopback; cold adoption, recurring rollout and recovery each complete separately. No Checkpoint P or real-GitHub claim |
 | SKILLS-E2E-063 | Standalone | Registered recovery with the same SDK and support-application wheels in an isolated container guest; eight faults, not E2B |
 | J3 driver | Distributed | Provision three v1 parents over v7, one pinned; execute the configured registered driver with the paired SDK. Require exit zero, a completed report bound to its registration and checkout, complete observations and confirmed teardown |
 | J4 driver | Distributed | Both cold and configured registered journeys exit zero with distinct completed reports for their own registrations and running backend image |
 
-Before enabling the workflow:
+How it is kept safe and private:
 
-1. Protect the `skills-e2e-gcp` GitHub environment with required trusted reviewers and no self-approval. Review the workflow **and** the exact tested changes before approving. Restrict the WIF provider/service-account binding to this repository's immutable ID, the approved environment subject, this workflow and the allowed events; do not authorize generic PR subjects. Set `GCP_WIF_PROVIDER` (full provider resource name) and `GCP_E2E_SERVICE_ACCOUNT` (controller service-account email) as environment variables or environment secrets on `skills-e2e-gcp`. Do not set a JSON key. Fork PRs never enter this job and cannot satisfy coverage via a skip; use a reviewed internal branch for the qualification run.
-2. In `fagi-omega-staging`, set `GCP_E2E_ZONE` and `GCP_E2E_SUBNET` to a compatible isolated subnet with outbound NAT for public package/image downloads, no production access, and firewall ingress for IAP SSH only. The controller needs instance/boot disk create, inspect and delete, subnet use, IAP tunneling and OS Admin Login. No controller or default service account is attached to the VM. Each run requests seven `e2-standard-8` workers, each with a 160 GB auto-delete boot disk.
-3. Set **hard project quotas** for the worker region before enabling creates: cap VM count, applicable vCPU quota and boot-disk storage. Two concurrent workers need 2 instances, 16 vCPUs and 320 GB of disks. Quotas apply to the whole project/region, not to a label; account for other approved workloads before setting the limits. Billing budgets only alert; they do not reject creates. The fixed Actions `skills-e2e-gcp-workers` concurrency group admits one matrix across refs and runs, and `max-parallel: 2` limits its active jobs. Older pending runs can be superseded and must qualify again; a cancelled run is not a pass. Quotas still apply if a previous worker or disk survives cancellation.
-4. Configure the separate `skills-e2e-gcp-cleanup` environment for **scheduled runs on the default branch only**. Set `GCP_WIF_PROVIDER` and `GCP_E2E_CLEANUP_SERVICE_ACCOUNT` there. Bind its WIF identity to that environment, repository ID, workflow on the default branch, and `schedule` event. Use a dedicated cleanup account with instance list/get, instance and auto-delete boot disk deletion, and operation-read permissions; no create or SSH access. This job must run without a human approval prompt. Enable Actions schedules on the default branch and monitor missed or failed sweeps. Every 15 minutes it checks creation time in every power state, rechecks worker labels and instance ID, and deletes workers older than three hours. This is the stopped-VM backstop: the GCE three-hour `DELETE` timer covers running workers, but stopping a VM can clear that timer. Scheduled cleanup occurs on the next successful sweep, not at an exact wall-clock deadline.
-5. Set the required branch/merge-queue check to **E2E Tests Pass**. There is no GCS prefix, package credential or separate dispatch to configure. Approve only reviewed internal code in the protected environment. The GCP worker creates its own synthetic actors and never needs a personal API key.
-6. After an authorized run, inspect the seven `skills-gcp-*` artifacts and verify that `gcloud compute instances list --project=fagi-omega-staging --filter="labels.app=skills-e2e AND labels.run-id=$RUN_ID"` is empty. Each worker has a distinct OS Login key with a fixed three-hour expiry; cleanup also removes that exact public key. Each guest keeps raw command output private; even a pre-browser failure exports only the bounded worker log (operation, exit code and source line) and stage timings. A completed browser run adds case identity/status, duration and validated registration digests. Missing results, wrong SDK bytes or a different application wheel fail reconciliation.
+1. The jobs hold only `contents: read`. There is no cloud identity, SSH key, package credential or personal API key; each case creates its own synthetic actors. Fork PRs never enter the job and cannot satisfy coverage through a skip.
+2. The job log is public, so the worker sends all build, stack and Playwright output to a private file on the runner, which is discarded with it. Only fixed stage names, UTC timestamps, failure locations and the validated result JSON are uploaded as the seven `skills-journey-*` artifacts.
+3. Each result is provenance `environment: blacksmith` with the runner label and this Actions run ID. `skills-coverage.py reconcile --run-id` accepts only this run's results, so an earlier run, another commit or a differently labelled result does not count.
+4. The Blacksmith GitHub app must have access to this repository. Set the required branch/merge-queue check to **E2E Tests Pass**.

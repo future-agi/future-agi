@@ -61,7 +61,7 @@ test('SKILLS-E2E-063: recover an incident through the declared eight-fault matri
       projectDir: resolve(dir, 'project'), prefix, log: (line: string) => console.log(`[j6-prepare] ${line}`) });
     const outputDir = resolve(dir, 'observations');
     const { registration, provenance: filled } = await buildJ6Registration({ seed, provenance, wheelsDir: wheels!, guest, author, apiUrl: E2E.apiUrl });
-    if (process.env.SKILLS_GCP_CASE === '063') await testInfo.attach('registration-guest', { contentType: 'application/json', body: JSON.stringify({ status: 'registered', provenance: filled }) });
+    if (process.env.SKILLS_JOURNEY_CASE === '063') await testInfo.attach('registration-guest', { contentType: 'application/json', body: JSON.stringify({ status: 'registered', provenance: filled }) });
     await writeFile(resolve(dir, 'registration.json'), JSON.stringify(registration, null, 2), { mode: 0o600 });
     await writeFile(inputPath, JSON.stringify({ ...seed, outputDir, provenance: filled, python, guest: guest.describe(),
       actors: { author, reviewer }, appUrl: E2E.appUrl, apiUrl: E2E.apiUrl }), { mode: 0o600 });

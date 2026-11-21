@@ -1,33 +1,25 @@
 #!/usr/bin/env bash
-# Runs only on the disposable Debian 12 worker. The controller writes the source
-# identity into instance metadata. Its credentials and Git config stay off-VM.
+# Runs one registered Skills journey on its own ephemeral Blacksmith runner
+# (skills-e2e-journeys.yml). No cloud credentials exist on the runner; the
+# workflow passes the tested source identity, and all output stays private.
 set -Eeu -o pipefail
-op=bootstrap
+op=identity
 trap 'rc=$?; printf "failed %s %d %d\n" "$op" "$rc" "$LINENO" >> "$HOME/worker.log"; exit "$rc"' ERR
 stage() { op=$1; printf "stage %s\n" "$op" >> "$HOME/worker.log"; echo "$1" > "$HOME/stage"; printf '%s %s\n' "$(date -u +%FT%TZ)" "$1" >> "$HOME/stages.log"; }
-meta() { curl -fsS --max-time 5 --noproxy '*' -H 'Metadata-Flavor: Google' "http://metadata.google.internal/computeMetadata/v1/$1"; }
-project=$(meta project/project-id)
-[[ $project == fagi-omega-staging && $(uname -sm) == 'Linux x86_64' ]]
-SKILLS_GCP_CASE=$(meta instance/attributes/skills-case)
-SKILLS_GCP_HEAD=$(git rev-parse HEAD)
-export SKILLS_GCP_CASE SKILLS_GCP_HEAD
-[[ $SKILLS_GCP_HEAD == "$(meta instance/attributes/skills-head)" && $(git rev-parse 'HEAD^{tree}') == "$(meta instance/attributes/skills-tree)" ]]
+[[ $(uname -sm) == 'Linux x86_64' && ${RUNNER_LABEL:-} =~ ^blacksmith-[0-9]+vcpu-ubuntu-[0-9]{4}$ && ${GITHUB_RUN_ID:-} =~ ^[0-9]+$ ]]
+: "${SKILLS_JOURNEY_CASE:?}" "${SKILLS_JOURNEY_BASE:?}" "${SKILLS_JOURNEY_TREE:?}"
+SKILLS_JOURNEY_HEAD=$(git rev-parse HEAD)
+export SKILLS_JOURNEY_CASE SKILLS_JOURNEY_HEAD
+[[ $SKILLS_JOURNEY_HEAD == "$GITHUB_SHA" && $(git rev-parse 'HEAD^{tree}') == "$SKILLS_JOURNEY_TREE" ]]
 
 stage bootstrap
 op=apt
-sudo apt-get install -y --no-install-recommends acl ca-certificates curl jq python3-venv
-sudo install -d -m 0755 /etc/apt/keyrings
-op=docker-repository
-sudo curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
-echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable' | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
 sudo apt-get update -qq
-op=docker-install
-sudo apt-get install -y --no-install-recommends docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-op=docker-start
-sudo systemctl start docker
-# OS Login principals come from NSS rather than /etc/passwd. Grant access on
-# this throwaway VM without rewriting a local account or running tests as root.
-sudo setfacl -m "u:$(id -u):rw" /var/run/docker.sock
+sudo apt-get install -y --no-install-recommends acl ca-certificates curl jq python3-venv
+# The runner image ships Docker Engine and the Compose plugin.
+op=docker-check
+docker version --format '{{.Server.Version}}' >/dev/null
+docker compose version >/dev/null
 stage packages
 private=$HOME/private
 install -d -m 0700 "$private" "$private/bin"
@@ -35,7 +27,7 @@ receipt=$HOME/receipt.json
 sdk=$(jq -er '.sdk' "$receipt")
 pair_digest=$(jq -er '.pair_sha256' "$receipt")
 op=verify-pair
-wheels=$(python3 -I e2e/stack/verify-skill-packages.py "$HOME/pair" "$pair_digest" "$SKILLS_GCP_HEAD" "$sdk" "$(jq -er '.traceai' "$receipt")" --require-sums)
+wheels=$(python3 -I e2e/stack/verify-skill-packages.py "$HOME/pair" "$pair_digest" "$SKILLS_JOURNEY_HEAD" "$sdk" "$(jq -er '.traceai' "$receipt")" --require-sums)
 sdk_wheel="$HOME/pair/${wheels%%$'\n'*}"
 # Match the ordinary E2E job's Node and lockfile rather than Debian's Node 18.
 op=node-install
@@ -53,11 +45,11 @@ op=browser-install
 (cd e2e && yarn playwright install --with-deps chromium)
 
 op=client-install
-case "$SKILLS_GCP_CASE" in
+case "$SKILLS_JOURNEY_CASE" in
   056|057|058|059)
     export E2E_STACK=standalone E2E_SKILLS_CAMPAIGNS_ENABLED=true
     spec=flows/skills/j5-registered-measurements.spec.ts
-    grep="SKILLS-E2E-$SKILLS_GCP_CASE:"
+    grep="SKILLS-E2E-$SKILLS_JOURNEY_CASE:"
     python3 -m venv "$private/sdk"
     export CTXHUB_J5_PYTHON="$private/sdk/bin/python"
     "$CTXHUB_J5_PYTHON" -m pip install "$sdk_wheel" httpx
@@ -83,7 +75,7 @@ case "$SKILLS_GCP_CASE" in
     ;;
   j3|j4)
     export E2E_STACK=distributed
-    if [[ $SKILLS_GCP_CASE == j3 ]]; then
+    if [[ $SKILLS_JOURNEY_CASE == j3 ]]; then
       python3 -m venv "$private/sdk"
       export J3_PYTHON="$private/sdk/bin/python"
       "$J3_PYTHON" -m pip install "${sdk_wheel}[context-deepagents]" deepagents==0.4.11 langgraph-checkpoint-sqlite
@@ -120,7 +112,7 @@ if [[ ${E2E_SKILLS_CAMPAIGNS_ENABLED:-false} == true ]]; then
 fi
 stage provenance
 umask 077
-base=$(meta instance/attributes/skills-base)
+base=$SKILLS_JOURNEY_BASE
 git cat-file -e "${base}^{commit}"
 image=$(docker inspect --type container --format '{{.Image}}' "$(bin/e2e compose ps -q "$service")")
 [[ $image =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -128,18 +120,18 @@ dirty=false
 if [[ -n $(git status --porcelain --untracked-files=normal) ]]; then dirty=true; fi
 # J3/J4/J6 complete their own fixture hashes after provisioning; J5's
 # synthetic 40-repository input is deterministic and fully known before boot.
-jq -n --arg project "$project" --arg base "$base" --arg head "$SKILLS_GCP_HEAD" --arg tree "$(git rev-parse 'HEAD^{tree}')" \
+jq -n --arg runner "$RUNNER_LABEL" --arg run_id "$GITHUB_RUN_ID" --arg base "$base" --arg head "$SKILLS_JOURNEY_HEAD" --arg tree "$(git rev-parse 'HEAD^{tree}')" \
   --arg sdk "$sdk" --argjson dirty "$dirty" --arg image "${image#sha256:}" --arg wheel "$(sha256sum "$sdk_wheel" | cut -d' ' -f1)" \
   --arg lock "$(sha256sum e2e/yarn.lock | cut -d' ' -f1)" \
-  '{environment:"gcp",project:$project,product_base:$base,product_head:$head,product_tree:$tree,sdk_commit:$sdk,dirty:$dirty,runtime_digest:$image,package_hashes:[$wheel],lockfile_hashes:[$lock]}' > "$private/provenance.json"
+  '{environment:"blacksmith",runner:$runner,run_id:$run_id,product_base:$base,product_head:$head,product_tree:$tree,sdk_commit:$sdk,dirty:$dirty,runtime_digest:$image,package_hashes:[$wheel],lockfile_hashes:[$lock]}' > "$private/provenance.json"
 if [[ -n ${J5_PROVENANCE_JSON:-} ]]; then
   fixture=$(node --input-type=module -e "import {fixtureRepositories} from './e2e/benchmarks/context-hub/drivers/j5.mjs'; import {digest} from './e2e/lib/skills-r3/canonical.mjs'; console.log(digest(fixtureRepositories()))")
   jq --arg hash "$fixture" '. + {fixture_hash:$hash}' "$private/provenance.json" > "$private/j5-provenance.json"
   export J5_PROVENANCE_JSON="$private/j5-provenance.json"
 fi
 stage playwright
-export SKILLS_GCP_PAIR_SHA256="$pair_digest"
-export SKILLS_GCP_SPEC="$spec" SKILLS_GCP_TITLE="$grep"
-bin/e2e test "$spec" -g "$grep" --workers=1 --retries=0 --output="$private/pw" --reporter=./scripts/skills-gcp-reporter.mjs
+export SKILLS_JOURNEY_PAIR_SHA256="$pair_digest"
+export SKILLS_JOURNEY_SPEC="$spec" SKILLS_JOURNEY_TITLE="$grep"
+bin/e2e test "$spec" -g "$grep" --workers=1 --retries=0 --output="$private/pw" --reporter=./scripts/skills-journey-reporter.mjs
 jq -e '.passed == true and .count == 1' "$HOME/result.json" >/dev/null
 stage completed

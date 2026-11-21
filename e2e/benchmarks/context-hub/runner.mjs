@@ -5,9 +5,19 @@ import { assertObservation, OracleFailure } from '../../lib/skills-r3/oracles.mj
 import { COMMIT, SHA256, canonical, digest, exactSet, requireValue, token } from '../../lib/skills-r3/canonical.mjs';
 import { JOBS, getJob } from './jobs.mjs';
 
+// Approved environments: the GCP test project, E2B sandboxes, and a CI job's own
+// ephemeral Blacksmith runner (identified by runner label and Actions run).
+export function approvedEnvironment(value) {
+  if (value?.environment === 'gcp') return value.project === 'fagi-omega-staging';
+  if (value?.environment === 'blacksmith') {
+    return /^blacksmith-\d+vcpu-ubuntu-\d{4}$/.test(value.runner ?? '') && /^\d+$/.test(value.run_id ?? '');
+  }
+  return value?.environment === 'e2b';
+}
+
 export function validateProvenance(value) {
-  requireValue(value && ['gcp', 'e2b'].includes(value.environment), 'Approved cloud provenance required');
-  requireValue(value.environment !== 'gcp' || value.project === 'fagi-omega-staging', 'Wrong GCP project');
+  requireValue(value && ['gcp', 'e2b', 'blacksmith'].includes(value.environment), 'Approved cloud provenance required');
+  requireValue(approvedEnvironment(value), 'Wrong GCP project or Blacksmith runner identity');
   for (const key of ['product_base', 'product_head', 'product_tree', 'sdk_commit']) requireValue(COMMIT.test(value[key]), `Missing real ${key}`);
   for (const key of ['fixture_hash', 'runtime_digest']) requireValue(SHA256.test(value[key]), `Missing ${key}`);
   for (const key of ['package_hashes', 'lockfile_hashes']) requireValue(Array.isArray(value[key]) && value[key].length > 0 && value[key].every((hash) => SHA256.test(hash)), `Missing ${key}`);

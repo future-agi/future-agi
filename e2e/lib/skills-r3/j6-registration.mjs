@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getJob } from '../../benchmarks/context-hub/jobs.mjs';
+import { approvedEnvironment } from '../../benchmarks/context-hub/runner.mjs';
 import { COMMIT, digest, requireValue, sha256 } from './canonical.mjs';
 import { API, GOOD_ROOT } from './j6-scenario.mjs';
 
@@ -18,7 +19,7 @@ export const COMPLETED_CHECKPOINT = 7;
 /** Preregistration is derived from the prepared fixture, never from a run's output. */
 export async function buildJ6Registration({ seed, provenance, wheelsDir, guest, author, apiUrl }) {
   requireValue(provenance && [provenance.product_base, provenance.product_head, provenance.product_tree, provenance.sdk_commit].every((value) => COMMIT.test(value)), 'Supply real source refs in J6_PROVENANCE; dirty provenance stays explicit');
-  requireValue(provenance.environment === 'gcp' && provenance.project === 'fagi-omega-staging' && typeof provenance.dirty === 'boolean', 'Expected observed GCP project and checkout state in J6_PROVENANCE');
+  requireValue(['gcp', 'blacksmith'].includes(provenance.environment) && approvedEnvironment(provenance) && typeof provenance.dirty === 'boolean', 'Expected an observed GCP project or Blacksmith runner and checkout state in J6_PROVENANCE');
   const headers = { Authorization: `Bearer ${author.access}`, 'X-Organization-Id': author.organizationId, 'X-Workspace-Id': author.workspaceId };
   const files = [];
   for (let offset = 0; ; offset = files.length) {
@@ -34,7 +35,7 @@ export async function buildJ6Registration({ seed, provenance, wheelsDir, guest, 
   requireValue(packages.length === 2, 'Pin both SDK and application wheels');
   const packageHashes = await Promise.all(packages.map(async (path) => sha256(await readFile(resolve(wheelsDir, path)))));
   const image = (await exec('docker', ['image', 'inspect', guest.names.image, '--format', '{{.Id}}'], { encoding: 'utf8' })).stdout.trim().replace(/^sha256:/, '');
-  const filled = { environment: provenance.environment, project: provenance.project, product_base: provenance.product_base, product_head: provenance.product_head,
+  const filled = { environment: provenance.environment, project: provenance.project, runner: provenance.runner, run_id: provenance.run_id, product_base: provenance.product_base, product_head: provenance.product_head,
     product_tree: provenance.product_tree, sdk_commit: provenance.sdk_commit, dirty: provenance.dirty, fixture_hash: seed.catalogHash, runtime_digest: image,
     package_hashes: packageHashes, lockfile_hashes: [sha256(await readFile('yarn.lock'))] };
   const job = getJob('J6');

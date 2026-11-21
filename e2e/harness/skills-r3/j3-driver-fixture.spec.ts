@@ -9,7 +9,7 @@ import { E2E } from '../../lib/env';
 // Provision the initial condition. In registered CI the driver must also complete, while the actors are live.
 // Private actor credentials stay on the owned VM; never fetch this output.
 test('J3 driver initial condition: three v1 parents over a v7 shared policy', async ({ request, scopeActors }, testInfo) => {
-  test.setTimeout(process.env.SKILLS_GCP_CASE === 'j3' ? 2_100_000 : 180_000);
+  test.setTimeout(process.env.SKILLS_JOURNEY_CASE === 'j3' ? 2_100_000 : 180_000);
   expect(process.platform).toBe('linux');
   const directory = process.env.J3_DRIVER_FIXTURE_DIR;
   const provenancePath = process.env.J3_PROVENANCE_PATH;
@@ -72,7 +72,7 @@ test('J3 driver initial condition: three v1 parents over a v7 shared policy', as
       expected_observations: { 'dependents-and-pins': parents.map((parent, index) => `${parent.name}:${index === 2 ? 'pin-v7' : 'follower'}`), 'accepted-v8-not-v9': [8, 8, 7], 'descriptor-projection': true, 'monotonic-draft-revisions': true, 'fresh-resumed-identities': { fresh: [8, 8, 7], resumed: [7, 7, 7] }, 'source-aba-rejected': true },
     }), { mode: 0o600 });
   }
-  if (process.env.SKILLS_GCP_CASE === 'j3') {
+  if (process.env.SKILLS_JOURNEY_CASE === 'j3') {
     const root = resolve(import.meta.dirname, '../../..');
     const runId = `j3-${randomUUID()}`;
     const registrationPath = `${directory}/configured.json`;
@@ -88,7 +88,7 @@ test('J3 driver initial condition: three v1 parents over a v7 shared policy', as
     const report = JSON.parse(await readFile(`${directory}/${runId}.json`, 'utf8'));
     expect(report).toMatchObject({ job: 'J3', run_id: runId, cohort: 'configured', status: 'completed', mode: 'product',
       evidence_scope: 'synthetic', observations_complete: true, teardown: 'confirmed', preregistration_hash: digest(registration),
-      provenance: { ...provenance, product_head: process.env.SKILLS_GCP_HEAD } });
+      provenance: { ...provenance, product_head: process.env.SKILLS_JOURNEY_HEAD } });
     await testInfo.attach('registration-configured', { contentType: 'application/json', body: JSON.stringify({ status: report.status, provenance: report.provenance }) });
   }
 });
