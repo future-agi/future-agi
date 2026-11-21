@@ -1,11 +1,27 @@
 import uuid
 
-from django.db import models
+from django.core.cache import cache
+from django.db import models, transaction
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models.api_key import ApiKey, validate_model_provider_choice
 from tfc.utils.base_model import BaseModel
+
+
+def custom_model_pricing_cache_key(organization_id, user_model_id) -> str:
+    return f"custom_model_pricing:{organization_id}:{user_model_id}"
+
+
+def invalidate_custom_model_pricing_cache(organization_id, *user_model_ids) -> None:
+    """Drop cached pricing (including "not found") once the write commits."""
+    keys = [
+        custom_model_pricing_cache_key(organization_id, name)
+        for name in user_model_ids
+        if name
+    ]
+    # robust: a cache outage must not fail a write that already committed.
+    transaction.on_commit(lambda: cache.delete_many(keys), robust=True)
 
 
 class CustomAIModel(BaseModel):
@@ -62,6 +78,13 @@ class CustomAIModel(BaseModel):
             self._actual_json = ApiKey().decrypt_json(self.key_config)
 
     def save(self, *args, **kwargs):
+        # A rename must also drop the pricing cached under the old name.
+        previous_user_model_id = (
+            type(self)
+            ._base_manager.filter(pk=self.pk)
+            .values_list("user_model_id", flat=True)
+            .first()
+        )
         # if self.key_config and not all(
         #     [v.startswith(b"gAAAAA".decode()) for v in self.key_config.values()]
         # ):
@@ -72,6 +95,9 @@ class CustomAIModel(BaseModel):
             self._actual_json = {}
         self.full_clean()
         super().save(*args, **kwargs)
+        invalidate_custom_model_pricing_cache(
+            self.organization_id, self.user_model_id, previous_user_model_id
+        )
 
     @property
     def actual_json(self):
