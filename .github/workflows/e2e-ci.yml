@@ -312,7 +312,9 @@ jobs:
     # Image builds (~20 min), the Playwright suite (~70 min and growing with
     # the flow catalog) and the SDK live suites run in this one job. Dev runs
     # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
-    timeout-minutes: 120
+    # DASH-E2E-017 waits out the 30-minute metric settle on one worker; its own
+    # test.setTimeout ceiling is 65 min, so 89 + 65 = 154 if it lands last.
+    timeout-minutes: 155
     env: &stack-env
       SKILLS_COHORT: ${{ matrix.cohort || 'ordinary' }}
       E2E_SKILLS_CAMPAIGNS_ENABLED: ${{ startsWith(matrix.cohort, 'campaign-') && 'true' || 'false' }}

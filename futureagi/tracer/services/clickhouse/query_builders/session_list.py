@@ -12,6 +12,7 @@ ID) into every span row, we can compute per-session aggregates in a single
 
 import re
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Any
 
 from django.conf import settings
@@ -73,6 +74,17 @@ _SEED_WITNESS_ENVELOPE_INDENT = " " * 22
 # asks the rendered statement whether it is referenced at all. One name, so
 # the binder, the predicate and the tests cannot drift apart.
 CANDIDATE_ROOT_SCAN_FLOOR_PARAM = "candidate_root_scan_start_us"
+
+
+class ResolvedSpanSource(Enum):
+    """Internal compiler relations, never parsed from request data.
+
+    SamplingQuery owns this CTE: it elects one physical winner before applying
+    live/watermark predicates and resolving remaps. A table name alone does not
+    establish that contract; ordinary TABLE overrides still require FINAL.
+    """
+
+    SAMPLING = "sampling_source"
 
 
 class SessionListQueryBuilder(BaseQueryBuilder):
@@ -281,9 +293,18 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         bounded_internal_scan: bool = False,
         bounded_sampling_salt: str | None = None,
         bounded_sampling_rate: float | None = None,
+        resolved_source: ResolvedSpanSource | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
+        if (
+            resolved_source is not None
+            and resolved_source is not ResolvedSpanSource.SAMPLING
+        ):
+            raise ValueError("Unsupported resolved span source")
+        self._resolved_source = resolved_source
+        if resolved_source is not None:
+            self.TABLE = resolved_source.value
         self.page_number = page_number
         self.page_size = page_size
         self.filters = filters or []
@@ -3178,6 +3199,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 expanded.append(entry)
         return expanded
 
+    def _page_hydration_source_ctes(self, params, *, roots, members, messages):
+        """Source seam; usage, message fallback and zipped attributes stay shared."""
+        return roots, members, messages
+
     def _session_member_ctes(
         self,
         *,
@@ -3196,9 +3221,21 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         Content is read only by hydration's finite message-key lookup (the CDC
         schema lacks lengths).
         """
+        # PREWHERE, like FINAL, belongs to physical storage, not a resolved CTE.
+        is_resolved_source = self._has_resolved_span_source()
+        source_filter = "WHERE" if is_resolved_source else "PREWHERE"
         identity_select = self._physical_identity_select_sql()
         identity_names = self._physical_identity_names_sql()
         group_by = self._physical_group_by_sql()
+        member_identity_scope = f"""({group_by}) IN (
+                      SELECT {identity_names} FROM candidate_member_identities
+                  )"""
+        if is_resolved_source:
+            # Winners already have canonical membership. Re-reading the CTE to
+            # acquire their physical keys repeats the whole bounded source plan.
+            member_identity_scope = """(project_id, trace_session_id) IN (
+                      SELECT project_id, session_id FROM member_session_scope
+                  )"""
         resolved_session = resolved_id_expr("latest_trace_session_id", "member_remap")
         coverage = usage_coverage_sql(
             attrs=self._COST_ATTRIBUTE_MAP, include_summary=True
@@ -3219,21 +3256,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             if include_messages
             else ""
         )
-        message_aggregates = (
-            f""",
-                minIf(latest_start_time, latest_is_root) AS trace_root_start,
-                countIf(latest_is_root) > 0 AS trace_has_root,
-                argMinIf(tuple({identity_names}),
-                    tuple(message_rank, latest_start_time, id),
-                    message_rank < 3) AS trace_message_key"""
-            if include_messages
-            else ""
-        )
-        member_trace_usage = self._member_trace_usage_select(
-            "session_members",
-            include_messages=include_messages,
-            message_aggregates=message_aggregates,
-        )
         return f"""
         member_session_scope AS (
             SELECT DISTINCT project_id, session_id FROM {session_source}
@@ -3241,7 +3263,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         candidate_member_identities AS (
             SELECT DISTINCT {identity_select}
             FROM {self.TABLE}
-            PREWHERE {self.project_filter_sql()}{physical_time_scope}
+            {source_filter} {self.project_filter_sql()}{physical_time_scope}
               AND (project_id, trace_session_id) IN (
                   SELECT project_id, session_id FROM member_session_scope
                   UNION ALL
@@ -3285,10 +3307,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                     argMax(_peerdb_is_deleted, _peerdb_version) AS latest_is_deleted
                     {message_length}
                 FROM {self.TABLE}
-                PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(physical_time_scope)}
-                  AND ({group_by}) IN (
-                      SELECT {identity_names} FROM candidate_member_identities
-                  )
+                {source_filter} {self.project_filter_sql()}{self._replay_time_scope_sql(physical_time_scope)}
+                  AND {member_identity_scope}
                 GROUP BY {group_by}
             ) AS latest_members
             LEFT JOIN ts_survivor_map AS member_remap
@@ -3298,8 +3318,28 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                   SELECT project_id, session_id FROM member_session_scope
               )
         ),
-        member_trace_usage AS ({member_trace_usage})
+        {self._session_member_usage_cte(include_messages=include_messages)}
         """
+
+    def _session_member_usage_cte(self, *, include_messages=False):
+        """Use one coverage-aware reducer for native and pinned member sources."""
+        identity_names = self._physical_identity_names_sql()
+        message_aggregates = (
+            f""",
+                minIf(latest_start_time, latest_is_root) AS trace_root_start,
+                countIf(latest_is_root) > 0 AS trace_has_root,
+                argMinIf(tuple({identity_names}),
+                    tuple(message_rank, latest_start_time, id),
+                    message_rank < 3) AS trace_message_key"""
+            if include_messages
+            else ""
+        )
+        usage = self._member_trace_usage_select(
+            "session_members",
+            include_messages=include_messages,
+            message_aggregates=message_aggregates,
+        )
+        return f"member_trace_usage AS ({usage})"
 
     @staticmethod
     def _member_trace_usage_select(
@@ -3409,8 +3449,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             latest_time_scope=member_latest_time_scope,
             include_messages=True,
         )
-        query = f"""
-        WITH
+        roots, members, messages = self._page_hydration_source_ctes(
+            params,
+            roots=f"""
         {ts_map_ctes},
         candidate_root_identities AS (
             SELECT DISTINCT {identity_select}
@@ -3468,7 +3509,30 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             WHERE latest_is_deleted = 0{latest_time_scope}
               AND (latest_parent_span_id IS NULL OR latest_parent_span_id = '')
               AND {resolved_session} IN %(candidate_session_ids)s
-        ),
+        )""",
+            members=member_ctes,
+            messages=f"""
+        message_inputs AS (
+            SELECT
+                groupArray(message_key) AS message_keys,
+                groupArray(message_input) AS message_input_values
+            FROM (
+                SELECT
+                    tuple({group_by}) AS message_key,
+                    argMax(tuple(input), _peerdb_version).1 AS message_input
+                FROM {self.TABLE}
+                PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(physical_time_scope)}
+                  AND ({group_by}) IN (
+                      SELECT arrayJoin([first_message_key, last_message_key])
+                      FROM member_rollup
+                  )
+                GROUP BY {group_by}
+            )
+        )""",
+        )
+        query = f"""
+        WITH
+        {roots},
         root_page AS (
             SELECT
                 session_id,
@@ -3494,7 +3558,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 tupleElement(scope_row, 2) AS session_id
             FROM (SELECT arrayJoin(hydration_member_scope_rows) AS scope_row)
         ),
-        {member_ctes},
+        {members},
         (
             SELECT groupArray(tuple(
                 member_session_id, member_total_cost, member_total_tokens,
@@ -3528,23 +3592,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 tupleElement(member_row, 7) AS member_request_count
             FROM (SELECT arrayJoin(member_rollup_rows) AS member_row)
         ),
-        message_inputs AS (
-            SELECT
-                groupArray(message_key) AS message_keys,
-                groupArray(message_input) AS message_input_values
-            FROM (
-                SELECT
-                    tuple({group_by}) AS message_key,
-                    argMax(tuple(input), _peerdb_version).1 AS message_input
-                FROM {self.TABLE}
-                PREWHERE {self.project_filter_sql()}{self._replay_time_scope_sql(physical_time_scope)}
-                  AND ({group_by}) IN (
-                      SELECT arrayJoin([first_message_key, last_message_key])
-                      FROM member_rollup
-                  )
-                GROUP BY {group_by}
-            )
-        )
+        {messages}
         SELECT
             root_page.session_id AS session_id,
             root_page.session_start AS session_start,
@@ -3726,11 +3774,16 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.params.update(datetime_params)
         if datetime_predicate:
             time_where += f"\n          AND {datetime_predicate}"
+        include_usage = (
+            not self._has_resolved_span_source()
+            or self.filters_need_session_usage(self.filters)
+        )
         from_where = self._session_from_where(
             self.params,
             time_where=time_where,
             filter_fragment=filter_fragment,
             scope_usage_to_request_window=created_at_floor is None,
+            include_usage=include_usage,
         )
 
         # Usage totals always mean the list's child-aware roll-up. Sampling
@@ -3741,8 +3794,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             "min(start_time) AS session_start, max(end_time) AS session_end, "
             "dateDiff('second', min(start_time), max(end_time)) AS duration, "
             "uniqExact(trace_id) AS traces_count"
-            if self.TABLE == "sampling_source"
-            and not self.filters_need_session_usage(self.filters)
+            if not include_usage
             else self._AGGREGATE_SELECT
         )
         query = f"""
@@ -4182,6 +4234,18 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "span_attr_str",
     )
 
+    def _has_resolved_span_source(self) -> bool:
+        if self._resolved_source is None:
+            return False
+        if self.TABLE != self._resolved_source.value:
+            raise ValueError("Resolved span source does not match TABLE")
+        return True
+
+    def _session_root_source_sql(self) -> str:
+        if self._has_resolved_span_source():
+            return self.TABLE
+        return f"{self.TABLE} FINAL"
+
     def _session_from_where(
         self,
         params: dict[str, Any],
@@ -4227,21 +4291,18 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         where_clause = f"WHERE {' AND '.join(outer_clauses)}" if outer_clauses else ""
         # Sampling supplies an already deduplicated CTE, not a MergeTree table.
         # ClickHouse rejects FINAL on that CTE; ordinary session reads keep FINAL.
-        table_source = (
-            self.TABLE if self.TABLE == "sampling_source" else f"{self.TABLE} FINAL"
-        )
-        if self.TABLE == "sampling_source":
+        if self._has_resolved_span_source():
             # The canonical sampling CTE already freezes one winner per span.
             # The list's physical member replay recursively inlines that CTE
             # through its scope/witness joins, exhausting bounded sampling reads.
-            # Roots come from one bounded scan of the snapshot. Only a usage
-            # filter adds the member roll-up, from one more snapshot read.
+            # Roots come from one bounded scan. Add a second snapshot read
+            # only when the caller projects usage or filters on its totals.
             remap = remap_left_join(
                 "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
             )
             roots_from = f"""FROM (SELECT {", ".join(scan_cols)} FROM {self.TABLE} {base_predicates}) AS rs
                 {remap}"""
-            if not (include_usage and self.filters_need_session_usage(self.filters)):
+            if not include_usage:
                 return f"""FROM (
                 SELECT {", ".join(outer_select)}
                 {roots_from}
@@ -4269,7 +4330,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 SELECT {", ".join(outer_select)}
                 FROM (
                     SELECT {", ".join(scan_cols)}
-                    FROM {table_source}
+                    FROM {self._session_root_source_sql()}
                     {base_predicates}
                 ) AS rs
                 {remap_left_join("rs.trace_session_id", "trace_session_id_remap", "ts_remap")}
@@ -4292,7 +4353,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 SELECT {", ".join(outer_select)}
                 FROM (
                     SELECT {", ".join(scan_cols)}
-                    FROM {table_source}
+                    FROM {self._session_root_source_sql()}
                     {base_predicates}
                 ) AS rs
                 LEFT JOIN ts_survivor_map AS ts_remap

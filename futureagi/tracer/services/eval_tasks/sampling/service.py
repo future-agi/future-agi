@@ -48,6 +48,7 @@ from tracer.services.eval_tasks.sampling.policy import (
     validate_policy,
 )
 from tracer.services.eval_tasks.sampling.query import (
+    BATCH_SIZE,
     SamplingQuery,
     live_scan_windows,
     sampling_clock,
@@ -56,6 +57,9 @@ from tracer.services.eval_tasks.sampling.query import (
 from tracer.services.eval_tasks.sampling.witnesses import TraceWitnessReader
 
 if TYPE_CHECKING:
+    from django.db.models import QuerySet
+
+    from tracer.models.observation_span import EvalLogger
     from tracer.services.eval_tasks.reconciler import ReconcileResult
 
 logger = logging.getLogger(__name__)
@@ -613,11 +617,37 @@ def _freeze_closed(
         raise
 
 
+def _retire_pending_pages(results: QuerySet[EvalLogger], *, write: WriteScope) -> int:
+    """Retire bounded pages under the task/revision/lease fence.
+
+    Each page locks eval rows before retiring their issue memberships. Commit
+    before taking the next page's eval locks, preserving the retirement lock
+    order without loading a whole backlog or retaining issue locks across pages.
+    """
+    from tracer.services.eval_tasks.recalculate import drop_pending_entries
+
+    results = results.using("default")
+    remaining = results
+    dropped = 0
+    while True:
+        with write():
+            ids = list(
+                remaining.select_for_update(of=("self",))
+                .order_by("pk")
+                .values_list("pk", flat=True)[:BATCH_SIZE]
+            )
+            if not ids:
+                return dropped
+            dropped += drop_pending_entries(results.filter(pk__in=ids).order_by("pk"))
+            # A busy Recalculate journal is deliberately skipped. Advance even
+            # then so the pass finishes and the next reconcile can retry it.
+            remaining = results.filter(pk__gt=ids[-1])
+
+
 def reconcile_policy(task: EvalTask) -> ReconcileResult:
     from tracer.models.observation_span import EvalEntryStatus, EvalLogger
     from tracer.selectors.eval_tasks.row_resolver import ResolvedRowSet
     from tracer.services.eval_tasks.entries import materialize_pending
-    from tracer.services.eval_tasks.recalculate import drop_pending_entries
     from tracer.services.eval_tasks.reconciler import (
         ReconcileResult,
         _continuous_requires_full_reclassification,
@@ -650,9 +680,9 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 )
                 | ~Q(output_metadata___task_selection__sampling__policy_version=version)
             )
-            # A dropped Recalculate replacement puts its previous result back,
-            # as on every other reconciler drop path.
-            result = ReconcileResult(dropped=drop_pending_entries(stale))
+        result = ReconcileResult(
+            dropped=_retire_pending_pages(stale, write=fence.write)
+        )
         witnesses = TraceWitnessReader(task)
         live_windows = (
             prepare_live_members(
@@ -701,13 +731,14 @@ def reconcile_policy(task: EvalTask) -> ReconcileResult:
                 )
             result.requeued += requeued
             result.dropped += dropped
-        with fence.write() as locked:
-            current_evals = locked.evals.values_list("id", flat=True)
-            result.dropped += drop_pending_entries(
-                EvalLogger.objects.filter(
-                    eval_task_id=str(locked.id), status=EvalEntryStatus.PENDING
-                ).exclude(custom_eval_config_id__in=current_evals)
-            )
+        result.dropped += _retire_pending_pages(
+            EvalLogger.objects.filter(
+                eval_task_id=str(task.id), status=EvalEntryStatus.PENDING
+            ).exclude(
+                custom_eval_config_id__in=task.evals.values_list("id", flat=True)
+            ),
+            write=fence.write,
+        )
         result.dropped += revalidate_pending(
             task, policy, version, cohort, sampling_clock(), page_write=fence.write
         )

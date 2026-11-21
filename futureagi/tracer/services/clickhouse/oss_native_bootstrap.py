@@ -45,6 +45,11 @@ _TABLES = {
     "end_user_id_remap": ("019_id_remap.sql", 2, 0),
     "trace_session_id_remap": ("019_id_remap.sql", 2, 1),
 }
+_CURRENT_LISTS = {
+    "list_current_root_facts": ("036_list_current_root_facts.sql", 2, 0),
+    "list_current_members": ("036_list_current_root_facts.sql", 2, 1),
+    "list_current_user_activity": ("037_list_current_user_activity.sql", 1, 0),
+}
 _ROLLUPS = {
     "spans_per_session": ("008_per_session_rollup.sql", 2, 0),
     "spans_hourly_rollup": ("010_hourly_downsample.sql", 2, 0),
@@ -200,7 +205,11 @@ def _qualify_reference(sql, keyword, name, database):
 
 
 def native_definitions(
-    database, *, include_backfill=False, include_dashboard_rollup=False
+    database,
+    *,
+    include_backfill=False,
+    include_dashboard_rollup=False,
+    include_current_lists=False,
 ):
     """Ordered fresh CREATEs. Backfill is legacy PG-to-spans, NOT catalog repair.
 
@@ -213,11 +222,14 @@ def native_definitions(
         or database.lower() in {"system", "information_schema"}
         or type(include_backfill) is not bool
         or type(include_dashboard_rollup) is not bool
+        or type(include_current_lists) is not bool
     ):
         raise NativeBootstrapError(
             "explicit native database and boolean options required"
         )
     tables = dict(_TABLES)
+    if include_current_lists:
+        tables.update(_CURRENT_LISTS)
     if include_backfill:
         tables.update(_BACKFILL)
     result = {
@@ -277,8 +289,8 @@ def _rows(client, sql, parameters=None, width=None):
     rows = client.query(
         sql, parameters=parameters or {}, settings=dict(_READ)
     ).result_rows
-    if not isinstance(rows, (list, tuple)) or any(
-        not isinstance(row, (list, tuple)) or (width is not None and len(row) != width)
+    if not isinstance(rows, list | tuple) or any(
+        not isinstance(row, list | tuple) or (width is not None and len(row) != width)
         for row in rows
     ):
         raise NativeBootstrapError("invalid native metadata response")
@@ -476,7 +488,12 @@ def _inspect(client, database, definitions):
 
 
 def inspect_native(
-    client, *, database, include_backfill=False, include_dashboard_rollup=False
+    client,
+    *,
+    database,
+    include_backfill=False,
+    include_dashboard_rollup=False,
+    include_current_lists=False,
 ):
     """SELECT-only full preflight; return missing names in dependency order."""
     try:
@@ -484,6 +501,7 @@ def inspect_native(
             database,
             include_backfill=include_backfill,
             include_dashboard_rollup=include_dashboard_rollup,
+            include_current_lists=include_current_lists,
         )
         return _inspect(client, database, definitions)
     except NativeBootstrapError:
@@ -596,6 +614,7 @@ def bootstrap_native(
     database,
     include_backfill=False,
     include_dashboard_rollup=False,
+    include_current_lists=False,
     ch_user="default",
     ch_password="",
 ):
@@ -614,6 +633,7 @@ def bootstrap_native(
             database,
             include_backfill=include_backfill,
             include_dashboard_rollup=include_dashboard_rollup,
+            include_current_lists=include_current_lists,
         )
         missing = _inspect(client, database, definitions)
         for name in missing:

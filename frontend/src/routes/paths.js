@@ -60,6 +60,12 @@ export const paths = {
     tasks: `${ROOTS.DASHBOARD}/tasks`,
     users: `${ROOTS.DASHBOARD}/users`,
     evals: `${ROOTS.DASHBOARD}/evaluations`,
+    metrics: {
+      root: `${ROOTS.DASHBOARD}/metrics`,
+      new: `${ROOTS.DASHBOARD}/metrics/new`,
+      detail: (metricId) => `${ROOTS.DASHBOARD}/metrics/${metricId}`,
+      edit: (metricId) => `${ROOTS.DASHBOARD}/metrics/${metricId}/edit`,
+    },
     docs: `${ROOTS.DASHBOARD}/docs`,
     sync: `${ROOTS.DASHBOARD}/sync`,
     develop: `${ROOTS.DASHBOARD}/develop`,
@@ -124,6 +130,7 @@ export const paths = {
       root: `${ROOTS.DASHBOARD}/error-feed`,
       detail: (id) => `${ROOTS.DASHBOARD}/error-feed/${id}`,
     },
+    derivedMetrics: `${ROOTS.DASHBOARD}/derived-metrics`,
     dashboards: {
       root: `${ROOTS.DASHBOARD}/dashboards`,
       detail: (id) => `${ROOTS.DASHBOARD}/dashboards/${id}`,

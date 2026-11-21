@@ -255,6 +255,86 @@ def ensure_project_session_property_identities(config: list[dict]) -> list[dict]
     )
 
 
+def update_column_config_based_on_metric_fields(
+    column_config: list[dict], metric_fields: list[dict], *, context: str
+) -> list[dict]:
+    """Merge scoped B08 catalog descriptors without reading any metric values.
+
+    Callers supply the complete descriptors for this authorized list/context
+    from the property catalog, not one partial catalog page. Cell hydration is
+    a separate, deferred page request. Saved visibility/order survive active-version
+    edits; stale metric metadata does not.
+    Existing non-metric columns and the caller's objects are left unchanged.
+    """
+    levels = {
+        "sessions": {"conversation"},
+        "spans": {"span"},
+        "traces": set(),  # M12 remains closed.
+        "users": {"user"},
+    }
+    if context not in levels:
+        raise ValueError("Unknown metric column list context.")
+    from tracer.services.derived_metrics.predicates import decode_metric_field_id
+
+    descriptors = {}
+    for item in metric_fields:
+        if (
+            item.get("property_kind") != "metric_field"
+            or item.get("source") != context
+            or item.get("level") not in levels[context]
+        ):
+            continue
+        identity = item["property_id"]
+        decode_metric_field_id(identity)
+        if context == "users" and item.get("projection") not in {
+            "per_user",
+            "user_metric",
+        }:
+            continue
+        value_type = item["type"]
+        if item.get("projection") == "per_user" and value_type != "number":
+            raise ValueError("Users projections must be numeric.")
+        present = asdict(
+            FieldConfig(
+                id=identity,
+                name=item["display_name"],
+                is_visible=False,
+                group_by="Metrics",
+                output_type=value_type,
+            )
+        )
+        present.update(
+            property_id=identity,
+            property_kind="metric_field",
+            property_source=context,
+            value_type=value_type,
+            value_labels=dict(item.get("value_labels", {}))
+            if value_type == "boolean"
+            else {},
+            unit=item["unit"],
+            format=item["value_format"],
+            projection=item["projection"],
+            level=item["level"],
+            source_level=item["source_level"],
+            version=item["version"],
+            version_id=item["version_id"],
+            filterable=item["filterable"],
+            hydration="deferred",
+        )
+        descriptors[identity] = present
+    merged = []
+    for saved in column_config or ():
+        identity = saved.get("property_id") or saved.get("id", "")
+        if identity.startswith("metric_field:"):
+            current = descriptors.pop(identity, None)
+            if current is not None:
+                current["is_visible"] = saved.get("is_visible", False)
+                merged.append(current)
+        else:
+            merged.append(dict(saved))
+    return [*merged, *descriptors.values()]
+
+
 def get_default_eval_task_config(is_project_name_visible=True):
     config = [
         FieldConfig(id="name", name="Task Name", is_visible=True, group_by=None),

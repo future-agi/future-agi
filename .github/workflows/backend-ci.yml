@@ -22,7 +22,16 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # Shard counts. "pytest shard N" runs everything but the Metrics suite on
+  # every backend change; "metrics shard N" runs only that suite, on Metrics
+  # changes and on every push (see the changes job). The Metrics suite was
+  # measured at about 368 test-minutes; its two longest cases run about 19
+  # minutes each against the real pass deadline, which bounds every shard.
   SPLITS: "10"
+  METRICS_SPLITS: "16"
+  # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
+  # adds its suite's term (futureagi/.ci/test_backend_ci_output.py pins this).
+  PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker"
 
 jobs:
   changes:
@@ -32,6 +41,8 @@ jobs:
       backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
       update_safety: ${{ steps.filter.outputs.update_safety || 'false' }}
       executor_base: ${{ steps.filter.outputs.executor_base || 'false' }}
+      metrics: ${{ steps.filter.outputs.metrics || steps.always.outputs.metrics }}
+      shards: ${{ steps.shards.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - id: filter
@@ -70,9 +81,113 @@ jobs:
             executor_base:
               - 'futureagi/code-executor/Dockerfile.base'
               - 'futureagi/code-executor/requirements.sandbox.txt'
+            # The Metrics suite (the modules tracer/tests/conftest.py marks
+            # `metrics`) and the code it exercises. Every path is also a
+            # backend path, so plan still runs. Runs that are not pull requests
+            # (every push to dev and main, manual dispatch) always run the
+            # suite, catching breakage from code outside this list after merge.
+            metrics:
+              - 'futureagi/tracer/services/derived_metrics/**'
+              - 'futureagi/tracer/models/derived_metric.py'
+              - 'futureagi/tracer/models/metric_pg_revision.py'
+              - 'futureagi/tracer/models/metric_source_intent.py'
+              - 'futureagi/tracer/models/monitor.py'
+              - 'futureagi/tracer/models/project.py'
+              - 'futureagi/tracer/models/trace_session.py'
+              - 'futureagi/tracer/apps.py'
+              - 'futureagi/tracer/tasks/__init__.py'
+              - 'futureagi/tracer/services/project_deletion.py'
+              # Two cases migrate back to tracer 0125 and forward to every leaf.
+              - 'futureagi/**/migrations/**'
+              # Metrics owns 028-038, but the suite applies every file in order.
+              - 'futureagi/tracer/services/clickhouse/v2/schema/*.sql'
+              - 'futureagi/tracer/services/clickhouse/v2/__init__.py'
+              - 'futureagi/tracer/services/clickhouse/v2/apply_schema*.py'
+              - 'futureagi/tracer/services/clickhouse/v2/id_remap_sql.py'
+              - 'futureagi/tracer/services/clickhouse/v2/query_builders/filters.py'
+              - 'futureagi/tracer/services/clickhouse/v2/property_catalog/source_adapters.py'
+              - 'futureagi/tracer/services/clickhouse/__init__.py'
+              - 'futureagi/tracer/services/clickhouse/client.py'
+              - 'futureagi/tracer/services/clickhouse/application_read_*.py'
+              - 'futureagi/tracer/services/clickhouse/native_read_stream.py'
+              - 'futureagi/tracer/services/clickhouse/read_budget.py'
+              - 'futureagi/tracer/services/clickhouse/query_service.py'
+              - 'futureagi/tracer/services/clickhouse/eval_logger_table.py'
+              - 'futureagi/tracer/services/clickhouse/query_builders/base.py'
+              - 'futureagi/tracer/services/clickhouse/query_builders/dashboard.py'
+              - 'futureagi/tracer/services/clickhouse/query_builders/filters.py'
+              - 'futureagi/tracer/services/private_boundary_log.py'
+              - 'futureagi/tracer/views/derived_metric.py'
+              - 'futureagi/tracer/serializers/derived_metric.py'
+              - 'futureagi/tracer/serializers/dashboard.py'
+              - 'futureagi/tracer/serializers/filters.py'
+              - 'futureagi/tracer/tasks/derived_metric.py'
+              - 'futureagi/tracer/permissions/metrics.py'
+              - 'futureagi/tracer/management/commands/erase_metric_data.py'
+              - 'futureagi/tracer/urls.py'
+              - 'futureagi/tracer/utils/filter_operators.py'
+              - 'futureagi/tracer/utils/helper.py'
+              - 'futureagi/tracer/utils/monitor.py'
+              - 'futureagi/tracer/utils/monitor_graphs.py'
+              - 'futureagi/tracer/selectors/eval_tasks/**'
+              - 'futureagi/tracer/sql_workbench/metric_retention.py'
+              - 'futureagi/tracer/sql_workbench/catalog.py'
+              - 'futureagi/tracer/sql_workbench/service.py'
+              - 'futureagi/tracer/sql_workbench/tasks.py'
+              - 'futureagi/tracer/sql_workbench/access.py'
+              - 'futureagi/tfc/capabilities/**'
+              - 'futureagi/tfc/settings/runtime_setting_specs.py'
+              - 'futureagi/tfc/settings/settings.py'
+              - 'futureagi/tfc/settings/test.py'
+              - 'futureagi/tfc/temporal/schedules/tracer.py'
+              - 'futureagi/model_hub/apps.py'
+              - 'futureagi/model_hub/models/score.py'
+              - 'futureagi/model_hub/models/develop_annotations.py'
+              # The suite, its fixtures and the modules it imports helpers from
+              - 'futureagi/tracer/tests/test_derived_metric_*.py'
+              - 'futureagi/tracer/tests/test_metric_*.py'
+              - 'futureagi/tracer/tests/_metric_busy_fixture.py'
+              - 'futureagi/tracer/tests/metric_read_fixtures.py'
+              - 'futureagi/tracer/tests/_ch_seed.py'
+              - 'futureagi/tracer/tests/conftest.py'
+              - 'futureagi/tracer/tests/test_base_list_current_pg_state.py'
+              - 'futureagi/tracer/tests/test_property_catalog_metric_fields.py'
+              - 'futureagi/tracer/sql_workbench/tests/test_permissions.py'
+              - 'futureagi/conftest.py'
+              - 'futureagi/pytest.ini'
+              - 'futureagi/.test_durations'
+              - 'futureagi/docker-compose.test.yml'
+              - 'futureagi/.ci/clickhouse-*.xml'
+              - 'futureagi/pyproject.toml'
+              - 'futureagi/uv.lock'
+              - '.github/workflows/backend-ci.yml'
       - id: always
         if: github.event_name != 'pull_request'
-        run: echo "backend=true" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "backend=true" >> "$GITHUB_OUTPUT"
+          echo "metrics=true" >> "$GITHUB_OUTPUT"
+      - id: shards
+        # The pytest shard matrix: the main legs always, the Metrics legs only
+        # when that suite is due. An absent leg leaves no check, so say which.
+        env:
+          METRICS: ${{ steps.filter.outputs.metrics || steps.always.outputs.metrics }}
+        run: |
+          set -euo pipefail
+          legs() { # suite, check name, marker term, timeout minutes, shard count
+            jq -nc --arg suite "$1" --arg name "$2" --arg markers "$3" \
+              --argjson timeout "$4" --argjson n "$5" \
+              '[{suite: $suite, name: $name, markers: $markers, timeout: $timeout,
+                 splits: $n, group: range(1; $n + 1)}]'
+          }
+          main=$(legs main pytest "not metrics" 45 "$SPLITS")
+          metrics='[]'
+          if [ "$METRICS" = true ]; then
+            metrics=$(legs metrics metrics metrics 50 "$METRICS_SPLITS")
+            echo "::notice::Metrics suite scheduled: metrics shard 1-$METRICS_SPLITS"
+          else
+            echo "::notice::Metrics suite not scheduled: no Metrics-related path changed"
+          fi
+          echo "matrix=$(jq -nc --argjson a "$main" --argjson b "$metrics" '{include: ($a + $b)}')" >> "$GITHUB_OUTPUT"
 
   update-safety:
     name: OSS migrations and unattended update safety
@@ -185,15 +300,16 @@ jobs:
           if-no-files-found: error
 
   test:
-    name: pytest shard ${{ matrix.group }}
+    # "pytest shard N" and "metrics shard N" share these steps; the changes
+    # job builds the matrix (suite, splits, marker term, timeout per leg).
+    name: ${{ matrix.name }} shard ${{ matrix.group }}
     needs: [changes, plan]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
-      matrix:
-        group: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+      matrix: ${{ fromJSON(needs.changes.outputs.shards) }}
     defaults:
       run:
         working-directory: futureagi
@@ -320,13 +436,18 @@ jobs:
 
       - name: Run shard
         id: run-shard
+        env:
+          SUITE: ${{ matrix.suite }}
+          SUITE_MARKERS: ${{ matrix.markers }}
+          SUITE_SPLITS: ${{ matrix.splits }}
         run: |
           set +e
           # pytest.ini adds -v; -q restores compact module progress. Verbose
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
           # processing after the tests have passed. Keep full JUnit results.
           uv run pytest -q -ra --ignore=tests/stress \
-            --splits "$SPLITS" --group "${{ matrix.group }}" \
+            -m "($PYTEST_MARKERS) and $SUITE_MARKERS" \
+            --splits "$SUITE_SPLITS" --group "${{ matrix.group }}" \
             --splitting-algorithm least_duration \
             --durations-path .test_durations \
             --durations=25 --durations-min=1.0 \
@@ -334,7 +455,8 @@ jobs:
             --junitxml=junit-${{ matrix.group }}.xml
           code=$?
           set -e
-          if [ "$code" -eq 5 ]; then
+          # Every Metrics shard has cases; none collected means the marker broke.
+          if [ "$code" -eq 5 ] && [ "$SUITE" = main ]; then
             echo "::warning::No tests collected for this shard — expected when splitting, but investigate if MANY shards report this"
             exit 0
           fi
@@ -346,7 +468,7 @@ jobs:
         if: ${{ !cancelled() && steps.run-shard.conclusion != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
-          name: junit-results-${{ matrix.group }}
+          name: junit-results-${{ matrix.suite }}-${{ matrix.group }}
           path: futureagi/junit-${{ matrix.group }}.xml
           overwrite: true
           if-no-files-found: error
@@ -355,7 +477,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
         uses: actions/upload-artifact@v4
         with:
-          name: timing-data-${{ matrix.group }}
+          name: timing-data-${{ matrix.suite }}-${{ matrix.group }}
           path: futureagi/.test_durations
           # .test_durations is a dotfile and upload-artifact@v4 defaults
           # include-hidden-files: false, dropping it even when named literally.

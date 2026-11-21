@@ -100,8 +100,22 @@
         "is_null",
         "is_not_null"
       ],
-      "thumbs": ["equals", "not_equals", "in", "not_in", "is_null", "is_not_null"],
-      "annotator": ["equals", "not_equals", "in", "not_in", "is_null", "is_not_null"],
+      "thumbs": [
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "is_null",
+        "is_not_null"
+      ],
+      "annotator": [
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "is_null",
+        "is_not_null"
+      ],
       "array": ["contains", "not_contains", "is_null", "is_not_null"]
     }
   },
@@ -147,7 +161,8 @@
       "CUSTOM_COLUMN",
       "NORMAL",
       "PROMPT_METRIC",
-      "PROMPT_METRIC_RUNS"
+      "PROMPT_METRIC_RUNS",
+      "METRIC_FIELD"
     ],
     "aliases": {
       "attribute": "SPAN_ATTRIBUTE",
@@ -155,7 +170,8 @@
       "eval": "EVAL_METRIC",
       "evaluation": "EVAL_METRIC",
       "annotation": "ANNOTATION",
-      "custom_column": "CUSTOM_COLUMN"
+      "custom_column": "CUSTOM_COLUMN",
+      "metric": "METRIC_FIELD"
     }
   }
 }
