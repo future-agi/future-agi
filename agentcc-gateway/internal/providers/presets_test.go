@@ -182,6 +182,7 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai", PathPrefix: "/v1"},
 		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai", PathPrefix: "/v1"},
 		"telnyx":      {BaseURL: "https://api.telnyx.com/v2/ai", APIFormat: "openai", PathPrefix: "/openai"},
+		"api-route":   {BaseURL: "https://global.api-route.com", APIFormat: "openai", PathPrefix: "/v1"},
 		"azure":       {BaseURL: "", APIFormat: "azure", PathPrefix: ""},
 	}
 
