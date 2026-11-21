@@ -1971,7 +1971,6 @@ def calculate_gleu(reference, hypothesis, **kwargs):
     Returns:
         dict: {"result": float, "reason": str}
     """
-    import math
     from collections import Counter
 
     ref_str = str(reference).lower().strip()
@@ -1987,27 +1986,18 @@ def calculate_gleu(reference, hypothesis, **kwargs):
     def _ngrams(tokens, n):
         return [tuple(tokens[i : i + n]) for i in range(len(tokens) - n + 1)]
 
-    max_n = min(4, len(ref_tokens), len(hyp_tokens))
-    if max_n == 0:
-        return {"result": 0.0, "reason": "GLEU: 0.0 (tokens too short for n-grams)"}
+    max_n = int(kwargs.get("max_n", 4))
+    total_matches = total_hyp = total_ref = 0
 
-    log_gleu_prec = 0.0
     for n in range(1, max_n + 1):
         ref_ng = Counter(_ngrams(ref_tokens, n))
         hyp_ng = Counter(_ngrams(hyp_tokens, n))
-        total_ref = sum(ref_ng.values())
-        total_hyp = sum(hyp_ng.values())
-        if total_hyp == 0 or total_ref == 0:
-            return {"result": 0.0, "reason": f"GLEU: 0.0 (no {n}-grams)"}
-        clipped = sum(min(hyp_ng[ng], ref_ng[ng]) for ng in hyp_ng)
-        precision = clipped / total_hyp
-        recall = clipped / total_ref
-        gleu_n = min(precision, recall)
-        if gleu_n == 0:
-            return {"result": 0.0, "reason": f"GLEU: 0.0 (zero {n}-gram overlap)"}
-        log_gleu_prec += math.log(gleu_n)
+        total_hyp += sum(hyp_ng.values())
+        total_ref += sum(ref_ng.values())
+        total_matches += sum(min(hyp_ng[ng], ref_ng[ng]) for ng in hyp_ng)
 
-    score = math.exp(log_gleu_prec / max_n)
+    n_all = max(total_hyp, total_ref)
+    score = (total_matches / n_all) if n_all > 0 else 0.0
     score = max(0.0, min(1.0, score))
     return {"result": score, "reason": f"GLEU: {score:.4f}"}
 
