@@ -1301,10 +1301,10 @@ class TestFetchAndPersistCallResultActivity:
                 assert result.success and result.recording_error["tracks"] == ["mono"]
                 await call_execution.arefresh_from_db()
                 stored = call_execution.provider_call_data["livekit"]
-                assert stored["recording_error"] == result.recording_error
-                assert stored["recording"] == {
+                assert stored.get("recording") == {
                     k: v for k, v in tracks.items() if k != "combined"
                 }
+                assert stored.get("recording_error") == result.recording_error
                 assert stored["verified_recording_tracks"] == {
                     k: {**source, "url": v} for k, v in stored["recording"].items()
                 }
