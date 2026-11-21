@@ -357,7 +357,9 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
               {role:'user',content:'Is my order on its way?',start_ms:0},
               {role:'assistant',speaker_name:'Fulfillment',content:'It shipped today.',start_ms:100},
             ])), ...carriers(livekit.session, [livekitRecording])], livekitRoot),
-          span(livekitTrace, hex(8), "lookup_order", [str("fi.span.kind", "tool")],livekitSession),
+          { ...span(livekitTrace, hex(8), 'lookup_order', [str('fi.span.kind', 'tool'),
+            str('session.id', livekitSessionName)], livekitSession),
+            startTimeUnixNano: String(start + 50_000_000n), endTimeUnixNano: String(start + 85_000_000n) },
         ] }, {
         scope: { name: 'pipecat' }, spans: [
           span(pipecatTrace, pipecatRoot, PIPECAT_ROOT, [str('fi.span.kind', PIPECAT_KIND), str('gen_ai.span.kind', PIPECAT_KIND),
@@ -497,29 +499,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         [node.ended, node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) >= 150 : false]),
       { timeout: UI_READY }).toStrictEqual([true, true]);
       await testInfo.attach(name, { body: await page.screenshot(), contentType: 'image/png' });
-      if(live){
-        // Playback above has already completed without waiting on derivatives. Reopen
-        // only after the worker publishes this asset's independent representation.
-        await expect.poll(()=>probe.pg<{state:string}>(`SELECT d.state FROM tracer_attachmentrecordingderivative d JOIN tracer_attachment a ON a.id=d.attachment_id WHERE a.client_id=$1 AND d.representation='peaks'`,[item.attachmentId]),POLL.ASYNC_JOB).toEqual([{state:'ready'}]);
-        await drawer.getByRole('tab',{name:'Preview',exact:true}).click();
-        const peakGrant=page.waitForResponse(exactResolve(voiceProject,item,traceKey,'peaks'));
-        const peakBytes=page.waitForResponse(r=>new URL(r.url()).pathname.includes(`/${item.occurrenceId}/`) && r.headers()['content-type']==='application/octet-stream');
-        await tab.click();
-        const [peak]=((await (await peakGrant).json()) as {items:Grant[]}).items;
-        const bytes=await peakBytes;
-        expect(new URL(bytes.url()).pathname).toBe(peak.gateway_path);
-        const descriptor=JSON.parse(bytes.headers()['x-attachment-peaks']);
-        expect(descriptor.v).toBe(1);
-        expect((await bytes.body()).length).toBe(4*descriptor.channels*descriptor.levels.reduce((sum:number,l:{buckets:number})=>sum+l.buckets,0));
-        await expect(panel.getByTestId('recording-waveform')).toBeVisible();
-        await slider.focus(); await slider.press('ArrowRight'); expect(Number(await slider.inputValue())).toBeGreaterThan(0);
-        await slider.press('Home'); await expect(slider).toHaveValue('0');
-        // Slow only the screenshot replay; the duration proof above uses normal speed.
-        await player.evaluate((n:HTMLAudioElement)=>{n.defaultPlaybackRate=0.25;n.playbackRate=0.25;});
-        await play.click();
-        await expect(panel.getByRole('button',{name:'Pause recording'})).toBeVisible();
-        await snapshot('waveform-playing');
-      }else await page.unroute(`**${fallbackRoute}`);
+      if(!live) await page.unroute(`**${fallbackRoute}`);
       const headers = await browserResolveHeaders(response, E2E.attachmentsAppUrl);
       // The grant names exactly the session this resolve selected.
       expect(gatewayIds(grants.items[0].gateway_path!)[0]).toBe(headers[MEDIA_SESSION_HEADER]);
@@ -588,6 +568,34 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         .toStrictEqual([{ id: pipecatRoot, name: PIPECAT_ROOT, attachments: [[pipecatRecording.occurrenceId, 'ready']] }]);
       await playRecording(drawer, pipecatRecording, 'pipecat-player');
     }, { timeout: UI_READY });
+
+    await test.step('UI: enhance the same transport with the worker’s genuine peaks after ordinary playback',async()=>{
+        const item=livekitRecording, traceKey=livekitTraceId;
+        await expect.poll(()=>probe.pg<{state:string}>(`SELECT d.state FROM tracer_attachmentrecordingderivative d JOIN tracer_attachment a ON a.id=d.attachment_id WHERE a.client_id=$1 AND d.representation='peaks'`,[item.attachmentId]),POLL.ASYNC_JOB).toEqual([{state:'ready'}]);
+        const {drawer}=await openTrace(voiceProject,traceKey);
+        await drawer.getByText(LIVEKIT_SESSION,{exact:true}).first().click();
+        const panel=drawer.getByRole('tabpanel',{name:'Conversation',exact:true});
+        const slider=panel.getByRole('slider',{name:'Recording position'}), player=panel.locator('audio');
+        const play=panel.getByRole('button',{name:'Play recording',exact:true});
+        const peakGrant=page.waitForResponse(exactResolve(voiceProject,item,traceKey,'peaks'));
+        const peakBytes=page.waitForResponse(r=>new URL(r.url()).pathname.includes(`/${item.occurrenceId}/`) && r.headers()['content-type']==='application/octet-stream');
+        await drawer.getByRole('tab',{name:'Conversation',exact:true}).click();
+        const [peak]=((await (await peakGrant).json()) as {items:Grant[]}).items;
+        const bytes=await peakBytes;
+        expect(new URL(bytes.url()).pathname).toBe(peak.gateway_path);
+        const descriptor=JSON.parse(bytes.headers()['x-attachment-peaks']);
+        expect(descriptor.v).toBe(1);
+        expect((await bytes.body()).length).toBe(4*descriptor.channels*descriptor.levels.reduce((sum:number,l:{buckets:number})=>sum+l.buckets,0));
+        await expect(panel.getByTestId('recording-waveform')).toBeVisible();
+        await slider.focus(); await slider.press('ArrowRight'); expect(Number(await slider.inputValue())).toBeGreaterThan(0);
+        await slider.press('Home'); await expect(slider).toHaveValue('0');
+        // Slow only the screenshot replay; the duration proof above uses normal speed.
+        await player.evaluate((n:HTMLAudioElement)=>{n.defaultPlaybackRate=0.25;n.playbackRate=0.25;});
+        await play.click();
+        await expect(panel.getByRole('button',{name:'Pause recording'})).toBeVisible();
+        await expect.poll(()=>player.evaluate((n:HTMLAudioElement)=>!n.paused && !n.ended && n.currentTime>0),{intervals:[15,25]}).toBe(true);
+        await snapshot('waveform-playing');
+    },{timeout:POLL.ASYNC_JOB.timeout + UI_READY});
 
     let traceViewerHeaders: Record<string, string> = {};
     await test.step('UI: the model span shows the image in user message 2', async () => {

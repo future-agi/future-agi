@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Button, Stack, TextField, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  ButtonBase,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import RecordingAttachmentPlayer from "../attachments/RecordingAttachmentPlayer";
 import { readRecordingPreview } from "../attachments/client";
 import { conversationTimeline, clock } from "./conversationTimeline";
@@ -117,16 +124,29 @@ function SelectedRecording({ projectId, selection, ambiguous }) {
             const estimated = r.clockLabel === "Trace time";
             const content = (
               <>
-                <Typography
-                  variant="caption"
-                  sx={{
-                    color: "text.secondary",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {time && `${time} · ${r.clockLabel}`}
-                </Typography>
-                <Box>
+                <Box component="span" sx={{ minWidth: 0 }}>
+                  <Typography
+                    component="span"
+                    variant="body2"
+                    sx={{
+                      display: "block",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {time}
+                  </Typography>
+                  {time && (
+                    <Typography
+                      component="span"
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: "block", lineHeight: 1.25 }}
+                    >
+                      {estimated ? "Trace time" : "Recording"}
+                    </Typography>
+                  )}
+                </Box>
+                <Box component="span" sx={{ minWidth: 0 }}>
                   <Typography component="span" variant="body2" fontWeight={600}>
                     {r.actor}
                   </Typography>
@@ -136,7 +156,15 @@ function SelectedRecording({ projectId, selection, ambiguous }) {
                       · {r.kind}
                     </Typography>
                   )}
-                  <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>
+                  <Typography
+                    component="span"
+                    variant="body2"
+                    sx={{
+                      display: "block",
+                      overflowWrap: "anywhere",
+                      whiteSpace: "normal",
+                    }}
+                  >
                     {r.text}
                   </Typography>
                 </Box>
@@ -149,11 +177,14 @@ function SelectedRecording({ projectId, selection, ambiguous }) {
             );
             const sx = {
               display: "grid",
-              gridTemplateColumns: "minmax(5em, 20%) minmax(0, 1fr) auto",
+              gridTemplateColumns: "minmax(4.2rem, 18%) minmax(0, 1fr) auto",
+              height: "auto",
+              minHeight: 52,
+              whiteSpace: "normal",
               gap: 1,
               width: "100%",
               textAlign: "left",
-              alignItems: "baseline",
+              alignItems: "start",
               py: 1,
               px: 0.5,
               borderRadius: 0,
@@ -175,8 +206,11 @@ function SelectedRecording({ projectId, selection, ambiguous }) {
                 {r.seekMs === null || !canSeek ? (
                   <Box sx={sx}>{content}</Box>
                 ) : (
-                  <Button
-                    color="inherit"
+                  <ButtonBase
+                    disableRipple
+                    title={
+                      estimated ? `Estimated from session start` : undefined
+                    }
                     aria-pressed={active === r.key}
                     aria-label={`${estimated ? "Seek near" : "Seek to"} ${time}${estimated ? " (estimated from session start)" : ""}, ${r.actor}, ${r.text}`}
                     onClick={() => {
@@ -187,11 +221,17 @@ function SelectedRecording({ projectId, selection, ambiguous }) {
                     }}
                     sx={{
                       ...sx,
+                      "&:hover": { bgcolor: "action.hover" },
+                      "&.Mui-focusVisible": {
+                        outline: "2px solid",
+                        outlineColor: "primary.main",
+                        outlineOffset: -2,
+                      },
                       bgcolor: active === r.key ? "action.selected" : undefined,
                     }}
                   >
                     {content}
-                  </Button>
+                  </ButtonBase>
                 )}
               </Box>
             );

@@ -175,10 +175,14 @@ export async function readRecordingPreview(projectId, parent, item, signal) {
     });
   } catch (error) {
     const unavailable = new AttachmentUnavailable();
+    // The app interceptor returns statusCode/transportCode, not an Axios response.
+    const status = error?.statusCode ?? error?.response?.status;
+    const transport = error?.transportCode ?? error?.code;
     unavailable.retryable =
-      !error.response ||
-      error.response.status >= 500 ||
-      error.response.status === 429;
+      status === 429 ||
+      status >= 500 ||
+      (status == null &&
+        ["ERR_NETWORK", "ECONNABORTED", "ETIMEDOUT"].includes(transport));
     throw unavailable;
   }
   const p = recordingProjectionSchema.parse(response.data);

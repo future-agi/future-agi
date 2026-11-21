@@ -36,6 +36,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends bubblewrap python3 \
     && rm -rf /var/lib/apt/lists/* \
     && test -x /usr/bin/bwrap && test -x /usr/bin/prlimit && test -x /usr/bin/python3
+# The real peaks worker decodes with the optional audio extra. Install only its
+# decoder, locked to the CPython 3.11 Linux wheels in futureagi/uv.lock. Never
+# substitute synthetic peak bytes or relax the worker's own seccomp policy.
+RUN printf '%s\n' 'av==14.2.0 --hash=sha256:e7647d4a8d1855d05fe70784a962b15e103a2d4a0eba1dea7bfbfd95753dedb9 --hash=sha256:707b3e9ec74d91a163b1b774b592cae32241f9df9b8f6c270ab7c7603e62359d' > /tmp/e2e-decoder.txt \
+    && python -m pip install --no-cache-dir --only-binary=:all: --no-deps --require-hashes -r /tmp/e2e-decoder.txt \
+    && rm /tmp/e2e-decoder.txt
 # Byte storage for OBS-E2E-066. The release build context excludes this module.
 COPY e2e/stack/backend/e2e_attachment_storage.py /app/backend/e2e_attachment_storage.py
 COPY e2e/stack/backend/e2e_attachment_scope.py /app/backend/tracer/views/e2e_attachment_scope.py

@@ -726,3 +726,23 @@ describe("selected recording preview", () => {
     ).rejects.toThrow();
   });
 });
+
+it.each([
+  [{ statusCode: 401 }, false],
+  [{ statusCode: 403 }, false],
+  [{ statusCode: 404 }, false],
+  [{ statusCode: 410 }, false],
+  [{ statusCode: 429 }, true],
+  [{ statusCode: 503 }, true],
+  [{ transportCode: "ERR_NETWORK" }, true],
+])(
+  "classifies the app interceptor result without retrying a lost scope",
+  async (error, retryable) => {
+    axios.get.mockRejectedValue(error);
+    await expect(
+      readRecordingPreview(projectId, parent, {
+        reference: { occurrence_id: occurrenceId },
+      }),
+    ).rejects.toMatchObject({ retryable });
+  },
+);

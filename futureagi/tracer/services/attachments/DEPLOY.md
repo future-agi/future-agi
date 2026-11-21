@@ -312,14 +312,16 @@ Two different isolation runtimes handle untrusted media; see `SANDBOX.md`.
   namespaces on the host (see "The validate drain needs the sandbox on
   `tasks_s`" above).
 - Recording imports and derivatives (`tasks_xl`, `sandbox.py` +
-  `media_worker.py`) run in a stdlib-only child that installs its own
+  `media_worker.py`) run in a child that installs its own
   seccomp-bpf filter, so the runtime only has to allow
   `prctl(PR_SET_SECCOMP)`. The Docker default profile and Kubernetes
   `RuntimeDefault` both do. No privileged mode, added capability or user
   namespace is needed. A runtime that blocks it fails readiness. The worker
-  image's Python must be able to start with `-I -S`; no extra packages and no
-  codec binaries are needed, because only canonical PCM WAV is segmented
-  today.
+  image's Python must support isolated mode. Operations on normalized PCM WAV
+  use `-I -S`; the confined input decoder (`pcm`, including for peaks) uses
+  `-I` and needs PyAV from the locked `audio` extra in that worker image.
+  Missing derivatives leave the trace position slider usable; audio playback
+  is not proof that the worker can generate a waveform.
 
 ## Gateway routing (for when the media gateway is mounted)
 

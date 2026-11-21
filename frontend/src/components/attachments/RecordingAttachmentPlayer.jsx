@@ -4,7 +4,14 @@ import RecordingSeekBar from "./RecordingSeekBar";
 import useRecordingPeaks from "./useRecordingPeaks";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
-import { Box, Button, Slider, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  IconButton,
+  Slider,
+  Stack,
+  Typography,
+} from "@mui/material";
 import {
   recordingLanes,
   recordingPlan,
@@ -263,27 +270,35 @@ function ReadyRecording({
             </Stack>
           )}
           <Stack direction="row" alignItems="center" spacing={2}>
-            <Button
-              variant="contained"
-              color="inherit"
-              onClick={() =>
-                playing
-                  ? playerRef.current?.pause()
-                  : void playerRef.current?.play()
-              }
-              aria-label={playing ? "Pause recording" : "Play recording"}
-            >
-              {trace ? (
+            {trace ? (
+              <IconButton
+                color="inherit"
+                onClick={() =>
+                  playing
+                    ? playerRef.current?.pause()
+                    : void playerRef.current?.play()
+                }
+                aria-label={playing ? "Pause recording" : "Play recording"}
+              >
                 <Iconify
-                  icon={playing ? "solar:pause-bold" : "solar:play-bold"}
-                  width={16}
+                  icon={playing ? "solar:pause-linear" : "solar:play-linear"}
+                  width={20}
                 />
-              ) : playing ? (
-                "Pause"
-              ) : (
-                "Play"
-              )}
-            </Button>
+              </IconButton>
+            ) : (
+              <Button
+                variant="contained"
+                color="inherit"
+                onClick={() =>
+                  playing
+                    ? playerRef.current?.pause()
+                    : void playerRef.current?.play()
+                }
+                aria-label={playing ? "Pause recording" : "Play recording"}
+              >
+                {playing ? "Pause" : "Play"}
+              </Button>
+            )}
             {trace ? (
               <RecordingSeekBar
                 seconds={time}
