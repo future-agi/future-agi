@@ -4,7 +4,7 @@ import { sendTrace, type SeededTrace } from '../../lib/otlp';
 import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
-import { shortenMetricSettle, SHORT_CADENCE_SECONDS, SHORT_SETTLE_MINUTES } from '../../lib/metric-settle';
+import { setMetricSettle } from '../../lib/metric-settle';
 
 // frontend/src/routes/paths.js (dashboard.metrics, dashboard.dashboards) and
 // frontend/src/utils/axios.js (derivedMetrics, dashboard, project.createMonitor).
@@ -25,22 +25,34 @@ const UI_READY = 60_000;
 // settle.py evaluate_settle; arrival is spans.updated_at, DEFAULT now64() in
 // clickhouse/v2/schema/002_spans_v2.sql, so it cannot be aged on the wire).
 // The product defaults are 30 minutes and 900 seconds
-// (tracer/models/derived_metric.py), per project. This flow sets its OWN
-// project to the shortest values the product accepts (lib/metric-settle.ts):
-// the settle path is the same for any value, and the default itself is pinned
-// by a backend unit test, not by a half-hour wait here.
+// (tracer/models/derived_metric.py), per project, and a backend unit test
+// pins them. This flow gives its OWN project 5 minutes and 60 seconds
+// (lib/metric-settle.ts). Five minutes, not the minimum of one: the first
+// publication lands one or two dispatch ticks after the metric is saved, and
+// it must land while the conversations are still open, so the flow can see
+// them open and then see them settle. What the flow proves, in order:
+//   1. a publication BEFORE the settle time reports the window as not final;
+//   2. the value does not become final before last arrival + settle;
+//   3. then the exact value is final, a snapshot freezes it, a dashboard
+//      renders it and the alert check records it.
 // A pass writes next_due_at = the earliest open due_at (admission.py), so the
 // settling pass normally runs at settle + one dispatch tick; the cadence term
-// covers the incremental_last_success_at + cadence_seconds fallback, which is
-// also what picks the new values up if a pass ran before they were set.
-const SETTLE_MS = SHORT_SETTLE_MINUTES * 60_000;
-const CADENCE_MS = SHORT_CADENCE_SECONDS * 1000;
+// covers the incremental_last_success_at + cadence_seconds admission.
+const SETTLE_MINUTES = 5;
+const CADENCE_SECONDS = 60;
+const SETTLE_MS = SETTLE_MINUTES * 60_000;
+const CADENCE_MS = CADENCE_SECONDS * 1000;
 // tfc/temporal/schedules/tracer.py: dispatch-derived-metrics and check-alerts.
 const DISPATCH_TICK_MS = 60_000;
 const ALERT_CHECK_TICK_MS = 60_000;
 const PASS_MARGIN_MS = 120_000;
-// Two cadences: the first pass can run a moment before the units settle.
+// Two cadences after the settle time. The 10-second poll is what sees the
+// open state: with a 5-minute settle the window is reported as not final for
+// two minutes or more, so no poll schedule can step over it.
 const VALUE_FINAL = { timeout: SETTLE_MS + 2 * (CADENCE_MS + DISPATCH_TICK_MS) + PASS_MARGIN_MS, intervals: [10_000] };
+// The stack and the runner share one clock in CI; in attach mode they may
+// differ by a little.
+const CLOCK_TOLERANCE_MS = 5_000;
 // UserAlertMonitor.alert_frequency MinValueValidator(5) (tracer/models/monitor.py).
 // The product's last create body used 60; the first check can land before the
 // snapshot capture commits, and the next one is alert_frequency later.
@@ -87,7 +99,7 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
     steps: [
       'ingest two minted conversations, each a root and a child span with numeric resolved/escalated outcomes, aged an hour so their 15-minute bucket is closed',
       'create the metric through New metric: name, project, Custom formula over conversations, two span-attribute inputs and the formula; Save metric validates, creates and queues the first calculation',
-      'set this project to the shortest settle and cadence the product accepts (1 minute and 60 seconds; the defaults are 30 minutes and 900 seconds, and no API sets them), then wait for the conversations to settle (1 minute after their last arrival) and the next refresh to publish them',
+      'give this project a 5-minute settle and a 60-second cadence (the defaults are 30 minutes and 900 seconds, and no API sets them), see a publication report the window as not final while the conversations are open, then wait for them to settle (5 minutes after their last arrival) and the next refresh to publish them',
       'reload the metric page and read the Overview value on the default 7-day window and on a Custom window around the seeded bucket',
       'create a static below-threshold monitor through POST /tracer/user-alerts/, then Save snapshot on the Custom window',
       'create a dashboard with a metric widget pinned to the snapshot through the dashboard and widget APIs, then open it in the browser',
@@ -96,7 +108,7 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
     backendChecks: [
       'The exact four seeded spans, their typed outcomes and two distinct conversations belong to the minted project in the actor organization/default workspace.',
       'Validate accepts the formula, and the saved metric is version 1 of a custom conversation recipe in PG and in the metric API, with the same definition hash.',
-      'The KPI API returns value 0.5 over exactly two evaluated conversations for the Custom window, not partial, and the Overview shows 0.5 on both windows.',
+      'While the conversations are open the KPI API reports the Custom window as partial; it reports a final value no earlier than the last arrival plus the settle time: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.',
       'The snapshot run completes; it froze exactly the two seeded conversations, its committed overall result is numerator 1, denominator 2, value 0.5, and its commit row names that result.',
       'The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.',
       'The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.',
@@ -105,9 +117,8 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
 }, async ({ page, actor, probe }, testInfo) => {
   // Every chained budget, in order: source visibility, three builder steps, the
   // settled value, two Overview steps, Save snapshot, its capture, the alert,
-  // the dashboard load, and API/storage I/O. About 24 minutes as a ceiling; a
-  // healthy run spends well under half of that, most of it in VALUE_FINAL and
-  // in the alert check.
+  // the dashboard load, and API/storage I/O. About 28 minutes as a ceiling; a
+  // healthy run spends about 6 to 8 of them, almost all in the settle wait.
   test.setTimeout(POLL.SPAN_VISIBLE.timeout + 3 * UI_READY + VALUE_FINAL.timeout + 2 * UI_READY + UI_READY
     + POLL.ASYNC_JOB.timeout + ALERT_RECORDED.timeout + UI_READY + IO_MARGIN_MS);
   const req = await request.newContext();
@@ -239,9 +250,15 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
     const kpiPath = `${METRICS}${metric.id}/kpi/`;
 
     // Saving the first metric created the project's refresh row.
-    await test.step('the project takes the shortest settle and cadence the product accepts', async () => {
-      await shortenMetricSettle(projectId);
+    await test.step('the project takes a 5-minute settle and a 60-second cadence', async () => {
+      await setMetricSettle(projectId, SETTLE_MINUTES, CADENCE_SECONDS);
     });
+    // The product's last arrival is never earlier than the newest stored span
+    // (settle.py: the committed arrival is a floor).
+    const lastArrivalMs = Number((await probe.ch<{ ms: string }>(
+      'SELECT toUnixTimestamp64Milli(max(updated_at)) AS ms FROM spans FINAL WHERE trace_id IN ({a:String}, {b:String})',
+      { a: traces[0].traceId, b: traces[1].traceId }))[0].ms);
+    expect(lastArrivalMs).toBeGreaterThan(Date.now() - 10 * 60_000);
 
     await test.step('backendCheck 3: the settled conversations publish an exact, final value', async () => {
       // 503 is the product's "not calculated / not final yet" (reads.metric_read,
@@ -258,6 +275,13 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
         return state;
       }, VALUE_FINAL).toBe('ok:partial=false');
       if (!kpi) throw new Error('The final KPI read was not kept.');
+      // Open before settled: a publication reported the window as not final,
+      // and the final value did not come before the settle time.
+      const final = kpiStates.at(-1)!;
+      const open = kpiStates.filter(entry => entry.state.endsWith(':partial=true'));
+      expect(open.length, `no publication reported the window as not final: ${JSON.stringify(kpiStates)}`).toBeGreaterThan(0);
+      expect(Date.parse(open[0].at)).toBeLessThan(lastArrivalMs + SETTLE_MS);
+      expect(Date.parse(final.at) + CLOCK_TOLERANCE_MS).toBeGreaterThanOrEqual(lastArrivalMs + SETTLE_MS);
       expect([Date.parse(kpi.effective_window.window_start), Date.parse(kpi.effective_window.window_end)])
         .toEqual([Date.parse(windowStart), Date.parse(windowEnd)]);
       expect([kpi.current.value, kpi.current.eligible_count, kpi.current.evaluated_count, kpi.current.missing_count])

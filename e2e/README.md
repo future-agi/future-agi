@@ -636,10 +636,12 @@ runners in November 2026:
 - Unsharded, the suite took about 90 minutes.
 - With four shards a shard took 36 to 48 minutes, because one flow waited out a 30-minute product
   default.
-- That flow now sets a one-minute settle on its own project (`lib/metric-settle.ts`) and took
-  102 seconds when measured (its alert check can add a few minutes). With six shards a shard takes 22 to 30 minutes: 11 to 15 of fixed cost (the
-  boot alone varied from 7 to 11) and 10 to 15 of tests. `E2E Tests Pass` reports about 31 minutes
-  after the push.
+- That flow now gives its own project a five-minute settle (`lib/metric-settle.ts`). It asserts
+  that the value is reported as not final while the conversations are open, and that it becomes
+  final no earlier than five minutes after their last arrival. A backend unit test pins the
+  30-minute default.
+- With six shards a shard takes about 20 to 30 minutes, 11 to 15 of them fixed cost (the boot
+  alone varied from 7 to 11), and `E2E Tests Pass` reports a little over 30 minutes after the push.
 
 **Parity is a gate, not an assumption.** The `report` job lists the suite without `E2E_SHARD` and
 compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
