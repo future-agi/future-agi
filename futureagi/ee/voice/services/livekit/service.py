@@ -824,7 +824,7 @@ class LivekitService(VoiceServiceBlueprint):
                 return info.file_results[0].filename or None
             return None
 
-        async def cleanup(object_key=None):
+        async def cleanup(saved_tracks, object_key=None):
             try:
                 if object_key is None:
                     # A complete bound map predates deletion. Resolve its key
@@ -853,17 +853,55 @@ class LivekitService(VoiceServiceBlueprint):
                     "message": "Tracks are available; raw recording cleanup could not be confirmed.",
                     "tracks": [],
                 }
-            if provider_data.get("recording_error") != result.error:
-                if result.error:
-                    provider_data["recording_error"] = result.error
-                else:
-                    provider_data.pop("recording_error", None)
-                await call.asave(update_fields=["provider_call_data"])
+            # The webhook can replace the egress while LiveKit/S3 is awaited.
+            # Compare-and-swap the JSON we just read, not the pre-cleanup copy.
+            while True:
+                current = await CallExecution.objects.aget(id=call_execution_id)
+                data = current.provider_call_data or {}
+                lk = data.get(PROVIDER_KEY, {})
+                if (
+                    lk.get("egress_id") != egress_id
+                    or lk.get("recording_source") != identity
+                    or lk.get("recording") != saved_tracks
+                ):
+                    # Costs may read current metadata, but the activity must
+                    # not copy old URLs or re-save this row's recording fields.
+                    return RecordingUrls(
+                        provider_call_data=data,
+                        recording_fields_persisted=True,
+                        error={
+                            "code": "recording_source_changed",
+                            "message": "Call recordings changed during cleanup; current recordings were kept.",
+                            "tracks": [],
+                        },
+                    )
+                changes: dict[str, Any] = {}
+                if lk.get("recording_error") != result.error:
+                    updated = lk.copy()
+                    if result.error:
+                        updated["recording_error"] = result.error
+                    else:
+                        updated.pop("recording_error", None)
+                    changes["provider_call_data"] = {**data, PROVIDER_KEY: updated}
+                # Finish the activity's recording fields here as well. It can
+                # await costs without later saving a superseded snapshot.
+                for field, value in (
+                    ("recording_url", result.recording_url),
+                    ("stereo_recording_url", result.stereo_recording_url),
+                    ("recording_available", True),
+                ):
+                    if getattr(current, field) != value:
+                        changes[field] = value
+                if changes and not await CallExecution.objects.filter(
+                    id=call_execution_id, provider_call_data=data
+                ).aupdate(**changes):
+                    continue
+                result.provider_call_data = changes.get("provider_call_data", data)
+                result.recording_fields_persisted = True
+                return result
 
         if tracks.keys() == fields.keys():
-            result.provider_call_data = call.provider_call_data
-            await cleanup()
-            return result
+            return await cleanup(saved_tracks=saved)
 
         # 1. Stop egress (it stays ACTIVE until explicitly stopped), then poll
         lkapi = self._create_api()
@@ -1043,7 +1081,7 @@ class LivekitService(VoiceServiceBlueprint):
                 code=recording_error["code"],
             )
         else:
-            await cleanup(object_key)
+            result = await cleanup(tracks, object_key)
 
         logger.info(
             "livekit_recordings_processed",

@@ -107,7 +107,14 @@ def _extract(
 
     api = AsyncMock()
     api.egress.list_egress.return_value = MagicMock(items=[egress_info])
+
+    async def update_fields(**changes):
+        for field, value in changes.items():
+            setattr(call, field, value)
+        return 1
+
     with (
+        patch("simulate.models.test_execution.CallExecution.objects.filter") as filtered,
         patch(
             "simulate.models.test_execution.CallExecution.objects.aget",
             new=AsyncMock(return_value=call),
@@ -130,6 +137,7 @@ def _extract(
         ),
         patch.object(client.return_value, "delete_object", side_effect=delete_effect) as delete,
     ):
+        filtered.return_value.aupdate = AsyncMock(side_effect=update_fields)
         client.return_value.get_object.return_value = {"Body": MagicMock()}
         if not real_split:
             patch_stream = patch.object(
@@ -347,14 +355,13 @@ def test_transient_cleanup_failure_then_replay_preserves_all_urls():
     _assert_returned_tracks(first, saved)
     assert first.error["code"] == "recording_cleanup_failed" and first.error["tracks"] == []
     assert call.provider_call_data[PROVIDER_KEY]["recording_error"] == first.error
-    call.asave.assert_awaited_with(update_fields=["provider_call_data"])
     no_stream = MagicMock()
     second, call, delete, _ = _extract(first.provider_call_data, stream=no_stream)
     no_stream.assert_not_called()
     delete.assert_called_once_with(Bucket="livekit-egress", Key="raw/room.ogg")
     _assert_returned_tracks(second, saved)
     assert second.error is None and "recording_error" not in call.provider_call_data[PROVIDER_KEY]
-    call.asave.assert_awaited_once_with(update_fields=["provider_call_data"])
+    call.asave.assert_not_awaited()
 
 
 @pytest.mark.parametrize(("response_id", "response_room"), [("EG_2", "call_call-1"), ("EG_1", "call_other")])

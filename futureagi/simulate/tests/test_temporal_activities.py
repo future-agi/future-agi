@@ -1128,6 +1128,99 @@ class TestFetchAndPersistCallResultActivity:
         await sync_to_async(create_call.refresh_from_db)()
         assert create_call.status == CreateCallExecution.CallStatus.COMPLETED
 
+    @pytest.mark.parametrize("during_cleanup", [True, False], ids=["cleanup", "handoff"])
+    @pytest.mark.parametrize("delete_fails", [False, True], ids=["clear-error", "set-error"])
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_cleanup_retry_preserves_new_egress_through_activity_save(
+        self, call_execution, delete_fails, during_cleanup
+    ):
+        activity_module = _ee_voice_large()
+        from livekit.protocol.egress import EgressStatus
+
+        from ee.voice.services.livekit.service import LivekitService
+        from ee.voice.services.types.voice import CostBreakdown
+        from simulate.temporal.types.activities import FetchAndPersistCallResultInput
+        from simulate.views.livekit_api import _handle_egress_ended
+        from tfc.temporal.common.heartbeat import Heartbeater
+
+        call_id = str(call_execution.id)
+        room = f"call_{call_id}"
+        tracks = ("combined", "stereo", "assistant", "customer")
+        old = {k: f"https://media/EG_1/{k}" for k in tracks}
+        new = {k: f"https://media/EG_2/{k}" for k in tracks}
+        lk = {
+            "egress_id": "EG_1", "recording_files": ["raw/one.ogg"],
+            "recording_source": {"call_id": call_id, "egress_id": "EG_1"}, "recording": old,
+        }
+        if not delete_fails:
+            lk["recording_error"] = {"code": "recording_cleanup_failed"}
+        await CallExecution.objects.filter(pk=call_id).aupdate(provider_call_data={"livekit": lk})
+
+        async def publish_new_recording():
+            # The webhook updates the ID and raw files. A second recording
+            # writer then publishes the new tracks.
+            await _handle_egress_ended(MagicMock(egress_info=MagicMock(
+                room_name=room, egress_id="EG_2", file_results=[MagicMock(filename="raw/two.ogg")],
+            )))
+            current = await CallExecution.objects.aget(pk=call_id)
+            current_lk = current.provider_call_data["livekit"]
+            assert current_lk["egress_id"] == "EG_2"
+            current_lk.update(recording_source={"call_id": call_id, "egress_id": "EG_2"}, recording=new)
+            current_lk.pop("recording_error", None)
+            current.recording_url, current.stereo_recording_url = new["combined"], new["stereo"]
+            await current.asave(update_fields=["provider_call_data", "recording_url", "stereo_recording_url"])
+
+        async def list_egress(_request):
+            if during_cleanup:
+                await publish_new_recording()
+            return MagicMock(items=[MagicMock(
+                room_name=room, egress_id="EG_1", status=EgressStatus.EGRESS_COMPLETE,
+                file_results=[MagicMock(filename="raw/one.ogg")],
+            )])
+
+        async def fetch_costs(_call_id):
+            if not during_cleanup:
+                await publish_new_recording()
+            return CostBreakdown(total=0.25)
+
+        api = AsyncMock()
+        api.egress.list_egress.side_effect = list_egress
+        with (
+            patch("temporalio.activity.info"), patch("temporalio.activity.heartbeat"),
+            patch.object(Heartbeater, "__aenter__", new=AsyncMock()),
+            patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
+            patch("ee.voice.services.livekit.service.LiveKitConfig.from_env"),
+            patch.object(LivekitService, "_create_api", return_value=api),
+            patch("ee.voice.services.livekit.recording.delete_egress_recording",
+                  side_effect=TimeoutError if delete_fails else None) as delete,
+            patch("ee.voice.services.voice_service_manager.VoiceServiceManager") as manager,
+        ):
+            service = LivekitService()
+            manager.return_value.fetch_and_store_call_data = AsyncMock(return_value=(2, True, True))
+            manager.return_value.extract_and_persist_recordings = service.extract_and_persist_recordings
+            manager.return_value.extract_costs = fetch_costs
+            result = await activity_module.fetch_and_persist_call_result(FetchAndPersistCallResultInput(
+                call_id=call_id, provider_call_id=room, status="COMPLETED",
+                provider="livekit", call_type=CallType.INBOUND,
+            ))
+
+        delete.assert_called_once_with(service.config, "raw/one.ogg")
+        assert result.success
+        if during_cleanup:
+            assert result.recording_error["code"] == "recording_source_changed"
+        elif delete_fails:
+            assert result.recording_error["code"] == "recording_cleanup_failed"
+        else:
+            assert result.recording_error is None
+        await call_execution.arefresh_from_db()
+        stored = call_execution.provider_call_data["livekit"]
+        assert stored["egress_id"] == stored["recording_source"]["egress_id"] == "EG_2"
+        assert stored["recording_files"] == ["raw/two.ogg"]
+        assert stored["recording"] == new and "recording_error" not in stored
+        assert (call_execution.recording_url, call_execution.stereo_recording_url) == (new["combined"], new["stereo"])
+        assert call_execution.cost_cents == 25  # the activity still saved its unrelated update
+
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
     async def test_fetch_and_persist_call_result_handles_failed_call(

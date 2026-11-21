@@ -216,3 +216,5 @@ class RecordingUrls:
     # Set when some tracks could not be made: {"code", "message", "tracks"}.
     # ``code`` is "ffmpeg_unavailable" when ffmpeg is missing from the image.
     error: dict[str, Any] | None = None
+    # The engine already committed the URLs, availability and provider JSON.
+    recording_fields_persisted: bool = False
