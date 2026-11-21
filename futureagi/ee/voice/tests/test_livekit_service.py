@@ -957,7 +957,8 @@ class TestRecordingSpeakerTracks:
         call = MagicMock()
         call.provider_call_data = {PROVIDER_KEY: {"egress_id": "EG_1"}}
         call.asave = AsyncMock()
-        egress_info = MagicMock()
+        call.service_provider_call_id = "call_call-1"
+        egress_info = MagicMock(egress_id="EG_1", room_name="call_call-1")
         egress_info.status = EgressStatus.EGRESS_COMPLETE
         egress_info.file_results = [MagicMock(filename="raw/room.mp3")]
         cuts = {}

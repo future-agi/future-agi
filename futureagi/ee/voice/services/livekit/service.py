@@ -748,6 +748,7 @@ class LivekitService(VoiceServiceBlueprint):
           4. Store assistant/customer URLs in provider_call_data
           5. Clean up raw egress file from S3
         """
+        from livekit.api import ListEgressRequest
         from livekit.protocol.egress import EgressStatus
 
         from simulate.models.test_execution import CallExecution
@@ -806,9 +807,62 @@ class LivekitService(VoiceServiceBlueprint):
                 if isinstance(url, str) and url.strip():
                     tracks[name] = url
                     setattr(result, field, url)
+        # Bridges can expose a customer-side display ID; egress still runs
+        # in call_<id>. SIP outbound can instead use the persisted SIP room.
+        call_rooms = {_room_name(call_id_str)}
+        if call.service_provider_call_id and call.service_provider_call_id.startswith("sip_"):
+            call_rooms.add(call.service_provider_call_id)
+
+        def source_key(info):
+            if (
+                info
+                and info.egress_id == egress_id
+                and info.room_name in call_rooms
+                and info.status == EgressStatus.EGRESS_COMPLETE
+                and info.file_results
+            ):
+                return info.file_results[0].filename or None
+            return None
+
+        async def cleanup(object_key=None):
+            try:
+                if object_key is None:
+                    # A complete bound map predates deletion. Resolve its key
+                    # from LiveKit, never from a URL or mutable webhook file list.
+                    api = self._create_api()
+                    try:
+                        response = await api.egress.list_egress(
+                            ListEgressRequest(egress_id=egress_id)
+                        )
+                        for info in response.items:
+                            object_key = source_key(info)
+                            if object_key:
+                                break
+                    finally:
+                        await api.aclose()
+                if not object_key:
+                    raise ValueError("No verified completed egress file")
+                # S3 DeleteObject succeeds for a missing key. No HEAD/GET race.
+                await asyncio.to_thread(delete_egress_recording, self.config, object_key)
+            except Exception:  # noqa: BLE001 - cleanup must not discard completed tracks
+                logger.warning(
+                    "livekit_egress_cleanup_failed", call_id=call_id_str, egress_id=egress_id
+                )
+                result.error = {
+                    "code": "recording_cleanup_failed",
+                    "message": "Tracks are available; raw recording cleanup could not be confirmed.",
+                    "tracks": [],
+                }
+            if provider_data.get("recording_error") != result.error:
+                if result.error:
+                    provider_data["recording_error"] = result.error
+                else:
+                    provider_data.pop("recording_error", None)
+                await call.asave(update_fields=["provider_call_data"])
+
         if tracks.keys() == fields.keys():
-            # Cleanup follows persistence, so the raw object may already be gone.
             result.provider_call_data = call.provider_call_data
+            await cleanup()
             return result
 
         # 1. Stop egress (it stays ACTIVE until explicitly stopped), then poll
@@ -858,7 +912,7 @@ class LivekitService(VoiceServiceBlueprint):
             )
             object_key = None
         else:
-            object_key = egress_info.file_results[0].filename
+            object_key = source_key(egress_info)
         loop = asyncio.get_running_loop()
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         s3_prefix = f"call-recordings/{call_id_str}/{egress_id}/{ts}"
@@ -989,16 +1043,7 @@ class LivekitService(VoiceServiceBlueprint):
                 code=recording_error["code"],
             )
         else:
-            try:
-                await loop.run_in_executor(
-                    None, delete_egress_recording, self.config, object_key
-                )
-            except Exception:
-                logger.warning(
-                    "livekit_egress_cleanup_failed",
-                    call_id=call_id_str,
-                    object_key=object_key,
-                )
+            await cleanup(object_key)
 
         logger.info(
             "livekit_recordings_processed",

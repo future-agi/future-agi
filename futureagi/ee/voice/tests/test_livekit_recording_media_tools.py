@@ -82,7 +82,10 @@ def _livekit_service():
         return LivekitService()
 
 
-def _extract(provider_call_data, *, stream=None, real_split=False):
+def _extract(
+    provider_call_data, *, stream=None, real_split=False, delete_effect=None,
+    response_id="EG_1", response_room="call_call-1", on_save=None,
+):
     """Run extract_and_persist_recordings on a stubbed call and egress.
 
     real_split: the ffmpeg tracks go through the real stream_egress_to_s3
@@ -95,19 +98,21 @@ def _extract(provider_call_data, *, stream=None, real_split=False):
     from ee.voice.services.livekit import recording
 
     service = _livekit_service()
-    call = MagicMock()
+    call = MagicMock(service_provider_call_id="call_call-1")
     call.provider_call_data = provider_call_data
-    call.asave = AsyncMock()
-    egress_info = MagicMock()
+    call.asave = AsyncMock(side_effect=on_save)
+    egress_info = MagicMock(egress_id=response_id, room_name=response_room)
     egress_info.status = EgressStatus.EGRESS_COMPLETE
     egress_info.file_results = [MagicMock(filename="raw/room.ogg")]
 
+    api = AsyncMock()
+    api.egress.list_egress.return_value = MagicMock(items=[egress_info])
     with (
         patch(
             "simulate.models.test_execution.CallExecution.objects.aget",
             new=AsyncMock(return_value=call),
         ),
-        patch.object(service, "_create_api", return_value=AsyncMock()),
+        patch.object(service, "_create_api", return_value=api),
         patch.object(
             recording,
             "poll_egress_completion",
@@ -123,7 +128,7 @@ def _extract(provider_call_data, *, stream=None, real_split=False):
         patch.object(
             subprocess, "Popen", side_effect=AssertionError("ffmpeg must not start")
         ),
-        patch.object(recording, "delete_egress_recording") as delete,
+        patch.object(client.return_value, "delete_object", side_effect=delete_effect) as delete,
     ):
         client.return_value.get_object.return_value = {"Body": MagicMock()}
         if not real_split:
@@ -272,19 +277,99 @@ def test_retry_completes_with_complementary_track_successes():
     delete.assert_called_once()
 
 
+def _output_url(_config, _source, destination, _args):
+    return f"https://media/{destination}"
+
+
+def _assert_returned_tracks(result, saved):
+    assert saved == {
+        "combined": result.recording_url,
+        "stereo": result.stereo_recording_url,
+        "assistant": result.assistant_recording_url,
+        "customer": result.customer_recording_url,
+    }
+    assert all(saved.values())
+
+
 def test_retry_after_raw_deletion_returns_persisted_tracks():
     from ee.voice.services.livekit.service import PROVIDER_KEY
 
-    first, _, delete, _ = _extract(
-        {PROVIDER_KEY: {"egress_id": "EG_1"}},
-        stream=lambda _c, _k, dest, _a: f"https://media/{dest}",
+    # S3 DeleteObject returns success even when the key no longer exists.
+    objects = {"raw/room.ogg": b"audio"}
+
+    def delete_object(*, Bucket, Key):
+        objects.pop(Key, None)
+        return {"ResponseMetadata": {"HTTPStatusCode": 204}}
+
+    first, _, _, _ = _extract(
+        {PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=_output_url, delete_effect=delete_object,
     )
-    delete.assert_called_once()
+    assert not objects
     missing_raw = MagicMock(side_effect=FileNotFoundError)
-    second, _, delete, _ = _extract(first.provider_call_data, stream=missing_raw)
+    second, _, delete, _ = _extract(first.provider_call_data, stream=missing_raw, delete_effect=delete_object)
     missing_raw.assert_not_called()
+    delete.assert_called_once_with(Bucket="livekit-egress", Key="raw/room.ogg")
+    assert second == first and second.error is None
+
+
+def test_complete_map_saved_before_cleanup_survives_worker_stop():
+    import asyncio
+    from copy import deepcopy
+
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+
+    data = {PROVIDER_KEY: {"egress_id": "EG_1", "recording_files": ["other/raw.ogg"]}}
+    persisted = {}
+
+    def stop_after_save(**_kwargs):
+        persisted.update(deepcopy(data))
+        raise asyncio.CancelledError
+
+    before_crash = MagicMock()
+    with pytest.raises(asyncio.CancelledError):
+        _extract(data, stream=_output_url, on_save=stop_after_save, delete_effect=before_crash)
+    before_crash.assert_not_called()
+    no_stream = MagicMock()
+    replay, _, delete, _ = _extract(persisted, stream=no_stream)
+    no_stream.assert_not_called()
+    delete.assert_called_once_with(Bucket="livekit-egress", Key="raw/room.ogg")
+    _assert_returned_tracks(replay, persisted[PROVIDER_KEY]["recording"])
+    assert replay.error is None
+
+
+def test_transient_cleanup_failure_then_replay_preserves_all_urls():
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+
+    first, call, _, _ = _extract(
+        {PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=_output_url, delete_effect=TimeoutError,
+    )
+    saved = dict(call.provider_call_data[PROVIDER_KEY]["recording"])
+    _assert_returned_tracks(first, saved)
+    assert first.error["code"] == "recording_cleanup_failed" and first.error["tracks"] == []
+    assert call.provider_call_data[PROVIDER_KEY]["recording_error"] == first.error
+    call.asave.assert_awaited_with(update_fields=["provider_call_data"])
+    no_stream = MagicMock()
+    second, call, delete, _ = _extract(first.provider_call_data, stream=no_stream)
+    no_stream.assert_not_called()
+    delete.assert_called_once_with(Bucket="livekit-egress", Key="raw/room.ogg")
+    _assert_returned_tracks(second, saved)
+    assert second.error is None and "recording_error" not in call.provider_call_data[PROVIDER_KEY]
+    call.asave.assert_awaited_once_with(update_fields=["provider_call_data"])
+
+
+@pytest.mark.parametrize(("response_id", "response_room"), [("EG_2", "call_call-1"), ("EG_1", "call_other")])
+def test_cleanup_replay_rejects_foreign_egress_result(response_id, response_room):
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+
+    first, _, _, _ = _extract({PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=_output_url)
+    no_stream = MagicMock()
+    result, _, delete, _ = _extract(
+        first.provider_call_data, stream=no_stream, response_id=response_id, response_room=response_room,
+    )
     delete.assert_not_called()
-    assert second == first
+    no_stream.assert_not_called()
+    _assert_returned_tracks(result, first.provider_call_data[PROVIDER_KEY]["recording"])
+    assert result.error["code"] == "recording_cleanup_failed"
 
 
 @pytest.mark.parametrize("changed", ["egress_id", "call_id"])
@@ -360,6 +445,7 @@ def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
         patch.object(CallExecution.objects, "aget", new=AsyncMock(return_value=call)),
         patch.object(CallTranscript.objects, "filter") as transcripts,
         patch.object(service, "_create_api") as api,
+        patch("ee.voice.services.livekit.recording.delete_egress_recording") as delete,
     ):
         transcripts.return_value.acount = AsyncMock(return_value=0)
         asyncio.run(service.fetch_and_store_call_data(
@@ -368,6 +454,7 @@ def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
         call.asave.reset_mock()
         result = asyncio.run(service.extract_and_persist_recordings("call-1"))
         api.assert_not_called()
+        delete.assert_not_called()
         call.asave.assert_not_awaited()
 
     assert result.error["code"] == "recording_source_unverified"
