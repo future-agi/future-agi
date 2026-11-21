@@ -91,6 +91,7 @@ def _extract(
     response_id="EG_1",
     response_room="call_call-1",
     on_save=None,
+    call=None,
 ):
     """Run extract_and_persist_recordings on a stubbed call and egress.
 
@@ -104,7 +105,13 @@ def _extract(
     from ee.voice.services.livekit import recording
 
     service = _livekit_service()
-    call = MagicMock(service_provider_call_id="call_call-1")
+    if call is None:
+        call = MagicMock(
+            service_provider_call_id="call_call-1",
+            recording_url=None,
+            stereo_recording_url=None,
+            recording_available=False,
+        )
     call.provider_call_data = provider_call_data
     call.asave = AsyncMock()
     egress_info = MagicMock(egress_id=response_id, room_name=response_room)
@@ -434,18 +441,66 @@ def test_retry_does_not_reuse_another_recording_source():
     assert not call.recording_available
 
 
-def test_unattributed_legacy_links_are_preserved_but_not_used_for_a_new_failure():
-    from ee.voice.services.livekit.service import PROVIDER_KEY
+@pytest.mark.parametrize(
+    "source", [{}, {"recording_source": None}, {"recording_source": "bad"}]
+)
+@pytest.mark.parametrize(
+    ("kind", "column"), [("stereo", True), ("combined", True), ("combined", False)]
+)
+def test_partial_legacy_playback_survives_until_verified_replacement(
+    source, kind, column
+):
+    from copy import deepcopy
 
-    saved = {"combined": "https://media/legacy"}
-    result, _, delete, _ = _extract(
-        {PROVIDER_KEY: {"egress_id": "EG_1", "recording": saved}},
-        stream=MagicMock(side_effect=FileNotFoundError),
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+    from simulate.serializers.test_execution import CallExecutionDetailSerializer
+
+    legacy = f"https://media/legacy/{kind}"
+    # Exercise playback with both copies, a combined column not in the
+    # shortcut, and a combined shortcut with no model URL at all.
+    shortcut = {"stereo": "https://media/legacy/stereo"} if column else {kind: legacy}
+    combined = legacy if column and kind == "combined" else None
+    stereo = legacy if column and kind == "stereo" else None
+    data = {PROVIDER_KEY: {"egress_id": "EG_1", "recording": shortcut, **source}}
+    call = MagicMock(
+        service_provider_call_id="call_call-1",
+        simulation_call_type="voice",
+        call_metadata={"call_direction": "inbound"},
+        recording_url=combined,
+        stereo_recording_url=stereo,
+        recording_available=True,
+        provider_call_data=data,
     )
-    delete.assert_not_called()
-    assert result.recording_url is None
-    assert result.error["tracks"] == ["assistant", "customer", "mono", "stereo"]
-    assert result.provider_call_data[PROVIDER_KEY]["unattributed_recording"] == saved
+    serializer = CallExecutionDetailSerializer()
+    before = serializer.get_recordings(call)
+    snapshot = deepcopy(data)
+    for stream in (
+        MagicMock(side_effect=FileNotFoundError),
+        # A speaker-only success cannot displace the visible legacy tracks.
+        lambda _c, _k, dest, _a: (
+            "https://media/new/assistant" if "_assistant_" in dest else None
+        ),
+    ):
+        result, _, delete, _ = _extract(data, call=call, stream=stream)
+        delete.assert_not_called()
+        assert result.recording_fields_persisted and result.recording_url is None
+        assert result.error["code"] == "recording_source_unverified"
+        assert call.provider_call_data == snapshot
+        assert call.recording_url == combined
+        assert call.stereo_recording_url == stereo
+        assert call.recording_available
+        assert serializer.get_recordings(call) == before and before[kind] == legacy
+
+    result, _, delete, _ = _extract(data, call=call, stream=_output_url)
+    stored = call.provider_call_data[PROVIDER_KEY]
+    assert result.error is None
+    delete.assert_called_once()
+    assert stored["recording_source"] == {"call_id": "call-1", "egress_id": "EG_1"}
+    _assert_returned_tracks(result, stored["recording"])
+    assert all("/EG_1/" in url for url in stored["recording"].values())
+    assert call.recording_url == stored["recording"]["combined"]
+    assert call.stereo_recording_url == stored["recording"]["stereo"]
+    assert call.recording_available and serializer.get_recordings(call)[kind] != legacy
 
 
 @pytest.mark.parametrize("incoming_egress", [None, "EG_2"])

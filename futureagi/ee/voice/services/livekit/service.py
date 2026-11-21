@@ -789,6 +789,21 @@ class LivekitService(VoiceServiceBlueprint):
             and isinstance(source["egress_id"], str)
             and bool(source["egress_id"].strip())
         )
+        playback_fields = (
+            "recording_url",
+            "stereo_recording_url",
+            "recording_available",
+        )
+        # Snapshot before any external I/O. A CAS retry may refresh its SQL
+        # predicate, but must never adopt a peer's playback change as our baseline.
+        initial_playback = {key: getattr(call, key) for key in playback_fields}
+        legacy_tracks = set()
+        if not valid_source:
+            for name, field in fields.items():
+                shortcut = saved.get(name) if isinstance(saved, dict) else None
+                column = initial_playback.get(field)
+                if any(isinstance(v, str) and v.strip() for v in (shortcut, column)):
+                    legacy_tracks.add(name)
         if (
             not valid_source
             and isinstance(saved, dict)
@@ -887,8 +902,18 @@ class LivekitService(VoiceServiceBlueprint):
                 updated = lk.copy()
                 error = cleanup_error
                 if cleanup_tracks is None:
-                    if "recording_source" not in lk and current_map:
-                        updated["unattributed_recording"] = current_map
+                    if not bound and legacy_tracks - merged.keys():
+                        # A legacy shortcut can be the serializer's only URL.
+                        # Keep the visible map until each old track has a verified
+                        # replacement; don't bind unverified links to this egress.
+                        return RecordingUrls(
+                            recording_fields_persisted=True,
+                            error={
+                                "code": "recording_source_unverified",
+                                "message": "Existing call recordings were kept pending verified replacements.",
+                                "tracks": sorted(failures),
+                            },
+                        )
                     if not bound or current_map != merged:
                         updated.pop("recording_cleanup_success", None)
                     updated.update(recording_source=identity, recording=merged)
@@ -936,18 +961,29 @@ class LivekitService(VoiceServiceBlueprint):
                 changes: dict[str, Any] = {}
                 if updated != lk:
                     changes["provider_call_data"] = {**data, PROVIDER_KEY: updated}
-                for field, value in (
-                    ("recording_url", result.recording_url),
-                    ("stereo_recording_url", result.stereo_recording_url),
-                    (
-                        "recording_available",
-                        bool(result.recording_url or result.stereo_recording_url),
-                    ),
-                ):
-                    if getattr(current, field) != value:
-                        changes[field] = value
+                predicate = {"id": call_execution_id, "provider_call_data": data}
+                if cleanup_tracks is None:
+                    observed = {key: getattr(current, key) for key in playback_fields}
+                    predicate.update(observed)
+                    # Merge the source-bound map independently of playback.
+                    # A peer's column wins even if it never touched provider JSON.
+                    for name in ("combined", "stereo"):
+                        field = fields[name]
+                        value = merged.get(name)
+                        if observed[field] == initial_playback[field] != value:
+                            changes[field] = value
+                    available = any(
+                        changes.get(field, observed[field])
+                        for field in playback_fields[:2]
+                    )
+                    if (
+                        observed["recording_available"]
+                        == initial_playback["recording_available"]
+                        != available
+                    ):
+                        changes["recording_available"] = available
                 if changes and not await CallExecution.objects.filter(
-                    id=call_execution_id, provider_call_data=data
+                    **predicate
                 ).aupdate(**changes):
                     continue
                 if cleanup_tracks is None:

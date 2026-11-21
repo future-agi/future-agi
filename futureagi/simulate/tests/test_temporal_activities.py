@@ -1136,6 +1136,172 @@ class TestFetchAndPersistCallResultActivity:
         await sync_to_async(create_call.refresh_from_db)()
         assert create_call.status == CreateCallExecution.CallStatus.COMPLETED
 
+    @pytest.mark.parametrize("phase", ["cleanup_wait", "split_wait", "split_cas"])
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_alk_upload_keeps_playback_through_recording_activity(
+        self, call_execution, auth_client, phase
+    ):
+        import hashlib
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.db.models.query import QuerySet
+
+        activity_module = _ee_voice_large()
+        from livekit.protocol.egress import EgressStatus
+
+        from ee.voice.services.livekit.service import LivekitService
+        from ee.voice.services.types.voice import CostBreakdown
+        from simulate.serializers.test_execution import CallExecutionDetailSerializer
+        from simulate.temporal.types.activities import FetchAndPersistCallResultInput
+        from tfc.temporal.common.heartbeat import Heartbeater
+
+        call_id = str(call_execution.pk)
+        room = f"call_{call_id}"
+        source = {"call_id": call_id, "egress_id": "EG_1"}
+        tracks = {
+            k: f"https://media/{k}"
+            for k in ("stereo", "combined", "assistant", "customer")
+        }
+        cleanup_only = phase == "cleanup_wait"
+        lk = {"egress_id": "EG_1", "recording_files": ["raw/one.ogg"]}
+        lk.update(
+            recording_source=source,
+            recording=tracks if cleanup_only else {"stereo": tracks["stereo"]},
+        )
+        await CallExecution.objects.filter(pk=call_id).aupdate(
+            provider_call_data={"livekit": lk},
+            recording_url=tracks["combined"] if cleanup_only else None,
+            stereo_recording_url=tracks["stereo"],
+            recording_available=True,
+        )
+        objects = {"raw/one.ogg": b"A"}
+        audio = b"RIFF-independent-upload-B"
+        url_b = "https://media/alk/B.wav"
+
+        def put_object(*, object_name, data, **_kwargs):
+            objects[object_name] = data.read()
+
+        @sync_to_async
+        def upload_b():
+            response = auth_client.post(
+                f"/simulate/api/alk-simulate/call-executions/{call_id}/recording/",
+                {"file": SimpleUploadedFile("B.wav", audio, content_type="audio/wav")},
+                format="multipart",
+            )
+            assert response.status_code == 200, response.content
+            assert response.json()["result"]["recording_url"] == url_b
+
+        info = MagicMock(
+            room_name=room,
+            egress_id="EG_1",
+            status=EgressStatus.EGRESS_COMPLETE,
+            file_results=[MagicMock(filename="raw/one.ogg")],
+        )
+
+        async def poll(*_args):
+            if phase == "split_wait":
+                await upload_b()
+            return info
+
+        async def list_egress(_request):
+            await upload_b()
+            return MagicMock(items=[info])
+
+        def split(_config, _key, destination, _args):
+            for k in ("stereo", "assistant", "customer"):
+                if f"_{k}_" in destination:
+                    return tracks[k]
+            return tracks["combined"]
+
+        writes = []
+        real_update = QuerySet.aupdate
+
+        async def at_predicate(query, **changes):
+            # The queryset already contains the service's WHERE clause. Let
+            # the endpoint commit B, then execute the actual conditional SQL.
+            if query.model is not CallExecution or "provider_call_data" not in changes:
+                return await real_update(query, **changes)
+            if phase == "split_cas" and not writes:
+                await upload_b()
+            count = await real_update(query, **changes)
+            writes.append((set(changes), count))
+            return count
+
+        api = AsyncMock()
+        api.egress.list_egress.side_effect = list_egress
+        with (
+            patch("temporalio.activity.info"),
+            patch("temporalio.activity.heartbeat"),
+            patch.object(Heartbeater, "__aenter__", new=AsyncMock()),
+            patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_storage_client"
+            ) as storage,
+            patch(
+                "simulate.services.alk_simulate_ingestion.get_object_url",
+                return_value=url_b,
+            ),
+            patch("ee.voice.services.livekit.service.LiveKitConfig.from_env"),
+            patch.object(LivekitService, "_create_api", return_value=api),
+            patch(
+                "ee.voice.services.livekit.recording.poll_egress_completion", new=poll
+            ),
+            patch(
+                "ee.voice.services.livekit.recording.stream_egress_to_s3",
+                side_effect=split,
+            ),
+            patch(
+                "ee.voice.services.livekit.recording.delete_egress_recording",
+                side_effect=lambda _config, key: objects.pop(key),
+            ) as delete,
+            patch.object(QuerySet, "aupdate", new=at_predicate),
+            patch(
+                "ee.voice.services.voice_service_manager.VoiceServiceManager"
+            ) as manager,
+        ):
+            storage.return_value.put_object.side_effect = put_object
+            service = LivekitService()
+            voice = manager.return_value
+            voice.fetch_and_store_call_data = AsyncMock(return_value=(2, True, True))
+            voice.extract_and_persist_recordings = service.extract_and_persist_recordings
+            voice.extract_costs = AsyncMock(return_value=CostBreakdown(total=0.25))
+            result = await activity_module.fetch_and_persist_call_result(
+                FetchAndPersistCallResultInput(
+                    call_id=call_id,
+                    provider_call_id=room,
+                    status="COMPLETED",
+                    provider="livekit",
+                    call_type=CallType.INBOUND,
+                )
+            )
+
+        assert result.success and result.recording_error is None
+        delete.assert_called_once_with(service.config, "raw/one.ogg")
+        assert writes[-1] == ({"provider_call_data"}, 1)
+        if cleanup_only:
+            assert len(writes) == 1
+        else:
+            counts = [count for _, count in writes]
+            assert counts == ([0, 1, 1] if phase == "split_cas" else [1, 1])
+            assert "recording_url" not in writes[-2][0]
+        await call_execution.arefresh_from_db()
+        stored = call_execution.provider_call_data["livekit"]
+        assert stored["egress_id"] == "EG_1" and stored["recording_source"] == source
+        assert stored["recording"] == tracks and stored["recording_cleanup_success"]
+        assert stored["recording_files"] == ["raw/one.ogg"]
+        assert call_execution.recording_url == url_b
+        assert call_execution.recording_available
+        assert call_execution.stereo_recording_url == tracks["stereo"]
+        artifact = call_execution.call_metadata["alk_recording_artifacts"]["combined"]
+        assert artifact["recording_url"] == url_b
+        assert artifact["sha256"] == hashlib.sha256(audio).hexdigest()
+        assert objects == {artifact["object_key"]: audio}
+        serialize = sync_to_async(CallExecutionDetailSerializer().get_recordings)
+        recordings = await serialize(call_execution)
+        assert recordings["combined"] == url_b
+        assert recordings["stereo"] == tracks["stereo"]
+
     @pytest.mark.parametrize("peer_succeeds", [True, False])
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
@@ -1154,6 +1320,9 @@ class TestFetchAndPersistCallResultActivity:
             for k in ("combined", "stereo", "assistant", "customer")
         }
         await CallExecution.objects.filter(pk=call_id).aupdate(
+            recording_url=tracks["combined"],
+            stereo_recording_url=tracks["stereo"],
+            recording_available=True,
             provider_call_data={
                 "livekit": {
                     "egress_id": "EG_1",
