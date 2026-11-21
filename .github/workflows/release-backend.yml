@@ -74,7 +74,8 @@ jobs:
 
       - name: Verify OSS image boundary
         env:
-          OSS_IMAGE: futureagi/future-agi:${{ inputs.version }}${{ inputs.variant == 'slim' && '-slim' || '' }}
+          OSS_IMAGE: futureagi/future-agi@${{ needs.release.outputs.digest }}
+          EXPECTED_FFMPEG_FLAVOR: ${{ inputs.variant == 'slim' && 'minimal' || 'debian' }}
           OSS_VARIANT: ${{ inputs.variant }}
           VERSION: ${{ inputs.version }}
         run: ./scripts/verify-image-contents.sh "$VERSION" oss

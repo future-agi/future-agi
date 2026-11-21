@@ -246,9 +246,12 @@ a release points the page's repository links at that tag.
 and the release workflows (both backend variants, the size budgets); CI runs it
 in `images-ci.yml`, with `test_image_size_budget.py`. Its workflow tests need
 PyYAML and are skipped without it. To check a built backend image's contents,
-`scripts/verify-image-contents.sh` takes `OSS_VARIANT=standard|slim` (a tag
-ending in `-slim` means slim). Standalone builds by `./bin/install --from-source`
-and `./bin/dev` are slim, so pass `OSS_VARIANT=slim` for them.
+pass the expected build version as the first argument to
+`scripts/verify-image-contents.sh`. For digests, local tags, or intentional
+build-arg overrides set both `OSS_VARIANT=standard|slim` and
+`EXPECTED_FFMPEG_FLAVOR=debian|minimal` from the build inputs. For example,
+Standalone from source uses `slim` and `minimal` by default. Only exact release
+tags with a recorded build contract can omit both variables.
 
 The Helm chart has its own checks (they need `helm`, `kubeconform` and Python
 with PyYAML; the kind smoke test also needs `kind`, `kubectl` and images built

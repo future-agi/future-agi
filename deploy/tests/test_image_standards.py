@@ -1190,11 +1190,19 @@ class VerifyImageContents(unittest.TestCase):
 
     FAKE_DOCKER = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$DOCKER_LOG"
+# Execute the real probe with simulated command paths and package metadata.
+if [ "$1" = run ] && [ "${10}" = -ec ]; then
+  bash -ec '
+    command() { echo "$FAKE_BIN/$2"; }
+    test() { case "$1" in -e) return 1 ;; -s) return 0 ;; *) [ "$@" ] ;; esac; }
+    dpkg-query() { return 0; }
+    '"${11}" sh "${13}"
+  exit $?
+fi
 case "$*" in
-  *-slim*"command -v uv"*|*-slim*"command -v git"*) exit 1 ;;
-  *-slim*"git --version"*|*-slim*"import daytona"*) exit 1 ;;
-  *-slim*omw-1.4*|*-slim*get_static_doc*) exit 1 ;;
-  *"index .Config.Labels"*) echo v9.9.9; exit 0 ;;
+  *"command -v uv"*|*"command -v git"*|*"git --version"*|*"import daytona"*|*omw-1.4*|*get_static_doc*)
+    [ "$FAKE_VARIANT" = standard ]; exit $? ;;
+  *'test "$SERVICE_VERSION"'*) [ "$FAKE_VERSION" = "${13}" ]; exit $? ;;
   *"test -e /app/backend/ee/cloud"*) exit 1 ;;
 esac
 exit 0
@@ -1209,13 +1217,16 @@ exit 0
                 "PATH": f"{tmp}:{os.environ.get('PATH', '/usr/bin:/bin')}",
                 "DOCKER_LOG": str(Path(tmp) / "log"),
                 "OSS_IMAGE": image,
+                "FAKE_VARIANT": "slim" if image.endswith("-slim") else "standard",
+                "FAKE_BIN": "/usr/local/bin" if image.endswith("-slim") else "/usr/bin",
+                "FAKE_VERSION": "v1.59.1",
                 **env,
             }
             proc = subprocess.run(
                 [
                     "bash",
                     str(ROOT / "scripts" / "verify-image-contents.sh"),
-                    "v9.9.9",
+                    "v1.59.1",
                     "oss",
                 ],
                 env=environment,
@@ -1228,20 +1239,22 @@ exit 0
             return proc
 
     def test_the_default_tag_is_checked_as_feature_complete(self):
-        proc = self.run_script("futureagi/future-agi:v9.9.9")
+        proc = self.run_script("futureagi/future-agi:v1.59.1")
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn("(standard variant)", proc.stdout)
         for check in ("Has uv", "Has git", "Has every NLTK package"):
             self.assertIn(f"PASS: {check}", proc.stdout)
         self.assertNotIn("No uv in the runtime image", proc.stdout)
-        self.assertIn("Runtime version matches image metadata (v9.9.9)", proc.stdout)
+        self.assertIn("Runtime version matches requested build (v1.59.1)", proc.stdout)
         self.assertIn("--user 1000:1000", proc.docker_log)
 
     def test_a_slim_tag_is_checked_as_lean(self):
         for image, env in (
-            ("futureagi/future-agi:v9.9.9-slim", {}),
-            ("futureagi/future-agi:v9.9.9-slim@sha256:" + "0" * 64, {}),
-            ("futureagi/future-agi:local-slim", {"OSS_VARIANT": "slim"}),
+            ("futureagi/future-agi:v1.59.1-slim", {}),
+            (
+                "futureagi/future-agi:local-slim",
+                {"OSS_VARIANT": "slim", "EXPECTED_FFMPEG_FLAVOR": "minimal"},
+            ),
         ):
             with self.subTest(image=image):
                 proc = self.run_script(image, **env)
@@ -1252,14 +1265,35 @@ exit 0
 
     def test_a_slim_image_checked_as_standard_fails(self):
         proc = self.run_script(
-            "futureagi/future-agi:v9.9.9-slim", OSS_VARIANT="standard"
+            "futureagi/future-agi:v1.59.1-slim",
+            OSS_VARIANT="standard", EXPECTED_FFMPEG_FLAVOR="debian",
         )
         self.assertEqual(proc.returncode, 1)
         self.assertIn("FAIL: Has uv", proc.stdout)
 
     def test_an_unknown_variant_is_a_usage_error(self):
-        proc = self.run_script("futureagi/future-agi:v9.9.9", OSS_VARIANT="lean")
+        proc = self.run_script("futureagi/future-agi:v1.59.1", OSS_VARIANT="lean")
         self.assertEqual(proc.returncode, 2)
+
+    def test_wrong_flavor_fails_even_when_binaries_agree_with_each_other(self):
+        proc = self.run_script("futureagi/future-agi:v1.59.1", FAKE_BIN="/usr/local/bin")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("FAIL: Active ffmpeg and ffprobe match expected debian", proc.stdout)
+
+    def test_digest_requires_independent_variant_and_flavor(self):
+        image = "futureagi/future-agi@sha256:" + "0" * 64
+        self.assertEqual(self.run_script(image).returncode, 2)
+        proc = self.run_script(
+            image, OSS_VARIANT="slim", EXPECTED_FFMPEG_FLAVOR="minimal",
+            FAKE_VARIANT="slim", FAKE_BIN="/usr/local/bin",
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertIn("PASS: No uv", proc.stdout)
+
+    def test_mismatched_service_version_fails(self):
+        proc = self.run_script("futureagi/future-agi:v1.59.1", FAKE_VERSION="dev")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("FAIL: Runtime version", proc.stdout)
 
 
 VERIFY_BINARIES = ROOT / "deploy" / "standalone" / "bin" / "verify-binaries"
@@ -2566,7 +2600,7 @@ class Workflows(unittest.TestCase):
                 code, _, out, urls = guard(
                     "workflow_dispatch",
                     tag,
-                    "v9.9.9",
+                    "v1.59.1",
                     component,
                     tags="v9.9.9 v9.10.0 v9.10.1-rc1",
                 )

@@ -6,13 +6,9 @@ set -euo pipefail
 #
 # Usage: ./scripts/verify-image-contents.sh [version] [oss|ee|cloud|all]
 # Overrides: OSS_IMAGE, EE_IMAGE, CLOUD_IMAGE, CLOUD_DEPLOYMENT_SECRET,
-#   OSS_VARIANT: the backend variant OSS_IMAGE was built as
-#   (futureagi/Dockerfile.oss IMAGE_VARIANT; https://docs.futureagi.com/docs/self-hosting/images#backend-variants). standard is
-#   feature-complete (uv, git, the sandbox SDKs, Debian ffmpeg, every NLTK
-#   package); slim is the lean base of futureagi/standalone. Default: slim for a
-#   tag ending in -slim, else standard. Standalone local builds
-#   (./bin/install --from-source, ./bin/dev) are slim: pass OSS_VARIANT=slim;
-#   ./bin/install --distributed --from-source builds standard.
+#   For local builds, digests, or a build-arg override, pass OSS_VARIANT
+#   (standard|slim), EXPECTED_FFMPEG_FLAVOR (debian|minimal), and the build's
+#   VERSION as argument 1. For known release tags, use the pinned table below.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"
@@ -21,14 +17,24 @@ case "$FLAVOR" in
   *) echo "Usage: $0 [version] [oss|ee|cloud|all]" >&2; exit 2 ;;
 esac
 OSS_IMAGE="${OSS_IMAGE:-futureagi/future-agi:${VERSION}}"
-case "$OSS_IMAGE" in
-  *-slim|*-slim@*) OSS_VARIANT="${OSS_VARIANT:-slim}" ;;
-  *) OSS_VARIANT="${OSS_VARIANT:-standard}" ;;
-esac
-case "$OSS_VARIANT" in
-  standard|slim) ;;
-  *) echo "OSS_VARIANT must be standard or slim, not '${OSS_VARIANT}'" >&2; exit 2 ;;
-esac
+if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
+  if [[ -z "${EXPECTED_FFMPEG_FLAVOR:-}" && -z "${OSS_VARIANT:-}" ]]; then
+    # Exact published build contracts, not a version threshold. Both variants
+    # of v1.59.1 use the defaults in futureagi/Dockerfile.oss at release
+    # 1cca6b23710ca1a2b7aeae1fe974556173c4a71c (release-images.yml).
+    case "$VERSION/$OSS_IMAGE" in
+      v1.59.1/futureagi/future-agi:v1.59.1) OSS_VARIANT=standard; EXPECTED_FFMPEG_FLAVOR=debian ;;
+      v1.59.1/futureagi/future-agi:v1.59.1-slim) OSS_VARIANT=slim; EXPECTED_FFMPEG_FLAVOR=minimal ;;
+    esac
+  fi
+  case "${OSS_VARIANT:-}/${EXPECTED_FFMPEG_FLAVOR:-}" in
+    standard/debian|standard/minimal|slim/debian|slim/minimal) ;;
+    *) echo 'Unknown build expectation: supply both OSS_VARIANT and EXPECTED_FFMPEG_FLAVOR from the build contract.' >&2; exit 2 ;;
+  esac
+  if [[ -z "${1:-}" || "$VERSION" == latest ]]; then
+    echo 'Supply the expected build version as argument 1, not latest.' >&2; exit 2
+  fi
+fi
 EE_IMAGE="${EE_IMAGE:-futureagi/future-agi-ee:${VERSION}}"
 CLOUD_IMAGE="${CLOUD_IMAGE:-futureagi/future-agi-cloud:${VERSION}}"
 CLOUD_DEPLOYMENT_SECRET="${CLOUD_DEPLOYMENT_SECRET:-}"
@@ -130,23 +136,16 @@ check "Has shared EE package tree" image_test "$OSS_IMAGE" test -d /app/backend/
 check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud
 check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
   "import nltk; [nltk.data.find(p) for p in ('corpora/stopwords/', 'tokenizers/punkt_tab/english/', 'taggers/averaged_perceptron_tagger_eng/', 'corpora/wordnet/')]; assert nltk.word_tokenize('Future AGI') == ['Future', 'AGI']; assert nltk.pos_tag(['Future'])[0][1]"
-# Published releases carry their own version. Do not classify local tags or
-# digests using the verifier checkout's release number. Old images have no
-# flavor marker: identify the active binary rather than guessing a cutoff.
-image_release=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$OSS_IMAGE" 2>/dev/null || true)
-if [[ -n "$image_release" && "$image_release" != '<no value>' ]]; then
-  check "Runtime version matches image metadata ($image_release)" image_test "$OSS_IMAGE" sh -c 'test "$SERVICE_VERSION" = "$1"' sh "$image_release"
-fi
-check "Active ffmpeg and ffprobe match the runtime flavor" image_test "$OSS_IMAGE" sh -ec '
+check "Runtime version matches requested build ($VERSION)" image_test "$OSS_IMAGE" sh -c 'test "$SERVICE_VERSION" = "$1"' sh "$VERSION"
+check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" image_test "$OSS_IMAGE" sh -ec '
   marker=/usr/local/lib/futureagi/ffmpeg-flavor
-  if test -f "$marker"; then flavor=$(cat "$marker"); else
-    case $(command -v ffmpeg) in /usr/local/bin/ffmpeg) flavor=minimal ;; /usr/bin/ffmpeg) flavor=debian ;; *) exit 1 ;; esac
-  fi
-  case $flavor in
+  # Historical releases have no marker. Always check both active binaries.
+  if test -e "$marker"; then test "$(cat "$marker")" = "$1"; fi
+  case $1 in
     minimal) test "$(command -v ffmpeg)" = /usr/local/bin/ffmpeg && test "$(command -v ffprobe)" = /usr/local/bin/ffprobe && test -s /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1 ;;
     debian) test "$(command -v ffmpeg)" = /usr/bin/ffmpeg && test "$(command -v ffprobe)" = /usr/bin/ffprobe && dpkg-query -S /usr/bin/ffmpeg ;;
     *) exit 1 ;;
-  esac'
+  esac' sh "$EXPECTED_FFMPEG_FLAVOR"
 check "ffmpeg can encode mp3 and png" image_test "$OSS_IMAGE" sh -c "ffmpeg -hide_banner -encoders | grep -q libmp3lame && ffmpeg -hide_banner -encoders | grep -qw png"
 check "ffprobe starts" image_test "$OSS_IMAGE" ffprobe -hide_banner -version
 if [[ "$OSS_VARIANT" == standard ]]; then
