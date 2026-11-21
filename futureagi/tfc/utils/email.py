@@ -192,6 +192,12 @@ def email_helper(
                 delivered += 1
             except Exception as exc:  # mail backend: best-effort per recipient
                 last_error = exc
+                # An SMTP server that dropped the session fails every later
+                # send on it; closing makes the next send open a fresh one.
+                try:
+                    connection.close()
+                except Exception:
+                    pass
                 logger.exception(
                     "notification_email_send_failed",
                     category=notification_category,

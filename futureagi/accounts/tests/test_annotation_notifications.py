@@ -112,3 +112,19 @@ def test_snooze_annotation_digest_invalid_token(api_client):
     response = api_client.get("/accounts/notifications/snooze/?token=bad")
     assert response.status_code == 200
     assert b"Link expired" in response.content
+
+
+@pytest.mark.django_db
+def test_snooze_post_without_the_pause_button_changes_nothing(api_client, user):
+    from model_hub.models.annotation_queues import AnnotationNotificationState
+    from model_hub.utils.annotation_digest import _unsubscribe_token
+
+    token = _unsubscribe_token(user.id)
+    response = api_client.post(
+        f"/accounts/notifications/snooze/?token={token}&days=30", {}, format="multipart"
+    )
+
+    assert b"Snoozed" not in response.content
+    assert not AnnotationNotificationState.objects.filter(
+        user=user, realtime_snoozed_until__isnull=False
+    ).exists()

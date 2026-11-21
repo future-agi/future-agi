@@ -176,6 +176,35 @@ class TestUserAlertMonitorCreateAPI:
         assert user_alert_monitor.name == "Renamed alert"
         assert user_alert_monitor.notification_emails == ["a@example.com"]
 
+    def test_edit_reads_a_removal_made_after_the_monitor_was_loaded(
+        self, auth_client, user_alert_monitor
+    ):
+        """The update saves every column, so it must work from the locked,
+        current row, not the copy loaded at the start of the request."""
+        from unittest import mock
+
+        from tfc.utils import email_unsubscribe as eu
+        from tracer.views.monitor import UserAlertMonitorView
+
+        user_alert_monitor.notification_emails = ["a@example.com", "b@example.com"]
+        user_alert_monitor.save(update_fields=["notification_emails"])
+        stale = UserAlertMonitor.objects.get(pk=user_alert_monitor.pk)
+        eu.set_subscribed(
+            eu.Link("b@example.com", eu.MONITOR_ALERTS, str(user_alert_monitor.id)),
+            False,
+        )
+
+        with mock.patch.object(UserAlertMonitorView, "get_object", return_value=stale):
+            response = auth_client.patch(
+                f"/tracer/user-alerts/{user_alert_monitor.id}/",
+                {"name": "Renamed again"},
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        user_alert_monitor.refresh_from_db()
+        assert user_alert_monitor.notification_emails == ["a@example.com"]
+
     @pytest.mark.requires_ee
     def test_create_monitor_rejects_other_workspace_project(
         self, auth_client, organization, user

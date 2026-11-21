@@ -376,6 +376,9 @@ class SnoozeAnnotationDigestView(_EmailedLinkView):
         user = self._user(request)
         if user is None:
             return _snooze_expired()
+        # Act only on the page's Pause button, not any POST carrying the link.
+        if request.validated_data.get("action") != "snooze":
+            return _snooze_expired()
         days = self._days(request)
         state, _ = AnnotationNotificationState.objects.get_or_create(user=user)
         state.realtime_snoozed_until = timezone.now() + timedelta(days=days)

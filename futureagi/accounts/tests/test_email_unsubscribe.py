@@ -618,3 +618,40 @@ def test_unsubscribing_from_one_monitor_leaves_others_alone(
     other.refresh_from_db()
     assert "oncall@example.com" not in monitor.notification_emails
     assert other.notification_emails == ["oncall@example.com"]
+
+
+@pytest.mark.django_db
+def test_a_dropped_mail_connection_is_reopened_for_the_next_recipient(user):
+    """Review round 2: an SMTP server that drops the session fails every later
+    send on it, so one failure must not silently skip the other recipients."""
+    from smtplib import SMTPServerDisconnected
+
+    from django.core.mail.backends.locmem import EmailBackend
+
+    from tfc.utils import email as email_module
+
+    real_send = email_module._send
+
+    def drops_after_first(subject, template, context, to, *args, connection, **kw):
+        if getattr(connection, "dead", False):
+            raise SMTPServerDisconnected("please run connect() first")
+        if to == ["first@example.com"]:
+            connection.dead = True
+            raise SMTPServerDisconnected("server closed the connection")
+        return real_send(
+            subject, template, context, to, *args, connection=connection, **kw
+        )
+
+    def close(self):
+        self.dead = False
+
+    with (
+        mock.patch.object(email_module, "_send", side_effect=drops_after_first),
+        mock.patch.object(EmailBackend, "close", close),
+    ):
+        messages = _send(
+            ["first@example.com", user.email, "third@example.com"],
+            eu.INTEGRATION_ERRORS,
+        )
+
+    assert [m.to for m in messages] == [[user.email], ["third@example.com"]]
