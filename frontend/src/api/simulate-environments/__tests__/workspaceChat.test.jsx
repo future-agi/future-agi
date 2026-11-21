@@ -328,8 +328,64 @@ describe("useWorkspaceChat (real)", () => {
         kind: "user_response",
         reply_to: "q1",
         content: "Strict",
+        // Typed into the message box, whatever the words: the builder is told so.
+        payload: expect.objectContaining({ answered_by: "typed" }),
       }),
     );
+  });
+
+  it("a reply picked on the question card says it was picked", async () => {
+    sendHarnessConversationMessage.mockResolvedValue(conversationWith());
+    const { result } = renderChat(
+      conversationWith({
+        state: "waiting_for_user",
+        blocking_input: {
+          message_id: "q1",
+          kind: "question_requested",
+          prompt: "How strict?",
+          options: ["Strict"],
+        },
+        messages: [
+          {
+            message_id: "q1",
+            role: "assistant",
+            kind: "question",
+            state: "completed",
+            content: "How strict?",
+            payload: { options: ["Strict"] },
+            created_at: "2026-09-22T10:00:00Z",
+            sequence: 1,
+          },
+        ],
+      }),
+    );
+    const ask = result.current.turns
+      .flatMap((turn) => turn.steps || [])
+      .find((step) => step.kind === "ask" && step.onSubmit);
+    expect(ask).toBeTruthy();
+    await act(async () => {
+      ask.onSubmit(["Strict"]);
+    });
+    expect(sendHarnessConversationMessage).toHaveBeenCalledWith(
+      "job-1",
+      expect.objectContaining({
+        kind: "user_response",
+        reply_to: "q1",
+        content: "Strict",
+        payload: expect.objectContaining({ answered_by: "picked" }),
+      }),
+    );
+  });
+
+  it("a new message carries no answered_by", async () => {
+    sendHarnessConversationMessage.mockResolvedValue(conversationWith());
+    const { result } = renderChat(conversationWith());
+    await act(async () => {
+      result.current.send("Add a refund scenario");
+    });
+    const [, sent] = sendHarnessConversationMessage.mock.calls[0];
+    expect(sent.kind).toBe("user_message");
+    expect(sent.payload).not.toHaveProperty("answered_by");
   });
 
   it("sends a NEW message (not a reply) when the blocking question is already answered", async () => {

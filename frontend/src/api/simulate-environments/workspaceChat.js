@@ -107,8 +107,11 @@ export function useWorkspaceChat(env, { source, scoped = true } = {}) {
   // so depending on it keeps `send`/`stop` stable and preserves the turns memo.
   const { mutate } = mutation;
 
+  // `picked` is true only when the reply comes from the question card's own options. A reply typed into the
+  // message box while a question is open is still sent as its answer, and says so (`answered_by`), so the
+  // builder can tell an answer from a new request without reading the words.
   const send = useCallback(
-    (text) => {
+    (text, { picked = false } = {}) => {
       const content = (text || "").trim();
       const id = jobIdRef.current;
       if (!content || !id) return;
@@ -152,6 +155,9 @@ export function useWorkspaceChat(env, { source, scoped = true } = {}) {
           ...(replyTo ? { reply_to: replyTo } : {}),
           payload: {
             mode: getBuilderMode(),
+            ...(kind === "user_response"
+              ? { answered_by: picked ? "picked" : "typed" }
+              : {}),
             ...(scenarioIds ? { scenario_ids: scenarioIds } : {}),
           },
         },
@@ -319,7 +325,8 @@ export function useWorkspaceChat(env, { source, scoped = true } = {}) {
           step.kind === "ask" && !step.resolved
             ? {
                 ...step,
-                onSubmit: (answers) => send((answers || []).join(", ")),
+                onSubmit: (answers) =>
+                  send((answers || []).join(", "), { picked: true }),
               }
             : step,
         ),
