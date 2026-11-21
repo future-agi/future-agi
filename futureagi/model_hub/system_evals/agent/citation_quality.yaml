@@ -1,0 +1,95 @@
+eval_id: 226
+name: citation_quality
+description: Checks whether each inline citation supports its claim and whether source-dependent claims are cited.
+criteria: &rubric |-
+  Evaluate the citations in the answer, not whether you could find the same answer somewhere else.
+
+  1. Identify the markers written in <output> before looking up any sources. Labels printed only
+     in <context> or <input> are not citations by the answer. If the answer has no markers, stop:
+     score 0.0 if any claim needs a source, or 1.0 if no claim needs one (for example, a greeting).
+     A correct fact copied from a source without its citation is still an uncited claim.
+  2. Resolve each actual marker against the supplied sources by label or, for an unlabeled list,
+     by position starting at 1. Accept different marker styles and paraphrases. Do not replace a
+     marker with the one the author should have used.
+  3. Check citation accuracy: does that particular source support the attached claim? An existing
+     source about a different subject is a wrong citation; a label with no matching source is an
+     invented citation. Both count as incorrect even if another source supports the claim. If the
+     context supplies distinct versions, use the version cited.
+  4. Check completeness only for claims the answer makes. Count a missing citation for each key
+     source-dependent claim without a marker. Do not require citations to unused documents or to
+     common knowledge. Do not grade whether the answer covers the entire context.
+
+  Score = correct citations / (all citations + missing citations). For a single cited claim,
+  award 1.0 if its marker points to a supporting source, otherwise 0.0. For mixed answers,
+  award partial credit in proportion to the correctly supported citations. In the explanation,
+  quote only markers that appear in the answer, or state that the answer contains none.
+
+  <context>{{context}}</context>
+  <input>{{input}}</input>
+  <output>{{output}}</output>
+  {% if output is string and '[' not in output %}
+  This answer contains no square-bracket citation markers. Do not credit any numbered label in
+  the source list to the answer. Is there an explicit reference in another form, such as a named
+  document or an author and year? If not, give 0.0 for a source-dependent claim or 1.0 if none
+  of the claims needs a source.
+  {% endif %}
+eval_tags:
+- RAG
+- Retrieval Systems
+- Quality
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - context
+  - input
+  - output
+  output: score
+  eval_type_id: AgentEvaluator
+  config:
+    check_internet:
+      type: boolean
+      default: false
+  config_params_desc:
+    context: The source documents or chunks provided as context (numbered or labeled)
+    input: The user query or question
+    output: The generated response containing inline citations to evaluate
+  param_modalities:
+    context:
+    - TEXT
+    - PDF
+    - KNOWLEDGE_BASE
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    input:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    output:
+    - TEXT
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+  rule_prompt: *rubric

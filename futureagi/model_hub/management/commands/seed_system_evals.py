@@ -38,7 +38,8 @@ logger = structlog.get_logger(__name__)
 # 32: refresh stored answer_similarity and jaro_winkler_similarity transposition math.
 # 33: mean_average_precision credits each relevant document once, so duplicate
 # retrievals no longer push AP past 1.0.
-SYSTEM_EVALS_VERSION = 33
+# 37: install citation_quality on existing catalogs.
+SYSTEM_EVALS_VERSION = 37
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
