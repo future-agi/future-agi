@@ -14,6 +14,7 @@ from simulate.models import (
     HarnessSuiteMember,
     HarnessSuiteVersion,
     HostedHarnessScenario,
+    HostedHarnessJob,
 )
 from simulate.services.harness_versioning import archives, drafts, review
 from simulate.services.harness_versioning.assembly import CERTIFICATE, SEALED_MANIFEST
@@ -95,10 +96,18 @@ def _validate(auth_client, environment, digest=None, revisions=None):
     )
 
 
-def _certify(environment, *, state=HarnessAssembledBundle.State.READY, error=None):
-    """The validation job's outcome for the live candidate set: a certified bundle, or a failed check."""
+def _certify(
+    environment, *, state=HarnessAssembledBundle.State.READY, error=None, finished=True
+):
+    """The validation job's outcome for the live candidate set: a certified bundle, or a failed check. `finished`
+    ends the set's own job too, as the job does once it has recorded the proofs; without it the bundle is ready
+    while the job still runs."""
     environment.refresh_from_db()
     entry = live_set(environment)
+    if finished and entry.get("job_id"):
+        HostedHarnessJob.no_workspace_objects.filter(id=entry["job_id"]).update(
+            state=HostedHarnessJob.State.COMPLETED
+        )
     key = f"bundles/{uuid.uuid4().hex}.tar.gz"
     archives.put_archive(
         key,
@@ -699,6 +708,33 @@ def test_a_validated_set_reads_outdated_once_what_save_would_save_moved(
     if moved == "draft_written":
         # Its refusal blames nobody: the changes moved since the page read them.
         assert "Someone" not in refused.json()["message"]
+
+
+def test_a_set_whose_check_is_still_recording_proofs_is_not_yet_saveable(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-still-proving", storage)
+    _two_actors(auth_client, environment)
+    digest = _decided(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    candidates = _result(_validate(auth_client, environment, digest))["candidates"]
+    # Certifying passed, but the job has not yet recorded each scenario's proof.
+    _certify(environment, finished=False)
+
+    still = _drafts(auth_client, environment)["validation"]["state"]
+    early = _save(auth_client, environment, candidates, digest=digest)
+    _certify(environment)
+    done = _drafts(auth_client, environment)["validation"]["state"]
+    saved = _save(auth_client, environment, candidates, digest=digest, key="save-2")
+
+    # Saved in that window, the new versions would carry no proofs and every case would read not proved.
+    assert still == "validating"
+    assert early.status_code == 409 and early.json()["error"] == "validation_running"
+    assert done == "ready"
+    assert saved.status_code == 200, saved.content
 
 
 def test_save_refused_unless_validated(user, workspace, storage, auth_client):
