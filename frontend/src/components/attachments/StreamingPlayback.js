@@ -22,7 +22,8 @@ const SILENT_TICK_MS = 250;
  * Events: timeupdate, intent, buffering, play, pause, ended, error.
  */
 export default class StreamingPlayback {
-  constructor(elements, duration) {
+  constructor(elements, duration, { wholeFile = false } = {}) {
+    this.wholeFile = wholeFile;
     this.elements = elements;
     this.duration = duration;
     this.limit = duration;
@@ -82,6 +83,11 @@ export default class StreamingPlayback {
         )
           return;
         const at = this.position(index);
+        // Chromium delivers a last timeupdate before its native ended event.
+        // Pausing right there prevents ended from being dispatched, even with
+        // every frame played (e.g. 206.5 ms container / 200 ms decoded Opus).
+        // Allow its native EOF event to settle; keep mid-file boundaries exact.
+        if (at >= this.limit && this.atNativeEnd(index)) return;
         if (
           !this.ready() ||
           this.running().some(
@@ -153,7 +159,7 @@ export default class StreamingPlayback {
     // A source whose replacement is still loading has no position yet.
     if (this.pendingMetadata.size) return;
     this.running().forEach((other) => {
-      if (this.position(other) < this.limit) return;
+      if (this.position(other) < this.limit || this.atNativeEnd(other)) return;
       this.ended[other] = true;
       this.elements[other].pause();
     });
@@ -171,6 +177,22 @@ export default class StreamingPlayback {
       ),
     );
     this.emit("timeupdate", this.time);
+  }
+  atNativeEnd(index) {
+    const element = this.elements[index];
+    if (!Number.isFinite(element.duration) || element.duration <= 0)
+      return false;
+    // One whole authorized file can have a few milliseconds of container
+    // padding beyond its decoded frame clock (e.g. Ogg Opus pre-skip). Let
+    // the native element finish that tail within the existing alignment
+    // tolerance. Never extend a segment window, gap or multitrack boundary.
+    return (
+      element.currentTime >= element.duration ||
+      (this.wholeFile &&
+        this.limit === this.duration &&
+        Math.abs(element.duration - this.duration) <= ALIGN_TOLERANCE &&
+        element.currentTime >= this.limit)
+    );
   }
   ready() {
     return (

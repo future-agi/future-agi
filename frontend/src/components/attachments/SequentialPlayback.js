@@ -65,7 +65,16 @@ export default class SequentialPlayback {
     this.renewal = undefined;
     this.listeners = new Map();
     this.elements = elements;
-    this.transport = new StreamingPlayback(elements, duration);
+    const onlyPart =
+      this.lanes.length === 1 && this.lanes[0].parts.length === 1
+        ? this.lanes[0].parts[0]
+        : null;
+    this.transport = new StreamingPlayback(elements, duration, {
+      wholeFile:
+        onlyPart?.kind === "segment" &&
+        onlyPart.start === 0 &&
+        onlyPart.end === duration,
+    });
     // Forward only the loaded window, never echoes of our own source/seek calls.
     const live = () => !this.quiet && this.isLoaded();
     this.transport.on("timeupdate", (time) => {
@@ -129,7 +138,9 @@ export default class SequentialPlayback {
   isLoaded() {
     return (
       this.loaded !== null &&
-      this.lanes.every((lane, index) => this.loaded.indexes[index] === lane.index)
+      this.lanes.every(
+        (lane, index) => this.loaded.indexes[index] === lane.index,
+      )
     );
   }
   // Authorize the opening segments so availability is known before Play.
@@ -140,7 +151,9 @@ export default class SequentialPlayback {
     if (this.disposed || !Number.isFinite(seconds)) return;
     const time = Math.max(0, Math.min(this.duration, seconds));
     const indexes = this.lanes.map((lane) => this.partAt(lane, time));
-    const moved = this.lanes.some((lane, index) => lane.index !== indexes[index]);
+    const moved = this.lanes.some(
+      (lane, index) => lane.index !== indexes[index],
+    );
     this.time = time;
     this.lanes.forEach((lane, index) => {
       lane.index = indexes[index];
@@ -439,6 +452,9 @@ export default class SequentialPlayback {
 function sameTargets(a, b) {
   return (
     a.length === b.length &&
-    a.every((target, at) => target.lane === b[at].lane && target.index === b[at].index)
+    a.every(
+      (target, at) =>
+        target.lane === b[at].lane && target.index === b[at].index,
+    )
   );
 }

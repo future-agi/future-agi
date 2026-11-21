@@ -105,3 +105,55 @@ describe("shared streaming transport", () => {
     expect(player.getCurrentTime()).toBe(100);
   });
 });
+
+it("does not turn a natural media ending into a synthetic pause on the last timeupdate", async () => {
+  const element = media();
+  element.duration = 0.2065;
+  const player = new StreamingPlayback([element], 0.2);
+  const ended = vi.fn();
+  player.on("ended", ended);
+  await player.play();
+  element.currentTime = element.duration;
+  const pauses = element.pause.mock.calls.length;
+  element.dispatchEvent(new Event("timeupdate"));
+  expect(element.pause).toHaveBeenCalledTimes(pauses);
+  expect(ended).not.toHaveBeenCalled();
+  element.dispatchEvent(new Event("ended"));
+  expect(ended).toHaveBeenCalledTimes(1);
+  expect(player.getCurrentTime()).toBe(0.2);
+  player.destroy();
+});
+it("still stops at a manifest boundary inside a longer native source", async () => {
+  const element = media();
+  element.duration = 10;
+  const player = new StreamingPlayback([element], 1);
+  const ended = vi.fn();
+  player.on("ended", ended);
+  await player.play();
+  element.currentTime = 1;
+  element.dispatchEvent(new Event("timeupdate"));
+  expect(ended).toHaveBeenCalledTimes(1);
+  expect(player.isPlaying()).toBe(false);
+  player.destroy();
+});
+
+it("lets an authorized whole Opus file finish its short container tail, not a segment window", async () => {
+  for (const wholeFile of [false, true]) {
+    const element = media();
+    element.duration = 0.2065;
+    const transport = new StreamingPlayback([element], 0.2, { wholeFile });
+    const ended = vi.fn();
+    transport.on("ended", ended);
+    await transport.play();
+    element.currentTime = 0.206097;
+    element.dispatchEvent(new Event("timeupdate"));
+    expect(ended).toHaveBeenCalledTimes(wholeFile ? 0 : 1);
+    if (wholeFile) {
+      element.currentTime = 0.2065;
+      element.dispatchEvent(new Event("ended"));
+      expect(ended).toHaveBeenCalledTimes(1);
+      expect(transport.getCurrentTime()).toBe(0.2);
+    }
+    transport.destroy();
+  }
+});
