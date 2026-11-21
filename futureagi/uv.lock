@@ -986,23 +986,6 @@ wheels = [
 ]
 
 [[package]]
-name = "chdb"
-version = "3.7.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pandas" },
-    { name = "pyarrow" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/a5/d83bfd989e5819944cf2f238e4d5150669a8aad1c013a1f34af38af17fb2/chdb-3.7.2-cp38-abi3-macosx_10_15_x86_64.whl", hash = "sha256:2cc22753ae4b042d091d810e2de60cb8badfd6ae9829109406b24bab75bbcb6b", size = 97945158, upload-time = "2025-11-13T02:40:20.009Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/97/460dea74d213d8e5bd831e0b7ab4cf1872b977373f674b8aa3135b1e1093/chdb-3.7.2-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:baaf88db434196b1db900c1747f6e47c0cde0c175cd3a3aaba7a8770bb56ddb2", size = 87499449, upload-time = "2025-11-12T13:25:20.29Z" },
-    { url = "https://files.pythonhosted.org/packages/fc/86/c5b8cf8319c9fce0b54e339becf2bd6886cd19784797f29b601d5e8817c1/chdb-3.7.2-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:605f121162b55bb3944af07c56a6f2290110b8f298c888047457c70105a0667b", size = 122954587, upload-time = "2025-11-12T10:08:56.069Z" },
-    { url = "https://files.pythonhosted.org/packages/a7/05/8ee5fcbebd3ea6fba18265b688f028e6c758115af0be276b22144e34f9bd/chdb-3.7.2-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:c119f0830c12438a4e4b60b8370859ba50992e8b1b01a8c681e1c57eeb2dc82d", size = 178830227, upload-time = "2025-11-12T10:11:50.237Z" },
-    { url = "https://files.pythonhosted.org/packages/cd/ff/f7485d5ceec2223032a588abde6815f486d7f164da1f3f716bb342eda2d5/chdb-3.7.2-cp38-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:9eb9ad98e0449a63c52d2296785fbb22d2ae8bd94846244179316a8f15581711", size = 145043926, upload-time = "2025-11-12T11:19:01.152Z" },
-    { url = "https://files.pythonhosted.org/packages/f4/56/f5561b8f10ec5c6638fa288efe0ae48021af3ff7dff8d915517aa5238247/chdb-3.7.2-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:2b8e2f45f0d856130de90d0908dec06581d49c794faf95528733f47883f7f050", size = 187017848, upload-time = "2025-11-12T10:13:19.818Z" },
-]
-
-[[package]]
 name = "chevron"
 version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1571,7 +1554,6 @@ voice = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "chdb", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "en-core-web-sm" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -1757,7 +1739,6 @@ provides-extras = ["sandbox", "billing", "ops", "gcp", "langchain", "localizer",
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "chdb", marker = "sys_platform == 'darwin' or sys_platform == 'linux'", specifier = "==3.7.2" },
     { name = "en-core-web-sm", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" },
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-asyncio", specifier = ">=0.21.0" },
