@@ -234,6 +234,8 @@ def sync_integration_connection(connection_id: str):
                         org=connection.organization,
                         workspace=connection.workspace,
                         org_id=connection.organization_id,
+                        source_origin=connection.host_url,
+                        source_project_id=full_trace.get("projectId"),
                     )
 
                     total_traces_fetched += 1
@@ -286,6 +288,8 @@ def sync_integration_connection(connection_id: str):
                         org=connection.organization,
                         workspace=connection.workspace,
                         org_id=connection.organization_id,
+                        source_origin=connection.host_url,
+                        source_project_id=full_trace.get("projectId"),
                     )
                     total_traces_fetched += 1
                     if created:
@@ -347,6 +351,8 @@ def sync_integration_connection(connection_id: str):
                             org=connection.organization,
                             workspace=connection.workspace,
                             org_id=connection.organization_id,
+                            source_origin=connection.host_url,
+                            source_project_id=full_trace.get("projectId"),
                         )
                         total_spans += spans_count
                         total_scores += scores_count

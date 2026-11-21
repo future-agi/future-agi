@@ -39,6 +39,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  SKILL_PAIR_UV_VERSION: "0.11.33"
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
@@ -56,6 +57,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend || steps.always.outputs.frontend }}
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
       stacks: ${{ steps.stacks.outputs.stacks }}
+      journeys: ${{ steps.journeys.outputs.journeys }}
     steps:
       - name: Validate host update fallibility opt-in
         if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
@@ -76,12 +78,14 @@ jobs:
             gateway:
               - 'agentcc-gateway/**'
             any:
+              - 'api_contracts/openapi/swagger.json'
               - 'futureagi/**'
               - 'fi-collector/**'
               - 'agentcc-gateway/**'
               - 'frontend/**'
               - 'e2e/**'
               - 'bin/e2e'
+              - 'bin/context-campaign.mjs'
               - 'docker-compose.yml'
               - 'docker-compose.distributed.yml'
               - 'docker-compose.dev.yml'
@@ -92,8 +96,43 @@ jobs:
               - 'bin/uninstall'
               - 'scripts/reclaim-runner-disk.sh'
               - '.github/workflows/e2e-ci.yml'
+              - '.github/workflows/skills-e2e-journeys.yml'
               - '.github/scripts/resolve-sdk-test-ref.py'
               - '.github/scripts/test_resolve_sdk_test_ref.py'
+            # Registered Skills journeys (Blacksmith runners, paid per minute) run on a
+            # PR only when the change can affect them; dev pushes and nightly run all.
+            skills_shared:
+              - 'futureagi/**/*skill*'
+              - 'futureagi/**/*skill*/**'
+              - 'futureagi/tracer/services/clickhouse/v2/schema/039_skill_attribution.sql'
+              - 'frontend/src/**/*kill*'
+              - 'frontend/src/**/*kill*/**'
+              - 'e2e/lib/skills-r3/**'
+              - 'e2e/benchmarks/context-hub/**'
+              - 'e2e/harness/skills-r3/qualification-contract.json'
+              - 'e2e/scripts/skills-journey-*'
+              - 'e2e/scripts/skills-coverage.*'
+              - 'e2e/scripts/test_skills_coverage.py'
+              - 'e2e/stack/**'
+              - 'e2e/package.json'
+              - 'e2e/yarn.lock'
+              - 'e2e/playwright.config.ts'
+              - 'bin/e2e'
+              - '.github/workflows/e2e-ci.yml'
+              - '.github/workflows/skills-e2e-journeys.yml'
+            journey_j3:
+              - 'e2e/**/j3*'
+              - 'e2e/**/j3*/**'
+            journey_j4:
+              - 'e2e/**/j4*'
+              - 'e2e/**/j4*/**'
+            journey_j5:
+              - 'e2e/**/j5*'
+              - 'e2e/**/j5*/**'
+              - 'bin/context-campaign.mjs'
+            journey_j6:
+              - 'e2e/**/j6*'
+              - 'e2e/**/j6*/**'
       - id: always
         if: github.event_name != 'pull_request'
         run: |
@@ -123,6 +162,200 @@ jobs:
             *) stacks='["distributed"]' ;;
           esac
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
+      - id: journeys
+        env:
+          EVENT: ${{ github.event_name }}
+          SHARED: ${{ steps.filter.outputs.skills_shared }}
+          J3: ${{ steps.filter.outputs.journey_j3 }}
+          J4: ${{ steps.filter.outputs.journey_j4 }}
+          J5: ${{ steps.filter.outputs.journey_j5 }}
+          J6: ${{ steps.filter.outputs.journey_j6 }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          # Fork PRs never run paid runners; dev pushes and nightly runs cover their journeys.
+          # Fail safe otherwise: every non-PR event and any shared Skills change runs all seven.
+          if [ "$FORK" = true ]; then
+            journeys='[]'
+          elif [ "$EVENT" != pull_request ] || [ "$SHARED" = true ]; then
+            journeys='["j3","j4","056","057","058","059","063"]'
+          else
+            journeys=$(jq -cn --arg j3 "$J3" --arg j4 "$J4" --arg j5 "$J5" --arg j6 "$J6" \
+              '[(if $j3 == "true" then "j3" else empty end), (if $j4 == "true" then "j4" else empty end),
+                (if $j5 == "true" then ("056","057","058","059") else empty end), (if $j6 == "true" then "063" else empty end)]')
+          fi
+          echo "journeys=$journeys" >> "$GITHUB_OUTPUT"
+          echo "Registered Skills journeys for this run: $journeys"
+
+  flow-catalog:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: e2e/yarn.lock
+      - name: Require the catalog and harness checks without blocking ordinary execution
+        working-directory: e2e
+        run: |
+          yarn install --frozen-lockfile
+          yarn playwright install --with-deps chromium
+          yarn catalog:check
+
+  skill-packages:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      sdk: ${{ fromJSON(steps.refs.outputs.sources).sdk.commit }}
+      traceai: ${{ fromJSON(steps.refs.outputs.sources).traceai.commit }}
+      pair_sha256: ${{ steps.build.outputs.pair_sha256 }}
+      sdk_sha256: ${{ steps.build.outputs.sdk_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve matching public branches independently
+        id: refs
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          PR_BASE: ${{ github.base_ref }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_ref }}
+        run: |
+          if [[ $GITHUB_EVENT_NAME == merge_group ]]; then BRANCH=${QUEUE_BASE#refs/heads/}; fi
+          sources=$(python3 -I e2e/stack/resolve-skill-refs.py -- "${BRANCH:?missing target branch}" "$PR_BASE")
+          echo "sources=$sources" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: future-agi/futureagi-sdk
+          ref: ${{ fromJSON(steps.refs.outputs.sources).sdk.commit }}
+          path: .skill-sources/sdk
+          fetch-depth: 0 # Scoped sync reads the non-Skills baseline from SDK history.
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: future-agi/traceAI
+          ref: ${{ fromJSON(steps.refs.outputs.sources).traceai.commit }}
+          path: .skill-sources/traceai
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.SKILL_PAIR_UV_VERSION }}
+          enable-cache: false
+      - name: Install SDK generator dependency
+        run: python3 -m pip install 'PyYAML==6.0.2'
+      - name: Check the producer and package verification controls
+        run: python3 -I -m unittest discover -s e2e/stack -p 'test_skill_*.py'
+      - name: Regenerate the SDK and build and verify the five Skills packages
+        id: build
+        env:
+          SKILL_REFS: ${{ steps.refs.outputs.sources }}
+        run: e2e/stack/build-skill-pair.sh .skill-sources/sdk .skill-sources/traceai "$RUNNER_TEMP/skill-pair"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
+          overwrite: true
+          retention-days: 3
+          if-no-files-found: error
+  application-wheels:
+    needs: skill-packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      sha256: ${{ steps.application.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.SKILL_PAIR_UV_VERSION }}
+          enable-cache: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
+      - name: Verify the SDK wheel against the source build
+        env:
+          SDK_COMMIT: ${{ needs.skill-packages.outputs.sdk }}
+          TRACEAI_COMMIT: ${{ needs.skill-packages.outputs.traceai }}
+          PAIR_SHA256: ${{ needs.skill-packages.outputs.pair_sha256 }}
+        run: |
+          python3 -I e2e/stack/verify-skill-packages.py "$RUNNER_TEMP/skill-pair" "$PAIR_SHA256" \
+            "$(git rev-parse HEAD)" "$SDK_COMMIT" "$TRACEAI_COMMIT" --require-sums
+      - name: Build the application and select its paired SDK wheel
+        id: application
+        run: |
+          dist="$RUNNER_TEMP/j6-wheels"
+          mkdir "$dist"
+          uv build --python 3.11 --wheel e2e/fixtures/skills-r3/support-application --out-dir "$dist"
+          cp "$RUNNER_TEMP/skill-pair/$(jq -er '.artifacts.sdk_python.file' "$RUNNER_TEMP/skill-pair/pair.json")" "$dist/"
+          uv venv --python 3.11 "$RUNNER_TEMP/app-preflight"
+          uv pip install --python "$RUNNER_TEMP/app-preflight/bin/python" "$dist"/*.whl
+          uv pip check --python "$RUNNER_TEMP/app-preflight/bin/python"
+          echo "sha256=$(sha256sum "$dist"/ctxhub_support_application-*.whl | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skill-application-wheels-${{ github.sha }}
+          path: ${{ runner.temp }}/j6-wheels/*.whl
+          overwrite: true
+          retention-days: 3
+          if-no-files-found: error
+
+  # These caches also feed Standalone and release builds. Only this push-only
+  # job publishes them; it never checks out or runs a sibling package.
+  publish-build-cache:
+    needs: changes
+    if: github.event_name == 'push' && needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {target: backend, context: futureagi, file: Dockerfile.oss}
+          - {target: code-executor, context: futureagi/code-executor, file: Dockerfile}
+          - {target: fi-collector, context: fi-collector, file: Dockerfile}
+          - {target: frontend, context: frontend, file: Dockerfile}
+          - {target: gateway, context: agentcc-gateway, file: Dockerfile}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: scripts/reclaim-runner-disk.sh
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/${{ matrix.file }}
+          build-args: ${{ matrix.target == 'frontend' && 'VITE_SKILL_TRACES=off' || '' }}
+          outputs: type=cacheonly
+          cache-from: type=registry,ref=${{ env.CACHE_REPO }}:${{ matrix.target }}
+          cache-to: type=registry,ref=${{ env.CACHE_REPO }}:${{ matrix.target }},mode=max
 
   e2e:
     name: e2e (${{ matrix.stack }})
@@ -140,10 +373,15 @@ jobs:
     # DASH-E2E-017 waits out the 30-minute metric settle on one worker; its own
     # test.setTimeout ceiling is 65 min, so 89 + 65 = 154 if it lands last.
     timeout-minutes: 155
-    permissions:
-      contents: read
-      packages: write # ghcr build-cache: read on PRs, written on pushes
-    env:
+    env: &stack-env
+      SKILLS_COHORT: ${{ matrix.cohort || 'ordinary' }}
+      E2E_SKILLS_CAMPAIGNS_ENABLED: ${{ startsWith(matrix.cohort, 'campaign-') && 'true' || 'false' }}
+      E2E_STANDALONE_NETWORK: ${{ matrix.cohort == 'typescript' && 'typescript' || matrix.cohort == 'native' && 'native' || 'managed-mock' }}
+      CTXHUB_APP_COMMIT: ${{ github.sha }}
+      SDK_COMMIT: ${{ needs.skill-packages.outputs.sdk }}
+      TRACEAI_COMMIT: ${{ needs.skill-packages.outputs.traceai }}
+      SKILL_TRACE_PAIR_SHA256: ${{ needs.skill-packages.outputs.pair_sha256 }}
+      J6_APP_SHA256: ${{ needs.application-wheels.outputs.sha256 }}
       # bin/e2e and lib/managed-mock.ts pick the stack from this.
       E2E_STACK: ${{ matrix.stack }}
       # Always from source: the stack's compose file runs backend modules at
@@ -159,8 +397,14 @@ jobs:
       # touch agentcc-gateway/ would otherwise run them against a released
       # :latest that predates that behavior.
       BUILD_GATEWAY: "true"
-    steps:
+    steps: &stack-steps
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify package-producing job completed
+        if: matrix.cohort && matrix.cohort != 'campaign-executor'
+        run: test -n "$SKILL_TRACE_PAIR_SHA256" || { echo '::error::No verified Skills package pair for this checkout'; exit 1; }
 
       - name: Tag for the images built below
         # Standalone runs the tag e2e/stack/standalone-e2e.env names
@@ -173,6 +417,7 @@ jobs:
             tag=e2e-ci
           fi
           echo "IMAGE_TAG=${tag:?no FUTURE_AGI_VERSION in e2e/stack/standalone-e2e.env}" >> "$GITHUB_ENV"
+          if [ "$SKILLS_COHORT" != ordinary ]; then echo "E2E_GOOGLE_IMAGE_TAG=$tag" >> "$GITHUB_ENV"; fi
 
       - name: Reclaim runner disk
         # / is the small volume and the backend image alone unpacks ~15GB of
@@ -182,30 +427,8 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: ghcr login (cache writes on trusted pushes only)
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: ghcr login (cache reads on internal PRs and the Standalone leg)
-        # Fork PRs get no token and read anonymously, which works only once the
-        # e2e-cache package is made public — a one-time manual step in the org's
-        # package settings. Until then forks build cold.
-        if: >-
-          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false)
-          || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # The backend, frontend and gateway images are always built from this
-      # PR's code (see the env block above); the registry cache keeps the
-      # backend build short.
+      # Stack images are built here; vendor pulls and optional layer-cache
+      # reads are anonymous. A private cache miss simply builds from source.
       - name: Build backend image from PR code
         if: env.BUILD_BACKEND == 'true'
         uses: docker/build-push-action@v5
@@ -223,7 +446,6 @@ jobs:
           cache-from: |
             type=registry,ref=${{ env.CACHE_REPO }}:backend
             ${{ matrix.stack == 'standalone' && format('type=registry,ref={0}:backend-slim-amd64', env.BUILD_CACHE) || '' }}
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:backend,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Add E2E-only fixtures and telemetry isolation to backend image
         if: env.BUILD_BACKEND == 'true'
@@ -243,7 +465,6 @@ jobs:
           load: true
           tags: futureagi/code-executor:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:code-executor
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:code-executor,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Select the source-built executor in both stacks
         run: echo "CODE_EXECUTOR_VERSION=$IMAGE_TAG" >> "$GITHUB_ENV"
@@ -257,7 +478,6 @@ jobs:
           load: true
           tags: futureagi/fi-collector:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:fi-collector
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:fi-collector,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Build frontend image from PR code
         if: env.BUILD_FRONTEND == 'true'
@@ -265,10 +485,11 @@ jobs:
         with:
           context: frontend
           file: frontend/Dockerfile
+          # Skills cohorts test the trace UI; ordinary flows keep the production default.
+          build-args: VITE_SKILL_TRACES=${{ matrix.cohort && 'on' || 'off' }}
           load: true
           tags: futureagi/frontend:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:frontend
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:frontend,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Add local editor assets to the E2E frontend
         if: env.BUILD_FRONTEND == 'true'
@@ -289,7 +510,6 @@ jobs:
           load: true
           tags: futureagi/agentcc-gateway:${{ env.IMAGE_TAG }}
           cache-from: type=registry,ref=${{ env.CACHE_REPO }}:gateway
-          cache-to: ${{ github.event_name == 'push' && format('type=registry,ref={0}:gateway,mode=max', env.CACHE_REPO) || '' }}
 
       - name: Assemble futureagi/standalone from those images
         if: matrix.stack == 'standalone'
@@ -394,21 +614,18 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Save Playwright browser cache
-        if: github.event_name == 'push' && steps.pw-cache.outputs.cache-hit != 'true'
+        if: github.event_name == 'push' && !matrix.cohort && steps.pw-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ hashFiles('e2e/yarn.lock') }}
-
-      - name: Flow catalog is current
-        working-directory: e2e
-        run: yarn catalog:check
 
       # The @saml flows start e2e/lib/saml_idp_server.py on the runner. It
       # signs with the backend's own pysaml2 fixtures, which need pysaml2,
       # cryptography and the xmlsec1 binary; the runner's python3 lacks pysaml2
       # and xmlsec1. Versions match futureagi/uv.lock.
       - name: Install the local SAML IdP's dependencies
+        if: ${{ !matrix.cohort }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends xmlsec1
@@ -416,21 +633,47 @@ jobs:
           "$RUNNER_TEMP/saml-idp/bin/pip" install --quiet pysaml2==7.5.0 cryptography==46.0.5
           echo "E2E_SAML_PYTHON=$RUNNER_TEMP/saml-idp/bin/python" >> "$GITHUB_ENV"
 
+      - uses: actions/setup-python@v5
+        if: matrix.cohort && matrix.cohort != 'campaign-executor'
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
+        if: matrix.cohort && matrix.cohort != 'campaign-executor'
+        with:
+          version: ${{ env.SKILL_PAIR_UV_VERSION }}
+          enable-cache: false
+      - uses: actions/download-artifact@v4
+        if: matrix.cohort && matrix.cohort != 'campaign-executor'
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
+      - uses: actions/download-artifact@v4
+        if: matrix.cohort == 'application' || matrix.cohort == 'registered-recovery'
+        with:
+          name: skill-application-wheels-${{ github.sha }}
+          path: ${{ runner.temp }}/j6-wheels
+      - name: Prepare verified Skills clients before stack boot
+        if: matrix.cohort && matrix.cohort != 'campaign-executor' && matrix.cohort != 'native'
+        run: e2e/stack/prepare-skill-clients.sh "$RUNNER_TEMP/skill-pair" "$SKILLS_COHORT"
+
       - name: Boot the e2e stack
+        if: matrix.cohort != 'native' # the serial native driver builds its guest before boot
         id: boot
         run: bin/e2e up
 
       - name: Start Redis diagnostics
+        if: ${{ !matrix.cohort }}
         continue-on-error: true
         run: node e2e/scripts/redis-diagnostics.mjs start --output-dir "$RUNNER_TEMP/redis-diagnostics"
 
+      # The native matrix entry requires 021 (runtime enabled), 022 and 108 in its receipt.
       - name: Run E2E suite
         id: suite
-        run: bin/e2e test
+        run: e2e/stack/run-skill-cohort.sh "$SKILLS_COHORT"
 
       - name: Prove host update assertion fallibility
         id: host-update-fallibility
-        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed'
+        if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed' && !matrix.cohort
         # Default success() gating: the unchanged normal suite must pass first.
         # Driver: 20m aggregate cap, 360s per child, <=7s termination grace.
         timeout-minutes: 22
@@ -441,7 +684,7 @@ jobs:
       - name: Upload host update fallibility evidence
         if: >-
           !cancelled() && github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility
-          && matrix.stack == 'distributed' && steps.host-update-fallibility.outcome != 'skipped'
+          && matrix.stack == 'distributed' && !matrix.cohort && steps.host-update-fallibility.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
           name: host-update-fallibility-distributed
@@ -450,14 +693,14 @@ jobs:
           if-no-files-found: error
 
       - name: Stop Redis diagnostics
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        if: ${{ !cancelled() && !matrix.cohort && steps.boot.outcome == 'success' }}
         continue-on-error: true
         env:
           SUITE_OUTCOME: ${{ steps.suite.outcome }}
         run: node e2e/scripts/redis-diagnostics.mjs stop --output-dir "$RUNNER_TEMP/redis-diagnostics" --suite-outcome "$SUITE_OUTCOME"
 
       - name: Upload Redis diagnostics
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        if: ${{ !cancelled() && !matrix.cohort && steps.boot.outcome == 'success' }}
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -466,8 +709,18 @@ jobs:
           retention-days: 3
           if-no-files-found: warn
 
+      - name: Upload Skills execution receipt
+        if: ${{ !cancelled() && matrix.cohort && steps.suite.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-passes-${{ matrix.cohort }}
+          path: ${{ runner.temp }}/${{ matrix.cohort }}.json
+          overwrite: true
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Upload report
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && !matrix.cohort }}
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
@@ -487,7 +740,7 @@ jobs:
       # SDK PR #35. Both suites still run after Playwright on a booted stack.
       - name: Resolve the futureagi-sdk ref
         id: sdk-ref
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        if: ${{ !cancelled() && !matrix.cohort && steps.boot.outcome == 'success' }}
         env:
           SDK_REF_INPUT: ${{ inputs.sdk-ref }}
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
@@ -503,6 +756,7 @@ jobs:
           repository: future-agi/futureagi-sdk
           ref: ${{ steps.sdk-ref.outputs.ref }}
           path: futureagi-sdk
+          persist-credentials: false
           fetch-depth: 1
 
       - uses: actions/setup-python@v5
@@ -518,7 +772,12 @@ jobs:
           python -m pip install --quiet -e ./python pytest pyyaml
           # Writes futureagi-sdk/.env.local, which both suites read. :8100 is
           # BACKEND_PORT in both e2e/stack/e2e.env and standalone-e2e.env.
-          python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
+          # Skills resources refuse an org system key; SDK checkouts whose helper can
+          # mint a user-bound workspace key use one (the SDK's own e2e.yml does too).
+          # Older SDK refs do not know the flag, so pass it only when supported.
+          key_flag=()
+          if grep -q -- '--workspace-user-key' sdkgen/local_api_key.py; then key_flag=(--workspace-user-key); fi
+          python sdkgen/local_api_key.py --signup "${key_flag[@]}" --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
 
       - name: Python SDK live suite
         if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
@@ -564,7 +823,7 @@ jobs:
           EOF
 
       - name: Capture backend lifecycle on failure
-        if: failure() && steps.boot.outcome == 'success'
+        if: failure() && !matrix.cohort && steps.boot.outcome == 'success'
         run: |
           mkdir -p "$RUNNER_TEMP/backend-lifecycle"
           if [ "$E2E_STACK" = standalone ]; then
@@ -578,7 +837,7 @@ jobs:
           done > "$RUNNER_TEMP/backend-lifecycle/state.txt"
 
       - name: Upload backend lifecycle diagnostics
-        if: failure() && steps.boot.outcome == 'success'
+        if: failure() && !matrix.cohort && steps.boot.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: backend-lifecycle-${{ matrix.stack }}
@@ -587,28 +846,120 @@ jobs:
           if-no-files-found: warn
 
       - name: Dump stack state on failure
-        if: failure()
+        if: failure() && !matrix.cohort
         run: |
           df -h / /mnt
           cat /tmp/e2e-pull.log || true
           bin/e2e ps
           bin/e2e logs --tail 200
 
+  # Same source images, boot graph and browser as the ordinary suite, but fresh
+  # machines for incompatible topologies. The JS executor needs no package pin.
+  campaign-executor:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        include:
+          - {cohort: campaign-executor, stack: distributed}
+    env: *stack-env
+    steps: *stack-steps
+
+  skills:
+    needs: [changes, skill-packages, application-wheels]
+    # An incompatible J6 wheel must not cancel F6 or campaign clients. J6
+    # consumers still require the real artifact and its independent digest.
+    if: ${{ !cancelled() && needs.changes.outputs.any == 'true' && needs.skill-packages.result == 'success' }}
+    name: skills (${{ matrix.cohort }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - {cohort: host, stack: distributed}
+          - {cohort: application, stack: distributed}
+          - {cohort: typescript, stack: standalone}
+          - {cohort: install-turn, stack: standalone}
+          - {cohort: native, stack: standalone}
+          - {cohort: campaign-sdk, stack: distributed}
+          - {cohort: campaign-cold, stack: distributed}
+          - {cohort: campaign-configured, stack: distributed}
+    env: *stack-env
+    steps: *stack-steps
+
+  skills-journeys:
+    needs: [changes, skill-packages, application-wheels]
+    if: >-
+      needs.changes.outputs.any == 'true' && needs.changes.outputs.journeys != '[]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+    uses: ./.github/workflows/skills-e2e-journeys.yml
+    with:
+      sdk: ${{ needs.skill-packages.outputs.sdk }}
+      traceai: ${{ needs.skill-packages.outputs.traceai }}
+      pair_sha256: ${{ needs.skill-packages.outputs.pair_sha256 }}
+      application_sha256: ${{ needs.application-wheels.outputs.sha256 }}
+      journeys: ${{ needs.changes.outputs.journeys }}
+
   e2e-tests:
     name: E2E Tests Pass
-    needs: [changes, e2e]
+    needs: [changes, e2e, skill-packages, application-wheels, skills, campaign-executor, skills-journeys, flow-catalog]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Fail closed unless every dependency succeeded or was skipped
+      - name: Check applicability and all required job outcomes
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          # No -e flag and a non-empty success output: `jq -e` exits 4 when a
-          # filter produces no output, which would fail the gate on green runs.
-          echo "$NEEDS" | jq 'with_entries(.value |= .result)
-            | to_entries
-            | map(select(.value != "success" and .value != "skipped"))
-            | if length > 0 then ("failing: " + (map(.key) | join(", ")) | halt_error)
-              else "all dependencies green (or legitimately skipped)" end'
+          jq -e '.changes.result == "success" and
+            (if .changes.outputs.any == "true" then
+              ([.e2e.result,.skills.result,."skill-packages".result,."application-wheels".result,."campaign-executor".result,."flow-catalog".result] | all(. == "success")) and
+              (if .changes.outputs.journeys == "[]" then ."skills-journeys".result == "skipped" else ."skills-journeys".result == "success" end)
+            elif .changes.outputs.any == "false" then
+              ([.e2e.result,.skills.result,."skill-packages".result,."application-wheels".result,."campaign-executor".result,."skills-journeys".result,."flow-catalog".result] | all(. == "skipped"))
+            else false end)' <<< "$NEEDS"
+      - uses: actions/checkout@v4
+        if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+        with:
+          pattern: skill-passes-*
+          path: ${{ runner.temp }}/skill-passes
+          merge-multiple: false
+      - name: Collect the package pair from this workflow run
+        uses: actions/download-artifact@v4
+        if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+        with:
+          name: skill-pair-${{ github.sha }}
+          path: ${{ runner.temp }}/skill-pair
+      - name: Collect registered worker receipts from this workflow run
+        uses: actions/download-artifact@v4
+        if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+        with:
+          pattern: skills-journey-*
+          path: ${{ runner.temp }}/skills-journeys
+      - name: Check required-coverage controls
+        if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+        run: python3 -I e2e/scripts/test_skills_coverage.py
+      - name: Require every Skills case on this tested commit
+        if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+        env:
+          SDK_COMMIT: ${{ needs.skill-packages.outputs.sdk }}
+          TRACEAI_COMMIT: ${{ needs.skill-packages.outputs.traceai }}
+          APP_SHA: ${{ needs.application-wheels.outputs.sha256 }}
+          PAIR_SHA: ${{ needs.skill-packages.outputs.pair_sha256 }}
+          SDK_SHA: ${{ needs.skill-packages.outputs.sdk_sha256 }}
+          JOURNEYS: ${{ needs.changes.outputs.journeys }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/skills-journeys"
+          python3 -I e2e/scripts/skills-coverage.py reconcile "$RUNNER_TEMP/skill-passes" "$GITHUB_SHA" \
+            --registered "$RUNNER_TEMP/skills-journeys" --run-id "$GITHUB_RUN_ID" --journeys "$JOURNEYS" --pair "$RUNNER_TEMP/skill-pair" --sdk "$SDK_COMMIT" \
+            --traceai "$TRACEAI_COMMIT" --pair-sha "$PAIR_SHA" --sdk-sha "$SDK_SHA" --application-sha "$APP_SHA"

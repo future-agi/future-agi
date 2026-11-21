@@ -79,6 +79,7 @@ const API_FILTER_ITEM_KEYS = new Set([
   "display_name",
   "source",
   "output_type",
+  "group",
   "filter_config",
 ]);
 const UI_FILTER_ITEM_KEYS = new Set(["id", "registryId", "_meta", "col_type"]);
@@ -301,6 +302,12 @@ export const serializeFilterForApi = (filter) => {
     );
   }
 
+  const isSkill = normalizeColumnType(config.col_type) === "SKILL";
+  if (filter.group !== undefined && (
+    !isSkill || !Number.isInteger(filter.group) || filter.group < 0 || filter.group > 2147483647
+  )) {
+    throw new Error("group requires a SKILL filter and a non-negative 32-bit integer.");
+  }
   const filterType = normalizeFilterType(
     config.filter_type,
     config.filter_value,
@@ -309,13 +316,17 @@ export const serializeFilterForApi = (filter) => {
     filterType,
     value: config.filter_value,
   });
-  if (!isAllowedFilterOperator(filterType, filterOp)) {
+  const skillVersionOperator = isSkill && columnId === "skill.version" &&
+    filterType === "number" && ["in", "gte", "lte"].includes(filterOp);
+  if (!skillVersionOperator && !isAllowedFilterOperator(filterType, filterOp)) {
     throw new Error(
       `Unsupported filter operator "${filterOp}" for type "${filterType}".`,
     );
   }
 
-  const filterValue = coerceFilterValue(
+  // SKILL values are an exact cohort identity. In particular an empty agent
+  // is valid, and version integers must not be coerced from untrusted strings.
+  const filterValue = isSkill ? config.filter_value : coerceFilterValue(
     config.filter_value,
     filterOp,
     filterType,
@@ -347,7 +358,7 @@ export const serializeFilterForApi = (filter) => {
   if (
     filterOp !== "is_null" &&
     filterOp !== "is_not_null" &&
-    (filterValue === "" ||
+    ((filterValue === "" && !(isSkill && columnId === "skill.agent")) ||
       filterValue === undefined ||
       (Array.isArray(filterValue) && filterValue.length === 0))
   ) {
@@ -358,6 +369,7 @@ export const serializeFilterForApi = (filter) => {
 
   return {
     column_id: columnId,
+    ...(filter.group !== undefined && { group: filter.group }),
     ...(filter.property_id && { property_id: filter.property_id }),
     ...(filter.display_name && { display_name: filter.display_name }),
     ...(filter.source && { source: filter.source }),

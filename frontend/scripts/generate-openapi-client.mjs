@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { generate } from "orval";
 import prettier from "prettier";
+import { checkGeneratedOutput } from "./lib/check-generated-output.mjs";
 
 import {
   deduplicateTypeAliases,
@@ -24,8 +25,6 @@ const swaggerPath = path.join(
   "swagger.json",
 );
 const outputDir = path.join(frontendRoot, "src", "generated", "api-contracts");
-const apiOutputPath = path.join(outputDir, "api.ts");
-const zodOutputPath = path.join(outputDir, "api.zod.ts");
 const mutatorPath = path.join(
   frontendRoot,
   "src",
@@ -119,6 +118,63 @@ function normalizeHostStatusSchema(schema) {
   return nullable ? { anyOf: [result, { type: "null" }] } : result;
 }
 
+export function normalizeSwaggerSchema(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(normalizeSwaggerSchema);
+  let result = Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => [
+      key,
+      normalizeSwaggerSchema(value),
+    ]),
+  );
+  // The legacy alternative exposes additive properties for Swagger tooling,
+  // but maxProperties == required.length forbids every optional property.
+  // Orval drops maxProperties, so express that same closed branch structurally
+  // before generation. Otherwise a partial restore group matches the legacy
+  // branch and is silently accepted (or stripped) by the generated parser.
+  if (
+    result.type === "object" &&
+    result.additionalProperties === false &&
+    Array.isArray(result.required) &&
+    result.maxProperties === result.required.length
+  ) {
+    result.properties = Object.fromEntries(
+      Object.entries(result.properties || {}).filter(([key]) =>
+        result.required.includes(key),
+      ),
+    );
+  }
+  const nullable = result["x-nullable"] === true;
+  delete result["x-nullable"];
+  // The recursive JSON-value rewrite already includes null. Adding another
+  // wrapper would change its alias shape before that rewrite can recognize it.
+  if (result["x-json-value"]) return result;
+  // swagger2openapi leaves parameter-level vendor extensions on the parameter,
+  // although nullability belongs to its converted schema, not the OAS3 parameter.
+  if (nullable && typeof result.in === "string" && result.schema) {
+    return { ...result, schema: { ...result.schema, nullable: true } };
+  }
+  if (result["x-oneOf"]) {
+    result = { description: result.description, oneOf: result["x-oneOf"] };
+  } else if (result["x-anyOf"]) {
+    result = { description: result.description, anyOf: result["x-anyOf"] };
+  }
+  if (!nullable) return result;
+  // Orval otherwise emits invalid `interface Name { ... } | null` for named
+  // objects. An explicit union produces a type alias and preserves object shape.
+  if (result.properties || result.$ref || result.oneOf || result.anyOf) {
+    const annotations = {};
+    for (const key of ["default", "description", "readOnly"]) {
+      if (Object.hasOwn(result, key)) {
+        annotations[key] = result[key];
+        delete result[key];
+      }
+    }
+    return { ...annotations, anyOf: [result, { type: "null" }] };
+  }
+  return { ...result, nullable: true };
+}
+
 // Run Epoch from an Error Feed issue sends these nested objects as null. drf-yasg
 // writes x-nullable beside no $ref, so the nullable ones are named here.
 const EPOCH_NULLABLE_REFS = ["issue", "report", "failure", "plan", "diagnosis"];
@@ -176,9 +232,50 @@ function withNullableFields(name, schema) {
 // The Orval input transformer runs AFTER its validated Swagger-to-OpenAPI 3.1
 // upgrade. Never insert native unions/null types into the Swagger 2 input, or
 // disable validation to make a nonconforming input pass.
-function normalizeHostStatusSpec(spec) {
+function normalizeManagementSpec(spec) {
+  const featureRoute = (route) => route.startsWith("/model-hub/skills/") || route === "/tracer/trace/skill-projection/";
+  // Only normalize definitions owned by Skills here. The target's existing
+  // operations keep their reviewed nullability and generated-client guards.
+  const featureSchemas = new Set();
+  function visit(node) {
+    if (!node || typeof node !== "object") return;
+    const prefix = "#/components/schemas/";
+    if (node.$ref?.startsWith(prefix)) {
+      const name = node.$ref.slice(prefix.length);
+      if (!featureSchemas.has(name)) {
+        featureSchemas.add(name);
+        visit(spec.components?.schemas?.[name]);
+      }
+    }
+    Object.values(node).forEach(visit);
+  }
+  // These existing wire contracts exercise the same two boundary cases as
+  // Skills: portable nullable unions and nullable objects with defaults. A
+  // field-specific transform retains all the target's other schema overrides.
+  const sharedNullableFields = {
+    PromptRunModelConfiguration: ["response_format", "model"],
+    AutoReloadSettingsRequest: ["autoreload_maxcharge"],
+    EvalTask: ["filters"],
+    EvalTaskUpdateRequest: ["filters"],
+  };
+  function sharedSchema(name, schema) {
+    const fields = sharedNullableFields[name];
+    if (!fields) return schema;
+    const properties = { ...schema.properties };
+    for (const key of fields) {
+      if (!properties[key]) throw new Error(`Missing ${name}.${key}`);
+      properties[key] = normalizeSwaggerSchema(properties[key]);
+    }
+    return { ...schema, properties };
+  }
+  const paths = Object.fromEntries(Object.entries(spec.paths || {}).map(([route, item]) => {
+    if (!featureRoute(route)) return [route, item];
+    visit(item);
+    return [route, normalizeSwaggerSchema(item)];
+  }));
   return {
     ...spec,
+    paths,
     components: {
       ...spec.components,
       schemas: Object.fromEntries(
@@ -194,7 +291,7 @@ function normalizeHostStatusSpec(spec) {
           // A log row sends explicit null for ids its source does not have.
           name === "EvalApiLogRowResponseResult"
             ? normalizeHostStatusSchema(schema)
-            : withNullableFields(name, schema),
+            : featureSchemas.has(name) ? normalizeSwaggerSchema(schema) : sharedSchema(name, withNullableFields(name, schema)),
         ]),
       ),
     },
@@ -257,7 +354,7 @@ function restoreSnapshot(snapshot) {
   }
 }
 
-function normalizeGeneratedFileEndings() {
+function normalizeGeneratedFileEndings(outputDir) {
   if (!fs.existsSync(outputDir)) return;
   for (const name of fs.readdirSync(outputDir)) {
     if (!name.endsWith(".ts")) continue;
@@ -267,7 +364,7 @@ function normalizeGeneratedFileEndings() {
   }
 }
 
-async function formatGeneratedFiles() {
+async function formatGeneratedFiles(outputDir) {
   if (!fs.existsSync(outputDir)) return;
   for (const name of fs.readdirSync(outputDir)) {
     if (!name.endsWith(".ts")) continue;
@@ -280,7 +377,7 @@ async function formatGeneratedFiles() {
   }
 }
 
-function normalizeGeneratedQueryParamSerialization() {
+function normalizeGeneratedQueryParamSerialization(apiOutputPath) {
   if (!fs.existsSync(apiOutputPath)) return;
   const content = fs.readFileSync(apiOutputPath, "utf8");
   fs.writeFileSync(
@@ -300,7 +397,9 @@ function normalizeGeneratedQueryParamSerialization() {
   );
 }
 
-async function runGeneration(schemaPath) {
+async function runGeneration(schemaPath, swagger, outputDir, mutatorPath) {
+  const apiOutputPath = path.join(outputDir, "api.ts");
+  const zodOutputPath = path.join(outputDir, "api.zod.ts");
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -325,7 +424,7 @@ async function runGeneration(schemaPath) {
   await generate({
     input: {
       target: schemaPath,
-      override: { transformer: normalizeHostStatusSpec },
+      override: { transformer: normalizeManagementSpec },
     },
     output: {
       target: apiOutputPath,
@@ -339,7 +438,7 @@ async function runGeneration(schemaPath) {
   await generate({
     input: {
       target: schemaPath,
-      override: { transformer: normalizeHostStatusSpec },
+      override: { transformer: normalizeManagementSpec },
     },
     output: {
       target: zodOutputPath,
@@ -377,7 +476,7 @@ async function runGeneration(schemaPath) {
       throw new Error(`OpenAPI generation did not produce ${name}`);
     }
   }
-  normalizeGeneratedQueryParamSerialization();
+  normalizeGeneratedQueryParamSerialization(apiOutputPath);
 
   // Post-processing for orval-narrow types.
   //
@@ -608,8 +707,8 @@ async function runGeneration(schemaPath) {
     // are generated as { [key: string]: unknown } but must be string | { ... }.
     schemas = assertReplaceRegex(
       schemas,
-      /\/\*\*\n \* String or JSON object\.\n \*\/\nexport type (\w+) = \{ \[key: string\]: unknown \};/g,
-      "/**\n * String or JSON object.\n */\nexport type $1 = string | { [key: string]: unknown };",
+      /\/\*\*\n \* String or JSON object\.\n \*\/\nexport type (\w+) = \{ \[key: string\]: unknown \}( \| null)?;/g,
+      "/**\n * String or JSON object.\n */\nexport type $1 = string | { [key: string]: unknown }$2;",
       "x-string-or-object TS aliases → string | object",
     );
 
@@ -2287,6 +2386,12 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
       `zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.')`,
       "x-string-or-object zod (optional) → union(string, object)",
     );
+    zod = assertReplace(
+      zod,
+      `zod.object({\n\n}).passthrough().nullish().describe('String or JSON object.')`,
+      `zod.union([zod.string(), zod.object({}).passthrough()]).nullish().describe('String or JSON object.')`,
+      "x-string-or-object zod (nullable) → nullable union(string, object)",
+    );
     // Default variant: fields declared with a default (e.g.
     // PromptTemplateData.response_format's default="text") emit
     // `.default(<generated constant>)` between .passthrough() and .describe().
@@ -2460,43 +2565,56 @@ const jsonValueSchema: zod.ZodType<JsonValue> =
     }
     fs.writeFileSync(zodOutputPath, zod);
   }
-  await formatGeneratedFiles();
-  normalizeGeneratedFileEndings();
+  await formatGeneratedFiles(outputDir);
+  normalizeGeneratedFileEndings(outputDir);
 }
 
-const swagger = JSON.parse(fs.readFileSync(swaggerPath, "utf8"));
-const managementApiSwagger = buildManagementApiSwagger(swagger);
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "futureagi-openapi-"));
-const tempSchemaPath = path.join(tempDir, "management-openapi.json");
-fs.writeFileSync(tempSchemaPath, JSON.stringify(managementApiSwagger, null, 2));
-
-const before = snapshotGeneratedFiles();
-
-try {
-  await runGeneration(tempSchemaPath);
-} catch (error) {
-  restoreSnapshot(before);
-  throw error;
-} finally {
-  fs.rmSync(tempDir, { recursive: true, force: true });
-}
-
-if (process.argv.includes("--check")) {
-  const after = snapshotGeneratedFiles();
-  const filePaths = new Set([...before.keys(), ...after.keys()]);
-  const changed = [...filePaths].filter(
-    (filePath) => before.get(filePath) !== after.get(filePath),
+async function main() {
+  const swagger = JSON.parse(fs.readFileSync(swaggerPath, "utf8"));
+  const managementApiSwagger = buildManagementApiSwagger(swagger);
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "futureagi-openapi-"));
+  const tempSchemaPath = path.join(tempDir, "management-openapi.json");
+  fs.writeFileSync(
+    tempSchemaPath,
+    JSON.stringify(managementApiSwagger, null, 2),
   );
-  restoreSnapshot(before);
-  if (changed.length) {
-    console.error(
-      [
-        "Generated OpenAPI clients are out of date. Run `yarn contracts:generate`.",
-        ...changed.map(
-          (filePath) => `  - ${path.relative(frontendRoot, filePath)}`,
-        ),
-      ].join("\n"),
-    );
-    process.exit(1);
+
+  try {
+    if (process.argv.includes("--check")) {
+      const changed = await checkGeneratedOutput({
+        outputDir,
+        mutatorPath,
+        generate: (directory, mutator) =>
+          runGeneration(tempSchemaPath, swagger, directory, mutator),
+      });
+      if (changed.length) {
+        console.error(
+          [
+            "Generated OpenAPI clients are out of date. Run `yarn contracts:generate`.",
+            ...changed.map(
+              (name) => `  - ${path.relative(frontendRoot, path.join(outputDir, name))}`,
+            ),
+          ].join("\n"),
+        );
+        process.exitCode = 1;
+      }
+    } else {
+      const before = snapshotGeneratedFiles();
+      try {
+        await runGeneration(tempSchemaPath, swagger, outputDir, mutatorPath);
+      } catch (error) {
+        restoreSnapshot(before);
+        throw error;
+      }
+    }
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  await main();
 }

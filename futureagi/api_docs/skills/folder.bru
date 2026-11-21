@@ -1,0 +1,28 @@
+meta {
+  name: Skills
+}
+
+docs {
+  These requests use synthetic skill content. Set backend_url, api_key, secret_key,
+  and workspace_id in a private Bruno environment. Never put credentials in this
+  collection. To use a browser session instead, replace the API-key headers with
+  Authorization: Bearer {{access_token}}.
+
+  Set skill_name and skill_id from Create skill or Push skill. Set version to an
+  immutable version number. base_version is that number, or JSON null before the
+  first publish. revision comes from Get draft. expected_version is the label's
+  current version, or JSON null to require a new label. Set label explicitly before
+  Set label or Remove label; moving production changes unpinned consumers.
+
+  Import uses skills_zip_path pointing to a local synthetic ZIP. Run Preview import
+  first, then copy the desired keys into selected_bundle_keys_json as a JSON array.
+  Invalid bundles cannot publish. Acknowledge warnings only after reviewing them.
+
+  Follow next_offset from Read file chunk until eof, concatenate text in order,
+  and verify the complete UTF-8 SHA-256. Resolve defaults to production, with no
+  fallback to latest. To check caching, repeat Resolve skill with If-None-Match set
+  to its ETag. A matching immutable digest returns HTTP 304.
+
+  Archive skill, Remove label and Discard draft mutate state. Run each request
+  deliberately; this folder is not a safe unattended collection run.
+}

@@ -195,3 +195,22 @@ export const formatDuration = (seconds) => {
 
   return result.trim() || "0s";
 };
+
+// Operations receipts use a fixed zone so a shared observation has one timestamp.
+export function fDateTimeUTC(value) {
+  const parsed = toInstant(value);
+  if (!parsed) return "Time not reported";
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC", day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(parsed).map(({ type, value: part }) => [type, part]));
+  return `${parts.day} ${parts.month} ${parts.year}, ${parts.hour}:${parts.minute} UTC`;
+}
+
+// The API age is relative to its snapshot, not the viewer's clock.
+export function fObservationAge(seconds) {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds < 0) return "Time not reported";
+  const [amount, unit] = seconds < 60 ? [Math.floor(seconds), "s"]
+    : seconds < 3600 ? [Math.floor(seconds / 60), "min"] : [Math.floor(seconds / 3600), "h"];
+  return `Updated ${amount}${unit} ago`;
+}

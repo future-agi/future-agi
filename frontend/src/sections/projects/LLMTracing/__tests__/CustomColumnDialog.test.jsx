@@ -188,3 +188,56 @@ describe("CustomColumnDialog — TH-4139", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("CustomColumnDialog — Skills columns (SKILL-TRACES §7.1)", () => {
+  const SKILL_COLUMNS = [
+    { id: "skills", name: "Skills" },
+    { id: "gen_ai.agent.name", name: "Agent" },
+    { id: "fi.context.name", name: "Context" },
+  ];
+
+  it("offers Skills, Agent and Context under Skills, unchecked by default", () => {
+    renderWithProviders(
+      <CustomColumnDialog
+        open
+        onClose={vi.fn()}
+        attributes={["gen_ai.agent.name", "custom.attr"]}
+        existingColumns={[{ id: "trace_name" }]}
+        skillColumns={SKILL_COLUMNS}
+      />,
+    );
+    expect(screen.getByText("Skills", { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Agent")).not.toBeChecked();
+    expect(screen.getByLabelText("Context")).not.toBeChecked();
+    // The agent attribute is listed once, under Skills, not again as a raw key.
+    expect(screen.queryByText("gen_ai.agent.name")).not.toBeInTheDocument();
+    expect(screen.getByText("custom.attr")).toBeInTheDocument();
+  });
+
+  it("adds a Skills column with its readable name", () => {
+    const onAddColumns = vi.fn();
+    const onClose = vi.fn();
+    renderWithProviders(
+      <CustomColumnDialog
+        open
+        onClose={onClose}
+        attributes={[]}
+        existingColumns={[{ id: "trace_name" }]}
+        skillColumns={SKILL_COLUMNS}
+        onAddColumns={onAddColumns}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("Agent"));
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(onAddColumns).toHaveBeenCalledWith([
+      { id: "gen_ai.agent.name", name: "Agent", isVisible: true, groupBy: "Custom Columns" },
+    ]);
+  });
+
+  it("shows no Skills section without skill columns", () => {
+    renderWithProviders(
+      <CustomColumnDialog open onClose={vi.fn()} attributes={["a.b"]} existingColumns={[]} />,
+    );
+    expect(screen.queryByText("Agent")).not.toBeInTheDocument();
+  });
+});

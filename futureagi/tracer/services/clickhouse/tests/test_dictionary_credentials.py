@@ -498,11 +498,24 @@ class ServerNativeClient(NativeMemoryClient):
             packaged = packaged.replace(
                 "CREATE OR REPLACE DICTIONARY ", "CREATE DICTIONARY IF NOT EXISTS ", 1
             )
-        name = next(
-            n
-            for n, ddl in self.definitions.items()
-            if core._tokens(ddl) == core._tokens(packaged)
-        )
+        try:
+            name = next(
+                n
+                for n, ddl in self.definitions.items()
+                if core._tokens(ddl) == core._tokens(packaged)
+            )
+        except StopIteration:
+            # The shipping bootstrap now applies the additive Skills schema in
+            # the same native window. This credential-focused double does not
+            # model those tables; the dedicated native-install tests cover that
+            # schema's DDL and receipt contract.
+            assert (
+                "schema_versions" in sql
+                or "skill_trace_links" in sql
+                or "skill_load_failures" in sql
+                or core._tokens(sql)[:3] == ("ALTER", "TABLE", "spans")
+            )
+            return
         assert replacing == (name in self.tables)
         if name == self.fail_create:
             raise RuntimeError(f"secret-password://{sql}")
@@ -512,6 +525,9 @@ class ServerNativeClient(NativeMemoryClient):
                 "CREATE OR REPLACE DICTIONARY ", "CREATE DICTIONARY IF NOT EXISTS ", 1
             ),
         )
+
+    def insert(self, table, rows, column_names):
+        self.events.append(("insert", table, rows, column_names))
 
     def close(self):
         pass
@@ -928,9 +944,21 @@ def install_env(monkeypatch):
 
 
 @pytest.mark.parametrize("password", [PASSWORD, ""])
-def test_bootstrap_install_native_schema_uses_ch_password(install_env, password):
+def test_bootstrap_install_native_schema_uses_ch_password(
+    install_env, password, monkeypatch
+):
     from tfc.management.commands import bootstrap_install
 
+    # This test asserts transport credentials and dictionary rewriting. The
+    # Skills native layout and receipt are covered by test_skill_native_install;
+    # keep this double focused by treating that already-qualified extension as
+    # complete after the bootstrap's packaged DDL is accepted.
+    monkeypatch.setattr(cli.native, "inspect_skill_extension", Mock(return_value=()))
+    # The packaged 039 Skills apply and its receipt go through apply_schema, which the
+    # read-only server double does not model; stub it so only native DDL is seen.
+    monkeypatch.setattr(cli.apply_schema, "ensure_versions_table", Mock())
+    monkeypatch.setattr(cli.apply_schema, "fetch_applied", Mock(return_value={}))
+    monkeypatch.setattr(cli.apply_schema, "apply_file", Mock())
     server = install_env(password)
     bootstrap_install.clickhouse_native_schema(lambda _: None, 120)
     assert server.connect.call_args.kwargs["username"] == USER

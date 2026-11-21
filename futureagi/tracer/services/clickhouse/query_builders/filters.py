@@ -11,6 +11,8 @@ import math
 import re
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, NamedTuple
 
 from tracer.services.clickhouse.query_builders.voice_filter_expressions import (
@@ -23,6 +25,15 @@ from tracer.utils.constants import (
     RANGE_OPS,
     SPAN_ATTR_ALLOWED_OPS,
     FilterType,
+)
+
+# Skill scope lives in span attributes (an array, so it lands in the
+# attributes_extra JSON text); there is no dedicated spans column. The
+# position() guard skips JSON parsing for the spans that carry no scope.
+SKILL_VERSION_IDS_SQL = (
+    "if(position(attributes_extra, '\"fi.skills.version_ids\"') > 0, "
+    "JSONExtract(attributes_extra, 'fi.skills.version_ids', 'Array(String)'), "
+    "CAST([], 'Array(String)'))"
 )
 
 _SAFE_ATTR_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
@@ -41,6 +52,258 @@ _LITERAL_TEXT_MATCH_OPS = frozenset(
 _BOOLEAN_META_PRESENCE_CONDITIONS = {"is_null": "0 = 1", "is_not_null": "1 = 1"}
 
 _BOOLEAN_META_VALUE_OPS = frozenset({"equals", "not_equals"})
+
+
+# The same contract is used by serializers and all Observe compilers. A group
+# describes ONE load row, not independent any-span attribute matches.
+SKILL_FILTER_COLUMNS = {
+    "skill.id": ("skill_id", "text", {"equals", "in", "not_in", "not_equals"}),
+    "skill.version_id": (
+        "skill_version_id",
+        "text",
+        {"equals", "in", "not_in", "not_equals"},
+    ),
+    "skill.name": ("skill_name", "text", {"equals", "in", "contains"}),
+    "skill.version": ("skill_version", "number", {"equals", "in", "gte", "lte"}),
+    "skill.requested_label": ("requested_label", "text", {"equals", "in"}),
+    "skill.digest": ("skill_digest", "text", {"equals"}),
+    "skill.evidence": ("evidence", "text", {"in"}),
+    "skill.agent": ("agent_name", "text", {"equals", "in"}),
+    "skill.service": ("service_name", "text", {"equals", "in"}),
+    "skill.context_id": ("context_id", "text", {"equals", "in"}),
+    "skill.context_version_id": ("context_version_id", "text", {"equals", "in"}),
+    "skill.binding_id": ("binding_id", "text", {"equals", "in"}),
+    "skill.in_scope": (None, "text", {"equals", "in"}),
+    "skill.load_result": (None, "text", {"equals"}),
+    "skill.root_status": (None, "text", {"equals"}),
+    "skill.trace_cohort": (None, "text", {"equals"}),
+}
+_SKILL_FAILED_COLUMNS = frozenset(
+    {
+        "skill.id",
+        "skill.name",
+        "skill.requested_label",
+        "skill.agent",
+        "skill.service",
+        "skill.context_id",
+        "skill.context_version_id",
+        "skill.load_result",
+        "skill.root_status",
+        "skill.trace_cohort",
+    }
+)
+
+
+@dataclass(frozen=True)
+class SkillEvidenceWindow:
+    """Compiler-owned, exact admission window shared by split graph sources.
+
+    Parameters are bound once on the outer query. Never apply this condition to
+    replayed metrics, or use an excluded timestamp to hide a newer tombstone.
+    """
+
+    bounds = "start_time >= fromUnixTimestamp64Micro(%(skill_window_start_us)s) AND start_time < fromUnixTimestamp64Micro(%(skill_window_end_us)s)"
+    condition: str
+    params: dict[str, Any]
+
+    @classmethod
+    def from_bounds(cls, start: datetime, end: datetime, filters: list[dict]):
+        from tracer.services.clickhouse.query_builders.base import (
+            BaseQueryBuilder,
+            _unix_microseconds,
+        )
+
+        # Widgets pass the chart's explicit display range separately from its
+        # canonical filters. Intersect them before admitting a load or witness;
+        # the caller can still display the full axis and replay entire traces.
+        bounded_filters = [
+            *filters,
+            {
+                "column_id": "start_time",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [start.isoformat(), end.isoformat()],
+                },
+            },
+        ]
+        window = BaseQueryBuilder.analyze_bounded_datetime_filters(bounded_filters)
+        excluded, params = BaseQueryBuilder.bounded_datetime_exclusion_sql(
+            bounded_filters, param_prefix="graph_datetime"
+        )
+        return cls(
+            cls.bounds + (f" AND ({excluded})" if excluded else ""),
+            {
+                **params,
+                "skill_window_start_us": _unix_microseconds(window.start),
+                "skill_window_end_us": _unix_microseconds(window.end),
+            },
+        )
+
+
+def is_skill_filter(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    config = item.get("filter_config") or item.get("filterConfig") or {}
+    return (
+        isinstance(config, dict)
+        and (config.get("col_type") or config.get("colType")) == "SKILL"
+    )
+
+
+def validate_skill_filter_item(item: dict) -> None:
+    """Validate canonical SKILL items; never coerce bools or string versions."""
+    key = item.get("column_id")
+    config = item.get("filter_config") or {}
+    if key not in SKILL_FILTER_COLUMNS:
+        raise ValueError("Unknown SKILL column_id")
+    group = item.get("group", 0)
+    if type(group) is not int or not 0 <= group <= 2147483647:
+        raise ValueError("SKILL group must be a non-negative 32-bit integer")
+    _, kind, ops = SKILL_FILTER_COLUMNS[key]
+    op = config.get("filter_op")
+    if config.get("filter_type") != kind or op not in ops:
+        raise ValueError(f"Unsupported type or operator for {key}")
+    value = config.get("filter_value")
+    values = value if op in {"in", "not_in"} else [value]
+    if not isinstance(values, list) or not values or len(values) > 1000:
+        raise ValueError("SKILL membership requires a non-empty bounded list")
+    for member in values:
+        if kind == "number":
+            if type(member) is not int or not 1 <= member <= 4294967295:
+                raise ValueError("skill.version must be a positive UInt32 integer")
+        elif not isinstance(member, str) or len(member.encode("utf-8")) > 16384:
+            raise ValueError("SKILL text values must be bounded strings")
+        elif not member and key not in {"skill.agent", "skill.service"}:
+            raise ValueError(f"{key} requires a non-empty value")
+    choices = {
+        "skill.load_result": {"loaded", "failed"},
+        "skill.root_status": {"error", "ok"},
+        "skill.evidence": {"delivered", "agent_read", "declared"},
+    }.get(key)
+    if choices and any(member not in choices for member in values):
+        raise ValueError(f"Invalid value for {key}")
+    if "attribute_value_types" in config:
+        raise ValueError("SKILL filters do not accept attribute_value_types")
+
+
+def validate_skill_filter_groups(filters: list[dict]) -> dict[int, list[dict]]:
+    groups: dict[int, list[dict]] = {}
+    items = [item for item in filters if is_skill_filter(item)]
+    for item in items:
+        validate_skill_filter_item(item)
+        groups.setdefault(item.get("group", 0), []).append(item)
+    if any(item["column_id"] == "skill.root_status" for item in items) and not any(
+        item["column_id"] != "skill.root_status" for item in items
+    ):
+        raise ValueError("skill.root_status requires another SKILL item")
+    for members in groups.values():
+        results = {
+            item["filter_config"]["filter_value"]
+            for item in members
+            if item["column_id"] == "skill.load_result"
+        }
+        if len(results) > 1:
+            raise ValueError("A SKILL group cannot be both loaded and failed")
+        keys = {item["column_id"] for item in members}
+        if "failed" in results and keys - _SKILL_FAILED_COLUMNS:
+            raise ValueError(
+                "Failed loads have no version, digest, evidence, binding or scope"
+            )
+        if "skill.version" in keys and not any(
+            item["column_id"] in {"skill.id", "skill.name"}
+            and item["filter_config"]["filter_op"] not in {"not_in", "not_equals"}
+            for item in members
+        ):
+            raise ValueError(
+                "skill.version requires skill.id or skill.name in the same group"
+            )
+    return groups
+
+
+def resolve_failed_skill_names(
+    skill_ids: list[str], project_ids: list[str]
+) -> list[tuple[str, str]]:
+    """Resolve names ONLY inside each authorized project's workspace.
+
+    Keep project/name pairs: organization reads must not transfer an identity
+    from one workspace to another workspace with the same reported name.
+    """
+    from model_hub.models.skills_hub import HubSkill
+    from tracer.models.project import Project
+
+    identifiers = []
+    for value in skill_ids:
+        try:
+            identifiers.append(str(uuid.UUID(value)))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    if not identifiers:
+        return []
+    projects = list(
+        Project.no_workspace_objects.filter(
+            id__in=project_ids,
+            deleted=False,
+        ).values_list("id", "workspace_id")
+    )
+    skills = list(
+        HubSkill.no_workspace_objects.filter(
+            id__in=identifiers,
+            workspace_id__in=[workspace for _, workspace in projects],
+            deleted=False,
+        ).values_list("workspace_id", "name")
+    )
+    return [
+        (str(project), name)
+        for project, workspace in projects
+        for skill_workspace, name in skills
+        if workspace == skill_workspace
+    ]
+
+
+def resolve_skill_cohort_catalog(project_ids: list[str]) -> dict:
+    """Bounded authoritative identities for cohort aggregates and labels.
+
+    This is intentionally not used by ordinary load filters: those must still
+    let people find reported identities and mismatched content. Aggregates,
+    however, exclude unverified content and cross-workspace claims by default.
+    """
+    from model_hub.models.skills_hub import HubSkillVersion
+    from tracer.models.project import Project
+
+    projects = list(
+        Project.no_workspace_objects.filter(
+            id__in=project_ids,
+            deleted=False,
+        ).values_list("id", "workspace_id")
+    )
+    versions = list(
+        HubSkillVersion.objects.filter(
+            skill__workspace_id__in=[workspace for _, workspace in projects],
+            skill__deleted=False,
+        ).values_list(
+            "id", "skill_id", "digest", "number", "skill__name", "skill__workspace_id"
+        )[:10001]
+    )
+    if len(versions) > 10000:
+        raise _unsupported_filter_shape(
+            "Skill cohort catalog is too large for this read"
+        )
+    identities: list[tuple[str, str, str, str]] = []
+    skill_labels, version_labels = {}, {}
+    for version, skill, digest, number, name, workspace in versions:
+        skill_labels[str(skill)] = name
+        version_labels[str(version)] = f"{name} v{number}"
+        identities.extend(
+            (str(project), str(skill), str(version), digest)
+            for project, project_workspace in projects
+            if project_workspace == workspace
+        )
+    return {
+        "identities": tuple(identities),
+        "skill": skill_labels,
+        "skill_version": version_labels,
+    }
 
 
 class EvalFilterMetadata(NamedTuple):
@@ -831,6 +1094,7 @@ class ClickHouseFilterBuilder:
         eval_filter_metadata: dict[str, EvalFilterMetadata] | None = None,
         resolved_candidate_sessions_table: str | None = None,
         eval_count_mode: bool = False,
+        skill_window: SkillEvidenceWindow | None = None,
         metric_filter_context: str | None = None,
         metric_read_scopes: dict | None = None,
         metric_candidates=None,
@@ -839,6 +1103,7 @@ class ClickHouseFilterBuilder:
         # Observe lists opt into newest-completed tiles. Session/user/dashboard
         # consumers retain matching across all live attempts by default.
         self.eval_count_mode = eval_count_mode
+        self.skill_window = skill_window
         # Native planners opt in only after capturing pins on one committed
         # manifest and canonical pre-page candidates. No fallback to the head
         # or page ids. metric_outer_column names the planner's canonical
@@ -1563,6 +1828,311 @@ class ClickHouseFilterBuilder:
     # Public API
     # ------------------------------------------------------------------
 
+    def _skill_window_bounds(self) -> str:
+        return (
+            self.skill_window.bounds
+            if self.skill_window
+            else "start_time >= %(start_date)s AND start_time < %(end_date)s"
+        )
+
+    def skill_live_span_versions_sql(self) -> str:
+        """Bounded, authoritative span winners, including key-only tombstones.
+
+        The narrow MV's FINAL key contains mutable load dimensions. Match its
+        version to the latest physical span, rather than trusting FINAL alone.
+        The caller binds start_date/end_date, as on every bounded Observe read.
+        """
+        if not self.project_ids:
+            raise _unsupported_filter_shape("SKILL filters require a project scope")
+        candidate = (
+            self._candidate_filter("trace_id")
+            if self.query_mode == self.QUERY_MODE_TRACE
+            else ""
+        )
+        from tracer.services.clickhouse.query_builders.session_list import (
+            ResolvedSpanSource,
+        )
+
+        # A closed sampling snapshot admits only spans whose latest state arrived
+        # before it. Skill evidence must come from those same spans, so a late
+        # child load cannot change an already closed sample.
+        snapshot = (
+            " AND (project_id, trace_id, id) IN "
+            f"(SELECT project_id, trace_id, id FROM {ResolvedSpanSource.SAMPLING.value})"
+            if self.table == ResolvedSpanSource.SAMPLING.value
+            else ""
+        )
+        return (
+            "SELECT project_id, trace_id, id, max(_version) AS live_version "
+            "FROM spans WHERE "
+            + self._project_scope_predicate()
+            + f" AND {self._skill_window_bounds()}"
+            + candidate
+            + snapshot
+            + " GROUP BY project_id, trace_id, id HAVING argMax(is_deleted, _version) = 0"
+        )
+
+    def skill_live_rows_sql(self, *, failed: bool = False) -> str:
+        """Shared live load source for filters and cohort dimensions (ST8)."""
+        table = "skill_load_failures" if failed else "skill_trace_links"
+        outcome = "" if failed else "AND status != 'ERROR' "
+        window = (
+            self.skill_window.condition
+            if self.skill_window
+            else self._skill_window_bounds()
+        )
+        return (
+            f"SELECT * FROM {table} FINAL WHERE {self._project_scope_predicate()} "
+            f"AND is_deleted = 0 {outcome}AND {window} "
+            "AND (project_id, trace_id, span_id, _version) IN ("
+            + self.skill_live_span_versions_sql()
+            + ")"
+        )
+
+    def skill_cohort_rows_sql(
+        self,
+        filters: list[dict],
+        *,
+        dimension: str,
+        verified_identities: tuple | None = None,
+    ) -> tuple[str, dict]:
+        """Load-grain cohort coordinates; callers deduplicate trace membership.
+
+        A split of a selected version must not introduce other versions merely
+        because they occur in the same trace. Preserve the positive selectors
+        of each loaded group here; the full trace predicate remains mandatory
+        on the metric source (and enforces negative and cross-group filters).
+        """
+        dimensions = {
+            "skill_version": "skill_version_id",
+            "skill": "skill_id",
+            "skill_agent": "toJSONString(tuple(toString(project_id), service_name, agent_name))",
+        }
+        if dimension not in dimensions:
+            raise _unsupported_filter_shape("Unknown skill cohort dimension")
+        try:
+            groups = validate_skill_filter_groups(filters)
+        except ValueError as exc:
+            raise _unsupported_filter_shape(str(exc)) from exc
+        self._params = {}
+        self._param_counter = 0
+        alternatives = []
+        for members in groups.values():
+            if any(
+                item["column_id"] == "skill.load_result"
+                and item["filter_config"]["filter_value"] == "failed"
+                for item in members
+            ):
+                continue
+            selectors = [
+                self._skill_row_predicate(item, failed=False)
+                for item in members
+                if SKILL_FILTER_COLUMNS[item["column_id"]][0] is not None
+                and item["filter_config"]["filter_op"] not in {"not_in", "not_equals"}
+            ]
+            if selectors:
+                alternatives.append("(" + " AND ".join(selectors) + ")")
+        row_predicate = " OR ".join(alternatives) or "1 = 1"
+        if groups and all(
+            any(
+                item["column_id"] == "skill.load_result"
+                and item["filter_config"]["filter_value"] == "failed"
+                for item in members
+            )
+            for members in groups.values()
+        ):
+            # A failed load has no resolved version. Do not borrow a successful
+            # sibling's version just to populate a split of failed-only groups.
+            row_predicate = "0 = 1"
+        if verified_identities is None:
+            raise _unsupported_filter_shape(
+                "Skill cohorts require authoritative version digests"
+            )
+        if verified_identities:
+            self._params["skill_verified_identities"] = verified_identities
+            row_predicate = (
+                f"({row_predicate}) AND "
+                "(toString(project_id), skill_id, skill_version_id, skill_digest) "
+                "IN %(skill_verified_identities)s"
+            )
+        else:
+            row_predicate = "0 = 1"
+        sql = (
+            "SELECT project_id, trace_id, start_time, "
+            + dimensions[dimension]
+            + " AS cohort_key FROM ("
+            + self.skill_live_rows_sql()
+            + ") WHERE "
+            + row_predicate
+        )
+        # Namespacing is required when this source and the full filter compiler
+        # are used together in one query.
+        params = {}
+        for name, value in self._params.items():
+            sql = sql.replace(f"%({name})s", f"%(cohort_{name})s")
+            params[f"cohort_{name}"] = value
+        return sql, params
+
+    def _skill_row_predicate(self, item: dict, *, failed: bool) -> str:
+        key = item["column_id"]
+        config = item["filter_config"]
+        op = config["filter_op"]
+        value = config["filter_value"]
+        column = SKILL_FILTER_COLUMNS[key][0]
+        param = self._next_param("skill")
+        if failed and key == "skill.id":
+            values = value if isinstance(value, list) else [value]
+            pairs = resolve_failed_skill_names(values, self.project_ids or [])
+            if not pairs:
+                return "0 = 1"
+            self._params[param] = tuple(pairs)
+            return f"(toString(project_id), skill_name) IN %({param})s"
+        if op in {"in", "not_in"}:
+            self._params[param] = tuple(value)
+            return f"{column} IN %({param})s"
+        self._params[param] = value
+        if op == "contains":
+            return f"positionUTF8({column}, %({param})s) > 0"
+        sql_op = {"equals": "=", "not_equals": "=", "gte": ">=", "lte": "<="}[op]
+        return f"{column} {sql_op} %({param})s"
+
+    def _build_skill_conditions(self, filters: list[dict]) -> list[str]:
+        try:
+            groups = validate_skill_filter_groups(filters)
+        except ValueError as exc:
+            raise _unsupported_filter_shape(str(exc)) from exc
+        if not groups:
+            return []
+        if not self.project_ids:
+            raise _unsupported_filter_shape("SKILL filters require a project scope")
+        conditions = []
+        root_statuses = set()
+        # Identity-only single-project trace classifiers omit project_id from
+        # their final relation. The bound project is equally authoritative;
+        # organization classifiers carry the per-row project explicitly.
+        outer_project = "project_id" if self._org_scoped else "toUUID(%(project_id)s)"
+        trace_identity = f"({outer_project}, trace_id)"
+        span_identity = f"({outer_project}, trace_id, id)"
+        for members in groups.values():
+            failed = any(
+                item["column_id"] == "skill.load_result"
+                and item["filter_config"]["filter_value"] == "failed"
+                for item in members
+            )
+            positives: list[str] = []
+            negatives: list[str] = []
+            explicit_result = False
+            for item in members:
+                key = item["column_id"]
+                config = item["filter_config"]
+                if key == "skill.trace_cohort":
+                    from tracer.services.clickhouse.runtime_cohorts import (
+                        resolve_cohort,
+                    )
+
+                    try:
+                        project, ids = resolve_cohort(
+                            config["filter_value"], self.project_ids
+                        )
+                    except ValueError as exc:
+                        raise _unsupported_filter_shape(str(exc)) from exc
+                    if not ids:
+                        conditions.append("0 = 1")
+                    else:
+                        param = self._next_param("runtime_cohort")
+                        self._params[param] = tuple(
+                            (project, trace_id) for trace_id in ids
+                        )
+                        conditions.append(
+                            f"(toString({outer_project}), trace_id) IN %({param})s"
+                        )
+                elif key == "skill.root_status":
+                    root_statuses.add(config["filter_value"])
+                elif key == "skill.load_result":
+                    explicit_result = True
+                elif key == "skill.in_scope":
+                    if self.query_mode != self.QUERY_MODE_SPAN:
+                        raise _unsupported_filter_shape(
+                            "skill.in_scope is span-grain only"
+                        )
+                    param = self._next_param("skill_scope")
+                    # hasAny requires an Array literal. Drivers encode tuples
+                    # as SQL tuples, and a singleton tuple becomes a String.
+                    self._params[param] = (
+                        list(config["filter_value"])
+                        if config["filter_op"] == "in"
+                        else [config["filter_value"]]
+                    )
+                    # Residual candidate relations do not project the array.
+                    # Resolve it on the current span identity, never a sibling.
+                    conditions.append(
+                        f"{span_identity} IN (SELECT project_id, trace_id, id FROM ("
+                        "SELECT project_id, trace_id, id, "
+                        f"argMax(tuple({SKILL_VERSION_IDS_SQL}, is_deleted), _version) AS scope_state "
+                        "FROM spans WHERE "
+                        + self._project_scope_predicate()
+                        + " AND start_time >= %(start_date)s AND start_time < %(end_date)s "
+                        "GROUP BY project_id, trace_id, id) WHERE scope_state.2 = 0 "
+                        f"AND hasAny(scope_state.1, %({param})s))"
+                    )
+                else:
+                    predicate = self._skill_row_predicate(item, failed=failed)
+                    target = (
+                        negatives
+                        if config["filter_op"] in {"not_in", "not_equals"}
+                        else positives
+                    )
+                    target.append(predicate)
+            source = self.skill_live_rows_sql(failed=failed)
+            # Negative membership is absence of a matching row, never a row
+            # with a different value. Other positive selectors still correlate.
+            positive = " AND ".join(positives) or "1 = 1"
+            if positives or explicit_result:
+                conditions.append(
+                    f"{trace_identity} IN (SELECT project_id, trace_id FROM ("
+                    + source
+                    + ") WHERE "
+                    + positive
+                    + ")"
+                )
+            for negative in negatives:
+                conditions.append(
+                    f"{trace_identity} NOT IN (SELECT project_id, trace_id FROM ("
+                    + source
+                    + ") WHERE "
+                    + positive
+                    + " AND "
+                    + negative
+                    + ")"
+                )
+        for status in sorted(root_statuses):
+            param = self._next_param("skill_root_status")
+            self._params[param] = "ERROR"
+            operator = "=" if status == "error" else "!="
+            # The load window chooses traces, not roots. Replay all spans of
+            # candidate traces first (including key-only tombstones), then use
+            # the same canonical root as runtime metrics: earliest (time, id).
+            # An existential ERROR root can disagree with the canonical root
+            # when malformed telemetry contains more than one root.
+            conditions.append(
+                f"{trace_identity} IN (SELECT project_id, trace_id FROM ("
+                "SELECT project_id, trace_id, "
+                "countIf(root_state.1 = '') AS roots, "
+                "argMinIf(tuple(root_state.2), tuple(root_state.4, id), "
+                "root_state.1 = '') AS canonical_root FROM ("
+                "SELECT project_id, trace_id, id, "
+                "argMax(tuple(parent_span_id, status, is_deleted, start_time), _version) AS root_state "
+                "FROM spans WHERE "
+                + self._project_scope_predicate()
+                + " AND (project_id, trace_id) IN (SELECT project_id, trace_id FROM spans WHERE "
+                + self._project_scope_predicate()
+                + f" AND {self._skill_window_bounds()}) "
+                "GROUP BY project_id, trace_id, id) WHERE root_state.3 = 0 "
+                "GROUP BY project_id, trace_id) "
+                f"WHERE roots > 0 AND canonical_root.1 {operator} %({param})s)"
+            )
+        return conditions
+
     def translate(self, filters: list[dict]) -> tuple[str, dict[str, Any]]:
         """Translate a filter list to ClickHouse WHERE clause fragments.
 
@@ -1582,8 +2152,20 @@ class ClickHouseFilterBuilder:
         conditions: list[str] = []
         self._params = {}
         self._param_counter = 0
+        for f in filters:
+            if is_skill_filter(f) and any(
+                str(f.get(key) or "").startswith("metric_field:")
+                for key in ("column_id", "columnId", "property_id")
+            ):
+                # Metric identities are validated only on the metric path.
+                raise _unsupported_filter_shape(
+                    "SKILL filters cannot carry a metric field identity"
+                )
+        conditions.extend(self._build_skill_conditions(filters))
 
         for f in filters:
+            if is_skill_filter(f):
+                continue
             col_id = f.get("column_id") or f.get("columnId")
             config = f.get("filter_config") or f.get("filterConfig") or {}
             col_type = config.get("col_type") or config.get("colType") or self.NORMAL

@@ -14,7 +14,7 @@ from tracer.serializers.derived_metric import DerivedMetricDashboardContextSeria
 from tracer.serializers.filters import (
     JsonValueField,
     StrictInputSerializer,
-    filter_list_field,
+    skill_filter_list_field,
 )
 from tracer.services.clickhouse.query_builders.dataset_dashboard import (
     DATASET_BREAKDOWN_COLUMNS,
@@ -222,7 +222,7 @@ class DashboardMetricSerializer(StrictInputSerializer):
         required=False,
         default="string",
     )
-    filters = filter_list_field(required=False, default=list)
+    filters = skill_filter_list_field(required=False, default=list)
 
     class Meta:
         swagger_schema_fields = {"additionalProperties": False}
@@ -515,7 +515,7 @@ class DashboardQuerySerializer(StrictInputSerializer):
         choices=DASHBOARD_GRANULARITIES, required=False, default="day"
     )
     metrics = DashboardMetricSerializer(many=True)
-    filters = filter_list_field(required=False, default=list)
+    filters = skill_filter_list_field(required=False, default=list)
     breakdowns = DashboardBreakdownSerializer(many=True, required=False, default=list)
     allow_sampled = serializers.BooleanField(
         required=False,

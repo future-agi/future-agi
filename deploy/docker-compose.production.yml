@@ -49,7 +49,7 @@ services:
     image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
     environment:
       <<: *production-backend-env
-    command: ["--phase", "native"]
+    command: ["--phase", "native", "--require-skill-schema"]
 
   peerdb-init:
     image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}

@@ -11,6 +11,7 @@ import math
 import socket
 import threading
 import time
+from collections.abc import Collection
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin, urlparse
 
@@ -151,7 +152,7 @@ def _resolve_pinned_ip(host: str) -> str:
     except socket.gaierror as e:
         raise SsrfBlocked(f"Cannot resolve URL host '{host}': {e}") from None
 
-    resolved_ips = sorted({info[4][0] for info in infos})
+    resolved_ips = sorted({str(info[4][0]) for info in infos})
     if not resolved_ips:
         raise SsrfBlocked(f"Cannot resolve URL host '{host}'.")
 
@@ -316,7 +317,13 @@ def safe_fetch(
     method: str = "HEAD",
     timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = _DEFAULT_MAX_BODY_BYTES,
-    headers: dict = None,
+    headers: dict | None = None,
+    allowed_hosts: Collection[str] | None = None,
+    allowed_schemes: Collection[str] | None = None,
+    allowed_ports: Collection[int] | None = None,
+    deadline: float | None = None,
+    allowed_urls: Collection[str] | None = None,
+    allowed_content_encodings: Collection[str] | None = None,
     total_timeout: float | None = None,
 ) -> SsrfResponse:
     """Fetch `url` with SSRF protection.
@@ -328,24 +335,45 @@ def safe_fetch(
     None preserves the existing per-operation inactivity timeout. A deadline
     raises TimeoutError and closes the active response/pool.
     """
-    deadline = None
+    if deadline is not None and not math.isfinite(deadline):
+        raise ValueError("deadline must be finite.")
     if total_timeout is not None:
         if not math.isfinite(total_timeout) or total_timeout <= 0:
             raise ValueError("total_timeout must be finite and positive.")
-        deadline = _monotonic() + total_timeout
+        relative_deadline = _monotonic() + total_timeout
+        deadline = (
+            relative_deadline if deadline is None else min(deadline, relative_deadline)
+        )
+    if method not in {"HEAD", "GET"}:
+        raise ValueError("Use HEAD or GET.")
     current_url = url
     caller_headers = headers or {}
     origin_host = urlparse(url).hostname
     for _ in range(_MAX_REDIRECTS):
         if deadline is not None:
             _remaining(deadline)
+        if (
+            any(ord(char) < 32 or ord(char) == 127 for char in current_url)
+            or "\\" in current_url
+        ):
+            raise SsrfBlocked("Invalid URL characters.")
+        if allowed_urls is not None and current_url not in allowed_urls:
+            raise SsrfBlocked("URL is outside the allowed resource set.")
         parsed = urlparse(current_url)
+        if parsed.username is not None or parsed.password is not None:
+            raise SsrfBlocked("URL credentials are not allowed.")
+        if allowed_schemes is not None and parsed.scheme not in allowed_schemes:
+            raise SsrfBlocked("URL scheme is not allowed.")
         if parsed.scheme not in ("http", "https"):
             raise SsrfBlocked(f"Unsupported URL scheme: '{parsed.scheme}'.")
         host = parsed.hostname
         if not host:
             raise SsrfBlocked("Invalid URL: missing host.")
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if allowed_hosts is not None and host not in allowed_hosts:
+            raise SsrfBlocked("URL host is not allowed.")
+        if allowed_ports is not None and port not in allowed_ports:
+            raise SsrfBlocked("URL port is not allowed.")
         pinned_ip = (
             _resolve_pinned_ip(host)
             if deadline is None
@@ -391,6 +419,13 @@ def safe_fetch(
 
             if deadline is not None:
                 _remaining(deadline)
+            encoding = response.headers.get("Content-Encoding", "").strip().lower()
+            if (
+                allowed_content_encodings is not None
+                and encoding not in allowed_content_encodings
+            ):
+                raise SsrfBlocked("URL content encoding is not allowed.")
+
             if response.status in (301, 302, 303, 307, 308):
                 location = response.headers.get("Location")
                 if not location:
@@ -426,11 +461,7 @@ def safe_fetch(
             raise ValueError(f"Cannot access URL: {e}") from None
         finally:
             if response is not None:
-                if deadline is not None:
-                    # Incomplete bodies/redirects must close their file/socket,
-                    # not just return a still-reading connection to the pool.
-                    # Close the response before releasing its connection.
-                    response.close()
+                response.close()
                 response.release_conn()
             pool.close()
 

@@ -185,6 +185,13 @@ const JSON_VALUE_SCHEMA = z.lazy(() =>
 function schemaToZod(schema, options = {}) {
   if (!schema || typeof schema !== "object") return z.any();
 
+  if (schema["x-anyOf"]) {
+    return nullableIfNeeded(
+      z.union(schema["x-anyOf"].map((alternative) => schemaToZod(alternative, options))),
+      schema,
+    );
+  }
+
   if (schema["x-string-or-object"]) {
     const { "x-string-or-object": _extension, ...objectSchema } = schema;
     return nullableIfNeeded(

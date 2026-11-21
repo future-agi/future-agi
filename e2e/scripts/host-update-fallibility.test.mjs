@@ -549,9 +549,9 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   const steps = workflow.jobs.e2e.steps;
   const normal = steps.findIndex(step => step.name === 'Run E2E suite');
   const proof = steps[normal + 1];
-  assert.equal(steps[normal].run, 'bin/e2e test');
+  assert.equal(steps[normal].run, 'e2e/stack/run-skill-cohort.sh "$SKILLS_COHORT"');
   assert.equal(proof.id, 'host-update-fallibility');
-  assert.equal(proof.if, "github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed'");
+  assert.equal(proof.if, "github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && matrix.stack == 'distributed' && !matrix.cohort");
   assert.equal(proof.timeoutMinutes, undefined);
   assert.equal(proof['timeout-minutes'], 22);
   assert.ok(proof['timeout-minutes'] * 60_000 > BUDGET.overallMs + BUDGET.termGraceMs + BUDGET.killGraceMs);
@@ -581,15 +581,26 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.match(rejected.stdout, /no builds were started/);
   assert.deepEqual(workflow.permissions, { contents: 'read' });
   assert.deepEqual(workflow.jobs.changes.permissions, { contents: 'read', 'pull-requests': 'read' });
-  assert.deepEqual(workflow.jobs.e2e.permissions, { contents: 'read', packages: 'write' });
-  assert.equal(Object.values(workflow.jobs).filter(job => job.permissions).length, 2);
+  const publisher = workflow.jobs['publish-build-cache'];
+  assert.deepEqual(publisher.permissions, { contents: 'read', packages: 'write' });
+  assert.equal(publisher.if, "github.event_name == 'push' && needs.changes.outputs.any == 'true'");
+  assert.deepEqual(publisher.strategy.matrix.include.map(x => x.target).sort(),
+    ['backend', 'code-executor', 'fi-collector', 'frontend', 'gateway']);
+  const cacheBuild = publisher.steps.find(step => step.uses === 'docker/build-push-action@v5');
+  assert.equal(cacheBuild.with['cache-to'], 'type=registry,ref=${{ env.CACHE_REPO }}:${{ matrix.target }},mode=max');
+  for (const [id, job] of Object.entries(workflow.jobs)) {
+    assert.equal(Boolean(job.steps?.some(step => step.uses?.startsWith('docker/login-action@'))), id === 'publish-build-cache');
+  }
+  // Registered journeys run on Blacksmith runners with read-only source access and no cloud identity.
+  assert.deepEqual(workflow.jobs['skills-journeys'].permissions, { contents: 'read' });
+  assert.deepEqual(Object.keys(workflow.jobs).filter(id => workflow.jobs[id].permissions).sort(), ['changes', 'publish-build-cache', 'skills-journeys']);
   const builds = steps.filter(step => step.uses === 'docker/build-push-action@v5');
   assert.equal(builds.length, 5);
   for (const step of builds) {
     assert.equal(step.with.push, undefined);
     assert.equal(step.with.load, true);
-    assert.match(step.with['cache-to'], /^\$\{\{ github.event_name == 'push' && format\('type=registry,ref=\{0\}:(backend|fi-collector|frontend|gateway|code-executor),mode=max', env.CACHE_REPO\) \|\| '' \}\}$/);
+    assert.equal(step.with['cache-to'], undefined);
   }
   assert.equal(steps.find(step => step.name === 'Save Playwright browser cache').if,
-    "github.event_name == 'push' && steps.pw-cache.outputs.cache-hit != 'true'");
+    "github.event_name == 'push' && !matrix.cohort && steps.pw-cache.outputs.cache-hit != 'true'");
 });

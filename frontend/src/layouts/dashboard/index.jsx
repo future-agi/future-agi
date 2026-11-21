@@ -7,9 +7,11 @@ import { useBoolean } from "src/hooks/use-boolean";
 import { useResponsive } from "src/hooks/use-responsive";
 
 import { useSettingsContext } from "src/components/settings";
-import { useRouter } from "src/routes/hooks";
+import { usePathname, useRouter } from "src/routes/hooks";
+import { paths } from "src/routes/paths";
 
 import Main from "./main";
+import { dashboardFrameSx, PHONE_BAR_HEIGHT } from "./frame";
 import NavMini from "./nav-mini";
 import NavVertical from "./nav-vertical";
 import NavHorizontal from "./nav-horizontal";
@@ -19,7 +21,10 @@ import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 import CreateWorkspaceModal from "./WorkspaceSwitcher/CreateWorkspaceModal";
 import TwoFactorBanner from "src/components/two-factor-enforcement/TwoFactorBanner";
 import HostUpdateNotice from "src/components/host-update-status/HostUpdateNotice";
-import { Typography } from "@mui/material";
+import { IconButton, Stack, Typography } from "@mui/material";
+import { addIcon } from "@iconify/react";
+import Iconify from "src/components/iconify";
+import Logo from "src/components/logo";
 import { ShowComponent } from "../../components/show";
 import { useFeatureAllowed } from "src/hooks/useCapabilities";
 
@@ -28,6 +33,12 @@ import { useFeatureAllowed } from "src/hooks/useCapabilities";
 const FalconAISidebar = lazy(
   () => import("src/sections/falcon-ai/FalconAISidebar"),
 );
+// Bundled locally so the phone navigation control never depends on the icon CDN.
+addIcon("solar:hamburger-menu-linear", {
+  width: 24,
+  height: 24,
+  body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.5" d="M20 7H4m16 5H4m16 5H4"/>',
+});
 
 // ----------------------------------------------------------------------
 
@@ -49,7 +60,7 @@ export default function DashboardLayout({ children }) {
     }
   }, [pendingNavigation, router, clearPendingNavigation]);
 
-  const lgUp = useResponsive("up", "xs");
+  const lgUp = useResponsive("up", "md");
 
   const nav = useBoolean();
 
@@ -74,24 +85,34 @@ export default function DashboardLayout({ children }) {
     navComponent = <NavVertical openNav={nav.value} onCloseNav={nav.onFalse} />;
   }
 
-  const boxStyles = isHorizontal
-    ? {
-        display: "block",
-      }
-    : {
-        minHeight: 1,
-        minWidth: 1200,
-        display: "flex",
-        flexDirection: { xs: "row", lg: "row" },
-        // The frame: sidebar and page edges on the canvas; <Main> is the
-        // inset content panel.
-        backgroundColor: "background.default",
-        ...(isMini ? {} : { overflowX: "auto" }),
-      };
+  // Skills pages also contain and clip absolutely positioned content, so it
+  // can never scroll the shell (see dashboardFrameSx).
+  const pathname = usePathname();
+  const skillsRoot = paths.dashboard.skills.root;
+  const inSkills = pathname === skillsRoot || pathname.startsWith(`${skillsRoot}/`);
+  const boxStyles = dashboardFrameSx({
+    horizontal: isHorizontal,
+    mini: isMini,
+    phone: !lgUp,
+    contain: inSkills,
+  });
 
   return (
     <>
-      {/* <Header onOpenNav={nav.onTrue} /> */}
+      {/* Below md the sidebar is a drawer: one 56px bar with the menu control and the mark, no text. */}
+      {!lgUp && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ height: PHONE_BAR_HEIGHT, flexShrink: 0, px: 1, bgcolor: "background.paper", borderBottom: 1, borderColor: "divider" }}
+        >
+          <IconButton onClick={nav.onTrue} aria-label="Open navigation" sx={{ color: "text.primary" }}>
+            <Iconify icon="solar:hamburger-menu-linear" width={24} />
+          </IconButton>
+          <Logo disabledLink aria-hidden="true" width={28} height={28} sx={{ width: 28, height: 28, alignItems: "center" }} />
+        </Stack>
+      )}
       <TwoFactorBanner />
       <CreateWorkspaceModal />
       <ShowComponent condition={isSOSMode}>
@@ -120,7 +141,8 @@ export default function DashboardLayout({ children }) {
       <Box sx={boxStyles}>
         {navComponent}
         <NavGatewayPanel />
-        <Main>
+        {/* The phone bar sits above the scrolling panel; the panel fills the frame under it. */}
+        <Main sx={lgUp ? undefined : { height: `calc(100vh - ${PHONE_BAR_HEIGHT}px)` }}>
           <HostUpdateNotice />
           {children}
         </Main>

@@ -886,6 +886,32 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             table="feedbacks",
         ),
     },
+    "model_hub.services.skills_hub.v11.adoption": {
+        "adoption_summary": filed(
+            NO_SPAN_TABLE,
+            why=(
+                "Skills adoption summary: its FROM templates are the quoted "
+                "Postgres tables of the skill, workspace, label, label event, "
+                "daily usage and version models, scoped to the caller's "
+                "organization and workspace"
+            ),
+            table=(
+                "HubSkill, Workspace, HubSkillLabel, HubSkillLabelEvent, "
+                "HubSkillUsageDaily and HubSkillVersion"
+            ),
+        ),
+    },
+    "model_hub.services.skills_hub.v12.trace_source": {
+        "read_trace_source": filed(
+            PROJECT_SET,
+            why=(
+                "context capture reads one span by project, trace, span id and "
+                "start hour; authorize_trace_source first resolves the project "
+                "through Project.no_workspace_objects in the caller's organization "
+                "and workspace, a manager that never returns a simulation project"
+            ),
+        ),
+    },
     "model_hub.utils.clickhouse": {
         "create_empty_conversation": _RECORD_UPSERT,
         "update_eval_record": _RECORD_UPSERT,
@@ -1280,6 +1306,9 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             table="tracer_trace",
         ),
         "ClickHouseFilterBuilder._build_system_metric_condition": _FILTER_LEAF,
+        "ClickHouseFilterBuilder._build_skill_conditions": _FILTER_LEAF,
+        "ClickHouseFilterBuilder.skill_live_rows_sql": _FILTER_LEAF,
+        "ClickHouseFilterBuilder.skill_live_span_versions_sql": _FILTER_LEAF,
         "ClickHouseFilterBuilder._candidate_trace_filter": _FILTER_LEAF,
         "ClickHouseFilterBuilder._enduser_dimension_id_subquery": filed(
             NO_SPAN_TABLE,
@@ -1427,6 +1456,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "TimeSeriesQueryBuilder._exact_latest_scalar_source": _EXACT_CHART_STATEMENT,
         "TimeSeriesQueryBuilder._raw_scalar_source": _EXACT_CHART_STATEMENT,
         "TimeSeriesQueryBuilder.build_exact_span_partition": _EXACT_CHART_STATEMENT,
+        "TimeSeriesQueryBuilder.build_skill_cohort_query": _EXACT_CHART_STATEMENT,
         (
             "TimeSeriesQueryBuilder.build_exact_trace_contribution_batch"
         ): _EXACT_CHART_STATEMENT,
@@ -1630,6 +1660,35 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
             table="observed_attribute_keys and observed_attribute_values",
         ),
     },
+    "tracer.services.clickhouse.v2.query_builders.skill_runtime": {
+        "SkillRuntimeQueryBuilder.build_cohort_metrics": filed(
+            PROJECT_SET,
+            why="runtime metrics replay cohort spans only for the workspace-authorized projects from projects_in_scope, which uses Project.no_workspace_objects",
+        ),
+        "SkillRuntimeQueryBuilder.build_context_members": filed(
+            PROJECT_SET,
+            why="context runtime membership uses the authorized non-simulation project set from projects_in_scope and the selected context version",
+        ),
+        "SkillRuntimeQueryBuilder.build_latest_load": filed(
+            PROJECT_SET,
+            why="Check tracing reads loads only within the workspace-authorized non-simulation projects selected by projects_in_scope",
+        ),
+        "SkillRuntimeQueryBuilder.build_usage_evals": _EVAL_ROWS_OF_A_CONFIG,
+        "SkillRuntimeQueryBuilder.build_usage_spans": filed(
+            PROJECT_SET,
+            why="usage replays finite cohort trace identities within the authorized non-simulation project set selected by projects_in_scope",
+        ),
+    },
+    "tracer.services.clickhouse.v2.query_builders.trace_skills": {
+        "TraceSkillsQueryBuilder.build_spans": filed(
+            PROJECT_SET,
+            why="trace skill detail replays requested trace spans after trace_skills_projection authorizes the project through projects_in_scope and Project.no_workspace_objects",
+        ),
+        "TraceSkillsQueryBuilder.build_summary": filed(
+            PROJECT_SET,
+            why="Observe cohort summary reads the project authorized by trace_skills_projection through projects_in_scope, which excludes simulation projects",
+        ),
+    },
     "tracer.services.clickhouse.v2.query_builders.columns": {
         "json_path": filed(
             NO_SPAN_TABLE,
@@ -1694,6 +1753,16 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
                 "exact usage sorting of the Observe list requires its one "
                 "authorized project and finite root time window; the view's "
                 "memory, read-byte and wall budgets remain fail-closed"
+            ),
+        ),
+    },
+    "tracer.services.clickhouse.v2.query_builders.observe_runtime": {
+        "RuntimeLatencyQueryBuilderV2.build_runtime_latency_page": filed(
+            PROJECT_SET,
+            why=(
+                "runtime latency replay reads the finite cohort for the authorized "
+                "Observe project selected by the view; bounded cohort and page "
+                "parameters keep the physical-version read fail-closed"
             ),
         ),
     },

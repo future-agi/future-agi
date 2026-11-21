@@ -1,0 +1,36 @@
+{
+  "evidence_class": "synthetic fixture",
+  "pipeline": "synthetic-support-regression",
+  "cases": [
+    {
+      "name": "refund",
+      "request": "My ceramic mug arrived cracked. Please refund this damaged order.",
+      "state": {
+        "age_days": 10,
+        "amount": 25,
+        "disputed": false
+      },
+      "expected_action": "issue_refund"
+    },
+    {
+      "name": "chargeback",
+      "request": "I do not recognize this charge on my card statement. Dispute the charge.",
+      "state": {
+        "age_days": 10,
+        "amount": 25,
+        "disputed": true
+      },
+      "expected_action": "open_chargeback"
+    },
+    {
+      "name": "shipping",
+      "request": "Where is my package? Please track the shipment.",
+      "state": {
+        "age_days": 5,
+        "amount": 25,
+        "disputed": false
+      },
+      "expected_action": "track_shipment"
+    }
+  ]
+}

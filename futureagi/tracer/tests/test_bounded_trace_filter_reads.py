@@ -107,6 +107,27 @@ def _short_time_filter() -> dict[str, Any]:
     return _time_filter(start=END - timedelta(minutes=30), end=END)
 
 
+@pytest.mark.parametrize("seconds", [12, 300, 301])
+def test_runtime_cohort_slice_hints_fit_the_bounded_reader(seconds):
+    width = timedelta(seconds=seconds)
+    filters = [
+        _time_filter(start=END - width, end=END),
+        {
+            "column_id": "skill.trace_cohort",
+            "filter_config": {
+                "col_type": "SKILL",
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "a" * 64,
+            },
+        },
+    ]
+    builder = TraceListQueryBuilderV2(project_id=PROJECT_ID, filters=filters)
+    expected = width if seconds >= 300 else None
+    assert builder.recommended_filter_initial_slice_width() == expected
+    assert builder.recommended_filter_max_slice_width() == expected
+
+
 @pytest.mark.parametrize(
     ("period", "days"),
     [("today", 1), ("7d", 7), ("30d", 30), ("3m", 90), ("6m", 180), ("12m", 365)],
@@ -5062,9 +5083,11 @@ def test_observe_trace_list_uses_v2_builder_when_routing_is_disabled() -> None:
     CLICKHOUSE_V2={"QUERY_TYPES_V2_ONLY": "TRACE_LIST"},
 )
 @pytest.mark.parametrize("row_count", [1, 201])
-def test_trace_list_nonempty_page_enrichments_share_wall_budget(
-    row_count: int,
-) -> None:
+def test_trace_list_nonempty_page_enrichments_share_wall_budget(row_count: int) -> None:
+    _check_page_enrichments(row_count, expect_offer=row_count == 1)
+
+
+def _check_page_enrichments(row_count, *, expect_offer, offer_query=None):
     from tracer.views.trace import (
         TRACE_LIST_CANDIDATE_DEADLINE_MS,
         TRACE_LIST_ENRICHMENT_CHUNK_SIZE,
@@ -5112,7 +5135,19 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
 
         def execute_ch_query(self, query, params, *, timeout_ms, settings):
             self.calls.append((params, timeout_ms, settings))
-            if "content_trace_ids" in params:
+            if "FROM skill_trace_links FINAL" in query:
+                assert params == {
+                    "project_id": PROJECT_ID,
+                    "start_date": END - timedelta(minutes=30),
+                    "end_date": END,
+                }
+                assert "LIMIT 1" in query
+                data = (
+                    offer_query(query, params)
+                    if offer_query
+                    else ([{"1": 1}] if expect_offer else [])
+                )
+            elif "content_trace_ids" in params:
                 data = [
                     {
                         "trace_id": trace_id,
@@ -5169,6 +5204,7 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
                 "page_number": 0,
                 "page_size": row_count,
                 "allow_sampled": True,
+                "include_skill_links": True,
             },
             analytics=analytics,
             org_project_ids=None,
@@ -5182,7 +5218,8 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
     expected_chunks = (
         row_count + TRACE_LIST_ENRICHMENT_CHUNK_SIZE - 1
     ) // TRACE_LIST_ENRICHMENT_CHUNK_SIZE
-    assert payload["metadata"]["query_count"] == 2 * expected_chunks + 2
+    assert payload["metadata"]["query_count"] == 2 * expected_chunks + 3
+    assert payload["metadata"]["skill_links_exist"] is expect_offer
     assert 0 <= payload["metadata"]["query_elapsed_ms"] < 3_000
     assert (
         bounded_read.call_args.kwargs["deadline_ms"] <= TRACE_LIST_CANDIDATE_DEADLINE_MS
@@ -5193,7 +5230,7 @@ def test_trace_list_nonempty_page_enrichments_share_wall_budget(
         == settings.INTERACTIVE_READ_DEFAULT_WALL_MS
     )
     assert TRACE_LIST_ENRICHMENT_MAX_WORKERS == 2
-    assert len(analytics.calls) == 2 * expected_chunks + 1
+    assert len(analytics.calls) == 2 * expected_chunks + 2
     content_chunks = [
         params["content_trace_ids"]
         for params, _timeout_ms, _settings in analytics.calls

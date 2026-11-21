@@ -467,6 +467,65 @@ An assertion that cannot fail is worse than no assertion, because it reads as co
   `status = 'completed'`, so a row that arrived and failed is distinguishable from a row the mirror
   has not delivered yet.
 
+### Skills v1.1 transport fixtures
+
+The managed overlays start `skills-fakes` on container port 8080 and host
+`127.0.0.1:${E2E_SKILLS_FIXTURE_PORT:-28084}`. `lib/skills-fixtures.ts` registers an
+isolated synthetic-credential namespace, declarative OpenAI tool/answer rules and
+recorded synthetic GitHub metadata/ref/archive responses. Unknown credentials,
+unrecorded URLs and ambiguous rules fail closed; the service never proxies live
+GitHub or model providers. Dispose only the namespace your test created. Its
+bounded ledger records request/response hashes and synthetic protocol messages,
+never authorization headers. Do not send private inputs or real provider keys.
+
+Only the E2E settings module reads `E2E_SKILLS_FIXTURES=1`. Its app config wraps the
+transport at the last boundary, preserving the actual scoped connection resolver,
+LiteLLM protocol normalization, reservations, native `tasks_l` workflow, GitHub
+parser, shared rate budgets, rights checks and source/draft CAS. The fake endpoint
+is a fixed internal address, not a configurable production endpoint. The test
+settings' `gpt-4o-mini` entry qualifies this fixture protocol only; it does not add
+a model to the production verified list. API and workers must use the same E2E
+settings. Both overlays use the image's pinned local LiteLLM price map, rather
+than fetching a moving GitHub price catalog. Standalone uses read-only test-overlay mounts; Distributed copies these
+modules into its E2E backend image. Neither changes the normal backend image.
+
+Qualify this seam before writing dependent flows:
+
+```bash
+node --test e2e/scripts/skills-fakes.test.mjs
+PYTHONPATH="$PWD/futureagi" flock /tmp/ctxhub-pytest.lock \
+  futureagi/.venv/bin/python -m pytest e2e/stack/backend/test_skills_transport.py
+E2E_STACK=standalone bin/e2e test harness/skills-v11-transport.spec.ts --workers=1
+```
+
+`e2e/stack/backend/prove_skills_boundary.py` additionally runs in separately built
+normal and E2E backend containers, with networking disabled. Its `production`,
+`overlay-off` and `overlay-on` modes assert module absence/presence, switch
+inertness, unchanged real endpoint selection and preservation of no-retry flags.
+Mount only that probe file read-only, set `PYTHONPATH=/app/backend` and
+`NO_STARTUP_DB_MUTATIONS=true`, and invoke it with the container's Python. A fake
+run is not real-provider verification, GitHub conformance or native-agent evidence.
+The GitHub seam keeps the production **60-second ref/metadata freshness** and
+**3/org, 10/Skills, 50/global REST calls per hour** (including lower deployment
+limits). `SkillsFixtures.advanceGitHubTime(seconds)` advances only that scenario's
+GitHub cache/rate-policy time, by a positive integer up to seven days in total.
+Every operation reads a frozen clock from the owner of its recorded repository.
+Real Redis counters and single-flight leases remain in use, namespaced per scenario;
+no shared cache is cleared and no limit is raised. The clock starts at a fixed hour.
+Advancing 60 seconds expires freshness; advancing 3600 seconds also opens the next
+budget period. The real socket/job deadlines, preview expiry and all other scenarios
+are unaffected. Call the control only after prior work has settled; it is not a
+concurrent clock scheduler. Unknown/disposed fixture policies fail closed.
+
+Changing a recording alone must still return the cached SHA. The transport harness
+checks that behavior at 59 seconds, refusal of the fourth organization REST request
+at 60 seconds, then fresh resolution with the paired ETag after period rollover.
+The update flow advances one period before root continuation and the later update,
+so the continuation cannot pass merely by hitting a fresh ref cache. This models
+a later user check without sleeps, SQL changes or treating `unchanged_commit` as
+proof of replacement. Only the E2E overlay installs the clock/cache adapters; the
+normal image and the disabled overlay retain the original clock and cache policy.
+
 ### Harness self-tests
 
 `harness/` holds the tests of the harness itself — provisioning, the probe, OTLP seeding, and the
@@ -479,7 +538,20 @@ bin/e2e test harness/
 
 Local runs use 3 workers (4 or more concurrent browsers overwhelm the stack's single-Granian-worker
 backend and the SPA never finishes booting); CI uses 2. Also available from `e2e/`: `yarn typecheck`
-and `yarn selftest` (unit tests for the catalog generator).
+and `yarn selftest` (unit tests for the catalog, harness scripts, and round-3 Skills primitives).
+The required CI `yarn catalog:check` step also runs `selftest`, discovering every
+`scripts/**/*.test.mjs` and `harness/skills-r3/**/*.test.mjs` suite except the separate docs gate.
+These are harness regressions, not complete product-journey or native qualification evidence.
+
+Run tests on the assigned temporary cloud VM, not on a shared local host. The documentation suite
+has a separate explicit gate because it requires the independently pinned docs repository:
+
+```bash
+CTXHUB_DOCS_ROOT=/absolute/pinned/docs-checkout yarn selftest:docs
+```
+
+Retain that checkout's commit/tree with the result. Missing docs fail this command; a passing
+`selftest` alone does not establish documentation qualification.
 
 ---
 
@@ -778,3 +850,171 @@ judge model to compose its own JSON — which is why `EVAL-E2E-001` authors its 
 - Frontend test conventions: [`../frontend/TESTING.md`](../frontend/TESTING.md)
 - Architecture spec and decision record:
   [`../../internal-docs/e2e-testing-setup/02-architecture.md`](../../internal-docs/e2e-testing-setup/02-architecture.md)
+
+### Standalone native and managed-model qualifications
+
+Ordinary standalone E2E and F10 use the managed-mock topology. It retains the
+internal executor link required by the existing canary tests; the app has no
+interface on the Skills native network. Native drivers (not F6) require the
+explicit `native` topology and prepared native runtime inputs (including the
+retained-CI fixture); do not treat a managed-mock run as native evidence. On the
+isolated test VM, with `E2E_STACK=standalone` and `DOCKER_CONTEXT=default`:
+
+```sh
+E2E_STANDALONE_NETWORK=managed-mock bin/e2e up
+E2E_STANDALONE_NETWORK=managed-mock bin/e2e test flows/skills/skill-traces.spec.ts -g 'SKILLS-E2E-110'
+E2E_STANDALONE_NETWORK=native bin/e2e up  # only with the complete native fixture set
+```
+
+Run the two topologies sequentially. Neither mode grants native guests an external network.
+
+`stack/native-runtime/ci_dataset.json` is **synthetic test data**, not an export
+from customer CI. It supplies three order inputs (refund, dispute and shipping).
+The retained pipeline checks its expected actions against the separate business
+ledger; Hub's assertions are not generated by that pipeline. The native image
+copies the JSON, and its bytes participate in the measured image identity.
+To regenerate it, from `e2e/stack/native-runtime` run
+`python3 -I generate_ci_dataset.py > ci_dataset.json`.
+
+On a dedicated Linux CI worker with the source-built standalone images, harness
+and Chromium installed, provide the four pairing variables below, then run:
+
+```sh
+e2e/stack/run-skills-native-ci.sh "$PAIR_DIR" "$RUNNER_TEMP/native-venvs"
+```
+
+The script verifies the fixture and packages, builds the guest, boots the native
+stack and runs 021, 022 and 108 with one worker and zero retries. Mock Google uses the
+checkout's backend image tag. In 022 the repaired candidate must also pass the
+retained application's three independent ledger checks. In 108 a real SDK load
+before the job proves ingestion; a second load after both cells finish must be
+visible in ClickHouse before inspecting the bounded job window for native links. It leaves the stack up for diagnostics;
+clean up the isolated worker with `E2E_STACK=standalone E2E_STANDALONE_NETWORK=native bin/e2e down -v`.
+This is synthetic container evidence, not E2B qualification.
+
+### Skills packages in required CI
+
+`skill-packages` resolves branches **independently** in the public `futureagi-sdk`
+and `traceAI` repositories. It takes the first branch that exists, not the first
+one that builds:
+
+| Product event | Branches in priority order |
+| --- | --- |
+| Pull request | PR head name, PR base name, `dev`, `main` |
+| Merge queue | Target branch, `dev`, `main` |
+| Push, dispatch or schedule | Checked-out branch name, `dev`, `main` |
+
+Feature branches pair by **the same name** when it exists in a package repo. An
+unpaired product PR targeting `dev` tests against SDK `dev`, the version that
+ships with it: Skills cases on `dev` require Skills support merged into SDK
+`dev`. For a PR targeting `main`, SDK `main` takes precedence over `dev`.
+A missing branch in one package repo does not change the choice in the other.
+A resolution or build failure fails the producer; it does not try an older SDK
+or skip cases. The dispatch input `sdk-ref` selects a separate live suite and
+does not override the Skills pair.
+
+**What gets built.** CI checks out both resolved full SHAs and gives the SDK
+copies of the OpenAPI and MCP blobs from the tested product commit (including
+PR merge and merge-queue commits). Both SDK layouts use `--backend-commit`
+and `--mcp-tools` to record those inputs:
+
+- **Scoped preview:** `sdkgen/contracts/SOURCE.json` names the non-Skills SDK
+  baseline (`non_skills_sdk_commit` and `non_skills_slice_sha256`). CI supplies
+  that commit via `--skills-baseline-sdk` and requires the SDK's non-Skills
+  baseline check to pass.
+- **Full sync or released checkout:** `SOURCE.json` either lacks both baseline
+  fields (a full commit-pinned sync) or is absent (a release sync, which records
+  `BACKEND_VERSION`). CI runs a full commit-pinned sync without a preview
+  baseline; it does not change the release pin. A `SOURCE.json` with only one of
+  the two baseline fields fails the build.
+
+Both modes regenerate and check the Python and TypeScript clients and reject
+changes outside the generator-owned files. Product CI checks the **shipped
+Skills subset**, as declared in `sdkgen/catalog/operations.yaml`: each SDK
+method must match the backend, including effective parameters and reachable
+models; each shipped MCP tool must match its backend binding, group, access
+and other declared settings (including page-size limits). Missing or changed
+shipped entries fail. Additional backend methods and tools do not: the pair
+receipt lists them under `contract.coverage.skills_operations.not_wrapped`
+(`METHOD /path`) and `contract.coverage.skills_mcp_tools.not_wrapped` (names).
+Full MCP inventory parity is the SDK repository's gate. On a backend release,
+`.github/workflows/sdk-sync.yml` opens the SDK sync PR.
+
+`application-wheels` builds the support application separately; 061 and 063 use
+that artifact and the same verified SDK wheel.
+
+**What to verify.** The schema-2 `pair.json` contains the three full commits in
+`sources` and the two resolved branch names in `branches`. `contract.sync_mode`
+is `full` or `scoped`; `contract.source` records the `SOURCE.json` metadata,
+and `contract.sha256` contains hashes of the three regenerated files
+(`swagger.json`, `mcp-tools.json`, and `SOURCE.json`). `artifacts` records the
+filename and SHA-256 for each of `sdk_python`, `traceai_python`, `sdk_ts`,
+`traceai_ts`, and `semconv_ts`. The producer emits the pair receipt digest and
+SDK wheel digest separately from the artifact. Consumers verify the supplied
+bytes; they never resolve a branch or build a replacement SDK.
+
+On an isolated worker, set `CTXHUB_APP_COMMIT`, `SDK_COMMIT`, `TRACEAI_COMMIT`,
+and `SKILL_TRACE_PAIR_SHA256` from the independent producer outputs. Run
+`e2e/stack/prepare-skill-traces.sh packages <dist>` to stage the archives, or
+`interpreters <dist> <new-dir>` to prepare traced and plain Python installs.
+A checksum computed only from a downloaded package directory cannot authenticate it.
+
+Only the E2E frontend is built with `VITE_SKILL_TRACES=on`. Host cases receive
+`SKILL_TRACES_PYTHON` (SDK with telemetry) and `SKILL_TRACES_NO_OTEL_PYTHON`
+(plain SDK, OpenTelemetry explicitly absent). Inventory and rollout clients use
+`CTXHUB_J5_PYTHON`; `E2E_SKILLS_CAMPAIGNS_ENABLED` is false for inventory and
+true **before boot** on each campaign runner. The J6 application and guest
+consume the same two wheel bytes via `J6_WHEELS`; `J6_APP_PYTHON` points to a
+fresh host install. The venv is never transported to another runner.
+
+F6 runs with `E2E_STACK=standalone E2E_STANDALONE_NETWORK=typescript` for both
+stack boot and Playwright. Prepare with `prepare-skill-traces.sh typescript <dist>`;
+only the client image is built and joined to the app on the internal network.
+No native verification service or callback is configured. Run incompatible
+standalone topologies on different workers or take the first stack down first.
+
+`e2e/scripts/skills-coverage.json` lists the required (cohort, case) pairs for
+each numbered Skills case, the two Observe cases and three named harnesses. `run-skill-cohort.sh <cohort>` uses
+Playwright discovery with the normal quarantine/live policy, checks real JSON
+results for one pass (not a skip, expected failure or retry) and emits only
+the case identities, tested SHA and relevant package digests. The ordinary suite
+selects the complement without requiring a complete Skills inventory. Catalog
+validation runs separately; Skills discovery and pass reconciliation fail if a
+required identity is missing. The required **E2E Tests Pass** aggregate also
+checks job outcomes, downloads the same-run package pair and verifies it against
+the independent receipt digest and all three expected commits before reconciling
+passes against the verified SDK wheel. A skipped or cancelled applicable worker
+cannot pass.
+Private browser output, raw attachments and actor inputs are not uploaded.
+On the host, R7 executes and inspects each client's copied plan with the plain
+interpreter, then verifies the installed lock. Case 021 checks the disabled
+runtime UI on distributed and the enabled UI on native; an attached backend
+with no topology declared is checked against its own targets API.
+
+### Registered Skills journeys on Blacksmith runners
+
+`e2e-ci.yml` calls `skills-e2e-journeys.yml` **in the same Actions run**, after
+both package producers succeed. Each of the seven cases runs on its own
+ephemeral `blacksmith-8vcpu-ubuntu-2404` runner (8 vCPU, 32 GB, 160 GB disk), all
+seven in parallel. On a pull request, only the journeys the change can affect
+run (`journeys` in the `changes` job of `e2e-ci.yml`): a change to shared Skills
+code, the stack or these workflows runs all seven, a journey-only change runs
+that journey, and an unrelated change runs none. Fork PRs run none (no paid runners for untrusted code); the dev push after merge runs all seven. Pushes to dev and main, merge
+groups and nightly runs always run all seven. The runner verifies the pair against the producer digest and
+the exact tested SHA; 063 also verifies the application wheel instead of
+rebuilding it. The aggregate requires a first-attempt receipt for each selected case:
+
+| Case | Stack | Evidence required |
+| --- | --- | --- |
+| SKILLS-E2E-056 | Standalone, campaigns on | Protected CLI refuses without Checkpoint P; no counts or campaign writes |
+| SKILLS-E2E-057, 058, 059 | Standalone, campaigns on, one runner per ID | Native Codex against loopback; cold adoption, recurring rollout and recovery each complete separately. No Checkpoint P or real-GitHub claim |
+| SKILLS-E2E-063 | Standalone | Registered recovery with the same SDK and support-application wheels in an isolated container guest; eight faults, not E2B |
+| J3 driver | Distributed | Provision three v1 parents over v7, one pinned; execute the configured registered driver with the paired SDK. Require exit zero, a completed report bound to its registration and checkout, complete observations and confirmed teardown |
+| J4 driver | Distributed | Both cold and configured registered journeys exit zero with distinct completed reports for their own registrations and running backend image |
+
+How it is kept safe and private:
+
+1. The jobs hold only `contents: read`. There is no cloud identity, SSH key, package credential or personal API key; each case creates its own synthetic actors. Fork PRs never enter the job and cannot satisfy coverage through a skip.
+2. The job log is public, so the worker sends all build, stack and Playwright output to a private file on the runner, which is discarded with it. Only fixed stage names, UTC timestamps, failure locations and the validated result JSON are uploaded as the seven `skills-journey-*` artifacts.
+3. Each result is provenance `environment: blacksmith` with the runner label and this Actions run ID. `skills-coverage.py reconcile --run-id` accepts only this run's results, so an earlier run, another commit or a differently labelled result does not count.
+4. The Blacksmith GitHub app must have access to this repository. Set the required branch/merge-queue check to **E2E Tests Pass**.

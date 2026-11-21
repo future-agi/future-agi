@@ -4,7 +4,10 @@ import { grepInvertPattern } from './lib/quarantine';
 
 export default defineConfig({
   testDir: '.',
+  globalSetup: process.env.SKILLS_CAMPAIGN_PREFLIGHT === '1' ? './stack/check-skills-capabilities.ts' : undefined,
   testMatch: ['flows/**/*.spec.ts', 'harness/**/*.spec.ts'],
+  // Native flows require their separate, fail-closed cloud qualification setup.
+  testIgnore: ['**/*.native.spec.ts'],
   grepInvert: grepInvertPattern(),
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

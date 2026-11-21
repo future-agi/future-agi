@@ -15,8 +15,10 @@ from typing import Any
 
 import yaml
 
+from mcp_server.request_headers import ALLOWED_REQUEST_HEADERS
+
 HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
-SUPPORTED_PARAMETER_LOCATIONS = {"path", "query", "body"}
+SUPPORTED_PARAMETER_LOCATIONS = {"path", "query", "body", "header"}
 PATH_PARAMETER_PATTERN = re.compile(r"{([^}]+)}")
 
 
@@ -255,7 +257,7 @@ def _build_input_schema(
 ) -> tuple[dict[str, Any], dict[str, list[str]]]:
     properties: dict[str, Any] = {}
     required: list[str] = []
-    request_mapping = {"path": [], "query": [], "body": []}
+    request_mapping: dict[str, list[str]] = {"path": [], "query": [], "body": []}
 
     def add_property(name: str, schema: dict[str, Any], is_required: bool) -> None:
         if name in properties:
@@ -273,7 +275,9 @@ def _build_input_schema(
             add_property(
                 name, _parameter_schema(parameter), parameter.get("required", False)
             )
-            request_mapping[location].append(name)
+            if location == "header" and name not in ALLOWED_REQUEST_HEADERS:
+                raise ToolGenerationError(f"Caller header mapping is forbidden: {name}")
+            request_mapping.setdefault(location, []).append(name)
             continue
 
         body_schema = _dereference_root_schema(_parameter_schema(parameter), contract)

@@ -456,6 +456,16 @@
       "pattern": "e2e/lib/harness_environment_seed.py",
       "reason": "Inspected E2E seed: the literal is the SQLite schema file packed into a fixture world archive, never run against a platform database.",
       "sha256": "6d8201f4f4d5f2491eccb27a2802fef6fcf72c9dc61f1e3436f2ff3675749963"
+    },
+    {
+      "pattern": "e2e/fixtures/skills-r3/support-application/src/ctxhub_support/business.py",
+      "reason": "Inspected synthetic E2E support application: a private per-run SQLite business ledger, not product PostgreSQL or ClickHouse schema.",
+      "sha256": "23eb546780624ba65a9e038a047bcd47f6d526332d628d896ec0cdb11e69df5f"
+    },
+    {
+      "pattern": "e2e/fixtures/skills-r3/support-application/src/ctxhub_support/store.py",
+      "reason": "Inspected synthetic E2E support application: a private per-run SQLite thread/receipt store, not product PostgreSQL or ClickHouse schema.",
+      "sha256": "a49bc04c12e9da1b11d72b4d105f2940200a0d482ddd601d9fa630518a2989f8"
     }
   ]
 }
