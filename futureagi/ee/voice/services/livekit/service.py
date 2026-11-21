@@ -1069,7 +1069,9 @@ class LivekitService(VoiceServiceBlueprint):
         else:
             results = [ValueError("No completed egress source") for _ in track_specs]
 
-        for (track_name, destination, _), outcome in zip(track_specs, results):
+        for (track_name, destination, _), outcome in zip(
+            track_specs, results, strict=True
+        ):
             if isinstance(outcome, BaseException) and not isinstance(
                 outcome, Exception
             ):
