@@ -1271,7 +1271,7 @@ if [ "$1" = run ] && [ "${10}" = -ec ]; then
       case "$*" in
         -version) echo "$tool version 7.1.5 Copyright"
           q=$(printf "\047")
-          echo "configuration: --disable-everything --enable-encoder=$q$(echo "$enc" | tr " " ,)$q --enable-decoder=$q$(echo "$dec" | tr " " ,)$q" ;;
+          echo "configuration: --disable-everything --enable-encoder=$q$(echo "$enc" | tr " " ,)$q --enable-decoder=$q$(echo "$dec" | tr " " ,)$q ${EXTRA_CONFIG:-}" ;;
         *-encoders) for id in $enc; do echo " A..... ${id/libaom_av1/libaom-av1}"; done ;;
         *-decoders) for id in $dec; do [ "$id" = "${MISSING_DECODER:-}" ] || echo " V..... ${id/libaom_av1/libaom-av1}"; done ;;
       esac
@@ -1322,6 +1322,18 @@ exit 0
             log = Path(tmp) / "log"
             proc.docker_log = log.read_text(encoding="utf-8") if log.exists() else ""
             return proc
+
+    def test_empty_duplicate_codec_option_is_rejected(self):
+        for option in ("--enable-encoder=", "--enable-decoder="):
+            with self.subTest(option=option):
+                proc = self.run_script(
+                    "futureagi/future-agi:local-slim",
+                    OSS_VARIANT="slim",
+                    EXPECTED_FFMPEG_FLAVOR="minimal",
+                    EXTRA_CONFIG=option,
+                )
+                self.assertEqual(proc.returncode, 1, proc.stdout)
+                self.assertIn("FAIL: Active ffmpeg and ffprobe", proc.stdout)
 
     def test_old_pair_only_satisfies_the_old_build(self):
         image = 'futureagi/future-agi:v1.59.1-slim'

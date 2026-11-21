@@ -168,6 +168,8 @@ check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" 
     case " $options " in *" --disable-everything "*) ;; *) exit 1 ;; esac
     for kind in encoder decoder; do
       case "$kind" in encoder) wanted=$3 ;; decoder) wanted=$4 ;; esac
+      count=$(printf "%s\n" "$options" | tr " " "\n" | grep -c "^--enable-$kind=")
+      test "$count" = 1
       got=$(printf "%s\n" "$options" | tr " " "\n" | sed -n "s/^--enable-$kind=//p")
       # FFmpeg prints comma-list arguments wrapped in literal single quotes.
       # Remove one matched pair as data; never evaluate configuration output.
