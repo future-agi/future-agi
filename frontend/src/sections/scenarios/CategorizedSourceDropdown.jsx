@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import {
   Box,
+  Button,
   Divider,
   InputAdornment,
   List,
@@ -21,11 +22,14 @@ import {
   useTheme,
 } from "@mui/material";
 import { Controller } from "react-hook-form";
+import { useNavigate } from "react-router-dom";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
+import EmptyState from "src/components/empty-state";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
+import { paths } from "src/routes/paths";
 import { AGENT_TYPES } from "../agents/constants";
 import { SourceType, getIconForAgentDefinitions } from "./common";
 
@@ -74,6 +78,7 @@ const CategorizedSourceDropdownInner = React.forwardRef(
       disabled,
       onScrollEnd,
       isFetchingNextPage,
+      isLoading = false,
       size = "small",
       fullWidth,
       sx,
@@ -81,6 +86,7 @@ const CategorizedSourceDropdownInner = React.forwardRef(
     _ref,
   ) => {
     const theme = useTheme();
+    const navigate = useNavigate();
     const [openDropdown, setOpenDropdown] = useState(false);
     const [searchedValue, setSearchedValue] = useState("");
     const [selectedCategory, setSelectedCategory] = useState("all");
@@ -155,6 +161,13 @@ const CategorizedSourceDropdownInner = React.forwardRef(
       [onChange, onClose],
     );
 
+    const handleCreateAgentDefinition = useCallback(() => {
+      onClose();
+      navigate(
+        `${paths.dashboard.simulate.agentDefinition}/create-new-agent-definition`,
+      );
+    }, [navigate, onClose]);
+
     const selectedOption = useMemo(
       () => options?.find((opt) => opt.value === value),
       [options, value],
@@ -194,6 +207,10 @@ const CategorizedSourceDropdownInner = React.forwardRef(
 
       return filtered;
     }, [options, selectedCategory, searchedValue]);
+
+    // Nothing to choose from at all, as opposed to a search or category
+    // filter matching nothing.
+    const hasNoSources = !isLoading && options.length === 0;
 
     const startAdornmentIcon =
       selectedOption && !openDropdown ? getOptionIcon(selectedOption) : null;
@@ -482,15 +499,33 @@ const CategorizedSourceDropdownInner = React.forwardRef(
                       </MenuItem>
                     );
                   })}
-                  {filteredOptions.length === 0 && (
-                    <MenuItem disabled>
-                      <Typography typography="s1" color="text.disabled">
-                        No results found
-                      </Typography>
-                    </MenuItem>
-                  )}
+                  {filteredOptions.length === 0 &&
+                    options.length > 0 &&
+                    !isLoading && (
+                      <MenuItem disabled>
+                        <Typography typography="s1" color="text.disabled">
+                          No results found
+                        </Typography>
+                      </MenuItem>
+                    )}
                 </MenuList>
-                {isFetchingNextPage && (
+                {hasNoSources && (
+                  <EmptyState
+                    title="No agent definitions or prompts yet"
+                    description="Create an agent definition to use as the source for this scenario."
+                    action={
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={handleCreateAgentDefinition}
+                      >
+                        Create agent definition
+                      </Button>
+                    }
+                    sx={{ pt: 2, pb: 2 }}
+                  />
+                )}
+                {(isFetchingNextPage || isLoading) && (
                   <Box sx={{ px: 1 }}>
                     <Skeleton variant="text" height={34} />
                     <Skeleton variant="text" height={34} />
@@ -520,6 +555,7 @@ CategorizedSourceDropdownInner.propTypes = {
   disabled: PropTypes.bool,
   onScrollEnd: PropTypes.func,
   isFetchingNextPage: PropTypes.bool,
+  isLoading: PropTypes.bool,
   size: PropTypes.string,
   fullWidth: PropTypes.bool,
   sx: PropTypes.object,
@@ -583,6 +619,7 @@ CategorizedSourceDropdown.propTypes = {
   ),
   onScrollEnd: PropTypes.func,
   isFetchingNextPage: PropTypes.bool,
+  isLoading: PropTypes.bool,
   label: PropTypes.string,
   placeholder: PropTypes.string,
   required: PropTypes.bool,
