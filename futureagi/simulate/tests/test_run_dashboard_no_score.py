@@ -32,31 +32,15 @@ def test_execution(organization, workspace, scenario):
     )
 
 
-class _Counts:
-    """The grouped-count chain `_breakdown` reads from a queryset, over fixed rows."""
-
-    def __init__(self, counts: dict[str, int]):
-        self.rows = [
-            {"dashboard_goal": label, "count": count} for label, count in counts.items()
-        ]
-
-    def order_by(self, *fields):
-        return self
-
-    def values(self, *fields):
-        return self
-
-    def annotate(self, **expressions):
-        return self
-
-    def __iter__(self):
-        return iter(sorted(self.rows, key=lambda row: -row["count"]))
+def _counts(counts: dict[str, int]) -> list[dict[str, object]]:
+    """The ``{"value", "count"}`` rows `_breakdown` reads, most frequent first."""
+    rows = [{"value": label, "count": count} for label, count in counts.items()]
+    return sorted(rows, key=lambda row: -row["count"])
 
 
 def _headline(counts: dict[str, int]) -> str:
     chart = _breakdown(
-        _Counts(counts),
-        "dashboard_goal",
+        _counts(counts),
         "goal_outcome",
         "Goal outcome breakdown",
         sum(counts.values()),
@@ -86,8 +70,7 @@ def test_the_goal_headline(counts, headline):
 
 def test_another_breakdown_keeps_its_first_segment():
     chart = _breakdown(
-        _Counts({"no_score": 3}),
-        "dashboard_goal",
+        _counts({"no_score": 3}),
         "disconnection",
         "How calls ended",
         3,

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import heapq
 import json
 from collections import defaultdict
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
+from typing import Any, Literal, TypedDict, cast
+from uuid import UUID
 
 from django.db.models import (
+    Aggregate,
     Avg,
     Case,
     Count,
@@ -35,9 +39,16 @@ from simulate.services.run_results_v3_expressions import (
     _json_text,
     _safe_json_float,
 )
+from simulate.services.run_results_v3_queries import FacetCount, _value_facets
 
 CHART_BUCKETS = 100
 NOT_REPORTED = "Not reported"
+BREAKDOWN_FIELDS = (
+    "dashboard_goal",
+    "dashboard_disconnection",
+    "dashboard_provider_success",
+    "dashboard_sentiment",
+)
 GOAL_OUTCOMES = (
     "queued",
     "in_progress",
@@ -117,38 +128,38 @@ def annotate_goal_outcome(queryset: QuerySet) -> QuerySet:
     )
 
 
-def _stats(queryset: QuerySet, fields: dict[str, str]) -> dict[str, dict[str, Any]]:
-    expressions = {}
+STAT_KEYS = ("measured", "average", "max", "p50", "p90", "p99")
+
+
+def _stats_expressions(
+    fields: dict[str, str], prefix: str, scope: Q | None = None
+) -> dict[str, Aggregate]:
+    expressions: dict[str, Aggregate] = {}
     for name, field in fields.items():
-        expressions[f"{name}_measured"] = Count(field)
-        expressions[f"{name}_average"] = Avg(field)
-        expressions[f"{name}_max"] = Max(field)
+        expressions[f"{prefix}{name}_measured"] = Count(field, filter=scope)
+        expressions[f"{prefix}{name}_average"] = Avg(field, filter=scope)
+        expressions[f"{prefix}{name}_max"] = Max(field, filter=scope)
         for percentile in (50, 90, 99):
-            expressions[f"{name}_p{percentile}"] = PercentileCont(
-                field, percentile / 100
+            expressions[f"{prefix}{name}_p{percentile}"] = PercentileCont(
+                field, percentile / 100, filter=scope
             )
-    values = queryset.aggregate(**expressions)
+    return expressions
+
+
+def _stats(
+    values: dict[str, Any], fields: dict[str, str], prefix: str
+) -> dict[str, dict[str, Any]]:
     return {
-        name: {
-            key: values[f"{name}_{key}"]
-            for key in ("measured", "average", "max", "p50", "p90", "p99")
-        }
+        name: {key: values[f"{prefix}{name}_{key}"] for key in STAT_KEYS}
         for name in fields
     }
 
 
-def _breakdown(
-    queryset: QuerySet, field: str, key: str, label: str, total: int
-) -> dict:
-    counts = list(
-        queryset.order_by()
-        .values(field)
-        .annotate(count=Count("id"))
-        .order_by("-count", field)
-    )
-    segments = [
+def _breakdown(counts: Sequence[FacetCount], key: str, label: str, total: int) -> dict:
+    """``counts`` are ``{"value", "count"}`` rows in ``ORDER BY -count, value``."""
+    segments: list[dict[str, Any]] = [
         {
-            "label": str(row[field] or NOT_REPORTED),
+            "label": str(row["value"] or NOT_REPORTED),
             "count": row["count"],
             "share": round(row["count"] * 100 / total, 2) if total else 0,
         }
@@ -242,35 +253,27 @@ def _tool_verdict(tool: dict) -> bool | None:
     return None
 
 
-def _tool_stats(queryset: QuerySet) -> dict:
-    # Project only tool evidence, never full transcripts/provider payloads.
-    arrays = (
-        queryset.order_by()
-        .annotate(
-            recorded_tools=Func(
-                F("provider_call_data"),
-                Value("$.*.tool_calls[*]"),
-                function="jsonb_path_query_array",
-                output_field=JSONField(),
-            )
+def _tool_verdicts(tools: Any) -> list[tuple[str, bool | None]]:
+    """Each named tool call's name and verdict, so its payload can be dropped."""
+    verdicts = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        name = tool.get("name") or (
+            function.get("name") if isinstance(function, dict) else None
         )
-        .values_list("recorded_tools", flat=True)
-        .iterator(chunk_size=2000)
-    )
+        if name:
+            verdicts.append((str(name), _tool_verdict(tool)))
+    return verdicts
+
+
+def _tool_stats(calls: Iterable[list[tuple[str, bool | None]]]) -> dict:
     counts = defaultdict(lambda: {"invocations": 0, "measured": 0, "failures": 0})
-    for tools in arrays:
-        for tool in tools or []:
-            if not isinstance(tool, dict):
-                continue
-            function = tool.get("function")
-            name = tool.get("name") or (
-                function.get("name") if isinstance(function, dict) else None
-            )
-            if not name:
-                continue
-            count = counts[str(name)]
+    for verdicts in calls:
+        for name, verdict in verdicts:
+            count = counts[name]
             count["invocations"] += 1
-            verdict = _tool_verdict(tool)
             if verdict is not None:
                 count["measured"] += 1
                 count["failures"] += int(verdict)
@@ -306,40 +309,57 @@ def _tool_stats(queryset: QuerySet) -> dict:
     }
 
 
-def _series(queryset: QuerySet, total: int) -> list[dict]:
+class SeriesBounds(TypedDict):
+    """The run's earliest and latest call start."""
+
+    first: datetime | None
+    last: datetime | None
+
+
+def _series(
+    queryset: QuerySet,
+    call_rows: Sequence[DashboardCallRow],
+    total: int,
+    bounds: SeriesBounds,
+) -> list[dict]:
     if total <= CHART_BUCKETS:
-        rows = (
-            queryset.order_by(F("started_at").asc(nulls_last=True), "id")
-            .annotate(
-                latency_ms=Case(
-                    When(result_latency_ms__gte=0, then=F("result_latency_ms")),
-                    output_field=FloatField(),
-                ),
-                duration_ms=F("duration_seconds") * 1000.0,
-                llm_cents=F("llm_cost_cents"),
-                tts_cents=F("tts_cost_cents"),
-                stt_cents=F("stt_cost_cents"),
-                storage_cents=F("storage_cost_cents"),
-            )
-            .values(
-                "started_at",
-                "latency_ms",
-                "duration_ms",
-                "llm_cents",
-                "tts_cents",
-                "stt_cents",
-                "storage_cents",
-            )
+        # ORDER BY started_at NULLS LAST, id; uuids compare bytewise, as UUID does.
+        rows = sorted(
+            call_rows,
+            key=lambda row: (
+                row["started_at"] is None,
+                row["started_at"] or datetime.min,
+                row["id"],
+            ),
         )
         return [
-            {"label": str(index + 1), "calls": 1, **row}
+            {
+                "label": str(index + 1),
+                "calls": 1,
+                "started_at": row["started_at"],
+                "latency_ms": (
+                    row["result_latency_ms"]
+                    if row["result_latency_ms"] is not None
+                    and row["result_latency_ms"] >= 0
+                    else None
+                ),
+                "duration_ms": (
+                    row["duration_seconds"] * 1000.0
+                    if row["duration_seconds"] is not None
+                    else None
+                ),
+                "llm_cents": row["llm_cost_cents"],
+                "tts_cents": row["tts_cost_cents"],
+                "stt_cents": row["stt_cost_cents"],
+                "storage_cents": row["storage_cost_cents"],
+            }
             for index, row in enumerate(rows)
         ]
-    bounds = queryset.aggregate(first=Min("started_at"), last=Max("started_at"))
-    if not bounds["first"]:
+    first, last = bounds["first"], bounds["last"]
+    if not first or not last:
         return []
-    start = bounds["first"].timestamp()
-    width = max((bounds["last"].timestamp() - start) / (CHART_BUCKETS - 1), 1)
+    start = first.timestamp()
+    width = max((last.timestamp() - start) / (CHART_BUCKETS - 1), 1)
     rows = (
         queryset.filter(started_at__isnull=False)
         .order_by()
@@ -374,13 +394,15 @@ def _series(queryset: QuerySet, total: int) -> list[dict]:
     ]
 
 
-def _tails(queryset: QuerySet, field: str) -> list[dict]:
-    rows = (
-        queryset.filter(**{f"{field}__isnull": False})
-        .order_by(f"-{field}", "id")
-        .values(
-            "id", "result_scenario", "simulation_call_type", "result_provider", field
-        )[:8]
+def _tails(
+    call_rows: Sequence[DashboardCallRow],
+    field: Literal["duration_seconds", "result_cost_cents"],
+) -> list[dict]:
+    # ORDER BY field DESC, id: PostgreSQL orders uuids bytewise, as UUID.int does.
+    rows = heapq.nsmallest(
+        8,
+        (row for row in call_rows if row[field] is not None),
+        key=lambda row: (-cast(float, row[field]), row["id"]),
     )
     return [
         {
@@ -396,16 +418,8 @@ def _tails(queryset: QuerySet, field: str) -> list[dict]:
     ]
 
 
-def build_run_dashboard(
-    queryset: QuerySet,
-    summary: dict,
-    evaluations: list,
-    risk: list,
-    comparison: dict | None = None,
-    trials: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    total = summary["total"]
-    queryset = (
+def annotate_dashboard(queryset: QuerySet) -> QuerySet:
+    annotated: QuerySet = (
         annotate_goal_outcome(queryset)
         .annotate(
             # Provider-reported only: the platform does not compute sentiment (v1 D1).
@@ -445,17 +459,131 @@ def build_run_dashboard(
             dashboard_csat=F("result_csat"),
         )
     )
-    voice = queryset.filter(simulation_call_type="voice")
-    # A run is one modality in practice; a mixed run counts as voice.
-    noun = "chat" if total and not voice.exists() else "call"
+    return annotated
+
+
+class DashboardCallRow(TypedDict):
+    """One call as the dashboard reads it; ``None`` where the call has no value."""
+
+    id: UUID
+    started_at: datetime | None
+    result_turn_count: float | None
+    result_outcome: str
+    result_eval_outcome: str
+    dashboard_goal: str | None
+    dashboard_disconnection: str
+    dashboard_provider_success: str | None
+    dashboard_sentiment: str | None
+    dashboard_csat: float | None
+    result_latency_ms: float | None
+    duration_seconds: int | None
+    result_cost_cents: float | None
+    llm_cost_cents: int | None
+    tts_cost_cents: int | None
+    stt_cost_cents: int | None
+    storage_cost_cents: float | None
+    result_scenario: str | None
+    simulation_call_type: str | None
+    result_provider: str
+    # (name, verdict) per named tool call; the call payloads are not kept.
+    tool_calls: list[tuple[str, bool | None]]
+
+
+def dashboard_call_rows(*, queryset: QuerySet) -> list[DashboardCallRow]:
+    """Read each call once: its outcome, breakdown and series scalars, and
+    the name and verdict of each recorded tool call."""
+    rows = (
+        annotate_dashboard(queryset)
+        .order_by()
+        .annotate(
+            # Project only tool evidence, never full transcripts/provider payloads.
+            recorded_tools=Func(
+                F("provider_call_data"),
+                Value("$.*.tool_calls[*]"),
+                function="jsonb_path_query_array",
+                output_field=JSONField(),
+            )
+        )
+        .values(
+            "id",
+            "started_at",
+            "result_turn_count",
+            "result_outcome",
+            "result_eval_outcome",
+            *BREAKDOWN_FIELDS,
+            "dashboard_csat",
+            "result_latency_ms",
+            "duration_seconds",
+            "result_cost_cents",
+            "llm_cost_cents",
+            "tts_cost_cents",
+            "stt_cost_cents",
+            "storage_cost_cents",
+            "result_scenario",
+            "simulation_call_type",
+            "result_provider",
+            "recorded_tools",
+        )
+        .iterator(chunk_size=2000)
+    )
+    call_rows = []
+    for row in rows:
+        row["tool_calls"] = _tool_verdicts(row.pop("recorded_tools"))
+        call_rows.append(cast(DashboardCallRow, row))
+    return call_rows
+
+
+def build_run_dashboard(
+    queryset: QuerySet,
+    summary: dict,
+    evaluations: list,
+    risk: list,
+    comparison: dict | None = None,
+    trials: Mapping[str, Any] | None = None,
+    *,
+    call_rows: Sequence[DashboardCallRow],
+) -> dict[str, Any]:
+    total = summary["total"]
+    # Charts built from the rows take their totals from the same rows.
+    row_total = len(call_rows)
+    queryset = annotate_dashboard(queryset)
+    voice_scope = Q(simulation_call_type="voice")
+    latency_scope = Q(result_latency_ms__gte=0)
     script_completed = Q(
         call_metadata__hosted_harness_receipt__call__script_completed=True
     ) | Q(call_metadata__hosted_harness_receipt__call__script_completed=False)
-    values = queryset.aggregate(
+    duration_fields = {
+        "duration_seconds": "duration_seconds",
+        "tokens": "result_tokens",
+        "cost_cents": "result_cost_cents",
+        "turns": "result_turn_count",
+    }
+    # Time to first word is not emitted by any runner today, so it is listed as
+    # unavailable instead of shown as an always-empty row.
+    slos = {
+        "model": "LLM response",
+        "voice": "Text-to-speech",
+        "transcriber": "Speech recognition",
+    }
+    cost_fields = {
+        "llm": "llm_cost_cents",
+        "tts": "tts_cost_cents",
+        "stt": "stt_cost_cents",
+        "storage": "storage_cost_cents",
+    }
+    # Every scalar the dashboard reads, in one scan; scopes are FILTER clauses.
+    values = queryset.annotate(
+        **{
+            f"slo_{key}": Coalesce(
+                _safe_json_float("customer_latency_metrics", "systemMetrics", key),
+                _safe_json_float("customer_latency_metrics", key),
+            )
+            for key in slos
+        }
+    ).aggregate(
+        voice_calls=Count("id", filter=voice_scope),
         csat=Avg("dashboard_csat"),
-        csat_measured=Count("dashboard_csat"),
         turns=Avg("result_turn_count"),
-        turns_measured=Count("result_turn_count"),
         cost_passed=Count(
             "id", filter=Q(result_cost_cents__isnull=False, result_outcome="passed")
         ),
@@ -473,12 +601,10 @@ def build_run_dashboard(
                 result_outcome="failed",
             ),
         ),
-    )
-    voice_values = voice.aggregate(
-        wpm=Avg("bot_wpm"),
-        wpm_measured=Count("bot_wpm"),
-        stop=Avg("avg_stop_time_after_interruption_ms"),
-        stop_measured=Count("avg_stop_time_after_interruption_ms"),
+        wpm=Avg("bot_wpm", filter=voice_scope),
+        wpm_measured=Count("bot_wpm", filter=voice_scope),
+        stop=Avg("avg_stop_time_after_interruption_ms", filter=voice_scope),
+        stop_measured=Count("avg_stop_time_after_interruption_ms", filter=voice_scope),
         talk=Avg(
             Case(
                 When(
@@ -486,12 +612,33 @@ def build_run_dashboard(
                     then=100.0 * F("talk_ratio") / (1.0 + F("talk_ratio")),
                 ),
                 output_field=FloatField(),
-            )
+            ),
+            filter=voice_scope,
         ),
-        talk_measured=Count("talk_ratio", filter=Q(talk_ratio__gte=0)),
-        interruptions=Sum("user_interruption_count"),
-        interruptions_measured=Count("user_interruption_count"),
+        talk_measured=Count("talk_ratio", filter=voice_scope & Q(talk_ratio__gte=0)),
+        interruptions=Sum("user_interruption_count", filter=voice_scope),
+        interruptions_measured=Count("user_interruption_count", filter=voice_scope),
+        **_stats_expressions(duration_fields, "stats_"),
+        **_stats_expressions({key: f"slo_{key}" for key in slos}, "slo_", voice_scope),
+        latency_measured=Count("id", filter=latency_scope),
+        latency_average=Avg("result_latency_ms", filter=latency_scope),
+        latency_max=Max("result_latency_ms", filter=latency_scope),
+        **{
+            f"latency_p{p}": PercentileCont(
+                "result_latency_ms", p / 100, filter=latency_scope
+            )
+            for p in range(101)
+        },
+        **{
+            f"duration_curve_p{p}": PercentileCont("duration_seconds", p / 100)
+            for p in range(101)
+        },
+        **{f"cost_{key}": Sum(field) for key, field in cost_fields.items()},
+        series_first=Min("started_at"),
+        series_last=Max("started_at"),
     )
+    # A run is one modality in practice; a mixed run counts as voice.
+    noun = "chat" if total and not values["voice_calls"] else "call"
     metrics = []
 
     def metric(
@@ -583,7 +730,7 @@ def build_run_dashboard(
         "csat",
         "Avg CSAT (0–10)",
         values["csat"],
-        measured=values["csat_measured"],
+        measured=sum(row["dashboard_csat"] is not None for row in call_rows),
         note="Scorer CSAT on a 0–10 scale; a provider success flag is never counted",
     )
     metric(
@@ -597,22 +744,22 @@ def build_run_dashboard(
         metric(
             "wpm",
             "Agent WPM",
-            voice_values["wpm"],
-            measured=voice_values["wpm_measured"],
+            values["wpm"],
+            measured=values["wpm_measured"],
         )
         metric(
             "stop",
             "Agent stop latency",
-            voice_values["stop"],
+            values["stop"],
             "ms",
-            voice_values["stop_measured"],
+            values["stop_measured"],
         )
         metric(
             "talk",
             "Agent share of talk time",
-            voice_values["talk"],
+            values["talk"],
             "percent",
-            voice_values["talk_measured"],
+            values["talk_measured"],
             "Agent speaking time ÷ (agent + caller) speaking time, averaged over calls",
         )
     metric(
@@ -626,17 +773,9 @@ def build_run_dashboard(
         "turns",
         f"Avg turns/{noun}",
         values["turns"],
-        measured=values["turns_measured"],
+        measured=sum(row["result_turn_count"] is not None for row in call_rows),
     )
-    duration_stats = _stats(
-        queryset,
-        {
-            "duration_seconds": "duration_seconds",
-            "tokens": "result_tokens",
-            "cost_cents": "result_cost_cents",
-            "turns": "result_turn_count",
-        },
-    )
+    duration_stats = _stats(values, duration_fields, "stats_")
     metric(
         "duration_p90",
         f"{noun.capitalize()} duration p90",
@@ -667,44 +806,14 @@ def build_run_dashboard(
     )
     metric("total_cost", "Total cost", cost["total_value"], "cents", cost["measured"])
 
-    # Time to first word is not emitted by any runner today, so it is listed as
-    # unavailable instead of shown as an always-empty row.
-    slos = {
-        "model": "LLM response",
-        "voice": "Text-to-speech",
-        "transcriber": "Speech recognition",
+    slo_stats = _stats(values, slos, "slo_")
+    latency = {
+        key: values[f"latency_{key}"]
+        for key in ("measured", "average", "max", *(f"p{p}" for p in range(101)))
     }
-    voice = voice.annotate(
-        **{
-            f"slo_{key}": Coalesce(
-                _safe_json_float("customer_latency_metrics", "systemMetrics", key),
-                _safe_json_float("customer_latency_metrics", key),
-            )
-            for key in slos
-        }
-    )
-    slo_stats = _stats(voice, {key: f"slo_{key}" for key in slos})
-    latency = queryset.filter(result_latency_ms__gte=0).aggregate(
-        measured=Count("id"),
-        average=Avg("result_latency_ms"),
-        max=Max("result_latency_ms"),
-        **{f"p{p}": PercentileCont("result_latency_ms", p / 100) for p in range(101)},
-    )
     # Call length under the earlier keys, for frontend builds that still read them.
-    duration_curve = queryset.aggregate(
-        **{f"p{p}": PercentileCont("duration_seconds", p / 100) for p in range(101)}
-    )
-    costs = queryset.aggregate(
-        **{
-            key: Sum(field)
-            for key, field in {
-                "llm": "llm_cost_cents",
-                "tts": "tts_cost_cents",
-                "stt": "stt_cost_cents",
-                "storage": "storage_cost_cents",
-            }.items()
-        }
-    )
+    duration_curve = {f"p{p}": values[f"duration_curve_p{p}"] for p in range(101)}
+    costs = {key: values[f"cost_{key}"] for key in cost_fields}
     component_total = sum(value or 0 for value in costs.values())
     eval_errored = sum(row["errored"] for row in evaluations)
     ran_cleanly = total - outcomes["error"]
@@ -725,6 +834,14 @@ def build_run_dashboard(
         "not_evaluated": outcomes["inconclusive"],
         "eval_errors": eval_errored,
     }
+    breakdown_counts = _value_facets(
+        call_rows, {field: field for field in BREAKDOWN_FIELDS}
+    )
+    reported = {
+        field
+        for field in ("dashboard_provider_success", "dashboard_sentiment")
+        if any(item["value"] is not None for item in breakdown_counts[field])
+    }
     return {
         "run_health": run_health,
         "comparison": comparison
@@ -735,9 +852,9 @@ def build_run_dashboard(
             "newly_passing": [],
             "newly_failing": [],
         },
-        "csat": csat_distribution(queryset, total),
+        "csat": csat_distribution(call_rows, row_total),
         "agent_response_time": response_time_distribution(
-            queryset, total, voice=is_voice
+            call_rows, row_total, voice=is_voice
         ),
         "pipeline_cost": [
             {
@@ -782,22 +899,20 @@ def build_run_dashboard(
         "metrics": metrics,
         "breakdowns": [
             _breakdown(
-                queryset,
-                "dashboard_goal",
+                breakdown_counts["dashboard_goal"],
                 "goal_outcome",
                 "Goal outcome breakdown",
-                total,
+                row_total,
             ),
             _breakdown(
-                queryset,
-                "dashboard_disconnection",
+                breakdown_counts["dashboard_disconnection"],
                 "disconnection",
                 "How calls ended" if is_voice else "How chats ended",
-                total,
+                row_total,
             ),
             # Provider-only verdicts appear only when some call reports them.
             *[
-                _breakdown(queryset, field, key, label, total)
+                _breakdown(breakdown_counts[field], key, label, row_total)
                 for field, key, label in [
                     (
                         "dashboard_provider_success",
@@ -806,7 +921,7 @@ def build_run_dashboard(
                     ),
                     ("dashboard_sentiment", "sentiment", "Provider sentiment"),
                 ]
-                if queryset.filter(**{f"{field}__isnull": False}).exists()
+                if field in reported
             ],
         ],
         "voice_slos": [
@@ -814,16 +929,21 @@ def build_run_dashboard(
             for key, label in slos.items()
         ],
         "interruptions": {
-            "total": voice_values["interruptions"],
-            "measured": voice_values["interruptions_measured"],
+            "total": values["interruptions"],
+            "measured": values["interruptions_measured"],
             "average": (
-                voice_values["interruptions"] / voice_values["interruptions_measured"]
-                if voice_values["interruptions_measured"]
+                values["interruptions"] / values["interruptions_measured"]
+                if values["interruptions_measured"]
                 else None
             ),
         },
-        "series": _series(queryset, total),
-        "series_mode": "calls" if total <= CHART_BUCKETS else "time_buckets",
+        "series": _series(
+            queryset,
+            call_rows,
+            row_total,
+            SeriesBounds(first=values["series_first"], last=values["series_last"]),
+        ),
+        "series_mode": "calls" if row_total <= CHART_BUCKETS else "time_buckets",
         "series_limit": CHART_BUCKETS,
         "agent_latency_percentiles": [
             {"percentile": p, "value": latency[f"p{p}"]} for p in range(101)
@@ -856,9 +976,9 @@ def build_run_dashboard(
                 },
             },
         ],
-        "tools": _tool_stats(queryset),
-        "slowest_tasks": _tails(queryset, "duration_seconds"),
-        "most_expensive_tasks": _tails(queryset, "result_cost_cents"),
+        "tools": _tool_stats(row["tool_calls"] for row in call_rows),
+        "slowest_tasks": _tails(call_rows, "duration_seconds"),
+        "most_expensive_tasks": _tails(call_rows, "result_cost_cents"),
         "unavailable_features": [
             {
                 "key": "failure_attribution",

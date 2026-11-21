@@ -541,15 +541,25 @@ def _harness_columns(execution: TestExecution) -> list[dict[str, str]]:
 
 
 def build_evaluation_catalog(
-    execution: TestExecution,
+    execution: TestExecution, *, live_evals: LiveEvals | None = None
 ) -> tuple[list[dict[str, str]], set[str]]:
-    """Return stable configured and harness-native columns for an execution."""
+    """Return stable configured and harness-native columns for an execution.
+
+    ``live_evals``, when given, supplies the configured columns, so they match
+    the configs the caller scores with."""
     # Configs can change after a run completes, so they must always be read
     # fresh; only the harness-native scan below is safe to cache.
-    configs = list(
-        SimulateEvalConfig.objects.filter(
-            run_test=execution.run_test, deleted=False
-        ).values("id", "name")
+    configs: list[Mapping[str, Any]] = (
+        [
+            {"id": live.config.id, "name": live.config.name}
+            for live in live_evals.values()
+        ]
+        if live_evals is not None
+        else list(
+            SimulateEvalConfig.objects.filter(
+                run_test=execution.run_test, deleted=False
+            ).values("id", "name")
+        )
     )
     configured_columns = [
         {"id": str(config["id"]), "name": str(config["name"]), "kind": "evaluation"}
