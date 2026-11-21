@@ -43,6 +43,7 @@ from simulate.selectors.agent_fix import (
     scenario_results,
     source_run_usage,
     variations_blocker,
+    was_the_retry,
     written_variations,
 )
 from simulate.selectors.evidence_import import evidence_origins
@@ -261,12 +262,18 @@ def _require_variation_room(source_run: HostedHarnessJob, failing_cases: int) ->
         raise HostedHarnessError(
             "fix_source_not_a_run", "Epoch starts from a run", status_code=422
         )
-    added = VARIATIONS_PER_CASE * failing_cases
     suites = (source_run.suite_version_id, environment.suite_version_id)
     largest = max(
         HarnessSuiteMember.no_workspace_objects.filter(suite_version_id=one).count()
         for one in suites
     )
+    require_variation_room(largest, failing_cases)
+
+
+def require_variation_room(largest: int, failing_cases: int) -> None:
+    """Refuse variations of ``failing_cases`` that would not fit a suite of ``largest``
+    scenarios, or one run of the cases and their variations."""
+    added = VARIATIONS_PER_CASE * failing_cases
     if largest + added > CHAT_CHECKPOINT_MAX_SCENARIOS:
         raise HostedHarnessError(
             "scenario_limit_exceeded",
@@ -286,18 +293,13 @@ def _require_variation_room(source_run: HostedHarnessJob, failing_cases: int) ->
 
 def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
     """Start a failed fix again: a new fix with its request, linked to it, so the check runs
-    it finished are reused instead of paid for twice. A fix that wrote variations keeps
-    them, on the same suite version."""
+    it finished are reused instead of paid for twice. Retry on a retry that never started
+    starts the fix it retried. A fix that wrote variations keeps them, on the same suite
+    version."""
     if not is_retryable(failed):
-        raise HostedHarnessError(
-            "fix_not_retryable",
-            "Only a failed epoch can be retried."
-            if failed.state != AgentFixRun.State.FAILED
-            else "This epoch was retried once already."
-            " Run a new epoch from the run's Debug failures.",
-            status_code=409,
-        )
-    source_run = failed.source_run
+        raise _retry_refused(failed)
+    original = failed.retried_from or failed
+    source_run = original.source_run
     if source_run is None:
         raise HostedHarnessError(
             "fix_source_deleted",
@@ -306,10 +308,10 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
         )
     if blocked := launch_blocker(source_run, usage=False):
         raise blocked
-    require_agent_fix_usage(str(failed.organization_id))
+    require_agent_fix_usage(str(original.organization_id))
     if (
-        FixRequest.model_validate(failed.request).variations_pending
-        and failed.suite_version_id is None
+        FixRequest.model_validate(original.request).variations_pending
+        and original.suite_version_id is None
     ):
         # Imported here: the variations step imports this module.
         from simulate.services.agent_fix_variations import failing_targets
@@ -317,22 +319,43 @@ def retry_fix_run(failed: AgentFixRun, *, user: Any) -> AgentFixRun:
         # The retry asks the builder again, so the launch's checks for that hold again.
         if blocked := variations_blocker(source_run):
             raise blocked
-        _require_variation_room(source_run, len(failing_targets(failed)))
-        require_harness_authoring(str(failed.organization_id))
+        _require_variation_room(source_run, len(failing_targets(original)))
+        require_harness_authoring(str(original.organization_id))
     # The models the failed fix lost recently, with when: the retry's first launch starts
     # without them. Its last error stays with it.
-    lost_models = recent_lost_models(failed.engine_notes)
-    return _create_fix_run(
-        source_run,
-        base_version_id=failed.base_agent_version_id,
-        request=failed.request,
-        user=user,
-        suite_version_id=failed.suite_version_id,
-        retried_from=failed,
-        engine_notes={"lost_models": lost_models, "last_error": None}
-        if lost_models
-        else None,
-    )
+    lost_models = recent_lost_models(original.engine_notes)
+    with transaction.atomic():
+        # Another Retry may have made its retry since this one read the fix. Both lock the
+        # original, from either page, so they go one at a time, and only while the retry
+        # is free.
+        locked = AgentFixRun.no_workspace_objects.select_for_update().get(
+            id=original.id
+        )
+        if not is_retryable(locked):
+            raise _retry_refused(locked)
+        return _create_fix_run(
+            source_run,
+            base_version_id=original.base_agent_version_id,
+            request=original.request,
+            user=user,
+            suite_version_id=original.suite_version_id,
+            retried_from=original,
+            engine_notes={"lost_models": lost_models, "last_error": None}
+            if lost_models
+            else None,
+        )
+
+
+def _retry_refused(fix_run: AgentFixRun) -> HostedHarnessError:
+    """Why Retry does not start this fix again, as is_retryable decided it."""
+    after = " Run a new epoch from the run's Debug failures."
+    if fix_run.state != AgentFixRun.State.FAILED:
+        message = "Only a failed epoch can be retried."
+    elif was_the_retry(fix_run):
+        message = f"This epoch was the retry.{after}"
+    else:
+        message = f"This epoch was retried once already.{after}"
+    return HostedHarnessError("fix_not_retryable", message, status_code=409)
 
 
 def _create_fix_run(

@@ -1508,6 +1508,7 @@ class TestUserApi:
             ).json()
         AgentFixRun.no_workspace_objects.filter(id=retried["id"]).update(
             state=AgentFixRun.State.FAILED,
+            started_at=timezone.now(),
             failure={"code": "fix_engine_failed", "message": "m"},
         )
 
@@ -1522,6 +1523,35 @@ class TestUserApi:
             ).count()
             == 2
         )
+
+    def test_a_retry_that_never_started_offers_the_retry_again(
+        self, auth_client, source_run, temporal, django_capture_on_commit_callbacks
+    ):
+        failed = _fix_run(
+            source_run,
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_engine_failed", "message": "m"},
+        )
+        with django_capture_on_commit_callbacks(execute=True):
+            first = auth_client.post(
+                f"{BASE}/{failed.id}/retry/", {}, format="json"
+            ).json()
+        # Its workflow could not be scheduled, so it ended before it started.
+        AgentFixRun.no_workspace_objects.filter(id=first["id"]).update(
+            state=AgentFixRun.State.FAILED,
+            failure={"code": "fix_dispatch_failed", "message": "m"},
+        )
+
+        offered = [
+            auth_client.get(f"{BASE}/{fix_id}/").json()["retryable"]
+            for fix_id in (failed.id, first["id"])
+        ]
+        with django_capture_on_commit_callbacks(execute=True):
+            again = auth_client.post(f"{BASE}/{first['id']}/retry/", {}, format="json")
+
+        assert offered == [True, True]
+        assert again.status_code == 201, again.content
+        assert again.json()["retried_from_id"] == str(failed.id)
 
     def test_a_candidates_patch_downloads(self, auth_client, source_run, storage):
         fix_run = _fix_run(source_run)

@@ -14,9 +14,13 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace
 from tfc.constants.roles import OrganizationRoles, RoleMapping
 from tfc.utils.base_model import BaseModel
+from tracer.services.derived_metrics.pg_response_hooks import (
+    PgResponseManagerMixin,
+    pg_response_save,
+)
 
 
-class CustomUserManager(BaseUserManager):
+class CustomUserManager(PgResponseManagerMixin, BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         if not email:
             raise ValueError("The Email field must be set")
@@ -111,6 +115,10 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+    @pg_response_save
+    def save(self, *args, **kwargs):
+        return super().save(*args, **kwargs)
 
     # --- Multi-org helpers ---
 

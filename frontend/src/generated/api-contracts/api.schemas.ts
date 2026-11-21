@@ -4038,6 +4038,7 @@ export interface CapabilitiesResponseApi {
   display_mode: CapabilitiesResponseApiDisplayMode;
   license_state: CapabilitiesResponseApiLicenseState;
   features: CapabilitiesResponseApiFeatures;
+  metrics_enabled?: boolean;
   license?: LicenseDetailsApi;
   instance_id?: string;
 }
@@ -7642,14 +7643,14 @@ export type AutomationRuleConditionsApiFilterItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: AutomationRuleConditionsApiFilterItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type AutomationRuleConditionsApiFilterItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -7851,14 +7852,14 @@ export type SelectionApiFilterItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: SelectionApiFilterItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type SelectionApiFilterItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -11034,14 +11035,14 @@ export type DatasetRowDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: DatasetRowDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type DatasetRowDataRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -13944,14 +13945,14 @@ export type EvalMetricRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalMetricRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type EvalMetricRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -18804,6 +18805,562 @@ export interface AgentFixEngineStateApi {
   state: string;
 }
 
+export type AgentFixIssueJobApiPhase =
+  (typeof AgentFixIssueJobApiPhase)[keyof typeof AgentFixIssueJobApiPhase];
+
+export const AgentFixIssueJobApiPhase = {
+  drafting: "drafting",
+  review: "review",
+  blocked: "blocked",
+  measuring: "measuring",
+  launched: "launched",
+  ended: "ended",
+} as const;
+
+export interface AgentFixIssueApi {
+  /** @minLength 1 */
+  cluster_id: string;
+  project_id: string;
+  title: string | null;
+}
+
+export interface AgentFixIssueEnvironmentApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export type AgentFixIssueSamplePickApiUnit =
+  (typeof AgentFixIssueSamplePickApiUnit)[keyof typeof AgentFixIssueSamplePickApiUnit];
+
+export const AgentFixIssueSamplePickApiUnit = {
+  call: "call",
+  session: "session",
+  trace: "trace",
+} as const;
+
+export type AgentFixIssueSamplePickApiReason =
+  (typeof AgentFixIssueSamplePickApiReason)[keyof typeof AgentFixIssueSamplePickApiReason];
+
+export const AgentFixIssueSamplePickApiReason = {
+  example: "example",
+  cited: "cited",
+  recent: "recent",
+} as const;
+
+export interface AgentFixIssueSamplePickApi {
+  /** @minLength 1 */
+  member_id: string;
+  unit: AgentFixIssueSamplePickApiUnit;
+  /** @minLength 1 */
+  source_id: string;
+  reason: AgentFixIssueSamplePickApiReason;
+  started_at: string | null;
+}
+
+export interface AgentFixFailureApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface AgentFixIssueBaselineApi {
+  run_id: string;
+  /** @minLength 1 */
+  state: string;
+  scenarios: number;
+  completed_count: number;
+  failed_count: number;
+}
+
+export interface AgentFixIssueEpochApi {
+  id: string;
+  number: number | null;
+  environment_id: string;
+  /** @minLength 1 */
+  state: string;
+  step: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  failure_code: string | null;
+  retryable: boolean;
+  limited_validation: boolean;
+  pull_request_url: string | null;
+}
+
+export interface AgentFixIssueJobApi {
+  id: string;
+  phase: AgentFixIssueJobApiPhase;
+  issue: AgentFixIssueApi | null;
+  environment: AgentFixIssueEnvironmentApi;
+  sample: AgentFixIssueSamplePickApi[];
+  ending: AgentFixFailureApi | null;
+  baseline: AgentFixIssueBaselineApi | null;
+  epoch: AgentFixIssueEpochApi | null;
+  created_at: string;
+}
+
+export interface AgentFixIssueStatusApi {
+  /** @minLength 1 */
+  cluster_id: string;
+  project_id: string;
+  job: AgentFixIssueJobApi;
+}
+
+export interface AgentFixIssueStatusListApi {
+  results: AgentFixIssueStatusApi[];
+}
+
+export interface AgentFixIssueCreateApi {
+  /**
+   * @minLength 1
+   * @maxLength 20
+   */
+  cluster_id: string;
+  project_id: string;
+  environment_id: string;
+  /**
+   * The plan's picks after any swap: each pick's member_id.
+   * @minItems 1
+   * @maxItems 20
+   */
+  member_ids: string[];
+}
+
+export type AgentFixIssueJobDetailApiPhase =
+  (typeof AgentFixIssueJobDetailApiPhase)[keyof typeof AgentFixIssueJobDetailApiPhase];
+
+export const AgentFixIssueJobDetailApiPhase = {
+  drafting: "drafting",
+  review: "review",
+  blocked: "blocked",
+  measuring: "measuring",
+  launched: "launched",
+  ended: "ended",
+} as const;
+
+export type EvidenceImportApiSourceKind =
+  (typeof EvidenceImportApiSourceKind)[keyof typeof EvidenceImportApiSourceKind];
+
+export const EvidenceImportApiSourceKind = {
+  session: "session",
+  call: "call",
+  trace: "trace",
+  transcript: "transcript",
+  dataset: "dataset",
+} as const;
+
+export type EvidenceImportCaseApiStatus =
+  (typeof EvidenceImportCaseApiStatus)[keyof typeof EvidenceImportCaseApiStatus];
+
+export const EvidenceImportCaseApiStatus = {
+  pending: "pending",
+  unavailable: "unavailable",
+  drafted: "drafted",
+  blocked: "blocked",
+  added: "added",
+  discarded: "discarded",
+  duplicate: "duplicate",
+} as const;
+
+/**
+ * Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.
+ */
+export interface EvidenceNewCheckApi {
+  /** @minLength 1 */
+  name: string;
+  what: string;
+}
+
+/**
+ * For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.
+ */
+export interface EvidenceDuplicateOfApi {
+  /** The import holding the case. */
+  import_id: string;
+  case_id: string;
+  /** Its drafted scenario's title; blank until drafted. */
+  scenario_name: string;
+}
+
+export type EvidenceTranscriptApiStatus =
+  (typeof EvidenceTranscriptApiStatus)[keyof typeof EvidenceTranscriptApiStatus];
+
+export const EvidenceTranscriptApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+export type EvidenceTurnApiRole =
+  (typeof EvidenceTurnApiRole)[keyof typeof EvidenceTurnApiRole];
+
+export const EvidenceTurnApiRole = {
+  user: "user",
+  agent: "agent",
+} as const;
+
+export interface EvidenceTurnApi {
+  role: EvidenceTurnApiRole;
+  text: string;
+  truncated: boolean;
+  /** Blank for a turn no trace recorded. */
+  trace_id: string;
+  at: string | null;
+}
+
+export interface EvidenceTranscriptApi {
+  status: EvidenceTranscriptApiStatus;
+  reason: string;
+  turns: EvidenceTurnApi[];
+}
+
+export type EvidenceToolCallsApiStatus =
+  (typeof EvidenceToolCallsApiStatus)[keyof typeof EvidenceToolCallsApiStatus];
+
+export const EvidenceToolCallsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+export interface EvidenceToolCallApi {
+  /** @minLength 1 */
+  span_id: string;
+  /** @minLength 1 */
+  trace_id: string;
+  name: string;
+  at: string;
+  failed: boolean;
+  error: string;
+  input: string;
+  output: string;
+  input_truncated: boolean;
+  output_truncated: boolean;
+}
+
+export interface EvidenceToolCallsApi {
+  status: EvidenceToolCallsApiStatus;
+  reason: string;
+  calls: EvidenceToolCallApi[];
+}
+
+export type EvidencePartApiStatus =
+  (typeof EvidencePartApiStatus)[keyof typeof EvidencePartApiStatus];
+
+export const EvidencePartApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * Whether the tool calls recorded their inputs.
+ */
+export interface EvidencePartApi {
+  status: EvidencePartApiStatus;
+  reason: string;
+}
+
+export type EvidenceLabelsApiStatus =
+  (typeof EvidenceLabelsApiStatus)[keyof typeof EvidenceLabelsApiStatus];
+
+export const EvidenceLabelsApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * row: a dataset row's label column.
+ */
+export type EvidenceLabelApiTarget =
+  (typeof EvidenceLabelApiTarget)[keyof typeof EvidenceLabelApiTarget];
+
+export const EvidenceLabelApiTarget = {
+  session: "session",
+  trace: "trace",
+  span: "span",
+  row: "row",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type EvidenceLabelApiValue = JsonValueApi;
+
+export interface EvidenceLabelApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  kind: string;
+  /** Any valid JSON value. */
+  value: EvidenceLabelApiValue;
+  notes: string;
+  /** row: a dataset row's label column. */
+  target: EvidenceLabelApiTarget;
+}
+
+export interface EvidenceLabelsApi {
+  status: EvidenceLabelsApiStatus;
+  reason: string;
+  labels: EvidenceLabelApi[];
+}
+
+export type EvidenceExpectedOutcomeApiStatus =
+  (typeof EvidenceExpectedOutcomeApiStatus)[keyof typeof EvidenceExpectedOutcomeApiStatus];
+
+export const EvidenceExpectedOutcomeApiStatus = {
+  present: "present",
+  partial: "partial",
+  truncated: "truncated",
+  missing: "missing",
+  unreadable: "unreadable",
+} as const;
+
+/**
+ * What a dataset row's expected outcome column says should happen.
+ */
+export interface EvidenceExpectedOutcomeApi {
+  status: EvidenceExpectedOutcomeApiStatus;
+  reason: string;
+  text: string;
+}
+
+export interface EvidenceImportCaseApi {
+  id: string;
+  /** @minLength 1 */
+  source_id: string;
+  /** A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source. */
+  name: string;
+  status: EvidenceImportCaseApiStatus;
+  reason: string;
+  /** False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored. */
+  source_available: boolean;
+  /** The drafted scenario's key, once drafted. */
+  scenario_key: string;
+  /** The drafted scenario's title, once drafted; blank when the builder gave none. */
+  scenario_name: string;
+  /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
+  new_checks: EvidenceNewCheckApi[];
+  /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again. */
+  changed_since_import: boolean | null;
+  /**
+   * How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.
+   * @minimum 0
+   */
+  also_from: number;
+  duplicate_of: EvidenceDuplicateOfApi | null;
+  trace_ids: string[];
+  started_at: string | null;
+  ended_at: string | null;
+  transcript: EvidenceTranscriptApi;
+  tool_calls: EvidenceToolCallsApi;
+  tool_inputs: EvidencePartApi;
+  tool_outputs: EvidencePartApi;
+  starting_state: EvidencePartApi;
+  labels: EvidenceLabelsApi;
+  expected_outcome: EvidenceExpectedOutcomeApi;
+}
+
+/**
+ * basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.
+ */
+export type EvidenceRedactionApiMethod =
+  (typeof EvidenceRedactionApiMethod)[keyof typeof EvidenceRedactionApiMethod];
+
+export const EvidenceRedactionApiMethod = {
+  presidio: "presidio",
+  basic: "basic",
+} as const;
+
+export type EvidenceRedactionFindingApiPart =
+  (typeof EvidenceRedactionFindingApiPart)[keyof typeof EvidenceRedactionFindingApiPart];
+
+export const EvidenceRedactionFindingApiPart = {
+  transcript: "transcript",
+  tool_calls: "tool_calls",
+  labels: "labels",
+  expected_outcome: "expected_outcome",
+} as const;
+
+export type EvidenceRedactionFindingApiField =
+  (typeof EvidenceRedactionFindingApiField)[keyof typeof EvidenceRedactionFindingApiField];
+
+export const EvidenceRedactionFindingApiField = {
+  text: "text",
+  input: "input",
+  output: "output",
+  error: "error",
+  notes: "notes",
+  value: "value",
+  name: "name",
+} as const;
+
+export interface EvidenceRedactionFindingApi {
+  case_id: string;
+  part: EvidenceRedactionFindingApiPart;
+  /** @minimum 0 */
+  index: number;
+  field: EvidenceRedactionFindingApiField;
+  /** @minLength 1 */
+  entity: string;
+  /** @minimum 0 */
+  start: number;
+  /** @minimum 0 */
+  end: number;
+  /** @minLength 1 */
+  value: string;
+  /** @minLength 1 */
+  replacement: string;
+}
+
+export interface EvidenceRedactionApi {
+  /** basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses. */
+  method: EvidenceRedactionApiMethod;
+  reason: string;
+  findings: EvidenceRedactionFindingApi[];
+  /**
+   * Every finding, including those past the listed ones.
+   * @minimum 0
+   */
+  total: number;
+}
+
+export interface EvidenceImportApi {
+  id: string;
+  environment_id: string;
+  /** The Observe project; null for evidence from outside Observe. */
+  project_id: string | null;
+  /** A dataset import's dataset; null otherwise. */
+  dataset_id: string | null;
+  agent_version_id: string | null;
+  source_kind: EvidenceImportApiSourceKind;
+  created_at: string;
+  /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
+  simulated: boolean;
+  /** True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production. */
+  production: boolean;
+  /** True while the environment's builder is drafting cases. */
+  drafting: boolean;
+  cases: EvidenceImportCaseApi[];
+  redaction: EvidenceRedactionApi;
+}
+
+export type AgentFixLaunchSurfaceApiId =
+  (typeof AgentFixLaunchSurfaceApiId)[keyof typeof AgentFixLaunchSurfaceApiId];
+
+export const AgentFixLaunchSurfaceApiId = {
+  prompt: "prompt",
+  tools: "tools",
+  settings: "settings",
+  code: "code",
+} as const;
+
+export interface AgentFixLaunchSurfaceApi {
+  id: AgentFixLaunchSurfaceApiId;
+  /** @minLength 1 */
+  label: string;
+  allowed: boolean;
+  reason: string | null;
+}
+
+export interface AgentFixIssueDefaultsApi {
+  surfaces: AgentFixLaunchSurfaceApi[];
+  budget_credits: number;
+  budget_credits_max: number;
+  max_minutes_max: number;
+  reply_latency_margin_pct: number;
+  cost_margin_pct: number;
+}
+
+export interface AgentFixIssueJobDetailApi {
+  id: string;
+  phase: AgentFixIssueJobDetailApiPhase;
+  issue: AgentFixIssueApi | null;
+  environment: AgentFixIssueEnvironmentApi;
+  sample: AgentFixIssueSamplePickApi[];
+  ending: AgentFixFailureApi | null;
+  baseline: AgentFixIssueBaselineApi | null;
+  epoch: AgentFixIssueEpochApi | null;
+  created_at: string;
+  evidence_import: EvidenceImportApi;
+  defaults: AgentFixIssueDefaultsApi;
+}
+
+export interface AgentFixIssueSampleApi {
+  unit: "call" | "session" | "trace" | null;
+  picks: AgentFixIssueSamplePickApi[];
+  alternates: AgentFixIssueSamplePickApi[];
+}
+
+export interface AgentFixIssueScenariosApi {
+  held: number;
+  limit: number;
+}
+
+export interface AgentFixIssuePlanApi {
+  issue: AgentFixIssueApi;
+  environment: AgentFixIssueEnvironmentApi | null;
+  blocked: AgentFixFailureApi | null;
+  sample: AgentFixIssueSampleApi;
+  open_job_id: string | null;
+  issue_scenarios: AgentFixIssueScenariosApi | null;
+  defaults: AgentFixIssueDefaultsApi;
+}
+
+export type AgentFixIssueRunApiSurfacesItem =
+  (typeof AgentFixIssueRunApiSurfacesItem)[keyof typeof AgentFixIssueRunApiSurfacesItem];
+
+export const AgentFixIssueRunApiSurfacesItem = {
+  prompt: "prompt",
+  tools: "tools",
+  settings: "settings",
+  code: "code",
+} as const;
+
+export interface AgentFixIssueRunApi {
+  /** @minItems 1 */
+  surfaces: AgentFixIssueRunApiSurfacesItem[];
+  locked_paths?: string[];
+  /**
+   * @minimum 1
+   * @maximum 50000
+   */
+  budget_credits: number;
+  /**
+   * @minimum 1
+   * @maximum 1440
+   */
+  max_minutes?: number;
+  /** @maxItems 50 */
+  allowed_models?: string[];
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  reply_latency_margin_pct?: number;
+  /**
+   * @minimum 0
+   * @maximum 1000
+   */
+  cost_margin_pct?: number;
+  cost_limit_usd?: number | null;
+  /**
+   * The import's cases to keep: drafted ones, and repeats of scenarios the suite already holds.
+   * @minItems 1
+   * @maxItems 20
+   */
+  case_ids: string[];
+}
+
 export interface AgentFixEnvironmentApi {
   /** @minLength 1 */
   name: string;
@@ -18838,20 +19395,6 @@ export const AgentFixRunApiState = {
   too_few_cases: "too_few_cases",
 } as const;
 
-/**
- * A finished fix is done, whatever the engine last said.
- */
-export type AgentFixRunApiStep =
-  (typeof AgentFixRunApiStep)[keyof typeof AgentFixRunApiStep];
-
-export const AgentFixRunApiStep = {
-  variations: "variations",
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
 export type AgentFixRequestApiVariationParents = { [key: string]: string };
 
 export interface AgentFixRequestApi {
@@ -18883,11 +19426,11 @@ export interface AgentFixReportApi {
   flaky_protected?: AgentFixFlakyProtectedApi[];
 }
 
-export interface AgentFixFailureApi {
+export interface AgentFixEpochIssueApi {
+  job_id: string;
   /** @minLength 1 */
-  code: string;
-  /** @minLength 1 */
-  message: string;
+  cluster_id: string;
+  project_id: string;
 }
 
 export interface AgentFixCheckRunApi {
@@ -18919,8 +19462,8 @@ export interface AgentFixOverrideApi {
   allowed: boolean;
   regressions: string[];
   reason: string;
-  by: HarnessVersionPersonApi;
-  at: string;
+  by: HarnessVersionPersonApi | null;
+  at: string | null;
 }
 
 export interface AgentFixCandidateApi {
@@ -18934,43 +19477,42 @@ export interface AgentFixCandidateApi {
   version_number: number;
   summary?: string;
   outcome?: AgentFixCandidateApiOutcome;
-  verdict: AgentFixVerdictApi;
+  verdict: AgentFixVerdictApi | null;
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   override?: AgentFixOverrideApi;
-  /** @maxLength 512 */
-  pull_request_url?: string;
+  pull_request_url: string;
   readonly created_at?: string;
 }
 
 export interface AgentFixRunApi {
   readonly id?: string;
-  number: number;
+  number: number | null;
   environment_id: string;
   environment?: AgentFixEnvironmentApi;
-  source_run_id: string;
-  source_run_number: number;
+  source_run_id: string | null;
+  source_run_number: number | null;
   base_agent_version_id: string;
   agent?: AgentFixAgentApi;
   state?: AgentFixRunApiState;
   /** @maxLength 32 */
   stage?: string;
-  /** A finished fix is done, whatever the engine last said. */
-  readonly step?: AgentFixRunApiStep;
-  plan: AgentFixPlanApi;
-  diagnosis: AgentFixDiagnosisApi;
+  step?: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  plan: AgentFixPlanApi | null;
+  diagnosis: AgentFixDiagnosisApi | null;
   request: AgentFixRequestApi;
   spent_credits: number;
   committed_credits: number;
-  report: AgentFixReportApi;
-  failure: AgentFixFailureApi;
-  retried_from_id: string;
+  report: AgentFixReportApi | null;
+  failure: AgentFixFailureApi | null;
+  retried_from_id: string | null;
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
+  issue?: AgentFixEpochIssueApi | null;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
-  started_at?: string;
-  finished_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
   readonly created_at?: string;
 }
 
@@ -19064,25 +19606,6 @@ export interface AgentFixLaunchSuggestedApi {
   protected_scenario_keys: string[];
 }
 
-export type AgentFixLaunchSurfaceApiId =
-  (typeof AgentFixLaunchSurfaceApiId)[keyof typeof AgentFixLaunchSurfaceApiId];
-
-export const AgentFixLaunchSurfaceApiId = {
-  prompt: "prompt",
-  tools: "tools",
-  settings: "settings",
-  code: "code",
-} as const;
-
-export interface AgentFixLaunchSurfaceApi {
-  id: AgentFixLaunchSurfaceApiId;
-  /** @minLength 1 */
-  label: string;
-  allowed: boolean;
-  /** @minLength 1 */
-  reason: string;
-}
-
 export type AgentFixLaunchDefaultsApiSurfacesItem =
   (typeof AgentFixLaunchDefaultsApiSurfacesItem)[keyof typeof AgentFixLaunchDefaultsApiSurfacesItem];
 
@@ -19143,20 +19666,6 @@ export const AgentFixRunDetailApiState = {
   too_few_cases: "too_few_cases",
 } as const;
 
-/**
- * A finished fix is done, whatever the engine last said.
- */
-export type AgentFixRunDetailApiStep =
-  (typeof AgentFixRunDetailApiStep)[keyof typeof AgentFixRunDetailApiStep];
-
-export const AgentFixRunDetailApiStep = {
-  variations: "variations",
-  reproduce: "reproduce",
-  search: "search",
-  verify: "verify",
-  done: "done",
-} as const;
-
 export type AgentFixRunDetailApiEvalGrading =
   (typeof AgentFixRunDetailApiEvalGrading)[keyof typeof AgentFixRunDetailApiEvalGrading];
 
@@ -19178,33 +19687,33 @@ export interface AgentFixEvalWarningApi {
 
 export interface AgentFixRunDetailApi {
   readonly id?: string;
-  number: number;
+  number: number | null;
   environment_id: string;
   environment?: AgentFixEnvironmentApi;
-  source_run_id: string;
-  source_run_number: number;
+  source_run_id: string | null;
+  source_run_number: number | null;
   base_agent_version_id: string;
   agent?: AgentFixAgentApi;
   state?: AgentFixRunDetailApiState;
   /** @maxLength 32 */
   stage?: string;
-  /** A finished fix is done, whatever the engine last said. */
-  readonly step?: AgentFixRunDetailApiStep;
-  plan: AgentFixPlanApi;
-  diagnosis: AgentFixDiagnosisApi;
+  step?: "variations" | "reproduce" | "search" | "verify" | "done" | null;
+  plan: AgentFixPlanApi | null;
+  diagnosis: AgentFixDiagnosisApi | null;
   request: AgentFixRequestApi;
   spent_credits: number;
   committed_credits: number;
-  report: AgentFixReportApi;
-  failure: AgentFixFailureApi;
-  retried_from_id: string;
+  report: AgentFixReportApi | null;
+  failure: AgentFixFailureApi | null;
+  retried_from_id: string | null;
   readonly retryable?: boolean;
   readonly limited_validation?: boolean;
+  issue?: AgentFixEpochIssueApi | null;
   /** The base version's runs; each candidate lists its own. */
   readonly check_runs?: readonly AgentFixCheckRunApi[];
   candidates: AgentFixCandidateApi[];
-  started_at?: string;
-  finished_at?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
   readonly created_at?: string;
   readonly eval_warnings?: readonly AgentFixEvalWarningApi[];
   readonly eval_grading?: AgentFixRunDetailApiEvalGrading;
@@ -21799,14 +22308,14 @@ export type HarnessEnvironmentEvalEditApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: HarnessEnvironmentEvalEditApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type HarnessEnvironmentEvalEditApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -21863,14 +22372,14 @@ export type SimulateEvalConfigResponseApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: SimulateEvalConfigResponseApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type SimulateEvalConfigResponseApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -21910,6 +22419,7 @@ export type EvidenceImportListItemApiSourceKind =
 export const EvidenceImportListItemApiSourceKind = {
   session: "session",
   call: "call",
+  trace: "trace",
   transcript: "transcript",
   dataset: "dataset",
 } as const;
@@ -21958,6 +22468,7 @@ export type EvidenceImportCreateApiSourceKind =
 export const EvidenceImportCreateApiSourceKind = {
   session: "session",
   call: "call",
+  trace: "trace",
   transcript: "transcript",
   dataset: "dataset",
 } as const;
@@ -22008,10 +22519,10 @@ export interface EvidenceTranscriptInputApi {
 
 export interface EvidenceImportCreateApi {
   source_kind: EvidenceImportCreateApiSourceKind;
-  /** Session and call imports: the Observe project. */
+  /** Session, call and trace imports: the Observe project. */
   project_id?: string;
   /**
-   * Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.
+   * Session, call, trace and dataset imports: session ids, the trace ids of calls or traces, or row ids, in the order picked.
    * @minItems 1
    * @maxItems 20
    */
@@ -22027,321 +22538,6 @@ export interface EvidenceImportCreateApi {
   transcripts?: EvidenceTranscriptInputApi[];
   /** Transcript and dataset imports: the person says they come from production. Unsaid, they are not called production evidence. */
   production?: boolean;
-}
-
-export type EvidenceImportApiSourceKind =
-  (typeof EvidenceImportApiSourceKind)[keyof typeof EvidenceImportApiSourceKind];
-
-export const EvidenceImportApiSourceKind = {
-  session: "session",
-  call: "call",
-  transcript: "transcript",
-  dataset: "dataset",
-} as const;
-
-export type EvidenceImportCaseApiStatus =
-  (typeof EvidenceImportCaseApiStatus)[keyof typeof EvidenceImportCaseApiStatus];
-
-export const EvidenceImportCaseApiStatus = {
-  pending: "pending",
-  unavailable: "unavailable",
-  drafted: "drafted",
-  blocked: "blocked",
-  added: "added",
-  discarded: "discarded",
-  duplicate: "duplicate",
-} as const;
-
-/**
- * Checks this case adds to the environment when it is added: each one is new, never a change to an existing check.
- */
-export interface EvidenceNewCheckApi {
-  /** @minLength 1 */
-  name: string;
-  what: string;
-}
-
-/**
- * For a case already imported (status duplicate): the case of another import it repeats, proposed there. Null otherwise, or once that case is gone.
- */
-export interface EvidenceDuplicateOfApi {
-  /** The import holding the case. */
-  import_id: string;
-  case_id: string;
-  /** Its drafted scenario's title; blank until drafted. */
-  scenario_name: string;
-}
-
-export type EvidenceTranscriptApiStatus =
-  (typeof EvidenceTranscriptApiStatus)[keyof typeof EvidenceTranscriptApiStatus];
-
-export const EvidenceTranscriptApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-export type EvidenceTurnApiRole =
-  (typeof EvidenceTurnApiRole)[keyof typeof EvidenceTurnApiRole];
-
-export const EvidenceTurnApiRole = {
-  user: "user",
-  agent: "agent",
-} as const;
-
-export interface EvidenceTurnApi {
-  role: EvidenceTurnApiRole;
-  text: string;
-  truncated: boolean;
-  /** Blank for a turn no trace recorded. */
-  trace_id: string;
-  at: string | null;
-}
-
-export interface EvidenceTranscriptApi {
-  status: EvidenceTranscriptApiStatus;
-  reason: string;
-  turns: EvidenceTurnApi[];
-}
-
-export type EvidenceToolCallsApiStatus =
-  (typeof EvidenceToolCallsApiStatus)[keyof typeof EvidenceToolCallsApiStatus];
-
-export const EvidenceToolCallsApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-export interface EvidenceToolCallApi {
-  /** @minLength 1 */
-  span_id: string;
-  /** @minLength 1 */
-  trace_id: string;
-  name: string;
-  at: string;
-  failed: boolean;
-  error: string;
-  input: string;
-  output: string;
-  input_truncated: boolean;
-  output_truncated: boolean;
-}
-
-export interface EvidenceToolCallsApi {
-  status: EvidenceToolCallsApiStatus;
-  reason: string;
-  calls: EvidenceToolCallApi[];
-}
-
-export type EvidencePartApiStatus =
-  (typeof EvidencePartApiStatus)[keyof typeof EvidencePartApiStatus];
-
-export const EvidencePartApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-/**
- * Whether the tool calls recorded their inputs.
- */
-export interface EvidencePartApi {
-  status: EvidencePartApiStatus;
-  reason: string;
-}
-
-export type EvidenceLabelsApiStatus =
-  (typeof EvidenceLabelsApiStatus)[keyof typeof EvidenceLabelsApiStatus];
-
-export const EvidenceLabelsApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-/**
- * row: a dataset row's label column.
- */
-export type EvidenceLabelApiTarget =
-  (typeof EvidenceLabelApiTarget)[keyof typeof EvidenceLabelApiTarget];
-
-export const EvidenceLabelApiTarget = {
-  session: "session",
-  trace: "trace",
-  span: "span",
-  row: "row",
-} as const;
-
-/**
- * Any valid JSON value.
- */
-export type EvidenceLabelApiValue = JsonValueApi;
-
-export interface EvidenceLabelApi {
-  /** @minLength 1 */
-  name: string;
-  /** @minLength 1 */
-  kind: string;
-  /** Any valid JSON value. */
-  value: EvidenceLabelApiValue;
-  notes: string;
-  /** row: a dataset row's label column. */
-  target: EvidenceLabelApiTarget;
-}
-
-export interface EvidenceLabelsApi {
-  status: EvidenceLabelsApiStatus;
-  reason: string;
-  labels: EvidenceLabelApi[];
-}
-
-export type EvidenceExpectedOutcomeApiStatus =
-  (typeof EvidenceExpectedOutcomeApiStatus)[keyof typeof EvidenceExpectedOutcomeApiStatus];
-
-export const EvidenceExpectedOutcomeApiStatus = {
-  present: "present",
-  partial: "partial",
-  truncated: "truncated",
-  missing: "missing",
-  unreadable: "unreadable",
-} as const;
-
-/**
- * What a dataset row's expected outcome column says should happen.
- */
-export interface EvidenceExpectedOutcomeApi {
-  status: EvidenceExpectedOutcomeApiStatus;
-  reason: string;
-  text: string;
-}
-
-export interface EvidenceImportCaseApi {
-  id: string;
-  /** @minLength 1 */
-  source_id: string;
-  /** A transcript's name as the person gave it, redacted; a dataset row's place in the import and its dataset ('Row 2 · Support evals'); blank for an Observe source. */
-  name: string;
-  status: EvidenceImportCaseApiStatus;
-  reason: string;
-  /** False once Observe or the dataset no longer holds the source: its provenance is unavailable, though what became of the case stands. Always true for a transcript, whose text is stored. */
-  source_available: boolean;
-  /** The drafted scenario's key, once drafted. */
-  scenario_key: string;
-  /** The drafted scenario's title, once drafted; blank when the builder gave none. */
-  scenario_name: string;
-  /** Checks this case adds to the environment when it is added: each one is new, never a change to an existing check. */
-  new_checks: EvidenceNewCheckApi[];
-  /** Null when unknown: the source is gone, or part of it could not be read now or when the import was made. Always null for a transcript, which has no source to read again. */
-  changed_since_import: boolean | null;
-  /**
-   * How many more sources hold this case: the same source or the same conversation imported again, in this import or a later one.
-   * @minimum 0
-   */
-  also_from: number;
-  duplicate_of: EvidenceDuplicateOfApi;
-  trace_ids: string[];
-  started_at: string | null;
-  ended_at: string | null;
-  transcript: EvidenceTranscriptApi;
-  tool_calls: EvidenceToolCallsApi;
-  tool_inputs: EvidencePartApi;
-  tool_outputs: EvidencePartApi;
-  starting_state: EvidencePartApi;
-  labels: EvidenceLabelsApi;
-  expected_outcome: EvidenceExpectedOutcomeApi;
-}
-
-/**
- * basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses.
- */
-export type EvidenceRedactionApiMethod =
-  (typeof EvidenceRedactionApiMethod)[keyof typeof EvidenceRedactionApiMethod];
-
-export const EvidenceRedactionApiMethod = {
-  presidio: "presidio",
-  basic: "basic",
-} as const;
-
-export type EvidenceRedactionFindingApiPart =
-  (typeof EvidenceRedactionFindingApiPart)[keyof typeof EvidenceRedactionFindingApiPart];
-
-export const EvidenceRedactionFindingApiPart = {
-  transcript: "transcript",
-  tool_calls: "tool_calls",
-  labels: "labels",
-  expected_outcome: "expected_outcome",
-} as const;
-
-export type EvidenceRedactionFindingApiField =
-  (typeof EvidenceRedactionFindingApiField)[keyof typeof EvidenceRedactionFindingApiField];
-
-export const EvidenceRedactionFindingApiField = {
-  text: "text",
-  input: "input",
-  output: "output",
-  error: "error",
-  notes: "notes",
-  value: "value",
-  name: "name",
-} as const;
-
-export interface EvidenceRedactionFindingApi {
-  case_id: string;
-  part: EvidenceRedactionFindingApiPart;
-  /** @minimum 0 */
-  index: number;
-  field: EvidenceRedactionFindingApiField;
-  /** @minLength 1 */
-  entity: string;
-  /** @minimum 0 */
-  start: number;
-  /** @minimum 0 */
-  end: number;
-  /** @minLength 1 */
-  value: string;
-  /** @minLength 1 */
-  replacement: string;
-}
-
-export interface EvidenceRedactionApi {
-  /** basic: a fixed-shape match, for a server without Presidio; it finds no names or addresses. */
-  method: EvidenceRedactionApiMethod;
-  reason: string;
-  findings: EvidenceRedactionFindingApi[];
-  /**
-   * Every finding, including those past the listed ones.
-   * @minimum 0
-   */
-  total: number;
-}
-
-export interface EvidenceImportApi {
-  id: string;
-  environment_id: string;
-  /** The Observe project; null for evidence from outside Observe. */
-  project_id: string | null;
-  /** A dataset import's dataset; null otherwise. */
-  dataset_id: string;
-  agent_version_id: string | null;
-  source_kind: EvidenceImportApiSourceKind;
-  created_at: string;
-  /** True when the sources come from a Simulator project: simulated conversations, not production evidence. */
-  simulated: boolean;
-  /** True for production evidence: an Observe project that is not a Simulator project, or transcripts or dataset rows the person said come from production. */
-  production: boolean;
-  /** True while the environment's builder is drafting cases. */
-  drafting: boolean;
-  cases: EvidenceImportCaseApi[];
-  redaction: EvidenceRedactionApi;
 }
 
 export interface EvidenceDraftRefApi {
@@ -22997,6 +23193,9 @@ export interface HarnessSuiteMemberApi {
   number: number;
   name: string;
   use_case: string;
+  /** @minLength 1 */
+  issue_cluster_id: string;
+  issue_project_id: string;
 }
 
 export interface HarnessDefaultMoveApi {
@@ -26414,14 +26613,14 @@ export type EvalConfigDefinitionApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalConfigDefinitionApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type EvalConfigDefinitionApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -26833,14 +27032,14 @@ export type EvalConfigUpdateRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalConfigUpdateRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type EvalConfigUpdateRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -30556,6 +30755,7 @@ export const DashboardMetricCatalogItemApiPropertyKind = {
   eval_template: "eval_template",
   annotation: "annotation",
   dataset_column: "dataset_column",
+  metric_field: "metric_field",
 } as const;
 
 export type DashboardMetricCatalogItemApiRole =
@@ -30578,6 +30778,48 @@ export const DashboardMetricCatalogItemApiAttributeTypesItem = {
   json: "json",
 } as const;
 
+export type DashboardMetricCatalogItemApiKind =
+  (typeof DashboardMetricCatalogItemApiKind)[keyof typeof DashboardMetricCatalogItemApiKind];
+
+export const DashboardMetricCatalogItemApiKind = {
+  share: "share",
+  average: "average",
+  total: "total",
+  count: "count",
+  unique_count: "unique_count",
+  percentile: "percentile",
+  custom: "custom",
+} as const;
+
+export type DashboardMetricCatalogItemApiLevel =
+  (typeof DashboardMetricCatalogItemApiLevel)[keyof typeof DashboardMetricCatalogItemApiLevel];
+
+export const DashboardMetricCatalogItemApiLevel = {
+  span: "span",
+  trace: "trace",
+  conversation: "conversation",
+  user: "user",
+} as const;
+
+export type DashboardMetricCatalogItemApiSourceLevel =
+  (typeof DashboardMetricCatalogItemApiSourceLevel)[keyof typeof DashboardMetricCatalogItemApiSourceLevel];
+
+export const DashboardMetricCatalogItemApiSourceLevel = {
+  span: "span",
+  trace: "trace",
+  conversation: "conversation",
+  user: "user",
+} as const;
+
+export type DashboardMetricCatalogItemApiProjection =
+  (typeof DashboardMetricCatalogItemApiProjection)[keyof typeof DashboardMetricCatalogItemApiProjection];
+
+export const DashboardMetricCatalogItemApiProjection = {
+  "": "",
+  per_user: "per_user",
+  user_metric: "user_metric",
+} as const;
+
 /**
  * Any valid JSON value.
  */
@@ -30590,6 +30832,10 @@ export type DashboardMetricCatalogItemApiChoicesItem = {
  */
 export type DashboardMetricCatalogItemApiChoiceOptionsItem = {
   [key: string]: unknown;
+};
+
+export type DashboardMetricCatalogItemApiValueLabels = {
+  [key: string]: string;
 };
 
 export interface DashboardMetricCatalogItemApi {
@@ -30613,6 +30859,27 @@ export interface DashboardMetricCatalogItemApi {
   data_type?: string;
   attribute_types?: DashboardMetricCatalogItemApiAttributeTypesItem[];
   attribute_types_exact?: boolean;
+  /** @minLength 1 */
+  column_id?: string;
+  metric_id?: string;
+  project_id?: string;
+  version_id?: string;
+  /** @minimum 1 */
+  version?: number;
+  kind?: DashboardMetricCatalogItemApiKind;
+  level?: DashboardMetricCatalogItemApiLevel;
+  source_level?: DashboardMetricCatalogItemApiSourceLevel;
+  projection?: DashboardMetricCatalogItemApiProjection;
+  value_format?: string;
+  value_labels?: DashboardMetricCatalogItemApiValueLabels;
+  /**
+   * @minLength 1
+   * @pattern ^[0-9a-f]{64}$
+   */
+  definition_hash?: string;
+  group_dims?: string[];
+  operators?: string[];
+  filterable?: boolean;
 }
 
 export type DashboardMetricsCatalogResultApiQueryStatus =
@@ -30698,6 +30965,39 @@ export const DashboardMetricsCatalogQueryApiCategory = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
+  metric: "metric",
+} as const;
+
+/**
+ * Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled.
+ */
+export type DashboardMetricsCatalogQueryApiContext =
+  (typeof DashboardMetricsCatalogQueryApiContext)[keyof typeof DashboardMetricsCatalogQueryApiContext];
+
+export const DashboardMetricsCatalogQueryApiContext = {
+  sessions: "sessions",
+  spans: "spans",
+  traces: "traces",
+  users: "users",
+  task_sessions: "task_sessions",
+  task_spans: "task_spans",
+  task_traces: "task_traces",
+  task: "task",
+  tasks: "tasks",
+} as const;
+
+/**
+ * Filter by the active definition's source grain, before projection.
+ */
+export type DashboardMetricsCatalogQueryApiLevel =
+  (typeof DashboardMetricsCatalogQueryApiLevel)[keyof typeof DashboardMetricsCatalogQueryApiLevel];
+
+export const DashboardMetricsCatalogQueryApiLevel = {
+  span: "span",
+  trace: "trace",
+  conversation: "conversation",
+  user: "user",
 } as const;
 
 export type DashboardMetricsCatalogQueryApiRole =
@@ -30735,6 +31035,10 @@ export interface DashboardMetricsCatalogQueryApi {
   /** @maxLength 256 */
   search?: string;
   category?: DashboardMetricsCatalogQueryApiCategory;
+  /** Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled. */
+  context?: DashboardMetricsCatalogQueryApiContext;
+  /** Filter by the active definition's source grain, before projection. */
+  level?: DashboardMetricsCatalogQueryApiLevel;
   role?: DashboardMetricsCatalogQueryApiRole;
   source?: DashboardMetricsCatalogQueryApiSource;
   /** @minimum 1 */
@@ -30788,14 +31092,14 @@ export type DashboardQueryApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: DashboardQueryApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type DashboardQueryApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -30838,6 +31142,7 @@ export const DashboardMetricApiType = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type DashboardMetricApiSource =
@@ -30849,6 +31154,7 @@ export const DashboardMetricApiSource = {
   simulation: "simulation",
   both: "both",
   all: "all",
+  derived_metrics: "derived_metrics",
 } as const;
 
 export type DashboardMetricApiAggregation =
@@ -30920,14 +31226,14 @@ export type DashboardMetricApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: DashboardMetricApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type DashboardMetricApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -30954,6 +31260,7 @@ export interface DashboardMetricApi {
   output_type?: string;
   eval_key?: string;
   config_id?: string;
+  derived_run_id?: string;
   label_id?: string;
   attribute_key?: string;
   attribute_type?: DashboardMetricApiAttributeType;
@@ -30971,6 +31278,7 @@ export const DashboardBreakdownApiType = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
 } as const;
 
 export type DashboardBreakdownApiSource =
@@ -30982,6 +31290,7 @@ export const DashboardBreakdownApiSource = {
   simulation: "simulation",
   both: "both",
   all: "all",
+  derived_metrics: "derived_metrics",
 } as const;
 
 export type DashboardBreakdownApiAttributeType =
@@ -31070,11 +31379,301 @@ export interface DashboardQuerySeriesPointApi {
   /** @minLength 1 */
   timestamp: string;
   value: number;
+  ci_low?: number;
+  ci_high?: number;
+  ci_reason?: string;
 }
 
 export interface DashboardQuerySeriesApi {
   name: string;
   data: DashboardQuerySeriesPointApi[];
+}
+
+export type DerivedMetricInputApiSource =
+  (typeof DerivedMetricInputApiSource)[keyof typeof DerivedMetricInputApiSource];
+
+export const DerivedMetricInputApiSource = {
+  eval: "eval",
+  span: "span",
+} as const;
+
+export type DerivedMetricInputApiField =
+  (typeof DerivedMetricInputApiField)[keyof typeof DerivedMetricInputApiField];
+
+export const DerivedMetricInputApiField = {
+  latency_ms: "latency_ms",
+  cost: "cost",
+  total_tokens: "total_tokens",
+  prompt_tokens: "prompt_tokens",
+  completion_tokens: "completion_tokens",
+  attribute_number: "attribute_number",
+  attribute_bool: "attribute_bool",
+  attribute_text: "attribute_text",
+} as const;
+
+export type DerivedMetricInputApiValueType =
+  (typeof DerivedMetricInputApiValueType)[keyof typeof DerivedMetricInputApiValueType];
+
+export const DerivedMetricInputApiValueType = {
+  number: "number",
+  boolean: "boolean",
+  text: "text",
+} as const;
+
+export type DerivedMetricInputApiReducer =
+  (typeof DerivedMetricInputApiReducer)[keyof typeof DerivedMetricInputApiReducer];
+
+export const DerivedMetricInputApiReducer = {
+  first: "first",
+  latest: "latest",
+  mean: "mean",
+  min: "min",
+  max: "max",
+  sum: "sum",
+  count: "count",
+  any: "any",
+  all: "all",
+} as const;
+
+export type DerivedMetricInputApiOrdering =
+  (typeof DerivedMetricInputApiOrdering)[keyof typeof DerivedMetricInputApiOrdering];
+
+export const DerivedMetricInputApiOrdering = {
+  sentence: "sentence",
+  legacy: "legacy",
+} as const;
+
+export type DerivedMetricInputApiConditionStage =
+  (typeof DerivedMetricInputApiConditionStage)[keyof typeof DerivedMetricInputApiConditionStage];
+
+export const DerivedMetricInputApiConditionStage = {
+  after_reduction: "after_reduction",
+  observation: "observation",
+} as const;
+
+export type MetricObservationConditionApiOperator =
+  (typeof MetricObservationConditionApiOperator)[keyof typeof MetricObservationConditionApiOperator];
+
+export const MetricObservationConditionApiOperator = {
+  eq: "eq",
+  ne: "ne",
+  lt: "lt",
+  lte: "lte",
+  gt: "gt",
+  gte: "gte",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type MetricObservationConditionApiValue = { [key: string]: unknown };
+
+export interface MetricObservationConditionApi {
+  operator: MetricObservationConditionApiOperator;
+  /** Any valid JSON value. */
+  value: MetricObservationConditionApiValue;
+}
+
+export interface DerivedMetricInputApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-z][a-z0-9_]{0,39}$
+   */
+  alias: string;
+  source: DerivedMetricInputApiSource;
+  config_id?: string;
+  /** @pattern ^(?:[a-f0-9]{64})?$ */
+  config_hash?: string;
+  field?: DerivedMetricInputApiField;
+  /** @maxLength 160 */
+  attribute_key?: string;
+  value_type?: DerivedMetricInputApiValueType;
+  reducer?: DerivedMetricInputApiReducer;
+  ordering?: DerivedMetricInputApiOrdering;
+  condition_stage?: DerivedMetricInputApiConditionStage;
+  condition?: MetricObservationConditionApi;
+}
+
+export type DerivedMetricFilterApiField =
+  (typeof DerivedMetricFilterApiField)[keyof typeof DerivedMetricFilterApiField];
+
+export const DerivedMetricFilterApiField = {
+  model: "model",
+  provider: "provider",
+  status: "status",
+  name: "name",
+  service_name: "service_name",
+} as const;
+
+export interface DerivedMetricFilterApi {
+  field: DerivedMetricFilterApiField;
+  /** @maxLength 255 */
+  value: string;
+}
+
+export interface DerivedMetricFrozenRecipeApi {
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  version: number;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  formula: string;
+  inputs: DerivedMetricInputApi[];
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  selection_unit: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  weighting: string;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  definition_hash: string;
+  readonly created_at?: string;
+}
+
+export type DerivedMetricSavedRunContextApiStatus =
+  (typeof DerivedMetricSavedRunContextApiStatus)[keyof typeof DerivedMetricSavedRunContextApiStatus];
+
+export const DerivedMetricSavedRunContextApiStatus = {
+  queued: "queued",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export interface DerivedMetricSavedRunContextApi {
+  readonly id?: string;
+  readonly metric_version?: number;
+  definition?: DerivedMetricFrozenRecipeApi;
+  readonly window_start?: string;
+  readonly window_end?: string;
+  readonly filters?: readonly DerivedMetricFilterApi[];
+  readonly result_id?: string;
+  readonly status?: DerivedMetricSavedRunContextApiStatus;
+}
+
+export type DerivedMetricResultApiStatus =
+  (typeof DerivedMetricResultApiStatus)[keyof typeof DerivedMetricResultApiStatus];
+
+export const DerivedMetricResultApiStatus = {
+  ok: "ok",
+  no_data: "no_data",
+  missing_inputs: "missing_inputs",
+  invalid_probability: "invalid_probability",
+  zero_denominator: "zero_denominator",
+  non_finite: "non_finite",
+} as const;
+
+/**
+ * `not_estimable` means no interval exists; `reason` says why. Never a guess.
+ */
+export type DerivedMetricUncertaintyApiStatus =
+  (typeof DerivedMetricUncertaintyApiStatus)[keyof typeof DerivedMetricUncertaintyApiStatus];
+
+export const DerivedMetricUncertaintyApiStatus = {
+  ok: "ok",
+  not_estimable: "not_estimable",
+} as const;
+
+export type DerivedMetricUncertaintyApiReason =
+  (typeof DerivedMetricUncertaintyApiReason)[keyof typeof DerivedMetricUncertaintyApiReason];
+
+export const DerivedMetricUncertaintyApiReason = {
+  "": "",
+  no_value: "no_value",
+  design_not_captured: "design_not_captured",
+  mixed_design: "mixed_design",
+  unweighted_total: "unweighted_total",
+  fewer_than_two_units: "fewer_than_two_units",
+  population_size_missing: "population_size_missing",
+  inconsistent_stratum_design: "inconsistent_stratum_design",
+  single_unit_stratum: "single_unit_stratum",
+  no_degrees_of_freedom: "no_degrees_of_freedom",
+  non_finite: "non_finite",
+  unstable_variance: "unstable_variance",
+  not_computed: "not_computed",
+} as const;
+
+/**
+ * stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.
+ */
+export type DerivedMetricUncertaintyApiMethod =
+  (typeof DerivedMetricUncertaintyApiMethod)[keyof typeof DerivedMetricUncertaintyApiMethod];
+
+export const DerivedMetricUncertaintyApiMethod = {
+  "": "",
+  stratified_wor_fpc: "stratified_wor_fpc",
+  poisson: "poisson",
+  iid_units: "iid_units",
+} as const;
+
+/**
+ * wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.
+ */
+export type DerivedMetricUncertaintyApiInterval =
+  (typeof DerivedMetricUncertaintyApiInterval)[keyof typeof DerivedMetricUncertaintyApiInterval];
+
+export const DerivedMetricUncertaintyApiInterval = {
+  "": "",
+  wilson: "wilson",
+  wald_t: "wald_t",
+} as const;
+
+/**
+ * Present on previews, and on persisted results when include_uncertainty=true.
+ */
+export interface DerivedMetricUncertaintyApi {
+  /** Always 0.95 (two-sided). */
+  confidence_level: number;
+  /** `not_estimable` means no interval exists; `reason` says why. Never a guess. */
+  status: DerivedMetricUncertaintyApiStatus;
+  reason: DerivedMetricUncertaintyApiReason;
+  /** stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error. */
+  method: DerivedMetricUncertaintyApiMethod;
+  /** wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE. */
+  interval: DerivedMetricUncertaintyApiInterval;
+  std_error: number;
+  ci_low: number;
+  ci_high: number;
+  /** Kish effective sample size of the valid units. */
+  effective_n: number;
+  /** @minimum 1 */
+  degrees_of_freedom: number;
+}
+
+export interface DerivedMetricResultApi {
+  group_key: string;
+  value: number;
+  numerator: number;
+  denominator: number;
+  status: DerivedMetricResultApiStatus;
+  /** @minimum 0 */
+  unit_count: number;
+  /** @minimum 0 */
+  valid_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  invalid_probability_count: number;
+  uncertainty?: DerivedMetricUncertaintyApi;
+}
+
+export interface DerivedMetricDashboardContextApi {
+  run?: DerivedMetricSavedRunContextApi;
+  result?: DerivedMetricResultApi;
 }
 
 export type DashboardQueryMetricResultApiQueryStatus =
@@ -31113,6 +31712,7 @@ export interface DashboardQueryMetricResultApi {
   aggregation: DashboardQueryMetricResultApiAggregation;
   unit: string;
   series: DashboardQuerySeriesApi[];
+  derived_context?: DerivedMetricDashboardContextApi;
   /** @minimum 0 */
   series_total?: number;
   series_truncated?: boolean;
@@ -31334,6 +31934,1488 @@ export interface ObserveDatasetApi {
   readonly user?: string;
 }
 
+export type DerivedMetricRunApiKind =
+  (typeof DerivedMetricRunApiKind)[keyof typeof DerivedMetricRunApiKind];
+
+export const DerivedMetricRunApiKind = {
+  run: "run",
+  snapshot: "snapshot",
+} as const;
+
+export type DerivedMetricRunApiCleanupStatus =
+  (typeof DerivedMetricRunApiCleanupStatus)[keyof typeof DerivedMetricRunApiCleanupStatus];
+
+export const DerivedMetricRunApiCleanupStatus = {
+  "": "",
+  pending: "pending",
+  running: "running",
+  done: "done",
+  failed: "failed",
+} as const;
+
+export type DerivedMetricRunApiStatus =
+  (typeof DerivedMetricRunApiStatus)[keyof typeof DerivedMetricRunApiStatus];
+
+export const DerivedMetricRunApiStatus = {
+  queued: "queued",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export type DerivedMetricVersionApiKind =
+  (typeof DerivedMetricVersionApiKind)[keyof typeof DerivedMetricVersionApiKind];
+
+export const DerivedMetricVersionApiKind = {
+  share: "share",
+  average: "average",
+  total: "total",
+  count: "count",
+  unique_count: "unique_count",
+  percentile: "percentile",
+  custom: "custom",
+} as const;
+
+export type DerivedMetricVersionApiLevel =
+  (typeof DerivedMetricVersionApiLevel)[keyof typeof DerivedMetricVersionApiLevel];
+
+export const DerivedMetricVersionApiLevel = {
+  span: "span",
+  trace: "trace",
+  conversation: "conversation",
+  user: "user",
+} as const;
+
+export type DerivedMetricVersionApiUserRule =
+  (typeof DerivedMetricVersionApiUserRule)[keyof typeof DerivedMetricVersionApiUserRule];
+
+export const DerivedMetricVersionApiUserRule = {
+  "": "",
+  any: "any",
+  every: "every",
+  average: "average",
+  total: "total",
+} as const;
+
+export type MetricConditionApiOperator =
+  (typeof MetricConditionApiOperator)[keyof typeof MetricConditionApiOperator];
+
+export const MetricConditionApiOperator = {
+  eq: "eq",
+  ne: "ne",
+  lt: "lt",
+  lte: "lte",
+  gt: "gt",
+  gte: "gte",
+} as const;
+
+export type MetricConditionApiConditionStage =
+  (typeof MetricConditionApiConditionStage)[keyof typeof MetricConditionApiConditionStage];
+
+export const MetricConditionApiConditionStage = {
+  after_reduction: "after_reduction",
+} as const;
+
+/**
+ * Any valid JSON value.
+ */
+export type MetricConditionApiValue = { [key: string]: unknown };
+
+export interface MetricConditionApi {
+  /**
+   * @minLength 1
+   * @pattern ^[a-z][a-z0-9_]{0,39}$
+   */
+  alias: string;
+  operator: MetricConditionApiOperator;
+  /** Any valid JSON value. */
+  value?: MetricConditionApiValue;
+  /**
+   * @minLength 1
+   * @pattern ^[a-z][a-z0-9_]{0,39}$
+   */
+  right_alias?: string;
+  condition_stage?: MetricConditionApiConditionStage;
+}
+
+export interface MetricFieldSpecApi {
+  inputs?: DerivedMetricInputApi[];
+  conditions?: MetricConditionApi[];
+  /**
+   * @minLength 1
+   * @pattern ^[a-z][a-z0-9_]{0,39}$
+   */
+  value_alias?: string;
+  /**
+   * @minimum 0
+   * @maximum 1
+   */
+  percentile?: number;
+}
+
+export type DerivedMetricVersionApiValueType =
+  (typeof DerivedMetricVersionApiValueType)[keyof typeof DerivedMetricVersionApiValueType];
+
+export const DerivedMetricVersionApiValueType = {
+  boolean: "boolean",
+  number: "number",
+  text: "text",
+} as const;
+
+export type DerivedMetricVersionApiBackfillStatus =
+  (typeof DerivedMetricVersionApiBackfillStatus)[keyof typeof DerivedMetricVersionApiBackfillStatus];
+
+export const DerivedMetricVersionApiBackfillStatus = {
+  pending: "pending",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export type DerivedMetricVersionApiHistoryMode =
+  (typeof DerivedMetricVersionApiHistoryMode)[keyof typeof DerivedMetricVersionApiHistoryMode];
+
+export const DerivedMetricVersionApiHistoryMode = {
+  history: "history",
+  forward: "forward",
+} as const;
+
+export type DerivedMetricVersionApiValueLabels = { [key: string]: unknown };
+
+export type DerivedMetricVersionApiSampling = { [key: string]: unknown };
+
+export interface DerivedMetricVersionApi {
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  version: number;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  formula: string;
+  inputs: DerivedMetricInputApi[];
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  selection_unit: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  weighting: string;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  definition_hash: string;
+  readonly id?: string;
+  kind?: DerivedMetricVersionApiKind;
+  level?: DerivedMetricVersionApiLevel;
+  user_rule?: DerivedMetricVersionApiUserRule;
+  field_spec?: MetricFieldSpecApi;
+  group_dims?: string[];
+  value_type?: DerivedMetricVersionApiValueType;
+  /** @maxLength 32 */
+  unit?: string;
+  /** @maxLength 32 */
+  value_format?: string;
+  value_labels?: DerivedMetricVersionApiValueLabels;
+  sampling?: DerivedMetricVersionApiSampling;
+  backfill_status?: DerivedMetricVersionApiBackfillStatus;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  backfill_days_done?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  backfill_days_total?: number;
+  history_mode?: DerivedMetricVersionApiHistoryMode;
+  coverage_start?: string;
+  activated_at?: string;
+  readonly needs_rebuild?: boolean;
+  readonly created_at?: string;
+}
+
+export interface DerivedMetricManifestApi {
+  sampling_scope: string;
+  schema_version: number;
+  compiler_version: number;
+  /** @minLength 1 */
+  evaluator_table: string;
+  /** @minLength 1 */
+  definition_hash: string;
+  captured_at: string;
+  /** @minLength 1 */
+  semantics: string;
+}
+
+export interface DerivedMetricRunApi {
+  readonly id?: string;
+  metric_id: string;
+  metric_version: number;
+  definition?: DerivedMetricVersionApi;
+  window_start: string;
+  window_end: string;
+  as_of: string;
+  /** @maxLength 255 */
+  source_run_id?: string;
+  filters: DerivedMetricFilterApi[];
+  snapshot_id?: string;
+  result_id?: string;
+  lease_expires_at?: string;
+  source_manifest?: DerivedMetricManifestApi;
+  kind?: DerivedMetricRunApiKind;
+  pinned_manifest?: string;
+  /**
+   * @minimum -9223372036854776000
+   * @maximum 9223372036854776000
+   */
+  pinned_generation?: number;
+  captured_at?: string;
+  /** @maxLength 16 */
+  supported_grain?: string;
+  changed_at?: string;
+  /** @maxLength 64 */
+  change_reason?: string;
+  /**
+   * @minimum 0
+   * @maximum 9223372036854776000
+   */
+  removed_unit_count?: number;
+  deleted_at?: string;
+  cleanup_status?: DerivedMetricRunApiCleanupStatus;
+  status?: DerivedMetricRunApiStatus;
+  /** @maxLength 300 */
+  error?: string;
+  /**
+   * @minimum 0
+   * @maximum 9223372036854776000
+   */
+  row_count?: number;
+  readonly created_at?: string;
+  completed_at?: string;
+}
+
+export type DerivedMetricContributorPageApiKind =
+  (typeof DerivedMetricContributorPageApiKind)[keyof typeof DerivedMetricContributorPageApiKind];
+
+export const DerivedMetricContributorPageApiKind = {
+  ratio: "ratio",
+  mean: "mean",
+  sum: "sum",
+  count_if: "count_if",
+} as const;
+
+export type DerivedMetricContributorPageApiSelectionUnit =
+  (typeof DerivedMetricContributorPageApiSelectionUnit)[keyof typeof DerivedMetricContributorPageApiSelectionUnit];
+
+export const DerivedMetricContributorPageApiSelectionUnit = {
+  span: "span",
+  session: "session",
+  user: "user",
+} as const;
+
+export interface DerivedMetricContributorApi {
+  /**
+   * Selection unit id; span units are ["trace_id","span_id"].
+   * @minLength 1
+   */
+  unit_id: string;
+  /**
+   * Span units only: the unit's trace.
+   * @minLength 1
+   */
+  trace_id: string;
+  session_id: string;
+  user_id: string;
+  cohort: string;
+  /** @minLength 1 */
+  day: string;
+  probability: number;
+  /** 1 / inclusion probability. */
+  weight: number;
+  numerator: number;
+  denominator: number;
+  weighted_numerator: number;
+  weighted_denominator: number;
+  /** Exact leave-one-out change: the persisted value minus the group's value without this unit (a total's weighted contribution). Null when removing the unit leaves no denominator or the group has no value. */
+  influence: number;
+}
+
+export type DerivedMetricContributorDiagnosticsApiMissingByInput = {
+  [key: string]: number;
+};
+
+export interface DerivedMetricContributorDiagnosticsApi {
+  /** @minimum 0 */
+  unit_count: number;
+  /** @minimum 0 */
+  valid_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  invalid_probability_count: number;
+  /**
+   * Valid units whose denominator is 0 (ratios only).
+   * @minimum 0
+   */
+  outside_denominator_count: number;
+  /**
+   * Units with every input present whose row arithmetic is undefined.
+   * @minimum 0
+   */
+  undefined_arithmetic_count: number;
+  missing_by_input: DerivedMetricContributorDiagnosticsApiMissingByInput;
+  missing_examples: string[];
+  invalid_probability_examples: string[];
+}
+
+export interface DerivedMetricContributorPageApi {
+  /** Committed result identity used for the value and contributor diagnostics. */
+  result_id: string;
+  /** @minLength 1 */
+  rollup: string;
+  group_key: string;
+  kind: DerivedMetricContributorPageApiKind;
+  selection_unit: DerivedMetricContributorPageApiSelectionUnit;
+  /** @minLength 1 */
+  status: string;
+  value: number;
+  numerator: number;
+  denominator: number;
+  results: DerivedMetricContributorApi[];
+  /** More valid units exist than were returned. */
+  truncated: boolean;
+  diagnostics: DerivedMetricContributorDiagnosticsApi;
+}
+
+export interface DerivedMetricRecomputeApi {
+  confirm?: boolean;
+}
+
+export interface DerivedMetricCommittedResultPageApi {
+  results: DerivedMetricResultApi[];
+  next_cursor: string;
+  /** Committed result identity used to read every row and the next cursor. */
+  result_id: string;
+}
+
+export type MetricCalculationPausedApi = {
+  /** too_large: stored row limit; too_busy: work cannot finish in a pass */
+  reason: "too_large" | "too_busy";
+  since: string;
+  rows: number | null;
+  /**
+   * METRICS_MAX_CHECKPOINT_ROWS; raising it resumes
+   * @minimum 1
+   */
+  limit: number;
+  /** Non-identifying busy-slot counts: owners, definitions, captures and capacity */
+  work?: { [key: string]: number };
+} | null;
+
+export interface DerivedMetricApi {
+  readonly id?: string;
+  readonly project_id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  description?: string;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  current_version?: number;
+  active_version?: string;
+  draft_definition?: DerivedMetricVersionApi;
+  readonly snapshot_supported?: boolean;
+  readonly snapshot_unsupported_reason?: string;
+  /** @minLength 1 */
+  readonly value_mode?: string;
+  calculation_paused?: MetricCalculationPausedApi | null;
+  definition?: DerivedMetricVersionApi;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface DerivedMetricListApi {
+  results: DerivedMetricApi[];
+  next_cursor: string;
+}
+
+export type DerivedMetricWriteApiSelectionUnit =
+  (typeof DerivedMetricWriteApiSelectionUnit)[keyof typeof DerivedMetricWriteApiSelectionUnit];
+
+export const DerivedMetricWriteApiSelectionUnit = {
+  span: "span",
+  session: "session",
+  user: "user",
+} as const;
+
+export type DerivedMetricWriteApiKind =
+  (typeof DerivedMetricWriteApiKind)[keyof typeof DerivedMetricWriteApiKind];
+
+export const DerivedMetricWriteApiKind = {
+  share: "share",
+  average: "average",
+  total: "total",
+  count: "count",
+  unique_count: "unique_count",
+  percentile: "percentile",
+  custom: "custom",
+} as const;
+
+export type DerivedMetricWriteApiLevel =
+  (typeof DerivedMetricWriteApiLevel)[keyof typeof DerivedMetricWriteApiLevel];
+
+export const DerivedMetricWriteApiLevel = {
+  span: "span",
+  trace: "trace",
+  conversation: "conversation",
+  user: "user",
+} as const;
+
+export type DerivedMetricWriteApiUserRule =
+  (typeof DerivedMetricWriteApiUserRule)[keyof typeof DerivedMetricWriteApiUserRule];
+
+export const DerivedMetricWriteApiUserRule = {
+  "": "",
+  any: "any",
+  every: "every",
+  average: "average",
+  total: "total",
+} as const;
+
+export type DerivedMetricWriteApiValueType =
+  (typeof DerivedMetricWriteApiValueType)[keyof typeof DerivedMetricWriteApiValueType];
+
+export const DerivedMetricWriteApiValueType = {
+  boolean: "boolean",
+  number: "number",
+  text: "text",
+} as const;
+
+export type DerivedMetricWriteApiValueFormat =
+  (typeof DerivedMetricWriteApiValueFormat)[keyof typeof DerivedMetricWriteApiValueFormat];
+
+export const DerivedMetricWriteApiValueFormat = {
+  "": "",
+  number: "number",
+  percent: "percent",
+  currency: "currency",
+  duration: "duration",
+} as const;
+
+export type DerivedMetricWriteApiValueLabels = { [key: string]: string };
+
+export type DerivedMetricWriteApiSampling = { [key: string]: string };
+
+export type DerivedMetricWriteApiWeighting =
+  (typeof DerivedMetricWriteApiWeighting)[keyof typeof DerivedMetricWriteApiWeighting];
+
+export const DerivedMetricWriteApiWeighting = {
+  none: "none",
+  inverse_probability: "inverse_probability",
+} as const;
+
+export interface DerivedMetricWriteApi {
+  project_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  name: string;
+  /** @maxLength 2000 */
+  description?: string;
+  /** @maxLength 2048 */
+  formula?: string;
+  inputs?: DerivedMetricInputApi[];
+  selection_unit?: DerivedMetricWriteApiSelectionUnit;
+  kind?: DerivedMetricWriteApiKind;
+  level?: DerivedMetricWriteApiLevel;
+  user_rule?: DerivedMetricWriteApiUserRule;
+  field_spec?: MetricFieldSpecApi;
+  /** @maxItems 2 */
+  group_dims?: string[];
+  value_type?: DerivedMetricWriteApiValueType;
+  /** @maxLength 32 */
+  unit?: string;
+  value_format?: DerivedMetricWriteApiValueFormat;
+  value_labels?: DerivedMetricWriteApiValueLabels;
+  sampling?: DerivedMetricWriteApiSampling;
+  weighting?: DerivedMetricWriteApiWeighting;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters?: DerivedMetricFilterApi[];
+  /** @minimum 1 */
+  expected_version?: number;
+}
+
+export type MetricCapabilitiesApiUserRules = { [key: string]: string[] };
+
+export interface MetricSourceCapabilityApi {
+  /** @minLength 1 */
+  value_type: string;
+  reducers: string[];
+  operators: string[];
+  observation_reducers: string[];
+  /** @minLength 1 */
+  ordering: string;
+}
+
+export interface MetricCapabilitiesApi {
+  sources: MetricSourceCapabilityApi[];
+  levels: string[];
+  kinds: string[];
+  user_rules: MetricCapabilitiesApiUserRules;
+  max_group_dims: number;
+  preview_max_days: number;
+  preview_budget_seconds: number;
+}
+
+export interface DerivedMetricEvaluatorApi {
+  /** Evaluator config ID to bind (config_id). */
+  id: string;
+  name: string;
+  /**
+   * Hash of the evaluator's CURRENT resolved definition: the config_hash that new evaluation results are stored under. Results produced under an earlier definition carry a different hash.
+   * @minLength 1
+   * @pattern ^[a-f0-9]{64}$
+   */
+  config_hash: string;
+}
+
+export interface DerivedMetricEvaluatorPageApi {
+  results: DerivedMetricEvaluatorApi[];
+  /** True when more evaluators matched than were returned; narrow the search. */
+  truncated: boolean;
+}
+
+export type MetricDraftDefinitionApiSelectionUnit =
+  (typeof MetricDraftDefinitionApiSelectionUnit)[keyof typeof MetricDraftDefinitionApiSelectionUnit];
+
+export const MetricDraftDefinitionApiSelectionUnit = {
+  span: "span",
+  session: "session",
+  user: "user",
+} as const;
+
+export type MetricDraftDefinitionApiKind =
+  (typeof MetricDraftDefinitionApiKind)[keyof typeof MetricDraftDefinitionApiKind];
+
+export const MetricDraftDefinitionApiKind = {
+  share: "share",
+  average: "average",
+  total: "total",
+  count: "count",
+  unique_count: "unique_count",
+  percentile: "percentile",
+  custom: "custom",
+} as const;
+
+export type MetricDraftDefinitionApiLevel =
+  (typeof MetricDraftDefinitionApiLevel)[keyof typeof MetricDraftDefinitionApiLevel];
+
+export const MetricDraftDefinitionApiLevel = {
+  span: "span",
+  trace: "trace",
+  conversation: "conversation",
+  user: "user",
+} as const;
+
+export type MetricDraftDefinitionApiUserRule =
+  (typeof MetricDraftDefinitionApiUserRule)[keyof typeof MetricDraftDefinitionApiUserRule];
+
+export const MetricDraftDefinitionApiUserRule = {
+  "": "",
+  any: "any",
+  every: "every",
+  average: "average",
+  total: "total",
+} as const;
+
+export type MetricDraftDefinitionApiValueType =
+  (typeof MetricDraftDefinitionApiValueType)[keyof typeof MetricDraftDefinitionApiValueType];
+
+export const MetricDraftDefinitionApiValueType = {
+  boolean: "boolean",
+  number: "number",
+  text: "text",
+} as const;
+
+export type MetricDraftDefinitionApiValueFormat =
+  (typeof MetricDraftDefinitionApiValueFormat)[keyof typeof MetricDraftDefinitionApiValueFormat];
+
+export const MetricDraftDefinitionApiValueFormat = {
+  "": "",
+  number: "number",
+  percent: "percent",
+  currency: "currency",
+  duration: "duration",
+} as const;
+
+export type MetricDraftDefinitionApiWeighting =
+  (typeof MetricDraftDefinitionApiWeighting)[keyof typeof MetricDraftDefinitionApiWeighting];
+
+export const MetricDraftDefinitionApiWeighting = {
+  none: "none",
+  inverse_probability: "inverse_probability",
+} as const;
+
+export type MetricDraftDefinitionApiValueLabels = { [key: string]: string };
+
+export type MetricDraftDefinitionApiSampling = { [key: string]: string };
+
+export interface MetricDraftDefinitionApi {
+  /** @maxLength 2048 */
+  formula?: string;
+  inputs?: DerivedMetricInputApi[];
+  selection_unit?: MetricDraftDefinitionApiSelectionUnit;
+  kind?: MetricDraftDefinitionApiKind;
+  level?: MetricDraftDefinitionApiLevel;
+  user_rule?: MetricDraftDefinitionApiUserRule;
+  field_spec?: MetricFieldSpecApi;
+  /** @maxItems 2 */
+  group_dims?: string[];
+  value_type?: MetricDraftDefinitionApiValueType;
+  /** @maxLength 32 */
+  unit?: string;
+  value_format?: MetricDraftDefinitionApiValueFormat;
+  value_labels?: MetricDraftDefinitionApiValueLabels;
+  sampling?: MetricDraftDefinitionApiSampling;
+  weighting?: MetricDraftDefinitionApiWeighting;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters?: DerivedMetricFilterApi[];
+}
+
+export interface MetricDraftPreviewRequestApi {
+  window_start: string;
+  window_end: string;
+  filters?: DerivedMetricFilterApi[];
+  source_run_id?: string;
+  request_id?: string;
+  include_samples?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  idempotency_key?: string;
+  project_id: string;
+  definition: MetricDraftDefinitionApi;
+}
+
+export type MetricPreviewApiValueMode =
+  (typeof MetricPreviewApiValueMode)[keyof typeof MetricPreviewApiValueMode];
+
+export const MetricPreviewApiValueMode = {
+  materialized: "materialized",
+  on_demand: "on_demand",
+} as const;
+
+export type MetricUnitValueApiStatus =
+  (typeof MetricUnitValueApiStatus)[keyof typeof MetricUnitValueApiStatus];
+
+export const MetricUnitValueApiStatus = {
+  value: "value",
+  in_progress: "in_progress",
+  not_calculated: "not_calculated",
+  no_value: "no_value",
+} as const;
+
+export type MetricUnitValueApiInputs = { [key: string]: number };
+
+export type MetricUnitValueApiInputsBool = { [key: string]: boolean };
+
+export type MetricUnitValueApiInputsText = { [key: string]: string };
+
+export interface MetricUnitValueApi {
+  /** @minLength 1 */
+  unit_id: string;
+  status: MetricUnitValueApiStatus;
+  no_value_reason: string;
+  value_number: number;
+  value_bool: boolean;
+  value_text: string;
+  inputs: MetricUnitValueApiInputs;
+  inputs_bool: MetricUnitValueApiInputsBool;
+  inputs_text: MetricUnitValueApiInputsText;
+  /** @minimum 0 */
+  eligible_count: number;
+  /** @minimum 0 */
+  evaluated_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  influence: number;
+}
+
+export type MetricPreviewSampleApiStatus =
+  (typeof MetricPreviewSampleApiStatus)[keyof typeof MetricPreviewSampleApiStatus];
+
+export const MetricPreviewSampleApiStatus = {
+  value: "value",
+  no_value: "no_value",
+} as const;
+
+export type MetricPreviewSampleApiInputs = { [key: string]: number };
+
+export type MetricPreviewSampleApiInputsBool = { [key: string]: boolean };
+
+export type MetricPreviewSampleApiInputsText = { [key: string]: string };
+
+export interface MetricPreviewSampleApi {
+  /** @minLength 1 */
+  unit_id: string;
+  status: MetricPreviewSampleApiStatus;
+  no_value_reason: string;
+  value_number: number;
+  value_bool: boolean;
+  value_text: string;
+  value_label: string;
+  inputs: MetricPreviewSampleApiInputs;
+  inputs_bool: MetricPreviewSampleApiInputsBool;
+  inputs_text: MetricPreviewSampleApiInputsText;
+}
+
+export interface MetricPreviewApi {
+  results: DerivedMetricResultApi[];
+  next_cursor: string;
+  rate_eligible: boolean;
+  weighted: boolean;
+  unit: string;
+  value_format: string;
+  /** @minLength 1 */
+  unit_noun: string;
+  value_mode: MetricPreviewApiValueMode;
+  /** @minimum 0 */
+  counted_users?: number;
+  /** @minimum 0 */
+  eligible_users?: number;
+  /** @minimum 0 */
+  no_value_users?: number;
+  /** @minimum 0 */
+  conversations_without_user?: number;
+  /** @minLength 1 */
+  point_status: string;
+  /** @minLength 1 */
+  summary: string;
+  sample_users?: MetricUnitValueApi[];
+  sample_units?: MetricPreviewSampleApi[];
+}
+
+export type MetricUnavailableApiValueMode =
+  (typeof MetricUnavailableApiValueMode)[keyof typeof MetricUnavailableApiValueMode];
+
+export const MetricUnavailableApiValueMode = {
+  on_demand: "on_demand",
+} as const;
+
+/**
+ * window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units), too_large (stored row limit), or too_busy (the pending work cannot complete within a pass)
+ */
+export type MetricUnavailableApiReason =
+  (typeof MetricUnavailableApiReason)[keyof typeof MetricUnavailableApiReason];
+
+export const MetricUnavailableApiReason = {
+  not_calculated: "not_calculated",
+  settling: "settling",
+  too_large: "too_large",
+  too_busy: "too_busy",
+} as const;
+
+export interface MetricUnavailableApi {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 1 */
+  message: string;
+  retryable: boolean;
+  value_mode?: MetricUnavailableApiValueMode;
+  /** window_not_calculated_yet: the read cut; values are final only before it */
+  calculated_through?: string;
+  /** window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units), too_large (stored row limit), or too_busy (the pending work cannot complete within a pass) */
+  reason?: MetricUnavailableApiReason;
+}
+
+export interface MetricDraftPreviewCancelApi {
+  request_id: string;
+  project_id: string;
+}
+
+export interface MetricPreviewCancelledApi {
+  cancelled: boolean;
+}
+
+export interface DerivedMetricValidationApi {
+  valid: boolean;
+  /** @minLength 1 */
+  kind: string;
+  required_inputs: string[];
+  /** @minLength 1 */
+  semantics: string;
+}
+
+export interface MetricActivationRequestApi {
+  /** @minimum 1 */
+  version: number;
+  expected_active_id: string;
+}
+
+/**
+ * forward: started with no history; values exist from coverage_start
+ */
+export type MetricReadProvenanceApiHistoryMode =
+  (typeof MetricReadProvenanceApiHistoryMode)[keyof typeof MetricReadProvenanceApiHistoryMode];
+
+export const MetricReadProvenanceApiHistoryMode = {
+  history: "history",
+  forward: "forward",
+} as const;
+
+export type MetricReadProvenanceApiRetentionPolicy =
+  (typeof MetricReadProvenanceApiRetentionPolicy)[keyof typeof MetricReadProvenanceApiRetentionPolicy];
+
+export const MetricReadProvenanceApiRetentionPolicy = {
+  follow_source: "follow_source",
+} as const;
+
+export interface MetricReadProvenanceApi {
+  manifest_id: string;
+  /** @minimum 0 */
+  generation: number;
+  version_id: string;
+  /** @minimum 1 */
+  version: number;
+  /** @minLength 1 */
+  definition_hash: string;
+  updated_at: string;
+  /** @minimum 0 */
+  backfill_days_done: number;
+  /** @minimum 0 */
+  backfill_days_total: number;
+  /** forward: started with no history; values exist from coverage_start */
+  history_mode?: MetricReadProvenanceApiHistoryMode;
+  coverage_start?: string;
+  /** Permanent floor of the published retained-only state; current source policy can be stricter. */
+  retention_floor?: string;
+  retention_policy?: MetricReadProvenanceApiRetentionPolicy;
+  /** Nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor) */
+  calculated_through?: string;
+}
+
+export interface MetricEffectiveWindowApi {
+  window_start: string;
+  window_end: string;
+  /**
+   * Rounded to 15 minutes
+   * @minLength 1
+   */
+  rounding: string;
+}
+
+export interface MetricDriversApi {
+  provenance: MetricReadProvenanceApi;
+  effective_window: MetricEffectiveWindowApi;
+  /** End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
+  complete_through?: string;
+  /** true when any bucket of the window is not final */
+  partial?: boolean;
+  /**
+   * 15-minute buckets of the window left out of the value
+   * @minimum 0
+   */
+  nonfinal_buckets?: number;
+  /**
+   * units in the window refresh still keeps open
+   * @minimum 0
+   */
+  open_units?: number;
+  results: MetricUnitValueApi[];
+  /** @minLength 1 */
+  next_cursor: string;
+}
+
+export type MetricFieldMetadataApiValueType =
+  (typeof MetricFieldMetadataApiValueType)[keyof typeof MetricFieldMetadataApiValueType];
+
+export const MetricFieldMetadataApiValueType = {
+  boolean: "boolean",
+  number: "number",
+  text: "text",
+} as const;
+
+export type MetricFieldMetadataApiValueLabels = { [key: string]: string };
+
+export interface MetricFieldMetadataApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  level: string;
+  /** @minLength 1 */
+  kind: string;
+  value_type: MetricFieldMetadataApiValueType;
+  value_format: string;
+  unit: string;
+  value_labels: MetricFieldMetadataApiValueLabels;
+  operators: string[];
+  projection: boolean;
+}
+
+export interface MetricFieldsApi {
+  results: MetricFieldMetadataApi[];
+}
+
+export type MetricHistoryEntryApiKind =
+  (typeof MetricHistoryEntryApiKind)[keyof typeof MetricHistoryEntryApiKind];
+
+export const MetricHistoryEntryApiKind = {
+  version: "version",
+  recalculation: "recalculation",
+  snapshot: "snapshot",
+} as const;
+
+export type MetricHistoryDefinitionApiKind =
+  (typeof MetricHistoryDefinitionApiKind)[keyof typeof MetricHistoryDefinitionApiKind];
+
+export const MetricHistoryDefinitionApiKind = {
+  share: "share",
+  average: "average",
+  total: "total",
+  count: "count",
+  unique_count: "unique_count",
+  percentile: "percentile",
+  custom: "custom",
+} as const;
+
+export type MetricHistoryDefinitionApiLevel =
+  (typeof MetricHistoryDefinitionApiLevel)[keyof typeof MetricHistoryDefinitionApiLevel];
+
+export const MetricHistoryDefinitionApiLevel = {
+  span: "span",
+  trace: "trace",
+  conversation: "conversation",
+  user: "user",
+} as const;
+
+export type MetricHistoryDefinitionApiUserRule =
+  (typeof MetricHistoryDefinitionApiUserRule)[keyof typeof MetricHistoryDefinitionApiUserRule];
+
+export const MetricHistoryDefinitionApiUserRule = {
+  "": "",
+  any: "any",
+  every: "every",
+  average: "average",
+  total: "total",
+} as const;
+
+export type MetricHistoryDefinitionApiValueType =
+  (typeof MetricHistoryDefinitionApiValueType)[keyof typeof MetricHistoryDefinitionApiValueType];
+
+export const MetricHistoryDefinitionApiValueType = {
+  boolean: "boolean",
+  number: "number",
+  text: "text",
+} as const;
+
+export type MetricHistoryDefinitionApiBackfillStatus =
+  (typeof MetricHistoryDefinitionApiBackfillStatus)[keyof typeof MetricHistoryDefinitionApiBackfillStatus];
+
+export const MetricHistoryDefinitionApiBackfillStatus = {
+  pending: "pending",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export type MetricHistoryDefinitionApiHistoryMode =
+  (typeof MetricHistoryDefinitionApiHistoryMode)[keyof typeof MetricHistoryDefinitionApiHistoryMode];
+
+export const MetricHistoryDefinitionApiHistoryMode = {
+  history: "history",
+  forward: "forward",
+} as const;
+
+export type MetricHistoryDefinitionApiValueLabels = { [key: string]: unknown };
+
+export type MetricHistoryDefinitionApiSampling = { [key: string]: unknown };
+
+export interface MetricHistoryDefinitionApi {
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  version: number;
+  /**
+   * @minLength 1
+   * @maxLength 2048
+   */
+  formula: string;
+  inputs: DerivedMetricInputApi[];
+  /**
+   * @minLength 1
+   * @maxLength 16
+   */
+  selection_unit: string;
+  /**
+   * @minLength 1
+   * @maxLength 32
+   */
+  weighting: string;
+  /** @maxLength 160 */
+  cohort_key?: string;
+  filters: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 64
+   */
+  definition_hash: string;
+  readonly id?: string;
+  kind?: MetricHistoryDefinitionApiKind;
+  level?: MetricHistoryDefinitionApiLevel;
+  user_rule?: MetricHistoryDefinitionApiUserRule;
+  field_spec?: MetricFieldSpecApi;
+  group_dims?: string[];
+  value_type?: MetricHistoryDefinitionApiValueType;
+  /** @maxLength 32 */
+  unit?: string;
+  /** @maxLength 32 */
+  value_format?: string;
+  value_labels?: MetricHistoryDefinitionApiValueLabels;
+  sampling?: MetricHistoryDefinitionApiSampling;
+  backfill_status?: MetricHistoryDefinitionApiBackfillStatus;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  backfill_days_done?: number;
+  /**
+   * @minimum 0
+   * @maximum 2147483647
+   */
+  backfill_days_total?: number;
+  history_mode?: MetricHistoryDefinitionApiHistoryMode;
+  coverage_start?: string;
+  activated_at?: string;
+  readonly needs_rebuild?: boolean;
+  readonly created_at?: string;
+}
+
+export type MetricHistorySnapshotApiKind =
+  (typeof MetricHistorySnapshotApiKind)[keyof typeof MetricHistorySnapshotApiKind];
+
+export const MetricHistorySnapshotApiKind = {
+  run: "run",
+  snapshot: "snapshot",
+} as const;
+
+export type MetricHistorySnapshotApiCleanupStatus =
+  (typeof MetricHistorySnapshotApiCleanupStatus)[keyof typeof MetricHistorySnapshotApiCleanupStatus];
+
+export const MetricHistorySnapshotApiCleanupStatus = {
+  "": "",
+  pending: "pending",
+  running: "running",
+  done: "done",
+  failed: "failed",
+} as const;
+
+export type MetricHistorySnapshotApiStatus =
+  (typeof MetricHistorySnapshotApiStatus)[keyof typeof MetricHistorySnapshotApiStatus];
+
+export const MetricHistorySnapshotApiStatus = {
+  queued: "queued",
+  running: "running",
+  complete: "complete",
+  failed: "failed",
+} as const;
+
+export interface MetricHistorySnapshotApi {
+  readonly id?: string;
+  metric_id: string;
+  metric_version: number;
+  definition?: DerivedMetricVersionApi;
+  window_start: string;
+  window_end: string;
+  as_of: string;
+  /** @maxLength 255 */
+  source_run_id?: string;
+  filters: DerivedMetricFilterApi[];
+  snapshot_id?: string;
+  result_id?: string;
+  lease_expires_at?: string;
+  source_manifest?: DerivedMetricManifestApi;
+  kind?: MetricHistorySnapshotApiKind;
+  pinned_manifest?: string;
+  /**
+   * @minimum -9223372036854776000
+   * @maximum 9223372036854776000
+   */
+  pinned_generation?: number;
+  captured_at?: string;
+  /** @maxLength 16 */
+  supported_grain?: string;
+  changed_at?: string;
+  /** @maxLength 64 */
+  change_reason?: string;
+  /**
+   * @minimum 0
+   * @maximum 9223372036854776000
+   */
+  removed_unit_count?: number;
+  deleted_at?: string;
+  cleanup_status?: MetricHistorySnapshotApiCleanupStatus;
+  status?: MetricHistorySnapshotApiStatus;
+  /** @maxLength 300 */
+  error?: string;
+  /**
+   * @minimum 0
+   * @maximum 9223372036854776000
+   */
+  row_count?: number;
+  readonly created_at?: string;
+  completed_at?: string;
+}
+
+export interface MetricHistoryEntryApi {
+  kind: MetricHistoryEntryApiKind;
+  created_at: string;
+  definition: MetricHistoryDefinitionApi;
+  snapshot: MetricHistorySnapshotApi;
+  /** @minLength 1 */
+  status: string;
+}
+
+export interface MetricHistoryApi {
+  results: MetricHistoryEntryApi[];
+  /** @minLength 1 */
+  next_cursor: string;
+}
+
+export type MetricPointApiPointStatus =
+  (typeof MetricPointApiPointStatus)[keyof typeof MetricPointApiPointStatus];
+
+export const MetricPointApiPointStatus = {
+  ok: "ok",
+  unavailable: "unavailable",
+  no_data: "no_data",
+  missing_inputs: "missing_inputs",
+  invalid_probability: "invalid_probability",
+  zero_denominator: "zero_denominator",
+  non_finite: "non_finite",
+  retention_expired: "retention_expired",
+  sampled_inputs_not_supported: "sampled_inputs_not_supported",
+  not_calculated: "not_calculated",
+  settling: "settling",
+} as const;
+
+export type MetricPointApiValueMode =
+  (typeof MetricPointApiValueMode)[keyof typeof MetricPointApiValueMode];
+
+export const MetricPointApiValueMode = {
+  materialized: "materialized",
+  on_demand: "on_demand",
+} as const;
+
+export interface MetricPointApi {
+  value: number;
+  point_status: MetricPointApiPointStatus;
+  rate_eligible: boolean;
+  weighted: boolean;
+  unit: string;
+  value_format: string;
+  /** @minLength 1 */
+  unit_noun: string;
+  value_mode: MetricPointApiValueMode;
+  /** @minimum 0 */
+  eligible_count: number;
+  /** @minimum 0 */
+  evaluated_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  counted_users?: number;
+  /** @minimum 0 */
+  eligible_users?: number;
+  /** @minimum 0 */
+  no_value_users?: number;
+  /** @minimum 0 */
+  conversations_without_user?: number;
+  history_available_from?: string;
+  uncertainty: DerivedMetricUncertaintyApi;
+}
+
+export type MetricKpiPreviousPointApiPointStatus =
+  (typeof MetricKpiPreviousPointApiPointStatus)[keyof typeof MetricKpiPreviousPointApiPointStatus];
+
+export const MetricKpiPreviousPointApiPointStatus = {
+  ok: "ok",
+  unavailable: "unavailable",
+  no_data: "no_data",
+  missing_inputs: "missing_inputs",
+  invalid_probability: "invalid_probability",
+  zero_denominator: "zero_denominator",
+  non_finite: "non_finite",
+  retention_expired: "retention_expired",
+  sampled_inputs_not_supported: "sampled_inputs_not_supported",
+  not_calculated: "not_calculated",
+  settling: "settling",
+} as const;
+
+export type MetricKpiPreviousPointApiValueMode =
+  (typeof MetricKpiPreviousPointApiValueMode)[keyof typeof MetricKpiPreviousPointApiValueMode];
+
+export const MetricKpiPreviousPointApiValueMode = {
+  materialized: "materialized",
+  on_demand: "on_demand",
+} as const;
+
+export interface MetricKpiPreviousPointApi {
+  value: number;
+  point_status: MetricKpiPreviousPointApiPointStatus;
+  rate_eligible: boolean;
+  weighted: boolean;
+  unit: string;
+  value_format: string;
+  /** @minLength 1 */
+  unit_noun: string;
+  value_mode: MetricKpiPreviousPointApiValueMode;
+  /** @minimum 0 */
+  eligible_count: number;
+  /** @minimum 0 */
+  evaluated_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  counted_users?: number;
+  /** @minimum 0 */
+  eligible_users?: number;
+  /** @minimum 0 */
+  no_value_users?: number;
+  /** @minimum 0 */
+  conversations_without_user?: number;
+  history_available_from?: string;
+  uncertainty: DerivedMetricUncertaintyApi;
+}
+
+export type DerivedMetricDeltaUncertaintyApiStatus =
+  (typeof DerivedMetricDeltaUncertaintyApiStatus)[keyof typeof DerivedMetricDeltaUncertaintyApiStatus];
+
+export const DerivedMetricDeltaUncertaintyApiStatus = {
+  ok: "ok",
+  not_estimable: "not_estimable",
+} as const;
+
+export interface DerivedMetricDeltaUncertaintyApi {
+  status: DerivedMetricDeltaUncertaintyApiStatus;
+  reason: string;
+  method: string;
+  std_error: number;
+  ci_low: number;
+  ci_high: number;
+}
+
+export interface MetricKpiApi {
+  provenance: MetricReadProvenanceApi;
+  effective_window: MetricEffectiveWindowApi;
+  /** End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
+  complete_through?: string;
+  /** true when any bucket of the window is not final */
+  partial?: boolean;
+  /**
+   * 15-minute buckets of the window left out of the value
+   * @minimum 0
+   */
+  nonfinal_buckets?: number;
+  /**
+   * units in the window refresh still keeps open
+   * @minimum 0
+   */
+  open_units?: number;
+  current: MetricPointApi;
+  previous: MetricKpiPreviousPointApi;
+  delta: number;
+  delta_uncertainty: DerivedMetricDeltaUncertaintyApi;
+}
+
+export interface MetricPreviewRequestApi {
+  window_start: string;
+  window_end: string;
+  /** @minimum 1 */
+  version?: number;
+  filters?: DerivedMetricFilterApi[];
+  source_run_id?: string;
+  request_id?: string;
+  include_samples?: boolean;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  idempotency_key?: string;
+}
+
+export interface MetricPreviewCancelApi {
+  request_id: string;
+}
+
+export interface MetricRefreshRequestApi {
+  confirm?: boolean;
+}
+
+export type MetricRefreshApiStatus =
+  (typeof MetricRefreshApiStatus)[keyof typeof MetricRefreshApiStatus];
+
+export const MetricRefreshApiStatus = {
+  queued: "queued",
+  already_queued: "already_queued",
+} as const;
+
+export interface MetricRefreshApi {
+  status: MetricRefreshApiStatus;
+}
+
+export interface DerivedMetricRunsApi {
+  results: DerivedMetricRunApi[];
+  next_cursor: string;
+}
+
+export interface DerivedMetricRunRequestApi {
+  /** @minimum 1 */
+  version?: number;
+  window_start: string;
+  window_end: string;
+  /** Persisted evaluation-task ID (the source eval_task_id), not an execution ID; snapshot and sampling_scope pin the observed evidence. */
+  source_run_id?: string;
+  filters?: DerivedMetricFilterApi[];
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  idempotency_key: string;
+}
+
+export interface MetricSnapshotRequestApi {
+  window_start: string;
+  window_end: string;
+  /**
+   * @minLength 1
+   * @maxLength 100
+   */
+  idempotency_key: string;
+}
+
+export type MetricSnapshotDeleteApiStatus =
+  (typeof MetricSnapshotDeleteApiStatus)[keyof typeof MetricSnapshotDeleteApiStatus];
+
+export const MetricSnapshotDeleteApiStatus = {
+  cleanup_pending: "cleanup_pending",
+  deleted: "deleted",
+} as const;
+
+export interface MetricSnapshotDeleteApi {
+  status: MetricSnapshotDeleteApiStatus;
+}
+
+export type MetricTrendPointApiPointStatus =
+  (typeof MetricTrendPointApiPointStatus)[keyof typeof MetricTrendPointApiPointStatus];
+
+export const MetricTrendPointApiPointStatus = {
+  ok: "ok",
+  unavailable: "unavailable",
+  no_data: "no_data",
+  missing_inputs: "missing_inputs",
+  invalid_probability: "invalid_probability",
+  zero_denominator: "zero_denominator",
+  non_finite: "non_finite",
+  retention_expired: "retention_expired",
+  sampled_inputs_not_supported: "sampled_inputs_not_supported",
+  not_calculated: "not_calculated",
+  settling: "settling",
+} as const;
+
+export type MetricTrendPointApiValueMode =
+  (typeof MetricTrendPointApiValueMode)[keyof typeof MetricTrendPointApiValueMode];
+
+export const MetricTrendPointApiValueMode = {
+  materialized: "materialized",
+  on_demand: "on_demand",
+} as const;
+
+export interface MetricTrendPointApi {
+  value: number;
+  point_status: MetricTrendPointApiPointStatus;
+  rate_eligible: boolean;
+  weighted: boolean;
+  unit: string;
+  value_format: string;
+  /** @minLength 1 */
+  unit_noun: string;
+  value_mode: MetricTrendPointApiValueMode;
+  /** @minimum 0 */
+  eligible_count: number;
+  /** @minimum 0 */
+  evaluated_count: number;
+  /** @minimum 0 */
+  missing_count: number;
+  /** @minimum 0 */
+  counted_users?: number;
+  /** @minimum 0 */
+  eligible_users?: number;
+  /** @minimum 0 */
+  no_value_users?: number;
+  /** @minimum 0 */
+  conversations_without_user?: number;
+  history_available_from?: string;
+  uncertainty: DerivedMetricUncertaintyApi;
+  window_start: string;
+  window_end: string;
+  group_key: string;
+}
+
+export interface MetricTrendApi {
+  provenance: MetricReadProvenanceApi;
+  effective_window: MetricEffectiveWindowApi;
+  /** End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit) */
+  complete_through?: string;
+  /** @minimum 0 */
+  nonfinal_buckets?: number;
+  /** @minimum 0 */
+  open_units?: number;
+  /** true when any point is not_calculated or settling */
+  partial?: boolean;
+  results: MetricTrendPointApi[];
+}
+
+export type MetricUnitValuesRequestApiContext =
+  (typeof MetricUnitValuesRequestApiContext)[keyof typeof MetricUnitValuesRequestApiContext];
+
+export const MetricUnitValuesRequestApiContext = {
+  sessions: "sessions",
+  users: "users",
+  spans: "spans",
+  traces: "traces",
+} as const;
+
+export interface MetricUnitValuesRequestApi {
+  window_start: string;
+  window_end: string;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unit_ids: string[];
+  context: MetricUnitValuesRequestApiContext;
+}
+
 /**
  * Which time-window preset the user chose. The frontend resolves it to date_range at save time; this records the intent so a relative window can be re-anchored on the next save. Never read when building a query — date_range remains authoritative. Absent on tasks predating this field. The enum documents the accepted values; it is not enforced.
  */
@@ -31370,14 +33452,14 @@ export type EvalTaskApiFiltersFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalTaskApiFiltersFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type EvalTaskApiFiltersFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -31407,14 +33489,14 @@ export type EvalTaskApiFiltersSpanAttributesFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalTaskApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type EvalTaskApiFiltersSpanAttributesFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -31881,14 +33963,14 @@ export type EvalTaskDetailsResultApiFiltersAppliedFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalTaskDetailsResultApiFiltersAppliedFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type EvalTaskDetailsResultApiFiltersAppliedFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -31909,14 +33991,14 @@ export type EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItemFilte
     filter_op: string;
     /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
     filter_value?: unknown;
-    /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+    /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
     col_type?: string;
     /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
     attribute_value_types?: EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem[];
   };
 
 export type EvalTaskDetailsResultApiFiltersAppliedSpanAttributesFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -32422,14 +34504,14 @@ export type SamplingPreviewRequestApiFiltersFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: SamplingPreviewRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type SamplingPreviewRequestApiFiltersFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -32460,14 +34542,14 @@ export type SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfi
     filter_op: string;
     /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
     filter_value?: unknown;
-    /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+    /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
     col_type?: string;
     /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
     attribute_value_types?: SamplingPreviewRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem[];
   };
 
 export type SamplingPreviewRequestApiFiltersSpanAttributesFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -32601,14 +34683,14 @@ export type EvalTaskUpdateRequestApiFiltersFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: EvalTaskUpdateRequestApiFiltersFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type EvalTaskUpdateRequestApiFiltersFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -32639,14 +34721,14 @@ export type EvalTaskUpdateRequestApiFiltersSpanAttributesFiltersItemFilterConfig
     filter_op: string;
     /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
     filter_value?: unknown;
-    /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+    /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
     col_type?: string;
     /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
     attribute_value_types?: EvalTaskUpdateRequestApiFiltersSpanAttributesFiltersItemFilterConfigAttributeValueTypesItem[];
   };
 
 export type EvalTaskUpdateRequestApiFiltersSpanAttributesFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -33997,14 +36079,14 @@ export type InstantEvalEstimateRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: InstantEvalEstimateRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type InstantEvalEstimateRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -34357,14 +36439,14 @@ export type InstantEvalStartRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: InstantEvalStartRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type InstantEvalStartRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -35894,14 +37976,14 @@ export type ObserveGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: ObserveGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type ObserveGraphDataRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -36592,14 +38674,14 @@ export type ProjectUserGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: ProjectUserGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type ProjectUserGraphDataRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -36669,14 +38751,14 @@ export type ProjectUserMetricsRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: ProjectUserMetricsRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type ProjectUserMetricsRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -36714,14 +38796,14 @@ export type ProjectUsersAggregateGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: ProjectUsersAggregateGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type ProjectUsersAggregateGraphDataRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -38084,14 +40166,14 @@ export type TraceSessionGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: TraceSessionGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type TraceSessionGraphDataRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -38688,14 +40770,14 @@ export type TraceGraphDataRequestApiFiltersItemFilterConfig = {
   filter_op: string;
   /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
   filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context. */
   col_type?: string;
   /** Optional storage-family provenance aligned one-for-one with filter_value for mixed SPAN_ATTRIBUTE in/not_in filters. Null entries retain filter_type semantics for manually entered values. */
   attribute_value_types?: TraceGraphDataRequestApiFiltersItemFilterConfigAttributeValueTypesItem[];
 };
 
 export type TraceGraphDataRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
+  /** Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id. */
   column_id: string;
   /** Optional stable namespaced Property Registry identity. */
   property_id?: string;
@@ -39276,6 +41358,15 @@ export const UserAlertMonitorApiMetricType = {
   daily_tokens_spent: "daily_tokens_spent",
   monthly_tokens_spent: "monthly_tokens_spent",
   evaluation_metrics: "evaluation_metrics",
+  derived_metric: "derived_metric",
+} as const;
+
+export type UserAlertMonitorApiAlertWhen =
+  (typeof UserAlertMonitorApiAlertWhen)[keyof typeof UserAlertMonitorApiAlertWhen];
+
+export const UserAlertMonitorApiAlertWhen = {
+  point: "point",
+  confident: "confident",
 } as const;
 
 export type UserAlertMonitorApiThresholdOperator =
@@ -39307,6 +41398,7 @@ export interface UserAlertMonitorApi {
   /** @minLength 1 */
   name: string;
   readonly metric_name?: string;
+  notification_emails?: string[];
   readonly created_at?: string;
   readonly updated_at?: string;
   readonly deleted?: boolean;
@@ -39317,6 +41409,7 @@ export interface UserAlertMonitorApi {
    * @maxLength 2556
    */
   metric?: string;
+  alert_when?: UserAlertMonitorApiAlertWhen;
   threshold_operator: UserAlertMonitorApiThresholdOperator;
   /** Method to set the threshold for the monitor (Static or Percentage change). */
   threshold_type?: UserAlertMonitorApiThresholdType;
@@ -39343,7 +41436,7 @@ export interface UserAlertMonitorApi {
   auto_threshold_time_window?: number;
   /** The last time the monitor was checked for alerts. */
   readonly last_checked_at?: string;
-  notification_emails?: string[];
+  readonly last_derived_run_id?: string;
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
@@ -39355,6 +41448,67 @@ export interface UserAlertMonitorApi {
   organization: string;
   workspace?: string;
   created_by?: string;
+}
+
+export interface UserAlertMonitorCreateResponseApi {
+  status: true;
+  /** @minLength 1 */
+  result: string;
+}
+
+export type UserAlertMonitorEntitlementResponseApiType =
+  (typeof UserAlertMonitorEntitlementResponseApiType)[keyof typeof UserAlertMonitorEntitlementResponseApiType];
+
+export const UserAlertMonitorEntitlementResponseApiType = {
+  validation_error: "validation_error",
+  authentication_error: "authentication_error",
+  payment_required: "payment_required",
+  entitlement_error: "entitlement_error",
+  permission_error: "permission_error",
+  not_found: "not_found",
+  conflict: "conflict",
+  client_error: "client_error",
+  rate_limit: "rate_limit",
+  server_error: "server_error",
+  service_unavailable: "service_unavailable",
+  timeout: "timeout",
+  api_error: "api_error",
+} as const;
+
+export type UserAlertMonitorEntitlementResponseApiDetails = {
+  [key: string]: string[];
+};
+
+/**
+ * Any valid JSON value.
+ */
+export type UserAlertMonitorEntitlementResponseApiUpgradeCta = {
+  [key: string]: unknown;
+};
+
+export type ApiErrorObjectApiDetail = {
+  [key: string]: { [key: string]: unknown };
+};
+
+export interface ApiErrorObjectApi {
+  code?: string;
+  message?: string;
+  detail?: ApiErrorObjectApiDetail;
+}
+
+export interface UserAlertMonitorEntitlementResponseApi {
+  status?: boolean;
+  type?: UserAlertMonitorEntitlementResponseApiType;
+  code?: string;
+  detail?: string;
+  result?: string;
+  message?: string;
+  error: ApiErrorObjectApi;
+  attr?: string;
+  details?: UserAlertMonitorEntitlementResponseApiDetails;
+  upgrade_required: boolean;
+  /** Any valid JSON value. */
+  upgrade_cta?: UserAlertMonitorEntitlementResponseApiUpgradeCta;
 }
 
 export interface UserAlertMonitorBulkMuteRequestApi {
@@ -39473,6 +41627,15 @@ export const UserAlertMonitorPreviewGraphApiMetricType = {
   daily_tokens_spent: "daily_tokens_spent",
   monthly_tokens_spent: "monthly_tokens_spent",
   evaluation_metrics: "evaluation_metrics",
+  derived_metric: "derived_metric",
+} as const;
+
+export type UserAlertMonitorPreviewGraphApiAlertWhen =
+  (typeof UserAlertMonitorPreviewGraphApiAlertWhen)[keyof typeof UserAlertMonitorPreviewGraphApiAlertWhen];
+
+export const UserAlertMonitorPreviewGraphApiAlertWhen = {
+  point: "point",
+  confident: "confident",
 } as const;
 
 export type UserAlertMonitorPreviewGraphApiThresholdOperator =
@@ -39505,6 +41668,7 @@ export interface UserAlertMonitorPreviewGraphApi {
   project: string;
   name?: string;
   readonly metric_name?: string;
+  notification_emails?: string[];
   readonly created_at?: string;
   readonly updated_at?: string;
   readonly deleted?: boolean;
@@ -39515,6 +41679,7 @@ export interface UserAlertMonitorPreviewGraphApi {
    * @maxLength 2556
    */
   metric?: string;
+  alert_when?: UserAlertMonitorPreviewGraphApiAlertWhen;
   threshold_operator: UserAlertMonitorPreviewGraphApiThresholdOperator;
   /** Method to set the threshold for the monitor (Static or Percentage change). */
   threshold_type?: UserAlertMonitorPreviewGraphApiThresholdType;
@@ -39541,7 +41706,7 @@ export interface UserAlertMonitorPreviewGraphApi {
   auto_threshold_time_window?: number;
   /** The last time the monitor was checked for alerts. */
   readonly last_checked_at?: string;
-  notification_emails?: string[];
+  readonly last_derived_run_id?: string;
   /** @maxLength 200 */
   slack_webhook_url?: string;
   slack_notes?: string;
@@ -43882,6 +46047,25 @@ export type SimulateApiAgentFixEngineV1ChatCompletionsCreateBody = {
   [key: string]: unknown;
 };
 
+export type SimulateApiAgentFixIssuesListParams = {
+  project_id?: string;
+  /**
+   * The issues' ids, comma-separated: one page of the issue list.
+   * @minLength 1
+   */
+  cluster_ids: string;
+};
+
+export type SimulateApiAgentFixIssuesPlanParams = {
+  /**
+   * @minLength 1
+   * @maxLength 20
+   */
+  cluster_id: string;
+  project_id: string;
+  environment_id?: string;
+};
+
 export type SimulateApiAgentFixRunsListParams = {
   environment_id: string;
   /**
@@ -44554,6 +46738,14 @@ export type TracerDashboardMetricsParams = {
    */
   search?: string;
   category?: TracerDashboardMetricsCategory;
+  /**
+   * Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled.
+   */
+  context?: TracerDashboardMetricsContext;
+  /**
+   * Filter by the active definition's source grain, before projection.
+   */
+  level?: TracerDashboardMetricsLevel;
   role?: TracerDashboardMetricsRole;
   source?: TracerDashboardMetricsSource;
   /**
@@ -44592,6 +46784,33 @@ export const TracerDashboardMetricsCategory = {
   annotation_metric: "annotation_metric",
   custom_attribute: "custom_attribute",
   custom_column: "custom_column",
+  derived_metric: "derived_metric",
+  metric: "metric",
+} as const;
+
+export type TracerDashboardMetricsContext =
+  (typeof TracerDashboardMetricsContext)[keyof typeof TracerDashboardMetricsContext];
+
+export const TracerDashboardMetricsContext = {
+  sessions: "sessions",
+  spans: "spans",
+  traces: "traces",
+  users: "users",
+  task_sessions: "task_sessions",
+  task_spans: "task_spans",
+  task_traces: "task_traces",
+  task: "task",
+  tasks: "tasks",
+} as const;
+
+export type TracerDashboardMetricsLevel =
+  (typeof TracerDashboardMetricsLevel)[keyof typeof TracerDashboardMetricsLevel];
+
+export const TracerDashboardMetricsLevel = {
+  span: "span",
+  trace: "trace",
+  conversation: "conversation",
+  user: "user",
 } as const;
 
 export type TracerDashboardMetricsRole =
@@ -44667,6 +46886,181 @@ export type TracerDatasetList200 = {
   previous?: string;
   results: ObserveDatasetApi[];
 };
+
+export type TracerDerivedMetricRunsContributorsParams = {
+  rollup?: TracerDerivedMetricRunsContributorsRollup;
+  /**
+   * The persisted rollup row to explain; empty for the overall row.
+   * @maxLength 2048
+   */
+  group_key?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type TracerDerivedMetricRunsContributorsRollup =
+  (typeof TracerDerivedMetricRunsContributorsRollup)[keyof typeof TracerDerivedMetricRunsContributorsRollup];
+
+export const TracerDerivedMetricRunsContributorsRollup = {
+  overall: "overall",
+  session: "session",
+  user: "user",
+  cohort: "cohort",
+  day: "day",
+} as const;
+
+export type TracerDerivedMetricRunsResultsParams = {
+  rollup?: TracerDerivedMetricRunsResultsRollup;
+  /**
+   * @maxLength 4096
+   */
+  after?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  /**
+   * Add each row's design-based standard error and 95% interval as `uncertainty`.
+   */
+  include_uncertainty?: boolean;
+};
+
+export type TracerDerivedMetricRunsResultsRollup =
+  (typeof TracerDerivedMetricRunsResultsRollup)[keyof typeof TracerDerivedMetricRunsResultsRollup];
+
+export const TracerDerivedMetricRunsResultsRollup = {
+  overall: "overall",
+  session: "session",
+  user: "user",
+  cohort: "cohort",
+  day: "day",
+} as const;
+
+export type TracerDerivedMetricsListParams = {
+  project_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  before?: string;
+};
+
+export type TracerDerivedMetricsEvaluatorsParams = {
+  project_id: string;
+  /**
+   * @maxLength 100
+   */
+  search?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type TracerDerivedMetricsDriversParams = {
+  window_start: string;
+  window_end: string;
+  /**
+   * @maxLength 4096
+   */
+  after?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+};
+
+export type TracerDerivedMetricsFieldsParams = {
+  context?: TracerDerivedMetricsFieldsContext;
+};
+
+export type TracerDerivedMetricsFieldsContext =
+  (typeof TracerDerivedMetricsFieldsContext)[keyof typeof TracerDerivedMetricsFieldsContext];
+
+export const TracerDerivedMetricsFieldsContext = {
+  sessions: "sessions",
+  users: "users",
+  spans: "spans",
+  traces: "traces",
+} as const;
+
+export type TracerDerivedMetricsHistoryParams = {
+  project_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  before?: string;
+};
+
+export type TracerDerivedMetricsKpiParams = {
+  window_start: string;
+  window_end: string;
+};
+
+export type TracerDerivedMetricsRunsReadParams = {
+  project_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  before?: string;
+};
+
+export type TracerDerivedMetricsSnapshotsReadParams = {
+  project_id?: string;
+  /**
+   * @minimum 1
+   * @maximum 100
+   */
+  limit?: number;
+  before?: string;
+};
+
+export type TracerDerivedMetricsTrendParams = {
+  window_start: string;
+  window_end: string;
+  /**
+   * @minimum 1
+   * @maximum 90
+   */
+  points?: number;
+  /**
+   * @minLength 1
+   * @maxLength 160
+   */
+  group_by?: string;
+};
+
+export type TracerDerivedMetricsUnitValuesParams = {
+  window_start: string;
+  window_end: string;
+  /**
+   * @minItems 1
+   * @maxItems 100
+   */
+  unit_ids: string[];
+  context: TracerDerivedMetricsUnitValuesContext;
+};
+
+export type TracerDerivedMetricsUnitValuesContext =
+  (typeof TracerDerivedMetricsUnitValuesContext)[keyof typeof TracerDerivedMetricsUnitValuesContext];
+
+export const TracerDerivedMetricsUnitValuesContext = {
+  sessions: "sessions",
+  users: "users",
+  spans: "spans",
+  traces: "traces",
+} as const;
 
 export type TracerEvalTaskListParams = {
   /**
