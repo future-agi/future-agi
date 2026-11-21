@@ -397,6 +397,89 @@ func TestBuildCacheKey_TemperatureAffectsKey(t *testing.T) {
 	}
 }
 
+// TestBuildCacheKey_ResponseShapeParameters is the regression test for the
+// cache-key blind spot: the fields below change the shape of the response body
+// itself (number of choices, logprob objects, audio parts), so a request that
+// asks for them must not be served an entry stored without them. Content-only
+// settings stay shared by design; see route_drops.go.
+func TestBuildCacheKey_ResponseShapeParameters(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*models.ChatCompletionRequest)
+	}{
+		{"n", func(r *models.ChatCompletionRequest) { v := 3; r.N = &v }},
+		{"logprobs", func(r *models.ChatCompletionRequest) { v := true; r.Logprobs = &v }},
+		{"top_logprobs", func(r *models.ChatCompletionRequest) { v := 2; r.TopLogprobs = &v }},
+		{"modalities", func(r *models.ChatCompletionRequest) { r.Modalities = []string{"text", "audio"} }},
+		{"audio", func(r *models.ChatCompletionRequest) { r.Audio = &models.AudioConfig{Voice: "alloy", Format: "wav"} }},
+	}
+
+	baseKey := BuildCacheKey("default", makeReq("gpt-4o", "hello"))
+	for _, tc := range cases {
+		req := makeReq("gpt-4o", "hello")
+		tc.mutate(req)
+		if got := BuildCacheKey("default", req); got == baseKey {
+			t.Errorf("%s changes the upstream response shape but not the cache key", tc.name)
+		}
+	}
+}
+
+// TestBuildCacheKey_ResponseShapeValuesAffectKey checks the other half of the
+// bug: two requests that both set the same field but with different values must
+// not share an entry (for example n=1 vs n=3 returns a different number of
+// choices).
+func TestBuildCacheKey_ResponseShapeValuesAffectKey(t *testing.T) {
+	one, three, two := 1, 3, 2
+	cases := []struct {
+		name string
+		a, b func(*models.ChatCompletionRequest)
+	}{
+		{"n", func(r *models.ChatCompletionRequest) { r.N = &one },
+			func(r *models.ChatCompletionRequest) { r.N = &three }},
+		{"logprobs", func(r *models.ChatCompletionRequest) { v := false; r.Logprobs = &v },
+			func(r *models.ChatCompletionRequest) { v := true; r.Logprobs = &v }},
+		{"top_logprobs", func(r *models.ChatCompletionRequest) { r.TopLogprobs = &one },
+			func(r *models.ChatCompletionRequest) { r.TopLogprobs = &two }},
+		{"modalities", func(r *models.ChatCompletionRequest) { r.Modalities = []string{"text"} },
+			func(r *models.ChatCompletionRequest) { r.Modalities = []string{"text", "audio"} }},
+		{"audio", func(r *models.ChatCompletionRequest) { r.Audio = &models.AudioConfig{Voice: "alloy", Format: "wav"} },
+			func(r *models.ChatCompletionRequest) { r.Audio = &models.AudioConfig{Voice: "echo", Format: "wav"} }},
+	}
+
+	for _, tc := range cases {
+		reqA := makeReq("gpt-4o", "hello")
+		tc.a(reqA)
+		reqB := makeReq("gpt-4o", "hello")
+		tc.b(reqB)
+		if BuildCacheKey("default", reqA) == BuildCacheKey("default", reqB) {
+			t.Errorf("%s: different values produced the same cache key", tc.name)
+		}
+	}
+}
+
+// TestPlugin_NoExactHitWhenRequestShapeChanges proves the user-visible effect:
+// a response cached for a single-choice request (n=1) must not be served to a
+// request that asks for three choices.
+func TestPlugin_NoExactHitWhenRequestShapeChanges(t *testing.T) {
+	p, store := newTestPlugin()
+
+	one := 1
+	reqOne := makeReq("gpt-4o", "hello")
+	reqOne.N = &one
+	store.Set(BuildCacheKey("default", reqOne), makeResp("one-choice"), 5*time.Minute)
+
+	three := 3
+	rc := models.AcquireRequestContext()
+	defer rc.Release()
+	rc.Request = makeReq("gpt-4o", "hello")
+	rc.Request.N = &three
+	rc.Model = "gpt-4o"
+
+	if result := p.ProcessRequest(context.Background(), rc); result.Action != pipeline.Continue {
+		t.Fatalf("n=3 request was served the cached n=1 response, got action %v", result.Action)
+	}
+}
+
 // --- Semantic Cache Tests ---
 
 func newTestSemanticPlugin() (*Plugin, *cache.Store, *cache.SemanticStore) {
