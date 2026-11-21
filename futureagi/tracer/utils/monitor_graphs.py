@@ -244,18 +244,13 @@ def _bucket_status(
     monitor: UserAlertMonitor,
     current_value: float,
     historical_mean: float,
-    historical_stddev: float,
     sign: int,
 ) -> str:
-    """critical/warning/healthy for a bucket against a mean/stddev band."""
+    """critical/warning/healthy for a bucket against percentage-of-mean bands."""
     warning_percent = monitor.warning_threshold_value or 0
     critical_percent = monitor.critical_threshold_value or 0
-    critical_threshold = historical_mean + sign * historical_stddev * (
-        1 + critical_percent / 100.0
-    )
-    warning_threshold = historical_mean + sign * historical_stddev * (
-        1 + warning_percent / 100.0
-    )
+    critical_threshold = historical_mean * (1 + sign * critical_percent / 100.0)
+    warning_threshold = historical_mean * (1 + sign * warning_percent / 100.0)
     if monitor.critical_threshold_value is not None and _compare(
         current_value, monitor.threshold_operator, critical_threshold
     ):
@@ -300,7 +295,7 @@ def _process_percentage_change_buckets(
 
         if eval_band is not None:
             status = _bucket_status(
-                monitor, current_value, eval_band[0], eval_band[1], sign
+                monitor, current_value, eval_band[0], sign
             )
         else:
             while (
@@ -320,7 +315,6 @@ def _process_percentage_change_buckets(
                     monitor,
                     current_value,
                     sum(historical_values) / len(historical_values),
-                    _calculate_std_dev(historical_values),
                     sign,
                 )
 
