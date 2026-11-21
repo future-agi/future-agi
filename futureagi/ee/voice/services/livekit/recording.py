@@ -127,10 +127,16 @@ def delete_egress_recording(config: LiveKitConfig, object_key: str) -> None:
 
 
 def _feed_pipe(source_iter, pipe) -> None:
-    """Close stdin even on an interrupted read. Let the caller report it."""
+    """Stream chunks from an iterator into a writable pipe, then close it.
+
+    Catches BrokenPipeError so the thread exits cleanly if ffmpeg
+    terminates early (error / killed).
+    """
     try:
         for chunk in source_iter:
             pipe.write(chunk)
+    except (BrokenPipeError, OSError):
+        pass  # ffmpeg exited early
     finally:
         pipe.close()
 
@@ -212,15 +218,11 @@ def stream_egress_to_s3(
     )
 
     # Thread A: feed S3 stream → ffmpeg stdin
-    feeder_errors: list[Exception] = []
-
-    def feed():
-        try:
-            _feed_pipe(source_iter, process.stdin)
-        except Exception as exc:  # noqa: BLE001 - forward the thread failure to the track caller
-            feeder_errors.append(exc)
-
-    feeder = threading.Thread(target=feed, daemon=True)
+    feeder = threading.Thread(
+        target=_feed_pipe,
+        args=(source_iter, process.stdin),
+        daemon=True,
+    )
 
     # Thread B: drain stderr to prevent pipe buffer deadlock
     stderr_buf: list[bytes] = [b""]
@@ -257,11 +259,6 @@ def stream_egress_to_s3(
         raise RuntimeError(
             f"ffmpeg failed (rc={process.returncode}): "
             f"{stderr_buf[0].decode('utf-8', errors='replace')}"
-        )
-
-    if feeder.is_alive() or feeder_errors:
-        raise RuntimeError("Incomplete egress recording input") from (
-            feeder_errors[0] if feeder_errors else None
         )
 
     return url

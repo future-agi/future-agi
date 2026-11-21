@@ -549,67 +549,47 @@ async def fetch_and_persist_call_result(
             recording_urls = await voice_manager.extract_and_persist_recordings(
                 input.call_id
             )
-            recording_error = getattr(recording_urls, "error", None)
-            if not isinstance(recording_error, dict):
-                recording_error = None
-            if recording_error:
-                # Not raised: the transcript, costs and status below still
-                # persist, and a retry cannot install a missing ffmpeg.
-                activity.logger.warning(
-                    f"Recordings incomplete for call_id={input.call_id}: "
-                    f"code={recording_error.get('code')}, "
-                    f"tracks={recording_error.get('tracks')}: "
-                    f"{recording_error.get('message')}"
+
+            if recording_urls.recording_url:
+                call.recording_url = recording_urls.recording_url
+                update_fields.append("recording_url")
+            if recording_urls.stereo_recording_url:
+                call.stereo_recording_url = recording_urls.stereo_recording_url
+                update_fields.append("stereo_recording_url")
+            if recording_urls.recording_url or recording_urls.stereo_recording_url:
+                call.recording_available = True
+                update_fields.append("recording_available")
+
+            # Store provider payload updates with the other CallExecution fields.
+            rec = {}
+            if recording_urls.customer_recording_url:
+                rec["customer"] = recording_urls.customer_recording_url
+            if recording_urls.assistant_recording_url:
+                rec["assistant"] = recording_urls.assistant_recording_url
+            if recording_urls.stereo_recording_url:
+                rec["stereo"] = recording_urls.stereo_recording_url
+            if recording_urls.recording_url:
+                rec["combined"] = recording_urls.recording_url
+            if recording_urls.provider_call_data is not None:
+                call.provider_call_data = recording_urls.provider_call_data
+                if "provider_call_data" not in update_fields:
+                    update_fields.append("provider_call_data")
+            elif rec:
+                provider_data = call.provider_call_data or {}
+                # Store under the account that actually holds the call data. For
+                # SIP outbound that is the customer's provider key (already
+                # written by fetch_and_store — "bland" for Bland); using the
+                # system provider here would create a stray "vapi" key that flips
+                # the drawer's provider chip depending on whether the rehost
+                # succeeded.
+                recording_provider = (
+                    input.client_provider if use_customer_account else input.provider
                 )
-
-            if recording_urls.recording_fields_persisted is True:
-                # Use the engine's fresh snapshot for costs, not for a second
-                # recording write after another egress may have arrived.
-                if recording_urls.provider_call_data is not None:
-                    call.provider_call_data = recording_urls.provider_call_data
-            else:
-                if recording_urls.recording_url:
-                    call.recording_url = recording_urls.recording_url
-                    update_fields.append("recording_url")
-                if recording_urls.stereo_recording_url:
-                    call.stereo_recording_url = recording_urls.stereo_recording_url
-                    update_fields.append("stereo_recording_url")
-                if recording_urls.recording_url or recording_urls.stereo_recording_url:
-                    call.recording_available = True
-                    update_fields.append("recording_available")
-
-                # Store provider payload updates with the other CallExecution fields.
-                rec = {}
-                if recording_urls.customer_recording_url:
-                    rec["customer"] = recording_urls.customer_recording_url
-                if recording_urls.assistant_recording_url:
-                    rec["assistant"] = recording_urls.assistant_recording_url
-                if recording_urls.stereo_recording_url:
-                    rec["stereo"] = recording_urls.stereo_recording_url
-                if recording_urls.recording_url:
-                    rec["combined"] = recording_urls.recording_url
-                if recording_urls.provider_call_data is not None:
-                    call.provider_call_data = recording_urls.provider_call_data
-                    if "provider_call_data" not in update_fields:
-                        update_fields.append("provider_call_data")
-                elif rec:
-                    provider_data = call.provider_call_data or {}
-                    # Store under the account that actually holds the call data. For
-                    # SIP outbound that is the customer's provider key (already
-                    # written by fetch_and_store — "bland" for Bland); using the
-                    # system provider here would create a stray "vapi" key that flips
-                    # the drawer's provider chip depending on whether the rehost
-                    # succeeded.
-                    recording_provider = (
-                        input.client_provider
-                        if use_customer_account
-                        else input.provider
-                    )
-                    pdata = provider_data.setdefault(recording_provider, {})
-                    pdata["recording"] = rec
-                    call.provider_call_data = provider_data
-                    if "provider_call_data" not in update_fields:
-                        update_fields.append("provider_call_data")
+                pdata = provider_data.setdefault(recording_provider, {})
+                pdata["recording"] = rec
+                call.provider_call_data = provider_data
+                if "provider_call_data" not in update_fields:
+                    update_fields.append("provider_call_data")
 
             activity.heartbeat(f"recordings persisted for {input.call_id}")
 
@@ -764,7 +744,6 @@ async def fetch_and_persist_call_result(
             message_count=message_count,
             has_agent_message=has_agent_message,
             has_customer_message=has_customer_message,
-            recording_error=recording_error,
         )
 
     except CallExecution.DoesNotExist:

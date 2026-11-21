@@ -863,9 +863,6 @@ class FetchAndPersistCallResultOutput:
     has_agent_message: bool = False
     has_customer_message: bool = False
     error: Optional[str] = None
-    # Recording tracks that could not be made ({"code", "message", "tracks"});
-    # the call itself is persisted. Also in provider_call_data.<provider>.
-    recording_error: dict[str, Any] | None = None
 
 
 @dataclass
