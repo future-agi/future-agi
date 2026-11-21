@@ -175,17 +175,15 @@ class TerminalRecorder:
         if hasattr(report, "wasxfail"):
             status = "xfail" if report.skipped else "xpass"
         elif report.skipped:
-            # Pytest marks a skip from @skip/@skipif with use_item_location;
-            # imperative pytest.skip() from a test or fixture is not such a mark.
-            exc = call.excinfo
+            # A declared skip is exactly what the inventory's evaluator expects:
+            # a unittest skip or a skip/skipif mark that holds at setup. Pytest
+            # also reports fixture-raised skips (importorskip, skip()) at the
+            # item's location, so the exception's location flag cannot tell
+            # them apart; those are runtime skips.
             status = (
                 "declared-skip"
                 if unittest_skip(item)
-                or (
-                    call.when == "setup"
-                    and exc
-                    and getattr(exc.value, "_use_item_location", False)
-                )
+                or (call.when == "setup" and evaluate_skip_marks(item) is not None)
                 else "runtime-skip"
             )
         report.ci_terminal_status = status

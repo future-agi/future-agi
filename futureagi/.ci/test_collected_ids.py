@@ -414,6 +414,16 @@ class PluginProtocolTest(unittest.TestCase):
 
                     def test_runtime(): pytest.skip("missing service")
 
+                    @pytest.fixture
+                    def engine():
+                        # Pytest reports fixture skips at the item location too.
+                        pytest.importorskip("module_that_is_missing_service")
+
+                    def test_fixture_runtime(engine): pass
+
+                    @pytest.mark.skipif(False, reason="never")
+                    def test_false_condition(): pass
+
                     class Cases(unittest.TestCase):
                         def test_ran(self):
                             for value in (1, 2):
@@ -442,15 +452,15 @@ class PluginProtocolTest(unittest.TestCase):
             self.assertEqual(outer.read_text(), "outer")
             rows = [json.loads(line) for line in receipt.read_text().splitlines()]
             expected = json.loads(inventory.read_text())
-            self.assertEqual(len(expected), 4)
+            self.assertEqual(len(expected), 6)
             checker.check_terminals(expected, rows)
             skips = checker.runtime_skips(rows)
             self.assertEqual(
                 {row["test"].split("::")[-1] for row in skips},
-                {"test_runtime", "test_subskip"},
+                {"test_runtime", "test_fixture_runtime", "test_subskip"},
             )
             for row in skips:
-                self.assertIn("missing service", str(row["skips"]))
+                self.assertIn("missing", str(row["skips"]))
 
     def test_only_the_excluded_examples_may_take_their_declared_collection_skip(self):
         with tempfile.TemporaryDirectory() as temp:

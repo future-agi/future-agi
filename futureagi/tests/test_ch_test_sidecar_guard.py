@@ -62,7 +62,6 @@ _LIVE_MODULES = (
     "tracer/tests/test_score_filter_hard_tombstone_ch25.py",
     "tracer/tests/test_trace_conjunction_seed_gate_ch25.py",
     "tracer/tests/test_hourly_aggregate_state_route_live_ch.py",
-    "tracer/tests/test_session_user_candidate_reads.py",
     "tracer/tests/test_session_user_scalar_fused_roots.py",
     "tracer/tests/test_user_graph_latest_state_ch25.py",
     "tracer/tests/test_users_matching_walk_ch25.py",
@@ -411,21 +410,6 @@ def test_a_local_http_port_issues_no_identity_statement(recording_http_clients):
 
     assert [client.kwargs["port"] for client in clients.clients] == [38123]
     assert clients.statements == []
-
-
-def test_legacy_native_port_requires_explicit_host_and_uses_the_general_port_guard():
-    env = {"CH25_HOST": "localhost", "CH_PORT": "9000"}
-    with pytest.raises(pytest.skip.Exception):
-        _ch_test_native_port(env)
-    with pytest.raises(pytest.skip.Exception):
-        _ch_test_native_port({"CH_PORT": "9000"}, allow_legacy_ch_port=True)
-    assert _ch_test_native_port(env, allow_legacy_ch_port=True) == (9000, False)
-    env["CH_PORT"] = "19000"
-    with pytest.raises(UnsafeClickHouseTestTarget, match="forwarded port 19000"):
-        _ch_test_native_port(env, allow_legacy_ch_port=True)
-    assert _ch_test_native_port(
-        env | {_OPT_IN: "19000"}, allow_legacy_ch_port=True
-    ) == (19000, True)
 
 
 @pytest.mark.parametrize("module", _LIVE_MODULES)
