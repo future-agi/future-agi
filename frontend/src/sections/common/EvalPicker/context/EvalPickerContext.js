@@ -21,6 +21,16 @@ export const EvalPickerContext = createContext({
   selectedEval: null,
   setSelectedEval: (_eval) => {},
 
+  // Multi-select the picker runs itself (multiSelect without a host
+  // onToggleSelect): the evals ticked in the list, and the pass that walks
+  // them ({ queue, total } — the picks still waiting for their config screen
+  // after the one on screen), or null.
+  ownsSelection: false,
+  selectedEvals: [],
+  setSelectedEvals: (_evals) => {},
+  batch: null,
+  setBatch: (_batch) => {},
+
   // Existing evals (to prevent duplicates)
   existingEvals: [],
 

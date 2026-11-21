@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import { useForm } from "react-hook-form";
 import { EvalPickerContext } from "./EvalPickerContext";
@@ -47,7 +47,8 @@ const EvalPickerProvider = ({
   keepOpenAfterEditSave = false,
   // Multi-select list mode. When true the list renders a checkbox per row
   // driven by selectedIds/onToggleSelect. Defaults off so the single-add
-  // list is byte-identical.
+  // list is byte-identical. Without a host onToggleSelect the picker keeps
+  // the ticked evals itself and adds them in one pass.
   multiSelect = false,
   selectedIds = null,
   onToggleSelect = null,
@@ -84,9 +85,29 @@ const EvalPickerProvider = ({
     setSelectedEvalState(normalizeEvalPickerEval(evalData));
   }, []);
 
+  // Built-in multi-select, used when the host doesn't keep the selection
+  // itself: the ticked evals, in the order they were ticked, and the pass
+  // that is walking them.
+  const ownsSelection = multiSelect && !onToggleSelect;
+  const [selectedEvals, setSelectedEvals] = useState([]);
+  const [batch, setBatch] = useState(null);
+  const ownSelectedIds = useMemo(
+    () => new Set(selectedEvals.map((e) => e.id)),
+    [selectedEvals],
+  );
+  const toggleSelectedEval = useCallback((evalItem) => {
+    setSelectedEvals((prev) =>
+      prev.some((e) => e.id === evalItem.id)
+        ? prev.filter((e) => e.id !== evalItem.id)
+        : [...prev, evalItem],
+    );
+  }, []);
+
   const handleReset = useCallback(() => {
     setStep("list");
     setSelectedEvalState(null);
+    setSelectedEvals([]);
+    setBatch(null);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -124,8 +145,13 @@ const EvalPickerProvider = ({
         keepOpenAfterSave,
         keepOpenAfterEditSave,
         multiSelect,
-        selectedIds,
-        onToggleSelect,
+        selectedIds: ownsSelection ? ownSelectedIds : selectedIds,
+        onToggleSelect: ownsSelection ? toggleSelectedEval : onToggleSelect,
+        ownsSelection,
+        selectedEvals,
+        setSelectedEvals,
+        batch,
+        setBatch,
         sourceFilters,
         onFiltersChange,
         sourceTimeWindow,

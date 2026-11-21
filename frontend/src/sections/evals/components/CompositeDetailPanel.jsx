@@ -18,7 +18,7 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import EvalPickerDrawer from "src/sections/common/EvalPicker/EvalPickerDrawer";
 import { useCompositeChildrenSchemas } from "../hooks/useCompositeChildrenKeys";
@@ -117,14 +117,17 @@ const CompositeDetailPanel = ({
   //       versionId, ... }
   // The latter is sent when the user goes through the config screen
   // for a child eval (playground + version + settings + mapping).
+  // The picker adds several children in one multi-select pass, so each add
+  // appends to the list the previous one produced (latestChildren), not to
+  // this render's copy. The picker closes itself once its pass is done.
+  const latestChildren = useRef(childrenList);
+  latestChildren.current = childrenList;
   const handleEvalAdded = (evalMeta) => {
     const childId =
       evalMeta?.id || evalMeta?.templateId || evalMeta?.evalTemplateId;
     if (!childId) return;
-    if (childrenList.some((c) => c.child_id === childId)) {
-      setPickerOpen(false);
-      return;
-    }
+    const current = latestChildren.current;
+    if (current.some((c) => c.child_id === childId)) return;
     const params =
       evalMeta?.params ||
       evalMeta?.config?.params ||
@@ -137,11 +140,11 @@ const CompositeDetailPanel = ({
       ...(Object.keys(runConfig).length > 0 ? { run_config: runConfig } : {}),
     };
     const next = [
-      ...childrenList,
+      ...current,
       {
         child_id: childId,
         child_name: evalMeta.name || childId,
-        order: childrenList.length,
+        order: current.length,
         eval_type: evalMeta.evalType || evalMeta.eval_type || "llm",
         weight: 1.0,
         // Persist the per-child version the user pinned in the picker
@@ -160,8 +163,8 @@ const CompositeDetailPanel = ({
         ...(Object.keys(childConfig).length ? { config: childConfig } : {}),
       },
     ];
+    latestChildren.current = next;
     onChildrenChange?.(next);
-    setPickerOpen(false);
   };
 
   const handleRemoveChild = (childId) => {
@@ -580,6 +583,8 @@ const CompositeDetailPanel = ({
           // Add children directly with template defaults; mapping is
           // resolved at composite level.
           skipConfig
+          // Tick several evals and add them as children in one pass.
+          multiSelect
           source={pickerSource || (pickerSourceId ? "dataset" : "composite")}
           sourceId={pickerSourceId || ""}
           sourceRowType={pickerSourceRowType}
