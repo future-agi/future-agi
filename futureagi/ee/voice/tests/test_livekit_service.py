@@ -1048,7 +1048,7 @@ class TestTranscriptNormalization:
 
         with (
             patch("simulate.models.test_execution.CallExecution.objects") as mock_qs,
-            patch("asgiref.sync.sync_to_async") as mock_s2a,
+            patch("ee.voice.services.livekit.service.sync_to_async") as mock_s2a,
         ):
             mock_qs.aget = AsyncMock(return_value=ce)
             mock_s2a.return_value = AsyncMock(return_value=transcripts)
@@ -1080,7 +1080,7 @@ class TestTranscriptNormalization:
 
         with (
             patch("simulate.models.test_execution.CallExecution.objects") as mock_qs,
-            patch("asgiref.sync.sync_to_async") as mock_s2a,
+            patch("ee.voice.services.livekit.service.sync_to_async") as mock_s2a,
         ):
             mock_qs.aget = AsyncMock(return_value=ce)
             mock_s2a.return_value = AsyncMock(return_value=transcripts)
@@ -1108,7 +1108,7 @@ class TestTranscriptNormalization:
 
         with (
             patch("simulate.models.test_execution.CallExecution.objects") as mock_qs,
-            patch("asgiref.sync.sync_to_async") as mock_s2a,
+            patch("ee.voice.services.livekit.service.sync_to_async") as mock_s2a,
         ):
             mock_qs.aget = AsyncMock(return_value=ce)
             mock_s2a.return_value = AsyncMock(return_value=transcripts)
@@ -1137,7 +1137,7 @@ class TestTranscriptNormalization:
 
         with (
             patch("simulate.models.test_execution.CallExecution.objects") as mock_qs,
-            patch("asgiref.sync.sync_to_async") as mock_s2a,
+            patch("ee.voice.services.livekit.service.sync_to_async") as mock_s2a,
         ):
             mock_qs.aget = AsyncMock(return_value=ce)
             mock_s2a.return_value = AsyncMock(return_value=transcripts)
@@ -1177,7 +1177,7 @@ class TestTranscriptNormalization:
 
         with (
             patch("simulate.models.test_execution.CallExecution.objects") as mock_qs,
-            patch("asgiref.sync.sync_to_async") as mock_s2a,
+            patch("ee.voice.services.livekit.service.sync_to_async") as mock_s2a,
         ):
             mock_qs.aget = AsyncMock(return_value=ce)
             mock_s2a.return_value = AsyncMock(return_value=transcripts)
@@ -1213,7 +1213,7 @@ class TestTranscriptNormalization:
 
         with (
             patch("simulate.models.test_execution.CallExecution.objects") as mock_qs,
-            patch("asgiref.sync.sync_to_async") as mock_s2a,
+            patch("ee.voice.services.livekit.service.sync_to_async") as mock_s2a,
         ):
             mock_qs.aget = AsyncMock(return_value=ce)
             mock_s2a.return_value = AsyncMock(return_value=transcripts)
