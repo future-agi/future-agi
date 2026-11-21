@@ -787,6 +787,12 @@ export default function DashboardDetailView() {
     );
   };
 
+  const restoreSavedWindow = () => {
+    clearTimeout(presetTimerRef.current);
+    setDatePreset(null);
+    setAppliedDatePreset(null);
+  };
+
   const applyCustomDatePreset = () => {
     clearTimeout(presetTimerRef.current);
     setDatePreset("custom");
@@ -1618,7 +1624,7 @@ export default function DashboardDetailView() {
                               isReadOnly={isReadOnly}
                               refreshRequestId={refreshRequestId}
                               onQuerySettled={handleWidgetQuerySettled}
-                              onRestoreSavedWindow={() => setDatePreset(null)}
+                              onRestoreSavedWindow={restoreSavedWindow}
                             />
 
                             {/* Resize handle between adjacent widgets */}

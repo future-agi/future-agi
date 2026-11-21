@@ -54,6 +54,25 @@ const widget = {
   chart_config: { chart_type: "metric" },
 };
 
+const savedWindow = {
+  custom_start: "2026-10-25T23:00:00Z",
+  custom_end: "2026-10-26T00:00:00Z",
+};
+const pinnedWidget = {
+  ...widget,
+  query_config: {
+    metrics: [
+      {
+        type: "derived_metric",
+        name: "Resolution",
+        aggregation: "avg",
+        derived_run_id: "50e51108-84cd-4485-8ec1-d81e15b1d070",
+      },
+    ],
+    time_range: savedWindow,
+  },
+};
+
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterAll(() => server.close());
 beforeEach(() => {
@@ -64,19 +83,14 @@ beforeEach(() => {
       mutations: { retry: false },
     },
   });
-  client.setQueryData(["dashboards", "detail", "date-dashboard"], {
-    data: {
-      result: {
-        id: "date-dashboard",
-        name: "Date selection",
-        widgets: [widget],
-      },
-    },
-  });
   server.use(
     http.post("*/tracer/dashboard/query/", async ({ request }) => {
+      const body = await request.json();
+      const outsideSavedWindow =
+        body.metrics[0].derived_run_id &&
+        body.time_range.custom_end !== savedWindow.custom_end;
       requests.push({
-        body: await request.json(),
+        body,
         refresh: new URL(request.url).searchParams.get("refresh"),
       });
       return HttpResponse.json({
@@ -95,7 +109,16 @@ beforeEach(() => {
               series: [
                 {
                   name: "total",
-                  data: [{ timestamp: "2026-11-01T00:00:00Z", value: 42 }],
+                  data: outsideSavedWindow
+                    ? []
+                    : [
+                        {
+                          timestamp:
+                            body.time_range.custom_end ??
+                            "2026-11-01T00:00:00Z",
+                          value: 42,
+                        },
+                      ],
                 },
               ],
             },
@@ -112,7 +135,16 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function openDashboard() {
+async function openDashboard(dashboardWidget = widget) {
+  client.setQueryData(["dashboards", "detail", "date-dashboard"], {
+    data: {
+      result: {
+        id: "date-dashboard",
+        name: "Date selection",
+        widgets: [dashboardWidget],
+      },
+    },
+  });
   const view = render(
     <QueryClientProvider client={client}>
       <DashboardDetailView />
@@ -179,6 +211,37 @@ describe("dashboard date request integration", () => {
     await advance(500);
     expect(requests).toHaveLength(2);
   });
+
+  it.each([false, true])(
+    "restores the saved query window (another preset pending: %s)",
+    async (pending) => {
+      await openDashboard(pinnedWidget);
+      vi.setSystemTime(new Date("2026-11-21T12:00:00Z"));
+      expect(requests[0].body.time_range).toEqual(savedWindow);
+      fireEvent.click(screen.getByText("Today", { exact: true }));
+      await advance(500);
+      expect(requests[1].body.time_range).toEqual(
+        toTimeRangePayload(resolveGlobalDateRange("today", null)),
+      );
+      await advance(10);
+      const restore = screen.getByRole("button", {
+        name: "Restore saved window",
+      });
+      if (pending) {
+        fireEvent.click(screen.getByText("7D", { exact: true }));
+        await advance(100);
+        expect(requests).toHaveLength(2);
+      }
+      fireEvent.click(restore);
+      await advance(pending ? 600 : 0);
+      expect(requests.slice(2).map(({ body }) => body.time_range)).toEqual([
+        savedWindow,
+      ]);
+      expect(screen.getByText("Default").closest(".MuiChip-root")).toHaveClass(
+        "MuiChip-filled",
+      );
+    },
+  );
 
   it("applies custom Done immediately and cancels a pending preset", async () => {
     await openDashboard();
