@@ -8,7 +8,8 @@ set -euo pipefail
 # Overrides: OSS_IMAGE, EE_IMAGE, CLOUD_IMAGE, CLOUD_DEPLOYMENT_SECRET,
 #   For local builds, digests, or a build-arg override, pass OSS_VARIANT
 #   (standard|slim), EXPECTED_FFMPEG_FLAVOR (debian|minimal), and the build's
-#   VERSION as argument 1. For known release tags, use the pinned table below.
+#   VERSION as argument 1. Set OSS_BUILD_REVISION to the full source SHA if not
+#   building HEAD. Release lookup needs PyYAML; a missing tag is read from origin in isolation.
 
 VERSION="${1:-latest}"
 FLAVOR="${2:-all}"
@@ -18,19 +19,9 @@ case "$FLAVOR" in
 esac
 OSS_IMAGE="${OSS_IMAGE:-futureagi/future-agi:${VERSION}}"
 if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
-  if [[ -z "${EXPECTED_FFMPEG_FLAVOR:-}" && -z "${OSS_VARIANT:-}" ]]; then
-    # Exact published build contracts, not a version threshold. Both variants
-    # of v1.59.1 use the defaults in futureagi/Dockerfile.oss at release
-    # 1cca6b23710ca1a2b7aeae1fe974556173c4a71c (release-images.yml).
-    case "$VERSION/$OSS_IMAGE" in
-      v1.59.1/futureagi/future-agi:v1.59.1) OSS_VARIANT=standard; EXPECTED_FFMPEG_FLAVOR=debian ;;
-      v1.59.1/futureagi/future-agi:v1.59.1-slim) OSS_VARIANT=slim; EXPECTED_FFMPEG_FLAVOR=minimal ;;
-    esac
-  fi
-  case "${OSS_VARIANT:-}/${EXPECTED_FFMPEG_FLAVOR:-}" in
-    standard/debian|standard/minimal|slim/debian|slim/minimal) ;;
-    *) echo 'Unknown build expectation: supply both OSS_VARIANT and EXPECTED_FFMPEG_FLAVOR from the build contract.' >&2; exit 2 ;;
-  esac
+  contract=$(python3 -I "$(dirname "$0")/oss-media-contract.py" "$VERSION" "$OSS_IMAGE" \
+    "${OSS_VARIANT:-}" "${EXPECTED_FFMPEG_FLAVOR:-}") || exit 2
+  read -r OSS_VARIANT EXPECTED_FFMPEG_FLAVOR media_version encoders decoders <<< "$contract"
   if [[ -z "${1:-}" || "$VERSION" == latest ]]; then
     echo 'Supply the expected build version as argument 1, not latest.' >&2; exit 2
   fi
@@ -150,11 +141,42 @@ check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" 
   marker=/usr/local/lib/futureagi/ffmpeg-flavor
   # Historical releases have no marker. Always check both active binaries.
   if test -e "$marker"; then test "$(cat "$marker")" = "$1"; fi
-  case $1 in
-    minimal) test "$(command -v ffmpeg)" = /usr/local/bin/ffmpeg && test "$(command -v ffprobe)" = /usr/local/bin/ffprobe && test -s /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1 ;;
-    debian) test "$(command -v ffmpeg)" = /usr/bin/ffmpeg && test "$(command -v ffprobe)" = /usr/bin/ffprobe && dpkg-query -S /usr/bin/ffmpeg ;;
-    *) exit 1 ;;
-  esac' sh "$EXPECTED_FFMPEG_FLAVOR"
+  # Package checksums detect replacement, not coordinated tampering with the
+  # dpkg database. For source builds we have a source hash, not independently
+  # published per-architecture binary hashes: verify the runtime contract.
+  if test "$1" = debian; then
+    for tool in ffmpeg ffprobe; do test "$(command -v "$tool")" = "/usr/bin/$tool"; done
+    sums=$(dpkg-query --control-show ffmpeg md5sums)
+    for tool in ffmpeg ffprobe; do
+      line=$(printf "%s\n" "$sums" | grep -Ex "[0-9a-f]{32}  usr/bin/$tool")
+      (cd / && printf "%s\n" "$line" | md5sum -c -)
+    done
+    exit 0
+  fi
+  test -s /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1
+  # Configure component IDs (libaom_av1) and registered codec names
+  # (libaom-av1) differ. Check exact tokens, never descriptions/substrings.
+  for tool in ffmpeg ffprobe; do
+    test "$(command -v "$tool")" = "/usr/local/bin/$tool"
+    info=$("$tool" -version)
+    case "$info " in "$tool version $2 "*) ;; *) exit 1 ;; esac
+    for kind in encoder decoder; do
+      case "$kind" in encoder) wanted=$3 ;; decoder) wanted=$4 ;; esac
+      got=$(printf "%s\n" "$info" | tr " " "\n" | sed -n "s/^--enable-$kind=//p")
+      for id in $(printf "%s" "$wanted" | tr , " "); do
+        case ",$got," in *",$id,"*) ;; *) exit 1 ;; esac
+      done
+    done
+  done
+  for kind in encoder decoder; do
+    case "$kind" in encoder) wanted=$3 ;; decoder) wanted=$4 ;; esac
+    listing=$(ffmpeg -hide_banner "-${kind}s")
+    names=$(printf "%s\n" "$listing" | awk "\$1 ~ /^[AVS][A-Z.]+$/ {print \$2}")
+    for id in $(printf "%s" "$wanted" | tr , " "); do
+      case "$id" in libaom_av1) id=libaom-av1 ;; esac
+      printf "%s\n" "$names" | grep -Fx "$id" >/dev/null
+    done
+  done' sh "$EXPECTED_FFMPEG_FLAVOR" "$media_version" "$encoders" "$decoders"
 check "ffmpeg can encode mp3 and png" image_test "$OSS_IMAGE" sh -c "ffmpeg -hide_banner -encoders | grep -q libmp3lame && ffmpeg -hide_banner -encoders | grep -qw png"
 check "ffprobe starts" image_test "$OSS_IMAGE" ffprobe -hide_banner -version
 if [[ "$OSS_VARIANT" == standard ]]; then
