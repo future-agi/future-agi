@@ -304,8 +304,11 @@ def test_validate_needs_the_digest_once_decided(user, workspace, storage, auth_c
         {"actor:manager": "accepted", "actor:auditor": "accepted"},
     )
 
+    # No digest: the request came from outside the review; it says so, and blames nobody.
     missing = _validate(auth_client, environment)
-    assert missing.status_code == 409 and missing.json()["error"] == "review_stale"
+    assert missing.status_code == 409
+    assert missing.json()["error"] == "review_in_progress"
+    assert "View changes" in missing.json()["message"]
     old = _validate(auth_client, environment, before)
     assert old.status_code == 409 and old.json()["error"] == "review_stale"
     assert _validate(auth_client, environment, digest).status_code == 202
