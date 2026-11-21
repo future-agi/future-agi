@@ -1487,6 +1487,51 @@ class TestFetchAndPersistCallResultActivity:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
+    async def test_successful_split_persists_after_peer_records_only_failures(
+        self, call_execution, recording_activity
+    ):
+        from django.db.models.query import QuerySet
+
+        io = recording_activity
+        source = {"call_id": str(call_execution.pk), "egress_id": "EG_1"}
+        expected = {}
+        real_update = QuerySet.aupdate
+
+        async def finish_peer_before_split_write(queryset, **changes):
+            lk = (changes.get("provider_call_data") or {}).get("livekit", {})
+            if queryset.model is CallExecution and not expected and lk.get("recording_source") == source:
+                expected.update(lk["recording"])
+                assert set(expected) == {"combined", "stereo", "assistant", "customer"}
+                # The outer uploads have finished but their first CAS has not run.
+                # A peer poll timeout commits an empty map and no track claims.
+                io.poll.return_value = None
+                peer = await io.run()
+                assert peer.success and peer.recording_error["tracks"] == ["assistant", "customer", "mono", "stereo"]
+                await call_execution.arefresh_from_db()
+                failed = call_execution.provider_call_data["livekit"]
+                assert failed["egress_id"] == source["egress_id"] and failed["recording"] == {}
+                assert failed["recording_error"] == peer.recording_error
+                assert "verified_recording_tracks" not in failed and "recording_source" not in failed
+                io.delete.assert_not_called()
+                matched = await real_update(queryset, **changes)
+                assert matched == 0
+                return matched
+            return await real_update(queryset, **changes)
+
+        with patch.object(QuerySet, "aupdate", new=finish_peer_before_split_write):
+            outer = await io.run()
+        assert outer.success and outer.recording_error is None
+        await call_execution.arefresh_from_db()
+        stored = call_execution.provider_call_data["livekit"]
+        assert expected and stored["recording"] == expected and stored["recording_source"] == source
+        assert stored["verified_recording_tracks"] == {
+            kind: {**source, "url": url} for kind, url in expected.items()
+        }
+        assert "recording_error" not in stored
+        io.delete.assert_called_once()
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
     async def test_changed_complete_map_cannot_reuse_cleanup_confirmation(
         self, call_execution, recording_activity
     ):

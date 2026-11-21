@@ -958,7 +958,9 @@ class LivekitService(VoiceServiceBlueprint):
                 bound = source == identity or bool(verified)
                 unchanged_origin = (
                     source == provider_data.get("recording_source")
-                    and current_map == saved
+                    # A same-source attempt that produced no tracks may materialize
+                    # an empty map. It has not acquired a competing track claim.
+                    and (current_map == saved or (saved is None and current_map == {}))
                     and lk.get("verified_recording_tracks") == provider_data.get("verified_recording_tracks")
                 )
                 if (
