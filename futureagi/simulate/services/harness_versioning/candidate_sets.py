@@ -160,21 +160,40 @@ def unavailable_on_our_side(entry: CandidateSet, bundle: Any) -> bool:
     return bool(bundle is not None and validation.repeats_unavailable(bundle))
 
 
-def still_proving(entry: CandidateSet) -> bool:
-    """Whether this set's own validation job is still live. Its bundle is ready once certifying passes, but the job
-    records each scenario's proof only as it finishes, so until then the set is not yet validated: saved earlier, the
-    new versions would carry no proofs and every case would read not proved."""
+def proof_state(entry: CandidateSet) -> str:
+    """Whether this set's versions carry their scenarios' proofs: `proving` while the set's own validation job runs
+    (its bundle can be ready before the job records each proof), `proved` once the pair holds recorded proofs or
+    the job that proved exactly this pair has finished, else `unproved` (a pairing certified earlier for other
+    versions: saved now, its cases would carry no proofs). Read from typed rows only."""
+    from simulate.models import HarnessSuiteValidation
+
     job_id = entry.get("job_id")
-    if not job_id:
-        return False
-    job = HostedHarnessJob.no_workspace_objects.filter(id=job_id).first()
-    return job is not None and validation.is_live(job)
+    job = (
+        HostedHarnessJob.no_workspace_objects.filter(id=job_id).first()
+        if job_id
+        else None
+    )
+    if job is not None and validation.is_live(job):
+        return "proving"
+    if HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version_id=entry["suite_version_id"],
+        environment_version_id=entry["environment_version_id"],
+    ).exists():
+        return "proved"
+    if (
+        job is not None
+        and str(job.suite_version_id) == str(entry["suite_version_id"])
+        and str(job.environment_version_id) == str(entry["environment_version_id"])
+    ):
+        return "proved"
+    return "unproved"
 
 
 def validation_state(
     environment: HostedHarnessJob, entry: CandidateSet | None = None
 ) -> CandidateValidation | None:
-    """Where the live set's validation stands: `validating`, `retry` (a job ended before any check ran), `ready`,
+    """Where the live set's validation stands: `validating`, `retry` (a job ended before any check ran, or the
+    pairing was certified for other versions and nothing proved this set's: Validate proves it), `ready`,
     `failed`, `check_unavailable` (the check ended on our side for a cause that repeats; the set may save
     uncertified), `superseded` once the defaults moved under it, or `outdated` once the drafts or decisions moved
     since the set was validated (Save would refuse it). A failed validation names the actions that failed and
@@ -191,7 +210,9 @@ def validation_state(
     if current_defaults(environment) != entry["base_defaults"]:
         state = "superseded"
     elif bundle is not None and bundle.state == HarnessAssembledBundle.State.READY:
-        state = "validating" if still_proving(entry) else "ready"
+        state = {"proving": "validating", "proved": "ready", "unproved": "retry"}[
+            proof_state(entry)
+        ]
     elif bundle is not None and bundle.state == HarnessAssembledBundle.State.FAILED:
         state = "failed"
     elif unavailable_on_our_side(entry, bundle):

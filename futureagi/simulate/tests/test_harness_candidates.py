@@ -737,6 +737,70 @@ def test_a_set_whose_check_is_still_recording_proofs_is_not_yet_saveable(
     assert saved.status_code == 200, saved.content
 
 
+def test_a_set_on_an_already_certified_pairing_is_proved_before_it_saves(
+    user, workspace, storage, auth_client
+):
+    from simulate.models import HarnessSuiteValidation
+
+    environment = _with_world(user, workspace, "cand-certified-again", storage)
+    _two_actors(auth_client, environment)
+    first, _ = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    # Discarded, then the same changes made again: a new candidate set on a pairing already certified.
+    for piece in ("environment", "suite"):
+        auth_client.delete(f"{BASE}/{environment.id}/drafts/{piece}/")
+    _two_actors(auth_client, environment)
+    digest = _decided(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    again = _validate(auth_client, environment, digest)
+    candidates = _result(again)["candidates"]
+    # New versions: the first set's were discarded with its drafts.
+    assert candidates != first
+    proved = HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version_id=candidates["suite_version_id"],
+        environment_version_id=candidates["environment_version_id"],
+    ).exists()
+    state = _drafts(auth_client, environment)["validation"]["state"]
+    early = _save(auth_client, environment, candidates, digest=digest)
+
+    # Nothing proved these versions' cases yet: the set is proved first, never offered to Save without proofs.
+    assert not proved
+    assert again.status_code == 202, again.content
+    assert state == "validating"
+    assert early.status_code == 409
+
+
+def test_a_set_nothing_proved_reads_validate_again_and_never_saves(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-unproved", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    # Its bundle is certified, but the job it holds proved other versions of that bundle (it joined one).
+    environment.refresh_from_db()
+    entry = live_set(environment)
+    assert entry["environment_version_id"] != str(environment.environment_version_id)
+    HostedHarnessJob.no_workspace_objects.filter(id=entry["job_id"]).update(
+        environment_version_id=environment.environment_version_id
+    )
+
+    state = _drafts(auth_client, environment)["validation"]["state"]
+    refused = _save(auth_client, environment, candidates, digest=digest)
+
+    assert state == "retry"
+    assert refused.status_code == 409 and refused.json()["error"] == "not_validated"
+
+
 def test_save_refused_unless_validated(user, workspace, storage, auth_client):
     environment = _with_world(user, workspace, "cand-unvalidated", storage)
     _two_actors(auth_client, environment)

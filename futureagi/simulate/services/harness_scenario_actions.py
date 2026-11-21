@@ -562,11 +562,16 @@ VALIDATION_RUNNING = (
 )
 
 
+def validation_running() -> HostedHarnessError:
+    """The refusal of a Save while a validation it depends on still runs; asking again once it ends works."""
+    return _error("validation_running", VALIDATION_RUNNING, 409, retryable=True)
+
+
 def require_no_validation(environment: HostedHarnessJob) -> None:
     """Refuse a Save while a validation of the default pair runs: the Save moves the defaults, and what the
     validation proves would land on the versions it left behind."""
     if live_validation(environment) is not None:
-        raise _error("validation_running", VALIDATION_RUNNING, 409, retryable=True)
+        raise validation_running()
 
 
 def running_validation(environment: HostedHarnessJob) -> RunningValidation:
