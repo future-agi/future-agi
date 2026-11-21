@@ -39,6 +39,7 @@ class RequiredCoverage(unittest.TestCase):
                 journey = case in ('j3', 'j4')
                 names = ['cold', 'configured'] if case == 'j4' else ['configured'] if journey else ['guest' if case == '063' else 'campaign']
                 records = [dict(name=n, status='completed' if journey else 'registered', product_head=commit, sdk_commit=sdk,
+                                environment='blacksmith', runner='blacksmith-8vcpu-ubuntu-2404', run_id='42',
                                 package_hashes=[wheel, application] if case == '063' else [wheel]) for n in names]
                 path = folder / ('skills-journey-' + case) / (case + '.json')
                 path.parent.mkdir()
@@ -70,10 +71,17 @@ class RequiredCoverage(unittest.TestCase):
             data['records'][0]['package_hashes'] = [wheel, application]
             # Only this run's own Blacksmith journeys count; a GCP-labelled or
             # another run's result is not evidence for this commit.
-            for field, bad in (('environment', 'gcp'), ('run_id', '43'), ('runner', 'ubuntu-latest')):
+            for field, bad in (('environment', 'gcp'), ('run_id', '43'), ('runner', 'blacksmith-16vcpu-ubuntu-2404')):
                 path.write_text(json.dumps({**data, field: bad}))
                 with self.assertRaisesRegex(ValueError, 'Invalid or incomplete'):
                     check()
+                record = {**data['records'][0], field: bad}
+                path.write_text(json.dumps({**data, 'records': [record]}))
+                with self.assertRaisesRegex(ValueError, 'Invalid or incomplete'):
+                    check()
+            path.write_text(json.dumps(data))
+            with self.assertRaisesRegex(ValueError, 'Actions run'):
+                coverage['registered_passes'](folder, commit, sdk, pair, wheel, application, coverage['required_runs'](), None)
             data['pair_sha256'] = 'f' * 64
             path.write_text(json.dumps(data))
             with self.assertRaisesRegex(ValueError, 'Invalid or incomplete'):

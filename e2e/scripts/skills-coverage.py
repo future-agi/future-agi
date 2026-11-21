@@ -141,7 +141,12 @@ def failure_summary(report):
 # These cases are executed on registered GCP workers, not a hosted runner
 # claiming a GCP environment. Their reporter checks the exact Playwright test,
 # expected status and single attempt before emitting its allowlisted result.
-def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha, expected, run_id=None):
+JOURNEY_RUNNER = "blacksmith-8vcpu-ubuntu-2404"
+
+
+def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha, expected, run_id):
+    if not re.fullmatch(r"\d+", str(run_id or "")):
+        raise ValueError("The Actions run that produced the registered results is required")
     if not all(re.fullmatch(r"[a-f0-9]{64}", value) for value in (pair_sha, sdk_sha, application_sha)):
         raise ValueError("Invalid producer digest")
     cases = {case: ((f"campaign-registered-{case}", f"SKILLS-E2E-{case}"), {"campaign": "registered"})
@@ -162,8 +167,9 @@ def registered_passes(directory, commit, sdk, pair_sha, sdk_sha, application_sha
         records = data["records"]
         if (key in seen or data["sha"] != commit or data["passed"] is not True or data["count"] != 1
                 or data["pair_sha256"] != pair_sha or data["environment"] != "blacksmith"
-                or not re.fullmatch(r"blacksmith-\d+vcpu-ubuntu-\d{4}", data.get("runner", ""))
-                or not re.fullmatch(r"\d+", data.get("run_id", "")) or (run_id is not None and data["run_id"] != run_id)
+                or data.get("runner") != JOURNEY_RUNNER or data.get("run_id") != run_id
+                or not all(r.get("environment") == "blacksmith" and r.get("runner") == JOURNEY_RUNNER
+                           and r.get("run_id") == run_id for r in records)
                 or len(records) != len(statuses) or {r["name"]: r["status"] for r in records} != statuses
                 or not all(r["product_head"] == commit and r["sdk_commit"] == sdk for r in records)):
             raise ValueError(f"Invalid or incomplete registered result: {key}")

@@ -9,9 +9,10 @@ import { homedir } from 'node:os';
 // digests, not free-form manifest fields or failed-driver messages.
 function evidence(name, { status, provenance }) {
   validateProvenance(provenance);
-  if (provenance.environment !== 'blacksmith' || provenance.run_id !== process.env.GITHUB_RUN_ID) throw new Error('Expected this run\'s Blacksmith registration');
-  const { product_base, product_head, product_tree, sdk_commit, runtime_digest, fixture_hash, package_hashes, lockfile_hashes, dirty } = provenance;
-  return { name, status, product_base, product_head, product_tree, sdk_commit, runtime_digest, fixture_hash, package_hashes, lockfile_hashes, dirty };
+  if (provenance.environment !== 'blacksmith' || provenance.run_id !== process.env.GITHUB_RUN_ID
+    || provenance.runner !== process.env.RUNNER_LABEL) throw new Error('Expected this run\'s Blacksmith registration');
+  const { environment, runner, run_id, product_base, product_head, product_tree, sdk_commit, runtime_digest, fixture_hash, package_hashes, lockfile_hashes, dirty } = provenance;
+  return { name, status, environment, runner, run_id, product_base, product_head, product_tree, sdk_commit, runtime_digest, fixture_hash, package_hashes, lockfile_hashes, dirty };
 }
 
 export default class SkillsJourneyReporter {
