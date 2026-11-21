@@ -187,8 +187,18 @@ jobs:
               - 'docker-compose*.yml'
               - 'deploy/docker-compose*.yml'
               - '.github/workflows/update-ci.yml'
-            migrations:
+            # What only latest-stable -> PR executes from the pull request: it
+            # builds the images and boots them on real data. Migrations, the
+            # image builds and entrypoints, and the settings the boot reads.
+            built:
               - 'futureagi/**/migrations/**'
+              - 'futureagi/tfc/settings/**'
+              - '**/Dockerfile*'
+              - '**/dockerfile*'
+              - '**/.dockerignore'
+              - '**/*.dockerignore'
+              - '**/entrypoint.sh'
+              - '**/docker-entrypoint.sh'
       - id: update-code
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
@@ -218,7 +228,7 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
           LABELLED: ${{ steps.labels.outputs.rehearsal == 'true' }}
           TOOLING_CHANGED: ${{ steps.filter.outputs.tooling == 'true' || steps.update-code.outputs.code == 'true' }}
-          MIGRATIONS_CHANGED: ${{ steps.filter.outputs.migrations == 'true' }}
+          BUILT_CHANGED: ${{ steps.filter.outputs.built == 'true' }}
         run: bash scripts/update-rehearsal-decision.sh >> "$GITHUB_OUTPUT"
 
   safety:

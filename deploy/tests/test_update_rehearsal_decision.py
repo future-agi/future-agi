@@ -1,4 +1,5 @@
 """When Update CI runs its two Real rehearsals (stdlib only)."""
+import fnmatch
 from pathlib import Path
 import subprocess
 import unittest
@@ -6,7 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/update-rehearsal-decision.sh"
 WORKFLOW = ROOT / ".github/workflows/update-ci.yml"
-QUIET = {"LABELLED": "false", "TOOLING_CHANGED": "false", "MIGRATIONS_CHANGED": "false"}
+QUIET = {"LABELLED": "false", "TOOLING_CHANGED": "false", "BUILT_CHANGED": "false"}
 
 
 def decide(event, **env):
@@ -31,7 +32,7 @@ class RehearsalDecisionTest(unittest.TestCase):
 
     def test_a_push_and_a_merge_group_never_rehearse(self):
         # Three hours per job would stall a merge queue.
-        loud = {"LABELLED": "true", "TOOLING_CHANGED": "true", "MIGRATIONS_CHANGED": "true", "BASE_REF": "main"}
+        loud = {"LABELLED": "true", "TOOLING_CHANGED": "true", "BUILT_CHANGED": "true", "BASE_REF": "main"}
         self.assertEqual(decide("push", **loud), NEITHER)
         self.assertEqual(decide("merge_group", **loud), NEITHER)
 
@@ -45,7 +46,7 @@ class RehearsalDecisionTest(unittest.TestCase):
         self.assertEqual(decide("pull_request", BASE_REF="dev", **{**QUIET, "TOOLING_CHANGED": "true"}), BOTH)
 
     def test_a_migration_runs_the_upgrade_from_the_latest_release_only(self):
-        self.assertEqual(decide("pull_request", BASE_REF="dev", **{**QUIET, "MIGRATIONS_CHANGED": "true"}),
+        self.assertEqual(decide("pull_request", BASE_REF="dev", **{**QUIET, "BUILT_CHANGED": "true"}),
                          {"upgrade": "true", "abc": "false"})
 
     def test_a_pull_request_with_an_unknown_input_fails_instead_of_skipping(self):
@@ -94,7 +95,7 @@ class RehearsalWorkflowTest(unittest.TestCase):
         self.assertIn("predicate-quantifier: every", code)
         for pattern in ("'deploy/update/**'", "'!**/*.md'", "'!**/*.json'"):
             self.assertIn("              - " + pattern + "\n", code)
-        tooling = self.changes.split("            tooling:\n", 1)[1].split("            migrations:\n", 1)[0]
+        tooling = self.changes.split("            tooling:\n", 1)[1].split("            # What only latest-stable", 1)[0]
         listed = [line.strip()[3:-1] for line in tooling.splitlines() if line.strip().startswith("- '")]
         # No whole-source glob: an ordinary backend or docs change must not run three-hour jobs.
         for pattern in listed:
@@ -103,8 +104,24 @@ class RehearsalWorkflowTest(unittest.TestCase):
         for required in ("bin/update", "deploy/tests/update_e2e/**", "docker-compose*.yml",
                          "scripts/update-rehearsal-decision.sh", ".github/workflows/update-ci.yml"):
             self.assertIn(required, listed)
-        self.assertIn("            migrations:\n              - 'futureagi/**/migrations/**'\n", self.changes)
 
+    def test_what_the_images_build_and_boot_triggers_latest_stable_only(self):
+        built = self.changes.split("            built:\n", 1)[1].split("      - id: update-code\n", 1)[0]
+        listed = [line.strip()[3:-1] for line in built.splitlines() if line.strip().startswith("- '")]
+        for required in ("futureagi/**/migrations/**", "futureagi/tfc/settings/**", "**/Dockerfile*",
+                         "**/dockerfile*", "**/entrypoint.sh", "**/docker-entrypoint.sh"):
+            self.assertIn(required, listed)
+        self.assertIn("BUILT_CHANGED: ${{ steps.filter.outputs.built == 'true' }}", self.changes)
+        # Every image build and entrypoint in the repository matches a pattern.
+        tracked = subprocess.run(
+            ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
+        ).stdout.splitlines()
+        for path in tracked:
+            name = path.rsplit("/", 1)[-1]
+            if name.lower().startswith("dockerfile") or name.endswith("entrypoint.sh"):
+                self.assertTrue(
+                    any(fnmatch.fnmatchcase("/" + path, "*" + pattern.lstrip("*")) for pattern in listed), path
+                )
 
 if __name__ == "__main__":
     unittest.main()

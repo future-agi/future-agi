@@ -441,12 +441,16 @@ jobs:
           SUITE: ${{ matrix.suite }}
           SUITE_MARKERS: ${{ matrix.markers }}
           SUITE_SPLITS: ${{ matrix.splits }}
+          # .ci/collected_ids.py records every test id this shard collected;
+          # the "collection" job fails the run when two shards differ.
+          PYTHONPATH: .ci
+          COLLECTED_IDS_FILE: ${{ runner.temp }}/collected-ids.txt
         run: |
           set +e
           # pytest.ini adds -v; -q restores compact module progress. Verbose
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
           # processing after the tests have passed. Keep full JUnit results.
-          uv run pytest -q -ra --ignore=tests/stress \
+          uv run pytest -q -ra --ignore=tests/stress -p collected_ids \
             -m "($PYTEST_MARKERS) and $SUITE_MARKERS" \
             --splits "$SUITE_SPLITS" --group "${{ matrix.group }}" \
             --splitting-algorithm least_duration \
@@ -473,6 +477,18 @@ jobs:
           path: futureagi/junit-${{ matrix.group }}.xml
           overwrite: true
           if-no-files-found: error
+
+      - name: Upload the record of what this shard collected
+        if: ${{ !cancelled() && steps.run-shard.conclusion != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: collected-ids-${{ matrix.suite }}-${{ matrix.group }}
+          path: ${{ runner.temp }}/collected-ids.txt
+          retention-days: 3
+          overwrite: true
+          # A shard that died before it collected has none; the collection
+          # job counts the records and fails on a missing one.
+          if-no-files-found: warn
 
       - name: Upload timing data (dev pushes only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -913,6 +929,32 @@ jobs:
           path: futureagi/.test_durations
           key: test-durations-${{ github.run_id }}
 
+  collection:
+    # pytest-split runs each test exactly once only when every shard collects
+    # the same test ids; a random value in an id lets a test run twice or
+    # never, with every job green. Each shard records what it collected
+    # (.ci/collected_ids.py) and this job compares the records. It runs
+    # whenever the shards ran, so it is never skipped past the gate.
+    name: Every shard collected the same tests
+    needs: [changes, test]
+    if: ${{ !cancelled() && needs.test.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: futureagi/.ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: collected-ids-*
+          path: ${{ runner.temp }}/collected
+      - name: Compare the shards' collection records
+        env:
+          SHARDS: ${{ needs.changes.outputs.shards }}
+        run: |
+          python3 -I futureagi/.ci/check_collected_ids.py "$(jq '.include | length' <<<"$SHARDS")" \
+            "$RUNNER_TEMP"/collected/*/collected-ids.txt
+
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
     needs:
@@ -921,6 +963,7 @@ jobs:
         update-safety,
         plan,
         test,
+        collection,
         saml-multiworker,
         migrated-database,
         agentic-eval,

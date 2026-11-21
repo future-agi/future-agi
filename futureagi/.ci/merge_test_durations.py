@@ -10,12 +10,15 @@ reported (its shard failed before the upload, or the test was deselected).
     merge_test_durations.py PLAN SHARD_FILE [SHARD_FILE ...] > .test_durations
 
 The result holds only tests of MIN_SECONDS or more. That is about a fifth of
-the tests and 99% of the time, and it splits as evenly as the full list:
-pytest-split places the longest known tests first and gives every test
-without a time the same weight, so the many near-instant tests spread evenly
-by count. Times are rounded to a tenth of a millisecond, and a test whose id
-is longer than MAX_ID_LENGTH is left out (a few generated parameter ids are
-hundreds of kilobytes long).
+the tests and 99% of the time. It splits nearly as evenly as the full list,
+not exactly: pytest-split gives a test without a time the average of its
+suite's known times, so the many near-instant tests carry weight they do not
+have, and the shard that holds a very long test gets a few more short tests
+than it should. Replaying one dev run's times through pytest-split's
+algorithm, the longest shard was equal for the main suite and 0.6 minutes
+longer for the Metrics suite (25.5 against 24.9). Times are rounded to a tenth
+of a millisecond, and a test whose id is longer than MAX_ID_LENGTH is left out
+(a few generated parameter ids are hundreds of kilobytes long).
 
 Standard library only.
 """

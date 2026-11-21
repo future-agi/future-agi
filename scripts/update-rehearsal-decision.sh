@@ -8,13 +8,14 @@
 #   pull request into main        both (a release)
 #   label update-rehearsal        both (ask for them on any pull request)
 #   update tooling changed        both
-#   a migration changed           latest-stable -> PR only: it builds the pull
-#                                 request and migrates real data; a-b-c installs
-#                                 published releases and builds nothing from it
+#   what the images build and     latest-stable -> PR only: it builds the pull
+#   boot changed (migrations,     request and boots it on real data; a-b-c installs
+#   Dockerfiles, entrypoints,     published releases and builds nothing from it
+#   settings)
 #   anything else                 neither (push, merge_group, other pull requests)
 #
 # Inputs, from the workflow: EVENT_NAME, BASE_REF, and for a pull request
-# LABELLED, TOOLING_CHANGED and MIGRATIONS_CHANGED, each "true" or "false".
+# LABELLED, TOOLING_CHANGED and BUILT_CHANGED, each "true" or "false".
 set -euo pipefail
 
 upgrade=false
@@ -24,7 +25,7 @@ case "${EVENT_NAME:?EVENT_NAME is required}" in
     upgrade=true abc=true why="every $EVENT_NAME run"
     ;;
   pull_request)
-    for name in LABELLED TOOLING_CHANGED MIGRATIONS_CHANGED; do
+    for name in LABELLED TOOLING_CHANGED BUILT_CHANGED; do
       case "${!name:-}" in
         true | false) ;;
         *)
@@ -39,10 +40,10 @@ case "${EVENT_NAME:?EVENT_NAME is required}" in
       upgrade=true abc=true why="label update-rehearsal"
     elif [[ "$TOOLING_CHANGED" == true ]]; then
       upgrade=true abc=true why="update tooling changed"
-    elif [[ "$MIGRATIONS_CHANGED" == true ]]; then
-      upgrade=true why="a migration changed"
+    elif [[ "$BUILT_CHANGED" == true ]]; then
+      upgrade=true why="a migration, image build, entrypoint or settings file changed"
     else
-      why="no update tooling or migration changed; add the update-rehearsal label and re-run this workflow to run them"
+      why="nothing a rehearsal builds or runs changed; add the update-rehearsal label and re-run this workflow to run them"
     fi
     ;;
   *)
