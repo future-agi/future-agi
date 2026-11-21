@@ -280,6 +280,11 @@ def _is_timestamp(value: Any) -> bool:
     )
 
 
+def _http_status_code(data: dict) -> int | None:
+    status = data.get("status_code")
+    return status if type(status) is int and 100 <= status <= 599 else None
+
+
 def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
     # Breadcrumbs outlive their originating event. Do not keep rendered log
     # arguments, request bodies, or arbitrary integration data in the trail.
@@ -299,8 +304,8 @@ def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
         method = data.get("method")
         if type(method) is str and len(method) <= 7 and method in _HTTP_METHODS:
             fields["method"] = method
-        status = data.get("status_code")
-        if type(status) is int and 100 <= status <= 599:
+        status = _http_status_code(data)
+        if status is not None:
             fields["status_code"] = status
         result["data"] = fields
     return result
@@ -441,15 +446,16 @@ def _scrub_transaction_spans(event: dict) -> None:
         # Read trace independently: Profile.to_json needs its ID even when an
         # unrelated scope or transaction context exceeds the scrubber budget.
         contexts = event["contexts"]
-        trace = contexts.get("trace") if type(contexts) is dict else None
-        event["contexts"] = (
-            {"trace": _span_structure(trace)} if type(trace) is dict else {}
-        )
-    # The SDK serializer can mirror discarded field names in its annotations.
-    meta = event.get("_meta")
-    if type(meta) is dict:
-        meta.pop("contexts", None)
-        meta.pop("spans", None)
+        event["contexts"] = {}
+        if type(contexts) is dict:
+            trace = contexts.get("trace")
+            if type(trace) is dict:
+                event["contexts"]["trace"] = _span_structure(trace)
+            response = contexts.get("response")
+            if type(response) is dict:
+                status = _http_status_code(response)
+                if status is not None:
+                    event["contexts"]["response"] = {"status_code": status}
 
 
 def _log_params(params: Any, message: str) -> dict | list | None:
@@ -580,7 +586,7 @@ def _scrub_event(
         if type(mechanism) is dict:
             # The SDK can attach an independent description and arbitrary data
             # here. Keep how the error was captured and its place in the chain.
-            safe_mechanism: dict[str, Any] = {}
+            safe_mechanism: dict[str, Any] = {"type": "generic"}
             for key in ("handled", "synthetic", "is_exception_group"):
                 if type(mechanism.get(key)) is bool:
                     safe_mechanism[key] = mechanism[key]
@@ -635,6 +641,27 @@ def _scrub_event(
                         for k, v in (("message", message), ("formatted", formatted))
                         if k in entry
                     }
+
+    # Serializer annotations describe the original fields, not the outgoing ones.
+    meta = event.get("_meta")
+    if type(meta) is dict:
+        for key in (
+            "breadcrumbs",
+            "contexts",
+            "spans",
+            "logger",
+            "level",
+            "request",
+            "extra",
+            "stacktrace",
+            "threads",
+            "exception",
+            "message",
+            "logentry",
+        ):
+            meta.pop(key, None)
+        if event.get("type") == "transaction":
+            meta.pop("tags", None)
     return event
 
 

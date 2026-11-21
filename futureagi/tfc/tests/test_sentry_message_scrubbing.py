@@ -7,6 +7,7 @@ import time
 import pytest
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.tracing import Transaction
 
 from tfc.logging import sentry
 from tfc.tests.sentry_capture import sentry_capture
@@ -207,6 +208,99 @@ def test_span_exception_text_is_not_sent_with_the_transaction_or_next_event():
         assert child["op"] == "task.read"
         assert child["data"] == {"exception.type": "LookupError"}
         assert second["message"] == "next diagnostic"
+
+
+def test_rebuilt_fields_discard_their_serializer_annotations():
+    with sentry_capture(
+        before_send_transaction=sentry._before_send_transaction,
+        traces_sample_rate=1.0,
+        max_value_length=128,
+    ) as transport:
+        # Truncation gives the SDK a reason to annotate each original field.
+        note = "x" * 160
+        sentry_sdk.capture_event(
+            {"message": "job finished", "extra": {"count": 2, MARKER: note}}
+        )
+        with sentry_sdk.start_transaction(name="process job", op="task") as txn:
+            txn.set_tag("component", "worker")
+            txn.set_tag(MARKER, note)
+
+        issue, transaction = transport.envelopes
+        [event] = transport.events
+        assert event["extra"] == {"count": 2}
+        assert "extra" not in event.get("_meta", {})
+        [item] = transaction.items
+        assert item.payload.json["tags"]["component"] == "worker"
+        assert "tags" not in item.payload.json.get("_meta", {})
+        assert MARKER.encode() not in issue.serialize()
+        assert MARKER.encode() not in transaction.serialize()
+
+
+def test_unknown_capture_type_keeps_the_exception_chain():
+    with sentry_capture() as transport:
+        sentry_sdk.capture_event(
+            {
+                "exception": {
+                    "values": [
+                        {
+                            "type": "LookupError",
+                            "mechanism": {
+                                "type": "job.runner",
+                                "handled": False,
+                                "exception_id": 1,
+                                "parent_id": 0,
+                                "description": MARKER,
+                            },
+                        },
+                        {
+                            "type": "RuntimeError",
+                            "mechanism": {
+                                "type": "logging",
+                                "handled": True,
+                                "exception_id": 0,
+                            },
+                        },
+                    ]
+                }
+            }
+        )
+        [event] = transport.events
+        cause, parent = event["exception"]["values"]
+        assert cause["mechanism"] == {
+            "type": "generic",
+            "handled": False,
+            "exception_id": 1,
+            "parent_id": 0,
+        }
+        assert parent["mechanism"] == {
+            "type": "logging",
+            "handled": True,
+            "exception_id": 0,
+        }
+
+
+@pytest.mark.parametrize("status", [200, 503, "200", True, 99, 600])
+def test_response_context_keeps_only_http_status_alongside_trace(status):
+    with sentry_capture(
+        before_send_transaction=sentry._before_send_transaction,
+        traces_sample_rate=1.0,
+    ) as transport:
+        with sentry_sdk.start_transaction(name="process job", op="http.server") as txn:
+            assert isinstance(txn, Transaction)
+            txn.set_context(
+                "response", {"status_code": status, "headers": {"Example": MARKER}}
+            )
+
+        [envelope] = transport.envelopes
+        [item] = envelope.items
+        contexts = item.payload.json["contexts"]
+        assert contexts["trace"]["trace_id"] == txn.trace_id
+        assert contexts["trace"]["span_id"] == txn.span_id
+        if status in (200, 503):
+            assert contexts["response"] == {"status_code": status}
+        else:
+            assert "response" not in contexts
+        assert MARKER.encode() not in envelope.serialize()
 
 
 def test_over_budget_span_list_is_dropped_without_losing_the_transaction(monkeypatch):
