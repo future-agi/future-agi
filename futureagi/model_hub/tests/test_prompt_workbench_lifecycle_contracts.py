@@ -835,6 +835,45 @@ def test_prompt_assistant_helpers_validate_required_fields_before_agent(
 
 
 @pytest.mark.django_db
+def test_prompt_assistant_helpers_surface_entitlement_denial_without_ee(
+    auth_client, monkeypatch
+):
+    from tfc.ee_stub import _ee_stub
+
+    for symbol in ("PromptGenerator", "PromptSuggestionGenerator", "SyntheticDataAgent"):
+        monkeypatch.setattr(
+            f"model_hub.views.prompt_template.{symbol}", _ee_stub(symbol)
+        )
+    monkeypatch.setattr(
+        "model_hub.views.prompt_template.log_and_deduct_cost_for_api_request", None
+    )
+
+    responses = [
+        auth_client.post(
+            "/model-hub/prompt-templates/generate-prompt/",
+            {"statement": "Draft a support reply."},
+            format="json",
+        ),
+        auth_client.post(
+            "/model-hub/prompt-templates/analyze-prompt/",
+            {"prompt": "Hello {{customer}}", "explanation": "Too vague."},
+            format="json",
+        ),
+        auth_client.post(
+            "/model-hub/prompt-templates/generate-variables/",
+            {"prompt_name": "Greeting", "variable_names": ["customer"]},
+            format="json",
+        ),
+    ]
+
+    for response in responses:
+        assert response.status_code == 402
+        assert response.data["status"] is False
+        assert response.data["error"]["code"] == "ENTITLEMENT_DENIED"
+        assert response.data["upgrade_required"] is True
+
+
+@pytest.mark.django_db
 def test_prompt_assistant_helpers_submit_scoped_payloads(
     auth_client, organization, workspace, user, monkeypatch
 ):
