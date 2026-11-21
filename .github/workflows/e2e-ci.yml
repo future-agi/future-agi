@@ -2,6 +2,7 @@ name: E2E CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
@@ -35,7 +36,7 @@ concurrency:
   # push waits, and GitHub cancels any older one still waiting. Pushes to main
   # keep one group per commit. A newer push to a pull request cancels its
   # running run; schedule, merge_group and dispatch group by ref as before.
-  group: e2e-ci-${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' && 'dev-push' || github.sha) || github.ref }}
+  group: e2e-ci-${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' && 'dev-push' || github.sha) || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -50,16 +51,19 @@ env:
 
 jobs:
   changes:
+    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read # dorny/paths-filter reads the PR's file list
+      actions: read # immutable creation date for partial reruns
     outputs:
-      any: ${{ steps.filter.outputs.any || steps.always.outputs.any }}
-      backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend || steps.always.outputs.frontend }}
-      gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
+      any: ${{ steps.filter.outputs.any }}
+      backend: ${{ steps.filter.outputs.any }}
+      frontend: ${{ steps.filter.outputs.any }}
+      gateway: ${{ steps.filter.outputs.any }}
+      legs: ${{ steps.shards.outputs.legs }}
+      scope: ${{ steps.filter.outputs.scope }}
       stacks: ${{ steps.stacks.outputs.stacks }}
       shards: ${{ steps.shards.outputs.shards }}
       shard_total: ${{ steps.shards.outputs.total }}
@@ -71,46 +75,67 @@ jobs:
           printf '%s\n' '::error::host_update_fallibility=true requires stack=distributed; no builds were started.'
           exit 1
       - uses: actions/checkout@v4
-      - id: filter
-        if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
         with:
-          filters: |
-            backend:
-              - 'futureagi/**'
-              - 'fi-collector/**'
-            frontend:
-              - 'frontend/**'
-            gateway:
-              - 'agentcc-gateway/**'
-            any:
-              - 'futureagi/**'
-              - 'fi-collector/**'
-              - 'agentcc-gateway/**'
-              - 'frontend/**'
-              - 'e2e/**'
-              - 'bin/e2e'
-              - 'docker-compose.yml'
-              - 'docker-compose.distributed.yml'
-              - 'docker-compose.dev.yml'
-              - 'docker-compose.distributed.dev.yml'
-              - 'deploy/**'
-              - 'bin/install*'
-              - 'bin/lib/**'
-              - 'bin/uninstall'
-              - 'scripts/reclaim-runner-disk.sh'
-              - '.github/workflows/e2e-ci.yml'
-              - '.github/scripts/resolve-sdk-test-ref.py'
-              - '.github/scripts/test_resolve_sdk_test_ref.py'
-      - id: always
-        if: github.event_name != 'pull_request'
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+      - name: Plan from the event base and complete candidate diff
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          CI_SCOPE_MODE: ${{ vars.CI_SCOPE_MODE }}
+          STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
+        # Bootstrap is workflow policy; never execute a candidate loader.
         run: |
+          set -euo pipefail
+          [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
+          case "$GITHUB_EVENT_NAME" in
+            pull_request|merge_group)
+              for sha in "$BASE_SHA" "$HEAD_SHA"; do
+                [[ $sha =~ ^[0-9a-f]{40}$ && ! $sha =~ ^0+$ ]]
+                git cat-file -e "${sha}^{commit}"
+              done
+              if [[ $GITHUB_EVENT_NAME == merge_group ]]; then
+                [[ $HEAD_SHA == "$GITHUB_SHA" ]]
+                git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+              else
+                [[ $(git show -s --format=%P HEAD) == "$BASE_SHA $HEAD_SHA" ]]
+              fi
+              policy=$BASE_SHA ;;
+            *) policy=$GITHUB_SHA; export BASE_SHA=$policy HEAD_SHA=$policy ;;
+          esac
+          file=.github/scripts/ci_scope.py
+          # Check presence separately: a corrupt/missing object is not a legacy base.
+          entry=$(git ls-tree "$policy" -- "$file")
+          if [[ -n $entry ]]; then
+            git show "$policy:$file" > "$RUNNER_TEMP/ci-scope.py"
+            exec python3 -I "$RUNNER_TEMP/ci-scope.py"
+          fi
+          # First landing / stacked PR onto a base predating the planner. Run all suites.
+          # The unpublished executor-tag assertion applies only to changes to its inputs.
+          pin=false
+          if [[ $GITHUB_EVENT_NAME == pull_request || $GITHUB_EVENT_NAME == merge_group ]]; then
+            start=$BASE_SHA
+            if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+              if ! start=$(git merge-base --all "$BASE_SHA" "$HEAD_SHA"); then start=unknown; fi
+            fi
+            if ! [[ $start =~ ^[0-9a-f]{40}$ ]] || ! git diff --quiet --no-renames "$start" "$HEAD_SHA" -- \
+                futureagi/code-executor/{Dockerfile.base,requirements.sandbox.txt} ||
+                ! git diff --quiet --no-renames "$BASE_SHA" "$GITHUB_SHA" -- \
+                futureagi/code-executor/{Dockerfile.base,requirements.sandbox.txt}; then pin=true; fi
+          fi
           {
-            echo "any=true"
-            echo "backend=true"
-            echo "frontend=true"
-            echo "gateway=true"
+            for key in backend metrics any collector ordinary_update update_safety tooling built python; do echo "$key=true"; done
+            echo "executor_base=$pin"
+            echo "scope=$(jq -cn --arg sha "$GITHUB_SHA" --arg base "$policy" '{version:0,mode:"full",reason:"legacy policy base",tested_commit:$sha,policy_base:$base}')"
           } >> "$GITHUB_OUTPUT"
+      - name: Validate the E2E plan flag
+        env:
+          ANY: ${{ steps.filter.outputs.any }}
+        run: '[[ "$ANY" == true || "$ANY" == false ]]'
       - id: stacks
         env:
           EVENT: ${{ github.event_name }}
@@ -120,7 +145,7 @@ jobs:
           STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
         run: |
           case "$EVENT" in
-            schedule) stacks='["standalone"]' ;;
+            schedule|merge_group|push) stacks='["distributed","standalone"]' ;;
             workflow_dispatch) stacks="[\"$DISPATCHED\"]" ;;
             pull_request)
               if [ "$STANDALONE_LABEL" = true ]; then
@@ -133,16 +158,27 @@ jobs:
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
       - id: shards
         env:
+          GH_TOKEN: ${{ github.token }}
+          ANY: ${{ steps.filter.outputs.any }}
+          STACKS: ${{ steps.stacks.outputs.stacks }}
           FALLIBILITY: ${{ github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility }}
         run: |
           total=$E2E_SHARDS
           # The fallibility proof follows the whole suite inside one job.
           if [ "$FALLIBILITY" = true ]; then total=1; fi
+          [[ $total =~ ^[1-9][0-9]*$ ]]
+          legs=$(jq -cn --argjson active "$ANY" --argjson stacks "$STACKS" --argjson n "$total" '
+            [select($active) | $stacks[] as $stack | range(1;$n+1) as $i |
+              {stack:$stack, shard:$i, total:$n, catalog_and_sdk:($i == $n)}]')
+          echo "legs=$legs" >> "$GITHUB_OUTPUT"
+          echo "Expected E2E legs: $legs"
           echo "total=$total" >> "$GITHUB_OUTPUT"
           echo "shards=[$(seq -s, 1 "$total")]" >> "$GITHUB_OUTPUT"
           # One date for the whole run: a quarantine entry that expires today
           # must be in or out for every shard and for the report job alike.
-          echo "today=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+          [[ $created =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2})T ]]
+          echo "today=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
 
   e2e:
     name: e2e (${{ matrix.stack }}, ${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }})
@@ -509,12 +545,9 @@ jobs:
         if: ${{ !cancelled() && steps.suite.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
-          name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}
+          name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: e2e/blob-report
           retention-days: 3
-          # A re-run of this one leg replaces its earlier blob; the report job
-          # then merges it with the other legs' blobs from the first attempt.
-          overwrite: true
           if-no-files-found: error
 
       - name: Upload report
@@ -629,20 +662,26 @@ jobs:
           CATALOG: ${{ steps.catalog.outcome }}
           SDK_PYTHON: ${{ steps.sdk-python.outcome }}
           SDK_TYPESCRIPT: ${{ steps.sdk-typescript.outcome }}
+          SDK_SHA: ${{ steps.sdk-ref.outputs.ref }}
+          TOTAL: ${{ needs.changes.outputs.shard_total }}
         run: |
           mkdir -p "$RUNNER_TEMP/once-per-stack"
+          [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
+          [[ $SDK_SHA =~ ^[0-9a-f]{40}$ && $(git -C futureagi-sdk rev-parse HEAD) == "$SDK_SHA" ]]
           jq -n --arg catalog "$CATALOG" --arg python "$SDK_PYTHON" --arg typescript "$SDK_TYPESCRIPT" \
-            '{flow_catalog_check: $catalog, python_sdk_suite: $python, typescript_sdk_suite: $typescript}' \
+            --arg run "$GITHUB_RUN_ID" --arg sha "$GITHUB_SHA" --arg sdk "$SDK_SHA" --arg stack "$E2E_STACK" \
+            --arg date "$E2E_QUARANTINE_TODAY" --argjson attempt "$GITHUB_RUN_ATTEMPT" --argjson total "$TOTAL" \
+            '{run:$run,sha:$sha,sdk:$sdk,stack:$stack,date:$date,attempt:$attempt,total:$total,
+              outcomes:{flow_catalog_check:$catalog,python_sdk_suite:$python,typescript_sdk_suite:$typescript}}' \
             | tee "$RUNNER_TEMP/once-per-stack/record.json"
 
       - name: Upload the once-per-stack record
         if: ${{ !cancelled() && env.E2E_LAST_SHARD == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: once-per-stack-${{ matrix.stack }}
+          name: once-per-stack-${{ matrix.stack }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/once-per-stack/record.json
           retention-days: 3
-          overwrite: true
           if-no-files-found: error
 
       - name: Capture backend lifecycle on failure
@@ -683,6 +722,9 @@ jobs:
     # result across the shards (e2e/scripts/shard-report.mjs). It runs when a
     # shard failed too, so the merged report shows the failure.
     name: e2e report (${{ matrix.stack }})
+    permissions:
+      contents: read
+      actions: read
     needs: [changes, e2e]
     if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
     strategy:
@@ -709,12 +751,11 @@ jobs:
       - name: Install harness
         run: yarn install --frozen-lockfile
 
-      - name: Download the shards' blob reports
-        uses: actions/download-artifact@v4
-        with:
-          pattern: blob-report-${{ matrix.stack }}-*
-          path: e2e/all-blob-reports
-          merge-multiple: true
+      - name: Download verified shard and once-per-stack receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARD_TOTAL: ${{ needs.changes.outputs.shard_total }}
+        run: node scripts/shard-report.mjs receipts
 
       - name: Merge the shards into one report
         env:
@@ -730,17 +771,13 @@ jobs:
       - name: The shards ran every test exactly once
         run: node scripts/shard-report.mjs parity --listed listed-suite.json --merged merged-report.json
 
-      - name: Download the once-per-stack record
-        # Fails when no shard uploaded one.
-        uses: actions/download-artifact@v4
-        with:
-          name: once-per-stack-${{ matrix.stack }}
-          path: e2e/once-per-stack
+      - name: Verify topology-specific cases in the listing and merged results
+        run: node --test scripts/qualify-topology.mjs
 
       - name: The flow catalog check and the SDK suites ran and passed
         run: |
           cat once-per-stack/record.json
-          if ! jq -e 'length == 3 and all(.[]; . == "success")' once-per-stack/record.json > /dev/null; then
+          if ! jq -e '.outcomes | keys == ["flow_catalog_check", "python_sdk_suite", "typescript_sdk_suite"] and all(.[]; . == "success")' once-per-stack/record.json > /dev/null; then
             echo "::error::A once-per-stack step (flow catalog check, SDK suites) did not succeed on the last shard."
             exit 1
           fi
@@ -768,9 +805,9 @@ jobs:
           if-no-files-found: warn
 
   e2e-tests:
-    name: E2E Tests Pass
+    name: ${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && 'E2E metadata edit' || 'E2E Tests Pass' }}
     needs: [changes, e2e, report]
-    if: always()
+    if: ${{ always() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

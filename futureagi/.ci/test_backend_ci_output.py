@@ -53,8 +53,9 @@ class MetricsShardTest(unittest.TestCase):
         )[0]
         self.assertIn('-m "($PYTEST_MARKERS) and $SUITE_MARKERS"', shard)
         self.assertIn('--splits "$SUITE_SPLITS"', shard)
-        # Exit 5 (nothing collected) passes a main leg only.
-        self.assertIn('[ "$code" -eq 5 ] && [ "$SUITE" = main ]', shard)
+        # An unplanned empty leg is a failure, not an accepted exit code.
+        self.assertNotIn("set +e", shard)
+        self.assertNotIn("exit 0", shard)
 
     def test_the_matrix_has_complementary_suites_with_distinct_artifacts(self):
         changes = self.workflow.split("  changes:\n", 1)[1].split(
@@ -62,7 +63,7 @@ class MetricsShardTest(unittest.TestCase):
         )[0]
         self.assertIn('legs main pytest "not metrics" 45 "$SPLITS"', changes)
         self.assertIn('legs metrics metrics metrics 50 "$METRICS_SPLITS"', changes)
-        self.assertIn("            metrics:\n", changes)
+        self.assertIn("metrics: ${{ steps.filter.outputs.metrics }}", changes)
         job = self.workflow.split("  test:\n", 1)[1].split("\n  saml-multiworker:", 1)[
             0
         ]

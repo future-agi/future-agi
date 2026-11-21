@@ -580,9 +580,10 @@ test('workflow opt-in is dispatch-only, validates before builds, follows the unc
   assert.equal(rejected.status, 1);
   assert.match(rejected.stdout, /no builds were started/);
   assert.deepEqual(workflow.permissions, { contents: 'read' });
-  assert.deepEqual(workflow.jobs.changes.permissions, { contents: 'read', 'pull-requests': 'read' });
+  assert.deepEqual(workflow.jobs.changes.permissions, { contents: 'read', actions: 'read' });
   assert.deepEqual(workflow.jobs.e2e.permissions, { contents: 'read', packages: 'write' });
-  assert.equal(Object.values(workflow.jobs).filter(job => job.permissions).length, 2);
+  assert.deepEqual(workflow.jobs.report.permissions, { contents: 'read', actions: 'read' });
+  assert.equal(Object.values(workflow.jobs).filter(job => job.permissions).length, 3);
   const builds = steps.filter(step => step.uses === 'docker/build-push-action@v5');
   assert.equal(builds.length, 5);
   for (const step of builds) {

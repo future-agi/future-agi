@@ -504,7 +504,7 @@ class BackendWorkflowTest(unittest.TestCase):
             "      CH_DATABASE: test_tfc\n",
             '      PYTHONHASHSEED: "0"\n',
             '      FI_CH25_SCHEMA_APPLY_STRICT: "1"\n',
-            "        uses: ./.github/actions/checkout-ee\n",
+            "        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2\n",
             "        run: uv sync --frozen --all-extras\n",
         ):
             self.assertIn(line, shard, line)

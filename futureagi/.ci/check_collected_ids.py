@@ -3,12 +3,23 @@
 
     check_collected_ids.py EXPECTED_SHARDS RECORD [RECORD ...]
 
-The records come from collected_ids.py, which says why they must be equal.
-Standard library only.
+    check_collected_ids.py --terminal
+
+In Actions, --terminal also verifies artifact identity, checks the latest
+producer of each matrix leg and compares independent per-suite inventories
+with completed pytest protocols. The file-only mode checks collection order.
 """
 
 import collections
+import concurrent.futures
+import hashlib
+import io
+import json
+import os
+import re
+import subprocess
 import sys
+import zipfile
 
 SHOWN = 40
 
@@ -77,5 +88,142 @@ def main(argv):
     return 1
 
 
+def check_terminals(expected, rows):
+    """Compare an independent marker-filtered inventory to completed protocols."""
+
+    def protocols(status):
+        return (
+            [["setup", status], ["teardown", "passed"]],
+            [["setup", "passed"], ["call", status], ["teardown", "passed"]],
+        )
+
+    allowed = {
+        "pass": ([["setup", "passed"], ["call", "passed"], ["teardown", "passed"]],),
+        "skip": protocols("declared-skip"),
+        "xfail": protocols("xfail"),
+        "xfail-or-xpass": protocols("xfail") + protocols("xpass"),
+    }
+    eligible = {key: expectation for key, _, expectation in expected}
+    if not eligible or len(eligible) != len(expected):
+        raise ValueError("empty or duplicated eligible inventory")
+    seen = set()
+    for key, label, phases in rows:
+        if key in seen or key not in eligible or phases not in allowed[eligible[key]]:
+            raise ValueError(
+                f"unexpected, repeated or incomplete terminal: {label!r} {phases!r}"
+            )
+        seen.add(key)
+    if seen != eligible.keys():
+        missing = [label for key, label, _ in expected if key not in seen]
+        raise ValueError(f"{len(missing)} tests never finished; first: {missing[0]!r}")
+
+
+def pages(endpoint, field):
+    raw = subprocess.check_output(["gh", "api", "--paginate", "--slurp", endpoint])
+    return [row for page in json.loads(raw) for row in page[field]]
+
+
+def verify_artifact(artifact, repo):
+    raw = subprocess.check_output(
+        ["gh", "api", f"repos/{repo}/actions/artifacts/{int(artifact['id'])}/zip"]
+    )
+    if artifact["digest"] != "sha256:" + hashlib.sha256(raw).hexdigest():
+        raise ValueError(f"digest mismatch for artifact {artifact['id']}")
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        receipt = json.loads(archive.read("receipt.json"))
+        records = [
+            json.loads(line) for line in archive.read("terminal.jsonl").splitlines()
+        ]
+        collection = hashlib.sha256(archive.read("collected-ids.txt")).hexdigest()
+        inventory = None
+        if receipt["group"] == 1:
+            if archive.read("inventory-exit.txt") != b"0\n":
+                raise ValueError(f"eligible inventory failed for {receipt['suite']}")
+            inventory = json.loads(archive.read("eligible.json"))
+    return receipt, records, collection, inventory
+
+
+def verify_run():
+    run_id, repo = os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_REPOSITORY"]
+    root = f"repos/{repo}/actions/runs/{run_id}"
+    legs = json.loads(os.environ["SHARDS"])["include"]
+    wanted = {f"collected-ids-{leg['suite']}-{leg['group']}": leg for leg in legs}
+    if not wanted or len(wanted) != len(legs):
+        raise ValueError("empty or duplicated matrix")
+    jobs = {}
+    for job in pages(root + "/jobs?filter=all&per_page=100", "jobs"):
+        name = job["name"]
+        if name not in jobs or job["run_attempt"] > jobs[name]["run_attempt"]:
+            jobs[name] = job
+    artifacts = [
+        a
+        for a in pages(root + "/artifacts?per_page=100", "artifacts")
+        if a["name"].startswith("collected-ids-")
+    ]
+    if len(artifacts) != len(wanted) or {a["name"] for a in artifacts} != wanted.keys():
+        raise ValueError("the run does not have exactly one artifact per planned shard")
+    plan_digest = hashlib.sha256(os.environ["SHARDS"].encode()).hexdigest()
+    identities = set()
+    expected = {}
+    outcomes = collections.defaultdict(list)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        for artifact, result in zip(
+            artifacts,
+            pool.map(lambda a: verify_artifact(a, repo), artifacts),
+            strict=True,
+        ):
+            leg = wanted[artifact["name"]]
+            suite, group = leg["suite"], leg["group"]
+            job = jobs[f"{leg['name']} shard {group}"]
+            receipt, rows, collection, inventory = result
+            if (
+                job["conclusion"] != "success"
+                or not rows
+                or receipt["suite"] != suite
+                or receipt["group"] != group
+                or receipt["run"] != run_id
+                or receipt["sha"] != os.environ["GITHUB_SHA"]
+                or receipt["attempt"] != job["run_attempt"]
+                or receipt["matrix"] != plan_digest
+            ):
+                raise ValueError(f"absent or superseded producer for {suite}/{group}")
+            if (
+                not all(
+                    re.fullmatch("[0-9a-f]{64}", receipt[k])
+                    for k in ("durations", "temporal")
+                )
+                or not receipt["db"]
+                or not re.fullmatch("oss|[0-9a-f]{40}", receipt["ee"])
+            ):
+                raise ValueError("incomplete dependency identities")
+            identities.add(
+                (
+                    collection,
+                    receipt["ee"],
+                    receipt["db"],
+                    receipt["durations"],
+                    receipt["temporal"],
+                )
+            )
+            if inventory is not None:
+                expected[suite] = inventory
+            outcomes[suite].extend(rows)
+            sys.stdout.write(
+                f"{suite}/{group}: attempt {job['run_attempt']}, artifact {artifact['id']} {artifact['digest']}\n"
+            )
+    if len(identities) != 1:
+        raise ValueError(
+            "shards disagree on inputs or collection order; rerun all jobs"
+        )
+    for suite, rows in outcomes.items():
+        check_terminals(expected[suite], rows)
+    all_ids = [key for inventory in expected.values() for key, _, _ in inventory]
+    if len(all_ids) != len(set(all_ids)):
+        raise ValueError("suites have overlapping inventories")
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    if sys.argv[1:] == ["--terminal"]:
+        verify_run()
+    else:
+        sys.exit(main(sys.argv))
