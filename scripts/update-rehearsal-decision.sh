@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Decides whether Update CI runs its two Real rehearsals for this event, and
+# prints `upgrade=<bool>` and `abc=<bool>` for $GITHUB_OUTPUT. Each rehearsal
+# takes about three hours, so a pull request runs them only when it can change
+# their result:
+#
+#   schedule, workflow_dispatch   both, always
+#   pull request into main        both (a release)
+#   label update-rehearsal        both (ask for them on any pull request)
+#   update tooling changed        both
+#   a migration changed           latest-stable -> PR only: it builds the pull
+#                                 request and migrates real data; a-b-c installs
+#                                 published releases and builds nothing from it
+#   anything else                 neither (push, merge_group, other pull requests)
+#
+# Inputs, from the workflow: EVENT_NAME, BASE_REF, and for a pull request
+# LABELLED, TOOLING_CHANGED and MIGRATIONS_CHANGED, each "true" or "false".
+set -euo pipefail
+
+upgrade=false
+abc=false
+case "${EVENT_NAME:?EVENT_NAME is required}" in
+  schedule | workflow_dispatch)
+    upgrade=true abc=true why="every $EVENT_NAME run"
+    ;;
+  pull_request)
+    for name in LABELLED TOOLING_CHANGED MIGRATIONS_CHANGED; do
+      case "${!name:-}" in
+        true | false) ;;
+        *)
+          echo "$name must be true or false for a pull request, got '${!name:-}'" >&2
+          exit 1
+          ;;
+      esac
+    done
+    if [[ "${BASE_REF:-}" == main ]]; then
+      upgrade=true abc=true why="pull request into main"
+    elif [[ "$LABELLED" == true ]]; then
+      upgrade=true abc=true why="label update-rehearsal"
+    elif [[ "$TOOLING_CHANGED" == true ]]; then
+      upgrade=true abc=true why="update tooling changed"
+    elif [[ "$MIGRATIONS_CHANGED" == true ]]; then
+      upgrade=true why="a migration changed"
+    else
+      why="no update tooling or migration changed; add the update-rehearsal label and re-run this workflow to run them"
+    fi
+    ;;
+  *)
+    why="never on $EVENT_NAME"
+    ;;
+esac
+echo "Real update rehearsals: latest-stable to PR=$upgrade, a-b-c=$abc ($why)" >&2
+printf 'upgrade=%s\nabc=%s\n' "$upgrade" "$abc"
