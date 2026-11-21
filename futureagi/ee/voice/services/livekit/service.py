@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import structlog
+from asgiref.sync import sync_to_async
+from django.core import signing
 from livekit.api import (  # type: ignore[attr-defined]
     CreateAgentDispatchRequest,
     ListRoomsRequest,
@@ -107,40 +109,67 @@ def _source_for_call(value, call_id: str) -> bool:
     )
 
 
-def _merge_track_view(lk, identity, fields, merged, current):
-    """Project verified results onto the public shortcut without attributing legacy links."""
+@sync_to_async
+def _recording_tenant(call):
+    run = call.test_execution.run_test
+    return {
+        "organization_id": str(run.organization_id),
+        "workspace_id": str(run.workspace_id) if run.workspace_id else None,
+    }
+
+
+def _source_tracks(lk, tenant, identity, fields):
+    history = lk.get("recording_history")
+    egress = identity["egress_id"]
+    if not isinstance(egress, str):
+        return {}
+    entry = history.get(egress) if isinstance(history, dict) else None
+    binding = {**tenant, **identity}
+    archived = {}
+    if isinstance(entry, dict) and entry.get("source") == binding:
+        urls = entry.get("tracks")
+        if isinstance(urls, dict):
+            archived = {
+                k: v
+                for k, v in urls.items()
+                if k in fields and isinstance(v, str) and v.strip()
+            }
+    return {**archived, **_verified_tracks(lk, identity, fields)}
+
+
+def _merge_track_view(lk, tenant, identity, fields, merged):
+    """Archive verified origins independently of the last visible URL per kind."""
     updated = lk.copy()
     original = lk.get("recording")
     visible = original.copy() if isinstance(original, dict) else {}
     source = lk.get("recording_source")
-    previous_egress = (
-        _source_for_call(source, identity["call_id"]) and source != identity
-    )
     prior = lk.get("verified_recording_tracks")
     receipts = prior.copy() if isinstance(prior, dict) else {}
-    if previous_egress and prior is None:
-        receipts = {
-            k: _TrackReceipt(**source, url=v)
-            for k, v in _verified_tracks(lk, source, fields).items()
-        }
-    # Retire known previous-egress outputs from the active view. A legacy
-    # reference has no such evidence and stays until replaced by kind.
-    for kind, field in fields.items():
-        receipt = receipts.get(kind)
-        url = visible.get(kind)
-        if not isinstance(receipt, dict) or not isinstance(url, str) or not url.strip():
+    history = lk.get("recording_history")
+    history = history.copy() if isinstance(history, dict) else {}
+    origins = [source]
+    if isinstance(prior, dict):
+        origins.extend(
+            {k: receipt.get(k) for k in ("call_id", "egress_id")}
+            for receipt in prior.values() if isinstance(receipt, dict)
+        )
+    for origin in origins:
+        # Upgrade only explicitly bound whole maps or matching per-kind receipts.
+        if not _source_for_call(origin, identity["call_id"]):
             continue
-        origin = {k: receipt.get(k) for k in ("call_id", "egress_id")}
-        if (
-            _source_for_call(origin, identity["call_id"])
-            and origin != identity
-            and receipt.get("url") == url
-        ):
-            visible.pop(kind)
-            if kind in ("assistant", "customer") and updated.get(field) == url:
-                updated.pop(field)
-            if kind not in ("combined", "stereo") or getattr(current, field) != url:
-                receipts.pop(kind)
+        previous = _verified_tracks(lk, origin, fields)
+        if previous:
+            history[origin["egress_id"]] = {
+                "source": {**tenant, **origin},
+                "tracks": _source_tracks(lk, tenant, origin, fields),
+            }
+            receipts.update({k: _TrackReceipt(**origin, url=v) for k, v in previous.items()})
+    if merged:
+        history[identity["egress_id"]] = {
+            "source": {**tenant, **identity}, "tracks": merged,
+        }
+    if history:
+        updated["recording_history"] = history
     visible.update(merged)
     updated["recording"] = visible
     receipts.update({k: _TrackReceipt(**identity, url=v) for k, v in merged.items()})
@@ -150,7 +179,7 @@ def _merge_track_view(lk, identity, fields, merged, current):
         updated.pop("verified_recording_tracks", None)
     if visible == merged and merged:
         updated["recording_source"] = identity
-    elif merged or previous_egress:
+    elif merged:
         updated.pop("recording_source", None)
     for kind in ("assistant", "customer"):
         if kind in merged:
@@ -901,10 +930,12 @@ class LivekitService(VoiceServiceBlueprint):
         # Snapshot before any external I/O. A CAS retry may refresh its SQL
         # predicate, but must never adopt a peer's playback change as our baseline.
         initial_playback = {key: getattr(call, key) for key in playback_fields}
-        tracks = _verified_tracks(provider_data, identity, fields)
+        tenant = await _recording_tenant(call)
+        tracks = _source_tracks(provider_data, tenant, identity, fields)
         if (
             not valid_source
             and not tracks
+            and (call.recording_url or call.stereo_recording_url)
             and isinstance(saved, dict)
             and all(isinstance(saved.get(k), str) and saved[k].strip() for k in fields)
         ):
@@ -940,15 +971,43 @@ class LivekitService(VoiceServiceBlueprint):
                 and info.status == EgressStatus.EGRESS_COMPLETE
                 and info.file_results
             ):
-                return info.file_results[0].filename or None
+                key = info.file_results[0].filename
+                return key if isinstance(key, str) and key.strip() else None
             return None
 
         uploaded: dict[str, str] = {}
         upload_keys: dict[str, str] = {}
         failures: dict[str, Exception] = {}
 
+        signer = signing.Signer(salt="livekit.raw-cleanup.v1")
+        intent_field = "recording_cleanup_intent"
+
+        def intent_binding(complete):
+            return {
+                **tenant, **identity,
+                "version": 1,
+                "recording": complete,
+                "room": call.service_provider_call_id,
+                "bucket": str(self.config.egress_bucket),
+            }
+
+        def verified_intent_key(token, complete):
+            if not isinstance(token, str) or complete.keys() != fields.keys():
+                return None
+            try:
+                payload = signer.unsign_object(token)
+            except signing.BadSignature:
+                return None
+            if not isinstance(payload, dict):
+                return None
+            key = payload.pop("key", None)
+            if payload == intent_binding(complete) and isinstance(key, str) and key.strip():
+                return key
+            return None
+
         async def persist(
-            *, cleanup_tracks=None, cleanup_error=None, reuse_confirmation=False
+            *, cleanup_tracks=None, cleanup_error=None, reuse_confirmation=False,
+            prepare_key=None, expected_intent=None,
         ):
             # Only the read/compare/update is retried. Never hold a row lock
             # over LiveKit, S3, or the activity's subsequent cost lookup.
@@ -958,25 +1017,18 @@ class LivekitService(VoiceServiceBlueprint):
                 lk = data.get(PROVIDER_KEY, {})
                 source = lk.get("recording_source")
                 current_map = lk.get("recording")
-                verified = _verified_tracks(lk, identity, fields)
+                verified = _source_tracks(lk, tenant, identity, fields)
                 bound = source == identity or bool(verified)
-                unchanged_origin = (
-                    source == provider_data.get("recording_source")
-                    # A same-source attempt that produced no tracks may materialize
-                    # an empty map. It has not acquired a competing track claim.
-                    and (current_map == saved or (saved is None and current_map == {}))
-                    and lk.get("verified_recording_tracks")
-                    == provider_data.get("verified_recording_tracks")
-                )
                 if (
                     current.service_provider_call_id != call.service_provider_call_id
                     or lk.get("egress_id") != egress_id
-                    or (not bound and not unchanged_origin)
+                    or await _recording_tenant(current) != tenant
                     or (
                         cleanup_tracks is not None
                         and (
                             verified != cleanup_tracks
                             or current_map != cleanup_tracks
+                            or (expected_intent is not None and lk.get(intent_field) != expected_intent)
                             or (
                                 reuse_confirmation
                                 and lk.get("recording_cleanup_success")
@@ -1013,7 +1065,12 @@ class LivekitService(VoiceServiceBlueprint):
                 )
                 error = cleanup_error
                 if cleanup_tracks is None:
-                    updated = _merge_track_view(lk, identity, fields, merged, current)
+                    updated = _merge_track_view(lk, tenant, identity, fields, merged)
+                    if (
+                        not confirmed and merged.keys() == fields.keys() and object_key
+                        and not verified_intent_key(lk.get(intent_field), merged)
+                    ):
+                        updated[intent_field] = signer.sign_object({**intent_binding(merged), "key": object_key})
                     if not confirmed:
                         updated.pop("recording_cleanup_success", None)
                     missing = {
@@ -1034,6 +1091,9 @@ class LivekitService(VoiceServiceBlueprint):
                         error = prior_error
                 elif confirmed:
                     error = None  # A later timeout cannot undo a confirmed deletion.
+                elif prepare_key is not None:
+                    if not verified_intent_key(lk.get(intent_field), merged):
+                        updated[intent_field] = signer.sign_object({**intent_binding(merged), "key": prepare_key})
                 elif cleanup_error is None:
                     updated["recording_cleanup_success"] = confirmation
                 else:
@@ -1051,6 +1111,7 @@ class LivekitService(VoiceServiceBlueprint):
                 changes: dict[str, Any] = {}
                 predicate = {
                     "id": call_execution_id,
+                    "test_execution_id": call.test_execution_id,
                     "provider_call_data": current.provider_call_data,
                     "service_provider_call_id": current.service_provider_call_id,
                 }
@@ -1136,9 +1197,11 @@ class LivekitService(VoiceServiceBlueprint):
                 **identity, recording=complete
             ):
                 return await persist(cleanup_tracks=complete, reuse_confirmation=True)
+            token = snapshot.get(intent_field)
+            durable_key = verified_intent_key(token, complete)
             error = None
             try:
-                if object_key is None:
+                if durable_key is None and object_key is None:
                     # A complete bound map predates deletion. Resolve its key
                     # from LiveKit, never from a URL or mutable webhook file list.
                     api = self._create_api()
@@ -1152,11 +1215,22 @@ class LivekitService(VoiceServiceBlueprint):
                                 break
                     finally:
                         await api.aclose()
-                if not object_key:
-                    raise ValueError("No verified completed egress file")
+                if durable_key is None:
+                    if not object_key:
+                        raise ValueError("No verified completed egress file")
+                    prepared = await persist(cleanup_tracks=complete, prepare_key=object_key)
+                    if prepared.error:
+                        return prepared
+                    pending = prepared.provider_call_data[PROVIDER_KEY]
+                    if pending.get("recording_cleanup_success") == _CleanupConfirmation(**identity, recording=complete):
+                        return prepared
+                    token = pending[intent_field]
+                    durable_key = verified_intent_key(token, complete)
+                    if not durable_key:
+                        raise ValueError("No verified cleanup intent")
                 # S3 DeleteObject succeeds for a missing key. No HEAD/GET race.
                 await asyncio.to_thread(
-                    delete_egress_recording, self.config, object_key
+                    delete_egress_recording, self.config, durable_key
                 )
             except Exception:  # noqa: BLE001 - cleanup must not discard completed tracks
                 logger.warning(
@@ -1172,10 +1246,17 @@ class LivekitService(VoiceServiceBlueprint):
             return await persist(
                 cleanup_tracks=snapshot["recording"],
                 cleanup_error=error,
+                expected_intent=token if durable_key else None,
             )
 
         if tracks.keys() == fields.keys():
-            return await cleanup(provider_data)
+            if saved == tracks:
+                return await cleanup(provider_data)
+            object_key = None
+            restored = await persist()
+            if restored.error:
+                return restored
+            return await cleanup(restored.provider_call_data[PROVIDER_KEY])
 
         # 1. Stop egress (it stays ACTIVE until explicitly stopped), then poll
         lkapi = self._create_api()
