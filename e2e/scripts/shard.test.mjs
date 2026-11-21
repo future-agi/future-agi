@@ -309,3 +309,96 @@ test("parity names a test that no shard ran, ran twice, never started or was not
   // An empty listing proves nothing.
   assert.equal(checkParity(report(), report(), FILES).ok, false);
 });
+
+// --- workflow wiring ---------------------------------------------------------
+
+const workflow = () =>
+  parseYaml(
+    readFileSync(
+      new URL("../../.github/workflows/e2e-ci.yml", import.meta.url),
+      "utf8",
+    ),
+  );
+
+test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on it", () => {
+  const jobs = workflow().jobs;
+  const step = (job, name) => job.steps.find((entry) => entry.name === name);
+  assert.equal(
+    step(jobs.e2e, "Run E2E suite").env.E2E_SHARD,
+    "${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }}",
+  );
+  assert.equal(
+    jobs.e2e.strategy.matrix.shard,
+    "${{ fromJSON(needs.changes.outputs.shards) }}",
+  );
+  assert.equal(jobs.e2e.strategy["fail-fast"], false);
+  // Once per stack: on the last shard, never on none.
+  assert.equal(
+    jobs.e2e.env.E2E_LAST_SHARD,
+    "${{ matrix.shard == needs.changes.outputs.shard_total }}",
+  );
+  assert.equal(
+    step(jobs.e2e, "Flow catalog is current").if,
+    "env.E2E_LAST_SHARD == 'true'",
+  );
+  assert.match(
+    step(jobs.e2e, "Resolve the futureagi-sdk ref").if,
+    /env\.E2E_LAST_SHARD == 'true'/,
+  );
+  // The parity proof cannot be skipped or softened, and the gate waits for it.
+  const parity = step(jobs.report, "The shards ran every test exactly once");
+  assert.equal(parity.if, undefined);
+  assert.match(parity.run, /shard-report\.mjs parity/);
+  assert.ok(jobs.report.steps.every((entry) => !entry["continue-on-error"]));
+  assert.equal(
+    jobs.report.if,
+    "${{ !cancelled() && needs.changes.outputs.any == 'true' }}",
+  );
+  assert.deepEqual(jobs["e2e-tests"].needs, ["changes", "e2e", "report"]);
+  assert.equal(jobs["e2e-tests"].name, "E2E Tests Pass");
+  assert.equal(jobs["e2e-tests"].if, "always()");
+});
+
+test("e2e-ci.yml restores a database dump only on an exact hit and keeps one from-zero migrate", () => {
+  const steps = workflow().jobs.e2e.steps;
+  const at = (name) => {
+    const index = steps.findIndex((entry) => entry.name === name);
+    assert.notEqual(index, -1, name);
+    return index;
+  };
+  const lookup = steps[at("Look for a dump of the migrated database")];
+  assert.match(lookup.uses, /^actions\/cache\/restore@/);
+  assert.equal(lookup.with.key, "${{ steps.db-key.outputs.key }}");
+  assert.equal(lookup.with["restore-keys"], undefined);
+  const restore =
+    steps[at("Restore the migrated database (exact key hit only)")];
+  assert.equal(
+    restore.if,
+    "steps.db-dump.outputs.cache-hit == 'true' && env.E2E_LAST_SHARD != 'true'",
+  );
+  assert.match(restore.run, /db_dump\.py restore/);
+  assert.doesNotMatch(restore.run, /\|\|/);
+  // The control: the last shard migrates from zero whether or not a dump exists.
+  const migrate = steps[at("Migrate an empty database from zero and dump it")];
+  assert.equal(
+    migrate.if,
+    "matrix.stack == 'distributed' && env.E2E_LAST_SHARD == 'true'",
+  );
+  assert.match(migrate.run, /manage\.py migrate --noinput/);
+  assert.equal(
+    steps[at("The cached dump equals this fresh migrate")].if,
+    "steps.db-dump.outputs.cache-hit == 'true' && env.E2E_LAST_SHARD == 'true'",
+  );
+  const save = steps[at("Save the dump for later runs")];
+  assert.match(save.uses, /^actions\/cache\/save@/);
+  assert.match(save.if, /cache-hit != 'true'$/);
+  assert.match(save.if, /env\.E2E_LAST_SHARD == 'true'/);
+  // Everything happens before the stack boots.
+  for (const name of [
+    "Restore the migrated database (exact key hit only)",
+    "Migrate an empty database from zero and dump it",
+    "Save the dump for later runs",
+  ]) {
+    assert.ok(at(name) < at("Boot the e2e stack"), name);
+  }
+});

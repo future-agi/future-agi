@@ -63,6 +63,7 @@ jobs:
               - 'deploy/**'
               - '.github/workflows/backend-ci.yml'
               - '.github/actions/backend-test-packages/**'
+              - '.github/actions/checkout-ee/**'
               # Read by futureagi/tests/test_env_reference.py and test_log_stream.py
               # (deploy/env-reference.toml is under deploy/**)
               - 'bin/dev'
@@ -163,6 +164,7 @@ jobs:
               - 'futureagi/uv.lock'
               - '.github/workflows/backend-ci.yml'
               - '.github/actions/backend-test-packages/**'
+              - '.github/actions/checkout-ee/**'
       - id: always
         if: github.event_name != 'pull_request'
         run: |
@@ -353,41 +355,26 @@ jobs:
 
       - name: Checkout EE package (internal runs only)
         if: env.IS_INTERNAL_RUN == 'true'
-        uses: actions/checkout@v4
+        uses: ./.github/actions/checkout-ee
         with:
-          repository: future-agi/ee
-          path: futureagi/ee/cloud
           token: ${{ secrets.EE_REPO_READ_TOKEN }}
-          persist-credentials: true
-          fetch-depth: 1
+          branch: ${{ env.EE_REPO_BRANCH }}
+          base-ref: ${{ env.EE_BASE_REF }}
 
-      - name: Resolve the EE branch to test against
-        if: env.IS_INTERNAL_RUN == 'true'
-        working-directory: futureagi/ee/cloud
+      - name: Key of the migrated database for this checkout
+        id: db-key
         run: |
-          # EE's default branch trails its own dev, so never settle for whatever
-          # the checkout landed on: walk the same candidate chain the SDK
-          # compatibility workflow uses and take the first branch that exists.
-          for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
-            if [ -z "${candidate}" ]; then
-              continue
-            fi
-            if git ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
-              git fetch --depth=1 origin "${candidate}"
-              git checkout --detach FETCH_HEAD
-              echo "::notice::Using EE branch ${candidate}"
-              exit 0
-            fi
-          done
-          echo "::error::No EE branch found among ${EE_REPO_BRANCH}, ${EE_BASE_REF}, dev, main"
-          exit 1
+          key=$(python3 -I .ci/db_dump.py key pytest)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
 
-      - name: Drop EE checkout credentials
-        # always(): the branch-resolution step above hard-fails when no
-        # candidate branch exists, and the token must be scrubbed regardless.
-        if: ${{ always() && env.IS_INTERNAL_RUN == 'true' }}
-        working-directory: futureagi/ee/cloud
-        run: git config --unset-all http.https://github.com/.extraheader || true
+      - name: Look for a dump of the migrated database
+        id: db-dump
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          # Exact key only, no restore-keys: a dump of other migrations is
+          # never a starting point.
+          key: ${{ steps.db-key.outputs.key }}
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -416,6 +403,18 @@ jobs:
         run: |
           docker compose -f docker-compose.test.yml -p futureagi-test \
             up -d --wait --wait-timeout 180
+
+      - name: Restore the migrated database (exact key hit only)
+        # Saves the shard its own six-minute migrate. On a miss this step does
+        # not run and pytest migrates from zero, as before. A failed restore
+        # fails the job: nothing falls back to a half-loaded database. pytest
+        # (--reuse-db) then runs Django's migrate on the restored database,
+        # which applies nothing when the dump is complete.
+        if: steps.db-dump.outputs.cache-hit == 'true'
+        run: |
+          db=(docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db)
+          "${db[@]}" createdb -U test_user test_tfc_test
+          python3 -I .ci/db_dump.py restore "$RUNNER_TEMP/migrated-db/dump.sql.gz" test_user test_tfc_test "${db[@]}"
 
       - name: Apply pinned sharding plan
         uses: actions/download-artifact@v4
@@ -549,6 +548,101 @@ jobs:
           pkill -TERM -f 'granian --interface asgi' || true
           for _ in $(seq 1 15); do pgrep -f 'granian --interface asgi' >/dev/null || exit 0; sleep 1; done
           pkill -KILL -f 'granian --interface asgi' || true
+
+  migrated-database:
+    # The from-zero migrate of every run, and the source of the dump the pytest
+    # shards restore. A shard skips its own migrate only when a dump exists for
+    # exactly this checkout's inputs (.ci/db_dump.py key). This job never
+    # restores: it always migrates an empty database. On a cache miss it saves
+    # the result. On a hit it compares the cached dump with its fresh migrate
+    # and fails on any difference, so a dump that no longer matches cannot keep
+    # passing. The SAML job migrates from zero as well, without the EE package.
+    name: Fresh migrate and database dump
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      # The environment a pytest shard creates its database in.
+      LITELLM_MODE: PRODUCTION
+      CH25_DATABASE: test_tfc
+      CH_DATABASE: test_tfc
+      PYTHONHASHSEED: "0"
+      FI_CH25_SCHEMA_APPLY_STRICT: "1"
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ github.base_ref || 'dev' }}
+      IS_INTERNAL_RUN: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout EE package (internal runs only)
+        if: env.IS_INTERNAL_RUN == 'true'
+        uses: ./.github/actions/checkout-ee
+        with:
+          token: ${{ secrets.EE_REPO_READ_TOKEN }}
+          branch: ${{ env.EE_REPO_BRANCH }}
+          base-ref: ${{ env.EE_BASE_REF }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+
+      - uses: ./.github/actions/backend-test-packages
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Start test services
+        run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
+
+      - name: Key of the migrated database for this checkout
+        id: db-key
+        run: |
+          key=$(python3 -I .ci/db_dump.py key pytest)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Look for a dump of the migrated database
+        id: db-dump
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          key: ${{ steps.db-key.outputs.key }}
+
+      - name: Migrate an empty test database from zero
+        # The pytest-django path a shard takes on a cache miss. Without
+        # SAML_MULTIWORKER every case of this module skips, and --reuse-db
+        # (pytest.ini) keeps the database.
+        run: uv run pytest saml2_auth/tests/test_multiworker.py -m multiworker --create-db -q
+
+      - name: Dump the fresh database
+        run: |
+          python3 -I .ci/db_dump.py dump "$RUNNER_TEMP/fresh-db/dump.sql.gz" test_user test_tfc_test \
+            docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
+
+      - name: The cached dump equals this fresh migrate
+        if: steps.db-dump.outputs.cache-hit == 'true'
+        run: python3 -I .ci/db_dump.py compare "$RUNNER_TEMP/migrated-db/dump.sql.gz" "$RUNNER_TEMP/fresh-db/dump.sql.gz"
+
+      - name: Stage the fresh dump for the cache
+        if: steps.db-dump.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/migrated-db"
+          cp "$RUNNER_TEMP/fresh-db/dump.sql.gz" "$RUNNER_TEMP/migrated-db/dump.sql.gz"
+
+      - name: Save the dump for later runs
+        if: steps.db-dump.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          key: ${{ steps.db-key.outputs.key }}
+
+      - name: Dump test service logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
 
   agentic-eval:
     # This suite has its own pytest root and is excluded from the backend shards.
@@ -767,6 +861,7 @@ jobs:
         plan,
         test,
         saml-multiworker,
+        migrated-database,
         agentic-eval,
         slim-smoke,
         code-executor-base-pin,

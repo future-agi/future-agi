@@ -151,10 +151,12 @@ jobs:
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
         # Each shard builds the images from the registry cache, boots its own
-        # stack and runs its share of the spec files (E2E_SHARD below). Steps
-        # that need to run once per stack run on shard 1: the flow catalog
-        # check and the SDK live suites. On a push every shard writes the
-        # registry cache; they build the same images, so the writes are equal.
+        # stack and runs its share of the spec files (E2E_SHARD below). Work
+        # that runs once per stack runs on the last shard (E2E_LAST_SHARD):
+        # the flow catalog check, the SDK live suites and the from-zero
+        # migrate. The last shard, because the longest spec file always goes
+        # to shard 1. On a push every shard writes the registry cache; they
+        # build the same images, so the writes are equal.
         shard: ${{ fromJSON(needs.changes.outputs.shards) }}
     runs-on: ubuntu-latest
     # One job is the image builds, the stack boot and the suite; the unsharded
@@ -181,6 +183,7 @@ jobs:
       # touch agentcc-gateway/ would otherwise run them against a released
       # :latest that predates that behavior.
       BUILD_GATEWAY: "true"
+      E2E_LAST_SHARD: ${{ matrix.shard == needs.changes.outputs.shard_total }}
     steps:
       - uses: actions/checkout@v4
 
@@ -423,7 +426,7 @@ jobs:
           key: playwright-${{ hashFiles('e2e/yarn.lock') }}
 
       - name: Flow catalog is current
-        if: matrix.shard == 1
+        if: env.E2E_LAST_SHARD == 'true'
         working-directory: e2e
         run: yarn catalog:check
 
@@ -438,6 +441,70 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/saml-idp"
           "$RUNNER_TEMP/saml-idp/bin/pip" install --quiet pysaml2==7.5.0 cryptography==46.0.5
           echo "E2E_SAML_PYTHON=$RUNNER_TEMP/saml-idp/bin/python" >> "$GITHUB_ENV"
+
+      # --- Migrated database (distributed stack) ---------------------------
+      # Booting a stack used to spend about six minutes on one serial
+      # `manage.py migrate`. A shard now restores a dump of that result when
+      # one exists for exactly this checkout's inputs
+      # (futureagi/.ci/db_dump.py key); the bootstrap's own migrate then
+      # applies nothing. The last shard is the control: it never restores, it
+      # migrates an empty database from zero, saves the dump on a cache miss,
+      # and on a hit fails unless the cached dump equals its fresh migrate.
+      # The Standalone stack always migrates from zero.
+      - name: Key of the migrated database for this checkout
+        id: db-key
+        if: matrix.stack == 'distributed'
+        run: |
+          key=$(python3 -I futureagi/.ci/db_dump.py key e2e-distributed)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Look for a dump of the migrated database
+        id: db-dump
+        if: matrix.stack == 'distributed'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          # Exact key only, no restore-keys: a dump of other migrations is
+          # never a starting point.
+          key: ${{ steps.db-key.outputs.key }}
+
+      - name: Restore the migrated database (exact key hit only)
+        # A miss runs nothing here and the stack migrates from zero, as
+        # before. A failed restore fails the job.
+        if: steps.db-dump.outputs.cache-hit == 'true' && env.E2E_LAST_SHARD != 'true'
+        run: |
+          bin/e2e compose up -d --wait postgres
+          python3 -I futureagi/.ci/db_dump.py restore "$RUNNER_TEMP/migrated-db/dump.sql.gz" \
+            futureagi futureagi bin/e2e compose exec -T postgres
+
+      - name: Migrate an empty database from zero and dump it
+        # The same command the bootstrap service runs (futureagi/entrypoint.sh),
+        # in the image built above. `bin/e2e up` below then runs the whole
+        # bootstrap; its migrate finds nothing left to apply.
+        if: matrix.stack == 'distributed' && env.E2E_LAST_SHARD == 'true'
+        run: |
+          bin/e2e compose run --rm --entrypoint python postgres-schema-bootstrap manage.py migrate --noinput
+          python3 -I futureagi/.ci/db_dump.py dump "$RUNNER_TEMP/fresh-db/dump.sql.gz" \
+            futureagi futureagi bin/e2e compose exec -T postgres
+
+      - name: The cached dump equals this fresh migrate
+        if: steps.db-dump.outputs.cache-hit == 'true' && env.E2E_LAST_SHARD == 'true'
+        run: |
+          python3 -I futureagi/.ci/db_dump.py compare \
+            "$RUNNER_TEMP/migrated-db/dump.sql.gz" "$RUNNER_TEMP/fresh-db/dump.sql.gz"
+
+      - name: Stage the fresh dump for the cache
+        if: matrix.stack == 'distributed' && env.E2E_LAST_SHARD == 'true' && steps.db-dump.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/migrated-db"
+          cp "$RUNNER_TEMP/fresh-db/dump.sql.gz" "$RUNNER_TEMP/migrated-db/dump.sql.gz"
+
+      - name: Save the dump for later runs
+        if: matrix.stack == 'distributed' && env.E2E_LAST_SHARD == 'true' && steps.db-dump.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          key: ${{ steps.db-key.outputs.key }}
 
       - name: Boot the e2e stack
         id: boot
@@ -525,10 +592,10 @@ jobs:
       # Resolve a full SDK commit with the required live suites. Explicit refs
       # fail closed; defaults lacking the harness use the pinned bootstrap from
       # SDK PR #35. Both suites still run after Playwright on a booted stack.
-      # Shard 1 only: every later SDK step runs only when this one succeeded.
+      # Last shard only: every later SDK step runs only when this one succeeded.
       - name: Resolve the futureagi-sdk ref
         id: sdk-ref
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' && matrix.shard == 1 }}
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && env.E2E_LAST_SHARD == 'true' }}
         env:
           SDK_REF_INPUT: ${{ inputs.sdk-ref }}
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
