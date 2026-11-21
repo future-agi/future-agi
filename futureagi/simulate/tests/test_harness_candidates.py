@@ -13,8 +13,8 @@ from simulate.models import (
     HarnessEnvironmentVersion,
     HarnessSuiteMember,
     HarnessSuiteVersion,
-    HostedHarnessScenario,
     HostedHarnessJob,
+    HostedHarnessScenario,
 )
 from simulate.services.harness_versioning import archives, drafts, review
 from simulate.services.harness_versioning.assembly import CERTIFICATE, SEALED_MANIFEST
