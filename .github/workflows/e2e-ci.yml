@@ -30,7 +30,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  # Pushes to dev share one group and never cancel: the running run finishes
+  # (its e2e-cache writes feed PR, Standalone CI and release builds), the newest
+  # push waits, and GitHub cancels any older one still waiting. Pushes to main
+  # keep one group per commit. A newer push to a pull request cancels its
+  # running run; schedule, merge_group and dispatch group by ref as before.
+  group: e2e-ci-${{ github.event_name == 'push' && (github.ref == 'refs/heads/dev' && 'dev-push' || github.sha) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -132,7 +137,9 @@ jobs:
     # Image builds (~20 min), the Playwright suite (~70 min and growing with
     # the flow catalog) and the SDK live suites run in this one job. Dev runs
     # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
-    timeout-minutes: 120
+    # DASH-E2E-017 waits out the 30-minute metric settle on one worker; its own
+    # test.setTimeout ceiling is 65 min, so 89 + 65 = 154 if it lands last.
+    timeout-minutes: 155
     permissions:
       contents: read
       packages: write # ghcr build-cache: read on PRs, written on pushes

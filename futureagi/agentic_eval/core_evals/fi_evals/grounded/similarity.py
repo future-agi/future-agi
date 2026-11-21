@@ -72,6 +72,12 @@ class NormalisedLevenshteinSimilarity(Comparator):
 
 
 class JaroWincklerSimilarity(Comparator):
+    """Score plain Jaro under the historical grounded comparator name.
+
+    Unlike the seeded Answer Similarity evaluator, this comparator gives no
+    bonus for a shared prefix.
+    """
+
     def compare(self, string1, string2):
         return self._jaro_winckler_similarity(string1, string2)
 
@@ -80,7 +86,7 @@ class JaroWincklerSimilarity(Comparator):
         len2 = len(str2)
         if len1 == 0 or len2 == 0:
             return 0.0
-        max_dist = (max(len(str1), len(str2)) // 2) - 1
+        max_dist = max(0, max(len1, len2) // 2 - 1)
         match = 0
         hash_str1 = [0] * len(str1)
         hash_str2 = [0] * len(str2)
@@ -100,8 +106,8 @@ class JaroWincklerSimilarity(Comparator):
                 while hash_str2[point] == 0:
                     point += 1
                 if str1[i] != str2[point]:
-                    point += 1
                     t += 1
+                point += 1
         t //= 2
         return (match / len1 + match / len2 + (match - t) / match) / 3.0
 

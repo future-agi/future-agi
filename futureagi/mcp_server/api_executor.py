@@ -15,7 +15,7 @@ from rest_framework.exceptions import APIException, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from accounts.authentication import APIKeyAuthentication
+from accounts.authentication import APIKeyAuthentication, workspace_write_denied
 from mcp_server.generated_registry import GeneratedTool
 from mcp_server.response_limits import ResponseTooLargeError, bounded_response
 from tfc.middleware.workspace_context import (
@@ -185,7 +185,7 @@ class DjangoAPIExecutor:
                     context.user, request.workspace
                 )
             ):
-                raise PermissionDenied("Write access denied to this workspace")
+                raise workspace_write_denied(request)
         except APIException as exc:
             raise APIExecutionError(
                 str(exc.detail), status_code=exc.status_code, data=exc.detail
@@ -302,8 +302,14 @@ class DjangoAPIExecutor:
             status_code = getattr(response, "status_code", 500)
             try:
                 data = json.loads(response.content)
-            except (AttributeError, json.JSONDecodeError, TypeError):
+            except (AttributeError, TypeError, ValueError):  # Not JSON, or not text.
                 data = getattr(response, "content", None)
+                # A text body, such as an Epoch candidate's git patch, is the
+                # result itself: return its text, not the bytes' repr.
+                if isinstance(data, bytes) and response.get(
+                    "Content-Type", ""
+                ).startswith("text/"):
+                    data = data.decode(response.charset, errors="replace")
 
         if status_code >= 400:
             message = "Django API request failed"
