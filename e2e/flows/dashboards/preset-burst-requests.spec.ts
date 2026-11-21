@@ -132,7 +132,7 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     if (!isQuery(url, req.method())) return;
     // captureAnnotationHttp's listener runs first and appends this very event's receipt synchronously.
     const receipt = http.receipts.at(-1), raw = req.postData();
-    if (!receipt || receipt.path !== QUERY || receipt.method !== req.method() || !raw) {
+    if (!receipt || seen.at(-1)?.receipt === receipt || receipt.path !== QUERY || receipt.method !== req.method() || !raw) {
       attributionErrors.push('no matching Playwright query receipt'); return;
     }
     const key = signature(req.url(), req.method(), raw);
@@ -168,8 +168,11 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   const pageErrors: string[] = [];
   page.on('pageerror', err => pageErrors.push(err.message));
   // Runner wall clock: receipt filtering only; never compared to a browser duration.
-  const queries = (metric: Metric, since: number) => (http.receipts as Receipt<QueryBody>[])
-    .filter(r => r.path === QUERY && r.method === 'POST' && r.startedAt >= since && mine(r.input as QueryInput, metric));
+  const queries = (metric: Metric, since: number) => {
+    expect(attributionErrors, 'every query has an unambiguous receipt').toEqual([]);
+    return (http.receipts as Receipt<QueryBody>[]).filter(r => r.path === QUERY && r.method === 'POST' &&
+      r.startedAt >= since && mine(r.input as QueryInput, metric));
+  };
   const distinctRanges = (metric: Metric, since: number) =>
     [...new Set(queries(metric, since).map(r => rangeKey(r.input as QueryInput)))];
   /** Latest settled receipt for a widget's range, reduced to what the checks compare. */
@@ -223,14 +226,19 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     return state;
   }, timing);
   await page.clock.setFixedTime(anchor);
-  const sinceNav = async () => navTime(await timing.evaluate(t => t.nav()), 'window start');
+  const readNav = async (read: () => Promise<number>, label: string) => {
+    await sameNavigation(); // Check before evaluating a handle bound to the original document.
+    return navTime(await read(), label);
+  };
+  const sinceNav = () => readNav(() => timing.evaluate(t => t.nav()), 'window start');
   const clickDispatch = async (target: Locator) => {
+    await sameNavigation();
     await target.evaluate((el, t) => {
       t.click = NaN;
       el.addEventListener('click', () => { t.click = t.nav(); }, { capture: true, once: true });
     }, timing);
     await target.click();
-    return navTime(await timing.evaluate(t => t.click), 'click');
+    return readNav(() => timing.evaluate(t => t.click), 'click');
   };
   const dispatchNav = (d: Dispatch) => navTime((d.timestamp - navigationStart) * 1000, `dispatch ${d.requestId}`);
   // Within each exact URL/method/body, match the nth CDP event to the nth
@@ -253,6 +261,7 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     });
   };
   const firstNav = async (metric: Metric, range: string, since: number) => {
+    await sameNavigation();
     const matches = (d: Dispatch) => d.metric === metric && d.range === range && dispatchNav(d) >= since;
     await uiExpect.poll(() => attributionErrors[0] ?? dispatches.some(matches),
       { message: `no attributed ${metric} ${range} dispatch` }).toBe(true);
@@ -268,7 +277,7 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     await chip(page, '7D').click();
     clickedNav30 = await clickDispatch(chip30);
     await expect(chip30).toHaveClass(PRIMARY);
-    highlightedNav30 = navTime(await highlight.evaluate(state => state.at), '30D primary transition');
+    highlightedNav30 = await readNav(() => highlight.evaluate(state => state.at), '30D primary transition');
     await expect(chip(page, 'Today')).not.toHaveClass(PRIMARY);
     await expect(chip(page, '7D')).not.toHaveClass(PRIMARY);
   });
