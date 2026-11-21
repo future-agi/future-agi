@@ -139,6 +139,11 @@ def main(samples_dir):
     if not (FFMPEG and FFPROBE):
         sys.exit("FAIL ffmpeg/ffprobe not on PATH")
 
+    decoders = run([FFMPEG, "-hide_banner", "-decoders"]).stdout.decode().splitlines()
+    for decoder in ("speex", "cinepak"):
+        if not any(line.split()[1:2] == [decoder] for line in decoders):
+            sys.exit(f"FAIL missing native decoder: {decoder}")
+
     for name, expected in SAMPLES.items():
         with open(os.path.join(samples_dir, name), "rb") as f:
             data = f.read()

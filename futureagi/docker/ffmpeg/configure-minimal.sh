@@ -44,7 +44,7 @@ MUXERS="mp3 wav ffmetadata image2 wv ivf mov null pcm_s16le pcm_f32le"
 # below from `./configure --list-decoders`, minus the macOS AudioToolbox
 # wrappers (pcm_*_at), which configure would only disable again.
 DECODERS="aac aac_latm ac3 eac3 alac amrnb amrwb flac mp2 mp2float mp3 mp3float
-  opus vorbis wmav1 wmav2 adpcm_ima_wav adpcm_ms gsm_ms
+  speex cinepak opus vorbis wmav1 wmav2 adpcm_ima_wav adpcm_ms gsm_ms
   h264 hevc mpeg1video mpeg2video mpeg4 vp8 vp9 prores wavpack libaom_av1 mjpeg png wrapped_avframe"
 ENCODERS="libmp3lame pcm_u8 pcm_s16le pcm_s24le pcm_s32le pcm_f32le pcm_mulaw
   pcm_alaw prores prores_aw prores_ks wavpack libaom_av1 mjpeg png"
