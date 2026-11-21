@@ -9,7 +9,7 @@ runnable until Save promotes it.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 from django.utils import timezone
 
@@ -61,6 +61,8 @@ class CandidateSet(TypedDict):
     # Per piece with a draft: the draft and the revision the candidates were built from.
     drafts: dict[str, CandidateDraft]
     review_digest: str
+    # The decisions the drafts kept at Validate, so a read checks them without building the review.
+    decisions_digest: NotRequired[str]
     job_id: str | None
     at: str
     # The check ended on our side for a cause that repeats: the set may be saved uncertified, as a run may go ahead.
@@ -221,10 +223,13 @@ def validation_state(
 
 
 def _drafts_moved(environment: HostedHarnessJob, entry: CandidateSet) -> bool:
-    """Whether the drafts or the review decisions moved since this set was validated, as Save checks them."""
+    """Whether the drafts or the review decisions moved since this set was validated, as Save checks them. Cheap on
+    every drafts read: the drafts' ids and revisions, then the decisions they keep; a set stored before it kept its
+    decisions is checked against the whole review."""
     from simulate.services.harness_versioning import review
     from simulate.services.harness_versioning.draft_pieces import open_draft
 
+    current = {}
     for piece, seen in entry["drafts"].items():
         draft = open_draft(environment, piece)
         if (
@@ -233,6 +238,15 @@ def _drafts_moved(environment: HostedHarnessJob, entry: CandidateSet) -> bool:
             or draft.revision != seen["revision"]
         ):
             return True
+        current[piece] = draft
+    # A piece opened since, such as a chat turn's environment change, is a change Validate did not see.
+    if any(
+        piece not in entry["drafts"] and open_draft(environment, piece) is not None
+        for piece in DRAFT_PIECES
+    ):
+        return True
+    if "decisions_digest" in entry:
+        return review.decisions_digest(current) != entry["decisions_digest"]
     return review.draft_review(environment)["review_digest"] != entry["review_digest"]
 
 
