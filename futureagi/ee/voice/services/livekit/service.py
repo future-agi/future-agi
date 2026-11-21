@@ -783,6 +783,23 @@ class LivekitService(VoiceServiceBlueprint):
         }
         tracks = {}
         saved = provider_data.get("recording")
+        if (
+            "recording_source" not in provider_data
+            and isinstance(saved, dict)
+            and all(isinstance(saved.get(k), str) and saved[k].strip() for k in fields)
+        ):
+            # Legacy object keys include the call ID but not the egress ID. The
+            # egress-ended webhook can replace egress_id before the feeder even
+            # reads this row. Neither its current value nor room_name proves
+            # which egress produced these four tracks. Leave the completed call
+            # visible; return no URLs or metadata update for the activity to save.
+            return RecordingUrls(
+                error={
+                    "code": "recording_source_unverified",
+                    "message": "Existing call recordings were kept; their egress could not be verified.",
+                    "tracks": [],  # no split was attempted
+                }
+            )
         if provider_data.get("recording_source") == identity and isinstance(saved, dict):
             for name, field in fields.items():
                 url = saved.get(name)

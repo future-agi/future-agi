@@ -1200,6 +1200,7 @@ if [ "$1" = run ] && [ "${10}" = -ec ]; then
   exit $?
 fi
 case "$*" in
+  *"org.opencontainers.image.version"*) printf '%s\n' "${FAKE_LABEL+version=$FAKE_LABEL}"; exit 0 ;;
   *"command -v uv"*|*"command -v git"*|*"git --version"*|*"import daytona"*|*omw-1.4*|*get_static_doc*)
     [ "$FAKE_VARIANT" = standard ]; exit $? ;;
   *'test "$SERVICE_VERSION"'*) [ "$FAKE_VERSION" = "${13}" ]; exit $? ;;
@@ -1289,6 +1290,20 @@ exit 0
         )
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn("PASS: No uv", proc.stdout)
+
+    def test_version_label_is_optional_but_must_match_when_present(self):
+        for env, expected in (
+            ({}, 0),
+            ({"FAKE_LABEL": "v1.59.1"}, 0),
+            ({"FAKE_LABEL": "v9.9.9"}, 1),
+            ({"FAKE_LABEL": ""}, 1),
+        ):
+            with self.subTest(env=env):
+                proc = self.run_script("futureagi/future-agi:v1.59.1", **env)
+                self.assertEqual(proc.returncode, expected, proc.stdout)
+                outcome = "FAIL" if expected else "PASS"
+                self.assertIn(f"{outcome}: Version label matches requested build", proc.stdout)
+                self.assertIn("PASS: Runtime version matches requested build", proc.stdout)
 
     def test_mismatched_service_version_fails(self):
         proc = self.run_script("futureagi/future-agi:v1.59.1", FAKE_VERSION="dev")
@@ -2600,7 +2615,7 @@ class Workflows(unittest.TestCase):
                 code, _, out, urls = guard(
                     "workflow_dispatch",
                     tag,
-                    "v1.59.1",
+                    "v9.9.9",
                     component,
                     tags="v9.9.9 v9.10.0 v9.10.1-rc1",
                 )

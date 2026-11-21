@@ -321,3 +321,61 @@ def test_unattributed_legacy_links_are_preserved_but_not_used_for_a_new_failure(
     assert result.recording_url is None
     assert result.error["tracks"] == ["assistant", "customer", "mono", "stereo"]
     assert result.provider_call_data[PROVIDER_KEY]["unattributed_recording"] == saved
+
+
+@pytest.mark.parametrize("incoming_egress", [None, "EG_2"])
+def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+    from simulate.models.test_execution import CallExecution, CallTranscript
+    from simulate.serializers.test_execution import CallExecutionDetailSerializer
+
+    # Before recording_source, all four keys included the call and timestamp,
+    # not the egress. The worker had already removed the raw object on success.
+    prefix = "https://media/call-recordings/call-1/20260101T000000"
+    saved = {
+        "combined": f"{prefix}_recording.mp3",
+        **{k: f"{prefix}_{k}_recording.mp3" for k in ("stereo", "assistant", "customer")},
+    }
+    call = MagicMock(
+        asave=AsyncMock(), recording_available=True, recording_url=saved["combined"],
+        stereo_recording_url=saved["stereo"], simulation_call_type="voice",
+        call_metadata={"call_direction": "inbound"},
+        provider_call_data={PROVIDER_KEY: {
+            "egress_id": "EG_1", "recording": saved.copy(),
+            "assistant_recording_url": saved["assistant"],
+            "customer_recording_url": saved["customer"],
+        }},
+    )
+    service = _livekit_service()
+    serializer = CallExecutionDetailSerializer()
+    before = serializer.get_recordings(call)
+    assert set(saved.values()) == {before[k] for k in saved}
+    feeder_data = {"room_name": "call_call-1"}
+    if incoming_egress:
+        feeder_data["egress_id"] = incoming_egress
+    with (
+        patch.object(CallExecution.objects, "aget", new=AsyncMock(return_value=call)),
+        patch.object(CallTranscript.objects, "filter") as transcripts,
+        patch.object(service, "_create_api") as api,
+    ):
+        transcripts.return_value.acount = AsyncMock(return_value=0)
+        asyncio.run(service.fetch_and_store_call_data(
+            "call-1", "call_call-1", "completed", provider_data=feeder_data,
+        ))
+        call.asave.reset_mock()
+        result = asyncio.run(service.extract_and_persist_recordings("call-1"))
+        api.assert_not_called()
+        call.asave.assert_not_awaited()
+
+    assert result.error["code"] == "recording_source_unverified"
+    assert result.error["tracks"] == []
+    assert result.provider_call_data is None
+    assert not any((result.recording_url, result.stereo_recording_url,
+                    result.assistant_recording_url, result.customer_recording_url))
+    bucket = call.provider_call_data[PROVIDER_KEY]
+    assert bucket["egress_id"] == (incoming_egress or "EG_1")
+    assert "recording_source" not in bucket and "recording_error" not in bucket
+    assert call.recording_available and serializer.get_recordings(call) == before

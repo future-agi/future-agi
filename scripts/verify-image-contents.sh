@@ -87,6 +87,14 @@ image_available() {
     docker manifest inspect "$image" >/dev/null 2>&1
 }
 
+version_label_matches() {
+  # No entry means a historical image without the label. Prefix a present
+  # value so an explicitly empty label is not mistaken for an absent one.
+  local label
+  label=$(docker image inspect --format '{{range $k, $v := .Config.Labels}}{{if eq $k "org.opencontainers.image.version"}}version={{$v}}{{end}}{{end}}' "$1") || return 1
+  [[ -z "$label" || "$label" == "version=$2" ]]
+}
+
 check_routes() {
   local image="$1"
   local expected="$2"
@@ -137,6 +145,7 @@ check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/bac
 check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
   "import nltk; [nltk.data.find(p) for p in ('corpora/stopwords/', 'tokenizers/punkt_tab/english/', 'taggers/averaged_perceptron_tagger_eng/', 'corpora/wordnet/')]; assert nltk.word_tokenize('Future AGI') == ['Future', 'AGI']; assert nltk.pos_tag(['Future'])[0][1]"
 check "Runtime version matches requested build ($VERSION)" image_test "$OSS_IMAGE" sh -c 'test "$SERVICE_VERSION" = "$1"' sh "$VERSION"
+check "Version label matches requested build when present" version_label_matches "$OSS_IMAGE" "$VERSION"
 check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" image_test "$OSS_IMAGE" sh -ec '
   marker=/usr/local/lib/futureagi/ffmpeg-flavor
   # Historical releases have no marker. Always check both active binaries.
