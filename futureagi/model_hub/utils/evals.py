@@ -3041,8 +3041,10 @@ def prepare_user_eval_config(validated_data, bypass=False):
         config["rule_prompt"] = processed_data["criteria"]
         config["choices"] = processed_data["choices"]
         config["multi_choice"] = processed_data.get("multi_choice")
-        model_manager = LiteLLMModelManager(config["model"], exclude_providers="custom")
-        config["provider"] = model_manager.get_provider(config["model"])
+        model = config.get("model") or processed_data.get("model")
+        config["model"] = model
+        model_manager = LiteLLMModelManager(model, exclude_providers="custom")
+        config["provider"] = model_manager.get_provider(model)
 
     elif template_type == EvalTemplateType.FUNCTION.value:
         template = EvalTemplate.no_workspace_objects.filter(
