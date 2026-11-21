@@ -955,6 +955,31 @@
 - The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.
 - The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.
 
+### DASH-E2E-018 — rapid date presets query only the final range, custom Done and Refresh apply at once
+
+**Goal:** A user flicking through date presets sees each chip highlight as they click, while the widgets load only the range they land on; a custom range applies as soon as they press Done, and Refresh still brings the widgets to a completed result.
+
+**Spec:** `flows/dashboards/preset-burst-requests.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed 3 traces into a minted project and a dashboard with trace_count and span_count widgets stored at 7D
+2. open the dashboard on the Default chip and wait for both widgets to load
+3. click Today, 7D and 30D back to back
+4. see the 30D chip highlighted, then both widgets load the 30-day range with the seeded totals
+5. open Custom, type today's date as Start Date and End Date and press Done
+6. click Refresh with the custom range applied and wait for it to finish
+
+**Backend state verified:**
+
+- the preset burst sends exactly one time range per widget on POST /tracer/dashboard/query/, the 30-day one; no Today or 7D range is ever sent, the 30D chip is primary before the first 30D query, and that query starts at least 450 ms after the 30D click
+- each completed, exact 30D response spans the expected start and end and contains 3 traces or 6 spans
+- custom Done sends exactly one range per widget, [local midnight today, local midnight tomorrow), dispatched under 450 ms after Done
+- the custom-range responses are complete and exact with the seeded totals
+- Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals; Refreshing returns to Refresh and Last updated shows that completion
+
 ## datasets
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
@@ -1830,6 +1855,30 @@
 **Backend state verified:**
 
 - the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
+
+### GW-E2E-024 — Add/Edit Provider saves only the models the user picked or typed
+
+**Goal:** A platform engineer adds and then edits a provider, and only the models they deliberately picked or typed are saved: hovering a listed model and clicking away neither selects it nor drops a selected one, and a typed model ID is kept, trimmed and once, whether they click away or press Save directly
+
+**Spec:** `flows/gateway/provider-model-selection.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway providers and start adding a custom provider with a base URL and API key
+2. pick one listed model, hover another listed model and click away
+3. type a model ID with surrounding spaces and click away
+4. add the provider
+5. edit the provider, hover a selected and an unselected listed model and click away
+6. type another model ID and press Save Changes directly
+7. reopen the provider and see exactly the picked and typed models
+
+**Backend state verified:**
+
+- the Add save posts config.models exactly [listedA, typedOne] to update-provider (typed ID trimmed, hovered listedB absent) and gets 200
+- the gateway config API returns the added provider with models exactly [listedA, typedOne]
+- the Edit direct save posts and persists models exactly [listedA, typedOne, typedTwo]: update-provider body and gateway config API agree
 
 ## knowledge-base
 
