@@ -3395,6 +3395,7 @@ class DatasetUpdateColumnTypeRequestSerializer(serializers.Serializer):
 
 class DatasetRowDataRequestSerializer(StrictInputSerializer):
     filters = filter_list_field(required=False, default=list)
+    search = JsonObjectRequestField(required=False, default=dict)
     # Row navigation can express one stable scalar key plus the row UUID
     # tie-breaker. Multiple independent cell sorts do not have a bounded
     # continuation predicate and were never applied consistently here.
