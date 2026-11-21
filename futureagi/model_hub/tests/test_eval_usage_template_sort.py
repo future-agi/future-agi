@@ -89,6 +89,36 @@ def sort_probe_templates(user, workspace):
     return specs
 
 
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("search", "separators"),
+    [
+        ("context adherence", ("_", "-")),
+        ("context_adherence", ("_", "-", "X")),  # Existing ILIKE wildcard.
+        ("context %herence", ()),  # Do not normalize spaces in a pattern.
+    ],
+)
+def test_usage_grid_template_search(auth_client, user, workspace, search, separators):
+    templates = {}
+    for separator in ("_", "-", "X"):
+        name = f"context{separator}adherence"
+        template = _create_template(user.organization, workspace, name.lower())
+        if separator == "X":
+            # New names must be lowercase; exercise the stored mixed-case control.
+            EvalTemplate.no_workspace_objects.filter(pk=template.pk).update(name=name)
+        _log_runs(user.organization, workspace, template, 1)
+        templates[separator] = template.id
+
+    response = auth_client.post(URL, {"search_text": search}, format="json")
+
+    assert response.status_code == status.HTTP_200_OK, response.data
+    result = response.data["result"]
+    assert {str(row["id"]) for row in result["row_data"]} == {
+        str(templates[separator]) for separator in separators
+    }
+    assert result["total_rows"] == len(separators)
+
+
 def _post(auth_client, sort):
     return auth_client.post(
         URL,

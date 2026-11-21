@@ -348,13 +348,25 @@ class SQLQueryHandler:
         sort_by = EVAL_TEMPLATE_SORT_COLUMNS[sort_by]
         limit = limit if limit else 10
         offset = offset if offset else 0
+        # Keep explicit LIKE patterns on the original search path. Only plain
+        # phrases get additional literal separator spellings.
+        underscored = hyphenated = None
+        if (
+            search_name
+            and " " in search_name
+            and not any(char in search_name for char in "%_\\")
+        ):
+            underscored = cls.build_ilike_pattern(search_name.replace(" ", "_"))
+            hyphenated = cls.build_ilike_pattern(search_name.replace(" ", "-"))
+
         query = f"""
         WITH filtered_templates AS (
             SELECT *
             FROM model_hub_evaltemplate
             WHERE NOT deleted
             AND name != 'deterministic_evals'
-            AND (%s IS NULL OR name ILIKE '%%' || %s || '%%')
+            AND (%s IS NULL OR name ILIKE '%%' || %s || '%%'
+                 OR name ILIKE %s OR name ILIKE %s)
             AND (%s IS NULL OR id = ANY(%s))
             AND (owner = 'system' OR organization_id = %s)
         ),
@@ -414,6 +426,8 @@ class SQLQueryHandler:
         params = [
             search_name,  # search (for IS NULL)
             search_name,  # search (for ILIKE)
+            underscored,
+            hyphenated,
             (
                 used_template_ids if used_template_ids else None
             ),  # Check if the list is empty
