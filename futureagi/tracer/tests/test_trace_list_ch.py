@@ -149,7 +149,15 @@ class TestExistingBehaviorPreserved:
     def test_default_sort_is_start_time_desc(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
         query, _ = builder.build()
-        assert "ORDER BY start_time DESC" in query
+        assert "ORDER BY start_time DESC, trace_id DESC" in query
+
+        user_builder = TraceListQueryBuilder(
+            project_id=project_id,
+            sort_params=[{"column_id": "latency", "direction": "desc"}],
+        )
+        user_builder.bounded_filter_degraded_error_code = lambda: None
+        user_query, _ = user_builder.build()
+        assert "ORDER BY latency_ms DESC, trace_id DESC" in user_query
 
     def test_pagination_params(self, project_id):
         builder = TraceListQueryBuilder(

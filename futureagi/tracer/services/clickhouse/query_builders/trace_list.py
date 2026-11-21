@@ -5115,10 +5115,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             order_clause = (
                 "ORDER BY start_time DESC, trace_id DESC, project_id DESC"
                 if self.project_ids is not None
-                else "ORDER BY start_time DESC"
+                else "ORDER BY start_time DESC, trace_id DESC"
             )
         elif self.project_ids is not None:
             order_clause = f"{order_clause}, trace_id DESC, project_id DESC"
+        else:
+            order_clause = f"{order_clause}, trace_id DESC"
 
         # Prefix-fetch pagination: read the sorted prefix [0, offset +
         # 2*page_size) in ONE bounded top-K pass and let the view dedup by
