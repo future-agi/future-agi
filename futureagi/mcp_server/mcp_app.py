@@ -162,6 +162,7 @@ def _authenticate_and_set_context(
 
 def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
     """Authenticate via OAuth Bearer token and set per-request context."""
+    from accounts.models.organization import Organization
     from accounts.models.user import User
     from accounts.models.workspace import Workspace
     from mcp_server.oauth_utils import decrypt_oauth_token
@@ -177,18 +178,45 @@ def _authenticate_via_oauth(token: str) -> MCPRequestContext | None:
     except User.DoesNotExist:
         return None
 
-    organization = user.organization
+    # Resolve the tenant from the token claim, not from mutable user state: a
+    # token minted for one organization must not silently authenticate as
+    # whatever organization the user belongs to now.
+    org_id = payload.get("org_id")
+    if not org_id:
+        logger.warning("mcp_oauth_missing_org_claim", user_id=str(user.id))
+        return None
+    organization = Organization.objects.filter(id=org_id).first()
+    if organization is None or user.get_membership_level(organization) is None:
+        logger.warning(
+            "mcp_oauth_org_claim_mismatch",
+            user_id=str(user.id),
+            org_id=str(org_id),
+        )
+        return None
 
     workspace = None
-    if payload.get("workspace_id"):
+    claimed_workspace_id = payload.get("workspace_id")
+    if claimed_workspace_id:
         workspace = (
             Workspace.objects.all()
             .filter(
-                id=payload["workspace_id"], organization=organization, is_active=True
+                id=claimed_workspace_id,
+                organization=organization,
+                is_active=True,
             )
             .first()
         )
-    if not workspace:
+        if workspace is None:
+            # The workspace named by the token is gone, inactive, or belongs to
+            # another organization. Fail closed instead of falling back.
+            logger.warning(
+                "mcp_oauth_workspace_claim_invalid",
+                user_id=str(user.id),
+                org_id=str(organization.id),
+                workspace_id=str(claimed_workspace_id),
+            )
+            return None
+    else:
         workspace = (
             Workspace.objects.all()
             .filter(organization=organization, is_default=True, is_active=True)
