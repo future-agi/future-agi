@@ -182,6 +182,15 @@ check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" 
       done
     done
   done
+  # WavPack decoding also requires its container demuxer in both tools.
+  case ",$4," in
+    *,wavpack,*)
+      for tool in ffmpeg ffprobe; do
+        formats=$("$tool" -hide_banner -demuxers)
+        printf "%s\n" "$formats" | awk "\$1 ~ /^D/ {print \$2}" | grep -Fx wv >/dev/null
+      done
+      ;;
+  esac
   for kind in encoder decoder; do
     case "$kind" in encoder) wanted=$3 ;; decoder) wanted=$4 ;; esac
     listing=$(ffmpeg -hide_banner "-${kind}s")

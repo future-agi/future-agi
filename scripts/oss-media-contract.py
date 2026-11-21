@@ -107,7 +107,7 @@ def pre_variant_debian(workflow, docker, suffix):
     instructions = instructions.replace("\\\n", " ")
     stages = re.split(r"^FROM ", instructions, flags=re.M)
     if (
-        len(stages) != 3
+        len(stages) not in (2, 3)
         or not stages[-1].startswith("python:3.11-slim-bookworm\n")
         or re.search(r"IMAGE_VARIANT|FFMPEG_FLAVOR", instructions)
     ):

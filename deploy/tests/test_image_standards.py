@@ -1261,6 +1261,7 @@ class VerifyImageContents(unittest.TestCase):
             "&& rm -rf /var/lib/apt/lists/* && apt-get clean"
         )
         for tag, stages in [
+            ("v1.34.0", [base, install]),
             ("v1.42.0", [base + " AS builder", base, install]),
             ("v1.42.1", [base + " AS builder", install, base]),
         ]:
@@ -1306,6 +1307,8 @@ if [ "$1" = run ] && [ "${10}" = -ec ]; then
         -version) echo "$tool version 7.1.5 Copyright"
           q=$(printf "\047")
           echo "configuration: --disable-everything --enable-encoder=$q$(echo "$enc" | tr " " ,)$q --enable-decoder=$q$(echo "$dec" | tr " " ,)$q ${EXTRA_CONFIG:-}" ;;
+        *-demuxers) echo " D   wav WAV"; if [ "${OLD_PAIR:-}" != yes ] &&
+          [ "${NO_WV:-}" != both ] && [ "${NO_WV:-}" != "$tool" ]; then echo " D   wv WavPack"; fi ;;
         *-encoders) for id in $enc; do echo " A..... ${id/libaom_av1/libaom-av1}"; done ;;
         *-decoders) for id in $dec; do [ "$id" = "${MISSING_DECODER:-}" ] || echo " V..... ${id/libaom_av1/libaom-av1}"; done ;;
       esac
@@ -1392,6 +1395,14 @@ exit 0
                 self.assertEqual(proc.returncode, 1, proc.stderr)
                 self.assertIn("FAIL: Active ffmpeg and ffprobe", proc.stdout)
 
+    def test_wavpack_recipe_requires_wv_in_both_tools(self):
+        image = "futureagi/future-agi:v2.0.0-slim"
+        for missing in ("ffmpeg", "ffprobe", "both"):
+            with self.subTest(missing=missing):
+                proc = self.run_script(image, version="v2.0.0", NO_WV=missing)
+                self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+                self.assertIn("FAIL: Active ffmpeg and ffprobe", proc.stdout)
+
     def test_replaced_debian_ffprobe(self):
         proc = self.run_script(
             "futureagi/future-agi:v1.59.1", BAD_CHECKSUM="usr/bin/ffprobe"
@@ -1444,6 +1455,7 @@ exit 0
 
     def test_pre_variant_tag_uses_runtime_package_not_builder_package(self):
         for tag, suffix, expected in [
+            ("v1.34.0", "", 0),
             ("v1.42.0", "", 0),
             ("v1.42.0", "-slim", 2),
             ("v1.42.1", "", 2),
@@ -1477,7 +1489,14 @@ exit 0
                 self.assertNotIn("--user 1000:1000", proc.docker_log)
 
     def test_archived_pre_variant_source(self):
-        revision = "0ba21537d449835392dc8301b4122936a79db307"
+        for revision in (
+            "7ab0ad4e809d99281a46797dd10092b6d1bcc0eb",  # v1.34.0: one stage
+            "0ba21537d449835392dc8301b4122936a79db307",  # v1.42.0: two stages
+        ):
+            with self.subTest(revision=revision):
+                self.check_archived_pre_variant_source(revision)
+
+    def check_archived_pre_variant_source(self, revision):
         if subprocess.run(
             ["git", "-C", ROOT, "cat-file", "-e", revision], capture_output=True
         ).returncode:
