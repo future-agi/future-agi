@@ -74,6 +74,15 @@ HISTORICAL_FILES = {
     "0138_attachment_binding_claims": "2b21dbc43a56ec9b42d3fd0daf0e9ce14cc4418745bfa51f574812f1ed42232e",
     "0139_attachment_recordings": "f8dde92abd8f54f0a6345cea8fc2e0ef8b7cfe2b6eab5bf77cee60a5a2e1890a",
 }
+# Evidence predates this rollout. Parallel tracer branches can share its numbers.
+IN_FLIGHT_ATTACHMENT_MIGRATIONS = frozenset(
+    {
+        "0140_attachment_value_expansion",
+        "0141_attachment_value_backfill",
+        "0142_attachment_value_fences",
+        "0143_attachment_value_contraction",
+    }
+)
 VECTOR = (
     "charge_bytes",
     "transfers",
@@ -234,9 +243,9 @@ def provenance(apps, connection):
             ["tracer"],
         )
         actual = [
-            r[0]
-            for r in cursor.fetchall()
-            if not r[0].startswith(("0140_", "0141_", "0142_", "0143_"))
+            name
+            for (name,) in cursor.fetchall()
+            if name not in IN_FLIGHT_ATTACHMENT_MIGRATIONS
         ]
     if actual != sorted(history.get("applied_tracer_migrations", [])):
         fail("applied migration inventory differs")

@@ -180,13 +180,13 @@ class Case:
         self.scope, self.session, self.binding = scope, session, binding
         return self
 
-    def inventory(self, owners):
+    def inventory(self, owners, *, extra_tracer_migrations=()):
         settings.FI_ATTACHMENTS_SCHEMA_V1_EVIDENCE = {
             "schema_version": 1,
             "evidence": "synthetic reviewed-inventory fixture (not approval)",
             "history": {
                 "file_sha256": self.modules["0141"].HISTORICAL_FILES,
-                "applied_tracer_migrations": list(NAMES[:5])[:4],
+                "applied_tracer_migrations": [*NAMES[:4], *extra_tracer_migrations],
             },
             "quiescence": {
                 "old_writers_stopped": True,
@@ -1048,6 +1048,28 @@ def test_whole_import_allocation_publishes_under_canonical_owner_locks(live):
     segment.refresh_from_db()
     assert asset.state == "ready" and segment.state == "published"
     assert asset.verified_storage_version == segment.storage_version == "v1"
+
+
+@pytest.mark.parametrize("reviewed", [True, False], ids=["accurate", "omitted-metrics"])
+def test_populated_migration_checks_parallel_metrics_history(case, reviewed):
+    case.seed()
+    metrics = (
+        "0140_metric_refresh_pause",
+        "0141_metric_refresh_busy_guard",
+        "0142_merge_metrics_and_eval_put_back",
+    )
+    for name in metrics:
+        case.recorder.record_applied("tracer", name)
+    case.inventory({}, extra_tracer_migrations=metrics if reviewed else ())
+
+    if reviewed:
+        case.activate()  # 0142 and 0143 recheck the same sealed inventory.
+        applied = case.recorder.applied_migrations()
+        assert all(("tracer", name) in applied for name in NAMES[5:])
+    else:
+        with pytest.raises(RuntimeError, match="applied migration inventory differs"):
+            case.apply("0141")
+        assert ("tracer", NAMES[5]) not in case.recorder.applied_migrations()
 
 
 def test_populated_migration_does_not_invent_missing_provenance(case):
