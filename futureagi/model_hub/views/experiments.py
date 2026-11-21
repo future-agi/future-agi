@@ -1219,9 +1219,9 @@ class DatasetExperimentsView(APIView):
                                 )
                             ),
                             "name": (
-                                column.name
-                                if "-reason" not in column.name
-                                else column.name.split("-reason")[0]
+                                column.name.removesuffix("-reason")
+                                if column.source == SourceChoices.EVALUATION_REASON.value
+                                else column.name
                             ),
                             "data_type": (
                                 column.data_type
