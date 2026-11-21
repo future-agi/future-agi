@@ -123,6 +123,8 @@ export default function DraftBar({
   // validated before it can be saved.
   const decided =
     (review?.counts?.accepted ?? 0) + (review?.counts?.rejected ?? 0) > 0;
+  // A review partly decided is finished in View changes: Validate opens it, never a request the server refuses.
+  const reviewUnfinished = decided && (review?.counts?.undecided ?? 0) > 0;
   const validation = drafts.validation;
   const needsValidate =
     drafts.validationRequired ||
@@ -147,6 +149,10 @@ export default function DraftBar({
   const onValidate = () => {
     discard.reset();
     save.reset();
+    if (reviewUnfinished) {
+      setReviewing(true);
+      return;
+    }
     startValidation();
   };
   const onSaveValidated = () => {

@@ -20,6 +20,11 @@ const discardReset = vi.fn();
 // The review drawer has its own tests; the bar only opens it.
 const reviewDrawer = vi.hoisted(() => vi.fn(() => null));
 vi.mock("../ReviewChangesDrawer", () => ({ default: reviewDrawer }));
+const queryClient = vi.hoisted(() => ({ invalidateQueries: vi.fn() }));
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useQueryClient: () => queryClient,
+}));
 const runningValidation = vi.hoisted(() => ({ data: undefined }));
 vi.mock("src/api/harness/scenarios", () => ({
   useRunningScenarioValidation: () => runningValidation,
@@ -266,7 +271,11 @@ describe("DraftBar", () => {
     };
 
     it("asks to validate decided changes, sending the revisions and digest reviewed", async () => {
-      decided();
+      validateMutate.mockClear();
+      state.review = {
+        review_digest: DIGEST,
+        counts: { total: 3, accepted: 2, rejected: 1, undecided: 0 },
+      };
       render(<DraftBar env={ENV} />);
 
       expect(
@@ -276,10 +285,43 @@ describe("DraftBar", () => {
         screen.getByRole("button", { name: DRAFTS_COPY.validate }),
       );
 
-      expect(validateMutate).toHaveBeenCalledWith({
+      expect(validateMutate.mock.calls[0][0]).toEqual({
         expectedRevisions: { environment: 3, suite: 1 },
         expectedReviewDigest: DIGEST,
       });
+    });
+
+    it("opens the review to finish deciding, instead of a Validate the server refuses", async () => {
+      validateMutate.mockClear();
+      decided();
+      render(<DraftBar env={ENV} />);
+
+      await userEvent.click(
+        screen.getByRole("button", { name: DRAFTS_COPY.validate }),
+      );
+
+      expect(validateMutate).not.toHaveBeenCalled();
+      expect(reviewDrawer.mock.lastCall[0].open).toBe(true);
+    });
+
+    it("reads the drafts and the review again when a Validate finds them behind", async () => {
+      validateMutate.mockClear();
+      state.review = {
+        review_digest: DIGEST,
+        counts: { total: 3, accepted: 2, rejected: 1, undecided: 0 },
+      };
+      render(<DraftBar env={ENV} />);
+      await userEvent.click(
+        screen.getByRole("button", { name: DRAFTS_COPY.validate }),
+      );
+      const spy = queryClient.invalidateQueries;
+      spy.mockClear();
+
+      validateMutate.mock.calls[0][1].onError({ error: "draft_changed" });
+
+      const keys = spy.mock.calls.map(([arg]) => JSON.stringify(arg.queryKey));
+      expect(keys).toContain(JSON.stringify(["harness-draft-review", "env-1"]));
+      expect(keys.some((key) => key.includes('"drafts"'))).toBe(true);
     });
 
     it("keeps Save off while validating", () => {

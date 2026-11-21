@@ -10,6 +10,10 @@ vi.mock("src/api/harness/harness", async () => ({
   harnessIdempotencyKey: () => "req-1",
 }));
 vi.mock("src/auth/hooks", () => ({ useAuthContext: () => ({ user: { name: "Reviewer One" } }) }));
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+}));
 vi.mock("src/api/harness/scenarios", () => ({
   useAmendScenarios: () => ({ mutate: amendMutate, isPending: false }),
   useScenarioRecords: (jobId, key, table) => ({
@@ -214,7 +218,7 @@ describe("ScenarioDetail unsaved case", () => {
 
     expect(screen.queryByRole("button", { name: "Validate scenario against the environment" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Validate with the unsaved changes" }));
-    expect(validateDrafts).toHaveBeenCalledWith({
+    expect(validateDrafts.mock.calls[0][0]).toEqual({
       expectedRevisions: { suite: 3 },
       expectedReviewDigest: "digest-1",
     });
