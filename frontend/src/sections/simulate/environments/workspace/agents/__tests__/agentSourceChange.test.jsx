@@ -86,7 +86,7 @@ describe("AgentSourceChange", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("says a private repository isn't watched, and names the default branch", () => {
+  it("watches a private repository like a public one, on the default branch", () => {
     renderFor({
       source: {
         kind: "github",
@@ -94,13 +94,8 @@ describe("AgentSourceChange", () => {
         visibility: "private",
       },
     });
-    expect(
-      screen.getByText("Built from acme/agent @ the default branch"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/^Watching/)).toBeNull();
-    expect(
-      screen.getByText("Private repositories aren't watched for new commits."),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/^Watching acme\/agent/)).toBeInTheDocument();
+    expect(screen.queryByText(/aren't watched/)).toBeNull();
   });
 
   it("says a GitHub source pinned to a commit isn't watched", () => {

@@ -1,6 +1,13 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  IconButton,
+  Link,
+  Stack,
+  Typography,
+} from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
@@ -88,7 +95,13 @@ function StopControl({ fix }) {
 }
 StopControl.propTypes = { fix: PropTypes.object.isRequired };
 
+// An epoch run from an Error Feed issue starts its breadcrumb at the issue, from the
+// link the epoch stores, so a reload or a shared link keeps it.
 export default function FixHeader({ fix, envId, actions }) {
+  const { issue } = fix;
+  const issueHref = issue
+    ? paths.dashboard.errorFeed.detail(issue.cluster_id)
+    : null;
   return (
     <Stack
       direction="row"
@@ -105,11 +118,14 @@ export default function FixHeader({ fix, envId, actions }) {
       <IconButton
         size="small"
         component={RouterLink}
-        href={paths.dashboard.simulate.environments.workspaceTab(
-          envId,
-          "improvements",
-        )}
-        aria-label="Back to epochs"
+        href={
+          issueHref ||
+          paths.dashboard.simulate.environments.workspaceTab(
+            envId,
+            "improvements",
+          )
+        }
+        aria-label={issue ? `Back to ${issue.cluster_id}` : "Back to epochs"}
       >
         <Iconify
           icon="solar:alt-arrow-left-linear"
@@ -119,6 +135,23 @@ export default function FixHeader({ fix, envId, actions }) {
       </IconButton>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={1}>
+          {issue && (
+            <Typography
+              noWrap
+              sx={{ typography: "m3", color: "text.secondary", flexShrink: 0 }}
+            >
+              <Link
+                component={RouterLink}
+                href={issueHref}
+                color="inherit"
+                underline="hover"
+                data-testid="epoch-issue-crumb"
+              >
+                {issue.cluster_id}
+              </Link>
+              {" /"}
+            </Typography>
+          )}
           <Typography noWrap sx={{ typography: "m3", fontWeight: 600 }}>
             {fixName(fix)}
           </Typography>

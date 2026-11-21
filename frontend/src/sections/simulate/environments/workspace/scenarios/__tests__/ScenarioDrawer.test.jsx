@@ -115,7 +115,15 @@ describe("ScenarioDrawer", () => {
     expect(screen.queryByText("Persona")).toBeNull();
     expect(screen.queryByText("Situation")).toBeNull();
     expect(screen.queryByText("Sub-goals")).toBeNull();
-    // The test conditions always read, even when the scenario sets none.
+    // Without test conditions taken, a scenario that sets none shows no row for them.
+    expect(screen.queryByText("Hidden · test conditions")).toBeNull();
+  });
+
+  it("reads the test conditions, even when the scenario sets none, while they are taken", () => {
+    open(
+      { id: "s2", name: "bare", persona: {}, sub_goals: [] },
+      { testConditions: true },
+    );
     expect(screen.getByText("Hidden · test conditions")).toBeInTheDocument();
     expect(screen.getByText("Tools behave normally")).toBeInTheDocument();
   });

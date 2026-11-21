@@ -261,7 +261,9 @@ export default function ChatCallDrawer({
           >
             <Tab value="transcript" label="Transcript" />
             <Tab value="traces" label={CALL_TRACES_COPY.tab} />
-            <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            {callDetail?.actorsEnabled === true && (
+              <Tab value="world_changes" label={TRIAL_CHANGES_COPY.tab} />
+            )}
           </CustomTabs>
 
           <Box

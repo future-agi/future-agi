@@ -7,6 +7,9 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
 import { CONSOLE_COPY } from "../build.constants";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import ViewerLock from "../../components/ViewerLock";
+import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
 import { JumpToLatestBar, StopOrbit } from "./BuilderProgress";
 import { Turn } from "./ConsoleTurn";
 // Voice input is temporarily disabled (Web Speech is blocked in Brave); re-enable
@@ -94,6 +97,7 @@ export default function BuilderConsole({
   active = true,
 }) {
   const [state, dispatch] = useReducer(composerReducer, INITIAL);
+  const { canEdit } = useSimulationAccess();
   const { draft, scaffolds } = state;
   const listRef = useRef(null);
   const lastScrollRef = useRef({ top: 0, height: 0 });
@@ -168,9 +172,12 @@ export default function BuilderConsole({
 
   // Frozen === the env is not Live yet, so the builder can't accept edits. It
   // blocks the composer exactly like `running`, but persists across turns.
+  const locked = frozen || !canEdit;
   // An open question that takes only its options holds the composer too, saying so.
-  const blocked = running || frozen || answerWithOptions;
-  const reason = frozenReason || CONSOLE_COPY.frozen;
+  const blocked = running || locked || answerWithOptions;
+  const reason = !canEdit
+    ? WORKSPACE_COPY.viewer.chat
+    : frozenReason || CONSOLE_COPY.frozen;
 
   const hasContent = draft.trim() || scaffolds.length > 0;
 
@@ -181,7 +188,7 @@ export default function BuilderConsole({
   const busy = running || working;
   const hasNewMessage = !following && messageCount > seenMessages;
   // One button: Stop while there's something to stop, Send as soon as the user types.
-  const showStop = onStop && (canStop || running) && !frozen && !hasContent;
+  const showStop = onStop && (canStop || running) && !locked && !hasContent;
 
   const send = () => {
     const text = draft.trim();
@@ -231,7 +238,7 @@ export default function BuilderConsole({
             noWrap
             sx={{ typography: "s1", color: "text.secondary" }}
           >
-            {frozen
+            {locked
               ? reason
               : stopping
                 ? CONSOLE_COPY.stopping
@@ -400,7 +407,7 @@ export default function BuilderConsole({
             maxRows={8}
             variant="standard"
             placeholder={
-              frozen
+              locked
                 ? reason
                 : answerWithOptions
                   ? CONSOLE_COPY.answerWithOptions
@@ -455,27 +462,32 @@ export default function BuilderConsole({
                 </IconButton>
               </Box>
             ) : (
-              <IconButton
-                aria-label="Send"
-                disabled={!hasContent || blocked}
-                onClick={send}
-                size="small"
-                sx={{
-                  bgcolor: hasContent && !blocked ? "primary.main" : undefined,
-                  color:
-                    hasContent && !blocked ? "primary.contrastText" : undefined,
-                  "&:hover": {
+              <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.chat}>
+                <IconButton
+                  aria-label="Send"
+                  disabled={!hasContent || blocked}
+                  onClick={send}
+                  size="small"
+                  sx={{
                     bgcolor:
-                      hasContent && !blocked ? "primary.dark" : undefined,
-                  },
-                  "&.Mui-disabled": {
-                    bgcolor: "action.selected",
-                    color: "text.disabled",
-                  },
-                }}
-              >
-                <Iconify icon="solar:arrow-up-bold" width={15} />
-              </IconButton>
+                      hasContent && !blocked ? "primary.main" : undefined,
+                    color:
+                      hasContent && !blocked
+                        ? "primary.contrastText"
+                        : undefined,
+                    "&:hover": {
+                      bgcolor:
+                        hasContent && !blocked ? "primary.dark" : undefined,
+                    },
+                    "&.Mui-disabled": {
+                      bgcolor: "action.selected",
+                      color: "text.disabled",
+                    },
+                  }}
+                >
+                  <Iconify icon="solar:arrow-up-bold" width={15} />
+                </IconButton>
+              </ViewerLock>
             )}
           </Stack>
         </Box>
