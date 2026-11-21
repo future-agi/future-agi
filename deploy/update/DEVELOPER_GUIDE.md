@@ -82,18 +82,20 @@ At the original guide baseline, normally migrated v1.56.1 databases had all thre
 
 The [EvalTask reference fixture](../../scripts/update_rehearsal_eval_task_reference.py) supplies 100,000 tasks per scale block: 50,000 completed historical, 20,000 failed historical, 20,000 paused continuous and 10,000 soft-deleted tasks, with real project/configuration relationships and 150,000 configuration memberships. It creates no evaluation entries or run loggers, so task recovery has no work to dispatch. Bounded atomic chunks and exact source-field/membership checks detect partial or conflicting replay. Separate read-only checks verify the retained fixture at qualification boundaries; independently observed physical counts and bytes, not the planned totals, remain authoritative. This fixture and its unit tests alone do not establish native migration or restore success.
 
+**Feature update (2026-11-19):** `simulate/0116_agent_fix_issue_job` adds `EvidenceImport.source_issue`, a relation to the registered `tracer_trace_error_group` table. Like `0118`'s relation, it is relation coverage, **not an Error Feed backfill**: the migration writes no Error Feed rows. Qualification now selects `tracer_trace_error_group` from v1.58.0 as well, so the complete v1.58.0 intersection is Trace/ObservationSpan/EvalTask/APICallLog/**TraceErrorGroup**. The existing Error Feed reference chunk in [update_rehearsal_shipping.py](../../scripts/update_rehearsal_shipping.py) seeds it, because reference seeding is chosen by table, not by journey. The latest-stable automatic-upgrade rehearsal on that branch seeded it at 100,000 rows (95 MB); that run is not qualification evidence.
+
 ## 3. What changes require extra work?
 
-| Your change | What to do | What the checker can establish |
-| --- | --- | --- |
-| UI/API logic with no upgrade-sensitive effects | Usual product tests; verify old-data/API compatibility where relevant | No blanket migration-declaration requirement |
-| Django model/schema change | Add a migration and run `makemigrations --check --dry-run` | Missing migrations and supported migration layout |
-| Non-noop `RunPython` or `RunSQL` | Declare `data_migration`, all affected tables and mitigation; get review | Declaration shape and presence, not arbitrary code correctness |
-| Risky operation on an existing registered high-volume table | Declare detected risks/tables; arrange applicable reference rehearsal | Real Django historical state and operation classification |
-| Production source containing recognized schema/mutation statements | Add exact before/after source-hash review; register new source paths | Keyword detection and review binding, not a complete SQL/program analysis |
-| Environment variable or installer/bootstrap change | Document it and provide a usable default or registered unattended generator | Required metadata, Compose substitutions and generator symbols |
-| Service, mount, volume, profile, restart or storage-format change | Update runtime/observer/backup/restore support and contract tests together | Whether the rendered model agrees with the declared layout |
-| New app, changed app label, migration module, squash or replacement | Coordinate fixed mapping/classifier changes and tests before support | Unknown/unsupported layouts fail closed |
+| Your change                                                         | What to do                                                                  | What the checker can establish                                            |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| UI/API logic with no upgrade-sensitive effects                      | Usual product tests; verify old-data/API compatibility where relevant       | No blanket migration-declaration requirement                              |
+| Django model/schema change                                          | Add a migration and run `makemigrations --check --dry-run`                  | Missing migrations and supported migration layout                         |
+| Non-noop `RunPython` or `RunSQL`                                    | Declare `data_migration`, all affected tables and mitigation; get review    | Declaration shape and presence, not arbitrary code correctness            |
+| Risky operation on an existing registered high-volume table         | Declare detected risks/tables; arrange applicable reference rehearsal       | Real Django historical state and operation classification                 |
+| Production source containing recognized schema/mutation statements  | Add exact before/after source-hash review; register new source paths        | Keyword detection and review binding, not a complete SQL/program analysis |
+| Environment variable or installer/bootstrap change                  | Document it and provide a usable default or registered unattended generator | Required metadata, Compose substitutions and generator symbols            |
+| Service, mount, volume, profile, restart or storage-format change   | Update runtime/observer/backup/restore support and contract tests together  | Whether the rendered model agrees with the declared layout                |
+| New app, changed app label, migration module, squash or replacement | Coordinate fixed mapping/classifier changes and tests before support        | Unknown/unsupported layouts fail closed                                   |
 
 **History is immutable.** Add a new migration to change behavior. Do not delete, rename or modify an old migration's operations, dependencies or helpers. The only existing-file exemption is a first `UPDATE_SAFETY` assignment whose removal leaves the same module AST as the merge-base version. Existing declarations cannot be rewritten under that exemption.
 

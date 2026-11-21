@@ -26,6 +26,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from accounts.authentication import viewer_denied
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import EvalTemplate
@@ -637,6 +638,7 @@ class CreateRunTestView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("create a test run")
     @validated_request(
         request_serializer=CreateRunTestSerializer,
         responses={
@@ -982,6 +984,7 @@ class RunTestExecutionView(APIView):
             self._test_executor = TestExecutor()
         return self._test_executor
 
+    @viewer_denied("start a paid run")
     @validated_request(
         request_serializer=ExecuteRunTestSerializer,
         responses={
@@ -1360,6 +1363,7 @@ class TestExecutionCancelView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @viewer_denied("cancel a run")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={
