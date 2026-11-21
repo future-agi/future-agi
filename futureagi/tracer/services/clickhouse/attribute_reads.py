@@ -742,7 +742,9 @@ class V2AttributeQueryExecutor:
                         params,
                         timeout_ms=timeout_ms,
                         settings=settings,
-                        **({"retained_lookup": True} if bounded_retained_lookup else {}),
+                        **(
+                            {"retained_lookup": True} if bounded_retained_lookup else {}
+                        ),
                     )
                 elif bounded_retained_lookup:
                     # Do not fall through to a client without quiet metadata support.
@@ -1447,7 +1449,9 @@ class AttributeReadSelector:
         try:
             remaining_ms = int((self._deadline - self._clock()) * 1000)
             if retained_lookup_deadline is not None:
-                remaining_ms = min(remaining_ms, retained_lookup_deadline.remaining_ms())
+                remaining_ms = min(
+                    remaining_ms, retained_lookup_deadline.remaining_ms()
+                )
             if remaining_ms < 25:
                 raise ReadDeadlineExceeded("Attribute read deadline exceeded")
             if self._query_count >= ATTRIBUTE_READ_MAX_QUERY_COUNT:

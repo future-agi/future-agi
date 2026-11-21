@@ -64,7 +64,10 @@ def test_only_retained_driver_call_omits_query_logs(monkeypatch, caplog, server_
         for marker in ("concurrent_read", "subsequent_read"):
             assert any(marker in message for message in query_messages), marker
         for marker in (
-            "system.parts", "retained_start", "fromUnixTimestamp64Micro", str(bound)
+            "system.parts",
+            "retained_start",
+            "fromUnixTimestamp64Micro",
+            str(bound),
         ):
             assert marker not in caplog.text
             assert marker not in repr(wrapper_logs)

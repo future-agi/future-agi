@@ -1531,7 +1531,9 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
     # Allow for request work in addition to the 750 ms metadata wait and the reserve.
     wall_ms = 2_750
     reserve_ms = 1_000
-    monkeypatch.setattr(dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", wall_ms)
+    monkeypatch.setattr(
+        dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", wall_ms
+    )
     metadata_entered, release_metadata, page_entered = Event(), Event(), Event()
     metadata_threads = []
     page_budgets = []
@@ -1541,7 +1543,9 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
             if "system.parts" in query:
                 metadata_threads.append(current_thread())
                 metadata_entered.set()
-                assert release_metadata.wait(timeout=10), "metadata gate was not released"
+                assert release_metadata.wait(timeout=10), (
+                    "metadata gate was not released"
+                )
                 return [(None,)], [("retained_start", "Nullable(DateTime)")]
             assert "PREWHERE project_id IN %(project_ids)s" in query
             assert params["project_ids"] == (project,)
@@ -1553,7 +1557,9 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
     if share_permit:
         if not hasattr(client, "_retained_lookup_admission"):
             pytest.skip("No separate retained-read permit to rewire on this revision")
-        monkeypatch.setattr(client, "_retained_lookup_admission", client._read_admission)
+        monkeypatch.setattr(
+            client, "_retained_lookup_admission", client._read_admission
+        )
     monkeypatch.setattr(client, "_create_client", Driver)
     monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
     epoch = datetime(1970, 1, 1, tzinfo=UTC)
@@ -1561,14 +1567,16 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
 
     def request_page():
         try:
-            result = _invoke({
-                "metric_name": "name",
-                "metric_type": "system_metric",
-                "source": "traces",
-                "project_ids": [],
-                "search": "",
-                "page_size": 1,
-            })
+            result = _invoke(
+                {
+                    "metric_name": "name",
+                    "metric_type": "system_metric",
+                    "source": "traces",
+                    "project_ids": [],
+                    "search": "",
+                    "page_size": 1,
+                }
+            )
         except Exception as exc:  # noqa: BLE001 - propagate request failures to the test
             response.set_exception(exc)
         else:
@@ -1594,7 +1602,9 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
 
         if not share_permit:
             fallback = dashboard_view._batched_span_system_retained_window_start(
-                [project], window_end=datetime.now(UTC), deadline=ReadDeadline.start(wall_ms)
+                [project],
+                window_end=datetime.now(UTC),
+                deadline=ReadDeadline.start(wall_ms),
             )
             assert fallback == epoch
             assert len(metadata_threads) == 1  # No second native lookup was queued.
@@ -1604,7 +1614,9 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
         release_metadata.set()
         request_thread.join(timeout=5)
         for worker in metadata_threads:
-            worker.join(timeout=5)  # Also works when metadata ran inline on the old path.
+            worker.join(
+                timeout=5
+            )  # Also works when metadata ran inline on the old path.
         assert not request_thread.is_alive()
         assert not any(worker.is_alive() for worker in metadata_threads)
 
