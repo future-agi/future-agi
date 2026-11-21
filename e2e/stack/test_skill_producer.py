@@ -219,7 +219,12 @@ class ContractTests(unittest.TestCase):
                                 'tools': [{'name': '/a/'}, {'name': '/b/'}]}, indent=2) + '\n').encode()
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            for name, content in {checker['MCP_GENERATOR']: generator, checker['MCP_CATALOG']: b'tools: {}\n'}.items():
+            package = {checker['MCP_GENERATOR']: generator, checker['MCP_CATALOG']: b'tools: {}\n',
+                       checker['MCP_PACKAGE'] + '/__init__.py': b'',
+                       checker['MCP_PACKAGE'] + '/request_headers.py': b'ALLOWED = ()\n'}
+            generator = b"from mcp_server.request_headers import ALLOWED\n" + generator
+            package[checker['MCP_GENERATOR']] = generator
+            for name, content in package.items():
                 (repo / name).parent.mkdir(parents=True, exist_ok=True)
                 (repo / name).write_bytes(content)
             subprocess.check_call(['git', '-C', repo, 'init', '-q'])

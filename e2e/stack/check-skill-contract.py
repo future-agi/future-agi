@@ -15,6 +15,7 @@ OPENAPI = 'api_contracts/openapi/swagger.json'
 MCP = 'futureagi/mcp_server/catalog/tools.generated.json'
 MCP_CATALOG = 'futureagi/mcp_server/catalog/tools.yaml'
 MCP_GENERATOR = 'futureagi/mcp_server/tool_generation.py'
+MCP_PACKAGE = 'futureagi/mcp_server'
 SKILLS = '/model-hub/skills/'
 HTTP_METHODS = {'get', 'put', 'post', 'delete', 'patch', 'head', 'options', 'trace'}
 CONTRACTS = ('swagger.json', 'mcp-tools.json', 'SOURCE.json')
@@ -192,15 +193,30 @@ def check_catalog_provenance(root, product, raw_api, raw_tools):
     """The committed MCP manifest must be exactly what the committed generator renders
     from the committed OpenAPI file and tool catalog. This does not depend on which
     metadata fields the manifest carries (a contract hash or a tool-name fingerprint)."""
+    if not isinstance(product, str) or not re.fullmatch(r'[0-9a-f]{40}', product):
+        raise ValueError('Expected a full commit SHA')
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        (tmp / 'tool_generation.py').write_bytes(blob(root, product, MCP_GENERATOR))
+        # The generator is a module of the committed mcp_server package; import it
+        # from that exact package rather than from the writable checkout.
+        archive = subprocess.check_output(['git', '--no-replace-objects', '-C', root, 'archive', '--format=tar',
+                                           product, MCP_PACKAGE])
+        subprocess.run(['tar', '-x', '-C', tmp], input=archive, check=True)
         (tmp / 'swagger.json').write_bytes(raw_api)
-        (tmp / 'tools.yaml').write_bytes(blob(root, product, MCP_CATALOG))
-        spec = importlib.util.spec_from_file_location('_committed_tool_generation', tmp / 'tool_generation.py')
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        manifest = module.generate_tool_manifest(tmp / 'swagger.json', tmp / 'tools.yaml')
+        package_root = str(tmp / Path(MCP_PACKAGE).parent)
+        saved = {name: module for name, module in sys.modules.items()
+                 if name == 'mcp_server' or name.startswith('mcp_server.')}
+        for name in saved:
+            del sys.modules[name]
+        sys.path.insert(0, package_root)
+        try:
+            module = importlib.import_module('mcp_server.tool_generation')
+            manifest = module.generate_tool_manifest(tmp / 'swagger.json', tmp / MCP_CATALOG)
+        finally:
+            sys.path.remove(package_root)
+            for name in [n for n in sys.modules if n == 'mcp_server' or n.startswith('mcp_server.')]:
+                del sys.modules[name]
+            sys.modules.update(saved)
     if (json.dumps(manifest, indent=2, sort_keys=False) + '\n').encode() != raw_tools:
         raise ValueError('Product MCP catalog was not generated from the committed OpenAPI file')
 
