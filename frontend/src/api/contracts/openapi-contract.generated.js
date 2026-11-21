@@ -110247,7 +110247,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         state: {
           title: "State",
           description:
-            "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check.",
+            "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check; outdated: the changes or their decisions moved since they were validated, so Validate again.",
           type: "string",
           enum: [
             "validating",
@@ -110256,6 +110256,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "failed",
             "check_unavailable",
             "superseded",
+            "outdated",
             "unavailable",
           ],
         },
