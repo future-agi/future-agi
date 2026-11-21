@@ -146,3 +146,24 @@ it.each([
   expect(screen.getByText(label)).toBeVisible();
   expect(resolveAttachments).not.toHaveBeenCalled();
 });
+
+it("a media error gets one fresh authorization; a second awaits explicit retry, denial stops playback", async () => {
+  render(<Host />);
+  fireEvent.click(screen.getByRole("button", { name: "Play clip: Turn 0" }));
+  const el = screen.getByLabelText("Clip: Turn 0");
+  await waitFor(() => expect(el).toHaveAttribute("src"));
+  fireEvent.error(el);
+  await waitFor(() => expect(resolveAttachments).toHaveBeenCalledTimes(2));
+  expect(resolveAttachments.mock.calls[1][3]?.fresh).toBe(true);
+  await waitFor(() => expect(el).toHaveAttribute("src"));
+  fireEvent.error(el);
+  await waitFor(() => expect(el).not.toHaveAttribute("src"));
+  expect(resolveAttachments).toHaveBeenCalledTimes(2);
+  resolveAttachments.mockResolvedValue([
+    { occurrence_id: a.reference.occurrence_id, status: "expired" },
+  ]);
+  fireEvent.click(screen.getByRole("button", { name: "Retry clip: Turn 0" }));
+  await screen.findByText("Clip unavailable");
+  expect(el).not.toHaveAttribute("src");
+  expect(resolveAttachments).toHaveBeenCalledTimes(3);
+});

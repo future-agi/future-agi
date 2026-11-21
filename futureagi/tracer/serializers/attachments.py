@@ -355,6 +355,25 @@ class AttachmentRecordingManifestSerializer(serializers.Serializer):
 _CONTROL_F01 = _attachment_wire._schema()["$defs"]
 
 
+class AttachmentRecordingPreviewSerializer(serializers.Serializer):
+    """Application projection, not an F01 grant. A manifest exists only if ready."""
+
+    occurrence_id = serializers.UUIDField()
+    parent = AttachmentParentSerializer()
+    state = serializers.ChoiceField(
+        choices=(
+            "pending",
+            "pending_upload",
+            "validating",
+            "importing",
+            "waiting",
+            "failed",
+            "ready",
+        )
+    )
+    manifest = AttachmentRecordingManifestSerializer(required=False)
+
+
 class AttachmentControlUUIDField(serializers.UUIDField):
     class Meta:
         swagger_schema_fields = _CONTROL_F01["UUID"]

@@ -41,6 +41,7 @@ from tracer.serializers.attachments import (
     AttachmentProviderRegistrationRequestSerializer,
     AttachmentProviderRegistrationResponseSerializer,
     AttachmentRecordingManifestSerializer,
+    AttachmentRecordingPreviewSerializer,
     AttachmentResolveRequestSerializer,
     AttachmentResolveResponseSerializer,
     AttachmentSourceEnvelopeRequestSerializer,
@@ -599,11 +600,11 @@ class AttachmentOccurrenceView(AttachmentView):
 class RecordingPreviewView(AttachmentView):
     """Lazy app projection for one authorized recording; never returns byte grants."""
 
-    @swagger_auto_schema(
+    @validated_request(
+        operation_id="readAttachmentRecordingPreview",
         tags=[TAG],
         manual_parameters=PARENT_QUERY,
-        operation_description="Selected recording state and finalized authorized manifest, if ready.",
-        responses={200: "Recording preview", **ERRORS},
+        responses={200: AttachmentRecordingPreviewSerializer, **ERRORS},
     )
     def get(self, request, project_id, occurrence_id):
         viewer = self.viewer(request, project_id)
@@ -783,7 +784,14 @@ class AttachmentMediaView(AttachmentView):
         tags=[TAG],
         responses={
             200: openapi.Response(
-                "Media bytes", openapi.Schema(type=openapi.TYPE_FILE)
+                "Media bytes",
+                openapi.Schema(type=openapi.TYPE_FILE),
+                headers={
+                    "X-Attachment-Peaks": {
+                        "type": "string",
+                        "description": "Only on an authorized peaks GET: JSON v1 with verified sample_rate, channels, frame_count and frames_per_bucket/buckets for each level.",
+                    }
+                },
             ),
             206: openapi.Response(
                 "Partial media bytes", openapi.Schema(type=openapi.TYPE_FILE)

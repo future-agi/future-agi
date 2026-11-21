@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import axios from "src/utils/axios";
-import { listAttachments, resolveAttachments } from "../client";
+import {
+  listAttachments,
+  readRecordingPreview,
+  resolveAttachments,
+} from "../client";
 import {
   MAX_EXCHANGES_PER_MINUTE,
   captureMediaContext,
@@ -14,6 +18,8 @@ import {
   mediaSessionId,
   occurrence,
   occurrenceId,
+  standaloneManifest,
+  mixedManifest,
   parent,
   projectId,
 } from "./fixtures";
@@ -659,3 +665,64 @@ describe("explicit exchange-to-resolve binding under races", () => {
 function scopeOrg() {
   return authDefaults().headers.common["X-Organization-Id"];
 }
+
+describe("selected recording preview", () => {
+  const item = { reference: { occurrence_id: occurrenceId } };
+  const ready = {
+    parent,
+    occurrence_id: occurrenceId,
+    state: "ready",
+    manifest: standaloneManifest,
+  };
+  it("uses a pinned same-origin read and never exchanges or resolves just to discover a manifest", async () => {
+    axios.get.mockResolvedValue({ data: ready });
+    await expect(
+      readRecordingPreview(projectId, parent, item),
+    ).resolves.toEqual(ready);
+    expect(axios.get.mock.calls[0][0]).toBe(
+      `/tracer/v1/projects/${projectId}/attachments/occurrences/${occurrenceId}/recording-preview`,
+    );
+    expect(axios.get.mock.calls[0][1]).toMatchObject({
+      baseURL: window.location.origin,
+      params: parent,
+    });
+    expect(axios.post).not.toHaveBeenCalled();
+  });
+  it("accepts the first segment as anchor only on the selected manifest", async () => {
+    const selected = {
+      recording_id: mixedManifest.recording_id,
+      reference: { occurrence_id: mixedManifest.segments[1].occurrence_id },
+    };
+    axios.get.mockResolvedValue({
+      data: { ...ready, manifest: mixedManifest },
+    });
+    await expect(
+      readRecordingPreview(projectId, parent, selected),
+    ).resolves.toMatchObject({ occurrence_id: occurrenceId });
+    for (const foreign of [
+      { ...selected, recording_id: occurrenceId },
+      { ...selected, reference: { occurrence_id: projectId } },
+    ])
+      await expect(
+        readRecordingPreview(projectId, parent, foreign),
+      ).rejects.toThrow();
+  });
+  it("drops a wrong-parent response, a substituted occurrence and a reply after identity replacement", async () => {
+    for (const p of [
+      { ...ready, parent: { ...parent, span_id: "1111111111111111" } },
+      { state: "pending", parent, occurrence_id: projectId },
+    ]) {
+      axios.get.mockResolvedValue({ data: p });
+      await expect(
+        readRecordingPreview(projectId, parent, item),
+      ).rejects.toThrow();
+    }
+    axios.get.mockImplementation(async () => {
+      signIn("changed");
+      return { data: ready };
+    });
+    await expect(
+      readRecordingPreview(projectId, parent, item),
+    ).rejects.toThrow();
+  });
+});

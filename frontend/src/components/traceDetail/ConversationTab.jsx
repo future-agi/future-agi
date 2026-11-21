@@ -10,6 +10,7 @@ function SelectedRecording({ projectId, selection, ambiguous }) {
     [projection, setProjection] = useState(null);
   const [failure, setFailure] = useState(null),
     [active, setActive] = useState(null);
+  const [canSeek, setCanSeek] = useState(false);
   const engine = useRef(null),
     unsubscribe = useRef(null),
     currentRows = useRef([]);
@@ -17,6 +18,7 @@ function SelectedRecording({ projectId, selection, ambiguous }) {
   const onInstance = useCallback(({ multitrack }) => {
     unsubscribe.current?.();
     engine.current = multitrack;
+    setCanSeek(Boolean(multitrack));
     unsubscribe.current = multitrack?.on("timeupdate", (seconds) => {
       // Prefer the explicit selection for simultaneous events. Never move focus.
       const hit = currentRows.current
@@ -170,7 +172,7 @@ function SelectedRecording({ projectId, selection, ambiguous }) {
                       Time not captured
                     </Typography>
                   )}
-                {r.seekMs === null ? (
+                {r.seekMs === null || !canSeek ? (
                   <Box sx={sx}>{content}</Box>
                 ) : (
                   <Button
