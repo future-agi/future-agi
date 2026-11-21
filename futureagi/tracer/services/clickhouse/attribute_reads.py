@@ -716,9 +716,9 @@ class V2AttributeQueryExecutor:
         *,
         timeout_ms: int,
         settings: dict[str, Any],
-        bounded_retained_lookup: bool = False,
+        retained_until: float | None = None,
     ) -> AttributeQueryPage:
-        application_read = self._application_read and not bounded_retained_lookup
+        application_read = self._application_read and retained_until is None
         if application_read:
             timeout_ms = None
             settings = application_read_settings(settings)
@@ -743,10 +743,12 @@ class V2AttributeQueryExecutor:
                         timeout_ms=timeout_ms,
                         settings=settings,
                         **(
-                            {"retained_lookup": True} if bounded_retained_lookup else {}
+                            {"retained_until": retained_until}
+                            if retained_until is not None
+                            else {}
                         ),
                     )
-                elif bounded_retained_lookup:
+                elif retained_until is not None:
                     # Do not fall through to a client without quiet metadata support.
                     raise ReadDeadlineExceeded("Optional metadata client unavailable")
                 else:
@@ -1467,7 +1469,12 @@ class AttributeReadSelector:
                 params,
                 timeout_ms=min(timeout_cap_ms, remaining_ms),
                 **(
-                    {"bounded_retained_lookup": True}
+                    {
+                        "retained_until": (
+                            retained_lookup_deadline.started
+                            + retained_lookup_deadline.total_ms / 1000
+                        )
+                    }
                     if retained_lookup_deadline is not None
                     else {}
                 ),

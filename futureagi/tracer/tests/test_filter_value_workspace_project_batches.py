@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
@@ -1399,6 +1400,25 @@ def test_workspace_span_system_retained_lookup_failure_falls_back_to_epoch(
     assert "system.parts" not in repr(logs)
 
 
+class _PickerDriver:
+    """Expose the leased native send boundary without a server."""
+
+    def __init__(self):
+        self.connection = SimpleNamespace(
+            connected=True,
+            socket=Mock(gettimeout=Mock(return_value=30.0)),
+            connect_timeout=3.0,
+            sync_request_timeout=5.0,
+            send_receive_timeout=30.0,
+            context=SimpleNamespace(),
+            send_query=self.send_query,
+        )
+
+    def execute(self, query, params, *, settings, with_column_types):
+        self.connection.context.settings = settings
+        return self.connection.send_query(query, params)
+
+
 @pytest.mark.unit
 @pytest.mark.parametrize("fallback", [False, True], ids=["retained", "epoch"])
 def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
@@ -1438,14 +1458,13 @@ def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
     )
     calls = []
 
-    class Driver:
-        connection = SimpleNamespace(connected=True, send_receive_timeout=30.0)
-
-        def execute(self, query, params, *, settings, with_column_types):
+    class Driver(_PickerDriver):
+        def send_query(self, query, params):
             if "system.parts" not in query:
                 return [], []
             seconds = self.connection.send_receive_timeout
-            calls.append((seconds, settings["max_execution_time"]))
+            server_cap = self.connection.context.settings["max_execution_time"]
+            calls.append((seconds, server_cap))
             if fallback:
                 # The native stall consumes its entire allowance, not a fraction.
                 now[0] += 1.0 if seconds is None else seconds
@@ -1501,13 +1520,75 @@ def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
         assert len(reads) == before
     assert len(calls) == 2
     for transport, server in calls:
-        assert 0 < server <= 0.225
+        assert 0 < server <= 0.175
         assert transport == pytest.approx(server)
     assert all("query" not in entry and "error" not in entry for entry in logs)
     assert "system.parts" not in repr(logs) and "secret-value-42" not in repr(logs)
     with capture_logs() as ordinary:
         client.execute_read("SELECT 1")
     assert any(entry.get("query") == "SELECT 1" for entry in ordinary)
+
+
+@pytest.mark.unit
+def test_near_reserve_skips_retained_worker_before_page_handoff(monkeypatch):
+    from tracer.services.clickhouse import read_budget
+    from tracer.services.clickhouse.client import ClickHouseClient
+    from tracer.services.clickhouse.v2 import query_service
+
+    now = [0.0]
+    monkeypatch.setattr(read_budget, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", 1120)
+    project = _uuid(1)
+    _install_scope_and_seen_state(monkeypatch, _ProjectQuery([project], []))
+    worker = Mock(side_effect=AssertionError("metadata should not be admitted"))
+    monkeypatch.setattr(dashboard_view, "Thread", worker)
+    parent = None
+
+    def read_projects(deadline, read):
+        nonlocal parent
+        parent = deadline
+        return read()
+
+    monkeypatch.setattr(dashboard_view, "_run_filter_value_pg_read", read_projects)
+    load_seen = dashboard_view.load_attribute_cursor_seen_state
+
+    def prepare_seen(*args, **kwargs):
+        now[0] += 0.1
+        return load_seen(*args, **kwargs)
+
+    monkeypatch.setattr(
+        dashboard_view, "load_attribute_cursor_seen_state", prepare_seen
+    )
+    entries = []
+
+    class Driver(_PickerDriver):
+        def send_query(self, query, params):
+            assert "PREWHERE project_id IN %(project_ids)s" in query
+            assert params["project_ids"] == (project,)
+            entries.append(parent.remaining_ms())
+            return [("scoped name",)], [("val", "String")]
+
+    client = ClickHouseClient(server_enforced_readonly=False)
+    monkeypatch.setattr(client, "_create_client", Driver)
+    monkeypatch.setattr(query_service, "get_v2_query_client", lambda: client)
+    page = _result(
+        _invoke(
+            {
+                "metric_name": "name",
+                "metric_type": "system_metric",
+                "source": "traces",
+                "project_ids": [],
+                "search": "",
+                "page_size": 1,
+            }
+        )
+    )
+    worker.assert_not_called()
+    assert entries == [1020]
+    assert page["values"] == [{"value": "scoped name", "label": "scoped name"}]
+    assert datetime.fromisoformat(page["query_window_start"]) == datetime(
+        1970, 1, 1, tzinfo=UTC
+    )
 
 
 @pytest.mark.unit
@@ -1552,8 +1633,8 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
     metadata_threads = []
     page_budgets = []
 
-    class Driver:
-        def execute(self, query, params, **_kwargs):
+    class Driver(_PickerDriver):
+        def send_query(self, query, params):
             if "system.parts" in query:
                 metadata_threads.append(current_thread())
                 metadata_entered.set()

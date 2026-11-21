@@ -35,6 +35,7 @@ export default function FilterValueLabel({
     options,
     queryIdentity,
     isLoading,
+    continuationKey,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
@@ -71,25 +72,41 @@ export default function FilterValueLabel({
   // Reset during render, not in an effect: `canReadMore` below reads the
   // counter in this same render, so a new selection must see its fresh
   // budget immediately rather than after some unrelated re-render.
-  const continuationReads = useRef({ key: budgetKey, count: 0 });
+  const continuationReads = useRef({ key: budgetKey, count: 0, cursor: null });
   if (continuationReads.current.key !== budgetKey) {
-    continuationReads.current = { key: budgetKey, count: 0 };
+    continuationReads.current = { key: budgetKey, count: 0, cursor: null };
   }
   const hasUnresolved =
     hasValue && !labelsAreValues && values.some((v) => !byValue.has(v));
   const canReadMore =
     hasUnresolved &&
     Boolean(hasNextPage) &&
+    Boolean(continuationKey) &&
     !isFetchNextPageError &&
     !cursorChainStopped &&
     continuationReads.current.count < MAX_LABEL_CONTINUATION_READS;
   useEffect(() => {
-    if (canReadMore && !isLoading && !isFetchingNextPage) {
+    // A fast fetch can settle without rendering a fetching state. Drive the
+    // next read from the actual cursor, at most once per cursor for this chip.
+    if (
+      canReadMore &&
+      !isLoading &&
+      !isFetchingNextPage &&
+      continuationReads.current.cursor !== continuationKey
+    ) {
+      continuationReads.current.cursor = continuationKey;
       continuationReads.current.count += 1;
       // Chips sharing one query must not cancel each other's page read.
       void fetchNextPage?.({ cancelRefetch: false });
     }
-  }, [budgetKey, canReadMore, isLoading, isFetchingNextPage, fetchNextPage]);
+  }, [
+    budgetKey,
+    canReadMore,
+    continuationKey,
+    isLoading,
+    isFetchingNextPage,
+    fetchNextPage,
+  ]);
   const isResolving =
     hasValue &&
     !labelsAreValues &&

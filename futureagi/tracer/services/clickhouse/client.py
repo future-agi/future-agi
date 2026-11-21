@@ -92,6 +92,56 @@ def _quiet_retained_driver():
         _quiet_retained_read.reset(token)
 
 
+@contextmanager
+def _guard_retained_dispatch(client, deadline):
+    """Guard the query packet on this lease, not the entry to Client.execute.
+
+    In clickhouse-driver 0.2.10, execute prepares the connection settings,
+    calls force_connect (which may ping and reconnect), then substitutes the
+    parameters before calling Connection.send_query. Keep that entire driver
+    and instrumentation path; only interpose at its single-connection send.
+    """
+    connection = client.connection
+    if getattr(client, "connections", ()):
+        # A rotating client could select a different, unguarded connection.
+        raise TimeoutError("Optional metadata requires a single connection")
+    send_query = connection.send_query
+    had_instance_method = "send_query" in vars(connection)
+    sync_timeout = connection.sync_request_timeout
+
+    def send_before_deadline(*args, **kwargs):
+        # Use the selector's minimum useful statement budget. Never serialize
+        # a near-zero server setting (zero would mean unlimited).
+        remaining_ms = int((deadline - time.monotonic()) * 1000)
+        if remaining_ms < 25 or not connection.connected or connection.socket is None:
+            raise TimeoutError("ClickHouse read deadline exhausted")
+        remaining = remaining_ms / 1000
+        # send_query serializes context.settings, not execute's input dict.
+        connection.context.settings = {
+            **connection.context.settings,
+            "max_execution_time": remaining,
+        }
+        if connection.send_receive_timeout is not None:
+            remaining = min(connection.send_receive_timeout, remaining)
+            connection.send_receive_timeout = remaining
+        connection.socket.settimeout(remaining)
+        return send_query(*args, **kwargs)
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("ClickHouse read deadline exhausted")
+    connection.send_query = send_before_deadline
+    try:
+        connection.sync_request_timeout = min(sync_timeout, remaining)
+        yield
+    finally:
+        connection.sync_request_timeout = sync_timeout
+        if had_instance_method:
+            connection.send_query = send_query
+        else:
+            del connection.send_query
+
+
 def _bounded_read_timeout_ms(
     timeout_ms: int | None,
     *,
@@ -400,18 +450,22 @@ class ClickHouseClient:
         timeout_ms: int | None = None,
         settings: dict[str, Any] | None = None,
         *,
-        retained_lookup: bool = False,
+        retained_until: float | None = None,
     ) -> tuple[list[tuple], list[tuple], float, int | None, int | None]:
-        """Execute a guarded read and include native rows/bytes progress."""
+        """Execute a guarded read and include native rows/bytes progress.
 
-        with _quiet_retained_driver() if retained_lookup else nullcontext():
+        retained_until is the optional lookup waiter's absolute monotonic expiry.
+        Other reads keep their original admission, transport and telemetry.
+        """
+
+        with _quiet_retained_driver() if retained_until is not None else nullcontext():
             result = self._execute_read(
                 query,
                 params,
                 timeout_ms=timeout_ms,
                 settings=settings,
                 include_progress=True,
-                retained_lookup=retained_lookup,
+                retained_until=retained_until,
             )
         assert len(result) == 5
         return result
@@ -424,7 +478,7 @@ class ClickHouseClient:
         settings: dict[str, Any] | None = None,
         *,
         include_progress: bool,
-        retained_lookup: bool = False,
+        retained_until: float | None = None,
     ) -> (
         tuple[list[tuple], list[tuple], float]
         | tuple[list[tuple], list[tuple], float, int | None, int | None]
@@ -446,7 +500,8 @@ class ClickHouseClient:
             Tuple of (rows, column_types, query_time_ms), optionally followed
             by native read_rows and read_bytes progress.
         """
-        application_read = is_application_read()
+        retained_lookup = retained_until is not None
+        application_read = is_application_read() and not retained_lookup
         timeout_ms = (
             None
             if application_read
@@ -551,6 +606,11 @@ class ClickHouseClient:
                         query_settings=query_settings,
                         started_at=t_start,
                         timeout_ms=timeout_ms,
+                        **(
+                            {"retained_until": retained_until}
+                            if retained_lookup
+                            else {}
+                        ),
                     )
                     break
                 except CHError as exc:
@@ -656,6 +716,7 @@ class ClickHouseClient:
         query_settings: dict[str, Any] | None,
         started_at: float,
         timeout_ms: int | None,
+        retained_until: float | None = None,
     ):
         """Keep connect + socket wait inside the read's remaining wall.
 
@@ -674,6 +735,13 @@ class ClickHouseClient:
 
         connection = getattr(client, "connection", None)
         connected = getattr(connection, "connected", None)
+        if retained_until is not None and (
+            timeout_ms is None
+            or query_settings is None
+            or connected not in {True, False}
+        ):
+            # No optional dispatch without both server and transport guardrails.
+            raise TimeoutError("Optional metadata requires bounded native dispatch")
         if timeout_ms is None:
             with application_native_read_transport(client):
                 return client.execute(
@@ -691,6 +759,9 @@ class ClickHouseClient:
             )
 
         deadline = started_at + (timeout_ms / 1000.0)
+        if retained_until is not None:
+            # Admission and executor setup must not renew the waiter's deadline.
+            deadline = min(deadline, retained_until)
         original_connect_timeout = getattr(connection, "connect_timeout", None)
         original_send_receive_timeout = getattr(
             connection, "send_receive_timeout", None
@@ -702,7 +773,7 @@ class ClickHouseClient:
             original_socket.gettimeout() if original_socket is not None else None
         )
         try:
-            if connected is False:
+            if connected is False or retained_until is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError("ClickHouse read deadline exhausted")
@@ -714,7 +785,8 @@ class ClickHouseClient:
                     connection.send_receive_timeout = min(
                         float(original_send_receive_timeout), remaining
                     )
-                connection.connect()
+                if connected is False:
+                    connection.connect()
 
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -727,12 +799,17 @@ class ClickHouseClient:
             if socket is not None:
                 socket.settimeout(remaining)
 
-            return client.execute(
-                query,
-                params,
-                with_column_types=True,
-                settings=query_settings,
-            )
+            with (
+                _guard_retained_dispatch(client, deadline)
+                if retained_until is not None
+                else nullcontext()
+            ):
+                return client.execute(
+                    query,
+                    params,
+                    with_column_types=True,
+                    settings=query_settings,
+                )
         finally:
             if original_connect_timeout is not None:
                 connection.connect_timeout = original_connect_timeout

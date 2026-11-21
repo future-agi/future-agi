@@ -668,6 +668,7 @@ class _BatchedFilterValueCursor:
 # Never queue optional work or wait for a late driver during request cleanup.
 _RETAINED_LOOKUP_SLOT = BoundedSemaphore(1)
 _RETAINED_PAGE_RESERVE_MS = 1_000
+_RETAINED_PAGE_HANDOFF_MS = 100
 
 
 def _batched_span_system_retained_window_start(
@@ -676,16 +677,20 @@ def _batched_span_system_retained_window_start(
     window_end: datetime,
     deadline,
 ) -> datetime:
-    """Admit metadata for at most half the surplus over the page reserve.
+    """Reserve the page and its handoff before allocating any metadata wait.
 
-    Leave the other half for wakeup, seen-state preparation and page admission.
-    This bounds the optional wait we request, not scheduling/queue delays:
-    page entry still observes the actual time left on the original deadline.
+    Budget for wakeup, seen-state preparation and page admission, then spend
+    at most half of what remains. This caps our requested wait; scheduling and
+    queue delays can still reduce the time left at page entry.
     """
     # Anchor before sampling the parent so setup cannot renew either wall.
     lookup_deadline = ReadDeadline.start(ATTRIBUTE_READ_METADATA_TIMEOUT_MS)
     try:
-        budget = (deadline.remaining_ms() - _RETAINED_PAGE_RESERVE_MS) // 2
+        budget = (
+            deadline.remaining_ms()
+            - _RETAINED_PAGE_RESERVE_MS
+            - _RETAINED_PAGE_HANDOFF_MS
+        ) // 2
     except ReadDeadlineExceeded:
         return _FILTER_VALUE_RETAINED_START
     if budget < 25 or not _RETAINED_LOOKUP_SLOT.acquire(blocking=False):

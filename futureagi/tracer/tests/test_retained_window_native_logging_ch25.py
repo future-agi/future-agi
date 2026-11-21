@@ -2,6 +2,8 @@
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from time import monotonic
+from types import SimpleNamespace
 
 import pytest
 from clickhouse_driver.errors import ServerException
@@ -53,7 +55,7 @@ def test_only_retained_driver_call_omits_query_logs(monkeypatch, caplog, server_
             return owner.execute_read_with_progress(
                 _GLOBAL_RETAINED_START_SQL,
                 {"window_end_us": bound},
-                retained_lookup=True,
+                retained_until=monotonic() + owner.read_timeout_ceiling_ms / 1000,
             )
 
         monkeypatch.setattr(metadata, "receive_result", receive_after_control)
@@ -100,3 +102,87 @@ def test_only_retained_driver_call_omits_query_logs(monkeypatch, caplog, server_
             assert marker not in caplog.text
             assert marker not in repr(wrapper_logs)
             assert all(marker not in span.to_json() for span in spans)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("reconnect", [False, True], ids=["ping", "reconnect"])
+@pytest.mark.parametrize("expires", [False, True], ids=["shrink", "skip"])
+def test_retained_dispatch_uses_time_left_after_connection_check(
+    monkeypatch, reconnect, expires
+):
+    from tracer.services.clickhouse import client as client_module
+
+    # The caller allocated 225 ms. Include time already spent outside the
+    # native wrapper, then advance only our clock during actual driver I/O.
+    now = [0.025]
+    clock = SimpleNamespace(monotonic=lambda: now[0])
+    owner = ClickHouseClient(pool_size=1, server_enforced_readonly=False)
+    with _ch_test_native_client() as native:
+        owner._return_client(native)
+        connection = native.connection  # Warm from the fixture's sidecar check.
+        ping, connect, send = connection.ping, connection.connect, connection.send_query
+        health, dispatch = [], []
+        sync = connection.sync_request_timeout
+        connect_timeout = connection.connect_timeout
+        policy = connection.send_receive_timeout
+        original_socket_timeout = connection.socket.gettimeout()
+
+        def delayed_ping():
+            health.append("ping")
+            assert 0 < connection.sync_request_timeout <= 0.201
+            assert ping()
+            if reconnect:
+                return False  # force_connect must reconnect before sending.
+            now[0] = 0.24 if expires else 0.125
+            return True
+
+        def delayed_connect():
+            health.append("connect")
+            assert 0 < connection.connect_timeout <= 0.201
+            connect()
+            now[0] = 0.24 if expires else 0.125
+
+        def record_send(sql, *args, **kwargs):
+            dispatch.append(
+                (
+                    connection.context.settings["max_execution_time"],
+                    connection.socket.gettimeout(),
+                )
+            )
+            return send(sql, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(client_module, "time", clock)
+            patch.setattr(connection, "ping", delayed_ping)
+            patch.setattr(connection, "connect", delayed_connect)
+            patch.setattr(connection, "send_query", record_send)
+
+            def lookup():
+                return owner.execute_read_with_progress(
+                    "SELECT toFloat64(getSetting('max_execution_time'))",
+                    timeout_ms=225,
+                    retained_until=0.225,
+                )
+
+            if expires:
+                with pytest.raises(TimeoutError, match="deadline exhausted"):
+                    lookup()
+                assert dispatch == []
+            else:
+                [(server_cap,)] = lookup()[0]
+                assert server_cap == pytest.approx(0.1)
+                assert len(dispatch) == 1
+                assert dispatch[0] == pytest.approx((0.1, 0.1))
+                expected = policy if reconnect else original_socket_timeout
+                assert connection.socket.gettimeout() == expected
+            assert health == (["ping", "connect"] if reconnect else ["ping"])
+            assert connection.send_query is record_send
+            assert connection.sync_request_timeout == sync
+            assert connection.connect_timeout == connect_timeout
+            assert connection.send_receive_timeout == policy
+
+        # The same client dispatches with the ordinary server policy after
+        # every outcome; it must not inherit the retained statement's cap.
+        assert owner.execute_read(
+            "SELECT toFloat64(getSetting('max_execution_time'))", timeout_ms=2000
+        )[0] == [(2.0,)]

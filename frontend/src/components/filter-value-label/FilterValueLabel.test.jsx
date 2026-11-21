@@ -206,6 +206,7 @@ describe("FilterValueLabel", () => {
       data: [],
       isLoading: false,
       hasNextPage: true,
+      continuationKey: "cursor-0",
       isFetchingNextPage: false,
       fetchNextPage,
     };
@@ -219,6 +220,7 @@ describe("FilterValueLabel", () => {
       data: DEFAULT_OPTIONS,
       isLoading: false,
       hasNextPage: true,
+      continuationKey: "cursor-0",
       isFetchingNextPage: false,
       fetchNextPage,
     };
@@ -233,6 +235,7 @@ describe("FilterValueLabel", () => {
       data: [],
       isLoading: false,
       hasNextPage: true,
+      continuationKey: "cursor-0",
       isFetchNextPageError: true,
       fetchNextPage,
     };
@@ -259,9 +262,17 @@ describe("FilterValueLabel", () => {
         hasNextPage: true,
         fetchNextPage,
       };
-      mockState.current = { ...page, isFetchingNextPage: true };
+      mockState.current = {
+        ...page,
+        continuationKey: mockState.current.continuationKey,
+        isFetchingNextPage: true,
+      };
       rerender(<FilterValueLabel filter={filterFor()} source="traces" />);
-      mockState.current = { ...page, isFetchingNextPage: false };
+      mockState.current = {
+        ...page,
+        continuationKey: `cursor-${i + 1}`,
+        isFetchingNextPage: false,
+      };
       rerender(<FilterValueLabel filter={filterFor()} source="traces" />);
     }
   };
@@ -269,9 +280,42 @@ describe("FilterValueLabel", () => {
     data: [],
     isLoading: false,
     hasNextPage: true,
+    continuationKey: "cursor-0",
     isFetchingNextPage: false,
     fetchNextPage,
   });
+
+  it.each([true, false])(
+    "follows cursor-only settlements without repeating a read (resolves: %s)",
+    (resolves) => {
+      const fetchNextPage = vi.fn();
+      const filter = { ...baseFilter, registryId: "project", value: ["p1"] };
+      mockState.current = unresolvedChain(fetchNextPage);
+      const { rerender } = renderLabel(filter);
+      const renderSameChip = () =>
+        rerender(<FilterValueLabel filter={filter} source="traces" />);
+      expect(fetchNextPage).toHaveBeenCalledTimes(1);
+      // Fetch notifications without cursor progress must not charge another read.
+      mockState.current.isFetchingNextPage = true;
+      renderSameChip();
+      mockState.current.isFetchingNextPage = false;
+      renderSameChip();
+      expect(fetchNextPage).toHaveBeenCalledTimes(1);
+
+      for (let i = 1; i <= 15; i += 1) {
+        // No intermediate fetching render; the query, selection, handler and
+        // options are unchanged until the page that actually resolves the id.
+        mockState.current.continuationKey = `cursor-${i}`;
+        if (resolves && i === 3) mockState.current.data = DEFAULT_OPTIONS;
+        renderSameChip();
+        renderSameChip();
+        expect(fetchNextPage).toHaveBeenCalledTimes(
+          Math.min(i + 1, resolves ? 3 : 12),
+        );
+      }
+      expect(screen.getByText(resolves ? "Project Alpha" : "p1")).toBeVisible();
+    },
+  );
 
   it("stops after exactly 12 continuation reads and shows the raw id", () => {
     const fetchNextPage = vi.fn();

@@ -201,6 +201,21 @@ def test_native_lazy_application_connection_keeps_finite_connect(
     assert connection.connect_timeout == 3
 
 
+def test_locked_profile_skips_only_retained_read_when_server_cap_is_unavailable(
+    monkeypatch,
+):
+    owner, native, _, _ = native_client(monkeypatch, locked=True)
+    with pytest.raises(TimeoutError, match="bounded native dispatch"):
+        owner.execute_read_with_progress(
+            "SELECT 1",
+            timeout_ms=225,
+            retained_until=client_module.time.monotonic() + 0.225,
+        )
+    native.execute.assert_not_called()
+    owner.execute_read("SELECT 1", timeout_ms=225)
+    assert native.execute.call_args.kwargs["settings"] is None
+
+
 @pytest.mark.parametrize("connect_expires", [False, True])
 def test_cold_retained_lookup_does_not_shorten_next_sampling_stream(
     monkeypatch, connect_expires
@@ -211,9 +226,17 @@ def test_cold_retained_lookup_does_not_shorten_next_sampling_stream(
     clock = SimpleNamespace(monotonic=lambda: now[0])
     monkeypatch.setattr(client_module, "time", clock)
     monkeypatch.setattr(native_read_stream, "time", clock)
-    owner = ClickHouseClient(pool_size=1, read_timeout_ceiling_ms=30_000)
+    owner = ClickHouseClient(
+        pool_size=1, read_timeout_ceiling_ms=30_000, server_enforced_readonly=False
+    )
     connection = SimpleNamespace(
-        connected=False, socket=None, connect_timeout=3, send_receive_timeout=60
+        connected=False,
+        socket=None,
+        connect_timeout=3,
+        send_receive_timeout=60,
+        sync_request_timeout=5,
+        send_query=Mock(return_value=([], [])),
+        context=SimpleNamespace(),
     )
 
     def connect():
@@ -224,14 +247,19 @@ def test_cold_retained_lookup_does_not_shorten_next_sampling_stream(
             now[0] += 0.8
 
     connection.connect = connect
-    native = Mock(connection=connection)
-    native.execute.return_value = ([], [])
+    native = Mock(connection=connection, connections=())
+
+    def execute(query, params, *, with_column_types, settings):
+        connection.context.settings = settings
+        return connection.send_query(query, params)
+
+    native.execute.side_effect = execute
     factory = Mock(return_value=native)
     monkeypatch.setattr(owner, "_create_client", factory)
 
     def lookup():
         owner.execute_read_with_progress(
-            "SELECT 1", timeout_ms=750, retained_lookup=True
+            "SELECT 1", timeout_ms=750, retained_until=0.75
         )
 
     if connect_expires:
