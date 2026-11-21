@@ -33,6 +33,7 @@ export default function FilterValueLabel({
   const labelsAreValues = filterLabelsMatchValues(filter);
   const {
     options,
+    queryIdentity,
     isLoading,
     hasNextPage,
     fetchNextPage,
@@ -61,15 +62,18 @@ export default function FilterValueLabel({
   // chain ends; only then fall back to the raw value.
   // Bounded per chip: a value that no longer exists must not make every mount
   // walk the whole workspace vocabulary.
-  // Keyed on the selection's contents, not the array's identity: a parent
-  // that rebuilds `filter.value` on every render must not restart the chain.
-  const valuesKey = useMemo(() => JSON.stringify(values), [values]);
+  // A reused widget row can switch queries without changing its selected ids.
+  // A new array with the same contents for the same query is still one budget.
+  const budgetKey = useMemo(
+    () => JSON.stringify([queryIdentity, values]),
+    [queryIdentity, values],
+  );
   // Reset during render, not in an effect: `canReadMore` below reads the
   // counter in this same render, so a new selection must see its fresh
   // budget immediately rather than after some unrelated re-render.
-  const continuationReads = useRef({ key: valuesKey, count: 0 });
-  if (continuationReads.current.key !== valuesKey) {
-    continuationReads.current = { key: valuesKey, count: 0 };
+  const continuationReads = useRef({ key: budgetKey, count: 0 });
+  if (continuationReads.current.key !== budgetKey) {
+    continuationReads.current = { key: budgetKey, count: 0 };
   }
   const hasUnresolved =
     hasValue && !labelsAreValues && values.some((v) => !byValue.has(v));
@@ -85,7 +89,7 @@ export default function FilterValueLabel({
       // Chips sharing one query must not cancel each other's page read.
       void fetchNextPage?.({ cancelRefetch: false });
     }
-  }, [canReadMore, isLoading, isFetchingNextPage, fetchNextPage]);
+  }, [budgetKey, canReadMore, isLoading, isFetchingNextPage, fetchNextPage]);
   const isResolving =
     hasValue &&
     !labelsAreValues &&

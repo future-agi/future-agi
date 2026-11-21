@@ -72,7 +72,9 @@ def _allow_native_log(_record: logging.LogRecord) -> bool:
 
 
 @contextmanager
-def _quiet_retained_driver_logs():
+def _quiet_retained_driver():
+    from tfc.telemetry.instrumentation import suppress_clickhouse_query_span
+
     # The driver logs substituted SQL, server messages and result-column names.
     # Filter at the emitters: ancestor logger filters don't see propagated records.
     for name in (
@@ -84,7 +86,8 @@ def _quiet_retained_driver_logs():
         logging.getLogger(name).addFilter(_allow_native_log)  # idempotent
     token = _quiet_retained_read.set(True)
     try:
-        yield
+        with suppress_clickhouse_query_span():
+            yield
     finally:
         _quiet_retained_read.reset(token)
 
@@ -401,7 +404,7 @@ class ClickHouseClient:
     ) -> tuple[list[tuple], list[tuple], float, int | None, int | None]:
         """Execute a guarded read and include native rows/bytes progress."""
 
-        with _quiet_retained_driver_logs() if retained_lookup else nullcontext():
+        with _quiet_retained_driver() if retained_lookup else nullcontext():
             result = self._execute_read(
                 query,
                 params,
@@ -692,9 +695,12 @@ class ClickHouseClient:
         original_send_receive_timeout = getattr(
             connection, "send_receive_timeout", None
         )
-        socket = None
-        original_socket_timeout = None
-        original_socket_timeout_known = False
+        # connect()/reconnect creates a socket using the *clamped* policy.
+        # Only a socket that existed before the clamp has a timeout to save.
+        original_socket = getattr(connection, "socket", None)
+        original_socket_timeout = (
+            original_socket.gettimeout() if original_socket is not None else None
+        )
         try:
             if connected is False:
                 remaining = deadline - time.monotonic()
@@ -719,8 +725,6 @@ class ClickHouseClient:
                 )
             socket = getattr(connection, "socket", None)
             if socket is not None:
-                original_socket_timeout = socket.gettimeout()
-                original_socket_timeout_known = True
                 socket.settimeout(remaining)
 
             return client.execute(
@@ -730,15 +734,22 @@ class ClickHouseClient:
                 settings=query_settings,
             )
         finally:
-            if socket is not None and original_socket_timeout_known:
-                try:
-                    socket.settimeout(original_socket_timeout)
-                except Exception:
-                    pass
             if original_connect_timeout is not None:
                 connection.connect_timeout = original_connect_timeout
             if original_send_receive_timeout is not None:
                 connection.send_receive_timeout = original_send_receive_timeout
+            current_socket = getattr(connection, "socket", None)
+            if current_socket is not None:
+                try:
+                    current_socket.settimeout(
+                        original_socket_timeout
+                        if current_socket is original_socket
+                        else original_send_receive_timeout
+                    )
+                except Exception:
+                    # The pool may reuse the client, but not this transport.
+                    client.disconnect()
+                    raise
 
     def execute_read_block_stream(
         self,

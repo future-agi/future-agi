@@ -200,6 +200,7 @@ export function useResolvedFilterOptions(
     options,
     isLoading,
     isError: valueQuery.isError,
+    queryIdentity: valueQuery.queryIdentity,
     queryReadState: valueQuery.queryReadState,
     fetchNextPage: valueQuery.fetchNextPage,
     hasNextPage: valueQuery.hasNextPage,

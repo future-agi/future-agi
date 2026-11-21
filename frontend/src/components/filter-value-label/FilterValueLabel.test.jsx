@@ -31,7 +31,7 @@ const { mockState, hookSpy } = vi.hoisted(() => ({
 vi.mock("src/hooks/useDashboards", () => ({
   useDashboardFilterValues: (args) => {
     hookSpy(args);
-    return mockState.current;
+    return { queryIdentity: args.propertyId, ...mockState.current };
   },
 }));
 
@@ -359,6 +359,38 @@ describe("FilterValueLabel", () => {
     });
     expect(fetchNextPage).toHaveBeenCalledTimes(24);
     expect(screen.getByText("other-id")).toBeInTheDocument();
+  });
+
+  it("reads page two when an exhausted row is reused for another property with the same id selected", () => {
+    const firstRead = vi.fn();
+    const first = {
+      ...baseFilter,
+      registryId: "first-property",
+      value: ["p1"],
+    };
+    mockState.current = unresolvedChain(firstRead);
+    const { rerender } = renderLabel(first);
+    cycleReads({
+      rerender,
+      fetchNextPage: firstRead,
+      cycles: 15,
+      filterFor: () => first,
+    });
+    expect(firstRead).toHaveBeenCalledTimes(12);
+    expect(screen.getByText("p1")).toBeInTheDocument();
+
+    // Deleting an index-keyed widget row gives the same mounted label the
+    // next row's props. Only the registry property changes, not the selection.
+    const next = { ...first, registryId: "next-property" };
+    const nextRead = vi.fn();
+    mockState.current = unresolvedChain(nextRead);
+    rerender(<FilterValueLabel filter={next} source="traces" />);
+    expect(nextRead).toHaveBeenCalledTimes(1);
+    expect(nextRead).toHaveBeenCalledWith({ cancelRefetch: false });
+    mockState.current = { ...mockState.current, data: DEFAULT_OPTIONS };
+    rerender(<FilterValueLabel filter={next} source="traces" />);
+    expect(screen.getByText("Project Alpha")).toBeInTheDocument();
+    expect(nextRead).toHaveBeenCalledTimes(1);
   });
 
   it("shows a skeleton instead of raw ids while resolving", () => {

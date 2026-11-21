@@ -1410,9 +1410,22 @@ def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
     clock = SimpleNamespace(monotonic=lambda: now[0])
     monkeypatch.setattr(read_budget, "time", clock)
     monkeypatch.setattr(native_client, "time", clock)
+    # Sequence the virtual clock; the held-driver test below uses real threads.
+    monkeypatch.setattr(
+        dashboard_view, "Thread", lambda *, target, **_: SimpleNamespace(start=target)
+    )
     monkeypatch.setattr(dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", 1450)
     owners = {_uuid(201): _uuid(301), _uuid(202): _uuid(302)}
     _install_scope_and_seen_state(monkeypatch, _ProjectQuery([], []))
+    load_seen = dashboard_view.load_attribute_cursor_seen_state
+
+    def prepare_seen(*args, **kwargs):
+        now[0] += 0.1  # Handoff after metadata, on the same request wall.
+        return load_seen(*args, **kwargs)
+
+    monkeypatch.setattr(
+        dashboard_view, "load_attribute_cursor_seen_state", prepare_seen
+    )
     monkeypatch.setattr(
         dashboard_view,
         "project_queryset_for_request",
@@ -1433,9 +1446,9 @@ def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
                 return [], []
             seconds = self.connection.send_receive_timeout
             calls.append((seconds, settings["max_execution_time"]))
-            # A one-second stall without a timeout leaves only 450 ms for the page.
-            now[0] += 1.0 if seconds is None else seconds * 0.9
             if fallback:
+                # The native stall consumes its entire allowance, not a fraction.
+                now[0] += 1.0 if seconds is None else seconds
                 raise DriverNetworkError(_LEAKY_DETAIL)
             return [(datetime(2020, 1, 1, tzinfo=UTC),)], [
                 ("retained_start", "DateTime")
@@ -1488,7 +1501,7 @@ def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
         assert len(reads) == before
     assert len(calls) == 2
     for transport, server in calls:
-        assert 0 < server <= 0.45
+        assert 0 < server <= 0.225
         assert transport == pytest.approx(server)
     assert all("query" not in entry and "error" not in entry for entry in logs)
     assert "system.parts" not in repr(logs) and "secret-value-42" not in repr(logs)
@@ -1498,11 +1511,12 @@ def test_workspace_page_keeps_read_budget_and_scope(monkeypatch, fallback):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("wall_ms", [1_450, 2_750], ids=["low-surplus", "metadata-cap"])
 @pytest.mark.parametrize(
     "share_permit", [False, True], ids=["isolated", "shared-control"]
 )
 def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
-    monkeypatch, share_permit
+    monkeypatch, share_permit, wall_ms
 ):
     from concurrent.futures import Future
     from contextlib import nullcontext
@@ -1528,8 +1542,8 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
         return read()
 
     monkeypatch.setattr(dashboard_view, "_run_filter_value_pg_read", read_projects)
-    # Allow for request work in addition to the 750 ms metadata wait and the reserve.
-    wall_ms = 2_750
+    # In the low-surplus case only 450 ms is available beyond the reserve,
+    # even before preparation. The metadata driver stays held past waiter expiry.
     reserve_ms = 1_000
     monkeypatch.setattr(
         dashboard_view, "_FILTER_VALUES_INTERACTIVE_TIMEOUT_MS", wall_ms
@@ -1555,8 +1569,6 @@ def test_stalled_retained_driver_does_not_block_page_or_queue_lookups(
 
     client = ClickHouseClient(server_enforced_readonly=False, pool_size=1)
     if share_permit:
-        if not hasattr(client, "_retained_lookup_admission"):
-            pytest.skip("No separate retained-read permit to rewire on this revision")
         monkeypatch.setattr(
             client, "_retained_lookup_admission", client._read_admission
         )

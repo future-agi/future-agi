@@ -1281,6 +1281,7 @@ export function useDashboardFilterValues({
   return {
     ...query,
     data: values,
+    queryIdentity,
     continuationKey:
       !cursorChainStopped && query.hasNextPage
         ? getFilterValueNextCursor(lastPage) || null

@@ -676,11 +676,16 @@ def _batched_span_system_retained_window_start(
     window_end: datetime,
     deadline,
 ) -> datetime:
-    """Spend only time above the page reserve on the first-page accelerator."""
+    """Admit metadata for at most half the surplus over the page reserve.
+
+    Leave the other half for wakeup, seen-state preparation and page admission.
+    This bounds the optional wait we request, not scheduling/queue delays:
+    page entry still observes the actual time left on the original deadline.
+    """
     # Anchor before sampling the parent so setup cannot renew either wall.
     lookup_deadline = ReadDeadline.start(ATTRIBUTE_READ_METADATA_TIMEOUT_MS)
     try:
-        budget = deadline.remaining_ms() - _RETAINED_PAGE_RESERVE_MS
+        budget = (deadline.remaining_ms() - _RETAINED_PAGE_RESERVE_MS) // 2
     except ReadDeadlineExceeded:
         return _FILTER_VALUE_RETAINED_START
     if budget < 25 or not _RETAINED_LOOKUP_SLOT.acquire(blocking=False):
