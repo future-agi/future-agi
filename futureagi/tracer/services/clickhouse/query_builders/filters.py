@@ -27,6 +27,15 @@ from tracer.utils.constants import (
     FilterType,
 )
 
+# Skill scope lives in span attributes (an array, so it lands in the
+# attributes_extra JSON text); there is no dedicated spans column. The
+# position() guard skips JSON parsing for the spans that carry no scope.
+SKILL_VERSION_IDS_SQL = (
+    "if(position(attributes_extra, '\"fi.skills.version_ids\"') > 0, "
+    "JSONExtract(attributes_extra, 'fi.skills.version_ids', 'Array(String)'), "
+    "CAST([], 'Array(String)'))"
+)
+
 _SAFE_ATTR_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
 _LEGACY_OP_ALIAS = {"is": "equals", "is_not": "not_equals"}
@@ -2033,7 +2042,7 @@ class ClickHouseFilterBuilder:
                     conditions.append(
                         f"{span_identity} IN (SELECT project_id, trace_id, id FROM ("
                         "SELECT project_id, trace_id, id, "
-                        "argMax(tuple(skill_version_ids, is_deleted), _version) AS scope_state "
+                        f"argMax(tuple({SKILL_VERSION_IDS_SQL}, is_deleted), _version) AS scope_state "
                         "FROM spans WHERE "
                         + self._project_scope_predicate()
                         + " AND start_time >= %(start_date)s AND start_time < %(end_date)s "

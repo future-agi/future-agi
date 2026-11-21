@@ -375,26 +375,6 @@ def _definitions(
     return create, native
 
 
-def _retained_skill_column():
-    """Read the exact optional 028 column contract; never execute a migration here."""
-    source = Path(__file__).with_name("v2") / "schema" / "028_skill_attribution.sql"
-    statements = apply_schema.split_statements(source.read_text())
-    prefix = (
-        "ALTER",
-        "TABLE",
-        "spans",
-        "ADD",
-        "COLUMN",
-        "IF",
-        "NOT",
-        "EXISTS",
-        "skill_version_ids",
-    )
-    if len(statements) != 6 or _tokens(statements[0])[: len(prefix)] != prefix:
-        raise BootstrapError("unexpected packaged skill attribution declaration")
-    return _column(_tokens(statements[0])[len(prefix) :])
-
-
 def _check_table(
     name,
     row,
@@ -413,10 +393,6 @@ def _check_table(
         expected.update(
             {key: _column(_tokens(value)) for key, value in _SPAN_COLUMNS.items()}
         )
-    # Both fresh-only native and CDC prerequisite inspections visit this table.
-    # Older checkouts need no ALTER; validate the exact migrated shape if present.
-    if native and name == "spans" and "skill_version_ids" in columns:
-        expected["skill_version_ids"] = _retained_skill_column()
     if name == "trace_session" and not native and not source_owned:
         expected.update(
             {

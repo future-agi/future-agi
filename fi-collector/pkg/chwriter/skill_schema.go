@@ -21,7 +21,7 @@ var skillViewSelects string
 // or a replicated history. A receipt alone survives DETACH/DROP. Check the
 // live source -> MV edges, local destinations and full SELECTs. No application data
 // is scanned, and no command (including DDL) runs with writer privileges.
-const skillSchemaSHA = "8b91a17af3c29991e0d437079815e49036b3c17c06c3b9ca2406e63d06be105e"
+const skillSchemaSHA = "ad2619673601e7df807bd62fe6ba0117e24b8f50e911c05c182ec0d2790c973b"
 
 // as_select is ClickHouse's single-line rendering of the stored SELECT AST.
 // Render the packaged SELECT with the same server, qualifying *its* spans
@@ -30,8 +30,6 @@ var skillSchemaProbe = skillViewSelects + `SELECT count() = 6
     AND (SELECT count() FROM system.databases WHERE name = currentDatabase() AND engine IN ('Atomic', 'Ordinary')) = 1
     AND (SELECT argMax(sha256, applied_at) FROM schema_versions
          WHERE filename = '028_skill_attribution.sql' AND notes IN ('schema-topology/v1/local', '')) = '` + skillSchemaSHA + `'
-    AND (SELECT count() FROM system.columns WHERE database = currentDatabase()
-         AND table = 'spans' AND name = 'skill_version_ids' AND type = 'Array(String)' AND default_kind = 'MATERIALIZED') = 1
 FROM system.tables WHERE database = currentDatabase() AND (
     (name = 'schema_versions' AND engine = 'MergeTree') OR
     (name = 'spans' AND engine = 'ReplacingMergeTree'

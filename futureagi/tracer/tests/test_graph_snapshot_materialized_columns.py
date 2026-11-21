@@ -46,7 +46,6 @@ DEPLOYED_MATERIALIZED = {
     "llm_response_model",
     "max_tokens",
     "output_length",
-    "skill_version_ids",
     "streaming",
     "temperature",
     "top_p",

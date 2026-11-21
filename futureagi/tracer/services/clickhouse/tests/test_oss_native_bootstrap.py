@@ -303,28 +303,6 @@ def test_fresh_then_retained_complete_is_zero_writes():
     assert before == (client.tables, client.columns, client.writes)
 
 
-def test_retained_skill_attribution_requires_packaged_expression():
-    client = MemoryClient(complete=True)
-    client.columns["spans"]["skill_version_ids"] = (
-        "Array(String)",
-        "MATERIALIZED",
-        """if(position(attributes_extra, '"fi.skills.version_ids"') > 0,
-        JSONExtract(attributes_extra, 'fi.skills.version_ids', 'Array(String)'), [])""",
-    )
-    client.data["spans"] = True
-    assert native.inspect_native(client, database=DATABASE) == ()
-    client.columns["spans"]["skill_version_ids"] = (
-        "Array(String)",
-        "MATERIALIZED",
-        "[]",
-    )
-    with pytest.raises(
-        native.NativeBootstrapError, match="incompatible native table contract"
-    ):
-        native.inspect_native(client, database=DATABASE)
-    assert not client.writes
-
-
 @pytest.mark.parametrize("name", DEFAULT_NAMES)
 def test_each_existing_object_is_inspect_only(name):
     client = MemoryClient(complete=True)

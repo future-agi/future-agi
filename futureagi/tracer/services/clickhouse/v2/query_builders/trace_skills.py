@@ -6,7 +6,10 @@ from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
 )
-from tracer.services.clickhouse.query_builders.filters import is_skill_filter
+from tracer.services.clickhouse.query_builders.filters import (
+    SKILL_VERSION_IDS_SQL,
+    is_skill_filter,
+)
 from tracer.services.clickhouse.v2.query_builders.skill_runtime import (
     SkillRuntimeQueryBuilder,
 )
@@ -24,13 +27,13 @@ class TraceSkillsQueryBuilder(SkillRuntimeQueryBuilder):
 
     def build_spans(self):
         return (
-            """
+            f"""
             SELECT id, state.1 AS start_time, state.2 AS name,
                    state.3 AS status, state.4 AS attrs, state.5 AS version_ids,
                    state.6 AS attributes
             FROM (
                 SELECT id, argMax(tuple(start_time, name, status, attrs_string,
-                    skill_version_ids, attributes_extra, is_deleted), _version) AS state
+                    {SKILL_VERSION_IDS_SQL}, attributes_extra, is_deleted), _version) AS state
                 FROM spans WHERE project_id IN %(project_ids)s AND trace_id IN %(trace_ids)s
                 GROUP BY id
             ) WHERE state.7 = 0 ORDER BY start_time, id LIMIT 10001

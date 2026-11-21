@@ -346,7 +346,11 @@ func TestConvertSkillAttributesClickHouse(t *testing.T) {
 	if got := f.sql("SELECT count() FROM skill_load_failures FINAL WHERE error_type = 'integrity' AND agent_name = 'reviewer' AND is_deleted = 0"); got != "1" {
 		t.Fatalf("collector failure view count = %s, want 1", got)
 	}
-	if got := f.sql("SELECT count() FROM spans WHERE has(skill_version_ids, '11111111-1111-4111-8111-111111111111')"); got != "1" {
+	// Skill scope stays in span attributes; spans has no dedicated column for it.
+	if got := f.sql("SELECT count() FROM system.columns WHERE database = currentDatabase() AND table = 'spans' AND name = 'skill_version_ids'"); got != "0" {
+		t.Fatalf("spans must not gain a skill_version_ids column, found %s", got)
+	}
+	if got := f.sql("SELECT count() FROM spans WHERE has(JSONExtract(attributes_extra, 'fi.skills.version_ids', 'Array(String)'), '11111111-1111-4111-8111-111111111111')"); got != "1" {
 		t.Fatalf("collector dotted-array membership count = %s, want 1", got)
 	}
 }

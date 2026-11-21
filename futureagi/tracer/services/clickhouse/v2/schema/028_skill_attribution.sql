@@ -1,17 +1,9 @@
 -- Runtime load evidence, not fetch accounting or proof of model use.
--- Like 022, this only adds metadata for existing parts on the boot path.
+-- Adds two new tables and their views only; spans is not altered. Skill scope
+-- (fi.skills.version_ids) stays in span attributes and is read from there.
 -- Historical rows are handled by ch25_backfill_skill_trace_links, off boot.
 -- Readers must collapse revisions (FINAL or argMax) before excluding tombstones.
 -- Full-row replays must preserve the load identity and start_time ordering key.
-
-ALTER TABLE spans
-    ADD COLUMN IF NOT EXISTS skill_version_ids Array(String)
-    MATERIALIZED if(position(attributes_extra, '"fi.skills.version_ids"') > 0,
-                    JSONExtract(attributes_extra, 'fi.skills.version_ids', 'Array(String)'), []);
-
-ALTER TABLE spans
-    ADD INDEX IF NOT EXISTS idx_skill_version_ids skill_version_ids
-    TYPE bloom_filter(0.01) GRANULARITY 1;
 
 CREATE TABLE IF NOT EXISTS skill_trace_links
 (

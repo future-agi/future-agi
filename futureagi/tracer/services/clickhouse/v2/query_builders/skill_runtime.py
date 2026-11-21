@@ -12,6 +12,7 @@ from datetime import datetime
 from uuid import UUID
 
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+from tracer.services.clickhouse.query_builders.filters import SKILL_VERSION_IDS_SQL
 from tracer.services.clickhouse.read_budget import ReadDeadline, WallCappedAnalytics
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
 from tracer.services.clickhouse.v2.query_builders.filters import (
@@ -200,7 +201,7 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
         """Replay complete traces, not just spans started in the load window."""
         params = {**self.params, "members": tuple(members)}
         return (
-            """
+            f"""
             SELECT project_id, trace_id, id, state.1 AS parent_span_id,
                    state.2 AS status, state.3 AS latency_ms, state.4 AS cost,
                    state.5 AS total_tokens, state.6 AS skill_version_ids,
@@ -208,7 +209,7 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             FROM (
                 SELECT project_id, trace_id, id,
                        argMax(tuple(parent_span_id, status, latency_ms, cost,
-                                    total_tokens, skill_version_ids, start_time, attrs_string['fi.context.version_id']), _version) AS state
+                                    total_tokens, {SKILL_VERSION_IDS_SQL}, start_time, attrs_string['fi.context.version_id']), _version) AS state
                 FROM spans
                 WHERE project_id IN %(project_ids)s
                   AND (toString(project_id), trace_id) IN %(members)s
@@ -410,7 +411,7 @@ class SkillRuntimeQueryBuilder(V2RewriteMixin):
             ), span_winners AS (
                 SELECT project_id, trace_id, id,
                        argMax(tuple(parent_span_id, status, latency_ms, cost,
-                                    total_tokens, skill_version_ids, start_time), _version) AS state
+                                    total_tokens, {SKILL_VERSION_IDS_SQL}, start_time), _version) AS state
                 FROM spans
                 WHERE project_id IN %(project_ids)s
                   AND (project_id, trace_id) IN (SELECT project_id, trace_id FROM members)

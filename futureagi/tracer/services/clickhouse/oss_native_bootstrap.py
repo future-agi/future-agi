@@ -511,22 +511,9 @@ def inspect_skill_extension(client, database, migration, *, require_receipt=True
                 missing.append(migration.path.name)
         elif prior != migration.sha256:
             raise NativeBootstrapError("Skills migration hash drift")
-    if not _rows(
-        client,
-        "SELECT 1 FROM system.columns WHERE database = currentDatabase() "
-        "AND table = 'spans' AND name = 'skill_version_ids' "
-        "AND type = 'Array(String)' AND default_kind = 'MATERIALIZED'",
-    ):
-        missing.append("spans.skill_version_ids")
-    if not _rows(
-        client,
-        "SELECT 1 FROM system.data_skipping_indices WHERE database = currentDatabase() "
-        "AND table = 'spans' AND name = 'idx_skill_version_ids'",
-    ):
-        missing.append("spans.idx_skill_version_ids")
     statements = core.apply_schema.split_statements(migration.path.read_text())
     for target, table_ddl, view_ddl in zip(
-        targets, statements[2::2], statements[3::2], strict=True
+        targets, statements[0::2], statements[1::2], strict=True
     ):
         view = f"{target}_mv"
         if target in tables:

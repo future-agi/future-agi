@@ -22,6 +22,7 @@ from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
     compile_exact_graph_row_predicates,
 )
 from tracer.services.clickhouse.query_builders.filters import (
+    SKILL_VERSION_IDS_SQL,
     EvalFilterMetadata,
     resolve_failed_skill_names,
 )
@@ -181,7 +182,8 @@ def test_in_scope_is_span_only_and_does_not_need_projected_array():
         compile_filters([skill("in_scope", VERSION)])
     sql, params = compile_filters([skill("in_scope", VERSION)], mode="span")
     assert "(toUUID(%(project_id)s), trace_id, id) IN" in sql
-    assert "argMax(tuple(skill_version_ids, is_deleted), _version)" in sql
+    assert f"argMax(tuple({SKILL_VERSION_IDS_SQL}, is_deleted), _version)" in sql
+    assert "skill_version_ids" not in sql
     assert "hasAny(scope_state.1" in sql
     assert [VERSION] in params.values()
     _, membership = compile_filters(

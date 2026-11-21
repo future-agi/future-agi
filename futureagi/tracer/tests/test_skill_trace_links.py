@@ -19,6 +19,7 @@ from conftest import (
     _open_ch_test_http_client,
 )
 from tracer.management.commands import ch25_backfill_skill_trace_links as backfill
+from tracer.services.clickhouse.query_builders.filters import SKILL_VERSION_IDS_SQL
 from tracer.services.clickhouse.v2.adapter import CH_INSERT_COLUMNS, adapt, row_to_tuple
 from tracer.tests._ch_seed import seed_ch_spans
 
@@ -141,18 +142,17 @@ def test_load_populates_correlated_evidence_and_indexed_list(skill_client, write
     }
     assert {key: row[key] for key in expected} == expected
     assert evidence_rows(skill_client, span, "skill_load_failures") == []
+    # Scope is read from span attributes; spans gains no column or index.
     result = skill_client.query(
-        "SELECT skill_version_ids FROM spans WHERE project_id = %(p)s AND id = %(id)s",
+        f"SELECT {SKILL_VERSION_IDS_SQL} FROM spans WHERE project_id = %(p)s AND id = %(id)s",
         parameters={"p": span["project_id"], "id": span["id"]},
     ).result_rows
     assert result == [([VERSION],)]
-    indexes = skill_client.query(
-        "SELECT expr, type FROM system.data_skipping_indices "
-        "WHERE database = currentDatabase() AND table = 'spans' AND name = 'idx_skill_version_ids'",
+    added = skill_client.query(
+        "SELECT count() FROM system.columns WHERE database = currentDatabase() "
+        "AND table = 'spans' AND name = 'skill_version_ids'",
     ).result_rows
-    assert len(indexes) == 1
-    assert indexes[0][0] == "skill_version_ids"
-    assert indexes[0][1] == "bloom_filter"
+    assert added == [(0,)]
 
 
 @pytest.mark.parametrize("writer", ["python", "json_each_row"])
@@ -275,7 +275,7 @@ def test_old_parts_and_bounded_backfill_through_schema_applier(monkeypatch):
             assert evidence_rows(client, failed, "skill_load_failures") == []
             old_lists = dict(
                 client.query(
-                    "SELECT id, skill_version_ids FROM spans WHERE id IN %(ids)s",
+                    f"SELECT id, {SKILL_VERSION_IDS_SQL} FROM spans WHERE id IN %(ids)s",
                     parameters={"ids": (historical["id"], ordinary["id"])},
                 ).result_rows
             )
@@ -283,7 +283,7 @@ def test_old_parts_and_bounded_backfill_through_schema_applier(monkeypatch):
             assert (
                 client.query(
                     "SELECT count() FROM system.mutations WHERE database = currentDatabase() "
-                    "AND position(command, 'skill_version_ids') > 0",
+                    "AND table = 'spans'",
                 ).result_rows[0][0]
                 == 0
             )
