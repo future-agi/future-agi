@@ -4,6 +4,7 @@ import { sendTrace, type SeededTrace } from '../../lib/otlp';
 import { POLL } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
+import { shortenMetricSettle, SHORT_CADENCE_SECONDS, SHORT_SETTLE_MINUTES } from '../../lib/metric-settle';
 
 // frontend/src/routes/paths.js (dashboard.metrics, dashboard.dashboards) and
 // frontend/src/utils/axios.js (derivedMetrics, dashboard, project.createMonitor).
@@ -23,17 +24,23 @@ const UI_READY = 60_000;
 // until settle_minutes after its LAST arrival (tracer/services/derived_metrics/
 // settle.py evaluate_settle; arrival is spans.updated_at, DEFAULT now64() in
 // clickhouse/v2/schema/002_spans_v2.sql, so it cannot be aged on the wire).
-// SETTLE_MINUTES_DEFAULT and CADENCE_SECONDS_DEFAULT: tracer/models/derived_metric.py.
+// The product defaults are 30 minutes and 900 seconds
+// (tracer/models/derived_metric.py), per project. This flow sets its OWN
+// project to the shortest values the product accepts (lib/metric-settle.ts):
+// the settle path is the same for any value, and the default itself is pinned
+// by a backend unit test, not by a half-hour wait here.
 // A pass writes next_due_at = the earliest open due_at (admission.py), so the
 // settling pass normally runs at settle + one dispatch tick; the cadence term
-// covers the incremental_last_success_at + cadence_seconds fallback.
-const SETTLE_MS = 30 * 60_000;
-const CADENCE_MS = 900_000;
+// covers the incremental_last_success_at + cadence_seconds fallback, which is
+// also what picks the new values up if a pass ran before they were set.
+const SETTLE_MS = SHORT_SETTLE_MINUTES * 60_000;
+const CADENCE_MS = SHORT_CADENCE_SECONDS * 1000;
 // tfc/temporal/schedules/tracer.py: dispatch-derived-metrics and check-alerts.
 const DISPATCH_TICK_MS = 60_000;
 const ALERT_CHECK_TICK_MS = 60_000;
 const PASS_MARGIN_MS = 120_000;
-const VALUE_FINAL = { timeout: SETTLE_MS + CADENCE_MS + DISPATCH_TICK_MS + PASS_MARGIN_MS, intervals: [30_000] };
+// Two cadences: the first pass can run a moment before the units settle.
+const VALUE_FINAL = { timeout: SETTLE_MS + 2 * (CADENCE_MS + DISPATCH_TICK_MS) + PASS_MARGIN_MS, intervals: [10_000] };
 // UserAlertMonitor.alert_frequency MinValueValidator(5) (tracer/models/monitor.py).
 // The product's last create body used 60; the first check can land before the
 // snapshot capture commits, and the next one is alert_frequency later.
@@ -80,7 +87,7 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
     steps: [
       'ingest two minted conversations, each a root and a child span with numeric resolved/escalated outcomes, aged an hour so their 15-minute bucket is closed',
       'create the metric through New metric: name, project, Custom formula over conversations, two span-attribute inputs and the formula; Save metric validates, creates and queues the first calculation',
-      'wait for the conversations to settle (30 minutes after their last arrival) and the next refresh to publish them',
+      'set this project to the shortest settle and cadence the product accepts (1 minute and 60 seconds; the defaults are 30 minutes and 900 seconds, and no API sets them), then wait for the conversations to settle (1 minute after their last arrival) and the next refresh to publish them',
       'reload the metric page and read the Overview value on the default 7-day window and on a Custom window around the seeded bucket',
       'create a static below-threshold monitor through POST /tracer/user-alerts/, then Save snapshot on the Custom window',
       'create a dashboard with a metric widget pinned to the snapshot through the dashboard and widget APIs, then open it in the browser',
@@ -98,8 +105,9 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
 }, async ({ page, actor, probe }, testInfo) => {
   // Every chained budget, in order: source visibility, three builder steps, the
   // settled value, two Overview steps, Save snapshot, its capture, the alert,
-  // the dashboard load, and API/storage I/O. About 65 minutes as a ceiling; a
-  // healthy run spends about 32-40 of them, almost all in VALUE_FINAL.
+  // the dashboard load, and API/storage I/O. About 24 minutes as a ceiling; a
+  // healthy run spends well under half of that, most of it in VALUE_FINAL and
+  // in the alert check.
   test.setTimeout(POLL.SPAN_VISIBLE.timeout + 3 * UI_READY + VALUE_FINAL.timeout + 2 * UI_READY + UI_READY
     + POLL.ASYNC_JOB.timeout + ALERT_RECORDED.timeout + UI_READY + IO_MARGIN_MS);
   const req = await request.newContext();
@@ -111,8 +119,10 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
   // Buckets use min(start_time) (queries.py units CTE). Start the spans 55-70
   // minutes ago inside one closed 15-minute bucket, and read a 30-minute window
   // that ends 30 minutes before the current bucket: cut_terms (reads.py) only
-  // calls a bucket final once it ends at or before floor15(watermark - 30 min),
-  // and a snapshot needs every bucket in its window final.
+  // calls a bucket final once it ends at or before
+  // floor15(watermark - settle_minutes), and a snapshot needs every bucket in
+  // its window final. The window is final for any settle up to the default 30
+  // minutes, so it does not depend on the short settle this flow sets.
   const currentBucket = Math.floor(Date.now() / QUARTER_MS) * QUARTER_MS;
   const windowStart = new Date(currentBucket - 4 * QUARTER_MS).toISOString();
   const windowEnd = new Date(currentBucket - 2 * QUARTER_MS).toISOString();
@@ -227,6 +237,11 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
       return saved;
     }, { timeout: UI_READY });
     const kpiPath = `${METRICS}${metric.id}/kpi/`;
+
+    // Saving the first metric created the project's refresh row.
+    await test.step('the project takes the shortest settle and cadence the product accepts', async () => {
+      await shortenMetricSettle(projectId);
+    });
 
     await test.step('backendCheck 3: the settled conversations publish an exact, final value', async () => {
       // 503 is the product's "not calculated / not final yet" (reads.metric_read,

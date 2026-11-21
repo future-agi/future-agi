@@ -48,11 +48,20 @@ reclaim_disk() {
     echo 'Cold build and checkout reserves available; keeping runner tools and Docker data-root.'
     return
   fi
-  sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
-    /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-  if [[ $mode == --ordinary ]] && has_room "$root" "$work"; then
-    echo 'Runner tool cleanup freed the cold-build reserve; keeping Docker data-root.'
-    return
+  local unused=(/usr/share/dotnet /opt/ghc /usr/local/lib/android
+    /opt/hostedtoolcache/CodeQL /usr/local/share/boost)
+  # RECLAIM_DELETE=background deletes the unused toolchains without waiting
+  # (1 to 2 minutes of every job). It only frees space on /, nothing later
+  # reads those directories, and Docker's data moves to /mnt below, so the
+  # freed-space fast path is not re-checked in that mode. The default waits.
+  if [[ ${RECLAIM_DELETE:-wait} == background ]]; then
+    sudo nohup rm -rf "${unused[@]}" >/dev/null 2>&1 &
+  else
+    sudo rm -rf "${unused[@]}" || true
+    if [[ $mode == --ordinary ]] && has_room "$root" "$work"; then
+      echo 'Runner tool cleanup freed the cold-build reserve; keeping Docker data-root.'
+      return
+    fi
   fi
   # No measured headroom (or a different caller): keep the established full
   # reclaim path. The reserve is a fast-path threshold, not a reason to fail a

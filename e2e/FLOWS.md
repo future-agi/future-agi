@@ -932,7 +932,7 @@
 
 **Goal:** Save a custom-formula conversation metric, read its settled value on the Overview, freeze it as a snapshot, and see that snapshot render on a dashboard and record a threshold alert. The Add to dashboard and Create alert menu items are disabled in the product, so the widget and monitor are created through the API the product used.
 
-**Spec:** `flows/dashboards/derived-metric.spec.ts:73`
+**Spec:** `flows/dashboards/derived-metric.spec.ts:80`
 
 **Tags:** —
 
@@ -940,7 +940,7 @@
 
 1. ingest two minted conversations, each a root and a child span with numeric resolved/escalated outcomes, aged an hour so their 15-minute bucket is closed
 2. create the metric through New metric: name, project, Custom formula over conversations, two span-attribute inputs and the formula; Save metric validates, creates and queues the first calculation
-3. wait for the conversations to settle (30 minutes after their last arrival) and the next refresh to publish them
+3. set this project to the shortest settle and cadence the product accepts (1 minute and 60 seconds; the defaults are 30 minutes and 900 seconds, and no API sets them), then wait for the conversations to settle (1 minute after their last arrival) and the next refresh to publish them
 4. reload the metric page and read the Overview value on the default 7-day window and on a Custom window around the seeded bucket
 5. create a static below-threshold monitor through POST /tracer/user-alerts/, then Save snapshot on the Custom window
 6. create a dashboard with a metric widget pinned to the snapshot through the dashboard and widget APIs, then open it in the browser

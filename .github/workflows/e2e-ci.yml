@@ -42,8 +42,11 @@ env:
   # The suite runs as this many matrix legs per stack, split by measured time
   # (e2e/lib/shard.ts). The report job proves the legs together ran every test
   # exactly once. Raise it only with measurements: each leg pays the fixed cost
-  # of building, pulling and booting a stack.
-  E2E_SHARDS: "4"
+  # of building, pulling and booting a stack before its first test (11 to 15
+  # minutes; the boot alone took 7 to 11, most of it the database migrate).
+  # Measured at 6 legs: 22 to 30 minutes per leg, 10 to 15 of them tests. Two
+  # more legs would cut about 3 minutes and cost about 25 runner-minutes.
+  E2E_SHARDS: "6"
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
@@ -208,6 +211,11 @@ jobs:
         # / is the small volume and the backend image alone unpacks ~15GB of
         # CUDA/nvidia libs, so docker moves to /mnt (~65GB free). Must run
         # before setup-buildx creates its builder container under the old root.
+        # The move is done when the step returns; deleting the unused
+        # toolchains goes on in the background (it took 1 to 2 minutes of
+        # every shard, and nothing later reads them).
+        env:
+          RECLAIM_DELETE: background
         run: scripts/reclaim-runner-disk.sh
 
       - uses: docker/setup-buildx-action@v3

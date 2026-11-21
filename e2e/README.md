@@ -579,7 +579,7 @@ passing the live-LLM filter on the command line would silently un-quarantine eve
 ## CI
 
 `.github/workflows/e2e-ci.yml` runs on PRs to and pushes on `dev`/`main`, plus merge queue entries.
-The suite runs as four shards per stack (see [Shards](#shards) below). Each shard builds the images
+The suite runs as six shards per stack (see [Shards](#shards) below). Each shard builds the images
 from the PR's code (tagged `:e2e-ci`) with the registry layer cache, boots its own stack with
 `bin/e2e up` and runs its share of the spec files with `bin/e2e test`; on failure it dumps
 `bin/e2e ps` and the last 200 log lines and uploads its own Playwright report. A `report` job then
@@ -614,10 +614,10 @@ there.
 ### Shards
 
 `E2E_SHARD=k/N` makes `bin/e2e test` run one of `N` shares of the spec files. CI sets it per matrix
-leg (`E2E_SHARDS` in the workflow, currently 4); it works locally too:
+leg (`E2E_SHARDS` in the workflow, currently 6); it works locally too:
 
 ```bash
-E2E_SHARD=2/4 bin/e2e test     # the second of four shares
+E2E_SHARD=2/6 bin/e2e test     # the second of six shares
 ```
 
 The split balances **measured time**, not test count (`lib/shard.ts`). Playwright's own `--shard`
@@ -629,11 +629,17 @@ of a run computes the same split, and a re-run repeats it. A spec without a reco
 flow) counts as the median file, so it runs at once. One very long flow fills a shard by itself;
 no number of shards makes a run shorter than its longest flow.
 
-Measured on the standard GitHub runners with four shards (three runs, November 2026): a shard takes
-36 to 48 minutes, about 9 of them the stack boot, and `E2E Tests Pass` reports 47 to 50 minutes
-after the push. The unsharded suite took about 90. The longest shard is the one that holds
-`flows/dashboards/derived-metric.spec.ts` (DASH-E2E-017), which waits 30 minutes by design. More
-shards would add boots without shortening that one.
+What sets the shard count: every shard pays a fixed cost before its first test (image build, pulls,
+and the stack boot, most of which is the database migrate). Measured on the standard GitHub
+runners in November 2026:
+
+- Unsharded, the suite took about 90 minutes.
+- With four shards a shard took 36 to 48 minutes, because one flow waited out a 30-minute product
+  default.
+- That flow now sets a one-minute settle on its own project (`lib/metric-settle.ts`) and took
+  102 seconds when measured (its alert check can add a few minutes). With six shards a shard takes 22 to 30 minutes: 11 to 15 of fixed cost (the
+  boot alone varied from 7 to 11) and 10 to 15 of tests. `E2E Tests Pass` reports about 31 minutes
+  after the push.
 
 **Parity is a gate, not an assumption.** The `report` job lists the suite without `E2E_SHARD` and
 compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
