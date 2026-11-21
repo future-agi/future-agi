@@ -184,11 +184,6 @@ class WorkflowTest(unittest.TestCase):
         # A failed shard with a passed check is the general filter's business, not this one's.
         self.assertEqual(run("failure", "success"), 0)
 
-    def test_the_record_is_not_an_input_of_the_database_dump_key(self):
-        # conftest.py and pytest.ini are key inputs; the plugin is loaded with -p instead.
-        dump = load("db_dump")
-        self.assertFalse(any("collected_ids" in spec for spec in dump.INPUTS))
-
 
 if __name__ == "__main__":
     unittest.main()

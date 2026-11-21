@@ -1,0 +1,26 @@
+name: Backend merge queue
+
+on:
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  backend:
+    # A queue can mix internal and fork PRs. Run the whole candidate suite
+    # without forwarding repository secrets into the reusable workflow.
+    uses: ./.github/workflows/backend-ci.yml
+
+  backend-tests:
+    # Reusable workflow checks are prefixed with the caller's job name.
+    # Keep the queue's required check name identical to a direct run's.
+    name: Backend Tests Pass
+    needs: backend
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+        run: test "$BACKEND_RESULT" = success
