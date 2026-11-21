@@ -419,6 +419,10 @@ class GCSPrivateMediaStorage:
             now=_now(),
             digest=hashlib.sha256(b"").hexdigest(),
         )
+        if method == "GET" and key is not None:
+            # GCS rejects Accept-Encoding in SignedHeaders. Request identity on the
+            # wire; the generation precondition and any Range remain signed.
+            headers["accept-encoding"] = "identity"
         return self._http.urlopen(
             method,
             _ORIGIN + path + ("?" + query if query else ""),
@@ -686,10 +690,7 @@ class GCSPrivateMediaStorage:
         self._locator(identity)
         _length(expected_length)
         self._metadata(identity.purpose, private=True)
-        headers = {
-            "x-goog-if-generation-match": identity.version,
-            "accept-encoding": "identity",
-        }
+        headers = {"x-goog-if-generation-match": identity.version}
         wanted = expected_length
         if start is not None:
             if (

@@ -567,6 +567,26 @@ def test_expired_posture_never_refreshes(setup, monkeypatch):
     assert "101" in http.objects and http.calls == []
 
 
+@pytest.mark.parametrize("ranged", [False, True], ids=["snapshot", "range"])
+def test_pinned_read_sends_identity_without_signing_it(setup, ranged):
+    storage, http, binding = setup
+    obj = identity(binding)
+    if ranged:
+        with storage.open_range(obj, start=1, end=3, expected_length=6):
+            pass
+    else:
+        storage.snapshot(obj, io.BytesIO(), expected_length=6)
+
+    method, url, options = http.calls[-1]
+    assert method == "GET" and parse_qs(urlsplit(url).query) == {"generation": ["101"]}
+    headers = options["headers"]
+    assert headers["accept-encoding"] == "identity"
+    assert headers["x-goog-if-generation-match"] == "101"
+    names = "content-length;host;" + ("range;" if ranged else "")
+    names += "x-goog-content-sha256;x-goog-date;x-goog-if-generation-match"
+    assert headers["authorization"].split("SignedHeaders=")[1].split(",")[0] == names
+
+
 def test_exact_range_inclusive_checked_and_detached(setup):
     s, http, b = setup
     with s.open_range(
