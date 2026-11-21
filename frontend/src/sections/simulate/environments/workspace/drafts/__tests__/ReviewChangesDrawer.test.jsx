@@ -31,6 +31,7 @@ const flow = vi.hoisted(() => ({
   saveMutate: vi.fn((_vars, { onSuccess } = {}) => onSuccess?.()),
   decideError: null,
   validateError: null,
+  refreshIfBehind: vi.fn(),
 }));
 vi.mock("../useDraftsValidation", () => ({
   validationStateNote: () => null,
@@ -45,6 +46,7 @@ vi.mock("../useDraftsValidation", () => ({
     startValidation: flow.startValidation,
     validate: { error: flow.validateError },
     saveValidated: { mutate: flow.saveMutate, error: null },
+    refreshIfBehind: flow.refreshIfBehind,
   }),
 }));
 const runningValidation = vi.hoisted(() => ({ data: undefined }));
@@ -291,6 +293,24 @@ describe("ReviewChangesDrawer", () => {
     );
     expect(onSaved).toHaveBeenCalledWith({ name: "Q3 orders" });
     expect(enqueueSnackbar).toHaveBeenCalled();
+  });
+
+  it("hands a refused save back to the validation, so the drawer asks to Validate again", async () => {
+    const user = userEvent.setup();
+    state.review = {
+      ...review([change({ decision: "accepted" })]),
+      review_digest: "sha256:review",
+    };
+    renderDrawer();
+    await user.type(screen.getByLabelText(/Name this version/), "Q3 orders");
+    await user.click(screen.getByRole("button", { name: /^Save/ }));
+    const refused = { error: "draft_changed" };
+
+    flow.saveMutate.mock.calls.at(-1)[1].onError(refused);
+
+    expect(flow.refreshIfBehind).toHaveBeenCalledWith(refused, {
+      dropSave: true,
+    });
   });
 
   it("holds Save while a validation of the scenarios runs", async () => {

@@ -246,7 +246,7 @@ describe("ScenarioDetail Activate after validating an unsaved case", () => {
     await user.type(drawer.getByRole("textbox", { name: "Name this version" }), "with refunds");
     await user.click(drawer.getByRole("button", { name: "Activate" }));
 
-    expect(saveCandidates).toHaveBeenCalledWith({
+    expect(saveCandidates.mock.calls.at(-1)[0]).toEqual({
       candidates: { environmentVersionId: "e2", suiteVersionId: "s2" },
       expectedReviewDigest: "digest-1",
       name: "with refunds",
@@ -274,7 +274,7 @@ describe("ScenarioDetail Activate of validated changes", () => {
     await user.type(screen.getByRole("textbox", { name: "Name this version" }), "with refunds");
     await user.click(screen.getByRole("button", { name: "Activate" }));
 
-    expect(saveCandidates).toHaveBeenCalledWith({
+    expect(saveCandidates.mock.calls.at(-1)[0]).toEqual({
       candidates: { environmentVersionId: "e2", suiteVersionId: "s2" },
       expectedReviewDigest: "digest-1",
       name: "with refunds",

@@ -203,6 +203,9 @@ export default function ReviewChangesDrawer({
           onSaved?.({ name: name.trim() });
           onClose?.();
         },
+        // The validated changes moved: the drawer asks to Validate again.
+        onError: (error) =>
+          validation.refreshIfBehind(error, { dropSave: true }),
       },
     );
   };

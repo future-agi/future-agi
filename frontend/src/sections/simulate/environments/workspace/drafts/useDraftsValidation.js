@@ -38,6 +38,14 @@ export function useDraftsValidation(envId, { enabled = true } = {}) {
   const validate = useValidateDrafts(envId);
   const saveValidated = useSaveCandidates(envId);
   const state = drafts?.validation?.state ?? null;
+  // A refusal saying this page is behind: read the drafts and the review again. A refused candidate save is then
+  // dropped, so the page shows where the validation stands now (Validate again) rather than a stale refusal.
+  const refreshIfBehind = (error, { dropSave = false } = {}) => {
+    if (!BEHIND.has(error?.error)) return;
+    refreshDrafts(queryClient, envId);
+    queryClient.invalidateQueries({ queryKey: draftReviewKey(envId) });
+    if (dropSave) saveValidated.reset();
+  };
   return {
     drafts,
     review,
@@ -46,6 +54,7 @@ export function useDraftsValidation(envId, { enabled = true } = {}) {
     state,
     validating: state === "validating" || validate.isPending,
     canSaveValidated: SAVABLE.has(state) && Boolean(drafts?.candidates),
+    refreshIfBehind,
     startValidation: () =>
       validate.mutate(
         {
@@ -54,19 +63,16 @@ export function useDraftsValidation(envId, { enabled = true } = {}) {
           ),
           expectedReviewDigest: review?.review_digest,
         },
-        {
-          onError: (error) => {
-            if (!BEHIND.has(error?.error)) return;
-            refreshDrafts(queryClient, envId);
-            queryClient.invalidateQueries({ queryKey: draftReviewKey(envId) });
-          },
-        },
+        { onError: (error) => refreshIfBehind(error) },
       ),
     saveCandidates: (name) =>
-      saveValidated.mutate({
-        candidates: drafts.candidates,
-        expectedReviewDigest: review?.review_digest,
-        name: name.trim(),
-      }),
+      saveValidated.mutate(
+        {
+          candidates: drafts.candidates,
+          expectedReviewDigest: review?.review_digest,
+          name: name.trim(),
+        },
+        { onError: (error) => refreshIfBehind(error, { dropSave: true }) },
+      ),
   };
 }
