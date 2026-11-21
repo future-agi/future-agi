@@ -42,7 +42,7 @@ export const WORKSPACE_TABS = [
     badge: "improvements",
   },
   // Shown only when the environment has versioning switched on.
-  { id: "versions", label: "Versions", icon: "solar:history-linear" },
+  { id: "versions", label: "History", icon: "solar:history-linear" },
   {
     id: "settings",
     label: "Settings",
@@ -142,11 +142,13 @@ export const WORKSPACE_COPY = {
   // The env-version pin: lists every version of the world, and makes an
   // earlier one the default.
   pin: {
+    prefix: "env",
     heading: "Environment versions",
     subtitle:
       "Runs use the default version. You can roll back to an earlier one.",
     default: "default",
     rollBack: (label) => `Roll back to ${label}`,
+    fullHistory: "See full history",
   },
   // Banner shown while the derivation is still in flight — the panels below are
   // loading and this explains why.
@@ -159,19 +161,16 @@ export const WORKSPACE_COPY = {
   // The strip under the header: the environment / agent version pairing when
   // versioning is on, else the agent version under test; stated, not selected.
   versionBar: {
-    envPrefix: "env",
-    agentPrefix: "agent",
+    envPrefix: "environment",
+    agentPrefix: "Agent",
     suitePrefix: "scenarios",
-    // Labels the agent in the versioning pairing (the environment's default).
-    defaultAgent: "Default",
     // Labels the agent under test when versioning is off.
     testSubject: "Test subject",
     // The agent has no name on record; the Overview agent card says the same.
     unnamedAgent: "Agent",
     beforeVersioning: "before versioning",
     noAgent: "none",
-    scenariosShared: (n) =>
-      `${n} scenario${n === 1 ? "" : "s"}, shared across agent versions`,
+    scenariosShared: (n) => `${n} scenario${n === 1 ? "" : "s"}`,
     // Either label can be missing: an environment with agent versions but no
     // environment version yet, or one with no default agent version.
     pairingTooltip: (envLabel, envNote, agentLabel) =>
@@ -183,6 +182,7 @@ export const WORKSPACE_COPY = {
           ? `The environment's default agent version is ${agentLabel}; other agent versions can run against the same environment.`
           : "No default agent version is set for this environment.",
       ].join(" "),
+    historyHint: "Click a version for its history and to roll back.",
     noVersionsTooltip:
       "This environment has no versions yet. One is recorded the next time it is built or saved.",
     subjectTooltip:
@@ -194,22 +194,19 @@ export const WORKSPACE_COPY = {
   },
 };
 
-// The Versions tab: the agent, environment and scenario versions of this
+// The History tab: the agent, environment and scenario versions of this
 // environment, what changed in each, and which scenarios a suite version holds.
 export const VERSIONS_COPY = {
-  title: "Versions",
-  subtitle:
-    "Every change to the agent, the environment or its scenarios is kept as a version. Runs replay the default environment and scenario versions.",
   pieces: {
     agent: "Agent",
     environment: "Environment",
     suite: "Scenarios",
   },
-  noneInPiece: "No versions yet",
   empty: {
     title: "This environment has no versions yet",
     body: "A version is recorded the next time the environment is built or saved.",
   },
+  loading: "Loading versions",
   loadError: "Couldn't load the versions. Try again in a moment.",
   disabled: "Versioning is switched off for this environment.",
   default: "default",
@@ -245,20 +242,38 @@ export const VERSIONS_COPY = {
     body: "New runs use it. If this combination hasn't run before, the next run prepares it first.",
     confirm: "Make default",
     pending: "Making default…",
+    // The design's wording for moving an environment or scenario version's
+    // default; it moves the default the same way.
+    rollBack: {
+      action: (piece, label) => `Roll back to ${piece} ${label}`,
+      title: (piece, label) => `Roll back to ${piece} ${label}?`,
+      // The button says the target short, as in the design: "Roll back to env v2".
+      confirm: (piece, label) => `Roll back to ${piece} ${label}`,
+      pending: "Rolling back…",
+      pieces: { environment: "environment", suite: "scenarios" },
+      shortPieces: { environment: "env", suite: "scenarios" },
+    },
     error: "Couldn't change the default. Try again in a moment.",
   },
   detail: {
-    pick: "Pick a version to see what changed in it.",
-    changes: (label) => `What changed in ${label}`,
+    // The row above names the version, so the heading doesn't again.
+    changes: "What changed",
     compareWith: "Compared with",
     previous: "Its previous version",
+    // The version it was made from, named so it isn't listed twice.
+    previousNamed: (label) => `Its previous version (${label})`,
+    unsavedDraft: "Unsaved draft",
     first:
       "This is the first version, so there is nothing earlier to compare with.",
     noChange: "Nothing changed.",
     noRecord: "No change record for this version.",
     notComparable: "These two versions can't be compared.",
+    loading: "Loading the changes",
+    membersLoading: "Loading the scenarios in this version",
     loadError: "Couldn't load the changes.",
-    scenarios: (label, n) => `${n} scenario${n === 1 ? "" : "s"} in ${label}`,
+    // The whole version, which the comparison above doesn't change.
+    scenarios: (label, n) =>
+      n === 1 ? `The 1 scenario in ${label}` : `All ${n} scenarios in ${label}`,
     membersError: "Couldn't load the scenarios in this version.",
   },
   diff: {
@@ -280,6 +295,31 @@ export const VERSIONS_COPY = {
     scenariosAdded: "Scenarios added",
     scenariosRemoved: "Scenarios removed",
     scenariosChanged: "Scenarios changed",
+    // A scenario's fields as the server names them, in the scenario
+    // editor's words.
+    scenarioFields: {
+      name: "Name",
+      instruction: "What the caller wants",
+      use_case: "Use case",
+      branch: "Branch",
+      tests: "Passes when",
+      folder: "Folder",
+      persona: "Persona",
+      coverage: "Coverage",
+      sub_goals: "Sub-goals",
+      keywords: "Keywords",
+      background_noise: "Background noise",
+      max_turns: "Max turns",
+      actors: "Actors",
+      pre_run: "Pre-run steps",
+      history: "History",
+      starts_with: "Starts with",
+      faults: "Faults",
+      limits: "Limits",
+    },
+    // Scenarios that changed the same fields, under one line.
+    changedGroup: (words, n) =>
+      `${words.join(", ")} · ${n} scenario${n === 1 ? "" : "s"}`,
     source: "Source changed",
     prompt: "Prompt changed",
     variables: "Variables",
@@ -288,6 +328,49 @@ export const VERSIONS_COPY = {
     key: "Key",
     name: "Name",
     useCase: "Use case",
+  },
+  // Each History row's actions menu.
+  menu: {
+    label: "Version actions",
+    seeChanges: "See what changed",
+    hideChanges: "Hide what changed",
+  },
+  // The History tab: every version as one timeline, newest first.
+  history: {
+    title: "Timeline",
+    subtitle:
+      "Scenario edits make a scenario version; any other change makes an environment version. Nothing is deleted.",
+    filterLabel: "Show versions of",
+    filters: {
+      environment: "Environment",
+      suite: "Scenarios",
+      agent: "Agent",
+    },
+    emptyKind: {
+      environment: "No environment versions yet.",
+      suite: "No scenario versions yet.",
+      agent: "No agent versions yet.",
+    },
+    none: "None yet",
+    tiles: {
+      environment: "Environment",
+      inUse: "latest · runs use this",
+      newer: "runs use this · a newer one exists",
+      agent: "Agent being tested",
+      agentSub: "default agent version",
+      scenarios: "Scenarios",
+      scenariosSub: (n) => `${n} scenario${n === 1 ? "" : "s"} in this version`,
+      evaluations: "Evaluations",
+      evaluationsSub: "score each run",
+    },
+    days: { today: "Today", yesterday: "Yesterday", earlier: "Earlier" },
+    badges: {
+      inUse: "runs use this",
+      tested: "being tested",
+      latest: "latest",
+      draft: "draft",
+      discarded: "discarded",
+    },
   },
 };
 

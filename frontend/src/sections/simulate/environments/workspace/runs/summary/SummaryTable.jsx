@@ -124,10 +124,16 @@ function SummaryRow({
   const clickable = !!row.executionId;
   const open = () => clickable && onOpenRun?.(row);
 
-  // The run's own agent version (per-execution, real). A run pinned to an
-  // environment version whose agent differs is tagged; its versions show on
-  // the run's own page.
-  const sub = row.agentVersion ? `agent ${row.agentVersion}` : "";
+  // The run's own agent version (per-execution, real), then the environment
+  // version it was pinned to. A run pinned to an environment version whose
+  // agent differs is tagged.
+  const sub = [
+    row.agentVersion && `agent ${row.agentVersion}`,
+    row.environmentVersion?.label &&
+      `environment ${row.environmentVersion.label}`,
+  ]
+    .filter(Boolean)
+    .join(" × ");
 
   return (
     <TableRow

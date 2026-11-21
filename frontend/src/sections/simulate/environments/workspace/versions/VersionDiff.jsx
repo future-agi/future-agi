@@ -8,6 +8,12 @@ const list = (value) => (Array.isArray(value) ? value : []);
 // A changed actor comes as {id, name}; everything else as its name.
 const label = (one) =>
   one && typeof one === "object" ? String(one.name || one.id) : String(one);
+// A field the copy doesn't name yet still reads as words: "max_turns" → "Max turns".
+const fieldWord = (field) =>
+  COPY.scenarioFields[field] ||
+  String(field)
+    .replace(/_/g, " ")
+    .replace(/^./, (c) => c.toUpperCase());
 
 // One labelled group of names, e.g. "Added: lookup_order, refund".
 function NameLine({ label, names, tone }) {
@@ -54,6 +60,48 @@ function ChangeGroup({ title, change, children }) {
     </Stack>
   );
 }
+// Rules and use cases are sentences: one per line, the old wording struck
+// through and the new marked added, as the design shows a reworded rule.
+function WordingGroup({ title, change }) {
+  const removed = list(change?.removed).map(label);
+  const added = list(change?.added).map(label);
+  if (!removed.length && !added.length) return null;
+  const line = { display: "block", typography: "s2" };
+  return (
+    <Stack spacing={0.5} data-testid={`diff-group-${title}`}>
+      <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+        {title}
+      </Typography>
+      {removed.map((text) => (
+        <Typography
+          key={`removed-${text}`}
+          component="del"
+          sx={{
+            ...line,
+            color: "text.disabled",
+            textDecoration: "line-through",
+          }}
+        >
+          {text}
+        </Typography>
+      ))}
+      {added.map((text) => (
+        <Typography
+          key={`added-${text}`}
+          component="ins"
+          sx={{ ...line, color: "status.success.fg", textDecoration: "none" }}
+        >
+          {text}
+        </Typography>
+      ))}
+    </Stack>
+  );
+}
+WordingGroup.propTypes = {
+  title: PropTypes.string.isRequired,
+  change: PropTypes.object,
+};
+
 ChangeGroup.propTypes = {
   title: PropTypes.string.isRequired,
   change: PropTypes.object,
@@ -66,8 +114,8 @@ function EnvironmentDiff({ diff }) {
   return (
     <Stack spacing={1.5}>
       <ChangeGroup title={COPY.tools} change={contract.tools} />
-      <ChangeGroup title={COPY.rules} change={contract.rules} />
-      <ChangeGroup title={COPY.useCases} change={contract.use_cases} />
+      <WordingGroup title={COPY.rules} change={contract.rules} />
+      <WordingGroup title={COPY.useCases} change={contract.use_cases} />
       {fields.length > 0 && (
         <ChangeGroup title={COPY.fields} change={{ changed: fields }} />
       )}
@@ -102,6 +150,19 @@ function EnvironmentDiff({ diff }) {
 }
 EnvironmentDiff.propTypes = { diff: PropTypes.object };
 
+// Changed scenarios gathered by the fields that changed, in first-seen order,
+// so "Passes when" across three scenarios is said once.
+const groupByFields = (changed) => {
+  const groups = new Map();
+  changed.forEach(([key, fields]) => {
+    const words = list(fields).map(fieldWord);
+    const id = words.join("\u0000");
+    if (!groups.has(id)) groups.set(id, { words, keys: [] });
+    groups.get(id).keys.push(key);
+  });
+  return [...groups.values()];
+};
+
 function SuiteDiff({ diff }) {
   const added = list(diff?.added).map(String);
   const removed = list(diff?.removed);
@@ -130,32 +191,34 @@ function SuiteDiff({ diff }) {
               >
                 {one?.key ?? String(one)}
               </Box>
-              {one?.reason ? ` — ${one.reason}` : ""}
+              {one?.reason ? ` · ${one.reason}` : ""}
             </Typography>
           ))}
         </Stack>
       )}
       {changed.length > 0 && (
-        <Stack
-          spacing={0.5}
-          data-testid={`diff-group-${COPY.scenariosChanged}`}
-        >
+        <Stack spacing={1} data-testid={`diff-group-${COPY.scenariosChanged}`}>
           <Typography sx={{ typography: "s2", fontWeight: 500 }}>
             {COPY.scenariosChanged}
           </Typography>
-          {changed.map(([key, fields]) => (
-            <Typography
-              key={key}
-              sx={{ typography: "s2", color: "text.secondary" }}
-            >
-              <Box
-                component="span"
-                sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}
-              >
-                {key}
-              </Box>
-              {`: ${list(fields).join(", ")}`}
-            </Typography>
+          {groupByFields(changed).map(({ words, keys }) => (
+            <Box key={words.join()}>
+              <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+                {COPY.changedGroup(words, keys.length)}
+              </Typography>
+              {keys.map((key) => (
+                <Typography
+                  key={key}
+                  sx={{
+                    typography: "s2",
+                    fontFamily: "ui-monospace, Menlo, monospace",
+                    mt: 0.25,
+                  }}
+                >
+                  {key}
+                </Typography>
+              ))}
+            </Box>
           ))}
         </Stack>
       )}

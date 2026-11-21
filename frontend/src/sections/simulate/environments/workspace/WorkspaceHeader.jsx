@@ -17,9 +17,10 @@ import {
 } from "../myEnvironments.constants";
 import CancelBuildControl from "../buildEnvironment/building/CancelBuildControl";
 import LivePill from "./LivePill";
+import EnvVersionPin from "./EnvVersionPin";
+import useWorkspaceTab from "./helpers/useWorkspaceTab";
 import RenameEnvironmentDialog from "./RenameEnvironmentDialog";
 import TrialsPicker from "./scenarios/TrialsPicker";
-import EnvVersionPin from "./EnvVersionPin";
 import ForkMenu from "./ForkMenu";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import useSimulationAccess from "../hooks/useSimulationAccess";
@@ -42,6 +43,7 @@ export default function WorkspaceHeader({
   selectionActive = false,
   scenarioCount: serverScenarioCount,
 }) {
+  const { setTab } = useWorkspaceTab();
   const navigate = useNavigate();
   const { canEdit } = useSimulationAccess();
   const [renameOpen, setRenameOpen] = useState(false);
@@ -69,8 +71,11 @@ export default function WorkspaceHeader({
   const onDelete = () =>
     deleteEnv.mutate(env.id, {
       onSuccess: () =>
-        navigate(`${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.MY}`),
-      onError: (error) => enqueueSnackbar(errorMessage(error), { variant: "error" }),
+        navigate(
+          `${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.MY}`,
+        ),
+      onError: (error) =>
+        enqueueSnackbar(errorMessage(error), { variant: "error" }),
     });
 
   return (
@@ -78,14 +83,24 @@ export default function WorkspaceHeader({
       direction="row"
       alignItems="center"
       spacing={2}
-      sx={{ px: 3, py: 2, borderBottom: "1px solid", borderColor: "divider", flexShrink: 0 }}
+      sx={{
+        px: 3,
+        py: 2,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        flexShrink: 0,
+      }}
     >
       <CustomTooltip show title={WORKSPACE_COPY.back} size="small" arrow>
         <IconButton
           aria-label={WORKSPACE_COPY.back}
           // Back to the environment list on its My Environments tab — the root
           // alone defaults to Build, which dropped you on an empty builder.
-          onClick={() => navigate(`${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.MY}`)}
+          onClick={() =>
+            navigate(
+              `${paths.dashboard.simulate.environments.root}?tab=${ENTRY_TAB.MY}`,
+            )
+          }
           sx={{ color: "text.subtitle" }}
         >
           <Iconify icon="solar:alt-arrow-left-linear" width={16} />
@@ -120,7 +135,10 @@ export default function WorkspaceHeader({
             </CustomTooltip>
           )}
           {/* The default environment version; hidden while versioning is off. */}
-          <EnvVersionPin env={env} />
+          <EnvVersionPin
+            env={env}
+            onHistory={() => setTab("versions", { kind: "environment" })}
+          />
         </Stack>
         <Typography noWrap sx={{ typography: "s1", color: "text.subtitle" }}>
           {env.tagline}
@@ -139,7 +157,12 @@ export default function WorkspaceHeader({
               scenarioCount={scenarioCount}
             />
           )}
-          <CustomTooltip show={!canRun} title={runBlockedReason} size="small" arrow>
+          <CustomTooltip
+            show={!canRun}
+            title={runBlockedReason}
+            size="small"
+            arrow
+          >
             <span>
               <Button
                 variant="contained"
@@ -182,7 +205,10 @@ export default function WorkspaceHeader({
           title={DELETE_DIALOG_COPY.title}
           content={
             <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-              <Box component="span" sx={{ fontWeight: 600 }}>{env.name}</Box> {DELETE_DIALOG_COPY.body}
+              <Box component="span" sx={{ fontWeight: 600 }}>
+                {env.name}
+              </Box>{" "}
+              {DELETE_DIALOG_COPY.body}
             </Typography>
           }
           action={

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography, Tooltip } from "@mui/material";
+import { Box, ButtonBase, Stack, Typography, Tooltip } from "@mui/material";
 import Iconify from "src/components/iconify";
 import {
   isVersioningDisabled,
@@ -7,6 +7,58 @@ import {
   useRefreshWhenChecked,
 } from "src/api/simulate-environments/versions";
 import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
+
+const Strong = ({ children }) => (
+  <Box
+    component="span"
+    sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
+  >
+    {children}
+  </Box>
+);
+Strong.propTypes = { children: PropTypes.node };
+
+// A version in the bar that opens the History tab on its kind, as the design
+// does for the environment version. Plain text without somewhere to go.
+function HistoryLink({ kind, onHistory, children }) {
+  if (!onHistory) return children;
+  return (
+    <ButtonBase
+      component="span"
+      onClick={() => onHistory(kind)}
+      sx={{
+        // Inline, not the default inline-flex, so the space before the label
+        // stays.
+        display: "inline",
+        font: "inherit",
+        color: "inherit",
+        verticalAlign: "baseline",
+        // Quiet until hovered: it reads as part of the line, not a call to act.
+        textUnderlineOffset: "3px",
+        borderRadius: "2px",
+        "&:hover": { color: "text.primary", textDecoration: "underline" },
+        "&.Mui-focusVisible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+          outlineOffset: 2,
+        },
+      }}
+    >
+      {children}
+    </ButtonBase>
+  );
+}
+HistoryLink.propTypes = {
+  kind: PropTypes.oneOf(["agent", "environment", "suite"]).isRequired,
+  onHistory: PropTypes.oneOfType([PropTypes.func, PropTypes.bool]),
+  children: PropTypes.node,
+};
+
+const Dot = () => (
+  <Typography sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}>
+    ·
+  </Typography>
+);
 
 // What is being tested, against what. A run is a pairing — this environment
 // version against that agent version — and a result nobody can attribute to a
@@ -18,7 +70,7 @@ import { VERSIONS_COPY, WORKSPACE_COPY } from "./workspace.constants";
 // shows, after the agent under test when one is connected. Until runs are pinned
 // to versions, the agent shown is the environment's default agent version, not
 // a claim about which one a run used.
-export default function VersionBar({ env, envState }) {
+export default function VersionBar({ env, envState, onHistory }) {
   const subject = env?.testSubject;
   const enabled = Boolean(env?.versioning?.enabled);
   const { data, error } = useEnvironmentVersions(env?.id, {
@@ -45,10 +97,10 @@ export default function VersionBar({ env, envState }) {
     : env?.counts?.scenarios ?? envState?.scenarios?.length ?? 0;
 
   return (
+    // No gap of its own: the dots between the parts carry the spacing.
     <Stack
       direction="row"
       alignItems="center"
-      spacing={1}
       sx={{
         px: 2,
         py: 0.875,
@@ -61,93 +113,64 @@ export default function VersionBar({ env, envState }) {
     >
       {showPairing && (
         <>
-          {/* The environment is the primary identity; the agent version is the
-              current test subject running against it. */}
+          {/* One line, agent first: the agent version under test against the
+              environment and scenario versions it runs on. */}
           <Tooltip
             arrow
             title={
               versioned
-                ? versionBar.pairingTooltip(
-                    envV ? envLabel : null,
-                    envV?.summary,
-                    agentV ? agentLabel : null,
-                  )
+                ? [
+                    versionBar.pairingTooltip(
+                      envV ? envLabel : null,
+                      envV?.summary,
+                      agentV ? agentLabel : null,
+                    ),
+                    onHistory && versionBar.historyHint,
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
                 : versionBar.noVersionsTooltip
             }
           >
-            <Stack
-              direction="row"
-              alignItems="center"
-              spacing={0.75}
-              sx={{ cursor: "default" }}
+            <Typography
+              noWrap
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                cursor: "default",
+                minWidth: 0,
+              }}
             >
               <Iconify
                 icon="solar:box-linear"
                 width={14}
-                sx={{ color: "text.subtitle" }}
+                sx={{ color: "text.subtitle", verticalAlign: "-2px", mr: 0.75 }}
               />
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.envPrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
-                >
-                  {envLabel}
-                </Box>
-              </Typography>
-              <Typography
-                sx={{ typography: "s3", color: "text.disabled", mx: 0.25 }}
-              >
-                ·
-              </Typography>
-              <Iconify
-                icon="solar:cpu-bolt-linear"
-                width={14}
-                sx={{ color: "text.subtitle" }}
-              />
-              <Typography
-                sx={{
-                  typography: "s3",
-                  color: "text.subtitle",
-                  fontWeight: "fontWeightSemiBold",
-                }}
-              >
-                {versionBar.defaultAgent}
-              </Typography>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.agentPrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
-                >
-                  {agentLabel}
-                </Box>
-              </Typography>
-            </Stack>
-          </Tooltip>
-          <Typography
-            sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
-          >
-            ·
-          </Typography>
-          {suiteV && (
-            <>
-              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-                {versionBar.suitePrefix}{" "}
-                <Box
-                  component="span"
-                  sx={{ color: "text.primary", fontWeight: "fontWeightSemiBold" }}
-                >
-                  {named(suiteV)}
-                </Box>
-              </Typography>
-              <Typography
+              <HistoryLink kind="agent" onHistory={agentV && onHistory}>
+                {versionBar.agentPrefix} <Strong>{agentLabel}</Strong>
+              </HistoryLink>
+              <Box
+                component="span"
                 sx={{ typography: "s3", color: "text.disabled", mx: 0.5 }}
               >
-                ·
+                ×
+              </Box>
+              <HistoryLink kind="environment" onHistory={envV && onHistory}>
+                {versionBar.envPrefix} <Strong>{envLabel}</Strong>
+              </HistoryLink>
+            </Typography>
+          </Tooltip>
+          {suiteV && (
+            <>
+              <Dot />
+              <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+                <HistoryLink kind="suite" onHistory={onHistory}>
+                  {versionBar.suitePrefix} <Strong>{named(suiteV)}</Strong>
+                </HistoryLink>
               </Typography>
             </>
           )}
+          <Dot />
         </>
       )}
 
@@ -233,6 +256,8 @@ VersionBar.propTypes = {
     }),
     counts: PropTypes.shape({ scenarios: PropTypes.number }),
   }),
+  // Opens the History tab on a kind; the versions stay plain text without it.
+  onHistory: PropTypes.func,
   envState: PropTypes.shape({
     scenarios: PropTypes.arrayOf(PropTypes.any),
   }),

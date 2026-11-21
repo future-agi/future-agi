@@ -53,8 +53,10 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     useEnvironmentVersions: vi.fn((envId, { enabled } = {}) => {
       const answer = versionsResponse.current;
       if (!enabled || !answer) return { data: undefined, isSuccess: false };
-      if (answer === "loading") return { data: undefined, isLoading: true, isSuccess: false };
-      if (answer === "error") return { data: undefined, isError: true, isSuccess: false };
+      if (answer === "loading")
+        return { data: undefined, isLoading: true, isSuccess: false };
+      if (answer === "error")
+        return { data: undefined, isError: true, isSuccess: false };
       if (answer.refreshFailed) {
         // An earlier answer is cached; the latest refresh failed.
         return {
@@ -84,7 +86,10 @@ const ENV = {
   surface: "voice",
   buildStatus: "ready",
 };
-const VERSIONED_ENV = { ...ENV, versioning: { enabled: true, nudges_enabled: false } };
+const VERSIONED_ENV = {
+  ...ENV,
+  versioning: { enabled: true, nudges_enabled: false },
+};
 
 const item = (overrides) => ({
   id: overrides.id,
@@ -102,10 +107,18 @@ const item = (overrides) => ({
 const VERSIONS = {
   agent: [item({ id: "a1", label: "v4", is_default: true })],
   environment: [
-    item({ id: "e2", label: "v2", is_default: true, summary: "1 tool added", created_by: { id: "u1", name: "Asha" } }),
+    item({
+      id: "e2",
+      label: "v2",
+      is_default: true,
+      summary: "1 tool added",
+      created_by: { id: "u1", name: "Asha" },
+    }),
     item({ id: "e1", label: "v1", summary: "First version" }),
   ],
-  suite: [item({ id: "s3", label: "v3", is_default: true, scenario_count: 12 })],
+  suite: [
+    item({ id: "s3", label: "v3", is_default: true, scenario_count: 12 }),
+  ],
 };
 
 // WorkspaceHeader now uses a react-query mutation (§2 delete), so wrap in a client.
@@ -171,11 +184,14 @@ describe("EnvVersionPin", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it.each(["loading", "error"])("renders nothing while the versions are %s", (answer) => {
-    versionsResponse.current = answer;
-    const { container } = render(<EnvVersionPin env={VERSIONED_ENV} />);
-    expect(container).toBeEmptyDOMElement();
-  });
+  it.each(["loading", "error"])(
+    "renders nothing while the versions are %s",
+    (answer) => {
+      versionsResponse.current = answer;
+      const { container } = render(<EnvVersionPin env={VERSIONED_ENV} />);
+      expect(container).toBeEmptyDOMElement();
+    },
+  );
 
   it("keeps showing the default when a refresh fails after an answer", () => {
     versionsResponse.current = { refreshFailed: VERSIONS };
@@ -189,7 +205,9 @@ describe("EnvVersionPin", () => {
       environment: [item({ id: "e9", label: null, is_default: true })],
     };
     render(<EnvVersionPin env={VERSIONED_ENV} />);
-    expect(screen.getByRole("button", { name: "env Unnumbered version" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "env Unnumbered version" }),
+    ).toBeInTheDocument();
   });
 
   it("opens from the keyboard and returns focus to the pin on close", async () => {
@@ -200,14 +218,18 @@ describe("EnvVersionPin", () => {
 
     trigger.focus();
     await user.keyboard("{Enter}");
-    expect(screen.getByRole("dialog", { name: "Environment versions" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Environment versions" }),
+    ).toBeInTheDocument();
 
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(trigger).toHaveFocus();
 
     await user.keyboard(" ");
-    expect(screen.getByRole("dialog", { name: "Environment versions" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Environment versions" }),
+    ).toBeInTheDocument();
   });
 
   it("renders nothing when the environment has no versions yet", () => {
@@ -246,7 +268,24 @@ describe("EnvVersionPin", () => {
     await user.click(screen.getByRole("button", { name: "Roll back to v1" }));
   };
   const confirmButton = () =>
-    screen.getByRole("button", { name: /^Mak(e|ing) default/ });
+    screen.getByRole("button", {
+      name: /^(Roll back to env v1|Rolling back…)$/,
+    });
+
+  it("opens the full history from the list", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    const onHistory = vi.fn();
+    render(<EnvVersionPin env={VERSIONED_ENV} onHistory={onHistory} />);
+    await user.click(screen.getByRole("button", { name: /env v2/i }));
+    await user.click(screen.getByRole("button", { name: "See full history" }));
+    expect(onHistory).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Environment versions" }),
+      ).toBeNull(),
+    );
+  });
 
   it("offers a move only on active versions that aren't the default", async () => {
     const user = userEvent.setup();
@@ -262,9 +301,9 @@ describe("EnvVersionPin", () => {
     await openPin(user);
 
     const items = screen.getAllByTestId("env-version-item");
-    // Newer than the default is a plain move; older is a roll back.
+    // Every version but the default reads as a roll back, as in the design.
     expect(
-      within(items[0]).getByRole("button", { name: "Make v3 the default" }),
+      within(items[0]).getByRole("button", { name: "Roll back to v3" }),
     ).toBeInTheDocument();
     expect(within(items[1]).queryByRole("button")).toBeNull();
     expect(
@@ -289,7 +328,7 @@ describe("EnvVersionPin", () => {
     await rollBackToV1(user);
 
     const confirm = screen.getByRole("dialog", {
-      name: "Make v1 the default environment?",
+      name: "Roll back to environment v1?",
     });
     expect(confirm).toHaveTextContent(
       "New runs use it. If this combination hasn't run before, the next run prepares it first.",
@@ -304,7 +343,7 @@ describe("EnvVersionPin", () => {
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", {
-          name: "Make v1 the default environment?",
+          name: "Roll back to environment v1?",
         }),
       ).toBeNull(),
     );
@@ -325,7 +364,7 @@ describe("EnvVersionPin", () => {
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", {
-          name: "Make v1 the default environment?",
+          name: "Roll back to environment v1?",
         }),
       ).toBeNull(),
     );
@@ -340,13 +379,13 @@ describe("EnvVersionPin", () => {
     await user.click(confirmButton());
 
     expect(
-      screen.getByRole("dialog", { name: "Make v1 the default environment?" }),
+      screen.getByRole("dialog", { name: "Roll back to environment v1?" }),
     ).toBeInTheDocument();
-    expect(confirmButton()).toHaveTextContent("Making default…");
+    expect(confirmButton()).toHaveTextContent("Rolling back…");
     expect(confirmButton()).toBeDisabled();
     // Cancel and the close X are visibly off too, not just ignored.
     const dialog = screen.getByRole("dialog", {
-      name: "Make v1 the default environment?",
+      name: "Roll back to environment v1?",
     });
     const buttons = within(dialog).getAllByRole("button");
     expect(buttons).toHaveLength(3);
@@ -401,7 +440,7 @@ describe("EnvVersionPin", () => {
     await waitFor(() =>
       expect(
         screen.queryByRole("dialog", {
-          name: "Make v1 the default environment?",
+          name: "Roll back to environment v1?",
         }),
       ).toBeNull(),
     );
@@ -416,7 +455,10 @@ describe("EnvVersionPin", () => {
     const user = userEvent.setup();
     versionsResponse.current = {
       ...VERSIONS,
-      environment: [...VERSIONS.environment, item({ id: "e0", label: null, status: "discarded" })],
+      environment: [
+        ...VERSIONS.environment,
+        item({ id: "e0", label: null, status: "discarded" }),
+      ],
     };
     render(<EnvVersionPin env={VERSIONED_ENV} />);
     const trigger = screen.getByRole("button", { name: /env v2/i });
@@ -426,7 +468,9 @@ describe("EnvVersionPin", () => {
     await user.click(trigger);
 
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("dialog", { name: "Environment versions" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "Environment versions" }),
+    ).toBeInTheDocument();
     const items = screen.getAllByTestId("env-version-item");
     expect(items[2]).toHaveTextContent("Unnumbered version");
     expect(items[2]).toHaveTextContent("discarded");
@@ -437,10 +481,16 @@ describe("SystemBanners", () => {
   it("renders the building banner from the env build status", () => {
     render(
       <SystemBanners
-        env={{ ...ENV, buildStatus: "building", buildProgress: { done: 5, total: 7 } }}
-      />
+        env={{
+          ...ENV,
+          buildStatus: "building",
+          buildProgress: { done: 5, total: 7 },
+        }}
+      />,
     );
-    expect(screen.getByText("Environment is still being built")).toBeInTheDocument();
+    expect(
+      screen.getByText("Environment is still being built"),
+    ).toBeInTheDocument();
     expect(screen.getByText(/5 of 7 steps done/)).toBeInTheDocument();
   });
 
@@ -474,10 +524,17 @@ describe("WorkspaceHeader", () => {
 
     render(
       withRouter(
-        <WorkspaceHeader {...baseProps} env={{ ...ENV, buildStatus: "building" }} canRun={false} locked />,
+        <WorkspaceHeader
+          {...baseProps}
+          env={{ ...ENV, buildStatus: "building" }}
+          canRun={false}
+          locked
+        />,
       ),
     );
-    expect(screen.getByRole("button", { name: /Cancel build/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Cancel build/ }),
+    ).toBeInTheDocument();
   });
 
   it("hides Cancel build once a cancel is in flight", () => {
@@ -518,12 +575,16 @@ describe("WorkspaceHeader", () => {
 
   it("hides the rename pencil for a non-backed env (no §8 row to PATCH)", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} />));
-    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Rename environment" }),
+    ).toBeNull();
   });
 
   it("hides the rename pencil when locked", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} backed locked />));
-    expect(screen.queryByRole("button", { name: "Rename environment" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Rename environment" }),
+    ).toBeNull();
   });
 
   it("offers Delete in the overflow for a backend-backed env and opens the confirm", async () => {
@@ -531,7 +592,9 @@ describe("WorkspaceHeader", () => {
     render(withRouter(<WorkspaceHeader {...baseProps} backed />));
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Delete environment/ }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Delete environment/ }),
+    );
     expect(screen.getByText("Delete environment?")).toBeInTheDocument();
   });
 
@@ -546,17 +609,27 @@ describe("WorkspaceHeader", () => {
   it.skip("forks from the overflow menu when unlocked", async () => {
     const user = userEvent.setup();
     const onFork = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} onFork={onFork} locked={false} />,
+      ),
+    );
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("menuitem", { name: /Fork environment/ }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /Fork environment/ }),
+    );
     expect(onFork).toHaveBeenCalledTimes(1);
   });
 
   it("starts a run-all (no ids) directly on Run, with no config dialog", async () => {
     const user = userEvent.setup();
     const onStartRun = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />,
+      ),
+    );
 
     await user.click(screen.getByRole("button", { name: "Run simulation" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -566,7 +639,11 @@ describe("WorkspaceHeader", () => {
   it("runs with the repeats picked in the header dropdown", async () => {
     const user = userEvent.setup();
     const onStartRun = vi.fn();
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />));
+    render(
+      withRouter(
+        <WorkspaceHeader {...baseProps} canRun onStartRun={onStartRun} />,
+      ),
+    );
 
     await user.click(screen.getByText(/^Repeats:/));
     await user.click(screen.getByText("3×"));
@@ -576,14 +653,20 @@ describe("WorkspaceHeader", () => {
 
   it("counts scenarios from the server count, not the seeded client list", async () => {
     const user = userEvent.setup();
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun scenarioCount={7} />));
+    render(
+      withRouter(<WorkspaceHeader {...baseProps} canRun scenarioCount={7} />),
+    );
 
     await user.click(screen.getByText(/^Repeats:/));
-    expect(screen.getByText(/7 scenarios × 1 repeat = 7 runs/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/7 scenarios × 1 repeat = 7 runs/),
+    ).toBeInTheDocument();
   });
 
   it("hides the header Run + Repeats while a scenario selection is active", () => {
-    render(withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />));
+    render(
+      withRouter(<WorkspaceHeader {...baseProps} canRun selectionActive />),
+    );
     expect(screen.queryByRole("button", { name: "Run simulation" })).toBeNull();
     // The Repeats button's accessible name is its tooltip, so match its text.
     expect(screen.queryByText(/^Repeats:/)).toBeNull();
@@ -594,8 +677,12 @@ describe("WorkspaceHeader", () => {
     const reason = "Add scenarios on the Scenarios tab";
     render(
       withRouter(
-        <WorkspaceHeader {...baseProps} canRun={false} runBlockedReason={reason} />
-      )
+        <WorkspaceHeader
+          {...baseProps}
+          canRun={false}
+          runBlockedReason={reason}
+        />,
+      ),
     );
 
     const btn = screen.getByRole("button", { name: "Run simulation" });
@@ -612,8 +699,8 @@ describe("VersionBar", () => {
 
   it("states only the scenario count while versioning is off", () => {
     render(<VersionBar env={ENV} envState={{ scenarios: [1, 2, 3, 4] }} />);
-    expect(screen.getByText("4 scenarios, shared across agent versions")).toBeInTheDocument();
-    expect(screen.queryByText("Default")).toBeNull();
+    expect(screen.getByText("4 scenarios")).toBeInTheDocument();
+    expect(screen.queryByText("×")).toBeNull();
   });
 
   it("follows agent checks while mounted, the drawer open or not", () => {
@@ -626,19 +713,46 @@ describe("VersionBar", () => {
 
   it("states the default agent, environment and scenario versions", () => {
     versionsResponse.current = VERSIONS;
-    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
+    const { container } = render(
+      <VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />,
+    );
+    // Agent first, then the environment it runs against, as one line.
+    expect(container).toHaveTextContent(
+      "Agent v4×environment v2·scenarios v3·12 scenarios",
+    );
     expect(screen.getByText("v2")).toBeInTheDocument();
     expect(screen.getByText("v4")).toBeInTheDocument();
     expect(screen.getByText("v3")).toBeInTheDocument();
     // The count is the default suite's, not the client store's.
-    expect(screen.getByText("12 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText("12 scenarios")).toBeInTheDocument();
+  });
+
+  it("opens the history of each version it names", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    const onHistory = vi.fn();
+    render(
+      <VersionBar
+        env={VERSIONED_ENV}
+        envState={{ scenarios: [1] }}
+        onHistory={onHistory}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Agent v4" }));
+    await user.click(screen.getByRole("button", { name: "environment v2" }));
+    await user.click(screen.getByRole("button", { name: "scenarios v3" }));
+    expect(onHistory.mock.calls).toEqual([
+      ["agent"],
+      ["environment"],
+      ["suite"],
+    ]);
   });
 
   it("says before versioning when the environment has no versions yet", () => {
     versionsResponse.current = { agent: [], environment: [], suite: [] };
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
     expect(screen.getAllByText("before versioning")).toHaveLength(1);
-    expect(screen.getByText("1 scenario, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText("1 scenario")).toBeInTheDocument();
   });
 
   it("says none, not before versioning, when there is no default agent", () => {
@@ -646,7 +760,7 @@ describe("VersionBar", () => {
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
     expect(screen.getByText("none")).toBeInTheDocument();
     expect(screen.queryByText("before versioning")).toBeNull();
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.getByText("×")).toBeInTheDocument();
   });
 
   it("names an unnumbered default instead of printing null", () => {
@@ -662,8 +776,8 @@ describe("VersionBar", () => {
   it("drops the pairing when the server has switched versioning off", () => {
     versionsResponse.current = "disabled";
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
-    expect(screen.queryByText("Default")).toBeNull();
-    expect(screen.getByText("2 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.queryByText("×")).toBeNull();
+    expect(screen.getByText("2 scenarios")).toBeInTheDocument();
   });
 
   it("calls the agent the environment's default, not the one runs test", async () => {
@@ -682,7 +796,9 @@ describe("VersionBar", () => {
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
     await user.hover(screen.getByText("v2"));
     const tip = await screen.findByRole("tooltip");
-    expect(tip).toHaveTextContent("No default agent version is set for this environment.");
+    expect(tip).toHaveTextContent(
+      "No default agent version is set for this environment.",
+    );
     expect(tip).not.toHaveTextContent(/is none/);
   });
 
@@ -692,24 +808,31 @@ describe("VersionBar", () => {
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1] }} />);
     await user.hover(screen.getByText("v4"));
     const tip = await screen.findByRole("tooltip");
-    expect(tip).toHaveTextContent("This environment has no environment version yet.");
+    expect(tip).toHaveTextContent(
+      "This environment has no environment version yet.",
+    );
     expect(tip).not.toHaveTextContent(/replay environment before versioning/);
   });
 
   it("keeps the pairing when a refresh fails after an answer", () => {
     versionsResponse.current = { refreshFailed: VERSIONS };
     render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
-    expect(screen.getByText("Default")).toBeInTheDocument();
+    expect(screen.getByText("×")).toBeInTheDocument();
     expect(screen.getByText("v4")).toBeInTheDocument();
   });
 
-  it.each(["loading", "error"])("states no pairing while the versions are %s", (answer) => {
-    versionsResponse.current = answer;
-    render(<VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />);
-    expect(screen.queryByText("before versioning")).toBeNull();
-    expect(screen.queryByText("Default")).toBeNull();
-    expect(screen.getByText("2 scenarios, shared across agent versions")).toBeInTheDocument();
-  });
+  it.each(["loading", "error"])(
+    "states no pairing while the versions are %s",
+    (answer) => {
+      versionsResponse.current = answer;
+      render(
+        <VersionBar env={VERSIONED_ENV} envState={{ scenarios: [1, 2] }} />,
+      );
+      expect(screen.queryByText("before versioning")).toBeNull();
+      expect(screen.queryByText("×")).toBeNull();
+      expect(screen.getByText("2 scenarios")).toBeInTheDocument();
+    },
+  );
 
   const SUBJECT = {
     id: "agent-1",
@@ -731,10 +854,14 @@ describe("VersionBar", () => {
     expect(screen.queryByText(/^env$/)).toBeNull();
   });
 
-  it("calls an agent with no name on record \"Agent\", as the Overview card does", () => {
+  it('calls an agent with no name on record "Agent", as the Overview card does', () => {
     render(
       <VersionBar
-        env={{ ...ENV, testSubject: { ...SUBJECT, name: null }, counts: { scenarios: 3 } }}
+        env={{
+          ...ENV,
+          testSubject: { ...SUBJECT, name: null },
+          counts: { scenarios: 3 },
+        }}
         envState={{ scenarios: [1] }}
       />,
     );
@@ -749,14 +876,17 @@ describe("VersionBar", () => {
         envState={{ scenarios: [1, 2, 3, 4] }}
       />,
     );
-    expect(screen.getByText("42 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText("42 scenarios")).toBeInTheDocument();
   });
 
   it("leaves the agent out when no agent is connected yet", () => {
     render(
-      <VersionBar env={{ ...ENV, testSubject: null, counts: { scenarios: 0 } }} envState={{}} />,
+      <VersionBar
+        env={{ ...ENV, testSubject: null, counts: { scenarios: 0 } }}
+        envState={{}}
+      />,
     );
     expect(screen.queryByText("Test subject")).toBeNull();
-    expect(screen.getByText("0 scenarios, shared across agent versions")).toBeInTheDocument();
+    expect(screen.getByText("0 scenarios")).toBeInTheDocument();
   });
 });
