@@ -1196,32 +1196,49 @@ const QueryInput = forwardRef(function QueryInput(
         : false;
 
   // Shared chip/prefix render — used by both the Autocomplete renderInput
-  // startAdornment and the range-phase Box below.
+  // startAdornment and the range-phase Box below. Query filters are always
+  // combined with AND on the server, so a static AND sits between chips.
   const tokenChips = tokens.map((token, idx) => (
-    <Chip
-      key={idx}
-      label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
-      size="small"
-      onClick={() => editToken(idx)}
-      onDelete={() => handleDeleteToken(idx)}
-      deleteIcon={<Iconify icon="solar:close-linear" width={12} />}
-      sx={{
-        mr: 0.25,
-        bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
-        color: "primary.main",
-        border: "1px solid",
-        borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
-        cursor: "pointer",
-        "&:hover": {
-          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.16),
-          borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-        },
-        "& .MuiChip-deleteIcon": {
+    <React.Fragment key={idx}>
+      {idx > 0 && (
+        <Typography
+          component="span"
+          variant="s3"
+          sx={{
+            color: "text.secondary",
+            fontWeight: 500,
+            mx: 0.5,
+            whiteSpace: "nowrap",
+            userSelect: "none",
+          }}
+        >
+          AND
+        </Typography>
+      )}
+      <Chip
+        label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
+        size="small"
+        onClick={() => editToken(idx)}
+        onDelete={() => handleDeleteToken(idx)}
+        deleteIcon={<Iconify icon="solar:close-linear" width={12} />}
+        sx={{
+          mr: 0.25,
+          bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
           color: "primary.main",
-          "&:hover": { color: "primary.dark" },
-        },
-      }}
-    />
+          border: "1px solid",
+          borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
+          cursor: "pointer",
+          "&:hover": {
+            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.16),
+            borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
+          },
+          "& .MuiChip-deleteIcon": {
+            color: "primary.main",
+            "&:hover": { color: "primary.dark" },
+          },
+        }}
+      />
+    </React.Fragment>
   ));
 
   const prefixChips = inlinePrefix.map((p, i) => (
