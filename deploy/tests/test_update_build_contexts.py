@@ -144,5 +144,5 @@ class BuildContextPolicyTests(unittest.TestCase):
 
     def test_ci_runs_on_ignore_and_dockerfile_changes(self):
         workflow = (ROOT / '.github/workflows/update-ci.yml').read_text()
-        for pattern in ('"**/.dockerignore"', '"**/*.dockerignore"', '"**/Dockerfile*"'):
-            self.assertEqual(workflow.count(pattern), 2, pattern)
+        self.assertNotIn('    paths:', workflow.split('permissions:', 1)[0])
+        self.assertIn('ordinary: ${{ steps.filter.outputs.ordinary_update }}', workflow)

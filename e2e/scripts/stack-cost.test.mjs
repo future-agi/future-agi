@@ -127,7 +127,9 @@ test('cold benchmarks disable all external BuildKit imports, without changing th
 test('profiling is a separate dispatch, not an alternative required check', () => {
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
   assert.notEqual(workflow.jobs['e2e-tests'].name, baseline.jobs['e2e-tests'].name);
-  assert.equal(baseline.jobs['e2e-tests'].name, 'E2E Tests Pass');
+  assert.match(baseline.jobs['e2e-tests'].name, /&& 'E2E metadata edit' \|\| 'E2E Tests Pass' \}\}$/);
+  assert.equal(workflow.jobs['e2e-tests'].name, 'E2E profile parity');
+  assert.equal(workflow.jobs.e2e.name, baseline.jobs.e2e.name); // receipt producer lookup
   const harness = loadWorkflow('e2e-harness-selftest.yml');
   for (const {paths} of [harness.on.pull_request, harness.on.push]) {
     for (const path of ['scripts/reclaim-runner-disk.sh', 'frontend/Dockerfile', '.github/workflows/e2e-stack-profile.yml']) assert.ok(paths.includes(path));
@@ -150,6 +152,9 @@ test('profiling is a separate dispatch, not an alternative required check', () =
   assert.ok(steps[suite-2].run.indexOf('bin/e2e verify-images') > steps[suite-2].run.indexOf('bin/e2e up'));
   assert.equal(steps[suite-2]['continue-on-error'], undefined);
   assert.deepEqual(steps.slice(suite-1,suite+5), baseSteps.slice(baseSuite-1,baseSuite+5));
+  for (const name of ['Upload blob report','Record the once-per-stack steps','Upload the once-per-stack record']) {
+    assert.deepEqual(steps.find(step => step.name === name), baseSteps.find(step => step.name === name));
+  }
   for (const id of ['catalog','sdk-python','sdk-typescript']) {
     assert.deepEqual(steps.find(step => step.id === id), baseSteps.find(step => step.id === id));
   }

@@ -2,11 +2,16 @@ name: Backend CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
   # The queue entrypoint calls this workflow without forwarding any secrets.
   workflow_call:
+    outputs:
+      verdict:
+        description: Result of the required backend aggregate step
+        value: ${{ jobs.backend-tests.outputs.verdict }}
   workflow_dispatch:
     inputs:
       backend_setup:
@@ -21,7 +26,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read # dorny/paths-filter reads the PR's file list
 
 concurrency:
   # PRs: one active run per PR, cancel stale. Push: per-SHA so dev/main runs
@@ -30,13 +34,13 @@ concurrency:
   # per PR even across forks, whereas a fork branch also named "dev" would share
   # a head_ref group with internal dev runs and cancel them.
   # Manual profiles can be dispatched together without replacing a pending trial.
-  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}
+  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Shard counts. "pytest shard N" runs everything but the Metrics suite on
-  # every backend change; "metrics shard N" runs only that suite, on Metrics
-  # changes and on every push (see the changes job). The Metrics suite was
+  # every selected backend change; "metrics shard N" runs its complementary
+  # suite on the same candidates and full controls. The Metrics suite was
   # measured at about 368 test-minutes; its two longest cases run about 19
   # minutes each against the real pass deadline, which bounds every shard.
   # The main suite was measured at about 196 test-minutes (dev, 21 Nov 2026),
@@ -50,18 +54,42 @@ env:
   PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker"
 
 jobs:
+  policy-self-test:
+    name: Scope policy fixtures
+    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exercise the candidate policy against Git fixtures
+        run: python3 -I .github/scripts/test_ci_scope.py
+
   changes:
+    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       queue_target: ${{ steps.queue.outputs.target }}
-      backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
-      update_safety: ${{ steps.filter.outputs.update_safety || 'false' }}
-      executor_base: ${{ steps.filter.outputs.executor_base || 'false' }}
-      metrics: ${{ steps.filter.outputs.metrics || steps.always.outputs.metrics }}
+      backend: ${{ steps.filter.outputs.backend }}
+      update_safety: ${{ steps.filter.outputs.update_safety }}
+      executor_base: ${{ steps.filter.outputs.executor_base }}
+      metrics: ${{ steps.filter.outputs.metrics }}
+      scope: ${{ steps.filter.outputs.scope }}
       shards: ${{ steps.shards.outputs.matrix }}
+      internal: ${{ steps.overlay.outputs.internal }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/workflows
       - id: queue
         if: github.event_name == 'merge_group'
         env:
@@ -70,138 +98,74 @@ jobs:
           [[ $BASE_REF == refs/heads/* ]]
           git check-ref-format "$BASE_REF"
           printf 'target=%s\n' "${BASE_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
-      - id: filter
-        if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            backend:
-              - 'futureagi/**'
-              - 'api_contracts/gateway/provider-url-policy.json'
-              - 'api_contracts/gateway/decision-cases.json'
-              - 'api_contracts/gateway/decision-providers.json'
-              - 'docker-compose*.yml'
-              - 'fi-collector/Dockerfile'
-              - 'bin/install*'
-              - 'bin/lib/**'
-              - 'bin/uninstall'
-              - 'deploy/**'
-              - '.github/workflows/backend-ci.yml'
-              - '.github/workflows/backend-queue-ci.yml'
-              - '.github/actions/backend-test-packages/**'
-              - '.github/actions/checkout-ee/**'
-              # Read by futureagi/tests/test_env_reference.py and test_log_stream.py
-              # (deploy/env-reference.toml is under deploy/**)
-              - 'bin/dev'
-              - '.env.example'
-              - 'INSTALLATION.md'
-              - 'frontend/docker-entrypoint.sh'
-              - 'scripts/env_reference.py'
-              - 'scripts/docs_site.py'
-              - 'scripts/check_update_safety.py'
-              - '.github/workflows/update-ci.yml'
-            # The gate also discovers shell sources by reading shebangs, which
-            # paths-filter cannot express (for example docs/rebuild-catalog).
-            # Run this daemon-free gate for every changed path without widening
-            # the separate backend filter that controls the heavy test shards.
-            update_safety:
-              - '**'
-            executor_base:
-              - 'futureagi/code-executor/Dockerfile.base'
-              - 'futureagi/code-executor/requirements.sandbox.txt'
-            # The Metrics suite (the modules tracer/tests/conftest.py marks
-            # `metrics`) and the code it exercises. Every path is also a
-            # backend path, so plan still runs. Runs that are not pull requests
-            # (every push to dev and main, manual dispatch) always run the
-            # suite, catching breakage from code outside this list after merge.
-            metrics:
-              - 'futureagi/tracer/services/derived_metrics/**'
-              - 'futureagi/tracer/models/derived_metric.py'
-              - 'futureagi/tracer/models/metric_pg_revision.py'
-              - 'futureagi/tracer/models/metric_source_intent.py'
-              - 'futureagi/tracer/models/monitor.py'
-              - 'futureagi/tracer/models/project.py'
-              - 'futureagi/tracer/models/trace_session.py'
-              - 'futureagi/tracer/apps.py'
-              - 'futureagi/tracer/tasks/__init__.py'
-              - 'futureagi/tracer/services/project_deletion.py'
-              # Two cases migrate back to tracer 0125 and forward to every leaf.
-              - 'futureagi/**/migrations/**'
-              # Metrics owns 028-038, but the suite applies every file in order.
-              - 'futureagi/tracer/services/clickhouse/v2/schema/*.sql'
-              - 'futureagi/tracer/services/clickhouse/v2/__init__.py'
-              - 'futureagi/tracer/services/clickhouse/v2/apply_schema*.py'
-              - 'futureagi/tracer/services/clickhouse/v2/id_remap_sql.py'
-              - 'futureagi/tracer/services/clickhouse/v2/query_builders/filters.py'
-              - 'futureagi/tracer/services/clickhouse/v2/property_catalog/source_adapters.py'
-              - 'futureagi/tracer/services/clickhouse/__init__.py'
-              - 'futureagi/tracer/services/clickhouse/client.py'
-              - 'futureagi/tracer/services/clickhouse/application_read_*.py'
-              - 'futureagi/tracer/services/clickhouse/native_read_stream.py'
-              - 'futureagi/tracer/services/clickhouse/read_budget.py'
-              - 'futureagi/tracer/services/clickhouse/query_service.py'
-              - 'futureagi/tracer/services/clickhouse/eval_logger_table.py'
-              - 'futureagi/tracer/services/clickhouse/query_builders/base.py'
-              - 'futureagi/tracer/services/clickhouse/query_builders/dashboard.py'
-              - 'futureagi/tracer/services/clickhouse/query_builders/filters.py'
-              - 'futureagi/tracer/services/private_boundary_log.py'
-              - 'futureagi/tracer/views/derived_metric.py'
-              - 'futureagi/tracer/serializers/derived_metric.py'
-              - 'futureagi/tracer/serializers/dashboard.py'
-              - 'futureagi/tracer/serializers/filters.py'
-              - 'futureagi/tracer/tasks/derived_metric.py'
-              - 'futureagi/tracer/permissions/metrics.py'
-              - 'futureagi/tracer/management/commands/erase_metric_data.py'
-              - 'futureagi/tracer/urls.py'
-              - 'futureagi/tracer/utils/filter_operators.py'
-              - 'futureagi/tracer/utils/helper.py'
-              - 'futureagi/tracer/utils/monitor.py'
-              - 'futureagi/tracer/utils/monitor_graphs.py'
-              - 'futureagi/tracer/selectors/eval_tasks/**'
-              - 'futureagi/tracer/sql_workbench/metric_retention.py'
-              - 'futureagi/tracer/sql_workbench/catalog.py'
-              - 'futureagi/tracer/sql_workbench/service.py'
-              - 'futureagi/tracer/sql_workbench/tasks.py'
-              - 'futureagi/tracer/sql_workbench/access.py'
-              - 'futureagi/tfc/capabilities/**'
-              - 'futureagi/tfc/settings/runtime_setting_specs.py'
-              - 'futureagi/tfc/settings/settings.py'
-              - 'futureagi/tfc/settings/test.py'
-              - 'futureagi/tfc/temporal/schedules/tracer.py'
-              - 'futureagi/model_hub/apps.py'
-              - 'futureagi/model_hub/models/score.py'
-              - 'futureagi/model_hub/models/develop_annotations.py'
-              # The suite, its fixtures and the modules it imports helpers from
-              - 'futureagi/tracer/tests/test_derived_metric_*.py'
-              - 'futureagi/tracer/tests/test_metric_*.py'
-              - 'futureagi/tracer/tests/_metric_busy_fixture.py'
-              - 'futureagi/tracer/tests/metric_read_fixtures.py'
-              - 'futureagi/tracer/tests/_ch_seed.py'
-              - 'futureagi/tracer/tests/conftest.py'
-              - 'futureagi/tracer/tests/test_base_list_current_pg_state.py'
-              - 'futureagi/tracer/tests/test_property_catalog_metric_fields.py'
-              - 'futureagi/tracer/sql_workbench/tests/test_permissions.py'
-              - 'futureagi/conftest.py'
-              - 'futureagi/pytest.ini'
-              - 'futureagi/.test_durations'
-              - 'futureagi/docker-compose.test.yml'
-              - 'futureagi/.ci/clickhouse-*.xml'
-              - 'futureagi/pyproject.toml'
-              - 'futureagi/uv.lock'
-              - '.github/workflows/backend-ci.yml'
-              - '.github/workflows/backend-queue-ci.yml'
-              - '.github/actions/backend-test-packages/**'
-              - '.github/actions/checkout-ee/**'
-      - id: always
-        if: github.event_name != 'pull_request'
+      - name: Plan from the event base and complete candidate diff
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          CI_SCOPE_MODE: ${{ vars.CI_SCOPE_MODE }}
+          STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
+        # Bootstrap is workflow policy; never execute a candidate loader.
         run: |
-          echo "backend=true" >> "$GITHUB_OUTPUT"
-          echo "metrics=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
+          case "$GITHUB_EVENT_NAME" in
+            pull_request|merge_group)
+              for sha in "$BASE_SHA" "$HEAD_SHA"; do
+                [[ $sha =~ ^[0-9a-f]{40}$ && ! $sha =~ ^0+$ ]]
+                git cat-file -e "${sha}^{commit}"
+              done
+              if [[ $GITHUB_EVENT_NAME == merge_group ]]; then
+                [[ $HEAD_SHA == "$GITHUB_SHA" ]]
+                git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+              else
+                [[ $(git show -s --format=%P HEAD) == "$BASE_SHA $HEAD_SHA" ]]
+              fi
+              policy=$BASE_SHA ;;
+            *) policy=$GITHUB_SHA; export BASE_SHA=$policy HEAD_SHA=$policy ;;
+          esac
+          file=.github/scripts/ci_scope.py
+          # Check presence separately: a corrupt/missing object is not a legacy base.
+          entry=$(git ls-tree "$policy" -- "$file")
+          if [[ -n $entry ]]; then
+            git show "$policy:$file" > "$RUNNER_TEMP/ci-scope.py"
+            exec python3 -I "$RUNNER_TEMP/ci-scope.py"
+          fi
+          # First landing / stacked PR onto a base predating the planner. Run all suites.
+          # The unpublished executor-tag assertion applies only to changes to its inputs.
+          pin=false
+          if [[ $GITHUB_EVENT_NAME == pull_request || $GITHUB_EVENT_NAME == merge_group ]]; then
+            start=$BASE_SHA
+            if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+              if ! start=$(git merge-base --all "$BASE_SHA" "$HEAD_SHA"); then start=unknown; fi
+            fi
+            if ! [[ $start =~ ^[0-9a-f]{40}$ ]] || ! git diff --quiet --no-renames "$start" "$HEAD_SHA" -- \
+                futureagi/code-executor/{Dockerfile.base,requirements.sandbox.txt} ||
+                ! git diff --quiet --no-renames "$BASE_SHA" "$GITHUB_SHA" -- \
+                futureagi/code-executor/{Dockerfile.base,requirements.sandbox.txt}; then pin=true; fi
+          fi
+          {
+            for key in backend metrics any collector ordinary_update update_safety tooling built python; do echo "$key=true"; done
+            echo "executor_base=$pin"
+            echo "scope=$(jq -cn --arg sha "$GITHUB_SHA" --arg base "$policy" '{version:0,mode:"full",reason:"legacy policy base",tested_commit:$sha,policy_base:$base}')"
+          } >> "$GITHUB_OUTPUT"
+      - id: overlay
+        env:
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          # The merge-group event does not attest to the provenance of every member.
+          internal=false
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) if [[ -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
+            push|workflow_dispatch|schedule) internal=true ;;
+          esac
+          echo "internal=$internal" >> "$GITHUB_OUTPUT"
       - id: shards
         # The pytest shard matrix: the main legs always, the Metrics legs only
         # when that suite is due. An absent leg leaves no check, so say which.
         env:
-          METRICS: ${{ steps.filter.outputs.metrics || steps.always.outputs.metrics }}
+          BACKEND: ${{ steps.filter.outputs.backend }}
+          METRICS: ${{ steps.filter.outputs.metrics }}
         run: |
           set -euo pipefail
           legs() { # suite, check name, marker term, timeout minutes, shard count
@@ -210,13 +174,13 @@ jobs:
               '[{suite: $suite, name: $name, markers: $markers, timeout: $timeout,
                  splits: $n, group: range(1; $n + 1)}]'
           }
-          main=$(legs main pytest "not metrics" 45 "$SPLITS")
-          metrics='[]'
-          if [ "$METRICS" = true ]; then
+          [[ "$METRICS" == true || "$METRICS" == false ]]
+          [[ "$BACKEND" == "$METRICS" ]]
+          [[ $SPLITS =~ ^[1-9][0-9]*$ && $METRICS_SPLITS =~ ^[1-9][0-9]*$ ]]
+          main='[]' metrics='[]'
+          if [[ $BACKEND == true ]]; then
+            main=$(legs main pytest "not metrics" 45 "$SPLITS")
             metrics=$(legs metrics metrics metrics 50 "$METRICS_SPLITS")
-            echo "::notice::Metrics suite scheduled: metrics shard 1-$METRICS_SPLITS"
-          else
-            echo "::notice::Metrics suite not scheduled: no Metrics-related path changed"
           fi
           echo "matrix=$(jq -nc --argjson a "$main" --argjson b "$metrics" '{include: ($a + $b)}')" >> "$GITHUB_OUTPUT"
 
@@ -325,7 +289,7 @@ jobs:
       EE_REPO_BRANCH: ${{ needs.changes.outputs.queue_target || github.head_ref || github.ref_name }}
       EE_BASE_REF: ${{ needs.changes.outputs.queue_target || github.base_ref || 'dev' }}
       # Queue events identify a base branch, not the origin of every queued PR.
-      IS_INTERNAL_RUN: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+      IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}
     steps:
       - uses: actions/checkout@v4
       - name: Restore newest timing cache over the committed floor
@@ -348,7 +312,7 @@ jobs:
       # warm paths never depend on the independent fresh-migration control.
       - name: Checkout EE package (internal runs only)
         if: inputs.backend_cold_fanout && env.IS_INTERNAL_RUN == 'true'
-        uses: ./.github/actions/checkout-ee
+        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
         with: &ee_checkout
           token: ${{ secrets.EE_REPO_READ_TOKEN }}
           branch: ${{ env.EE_REPO_BRANCH }}
@@ -427,7 +391,7 @@ jobs:
 
       - name: Checkout EE package (internal runs only)
         if: env.IS_INTERNAL_RUN == 'true'
-        uses: ./.github/actions/checkout-ee
+        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
         with: *ee_checkout
 
       - uses: ./.github/actions/backend-test-packages/environment
@@ -495,18 +459,50 @@ jobs:
           name: test-durations-plan
           path: futureagi
 
+      - name: Exercise terminal recording with the installed shard pytest
+        if: matrix.group == 1 && matrix.suite == 'main'
+        run: uv run --no-sync python -I .ci/test_collected_ids.py PluginProtocolTest RecordTest
+
+      - name: Collect the eligible inventory without sharding
+        if: matrix.group == 1
+        env:
+          PYTHONPATH: .ci
+          ELIGIBLE_IDS_FILE: ${{ runner.temp }}/shard-receipt/eligible.json
+          SUITE_MARKERS: ${{ matrix.markers }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/shard-receipt"
+          # A failure in the independent inventory must not preempt the real shard.
+          # The terminal verifier requires a successful exit as well as the inventory.
+          status=0
+          uv run pytest --collect-only -q --ignore=tests/stress -p collected_ids \
+            -m "($PYTEST_MARKERS) and $SUITE_MARKERS" > "$RUNNER_TEMP/collection.log" || status=$?
+          printf '%s\n' "$status" > "$RUNNER_TEMP/shard-receipt/inventory-exit.txt"
+          if [[ $status != 0 ]]; then tail -c 8192 "$RUNNER_TEMP/collection.log"; fi
+
       - name: Run shard
         id: run-shard
         env:
           SUITE: ${{ matrix.suite }}
+          GROUP: ${{ matrix.group }}
+          SHARDS: ${{ needs.changes.outputs.shards }}
           SUITE_MARKERS: ${{ matrix.markers }}
           SUITE_SPLITS: ${{ matrix.splits }}
-          # .ci/collected_ids.py records every test id this shard collected;
-          # the "collection" job fails the run when two shards differ.
+          DB_KEY: ${{ steps.db-key.outputs.key }}
           PYTHONPATH: .ci
-          COLLECTED_IDS_FILE: ${{ runner.temp }}/collected-ids.txt
+          COLLECTED_IDS_FILE: ${{ runner.temp }}/shard-receipt/collected-ids.txt
+          TERMINAL_IDS_FILE: ${{ runner.temp }}/shard-receipt/terminal.jsonl
         run: |
-          set +e
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/shard-receipt"
+          ee=oss
+          if [[ $IS_INTERNAL_RUN == true ]]; then ee=$(git -C ee/cloud rev-parse HEAD); fi
+          [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
+          jq -nc --arg run "$GITHUB_RUN_ID" --arg sha "$GITHUB_SHA" --arg suite "$SUITE" \
+            --argjson attempt "$GITHUB_RUN_ATTEMPT" --argjson group "$GROUP" --arg ee "$ee" --arg db "${DB_KEY:?}" \
+            --arg matrix "$(printf %s "$SHARDS" | sha256sum | cut -d' ' -f1)" \
+            --arg durations "$(sha256sum .test_durations | cut -d' ' -f1)" \
+            --arg temporal "$(sha256sum "$TEMPORAL_TEST_SERVER" | cut -d' ' -f1)" \
+            '$ARGS.named' > "$RUNNER_TEMP/shard-receipt/receipt.json"
           # pytest.ini adds -v; -q restores compact module progress. Verbose
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
           # processing after the tests have passed. Keep full JUnit results.
@@ -518,15 +514,7 @@ jobs:
             --durations=25 --durations-min=1.0 \
             ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && '--store-durations' || '' }} \
             --junitxml=junit-${{ matrix.group }}.xml
-          code=$?
-          set -e
           echo "Restore through last test: $(( $(date +%s) - $(cat "$RUNNER_TEMP/backend-setup-start") ))s" >> "$GITHUB_STEP_SUMMARY"
-          # Every Metrics shard has cases; none collected means the marker broke.
-          if [ "$code" -eq 5 ] && [ "$SUITE" = main ]; then
-            echo "::warning::No tests collected for this shard — expected when splitting, but investigate if MANY shards report this"
-            exit 0
-          fi
-          exit $code
 
       - name: Upload JUnit results
         # Skip when the shard never ran: a missing-file error here would bury
@@ -544,12 +532,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: collected-ids-${{ matrix.suite }}-${{ matrix.group }}
-          path: ${{ runner.temp }}/collected-ids.txt
+          path: ${{ runner.temp }}/shard-receipt
           retention-days: 3
           overwrite: true
-          # A shard that died before it collected has none; the collection
-          # job counts the records and fails on a missing one.
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload timing data (dev pushes only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -653,7 +639,7 @@ jobs:
         if: needs.plan.outputs.cold_control != 'success'
       - name: Checkout EE package (internal runs only)
         if: needs.plan.outputs.cold_control != 'success' && env.IS_INTERNAL_RUN == 'true'
-        uses: ./.github/actions/checkout-ee
+        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
         with: *ee_checkout
 
       - uses: ./.github/actions/backend-test-packages/database
@@ -936,38 +922,63 @@ jobs:
           python3 -I futureagi/.ci/check_collected_ids.py "$(jq '.include | length' <<<"$SHARDS")" \
             "$RUNNER_TEMP"/collected/*/collected-ids.txt
 
+  terminal-parity:
+    # Verify the unsharded eligible inventory against terminal outcomes. Use
+    # artifact IDs/digests and the latest producer attempt, not names alone.
+    permissions:
+      contents: read
+      actions: read
+    name: Backend terminal inventory qualification
+    needs: [changes, test]
+    if: ${{ !cancelled() && needs.test.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: futureagi/.ci
+      - name: Verify each planned shard receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARDS: ${{ needs.changes.outputs.shards }}
+        run: python3 -I futureagi/.ci/check_collected_ids.py --terminal
+
   backend-tests:
-    name: Backend Tests Pass # the ONLY required status check
+    name: ${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && 'Backend metadata edit' || 'Backend Tests Pass' }} # the ONLY required status check
     needs:
       [
         changes,
+        policy-self-test,
         update-safety,
         plan,
         test,
         collection,
+        terminal-parity,
         saml-multiworker,
         migrated-database,
         agentic-eval,
         slim-smoke,
         code-executor-base-pin,
       ]
-    if: always()
+    if: ${{ always() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      verdict: ${{ steps.verdict.outcome }}
     steps:
-      - name: Fail closed unless every dependency succeeded or was skipped
+      - id: verdict
+        name: Require exactly the outcomes the change plan selected
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          # No -e flag and a non-empty success output: `jq -e` exits 4 when a
-          # filter produces no output, which would fail the gate on green runs.
-          echo "$NEEDS" | jq 'with_entries(.value |= .result)
-            | to_entries
-            | map(select(.value != "success" and .value != "skipped"))
-            | if length > 0 then ("failing: " + (map(.key) | join(", ")) | halt_error)
-              else "all dependencies green (or legitimately skipped)" end'
-          # A skipped collection check passes the filter above. It may be
-          # skipped only when the shards were.
-          echo "$NEEDS" | jq 'if .test.result != "skipped" and .collection.result != "success"
-            then ("the shards ran but the collection check is " + .collection.result | halt_error)
-            else "collection check: " + .collection.result end'
+          jq -e '
+            def flag: if . == "true" then true elif . == "false" then false else error("invalid plan flag") end;
+            def status: if . then "success" else "skipped" end;
+            .changes.outputs as $p | ($p.backend|flag) as $b | ($p.metrics|flag) as $m |
+            ($p.update_safety|flag) as $u | ($p.executor_base|flag) as $x |
+            .changes.result == "success" and .["policy-self-test"].result == "success" and ($m == $b) and
+            .["update-safety"].result == (($b or $u)|status) and
+            .["code-executor-base-pin"].result == ($x|status) and
+            ([.plan, .test, .collection, .["terminal-parity"], .["saml-multiworker"], .["migrated-database"],
+              .["agentic-eval"], .["slim-smoke"]] | all(.result == ($b|status)))
+          ' <<<"$NEEDS"

@@ -4,7 +4,7 @@
 # takes about three hours, so a pull request runs them only when it can change
 # their result:
 #
-#   schedule, workflow_dispatch   both, always
+#   schedule, workflow_dispatch, push to dev   both, always
 #   pull request into main        both (a release)
 #   label update-rehearsal        both (ask for them on any pull request)
 #   update tooling changed        both
@@ -12,7 +12,7 @@
 #   boot changed (migrations,     request and boots it on real data; a-b-c installs
 #   Dockerfiles, entrypoints,     published releases and builds nothing from it
 #   settings)
-#   anything else                 neither (push, merge_group, other pull requests)
+#   anything else                 neither (main push, merge_group, other pull requests)
 #
 # Inputs, from the workflow: EVENT_NAME, BASE_REF, and for a pull request
 # LABELLED, TOOLING_CHANGED and BUILT_CHANGED, each "true" or "false".
@@ -23,6 +23,10 @@ abc=false
 case "${EVENT_NAME:?EVENT_NAME is required}" in
   schedule | workflow_dispatch)
     upgrade=true abc=true why="every $EVENT_NAME run"
+    ;;
+  push)
+    why="push outside dev"
+    if [[ ${BASE_REF:-} == dev ]]; then upgrade=true abc=true why="full dev control"; fi
     ;;
   pull_request)
     for name in LABELLED TOOLING_CHANGED BUILT_CHANGED; do
