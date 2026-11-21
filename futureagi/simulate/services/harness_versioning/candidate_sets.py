@@ -163,7 +163,8 @@ def validation_state(
 ) -> CandidateValidation | None:
     """Where the live set's validation stands: `validating`, `retry` (a job ended before any check ran), `ready`,
     `failed`, `check_unavailable` (the check ended on our side for a cause that repeats; the set may save
-    uncertified), or `superseded` once the defaults moved under it. A failed validation names the actions that failed and
+    uncertified), or `superseded` once the defaults moved under it, or once the drafts or decisions moved since the set
+    was validated (Save would refuse it). A failed validation names the actions that failed and
     the scenarios that need one of them on every path; a ready one names the scenarios certifying dropped.
     """
     entry = entry or live_set(environment)
@@ -182,6 +183,9 @@ def validation_state(
         state = "failed"
     elif unavailable_on_our_side(entry, bundle):
         state = "check_unavailable"
+    if state in ("ready", "check_unavailable") and _drafts_moved(environment, entry):
+        # Save would refuse these candidates: what it would save is no longer what was validated.
+        state = "superseded"
     body = CandidateValidation(
         state=state,
         job_id=entry.get("job_id"),
@@ -214,6 +218,22 @@ def validation_state(
             environment, entry, {str(one["action"]) for one in failed}
         )
     return body
+
+
+def _drafts_moved(environment: HostedHarnessJob, entry: CandidateSet) -> bool:
+    """Whether the drafts or the review decisions moved since this set was validated, as Save checks them."""
+    from simulate.services.harness_versioning import review
+    from simulate.services.harness_versioning.draft_pieces import open_draft
+
+    for piece, seen in entry["drafts"].items():
+        draft = open_draft(environment, piece)
+        if (
+            draft is None
+            or str(draft.id) != seen["id"]
+            or draft.revision != seen["revision"]
+        ):
+            return True
+    return review.draft_review(environment)["review_digest"] != entry["review_digest"]
 
 
 def _affected_scenarios(
