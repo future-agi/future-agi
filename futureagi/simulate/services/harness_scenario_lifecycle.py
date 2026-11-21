@@ -586,6 +586,7 @@ def scenario_lifecycle(
     )
     unread: set[str] = set()
     changed = changed_refs(environment_version, contents, unread=unread)
+    current_rules = rules_of(environment_version.documents or {})
     proofs_lost = _proofs_unread(environment, suite_version, environment_version)
     from simulate.services.hosted_harness_conversation import failed_changes
 
@@ -680,13 +681,27 @@ def scenario_lifecycle(
             if isinstance(one, Mapping)
         ]
         view["sources"] = [SourceView(**one) for one in resolved.get(key) or []]
-        view["source_changed"] = (
-            [] if _checked_here(proofs, key) else changed.get(key, [])
+        # A rule source resolved only through the rule that replaced it still quotes the old words: Source changed
+        # until the case cites the new rule, whatever proved it since.
+        reworded = [
+            one["ref"]
+            for one in view["sources"]
+            if one["kind"] == "rule"
+            and one["resolved"]
+            and matched_rule(one["quote"], current_rules) is None
+        ]
+        view["source_changed"] = list(
+            dict.fromkeys(
+                ([] if _checked_here(proofs, key) else changed.get(key, [])) + reworded
+            )
         )
         if view["source_changed"]:
             view["source_changed_version"] = environment_version.version_number
             view["source_changed_version_id"] = str(environment_version.id)
         bad = next((one for one in view["sources"] if not one.get("resolved")), None)
+        if bad is None and reworded and view.get("reason") == "source_unresolved":
+            # Held only for a rule the contract records as reworded: never checked against the new rule yet.
+            _demote(view, "not_validated", reason_text("not_validated"))
         # The proof can already read source_unresolved; its text still names the source.
         if bad is not None and (
             view["state"] in ("validated", "active", "kept_as_written")

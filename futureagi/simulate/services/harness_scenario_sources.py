@@ -297,6 +297,51 @@ def _rule_match(quote: str, rules: list[str]) -> int | None:
     )
 
 
+def replacement(quote: str, rules: list[str], records: object) -> int | None:
+    """The rule of this version that replaced the one a rule source quotes, following the contract's
+    `amendment_records` (a removed rule's `replaced_by`, or an added rule's `previous`, by rule id) through every
+    rewording; None for a rule removed with no replacement, or for words no recorded rule held. ALK reads it the same
+    way (agent-learning-kit ``fi/alk/harness/grounding.py`` ``_replacement``)."""
+    from simulate.services.harness_versioning.review_items import rule_key
+
+    wanted = normalise(quote)
+    if not wanted or not isinstance(records, list):
+        return None
+    ruled = [
+        one for one in records if isinstance(one, Mapping) and one.get("kind") == "rule"
+    ]
+    held = {f"rule-{rule_key(rule)}": at for at, rule in enumerate(rules)}
+
+    def after(key: str) -> str:
+        return next(
+            (
+                str(one["replaced_by"])
+                for one in ruled
+                if one.get("key") == key and one.get("replaced_by")
+            ),
+            "",
+        ) or next(
+            (
+                str(one["key"])
+                for one in ruled
+                if one.get("previous") == key and one.get("key")
+            ),
+            "",
+        )
+
+    for removed in ruled:
+        text = str(removed.get("text") or "")
+        if removed.get("action") != "removed" or wanted not in normalise(text):
+            continue
+        key, seen = str(removed.get("key") or f"rule-{rule_key(text)}"), set()
+        while key and key not in seen:
+            seen.add(key)
+            key = after(key)
+            if key in held:
+                return held[key]
+    return None
+
+
 # The prefix each kind's `ref` carries, as ALK writes it (`rule:<n>`, `file:<path>`, `chat:<id>`, `evidence:<id>`).
 REF_SCHEMES = {
     "rule": "rule:",
@@ -451,6 +496,10 @@ def resolve(
     from simulate.models import HostedHarnessConversationMessage
 
     rules = _rules(environment_version)
+    contract = (getattr(environment_version, "documents", None) or {}).get("contract")
+    records = (
+        contract.get("amendment_records") if isinstance(contract, Mapping) else None
+    )
     digests = _file_digests(environment_version)
     chat_ids = {
         bare_ref("chat_message", str(one.get("ref") or ""))
@@ -492,8 +541,13 @@ def resolve(
             ref = str(one.get("ref") or "")
             quote = str(one.get("quote") or "")
             resolved, problem, matched, created, link = True, "", None, None, None
+            reworded = False
             if kind == "rule":
                 matched = _rule_match(quote, rules)
+                if matched is None:
+                    # A rule reworded as another resolves to its replacement; the case reads Source changed.
+                    matched = replacement(quote, rules, records)
+                    reworded = matched is not None
                 resolved = matched is not None
                 problem = (
                     ""
@@ -536,7 +590,12 @@ def resolve(
                     "" if resolved else "a requirement needs the person's own words"
                 )
             verdict = verdicts.get(ref)
-            if verdict is not None and verdict.get("kind", kind) == kind:
+            # A proof read against the old rules cannot know the replacement this version records.
+            if (
+                verdict is not None
+                and verdict.get("kind", kind) == kind
+                and not reworded
+            ):
                 resolved = verdict["resolved"] is True
                 problem = "" if resolved else str(verdict.get("problem") or problem)
             out.append(

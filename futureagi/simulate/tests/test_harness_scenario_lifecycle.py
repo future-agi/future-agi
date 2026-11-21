@@ -795,6 +795,118 @@ def test_a_case_proved_on_the_changed_environment_no_longer_reads_source_changed
     assert views[REFUND_KEYS[1]]["source_changed"] == ["rule:0"]
 
 
+def test_a_case_citing_a_reworded_rule_reads_source_changed_and_an_orphaned_one_unresolved(
+    user, workspace, storage
+):
+    """The live shape: "change the refund window from 14 days to 10 days" was made with add_rule replacing the 14-day
+    rule, and after Validate and Save every case citing it read source_unresolved, as if the rule had been dropped."""
+    import hashlib
+
+    def rid(rule):
+        return "rule-" + hashlib.sha256(rule.encode()).hexdigest()[:12]
+
+    old = (
+        "Refund only when the customer asks, the order was delivered within the last 14 days, and list_refunds "
+        "shows no earlier refund; then call issue_refund once with the full amount."
+    )
+    new = old.replace("14 days", "10 days")
+    gone = "Never refund gift cards."
+    environment = _environment(user, workspace, storage, "lc-reworded-rule")
+    _suite(environment, _ten())
+    parent = _with_rules_and_files(
+        environment.environment_version, [old, gone, "Refund at most once."], {}
+    )
+    child = _copy(parent, HarnessEnvironmentVersion, parent=parent)
+    _with_rules_and_files(child, ["Refund at most once.", new], {})
+    documents = dict(child.documents)
+    documents["contract"] = {
+        **documents["contract"],
+        "amendment_records": [
+            {"kind": "rule", "key": rid(gone), "action": "removed", "text": gone},
+            {
+                "kind": "rule",
+                "key": rid(old),
+                "action": "removed",
+                "replaced_by": rid(new),
+                "text": old,
+            },
+            {
+                "kind": "rule",
+                "key": rid(new),
+                "action": "added",
+                "previous": rid(old),
+                "text": new,
+            },
+        ],
+    }
+    HarnessEnvironmentVersion._base_manager.filter(id=child.id).update(
+        documents=documents
+    )
+    child.refresh_from_db()
+    cites_old = [
+        {"kind": "rule", "ref": "rule:0", "quote": "delivered within the last 14 days"}
+    ]
+    _cite(
+        environment,
+        {
+            REFUND_KEYS[0]: cites_old,
+            REFUND_KEYS[1]: cites_old,
+            REFUND_KEYS[2]: [
+                {"kind": "rule", "ref": "rule:1", "quote": "Never refund gift cards"}
+            ],
+            REFUND_KEYS[3]: [
+                {
+                    "kind": "rule",
+                    "ref": "rule:2",
+                    "quote": "never more than two refunds",
+                }
+            ],
+        },
+    )
+    # Validated against the new rules by an image that did not follow the link: held for the source, which it read
+    # unresolved. Another proved on this pair.
+    held = {
+        **PROVED,
+        "proved": False,
+        "blocked_reason": "source_unresolved",
+        "sources": [
+            {"kind": "rule", "ref": "rule:0", "resolved": False, "problem": "no rule"}
+        ],
+    }
+    _proofs(
+        environment,
+        {
+            **dict.fromkeys(KEYS, PROVED),
+            REFUND_KEYS[0]: held,
+            REFUND_KEYS[2]: {
+                **held,
+                "sources": [{"kind": "rule", "ref": "rule:1", "resolved": False}],
+            },
+            REFUND_KEYS[3]: {
+                **held,
+                "sources": [{"kind": "rule", "ref": "rule:2", "resolved": False}],
+            },
+        },
+        version=child,
+    )
+
+    views = _views(environment, version=child)
+
+    reworded, proved = views[REFUND_KEYS[0]], views[REFUND_KEYS[1]]
+    assert reworded["reason"] == "not_validated" and reworded["source_changed"] == [
+        "rule:0"
+    ]
+    assert (
+        reworded["sources"][0]["resolved"] is True
+        and reworded["sources"][0]["label"] == new[:80]
+    )
+    # Proved on the new rule since, it still reads Source changed: it quotes the old words.
+    assert proved["state"] != "draft" and proved["source_changed"] == ["rule:0"]
+    # Dropped with no replacement, and words no rule ever held: unresolved as before.
+    assert views[REFUND_KEYS[2]]["reason"] == "source_unresolved"
+    assert views[REFUND_KEYS[3]]["reason"] == "source_unresolved"
+
+
 def test_counts_call_only_a_run_proof_proved():
     from simulate.services.harness_scenario_lifecycle import lifecycle_counts
 
