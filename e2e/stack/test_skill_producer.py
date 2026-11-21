@@ -187,7 +187,7 @@ class ContractTests(unittest.TestCase):
                     for name, value in snapshots.items():
                         (sdk / 'sdkgen/contracts' / name).write_text(json.dumps(value))
 
-            with patch.dict(regenerate.__globals__, run_sdk=fixture_run):
+            with patch.dict(regenerate.__globals__, run_sdk=fixture_run, check_catalog_provenance=lambda *_: None):
                 receipt = regenerate(product, sdk, revision)
             self.assertEqual(receipt['sync_mode'], 'full')
             # A full commit-pinned sync leaves SOURCE.json without baseline fields; it also selects full mode.
@@ -195,17 +195,43 @@ class ContractTests(unittest.TestCase):
             subprocess.check_call(['git', '-C', sdk, 'add', '.'])
             subprocess.check_call(['git', '-C', sdk, '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'full sync'])
             calls.clear()
-            with patch.dict(regenerate.__globals__, run_sdk=fixture_run):
+            with patch.dict(regenerate.__globals__, run_sdk=fixture_run, check_catalog_provenance=lambda *_: None):
                 self.assertEqual(regenerate(product, sdk, revision)['sync_mode'], 'full')
             # Partial baseline metadata is rejected rather than guessed.
             (sdk / 'sdkgen/contracts/SOURCE.json').write_text(json.dumps({'non_skills_sdk_commit': 'a' * 40}))
             subprocess.check_call(['git', '-C', sdk, 'add', '.'])
             subprocess.check_call(['git', '-C', sdk, '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'partial'])
-            with patch.dict(regenerate.__globals__, run_sdk=fixture_run), self.assertRaisesRegex(ValueError, 'partial'):
+            with patch.dict(regenerate.__globals__, run_sdk=fixture_run, check_catalog_provenance=lambda *_: None), self.assertRaisesRegex(ValueError, 'partial'):
                 regenerate(product, sdk, revision)
             self.assertEqual(receipt['source'], source)
             self.assertEqual(calls[1:], [('sdkgen/generate.py', '--only', 'python', 'typescript'),
                                          ('sdkgen/generate.py', '--check', '--only', 'python', 'typescript')])
+
+    def test_catalog_must_be_what_the_committed_generator_renders(self):
+        provenance = checker['check_catalog_provenance']
+        generator = (b"import json\n"
+                     b"def generate_tool_manifest(contract_path, catalog_path):\n"
+                     b"    contract = json.loads(contract_path.read_text())\n"
+                     b"    return {'source_contract': contract_path.name, 'tool_count': len(contract['paths']),"
+                     b" 'tools': [{'name': n} for n in sorted(contract['paths'])]}\n")
+        api = json.dumps({'swagger': '2.0', 'paths': {'/a/': {}, '/b/': {}}}).encode()
+        rendered = (json.dumps({'source_contract': 'swagger.json', 'tool_count': 2,
+                                'tools': [{'name': '/a/'}, {'name': '/b/'}]}, indent=2) + '\n').encode()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for name, content in {checker['MCP_GENERATOR']: generator, checker['MCP_CATALOG']: b'tools: {}\n'}.items():
+                (repo / name).parent.mkdir(parents=True, exist_ok=True)
+                (repo / name).write_bytes(content)
+            subprocess.check_call(['git', '-C', repo, 'init', '-q'])
+            subprocess.check_call(['git', '-C', repo, 'add', '.'])
+            subprocess.check_call(['git', '-C', repo, '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid', 'commit', '-qm', 'gen'])
+            revision = subprocess.check_output(['git', '-C', repo, 'rev-parse', 'HEAD'], text=True).strip()
+            provenance(repo, revision, api, rendered)
+            # Any byte that the committed generator would not produce is rejected,
+            # whatever metadata fields the manifest carries.
+            for stale in (rendered.replace(b'"/b/"', b'"/c/"'), rendered[:-1], json.dumps({'x': 1}).encode()):
+                with self.assertRaisesRegex(ValueError, 'not generated from the committed OpenAPI'):
+                    provenance(repo, revision, api, stale)
 
     def test_regeneration_rejects_handwritten_changes_and_new_scaffolds(self):
         with tempfile.TemporaryDirectory() as tmp:

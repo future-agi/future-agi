@@ -1,6 +1,7 @@
 """Regenerate the SDK snapshot and compare the shipped Skills subset to committed product inputs."""
 
 import hashlib
+import importlib.util
 import json
 import re
 import subprocess
@@ -12,6 +13,8 @@ import yaml
 
 OPENAPI = 'api_contracts/openapi/swagger.json'
 MCP = 'futureagi/mcp_server/catalog/tools.generated.json'
+MCP_CATALOG = 'futureagi/mcp_server/catalog/tools.yaml'
+MCP_GENERATOR = 'futureagi/mcp_server/tool_generation.py'
 SKILLS = '/model-hub/skills/'
 HTTP_METHODS = {'get', 'put', 'post', 'delete', 'patch', 'head', 'options', 'trace'}
 CONTRACTS = ('swagger.json', 'mcp-tools.json', 'SOURCE.json')
@@ -185,13 +188,29 @@ def run_sdk(sdk, *args):
     subprocess.run([sys.executable, '-IB', *args], cwd=sdk, stdout=sys.stderr, check=True)
 
 
+def check_catalog_provenance(root, product, raw_api, raw_tools):
+    """The committed MCP manifest must be exactly what the committed generator renders
+    from the committed OpenAPI file and tool catalog. This does not depend on which
+    metadata fields the manifest carries (a contract hash or a tool-name fingerprint)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        (tmp / 'tool_generation.py').write_bytes(blob(root, product, MCP_GENERATOR))
+        (tmp / 'swagger.json').write_bytes(raw_api)
+        (tmp / 'tools.yaml').write_bytes(blob(root, product, MCP_CATALOG))
+        spec = importlib.util.spec_from_file_location('_committed_tool_generation', tmp / 'tool_generation.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        manifest = module.generate_tool_manifest(tmp / 'swagger.json', tmp / 'tools.yaml')
+    if (json.dumps(manifest, indent=2, sort_keys=False) + '\n').encode() != raw_tools:
+        raise ValueError('Product MCP catalog was not generated from the committed OpenAPI file')
+
+
 def regenerate(root, sdk, product):
     # Keep the expected bytes independent of the generator's writable inputs.
     raw_api, raw_tools = blob(root, product, OPENAPI), blob(root, product, MCP)
     api_hash, mcp_hash = sha(raw_api), sha(raw_tools)
     catalog = json.loads(raw_tools)
-    if catalog['source_contract_sha256'] != api_hash:
-        raise ValueError('Product MCP catalog was not generated from the committed OpenAPI file')
+    check_catalog_provenance(root, product, raw_api, raw_tools)
 
     contracts = sdk / 'sdkgen/contracts'
     metadata = contracts / 'SOURCE.json'

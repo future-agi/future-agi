@@ -357,12 +357,16 @@ def audit_mcp(before, after):
             f"Changed new Skills MCP tool: {name}",
         )
     metadata = {k: v for k, v in before.items() if k != "tools"}
-    metadata.update(
-        tool_count=len(new),
-        source_contract_sha256=hashlib.sha256(
+    metadata["tool_count"] = len(new)
+    # The manifest carries either a whole-contract hash or a tool-name fingerprint.
+    if "source_contract_sha256" in before:
+        metadata["source_contract_sha256"] = hashlib.sha256(
             (ROOT / SWAGGER).read_bytes()
-        ).hexdigest(),
-    )
+        ).hexdigest()
+    if "tool_names_sha256" in before:
+        metadata["tool_names_sha256"] = hashlib.sha256(
+            "\n".join(sorted(new)).encode()
+        ).hexdigest()
     check(
         canonical(metadata)
         == canonical({k: v for k, v in after.items() if k != "tools"}),
