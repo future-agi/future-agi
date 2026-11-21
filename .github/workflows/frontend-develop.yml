@@ -61,8 +61,10 @@ jobs:
   # cannot be trusted with it. With coverage on, vitest converts the coverage
   # on its main thread after the last test (70 to 105 seconds here). Past its
   # 60-second worker RPC limit it exits 1 with every test passed. So this job
-  # ignores vitest's exit code and fails when no coverage file was written.
-  # vitest writes none when a test failed, so a real failure is red here too.
+  # ignores vitest's exit code and fails only when no coverage file was
+  # written. reportOnFailure makes vitest write the file even when a test
+  # failed: a test that fails here and passes in quality-and-tests (the run is
+  # slower with coverage on) must not turn the coverage job red.
   coverage:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -84,7 +86,7 @@ jobs:
 
       - name: Run all tests with coverage
         run: |
-          yarn test:run --coverage || echo "::warning::vitest exited $? in the coverage run; quality-and-tests holds the verdict on the tests"
+          yarn test:run --coverage --coverage.reportOnFailure || echo "::warning::vitest exited $? in the coverage run; quality-and-tests holds the verdict on the tests"
           test -s coverage/lcov.info
         env:
           NODE_OPTIONS: --max-old-space-size=4096
