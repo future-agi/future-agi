@@ -1,7 +1,7 @@
 """Tests for integration Temporal activities."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,7 +31,7 @@ from integrations.transformers.langfuse_transformer import LangfuseTransformer
 class TestPollActiveIntegrations:
     @patch("integrations.temporal.activities.sync_integration_connection")
     def test_dispatches_due_connections(self, mock_sync, integration_connection):
-        integration_connection.last_synced_at = datetime.now(timezone.utc) - timedelta(
+        integration_connection.last_synced_at = datetime.now(UTC) - timedelta(
             minutes=10
         )
         integration_connection.sync_interval_seconds = 300
@@ -45,7 +45,7 @@ class TestPollActiveIntegrations:
 
     @patch("integrations.temporal.activities.sync_integration_connection")
     def test_skips_not_yet_due(self, mock_sync, integration_connection):
-        integration_connection.last_synced_at = datetime.now(timezone.utc) - timedelta(
+        integration_connection.last_synced_at = datetime.now(UTC) - timedelta(
             seconds=120
         )
         integration_connection.sync_interval_seconds = 300
@@ -527,7 +527,7 @@ class TestCheckIntegrationErrorAlerts:
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id
         ).update(
-            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
             last_error_notified_at=None,
         )
 
@@ -540,8 +540,8 @@ class TestCheckIntegrationErrorAlerts:
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id
         ).update(
-            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
-            last_error_notified_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
+            last_error_notified_at=datetime.now(UTC) - timedelta(hours=1),
         )
 
         check_integration_error_alerts()
@@ -562,12 +562,80 @@ class TestCheckIntegrationErrorAlerts:
         mock_send.assert_not_called()
 
     @patch("integrations.temporal.activities._send_error_notification")
+    def test_claims_before_sending(self, mock_send, error_connection):
+        """The notified timestamp is written before the email goes out, so a
+        run killed mid-send can't make the next run re-email the admins."""
+        IntegrationConnection.no_workspace_objects.filter(
+            id=error_connection.id
+        ).update(
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
+            last_error_notified_at=None,
+        )
+        seen = {}
+
+        def record(conn):
+            seen["at_send"] = IntegrationConnection.no_workspace_objects.get(
+                id=conn.id
+            ).last_error_notified_at
+
+        mock_send.side_effect = record
+
+        check_integration_error_alerts()
+        check_integration_error_alerts()  # a second run finds it claimed
+
+        assert seen["at_send"] is not None
+        mock_send.assert_called_once()
+
+    @patch("integrations.temporal.activities._send_error_notification")
+    def test_two_workers_holding_the_same_row_notify_once(
+        self, mock_send, error_connection
+    ):
+        """Review round 2: a second worker that selected the connection before
+        the first one claimed it must lose the claim, not re-email admins."""
+        IntegrationConnection.no_workspace_objects.filter(
+            id=error_connection.id
+        ).update(
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
+            last_error_notified_at=None,
+        )
+        manager = IntegrationConnection.no_workspace_objects
+        real_filter = manager.filter
+        stale = list(real_filter(id=error_connection.id))  # worker 2's read
+
+        check_integration_error_alerts()  # worker 1 claims and sends
+
+        def scan_returns_the_stale_copy(*args, **kwargs):
+            if "status" in kwargs:  # the activity's eligibility scan
+                return MagicMock(filter=MagicMock(return_value=stale))
+            return real_filter(*args, **kwargs)
+
+        with patch.object(manager, "filter", side_effect=scan_returns_the_stale_copy):
+            check_integration_error_alerts()  # worker 2, holding the old row
+
+        mock_send.assert_called_once()
+
+    @patch("integrations.temporal.activities._send_error_notification")
+    def test_failed_send_releases_claim_for_retry(self, mock_send, error_connection):
+        IntegrationConnection.no_workspace_objects.filter(
+            id=error_connection.id
+        ).update(
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
+            last_error_notified_at=None,
+        )
+        mock_send.side_effect = RuntimeError("nobody reached")
+
+        check_integration_error_alerts()
+
+        error_connection.refresh_from_db()
+        assert error_connection.last_error_notified_at is None
+
+    @patch("integrations.temporal.activities._send_error_notification")
     def test_notification_exception_does_not_crash(self, mock_send, error_connection):
         """If _send_error_notification raises, alert loop continues."""
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id
         ).update(
-            updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
             last_error_notified_at=None,
         )
         mock_send.side_effect = RuntimeError("SMTP down")

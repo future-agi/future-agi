@@ -154,6 +154,14 @@ user_urls = [
         name="annotation-digest-unsubscribe",
     ),
     path(
+        "notifications/email/unsubscribe/",
+        __import__(
+            "accounts.views.annotation_notifications",
+            fromlist=["EmailUnsubscribeView"],
+        ).EmailUnsubscribeView.as_view(),
+        name="email-notification-unsubscribe",
+    ),
+    path(
         "notifications/snooze/",
         __import__(
             "accounts.views.annotation_notifications",

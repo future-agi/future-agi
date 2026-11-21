@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1204,
+  endpointCount: 1205,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -1203,31 +1203,119 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    "/accounts/notifications/snooze/": {
+    "/accounts/notifications/email/unsubscribe/": {
       get: {
-        operationId: "accounts_notifications_snooze_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        operationId: "accounts_notifications_email_unsubscribe_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
         responses: {
           200: {
             type: "string",
           },
           400: {
-            $ref: "#/definitions/AccountsErrorResponse",
+            type: "string",
           },
-          401: {
-            $ref: "#/definitions/AccountsErrorResponse",
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
           },
-          403: {
-            $ref: "#/definitions/AccountsErrorResponse",
+        },
+      },
+      post: {
+        operationId: "accounts_notifications_email_unsubscribe_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmailUnsubscribeRequest",
+        },
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
           },
-          404: {
-            $ref: "#/definitions/AccountsErrorResponse",
+        },
+        responses: {
+          200: {
+            type: "string",
           },
-          500: {
-            $ref: "#/definitions/AccountsErrorResponse",
+          400: {
+            type: "string",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/accounts/notifications/snooze/": {
+      get: {
+        operationId: "accounts_notifications_snooze_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          days: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "string",
+          },
+          400: {
+            type: "string",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "accounts_notifications_snooze_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/SnoozeRequest",
+        },
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+          days: {
+            required: false,
+            schema: {
+              type: "integer",
+            },
+          },
+        },
+        responses: {
+          200: {
+            type: "string",
+          },
+          400: {
+            type: "string",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -1238,28 +1326,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/accounts/notifications/unsubscribe/": {
       get: {
         operationId: "accounts_notifications_unsubscribe_list",
-        runtimeRequestValidation: false,
-        runtimeResponseValidation: false,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          token: {
+            required: true,
+            schema: {
+              type: "string",
+            },
+          },
+        },
         responses: {
           200: {
             type: "string",
           },
           400: {
-            $ref: "#/definitions/AccountsErrorResponse",
-          },
-          401: {
-            $ref: "#/definitions/AccountsErrorResponse",
-          },
-          403: {
-            $ref: "#/definitions/AccountsErrorResponse",
-          },
-          404: {
-            $ref: "#/definitions/AccountsErrorResponse",
-          },
-          500: {
-            $ref: "#/definitions/AccountsErrorResponse",
+            type: "string",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -65621,6 +65704,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    EmailUnsubscribeRequest: {
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["unsubscribe", "resubscribe"],
+        },
+      },
+    },
     EmbeddingsResponse: {
       required: ["status", "result"],
       type: "object",
@@ -91747,6 +91840,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/SlackInstallResult",
+        },
+      },
+    },
+    SnoozeRequest: {
+      type: "object",
+      properties: {
+        action: {
+          title: "Action",
+          type: "string",
+          enum: ["snooze"],
         },
       },
     },

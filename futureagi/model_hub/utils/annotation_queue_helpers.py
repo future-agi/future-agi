@@ -3722,6 +3722,7 @@ def send_rule_completion_email(
     back.
     """
     from tfc.utils.email import email_helper
+    from tfc.utils.email_unsubscribe import AUTOMATION_RULE_RUNS
 
     recipients = _rule_completion_recipients(
         rule, triggered_by_user_id=triggered_by_user_id
@@ -3772,6 +3773,7 @@ def send_rule_completion_email(
                 "error_message": error_message or "",
             },
             to_email_list=recipients,
+            notification_category=AUTOMATION_RULE_RUNS,
         )
     except Exception as exc:
         logger.warning(

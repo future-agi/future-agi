@@ -116,9 +116,42 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.email
 
+    # Set only by tfc.utils.email_unsubscribe, the one writer of email opt-outs.
+    _writes_email_optouts = False
+
     @pg_response_save
     def save(self, *args, **kwargs):
-        return super().save(*args, **kwargs)
+        """Keep the stored email opt-outs whenever ``config`` is written.
+
+        Org and workspace switches rewrite the whole ``config``, often from a
+        user object cached at login, so their copy of the opt-outs can be
+        stale; saving it would silently resubscribe the user."""
+        update_fields = kwargs.get("update_fields")
+        writes_config = update_fields is None or "config" in update_fields
+        if self._state.adding or not writes_config or self._writes_email_optouts:
+            return super().save(*args, **kwargs)
+
+        from tfc.utils.email_unsubscribe import USER_CONFIG_KEY
+
+        positional_using = args[2] if len(args) > 2 else None
+        db = kwargs.get("using") or positional_using or self._state.db or "default"
+        with transaction.atomic(using=db):
+            stored = (
+                type(self)
+                ._base_manager.using(db)
+                .select_for_update()
+                .filter(pk=self.pk)
+                .values_list("config", flat=True)
+                .first()
+            )
+            optouts = (stored or {}).get(USER_CONFIG_KEY)
+            config = dict(self.config or {})
+            if optouts:
+                config[USER_CONFIG_KEY] = optouts
+            else:
+                config.pop(USER_CONFIG_KEY, None)
+            self.config = config
+            return super().save(*args, **kwargs)
 
     # --- Multi-org helpers ---
 

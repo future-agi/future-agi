@@ -1,6 +1,6 @@
 import time
 import traceback as tb_module
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from django.db.models import F, Q
@@ -24,7 +24,7 @@ def poll_active_integrations():
         IntegrationPlatform,
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     connections = (
         IntegrationConnection.no_workspace_objects.filter(
@@ -121,13 +121,11 @@ def sync_integration_connection(connection_id: str):
     connection.status = ConnectionStatus.SYNCING
     connection.save(update_fields=["status", "updated_at"])
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     # For backfill: use backfill_from date if set, otherwise sync from epoch
     # For incremental: use last_synced_at with overlap buffer
     if not connection.last_synced_at:
-        sync_from = connection.backfill_from or datetime(
-            2020, 1, 1, tzinfo=timezone.utc
-        )
+        sync_from = connection.backfill_from or datetime(2020, 1, 1, tzinfo=UTC)
     else:
         # Overlap buffer: re-scan the last 5 minutes to catch traces that
         # were in-flight during the previous sync (some sources index async,
@@ -187,7 +185,7 @@ def sync_integration_connection(connection_id: str):
                     if total_traces_fetched > 0
                     else SyncStatus.FAILED
                 )
-                sync_log.completed_at = datetime.now(timezone.utc)
+                sync_log.completed_at = datetime.now(UTC)
                 sync_log.traces_fetched = total_traces_fetched
                 sync_log.traces_created = total_traces_created
                 sync_log.traces_updated = total_traces_updated
@@ -387,7 +385,7 @@ def sync_integration_connection(connection_id: str):
         sync_log.status = (
             SyncStatus.SUCCESS if total_traces_fetched > 0 else SyncStatus.NO_NEW_DATA
         )
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.traces_fetched = total_traces_fetched
         sync_log.traces_created = total_traces_created
         sync_log.traces_updated = total_traces_updated
@@ -453,7 +451,7 @@ def sync_integration_connection(connection_id: str):
                 f"Partial sync: {total_traces_fetched} traces ingested before error. "
                 f"{error_msg[:200]}"
             )
-            connection.last_synced_at = datetime.now(timezone.utc)
+            connection.last_synced_at = datetime.now(UTC)
             sync_log.status = SyncStatus.PARTIAL
             IntegrationConnection.no_workspace_objects.filter(id=connection_id).update(
                 total_traces_synced=F("total_traces_synced")
@@ -473,7 +471,7 @@ def sync_integration_connection(connection_id: str):
             "type": type(e).__name__,
             "traceback": tb_module.format_exc(),
         }
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.traces_fetched = total_traces_fetched
         sync_log.traces_created = total_traces_created
         sync_log.traces_updated = total_traces_updated
@@ -486,7 +484,6 @@ def _sync_export_integration(connection):
     """Export Agentcc request logs to a push-based integration (Datadog, PostHog, etc.)."""
     from integrations.models import (
         ConnectionStatus,
-        IntegrationConnection,
         SyncLog,
         SyncStatus,
     )
@@ -501,7 +498,7 @@ def _sync_export_integration(connection):
     connection.status = ConnectionStatus.SYNCING
     connection.save(update_fields=["status", "updated_at"])
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Determine time window for log export.
     if not connection.last_synced_at:
@@ -559,7 +556,7 @@ def _sync_export_integration(connection):
         sync_log.status = (
             SyncStatus.SUCCESS if logs_sent > 0 else SyncStatus.NO_NEW_DATA
         )
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.traces_fetched = logs_sent
         sync_log.traces_created = logs_sent
         sync_log.spans_synced = metrics_sent
@@ -611,7 +608,7 @@ def _sync_export_integration(connection):
             "type": type(e).__name__,
             "traceback": tb_module.format_exc(),
         }
-        sync_log.completed_at = datetime.now(timezone.utc)
+        sync_log.completed_at = datetime.now(UTC)
         sync_log.save()
 
 
@@ -936,8 +933,8 @@ def check_integration_error_alerts():
     """Send email alerts for connections that have been in error state > 1 hour."""
     from integrations.models import ConnectionStatus, IntegrationConnection
 
-    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-    twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+    one_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+    twenty_four_hours_ago = datetime.now(UTC) - timedelta(hours=24)
 
     connections_in_error = IntegrationConnection.no_workspace_objects.filter(
         status=ConnectionStatus.ERROR,
@@ -949,11 +946,24 @@ def check_integration_error_alerts():
     )
 
     for conn in connections_in_error:
+        previous = conn.last_error_notified_at
+        claimed_at = datetime.now(UTC)
+        # Claim the notification before sending, atomically. If this run dies
+        # mid-send (the activity time limit, a worker restart) or another run
+        # overlaps, the next pick-up must not re-email admins already reached.
+        claimed = IntegrationConnection.no_workspace_objects.filter(
+            id=conn.id, last_error_notified_at=previous
+        ).update(last_error_notified_at=claimed_at)
+        if not claimed:
+            continue
         try:
             _send_error_notification(conn)
-            conn.last_error_notified_at = datetime.now(timezone.utc)
-            conn.save(update_fields=["last_error_notified_at"])
         except Exception as e:
+            # email_helper raises only when no admin was reached, so release
+            # the claim and let the next run retry.
+            IntegrationConnection.no_workspace_objects.filter(
+                id=conn.id, last_error_notified_at=claimed_at
+            ).update(last_error_notified_at=previous)
             logger.warning(
                 "Failed to send error notification",
                 connection_id=str(conn.id),
@@ -966,6 +976,7 @@ def _send_error_notification(connection):
     from accounts.models.user import User
     from tfc.constants.roles import OrganizationRoles
     from tfc.utils.email import email_helper
+    from tfc.utils.email_unsubscribe import INTEGRATION_ERRORS
 
     # Get org admins and owners
     admins = User.objects.filter(
@@ -989,6 +1000,7 @@ def _send_error_notification(connection):
             "error_message": connection.status_message or "Unknown error",
         },
         recipient_emails,
+        notification_category=INTEGRATION_ERRORS,
     )
 
 

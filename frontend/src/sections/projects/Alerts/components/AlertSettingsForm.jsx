@@ -20,6 +20,7 @@ import {
   convertFiltersToPayload,
   evalUsesChoiceThreshold,
   isSpanAttrFilterValid,
+  notificationPayload,
 } from "../common";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import AlertFilterBar from "./AlertFilterBar";
@@ -92,7 +93,7 @@ export default function AlertSettingsForm({
     reset,
     setError,
     trigger,
-    formState: { errors, isDirty },
+    formState: { errors, isDirty, defaultValues },
   } = useForm({
     defaultValues: buildFormValues(),
     resolver: zodResolver(AlertConfigValidationSchema),
@@ -381,17 +382,6 @@ export default function AlertSettingsForm({
     const { observation_type, span_attributes_filters } =
       convertFiltersToPayload(data?.filters);
 
-    const isSlack = data?.notification?.method === "slack";
-    const isWebhook = data?.notification?.method === "webhook";
-    const notificationPayload = {
-      notification_emails:
-        !isSlack && !isWebhook ? data?.notification?.emails ?? [] : [],
-      slack_webhook_url: isSlack
-        ? data?.notification?.slack?.webhookUrl ?? ""
-        : "",
-      slack_notes: isSlack ? data?.notification?.slack?.notes ?? "" : "",
-      webhook_url: isWebhook ? data?.notification?.webhook?.url ?? "" : "",
-    };
     if (
       selectedMetricOptions?.length > 0 &&
       data?.metric_type === "evaluation_metrics" &&
@@ -404,6 +394,11 @@ export default function AlertSettingsForm({
     }
 
     const isUpdate = Boolean(openSheetView && !duplicateAlertName);
+    const notificationFields = notificationPayload(
+      data?.notification,
+      defaultValues?.notification,
+      isUpdate,
+    );
     // Send the choice only for an eval known to take one. While the eval list
     // is unresolved an update leaves it out: the server keeps the stored choice
     // for a Pass/Fail eval and drops it for a score eval, where resending it
@@ -436,7 +431,7 @@ export default function AlertSettingsForm({
             threshold_metric_value: data?.threshold_metric_value,
           }),
       }),
-      ...notificationPayload,
+      ...notificationFields,
       ...(data?.threshold_type === "percentage_change" && {
         auto_threshold_time_window: data?.auto_threshold_time_window,
       }),

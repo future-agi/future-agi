@@ -111,6 +111,36 @@ class TimezoneResponseSerializer(serializers.Serializer):
     timezone = serializers.CharField()
 
 
+class EmailLinkQuerySerializer(serializers.Serializer):
+    """Query of an emailed notification link: the token signs who and what."""
+
+    token = serializers.CharField(
+        allow_blank=True, help_text="Signed token from the emailed link."
+    )
+
+
+class SnoozeLinkQuerySerializer(EmailLinkQuerySerializer):
+    days = serializers.IntegerField(
+        required=False, help_text="Days to pause realtime digests, 1 to 30 (default 7)."
+    )
+
+
+class SnoozeRequestSerializer(serializers.Serializer):
+    """Form body of the snooze page's Pause button."""
+
+    action = serializers.ChoiceField(choices=["snooze"], required=False)
+
+
+class EmailUnsubscribeRequestSerializer(serializers.Serializer):
+    """Form body of the unsubscribe page's buttons, or a mail client's RFC 8058
+    one-click POST, which sends ``List-Unsubscribe=One-Click`` and no
+    ``action`` and means unsubscribe. A POST with neither changes nothing."""
+
+    action = serializers.ChoiceField(
+        choices=["unsubscribe", "resubscribe"], required=False
+    )
+
+
 class AccountsMessageResultSerializer(serializers.Serializer):
     message = serializers.CharField()
 

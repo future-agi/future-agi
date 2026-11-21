@@ -259,7 +259,9 @@ class OTelContextMiddleware:
         try:
             # Route/path
             span.set_attribute("http.route", request.path)
-            span.set_attribute("http.url", request.build_absolute_uri())
+            # Without the query: it can hold a signed link token (unsubscribe
+            # links). The masked parameters are recorded just below.
+            span.set_attribute("http.url", request.build_absolute_uri(request.path))
 
             # Query parameters (masked)
             if request.GET:

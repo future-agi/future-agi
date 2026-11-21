@@ -279,9 +279,16 @@
         </tr>
         <tr>
           <td align="center" style="padding-top: 8px; font-family:'Inter',sans-serif; font-size:11px; color:#71717a; line-height:1.6;">
-            © Future AGI &nbsp;·&nbsp; You received this because you have an account on Future AGI.
+            © Future AGI &nbsp;·&nbsp; {% if unsubscribe_reason %}{{ unsubscribe_reason }}{% else %}You received this because you have an account on Future AGI.{% endif %}
           </td>
         </tr>
+        {% block unsubscribe_footer %}{% if unsubscribe_url %}
+        <tr>
+          <td align="center" style="padding-top: 8px; font-family:'Inter',sans-serif; font-size:11px; color:#a1a1aa; line-height:1.6;">
+            Don't want these emails? <a href="{{ unsubscribe_url }}" target="_blank" style="color:#d4d4d8; text-decoration:underline;">Unsubscribe</a>
+          </td>
+        </tr>
+        {% endif %}{% endblock %}
       </table>
     </td>
   </tr>

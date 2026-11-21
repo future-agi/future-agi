@@ -51,7 +51,8 @@ def test_user_timezone_invalid_value_uses_error_envelope(auth_client):
 
 @pytest.mark.django_db
 def test_unsubscribe_annotation_digest_happy_path(api_client, user):
-    """Valid token disables both digest tracks."""
+    """A valid legacy link asks for confirmation; it no longer acts on GET,
+    since link scanners prefetch URLs (one-click flow: test_email_unsubscribe)."""
     from model_hub.models.annotation_queues import AnnotationNotificationState
     from model_hub.utils.annotation_digest import _unsubscribe_token
 
@@ -61,11 +62,11 @@ def test_unsubscribe_annotation_digest_happy_path(api_client, user):
     token = _unsubscribe_token(user.id)
     response = api_client.get(f"/accounts/notifications/unsubscribe/?token={token}")
     assert response.status_code == 200
-    assert b"Unsubscribed" in response.content
-    assert user.email.encode() in response.content
+    assert b"Unsubscribe?" in response.content
+    assert user.email.lower().encode() in response.content
 
     state.refresh_from_db()
-    assert state.digest_enabled is False
+    assert state.digest_enabled is True
 
 
 @pytest.mark.django_db
@@ -78,15 +79,23 @@ def test_unsubscribe_annotation_digest_invalid_token(api_client):
 
 @pytest.mark.django_db
 def test_snooze_annotation_digest_happy_path(api_client, user):
-    """Valid token snoozes realtime track for N days."""
+    """GET asks (link scanners prefetch it); POST snoozes the realtime track."""
     from django.utils import timezone
 
     from model_hub.models.annotation_queues import AnnotationNotificationState
     from model_hub.utils.annotation_digest import _unsubscribe_token
 
     token = _unsubscribe_token(user.id)
+    url = f"/accounts/notifications/snooze/?token={token}&days=3"
+    page = api_client.get(url)
+    assert page.status_code == 200
+    assert b"Pause realtime emails?" in page.content
+    assert not AnnotationNotificationState.objects.filter(
+        user=user, realtime_snoozed_until__isnull=False
+    ).exists()
+
     before = timezone.now()
-    response = api_client.get(f"/accounts/notifications/snooze/?token={token}&days=3")
+    response = api_client.post(url, {"action": "snooze"}, format="multipart")
     assert response.status_code == 200
     assert b"Snoozed" in response.content
 
@@ -103,3 +112,19 @@ def test_snooze_annotation_digest_invalid_token(api_client):
     response = api_client.get("/accounts/notifications/snooze/?token=bad")
     assert response.status_code == 200
     assert b"Link expired" in response.content
+
+
+@pytest.mark.django_db
+def test_snooze_post_without_the_pause_button_changes_nothing(api_client, user):
+    from model_hub.models.annotation_queues import AnnotationNotificationState
+    from model_hub.utils.annotation_digest import _unsubscribe_token
+
+    token = _unsubscribe_token(user.id)
+    response = api_client.post(
+        f"/accounts/notifications/snooze/?token={token}&days=30", {}, format="multipart"
+    )
+
+    assert b"Snoozed" not in response.content
+    assert not AnnotationNotificationState.objects.filter(
+        user=user, realtime_snoozed_until__isnull=False
+    ).exists()

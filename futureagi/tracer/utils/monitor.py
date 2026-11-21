@@ -15,8 +15,10 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from slack_sdk.webhook import WebhookClient
 
+from tfc.routers import force_primary
 from tfc.temporal import temporal_activity
 from tfc.utils.email import email_helper
+from tfc.utils.email_unsubscribe import MONITOR_ALERTS
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.webhook_delivery import post_webhook
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
@@ -137,6 +139,13 @@ def get_interval_kind(monitor: UserAlertMonitor) -> str:
 
 def _send_alert_email(monitor: UserAlertMonitor, message: str, alert_type: str) -> None:
     """Sends an email notification for an alert."""
+    # Re-read the recipients: the monitor was loaded before the metric query,
+    # and someone may have unsubscribed (or been removed) since.
+    try:
+        with force_primary():
+            monitor.refresh_from_db(fields=["notification_emails"])
+    except UserAlertMonitor.DoesNotExist:
+        return
     if not monitor.notification_emails:
         return
     try:
@@ -149,6 +158,8 @@ def _send_alert_email(monitor: UserAlertMonitor, message: str, alert_type: str) 
                 "alert_type": alert_type,
             },
             to_email_list=list(monitor.notification_emails),
+            notification_category=MONITOR_ALERTS,
+            unsubscribe_scope=str(monitor.id),
         )
         logger.info(f"Sent {alert_type} alert email for monitor {monitor.id}")
     except Exception as e:
