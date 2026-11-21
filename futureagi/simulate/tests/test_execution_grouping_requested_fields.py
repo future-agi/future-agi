@@ -165,6 +165,41 @@ def _add_transcripts(call, count):
         )
 
 
+@pytest.mark.parametrize("filter_scenario", [False, True], ids=["plain", "scenario"])
+def test_grouping_without_search_aggregates_without_listing_call_ids(
+    auth_client, chat_run, filter_scenario
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    execution, add = chat_run
+    add("Checkout")
+    add("Returns")
+    params = {}
+    if filter_scenario:
+        params["filters"] = json.dumps(
+            [
+                {
+                    "column_id": "scenario",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "Checkout",
+                    },
+                }
+            ]
+        )
+    with CaptureQueriesContext(connection) as queries:
+        data = _detail(auth_client, execution, row_groups=["status"], **params)
+
+    assert _groups(data, "status") == [("completed", 1 if filter_scenario else 2)]
+    sql = [q["sql"] for q in queries.captured_queries]
+    call_pk = '"simulate_call_execution"."id"'
+    assert not any(q.startswith(f"SELECT DISTINCT {call_pk}") for q in sql)
+    (aggregate,) = [q for q in sql if f"COUNT({call_pk})" in q and "GROUP BY" in q]
+    assert f"{call_pk} IN (" not in aggregate
+
+
 def test_search_counts_each_matching_call_once(auth_client, chat_run):
     execution, add = chat_run
     calls = [add(score=4), add(score=4), add(score=1)]
