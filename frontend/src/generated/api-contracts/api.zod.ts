@@ -46829,10 +46829,11 @@ export const SimulateApiHarnessEnvironmentsDraftsResponse = zod.object({
           "failed",
           "check_unavailable",
           "superseded",
+          "outdated",
           "unavailable",
         ])
         .describe(
-          "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check.",
+          "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check; outdated: the changes or their decisions moved since they were validated, so Validate again.",
         ),
       job_id: zod
         .string()
@@ -47686,10 +47687,11 @@ export const SimulateApiHarnessEnvironmentsDraftsValidateDraftsResponse =
           "failed",
           "check_unavailable",
           "superseded",
+          "outdated",
           "unavailable",
         ])
         .describe(
-          "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check.",
+          "ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check; outdated: the changes or their decisions moved since they were validated, so Validate again.",
         ),
       job_id: zod
         .string()
