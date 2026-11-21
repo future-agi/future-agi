@@ -141,6 +141,7 @@ from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.call_provider import (
     call_agent_provider_expression,
     execution_agent_provider,
+    public_provider_call_data,
 )
 from simulate.services.call_rerun import (
     call_snapshot,
@@ -3908,7 +3909,7 @@ class CallExecutionDetailView(APIView):
             # collapsed raw_log tree. `include_call_logs=False` skips the
             # blocking GET against `artifact.logUrl`; CallExecutionLogsView
             # handles that asynchronously via the ingest task.
-            pcd = call_execution.provider_call_data or {}
+            pcd = public_provider_call_data(call_execution.provider_call_data or {})
             vapi_data = pcd.get("vapi") if isinstance(pcd.get("vapi"), dict) else None
             if vapi_data:
                 from tracer.utils.vapi import _extract_eval_attributes

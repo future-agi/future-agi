@@ -251,6 +251,58 @@ def test_get_eval_outputs_keeps_external_harness_results_without_config(
 
 
 @pytest.mark.django_db
+def test_private_livekit_state_is_not_call_response_data(auth_client, simulation_tree):
+    from types import SimpleNamespace
+
+    from model_hub.models.choices import QueueItemSourceType
+    from model_hub.utils.annotation_queue_helpers import resolve_source_content
+    from simulate.serializers.test_execution import CallExecutionSnapshotSerializer
+
+    call = simulation_tree["call_execution"]
+    tracks = {k: f"https://media.example/{k}" for k in ("combined", "stereo", "assistant", "customer")}
+    visible = {
+        "recording": tracks,
+        "recording_source": {"call_id": str(call.pk), "egress_id": "current"},
+        "verified_recording_tracks": {"assistant": {"url": tracks["assistant"]}},
+        "recording_error": {"code": "recording_cleanup_failed"},
+    }
+    private = {
+        "recording_cleanup_intent": "synthetic-raw-key-only-in-intent",
+        "recording_history": {"old": {"tracks": {"assistant": "https://archive.example/old-only"}}},
+        "recording_scope": {"workspace_id": "synthetic-private-scope"},
+    }
+    other = {"recording_history": "other-provider-public-field"}
+    stored = {"livekit": {**visible, **private}, "unrelated_provider": other}
+    expected = {"livekit": visible, "unrelated_provider": other}
+    call.provider_call_data = copy.deepcopy(stored)
+    call.simulation_call_type = CallExecution.SimulationCallType.VOICE
+    call.save(update_fields=["provider_call_data", "simulation_call_type"])
+    snapshot = CallExecutionSnapshot.objects.create(
+        call_execution=call, rerun_type=CallExecutionSnapshot.RerunType.CALL_AND_EVAL,
+        status=call.status, provider_call_data=copy.deepcopy(stored),
+    )
+
+    listing = auth_client.get("/simulate/api/call-executions/", {"test_execution_id": str(call.test_execution_id)})
+    detail = auth_client.get(f"/simulate/call-executions/{call.pk}/")
+    for response in (listing, detail):
+        assert response.status_code == 200
+        for sentinel in ("synthetic-raw-key-only-in-intent", "archive.example/old-only", "synthetic-private-scope"):
+            assert sentinel not in response.content.decode()
+    row = next(x for x in listing.json()["results"] if x["id"] == str(call.pk))
+    assert row["provider_call_data"] == expected
+    body = detail.json()
+    assert all(body["recordings"][k] == url for k, url in tracks.items())
+    assert body["attributes"]["raw_log"] == visible
+    assert CallExecutionSnapshotSerializer(snapshot).data["provider_call_data"] == expected
+    assert snapshot.provider_call_data == stored  # even the cached instance is unchanged
+    item = SimpleNamespace(source_type=QueueItemSourceType.CALL_EXECUTION.value, call_execution=call)
+    assert resolve_source_content(item)["provider_call_data"] == expected
+    assert call.provider_call_data == stored
+    call.refresh_from_db()
+    assert call.provider_call_data == stored
+
+
+@pytest.mark.django_db
 def test_hosted_recording_artifacts_surface_in_detail_recording_shape(simulation_tree):
     call_execution = simulation_tree["call_execution"]
     agent_definition = call_execution.test_execution.run_test.agent_definition

@@ -16,6 +16,7 @@ from model_hub.models.choices import (
 )
 from simulate.selectors.call_transcripts import with_speakers
 from simulate.serializers import CallTranscriptSerializer
+from simulate.services.call_provider import public_provider_call_data
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 
 if TYPE_CHECKING:
@@ -1892,7 +1893,7 @@ def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
                 "input": scenario_input,
                 "output": transcript_turns or raw_transcript or call_summary or "",
                 "metadata": call_meta,
-                "provider_call_data": provider,
+                "provider_call_data": public_provider_call_data(provider),
                 "monitor_call_data": getattr(call, "monitor_call_data", {}) or {},
                 "analysis_data": getattr(call, "analysis_data", {}) or {},
                 "evaluation_data": getattr(call, "evaluation_data", {}) or {},

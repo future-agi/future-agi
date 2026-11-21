@@ -1615,6 +1615,101 @@ class TestFetchAndPersistCallResultActivity:
         assert playback == (call_execution.recording_url, call_execution.stereo_recording_url)
         assert call_execution.recording_available
 
+    @pytest.mark.parametrize("outcome", ["empty", "lookup_error", "error_cas", "contention", "changed_map", "unsigned"])
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_pending_listing_rechecks_peer_intent(self, call_execution, recording_activity, outcome):
+        import asyncio
+        from django.db.models.query import QuerySet
+
+        io = recording_activity
+        tracks = {k: f"https://media/{k}" for k in ("combined", "stereo", "assistant", "customer")}
+        lk = call_execution.provider_call_data["livekit"]
+        lk.update(recording=tracks, recording_source={"call_id": str(call_execution.pk), "egress_id": "EG_1"})
+        await call_execution.asave(update_fields=["provider_call_data"])
+        objects = {"raw/one.ogg"}
+        io.delete.side_effect = lambda _config, key: objects.discard(key)
+        update = QuerySet.aupdate
+
+        async def interrupt_confirmation(query, **changes):
+            if changes.get("provider_call_data", {}).get("livekit", {}).get("recording_cleanup_success"):
+                assert not objects
+                raise asyncio.CancelledError
+            return await update(query, **changes)
+
+        async def install_peer_intent():
+            # B lists successfully, installs its intent and deletes the object,
+            # then loses the acknowledgement before the real ORM confirmation.
+            io.api.egress.list_egress.side_effect = None
+            with patch.object(QuerySet, "aupdate", new=interrupt_confirmation):
+                with pytest.raises(asyncio.CancelledError):
+                    await io.run()
+            await call_execution.arefresh_from_db()
+            pending = call_execution.provider_call_data["livekit"]
+            assert pending["recording_cleanup_intent"] and not pending.get("recording_cleanup_success")
+            if outcome == "changed_map":
+                pending["recording"]["customer"] = "https://media/replacement"
+            elif outcome == "unsigned":
+                pending["recording_cleanup_intent"] = "unsigned-example"
+            if outcome in ("changed_map", "unsigned"):
+                await call_execution.asave(update_fields=["provider_call_data"])
+
+        async def peer_during_listing(_request):
+            if outcome not in ("error_cas", "contention"):
+                await install_peer_intent()
+            if outcome == "lookup_error":
+                raise TimeoutError
+            return MagicMock(items=[])
+
+        misses = 0
+
+        async def peer_at_error_write(query, **changes):
+            nonlocal misses
+            pending = changes.get("provider_call_data", {}).get("livekit", {})
+            if outcome == "contention" and pending.get("recording_error"):
+                misses += 1
+                assert misses <= 3
+                await call_execution.arefresh_from_db()
+                call_execution.provider_call_data["peer_revision"] = misses
+                await call_execution.asave(update_fields=["provider_call_data"])
+                matched = await update(query, **changes)
+                assert matched == 0
+                return matched
+            if outcome == "error_cas" and pending.get("recording_error"):
+                await install_peer_intent()
+                matched = await update(query, **changes)
+                assert matched == 0
+                return matched
+            return await update(query, **changes)
+
+        io.api.egress.list_egress.side_effect = peer_during_listing
+        with patch.object(QuerySet, "aupdate", new=peer_at_error_write):
+            result = await io.run()
+        assert result.success
+        await call_execution.arefresh_from_db()
+        stored = call_execution.provider_call_data["livekit"]
+        if outcome == "contention":
+            assert misses == 3 and io.api.egress.list_egress.await_count == 1
+            io.delete.assert_not_called()
+            assert result.recording_error["code"] == "recording_source_changed"
+            assert not stored.get("recording_error") and not stored.get("recording_cleanup_success")
+            return
+        assert io.api.egress.list_egress.await_count == 2
+        if outcome in ("changed_map", "unsigned"):
+            io.delete.assert_called_once()
+            assert not stored.get("recording_cleanup_success")
+            if outcome == "changed_map":
+                assert result.recording_error["code"] == "recording_source_changed"
+                assert stored["recording"]["customer"] == "https://media/replacement"
+                assert not stored.get("recording_error")
+            else:
+                assert result.recording_error == stored["recording_error"]
+                assert result.recording_error["code"] == "recording_cleanup_failed"
+        else:
+            assert [c.args[1] for c in io.delete.call_args_list] == ["raw/one.ogg"] * 2
+            assert result.recording_error is None and not stored.get("recording_error")
+            assert stored["recording_cleanup_success"]["recording"] == tracks
+
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
     async def test_delete_ack_cannot_confirm_a_changed_map(self, call_execution, recording_activity):

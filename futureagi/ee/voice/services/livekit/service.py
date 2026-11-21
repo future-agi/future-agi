@@ -1013,10 +1013,11 @@ class LivekitService(VoiceServiceBlueprint):
 
         async def persist(
             *, cleanup_tracks=None, cleanup_error=None, reuse_confirmation=False,
-            prepare_key=None, expected_intent=None,
+            prepare_key=None, expected_intent=None, discovery_failed=False,
         ):
             # Only the read/compare/update is retried. Never hold a row lock
             # over LiveKit, S3, or the activity's subsequent cost lookup.
+            cas_misses = 0
             while True:
                 current = await CallExecution.objects.aget(id=call_execution_id)
                 data = current.provider_call_data or {}
@@ -1100,6 +1101,12 @@ class LivekitService(VoiceServiceBlueprint):
                         error = prior_error
                 elif confirmed:
                     error = None  # A later timeout cannot undo a confirmed deletion.
+                elif discovery_failed and verified_intent_key(lk.get(intent_field), cleanup_tracks):
+                    # Discovery raced a peer's prepare. Return its verified token
+                    # for one delete, not a confirmation or a stale lookup error.
+                    return RecordingUrls(
+                        provider_call_data=data, recording_fields_persisted=True
+                    )
                 elif prepare_key is not None:
                     updated["recording_scope"] = scope
                     if not verified_intent_key(lk.get(intent_field), merged):
@@ -1183,9 +1190,20 @@ class LivekitService(VoiceServiceBlueprint):
                         changes["recording_available"] = available
                 if updated != lk:
                     changes["provider_call_data"] = {**data, PROVIDER_KEY: updated}
+                if changes and cleanup_tracks is not None and cas_misses >= 3:
+                    # A continuously changing row wins. Do not keep retrying its
+                    # error/receipt write, or claim the proposed write succeeded.
+                    result.provider_call_data = data
+                    result.error = {
+                        "code": "recording_source_changed",
+                        "message": "Recording state changed; current recordings were kept.",
+                        "tracks": [],
+                    }
+                    return result
                 if changes and not await CallExecution.objects.filter(
                     **predicate
                 ).aupdate(**changes):
+                    cas_misses += 1
                     continue
                 if cleanup_tracks is None:
                     unused = [
@@ -1209,35 +1227,50 @@ class LivekitService(VoiceServiceBlueprint):
                 return await persist(cleanup_tracks=complete, reuse_confirmation=True)
             token = snapshot.get(intent_field)
             durable_key = verified_intent_key(token, complete)
+            failure = {
+                "code": "recording_cleanup_failed",
+                "message": "Tracks are available; raw recording cleanup could not be confirmed.",
+                "tracks": [],
+            }
+            if durable_key is None:
+                if object_key is None:
+                    # A pre-intent map needs either verified provider evidence
+                    # or an exact-map intent installed while discovery awaited.
+                    try:
+                        api = self._create_api()
+                        try:
+                            response = await api.egress.list_egress(
+                                ListEgressRequest(egress_id=egress_id)
+                            )
+                            for info in response.items:
+                                object_key = source_key(info)
+                                if object_key:
+                                    break
+                        finally:
+                            await api.aclose()
+                    except Exception:  # noqa: BLE001 - recheck durable evidence after provider failure
+                        object_key = None
+                prepared = await persist(
+                    cleanup_tracks=complete,
+                    prepare_key=object_key,
+                    discovery_failed=not object_key,
+                    cleanup_error=None if object_key else failure,
+                )
+                if prepared.error:
+                    return prepared
+                pending = prepared.provider_call_data[PROVIDER_KEY]
+                if pending.get("recording_cleanup_success") == _CleanupConfirmation(
+                    **identity, recording=complete
+                ):
+                    return prepared
+                token = pending.get(intent_field)
+                durable_key = verified_intent_key(token, complete)
+                if not durable_key:
+                    # No valid authority: never delete or report success.
+                    prepared.error = failure
+                    return prepared
             error = None
             try:
-                if durable_key is None and object_key is None:
-                    # A complete bound map predates deletion. Resolve its key
-                    # from LiveKit, never from a URL or mutable webhook file list.
-                    api = self._create_api()
-                    try:
-                        response = await api.egress.list_egress(
-                            ListEgressRequest(egress_id=egress_id)
-                        )
-                        for info in response.items:
-                            object_key = source_key(info)
-                            if object_key:
-                                break
-                    finally:
-                        await api.aclose()
-                if durable_key is None:
-                    if not object_key:
-                        raise ValueError("No verified completed egress file")
-                    prepared = await persist(cleanup_tracks=complete, prepare_key=object_key)
-                    if prepared.error:
-                        return prepared
-                    pending = prepared.provider_call_data[PROVIDER_KEY]
-                    if pending.get("recording_cleanup_success") == _CleanupConfirmation(**identity, recording=complete):
-                        return prepared
-                    token = pending[intent_field]
-                    durable_key = verified_intent_key(token, complete)
-                    if not durable_key:
-                        raise ValueError("No verified cleanup intent")
                 # S3 DeleteObject succeeds for a missing key. No HEAD/GET race.
                 await asyncio.to_thread(
                     delete_egress_recording, self.config, durable_key
@@ -1248,15 +1281,9 @@ class LivekitService(VoiceServiceBlueprint):
                     call_id=call_id_str,
                     egress_id=egress_id,
                 )
-                error = {
-                    "code": "recording_cleanup_failed",
-                    "message": "Tracks are available; raw recording cleanup could not be confirmed.",
-                    "tracks": [],
-                }
+                error = failure
             return await persist(
-                cleanup_tracks=snapshot["recording"],
-                cleanup_error=error,
-                expected_intent=token if durable_key else None,
+                cleanup_tracks=complete, cleanup_error=error, expected_intent=token,
             )
 
         if tracks.keys() == fields.keys():
