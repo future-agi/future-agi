@@ -268,6 +268,11 @@ def test_old_parts_and_bounded_backfill_through_schema_applier(monkeypatch):
                     "created_at": START + timedelta(seconds=1),
                 },
             )
+            span_mutations = (
+                "SELECT count() FROM system.mutations WHERE database = currentDatabase() "
+                "AND table = 'spans'"
+            )
+            mutations_before = client.query(span_mutations).result_rows[0][0]
             apply_file(client, SchemaFile.from_path(backfill.SCHEMA_PATH), "skill-test")
             # Applying the DDL a second time is harmless and never populates history.
             apply_file(client, SchemaFile.from_path(backfill.SCHEMA_PATH), "skill-test")
@@ -280,13 +285,8 @@ def test_old_parts_and_bounded_backfill_through_schema_applier(monkeypatch):
                 ).result_rows
             )
             assert old_lists == {historical["id"]: [VERSION], ordinary["id"]: []}
-            assert (
-                client.query(
-                    "SELECT count() FROM system.mutations WHERE database = currentDatabase() "
-                    "AND table = 'spans'",
-                ).result_rows[0][0]
-                == 0
-            )
+            # 028 never alters or mutates spans.
+            assert client.query(span_mutations).result_rows[0][0] == mutations_before
             monkeypatch.setattr(
                 backfill.Command,
                 "_client",
