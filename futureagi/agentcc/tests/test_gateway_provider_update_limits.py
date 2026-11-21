@@ -121,13 +121,19 @@ def test_legacy_concurrency_read_then_model_edit(auth_client, credential, rows, 
 
     response = auth_client.post(
         URL,
-        {"name": NAME, "config": {"default_timeout": config["default_timeout"],
-         "max_concurrent": 0, "models": [*config["models"], "additional"]}},
+        {
+            "name": NAME,
+            "config": {
+                "default_timeout": config["default_timeout"],
+                "max_concurrent": 0,
+                "models": [*config["models"], "additional"],
+            },
+        },
         format="json",
     )
     assert response.status_code == 200
     assert response.data["result"]["gateway_synced"] is True
-    assert rows.values_list("pk", "max_concurrent", "default_timeout_seconds", "models_list").get() == (
-        credential.pk, 0, 60, ["original", "additional"]
-    )
+    assert rows.values_list(
+        "pk", "max_concurrent", "default_timeout_seconds", "models_list"
+    ).get() == (credential.pk, 0, 60, ["original", "additional"])
     push.assert_called_once()
