@@ -91,6 +91,18 @@ def _decisions(draft: Any) -> dict[str, RecordedDecision]:
     }
 
 
+def decisions_digest(drafts: Mapping[str, Any]) -> str:
+    """A digest of the decisions the open drafts keep, by piece: what moves a review without moving a draft revision."""
+    import hashlib
+    import json
+
+    kept = {piece: _decisions(draft) for piece, draft in drafts.items()}
+    return (
+        "sha256:"
+        + hashlib.sha256(json.dumps(kept, sort_keys=True).encode()).hexdigest()
+    )
+
+
 def any_decision(environment: Any) -> bool:
     """Whether anyone decided a change on the environment's open drafts."""
     return any(
@@ -463,8 +475,11 @@ def check_review(
     changes = review["changes"]
     decided = any(one["decision"] for one in changes)
     if decided and digest_required and not expected_review_digest:
-        # Nothing moved: the request came from outside the review, which is still being decided.
-        raise review_in_progress()
+        # No digest: from outside a review still being decided, say so; with every change decided, the page has not
+        # read the review it acts on, so it is read again.
+        if any(not one["decision"] for one in changes):
+            raise review_in_progress()
+        raise review_stale()
     if expected_review_digest and expected_review_digest != review["review_digest"]:
         raise review_stale()
     if environment is not None and (

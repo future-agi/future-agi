@@ -1414,9 +1414,10 @@ def removed_scenarios(
     suite does not. The current suite is the open draft when there is one (a case removed only in the draft is
     offered from the default version), else the default saved version, else the live rows. An archived case is not
     removed and is not offered."""
-    from simulate.models import HarnessSuiteMember
+    from django.db.models import F
+
+    from simulate.models import HarnessSuiteMember, HarnessSuiteVersion
     from simulate.models.harness_versioning import VersionStatus
-    from simulate.services.harness_starting_records import scenario_token
 
     if drafted is not None:
         current = {row.scenario_key for row in drafted}
@@ -1432,33 +1433,50 @@ def removed_scenarios(
                 job=environment
             ).values_list("scenario_key", flat=True)
         )
-    members = (
+    # Newest saved version first, the version number breaking a tie: the first member of a key is the last saved
+    # version that held it. Only ids here; the documents are read once per chosen version below.
+    chosen: dict[str, Any] = {}
+    for member_id, key in (
         HarnessSuiteMember.no_workspace_objects.filter(
             suite_version__job=environment,
             suite_version__status=VersionStatus.ACTIVE,
         )
         .exclude(scenario_key__in=current)
-        .select_related("suite_version", "scenario")
-        .order_by("-suite_version__created_at")
+        .order_by(
+            "-suite_version__created_at",
+            F("suite_version__version_number").desc(nulls_last=True),
+        )
+        .values_list("id", "scenario_key")
+    ):
+        chosen.setdefault(key, member_id)
+    if not chosen:
+        return []
+    # An archived case is put away, not removed, whether or not its saved member still links its row.
+    archived = set(
+        HostedHarnessScenario.all_objects.filter(
+            job=environment, scenario_key__in=list(chosen), archived_at__isnull=False
+        ).values_list("scenario_key", flat=True)
+    )
+    members = list(
+        HarnessSuiteMember.no_workspace_objects.filter(
+            id__in=[one for key, one in chosen.items() if key not in archived]
+        ).select_related("scenario")
+    )
+    documents = dict(
+        HarnessSuiteVersion._base_manager.filter(
+            id__in={member.suite_version_id for member in members}
+        ).values_list("id", "documents")
     )
     removed: list[tuple[int, dict[str, Any]]] = []
-    seen: set[str] = set()
     for member in members:
-        # Newest saved version first: the first member of a key is the last saved version that held it.
-        if member.scenario_key in seen:
-            continue
-        seen.add(member.scenario_key)
         row = member.scenario
-        if row is not None and row.archived_at is not None:
-            continue
-        documents = (member.suite_version.documents or {}).get("scenarios") or []
+        held = (documents.get(member.suite_version_id) or {}).get("scenarios") or []
         content = next(
             (
                 one
-                for one in documents
+                for one in held
                 if isinstance(one, dict)
-                and scenario_token(one.get("scenario_key") or one.get("name"))
-                == scenario_token(member.scenario_key)
+                and one.get("scenario_key") == member.scenario_key
             ),
             member.content or {},
         )

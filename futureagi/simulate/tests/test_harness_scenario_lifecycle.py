@@ -308,6 +308,46 @@ def test_a_case_a_saved_version_dropped_is_offered_though_its_row_was_never_mark
     )
 
 
+def test_two_saved_versions_made_at_one_instant_offer_the_later_numbered_one(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import removed_scenarios
+
+    environment, older, row, _document = _removed_case(
+        user, workspace, storage, "lc-removed-same-instant"
+    )
+    # A second version holding the case, saved at the same instant as the first and numbered after it.
+    twin = _copy(
+        older,
+        HarnessSuiteVersion,
+        hash=older.hash[:-4] + "twin",
+        version_number=(older.version_number or 0) + 50,
+    )
+    _members_of(older, twin)
+    HarnessSuiteVersion._base_manager.filter(id=twin.id).update(
+        created_at=older.created_at
+    )
+
+    [removed] = removed_scenarios(environment)
+
+    assert removed["suite_version"] == str(twin.id)
+
+
+def test_an_archived_case_a_saved_version_dropped_is_not_offered(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import removed_scenarios
+
+    environment, _older, row, _document = _removed_case(
+        user, workspace, storage, "lc-removed-archived"
+    )
+    HostedHarnessScenario.all_objects.filter(id=row.id).update(
+        deleted=False, deleted_at=None, archived_at=timezone.now()
+    )
+
+    assert removed_scenarios(environment) == []
+
+
 def test_a_removed_case_is_offered_with_its_last_saved_content_not_its_first(
     user, workspace, storage
 ):

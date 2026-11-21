@@ -3,6 +3,7 @@
 import json
 import uuid
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -14,7 +15,7 @@ from simulate.models import (
     HarnessSuiteVersion,
     HostedHarnessScenario,
 )
-from simulate.services.harness_versioning import archives, drafts
+from simulate.services.harness_versioning import archives, drafts, review
 from simulate.services.harness_versioning.assembly import CERTIFICATE, SEALED_MANIFEST
 from simulate.services.harness_versioning.candidate_sets import live_set
 from simulate.services.harness_versioning.review_items import rule_key
@@ -304,14 +305,27 @@ def test_validate_needs_the_digest_once_decided(user, workspace, storage, auth_c
         {"actor:manager": "accepted", "actor:auditor": "accepted"},
     )
 
-    # No digest: the request came from outside the review; it says so, and blames nobody.
+    # Every change decided but no digest: the page has not read the review, so it is asked to read it again.
     missing = _validate(auth_client, environment)
-    assert missing.status_code == 409
-    assert missing.json()["error"] == "review_in_progress"
-    assert "View changes" in missing.json()["message"]
+    assert missing.status_code == 409 and missing.json()["error"] == "review_stale"
     old = _validate(auth_client, environment, before)
     assert old.status_code == 409 and old.json()["error"] == "review_stale"
     assert _validate(auth_client, environment, digest).status_code == 202
+
+
+def test_a_validate_from_outside_an_unfinished_review_says_to_finish_it(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-in-progress", storage)
+    _two_actors(auth_client, environment)
+    _decided(auth_client, environment, {"actor:manager": "accepted"})
+
+    # No digest, one change still undecided: it says so, and blames nobody.
+    missing = _validate(auth_client, environment)
+
+    assert missing.status_code == 409
+    assert missing.json()["error"] == "review_in_progress"
+    assert "View changes" in missing.json()["message"]
 
 
 def test_undecided_refused_once_any_decision_exists(
@@ -643,7 +657,7 @@ def test_failed_validation_keeps_draft_and_names_affected_scenarios(
 # --- step 5: Save --------------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("moved", ["draft_written", "decision_changed"])
+@pytest.mark.parametrize("moved", ["draft_written", "decision_changed", "piece_opened"])
 def test_a_validated_set_reads_superseded_once_what_save_would_save_moved(
     user, workspace, storage, auth_client, moved
 ):
@@ -654,7 +668,9 @@ def test_a_validated_set_reads_superseded_once_what_save_would_save_moved(
         environment,
         {"actor:manager": "accepted", "actor:auditor": "accepted"},
     )
-    before = _drafts(auth_client, environment)["validation"]["state"]
+    # Read on every drafts poll: the check compares what the set kept, never building the review.
+    with patch.object(review, "draft_review", side_effect=AssertionError("built")):
+        before = _drafts(auth_client, environment)["validation"]["state"]
 
     if moved == "draft_written":
         # A later write to the draft, such as a restore: its revision moves.
@@ -662,8 +678,17 @@ def test_a_validated_set_reads_superseded_once_what_save_would_save_moved(
         type(draft).no_workspace_objects.filter(id=draft.id).update(
             revision=draft.revision + 1
         )
-    else:
+    elif moved == "decision_changed":
         digest = _decided(auth_client, environment, {"actor:auditor": "rejected"})
+    else:
+        # A chat turn opens the other piece's draft after Validate.
+        opened = type(environment.suite_version).no_workspace_objects.get(
+            id=environment.suite_version_id
+        )
+        opened.pk = uuid.uuid4()
+        opened.status, opened.version_number, opened.revision = "draft", None, 1
+        opened.parent_id = environment.suite_version_id
+        opened.save()
     after = _drafts(auth_client, environment)["validation"]["state"]
     refused = _save(auth_client, environment, candidates, digest=digest)
 
