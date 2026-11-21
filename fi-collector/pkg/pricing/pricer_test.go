@@ -49,7 +49,8 @@ func TestTokenCostUsesRequestSnapshot(t *testing.T) {
 		}
 	}
 	price(batch, "p", 2.5)
-	resolved.SetProjectTypesInWorkspace("ws", map[string]string{"p": "experiment", "unknown": auth.ProjectTypeObserve})
+	resolved.DeleteProjectByID("p")
+	resolved.SetProjectTypesInWorkspace("ws", map[string]string{"unknown": auth.ProjectTypeObserve})
 	price(batch, "p", 2.5)
 	price(batch, "unknown", 2500)
 	fresh := WithProjectTypes(ctx, td)
