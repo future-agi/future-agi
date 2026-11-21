@@ -12,7 +12,7 @@ set -euo pipefail
 # Overrides: OSS_IMAGE, EE_IMAGE, CLOUD_IMAGE, CLOUD_DEPLOYMENT_SECRET,
 #   For local builds, digests, or a build-arg override, pass OSS_VARIANT
 #   (standard|slim), EXPECTED_FFMPEG_FLAVOR (debian|minimal), and the build's
-#   VERSION as argument 1. Set OSS_BUILD_REVISION to the full source SHA if not
+#   VERSION as argument 1. Set BUILD_SOURCE_REVISION to the full source SHA if not
 #   building HEAD. Release lookup needs PyYAML; a missing tag is read from origin in isolation.
 
 VERSION="${1:-latest}"
@@ -25,7 +25,7 @@ OSS_IMAGE="${OSS_IMAGE:-futureagi/future-agi:${VERSION}}"
 if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
   contract=$(python3 -I "$(dirname "$0")/oss-media-contract.py" "$VERSION" "$OSS_IMAGE" \
     "${OSS_VARIANT:-}" "${EXPECTED_FFMPEG_FLAVOR:-}") || exit 2
-  read -r OSS_VARIANT EXPECTED_FFMPEG_FLAVOR media_version encoders decoders <<< "$contract"
+  read -r OSS_VARIANT EXPECTED_FFMPEG_FLAVOR media_version encoders decoders scope <<< "$contract"
   if [[ -z "${1:-}" || "$VERSION" == latest ]]; then
     echo 'Supply the expected build version as argument 1, not latest.' >&2; exit 2
   fi
@@ -135,12 +135,7 @@ echo ""
 
 if [[ "$FLAVOR" == oss || "$FLAVOR" == all ]]; then
 echo "=== OSS Image: ${OSS_IMAGE} (${OSS_VARIANT} variant) ==="
-check "Has shared EE package tree" image_test "$OSS_IMAGE" test -d /app/backend/ee
-check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud
-check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
-  "import nltk; [nltk.data.find(p) for p in ('corpora/stopwords/', 'tokenizers/punkt_tab/english/', 'taggers/averaged_perceptron_tagger_eng/', 'corpora/wordnet/')]; assert nltk.word_tokenize('Future AGI') == ['Future', 'AGI']; assert nltk.pos_tag(['Future'])[0][1]"
-check "Runtime version matches requested build ($VERSION)" image_test "$OSS_IMAGE" sh -c 'test "$SERVICE_VERSION" = "$1"' sh "$VERSION"
-check "Version label matches requested build when present" version_label_matches "$OSS_IMAGE" "$VERSION"
+echo "OSS verification scope: $scope"
 check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" image_test "$OSS_IMAGE" sh -ec '
   marker=/usr/local/lib/futureagi/ffmpeg-flavor
   # Historical releases have no marker. Always check both active binaries.
@@ -198,6 +193,13 @@ check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" 
   done' sh "$EXPECTED_FFMPEG_FLAVOR" "$media_version" "$encoders" "$decoders"
 check "ffmpeg can encode mp3 and png" image_test "$OSS_IMAGE" sh -c "ffmpeg -hide_banner -encoders | grep -q libmp3lame && ffmpeg -hide_banner -encoders | grep -qw png"
 check "ffprobe starts" image_test "$OSS_IMAGE" ffprobe -hide_banner -version
+if [[ "$scope" == FULL ]]; then
+check "Has shared EE package tree" image_test "$OSS_IMAGE" test -d /app/backend/ee
+check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud
+check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
+  "import nltk; [nltk.data.find(p) for p in ('corpora/stopwords/', 'tokenizers/punkt_tab/english/', 'taggers/averaged_perceptron_tagger_eng/', 'corpora/wordnet/')]; assert nltk.word_tokenize('Future AGI') == ['Future', 'AGI']; assert nltk.pos_tag(['Future'])[0][1]"
+check "Runtime version matches requested build ($VERSION)" image_test "$OSS_IMAGE" sh -c 'test "$SERVICE_VERSION" = "$1"' sh "$VERSION"
+check "Version label matches requested build when present" version_label_matches "$OSS_IMAGE" "$VERSION"
 if [[ "$OSS_VARIANT" == standard ]]; then
   # A drop-in for what builds on it: the EE and cloud images run
   # `uv pip install` in it, and the simulation runner's hosted-harness jobs
@@ -228,6 +230,9 @@ check "CE base remains self-hosted with an invalid cloud secret" docker run --rm
   -e CLOUD_DEPLOYMENT=DEV \
   -e CLOUD_DEPLOYMENT_SECRET="$CLOUD_DEPLOYMENT_SECRET" \
   "$OSS_IMAGE" -c "import django; django.setup(); from tfc.capabilities import service; assert service.get_deployment_flavor().value == 'self_hosted_ee_image'"
+else
+  echo "Historical media checks only; full image boundary not evaluated."
+fi
 echo ""
 fi
 

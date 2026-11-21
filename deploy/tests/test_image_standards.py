@@ -1280,9 +1280,11 @@ class VerifyImageContents(unittest.TestCase):
         config.write_text(old)
         git("add", ".")
         git("commit", "-m", "old minimal configuration")
+        git("tag", "v1.56.1")
         git("tag", "v1.59.1")
         config.write_text(current)
         git("commit", "-am", "current minimal configuration")
+        git("tag", "v2.0.0")
 
     FAKE_DOCKER = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$DOCKER_LOG"
@@ -1315,6 +1317,7 @@ if [ "$1" = run ] && [ "${10}" = -ec ]; then
 fi
 case "$*" in
   *"org.opencontainers.image.version"*) printf '%s|\n' "${FAKE_LABEL+version=$FAKE_LABEL}"; exit 0 ;;
+  *presidio_analyzer*) [ "$FAKE_VARIANT" = standard ] && [ "${MISSING_PII:-}" != yes ]; exit $? ;;
   *"command -v uv"*|*"command -v git"*|*"git --version"*|*"import daytona"*|*omw-1.4*|*get_static_doc*)
     [ "$FAKE_VARIANT" = standard ]; exit $? ;;
   *'test "$SERVICE_VERSION"'*) [ "$FAKE_VERSION" = "${13}" ]; exit $? ;;
@@ -1458,6 +1461,16 @@ exit 0
                         proc.stdout,
                     )
 
+    def test_historical_media_does_not_require_later_runtime_features(self):
+        for tag, missing in [("v1.42.0", {"FAKE_VERSION": ""}), ("v1.56.1", {"MISSING_PII": "yes"})]:
+            with self.subTest(tag=tag):
+                proc = self.run_script(f"futureagi/future-agi:{tag}", version=tag, **missing)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertIn("OSS verification scope: MEDIA_ONLY", proc.stdout)
+                self.assertNotIn("SERVICE_VERSION", proc.docker_log)
+                self.assertNotIn("presidio_analyzer", proc.docker_log)
+                self.assertNotIn("--user 1000:1000", proc.docker_log)
+
     def test_archived_pre_variant_source(self):
         revision = "0ba21537d449835392dc8301b4122936a79db307"
         if subprocess.run(
@@ -1467,7 +1480,7 @@ exit 0
         helper = runpy.run_path(str(ROOT / "scripts/oss-media-contract.py"))
         self.assertEqual(
             helper["from_source"](ROOT, revision, False, "", "", ""),
-            ("standard", "debian", "-", "-", "-"),
+            ("standard", "debian", "-", "-", "-", "MEDIA_ONLY"),
         )
 
     def test_archived_release_sources(self):
@@ -1489,18 +1502,18 @@ exit 0
                 self.assertNotIn("libaom_av1", result[4].split(","))
 
     def test_the_default_tag_is_checked_as_feature_complete(self):
-        proc = self.run_script("futureagi/future-agi:v1.59.1")
+        proc = self.run_script("futureagi/future-agi:v2.0.0", version="v2.0.0")
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertIn("(standard variant)", proc.stdout)
         for check in ("Has uv", "Has git", "Has every NLTK package"):
             self.assertIn(f"PASS: {check}", proc.stdout)
         self.assertNotIn("No uv in the runtime image", proc.stdout)
-        self.assertIn("Runtime version matches requested build (v1.59.1)", proc.stdout)
+        self.assertIn("Runtime version matches requested build (v2.0.0)", proc.stdout)
         self.assertIn("--user 1000:1000", proc.docker_log)
 
     def test_a_slim_tag_is_checked_as_lean(self):
         for image, env in (
-            ("futureagi/future-agi:v1.59.1-slim", {"OLD_PAIR": "yes"}),
+            ("futureagi/future-agi:v2.0.0-slim", {"version": "v2.0.0"}),
             (
                 "futureagi/future-agi:local-slim",
                 {"OSS_VARIANT": "slim", "EXPECTED_FFMPEG_FLAVOR": "minimal"},
@@ -1515,7 +1528,7 @@ exit 0
 
     def test_a_slim_image_checked_as_standard_fails(self):
         proc = self.run_script(
-            "futureagi/future-agi:v1.59.1-slim",
+            "futureagi/future-agi:v2.0.0-slim",
             OSS_VARIANT="standard",
             EXPECTED_FFMPEG_FLAVOR="debian",
         )
@@ -1523,12 +1536,12 @@ exit 0
         self.assertIn("FAIL: Has uv", proc.stdout)
 
     def test_an_unknown_variant_is_a_usage_error(self):
-        proc = self.run_script("futureagi/future-agi:v1.59.1", OSS_VARIANT="lean")
+        proc = self.run_script("futureagi/future-agi:v2.0.0", OSS_VARIANT="lean")
         self.assertEqual(proc.returncode, 2)
 
     def test_wrong_flavor_fails_even_when_binaries_agree_with_each_other(self):
         proc = self.run_script(
-            "futureagi/future-agi:v1.59.1", FAKE_BIN="/usr/local/bin"
+            "futureagi/future-agi:v2.0.0", version="v2.0.0", FAKE_BIN="/usr/local/bin"
         )
         self.assertEqual(proc.returncode, 1)
         self.assertIn(
@@ -1551,14 +1564,14 @@ exit 0
     def test_version_label_is_optional_but_must_match_when_present(self):
         for env, expected in (
             ({}, 0),
-            ({"FAKE_LABEL": "v1.59.1"}, 0),
+            ({"FAKE_LABEL": "v2.0.0"}, 0),
             ({"FAKE_LABEL": "v9.9.9"}, 1),
             ({"FAKE_LABEL": ""}, 1),
-            ({"FAKE_LABEL": "v1.59.1\n"}, 1),
-            ({"FAKE_LABEL": "v1.59.1\n\n"}, 1),
+            ({"FAKE_LABEL": "v2.0.0\n"}, 1),
+            ({"FAKE_LABEL": "v2.0.0\n\n"}, 1),
         ):
             with self.subTest(env=env):
-                proc = self.run_script("futureagi/future-agi:v1.59.1", **env)
+                proc = self.run_script("futureagi/future-agi:v2.0.0", version="v2.0.0", **env)
                 self.assertEqual(proc.returncode, expected, proc.stdout)
                 outcome = "FAIL" if expected else "PASS"
                 self.assertIn(
@@ -1569,7 +1582,7 @@ exit 0
                 )
 
     def test_mismatched_service_version_fails(self):
-        proc = self.run_script("futureagi/future-agi:v1.59.1", FAKE_VERSION="dev")
+        proc = self.run_script("futureagi/future-agi:v2.0.0", version="v2.0.0", FAKE_VERSION="dev")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("FAIL: Runtime version", proc.stdout)
 

@@ -126,14 +126,18 @@ def contract(version, image, variant, flavor):
     if explicit:
         if variant not in ("standard", "slim") or flavor not in ("minimal", "debian"):
             raise ValueError("supply both OSS_VARIANT and EXPECTED_FFMPEG_FLAVOR")
-        ref = os.getenv("OSS_BUILD_REVISION", "HEAD")
+        ref = os.getenv("BUILD_SOURCE_REVISION", os.getenv("OSS_BUILD_REVISION", "HEAD"))
+        if os.getenv("OSS_BUILD_REVISION", ref) != ref:
+            raise ValueError("conflicting build revisions")
         if ref != "HEAD" and not re.fullmatch("[0-9a-f]{40}", ref):
-            raise ValueError("OSS_BUILD_REVISION must be a full build commit")
+            raise ValueError("expected a full build commit")
     else:
         if not re.fullmatch(r"v\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?", version):
             raise ValueError("expected a local release tag")
         base = "futureagi/future-agi:" + version
-        if image not in (base, base + "-slim") or "OSS_BUILD_REVISION" in os.environ:
+        if image not in (base, base + "-slim") or any(
+            key in os.environ for key in ("BUILD_SOURCE_REVISION", "OSS_BUILD_REVISION")
+        ):
             raise ValueError("supply explicit expectations for custom images")
         ref = "refs/tags/" + version
     # A shallow checkout may lack this tag. Fetch only that tag into a disposable
@@ -178,6 +182,10 @@ def contract(version, image, variant, flavor):
 def from_source(repo, ref, explicit, suffix, variant, flavor):
     revision = git("-C", repo, "rev-parse", "--verify", ref + "^{commit}")
 
+    # Explicit build inputs request the full boundary. Automatic release lookup
+    # only knows the media contract unless it resolves to this exact checkout.
+    scope = "FULL" if explicit or revision == git("rev-parse", "HEAD") else "MEDIA_ONLY"
+
     def source(path):
         return git("-C", repo, "cat-file", "blob", revision + ":" + path)
 
@@ -186,7 +194,7 @@ def from_source(repo, ref, explicit, suffix, variant, flavor):
         workflow = source(".github/workflows/release-images.yml")
         if "IMAGE_VARIANT" not in docker:
             pre_variant_debian(workflow, docker, suffix)
-            return "standard", "debian", "-", "-", "-"
+            return "standard", "debian", "-", "-", "-", scope
         default = one(r"^ARG IMAGE_VARIANT=(standard|slim)$", docker)
         variant = release_variant(workflow, suffix, default)
         if (
@@ -205,7 +213,7 @@ def from_source(repo, ref, explicit, suffix, variant, flavor):
         if resolved != flavor:
             raise ValueError("runtime package selection disagrees with build stage")
     if flavor == "debian":
-        return variant, flavor, "-", "-", "-"
+        return variant, flavor, "-", "-", "-", scope
     config = source("futureagi/docker/ffmpeg/configure-minimal.sh")
 
     configure = config.partition("if ! ./configure ")[2].partition('>"$LOG"')[0]
@@ -235,6 +243,7 @@ def from_source(repo, ref, explicit, suffix, variant, flavor):
         one(r"^ARG FFMPEG_VERSION=([\d.]+)$", docker),
         codecs("ENCODERS"),
         codecs("DECODERS"),
+        scope,
     )
 
 

@@ -250,8 +250,13 @@ pass the expected build version as the first argument to
 `scripts/verify-image-contents.sh`. For digests, local tags, or intentional
 build-arg overrides set both `OSS_VARIANT=standard|slim` and
 `EXPECTED_FFMPEG_FLAVOR=debian|minimal` from the build inputs. For example,
-Standalone from source uses `slim` and `minimal` by default. Only exact release
-tags with a recorded build contract can omit both variables.
+standalone from source uses `slim` and `minimal` by default. Only exact release
+tags with a recorded build contract can omit both variables. Automatic lookup
+prints `MEDIA_ONLY` when the tag resolves to a commit other than checkout HEAD:
+it checks the tagged FFmpeg recipe and active tools, not the full image boundary.
+A tag at HEAD or explicit build inputs select `FULL`, including runtime version,
+optional dependencies and writable directories. For explicit inputs set
+`BUILD_SOURCE_REVISION` (`OSS_BUILD_REVISION` is also accepted) to the full build SHA if it differs from checkout HEAD.
 
 The Helm chart has its own checks (they need `helm`, `kubeconform` and Python
 with PyYAML; the kind smoke test also needs `kind`, `kubectl` and images built
