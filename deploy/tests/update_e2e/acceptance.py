@@ -61,6 +61,14 @@ RELEASE_TOKEN_ENV = 'FAGI_UPDATE_RELEASE_TOKEN'
 # of the latest release, to rehearse a transition whose migrations the latest
 # release already contains. Unset for pull requests and the nightly run.
 UPGRADE_SOURCE_ENV = 'FAGI_UPDATE_E2E_UPGRADE_SOURCE'
+# A release is tagged and announced before its images exist: the release
+# workflow builds and pushes them afterwards (more than seven hours for
+# v1.59.1). Until then nobody can install the newest release, and a rehearsal
+# that starts from it fails in its first minute. For this long after the
+# newest release was published, the rehearsal starts from the release before
+# it while the newest has no complete image set. After that a release without
+# images is broken, and the rehearsal fails on it.
+SOURCE_IMAGE_GRACE_SECONDS = 24*60*60
 
 
 class _NoReleaseRedirects(HTTPRedirectHandler):
@@ -363,6 +371,52 @@ class NativeAcceptance:
         (self.out/('test-candidate-'+version+'.json')).write_bytes(canonical_json(manifest))
         return manifest,directory
 
+    def images_published(self, version):
+        """Whether every component image of `version` resolves in the registry."""
+        try:
+            for name,repository in COMPONENT_REPOSITORIES.items():
+                self.registry_digest('docker.io/'+repository+':'+version+COMPONENT_TAG_SUFFIX.get(name,''))
+        except (RuntimeError,ValueError):
+            return False
+        return True
+
+    def previous_stable_tag(self, version):
+        """The newest vX.Y.Z tag of this checkout that is older than `version`."""
+        tags = self.command(['git','tag','--list','v*']).decode().split()
+        older = sorted((parse_version(tag),tag) for tag in tags
+                       if is_version(tag) and parse_version(tag)[3] == 2 and parse_version(tag) < parse_version(version))
+        if not older:
+            raise ValueError('no stable release precedes the latest')
+        return older[-1][1]
+
+    def latest_source(self):
+        """The latest stable release, or the one before it while the latest has no images yet."""
+        release = get_json(RELEASE_API+'latest')
+        if release.get('draft') or release.get('prerelease'):
+            raise ValueError('latest source is not stable')
+        latest = release['tag_name']
+        # Refuses anything that is not a version before it reaches a command line.
+        if parse_version(latest)[3] != 2:
+            raise ValueError('latest source is not stable')
+        if self.images_published(latest):
+            return release
+        try:
+            published = datetime.strptime(release.get('published_at') or '','%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
+        except ValueError:
+            raise ValueError('latest source has no publication time') from None
+        age = (datetime.now(timezone.utc)-published).total_seconds()
+        if not 0 <= age <= SOURCE_IMAGE_GRACE_SECONDS:
+            raise ValueError('latest source has no published images')
+        previous = self.previous_stable_tag(latest)
+        fallback = get_json(RELEASE_API+'tags/'+previous)
+        if fallback.get('tag_name') != previous or fallback.get('draft') or fallback.get('prerelease'):
+            raise ValueError('upgrade source is not a published stable release')
+        (self.out/'upgrade-source.json').write_bytes(canonical_json(dict(schema_version=1,latest=latest,
+            source=previous,reason='latest_images_not_published')))
+        print('::warning title=Upgrade source::%s was published %d minutes ago and has no complete image set yet; '
+              'this rehearsal upgrades from %s' % (latest,age//60,previous),flush=True)
+        return fallback
+
     def pull_pr_image(self, image, digest, pr_tag):
         """Prove mirror resolution, tag agreement and Docker Hub RepoDigests."""
         repository = parse_image_ref(image).repository
@@ -502,9 +556,7 @@ class NativeAcceptance:
                 if release.get('tag_name') != source or release.get('draft') or release.get('prerelease'):
                     raise ValueError('upgrade source is not a published stable release')
             else:
-                release=get_json(RELEASE_API+'latest')
-                if release.get('draft') or release.get('prerelease'):
-                    raise ValueError('latest source is not stable')
+                release=self.latest_source()
             versions=[release['tag_name']]
         candidates,deployments={},{}
         for version in versions:

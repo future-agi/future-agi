@@ -541,6 +541,7 @@ jobs:
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/command-diagnostics.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/pr-image-transport.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/pr-built-images.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/upgrade-source.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/platform-images.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/cron-environment.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-budgets.json
