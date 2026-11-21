@@ -35,6 +35,9 @@ vi.mock("src/hooks/useDashboards", () => ({
     return {
       queryIdentity: args.propertyId,
       fetchStatus: isLoading || isFetchingNextPage ? "fetching" : "idle",
+      // These unit cases publish progress explicitly by changing the cursor.
+      tryStartNextPage: () =>
+        mockState.current.fetchNextPage() ?? new Promise(() => {}),
       ...mockState.current,
     };
   },
@@ -450,7 +453,6 @@ describe("FilterValueLabel", () => {
     mockState.current = unresolvedChain(nextRead);
     rerender(<FilterValueLabel filter={next} source="traces" />);
     expect(nextRead).toHaveBeenCalledTimes(1);
-    expect(nextRead).toHaveBeenCalledWith({ cancelRefetch: false });
     mockState.current = { ...mockState.current, data: DEFAULT_OPTIONS };
     rerender(<FilterValueLabel filter={next} source="traces" />);
     expect(screen.getByText("Project Alpha")).toBeInTheDocument();

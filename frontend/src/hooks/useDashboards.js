@@ -1282,6 +1282,22 @@ export function useDashboardFilterValues({
     ...query,
     data: values,
     queryIdentity,
+    // Unlike the picker's explicit Load more, a chip must not pay for joining
+    // another observer's request. Check the live cache and dispatch in the
+    // same turn. If the rendered page/error changed, let its observer rerender.
+    tryStartNextPage: () => {
+      const live = queryClient.getQueryState(queryKey);
+      if (
+        !query.hasNextPage ||
+        cursorChainStopped ||
+        live?.fetchStatus !== "idle" ||
+        live.data !== query.data ||
+        live.errorUpdateCount !== query.errorUpdateCount
+      ) {
+        return null;
+      }
+      return query.fetchNextPage({ cancelRefetch: false });
+    },
     continuationKey:
       !cursorChainStopped && query.hasNextPage
         ? getFilterValueNextCursor(lastPage) || null

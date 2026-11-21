@@ -11,6 +11,48 @@ import {
 
 const MAX_LABEL_CONTINUATION_READS = 12;
 
+const newWalk = (key) => ({ key, count: 0, cursor: null, pending: false });
+
+// An unspent cursor can wait on shared work without consuming a read. Once
+// started, this chip's request owns the cursor until progress or a new scope:
+// pending shows the skeleton; settled at the same cursor shows the raw ID.
+function useLabelContinuation(key, cursor, query) {
+  const {
+    fetchStatus,
+    isFetchNextPageError,
+    isFetchingNextPage,
+    tryStartNextPage,
+  } = query;
+  const [walk, setWalk] = useState(() => newWalk(key));
+  const spent = cursor === walk.cursor;
+  const failed = fetchStatus === "idle" && isFetchNextPageError;
+  if (walk.key !== key) {
+    setWalk(newWalk(key));
+  } else if (cursor && failed && !spent) {
+    // A sibling can own the failed continuation. Remember it too, but don't
+    // charge this chip or rely on the next ordinary refetch's error flags.
+    setWalk({ ...walk, cursor, pending: false });
+  }
+  const canStart =
+    cursor && !spent && !failed && walk.count < MAX_LABEL_CONTINUATION_READS;
+  useEffect(() => {
+    if (!canStart || fetchStatus !== "idle") return;
+    const request = tryStartNextPage();
+    if (!request) return;
+
+    const active = { key, cursor, count: walk.count + 1, pending: true };
+    setWalk(active);
+    const settle = () =>
+      setWalk((current) =>
+        current === active ? { ...active, pending: false } : current,
+      );
+    // A newer cursor/selection may already own the walk by settlement time.
+    void request.then(settle, settle);
+  }, [canStart, cursor, fetchStatus, key, tryStartNextPage, walk.count]);
+
+  return cursor && (canStart || (spent ? walk.pending : isFetchingNextPage));
+}
+
 export default function FilterValueLabel({
   filter,
   source,
@@ -31,22 +73,12 @@ export default function FilterValueLabel({
   // value list is time-windowed, so a filter on an older value would miss the
   // lookup and fall back to the raw value anyway.
   const labelsAreValues = filterLabelsMatchValues(filter);
-  const {
-    options,
-    queryIdentity,
-    isLoading,
-    fetchStatus,
-    continuationKey,
-    hasNextPage,
-    fetchNextPage,
-    isFetchingNextPage,
-    isFetchNextPageError,
-    cursorChainStopped,
-  } = useResolvedFilterOptions(
+  const query = useResolvedFilterOptions(
     filter,
     source,
     values.length > 0 && !labelsAreValues,
   );
+  const { options, queryIdentity, isLoading, continuationKey } = query;
 
   const byValue = useMemo(
     () => new Map(options.map((o) => [o.value, o.label ?? o.value])),
@@ -70,42 +102,20 @@ export default function FilterValueLabel({
     () => JSON.stringify([queryIdentity, values]),
     [queryIdentity, values],
   );
-  // Reset during render, not in an effect: `canReadMore` below reads the
-  // counter in this same render, so a new selection must see its fresh
-  // budget immediately rather than after some unrelated re-render.
-  const continuationReads = useRef({ key: budgetKey, count: 0, cursor: null });
-  if (continuationReads.current.key !== budgetKey) {
-    continuationReads.current = { key: budgetKey, count: 0, cursor: null };
-  }
   const hasUnresolved =
     hasValue && !labelsAreValues && values.some((v) => !byValue.has(v));
-  const canReadMore =
-    hasUnresolved &&
-    Boolean(hasNextPage) &&
-    Boolean(continuationKey) &&
-    !isFetchNextPageError &&
-    !cursorChainStopped &&
-    continuationReads.current.count < MAX_LABEL_CONTINUATION_READS;
-  useEffect(() => {
-    // A fast fetch can settle without rendering a fetching state. Drive the
-    // next read from the actual cursor, at most once per cursor for this chip.
-    // With cancelRefetch: false, a busy query joins its existing request. Wait
-    // for an idle query so a remount refetch doesn't spend this cursor's read.
-    if (
-      canReadMore &&
-      fetchStatus === "idle" &&
-      continuationReads.current.cursor !== continuationKey
-    ) {
-      continuationReads.current.cursor = continuationKey;
-      continuationReads.current.count += 1;
-      void fetchNextPage({ cancelRefetch: false });
-    }
-  }, [budgetKey, canReadMore, continuationKey, fetchStatus, fetchNextPage]);
+  const resolvingCursor = useLabelContinuation(
+    budgetKey,
+    hasUnresolved && query.hasNextPage && !query.cursorChainStopped
+      ? continuationKey
+      : null,
+    query,
+  );
   const isResolving =
     hasValue &&
     !labelsAreValues &&
     ((isLoading && options.length === 0) ||
-      (!byValue.has(values[0]) && (canReadMore || isFetchingNextPage)));
+      (!byValue.has(values[0]) && resolvingCursor));
   const extra = Math.max(labels.length - 1, 0);
   const entity = (filter?.name || "item").toLowerCase();
   const entityLabel = pluralize(entity, extra);
