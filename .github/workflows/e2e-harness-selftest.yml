@@ -6,7 +6,11 @@ on:
     paths:
       - "e2e/**"
       - "bin/e2e"
+      - "frontend/Dockerfile"
+      - "scripts/reclaim-runner-disk.sh"
+      - ".github/workflows/e2e-stack-profile.yml"
       - ".github/workflows/e2e-ci.yml"
+      - ".github/workflows/e2e-cache.yml"
       - ".github/workflows/e2e-harness-selftest.yml"
       # Inputs read outside e2e/ by the coverage and host-update self-tests.
       - ".github/PULL_REQUEST_TEMPLATE.md"
@@ -16,7 +20,11 @@ on:
     paths:
       - "e2e/**"
       - "bin/e2e"
+      - "frontend/Dockerfile"
+      - "scripts/reclaim-runner-disk.sh"
+      - ".github/workflows/e2e-stack-profile.yml"
       - ".github/workflows/e2e-ci.yml"
+      - ".github/workflows/e2e-cache.yml"
       - ".github/workflows/e2e-harness-selftest.yml"
       - ".github/PULL_REQUEST_TEMPLATE.md"
       - "api_contracts/host-update/**"

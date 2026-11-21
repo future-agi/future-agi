@@ -20,7 +20,7 @@ import {
   shardTestMatch,
 } from "../lib/shard.ts";
 import { grepInvertPattern } from "../lib/quarantine.ts";
-import { checkParity, fileDurations } from "./shard-report.mjs";
+import { checkParity, cohortAttempt, fileDurations } from "./shard-report.mjs";
 
 const flat = (groups) => groups.flat().sort();
 
@@ -279,6 +279,28 @@ test("parity passes only when every listed test has exactly one result", () => {
   });
 });
 
+test("a report can reuse an unsuperseded cohort but not a missing or changed sibling", () => {
+  const job = (i, attempt) => ({name: `e2e (distributed, ${i}/2)`, run_attempt: attempt});
+  const jobs = [job(1, 1), job(2, 1)];
+  assert.equal(cohortAttempt("distributed", 2, jobs), 1);
+  assert.throws(() => cohortAttempt("distributed", 2, [jobs[0]]), /missing/);
+  assert.throws(() => cohortAttempt("distributed", 2, [...jobs, job(2, 2)]), /mixed/);
+  assert.equal(cohortAttempt("distributed", 2, [...jobs, job(2, 2), job(1, 2)]), 2);
+});
+
+test("parity checks the listed project and declared outcome, not just result count", () => {
+  const plan = spec("flows/a.spec.ts", 1, "one", []);
+  const actual = spec("flows/a.spec.ts", 1, "one", [1]);
+  plan.tests[0].projectId = actual.tests[0].projectId = "chromium";
+  actual.tests[0].results[0].status = "skipped";
+  actual.tests[0].expectedStatus = "skipped";
+  assert.equal(checkParity(report(plan), report(actual), FILES).ok, false);
+  plan.tests[0].annotations = [{type: "skip", description: "not in this topology"}];
+  assert.equal(checkParity(report(plan), report(actual), FILES).ok, true);
+  actual.tests[0].projectId = "different";
+  assert.equal(checkParity(report(plan), report(actual), FILES).ok, false);
+});
+
 test("parity names a test that no shard ran, ran twice, never started or was not listed", () => {
   const one = spec("flows/a.spec.ts", 3, "one", [1]);
   const two = spec("flows/a.spec.ts", 9, "two", [1]);
@@ -357,8 +379,9 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
     "${{ !cancelled() && needs.changes.outputs.any == 'true' }}",
   );
   assert.deepEqual(jobs["e2e-tests"].needs, ["changes", "e2e", "report"]);
-  assert.equal(jobs["e2e-tests"].name, "E2E Tests Pass");
-  assert.equal(jobs["e2e-tests"].if, "always()");
+  const metadata = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)";
+  assert.equal(jobs["e2e-tests"].name, `\${{ ${metadata} && 'E2E metadata edit' || 'E2E Tests Pass' }}`);
+  assert.equal(jobs["e2e-tests"].if, `\${{ always() && !(${metadata}) }}`);
 });
 
 test("the E2E gate passes only on a green suite with its report, or when nothing was needed", () => {
@@ -417,6 +440,8 @@ test("the report job requires proof that the once-per-stack steps ran and passed
     CATALOG: "${{ steps.catalog.outcome }}",
     SDK_PYTHON: "${{ steps.sdk-python.outcome }}",
     SDK_TYPESCRIPT: "${{ steps.sdk-typescript.outcome }}",
+    SDK_SHA: "${{ steps.sdk-ref.outputs.ref }}",
+    TOTAL: "${{ needs.changes.outputs.shard_total }}",
   });
   assert.equal(step(jobs.e2e, "Flow catalog is current").id, "catalog");
   assert.equal(step(jobs.e2e, "Python SDK live suite").id, "sdk-python");
@@ -425,11 +450,11 @@ test("the report job requires proof that the once-per-stack steps ran and passed
     "sdk-typescript",
   );
   const upload = step(jobs.e2e, "Upload the once-per-stack record");
-  assert.equal(upload.with.name, "once-per-stack-${{ matrix.stack }}");
+  assert.equal(upload.with.name, "once-per-stack-${{ matrix.stack }}-attempt-${{ github.run_attempt }}");
   assert.equal(upload.with["if-no-files-found"], "error");
   // A missing record fails the download; a record with a skip fails the check.
-  const download = step(jobs.report, "Download the once-per-stack record");
-  assert.equal(download.with.name, "once-per-stack-${{ matrix.stack }}");
+  const download = step(jobs.report, "Download verified shard and once-per-stack receipts");
+  assert.equal(download.run, "node scripts/shard-report.mjs receipts");
   assert.equal(download.if, undefined);
   const check = step(
     jobs.report,
@@ -450,11 +475,12 @@ test("the report job requires proof that the once-per-stack steps ran and passed
       [outcomes("skipped", "skipped", "skipped"), false],
       [outcomes("success", "success", "failure"), false],
       [{ flow_catalog_check: "success" }, false],
+      [{ a: "success", b: "success", c: "success" }, false],
       [{}, false],
     ]) {
       writeFileSync(
         path.join(dir, "once-per-stack", "record.json"),
-        JSON.stringify(content),
+        JSON.stringify({outcomes: content}),
       );
       const run = spawnSync(
         "bash",

@@ -20,7 +20,12 @@ case "${EVENT_NAME:?EVENT_NAME is required}" in
   merge_group) base=${MERGE_GROUP_BASE:-} ;;
   *) base= ;;
 esac
-if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+if [[ "$EVENT_NAME" == pull_request || "$EVENT_NAME" == merge_group ]]; then
+  if ! [[ "$base" =~ ^[0-9a-f]{40}$ ]] || [[ "$base" =~ ^0+$ ]]; then
+    echo "Missing immutable comparison base for $EVENT_NAME" >&2
+    exit 1
+  fi
+elif [[ -z "$base" || "$base" =~ ^0+$ ]]; then
   base=origin/main
 fi
 printf '%s\n' "$base"

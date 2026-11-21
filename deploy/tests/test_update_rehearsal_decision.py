@@ -1,5 +1,5 @@
 """When Update CI runs its two Real rehearsals (stdlib only)."""
-import fnmatch
+import runpy
 from pathlib import Path
 import subprocess
 import unittest
@@ -30,11 +30,12 @@ class RehearsalDecisionTest(unittest.TestCase):
         self.assertEqual(decide("schedule"), BOTH)
         self.assertEqual(decide("workflow_dispatch"), BOTH)
 
-    def test_a_push_and_a_merge_group_never_rehearse(self):
+    def test_a_main_push_and_a_merge_group_never_rehearse(self):
         # Three hours per job would stall a merge queue.
         loud = {"LABELLED": "true", "TOOLING_CHANGED": "true", "BUILT_CHANGED": "true", "BASE_REF": "main"}
         self.assertEqual(decide("push", **loud), NEITHER)
         self.assertEqual(decide("merge_group", **loud), NEITHER)
+        self.assertEqual(decide("push", BASE_REF="dev"), BOTH)
 
     def test_an_ordinary_pull_request_does_not_rehearse(self):
         self.assertEqual(decide("pull_request", BASE_REF="dev", **QUIET), NEITHER)
@@ -65,19 +66,19 @@ class RehearsalWorkflowTest(unittest.TestCase):
         self.changes = self.text.split("\n  changes:\n", 1)[1].split("\n  safety:\n", 1)[0]
 
     def test_both_real_jobs_follow_the_decision_and_fail_open(self):
-        fail_open = "(needs.changes.result != 'success' && github.event_name != 'push' && github.event_name != 'merge_group')"
+        fail_open = "(needs.changes.result != 'success' && github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))"
         for job, output in (("automatic-upgrade", "upgrade"), ("automatic-a-b-c", "abc")):
             body = self.text.split("\n  " + job + ":\n", 1)[1]
             condition = next(line.strip() for line in body.splitlines() if line.strip().startswith("if: "))
             self.assertEqual(
                 condition,
-                "if: ${{ !cancelled() && (needs.changes.outputs." + output + " == 'true' || " + fail_open + ") }}",
+                "if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.outputs." + output + " == 'true' || " + fail_open + ") }}",
                 job,
             )
             self.assertIn("    needs: changes\n", body.split("    steps:", 1)[0])
         self.assertIn("      upgrade: ${{ steps.decide.outputs.upgrade }}\n", self.changes)
         self.assertIn("      abc: ${{ steps.decide.outputs.abc }}\n", self.changes)
-        self.assertIn('run: bash scripts/update-rehearsal-decision.sh >> "$GITHUB_OUTPUT"', self.changes)
+        self.assertIn('git show "$POLICY:scripts/update-rehearsal-decision.sh"', self.changes)
 
     def test_the_nightly_and_a_manual_run_still_exist(self):
         triggers = self.text.split("\npermissions:", 1)[0]
@@ -91,37 +92,20 @@ class RehearsalWorkflowTest(unittest.TestCase):
         self.assertIn("LABELLED: ${{ steps.labels.outputs.rehearsal == 'true' }}", self.changes)
 
     def test_documents_and_json_registers_under_deploy_update_do_not_trigger(self):
-        code = self.changes.split("      - id: update-code\n", 1)[1].split("      - id: labels\n", 1)[0]
-        self.assertIn("predicate-quantifier: every", code)
-        for pattern in ("'deploy/update/**'", "'!**/*.md'", "'!**/*.json'"):
-            self.assertIn("              - " + pattern + "\n", code)
-        tooling = self.changes.split("            tooling:\n", 1)[1].split("            # What only latest-stable", 1)[0]
-        listed = [line.strip()[3:-1] for line in tooling.splitlines() if line.strip().startswith("- '")]
-        # No whole-source glob: an ordinary backend or docs change must not run three-hour jobs.
-        for pattern in listed:
-            self.assertFalse(pattern.startswith("**"), pattern)
-            self.assertNotIn(pattern, ("deploy/**", "futureagi/**", "scripts/**", "bin/**"))
-        for required in ("bin/update", "deploy/tests/update_e2e/**", "docker-compose*.yml",
-                         "scripts/update-rehearsal-decision.sh", ".github/workflows/update-ci.yml"):
-            self.assertIn(required, listed)
+        classify = runpy.run_path(str(ROOT / '.github/scripts/ci_scope.py'))['rehearsal_inputs']
+        for path in (b'deploy/update/review.json', b'deploy/update/README.md', b'futureagi/example.py'):
+            self.assertEqual(classify([path]), (False, False))
+        for path in (b'bin/update', b'deploy/tests/update_e2e/run.py', b'docker-compose.yml',
+                     b'scripts/update-rehearsal-decision.sh', b'.github/workflows/update-ci.yml'):
+            self.assertEqual(classify([path]), (True, False))
 
     def test_what_the_images_build_and_boot_triggers_latest_stable_only(self):
-        built = self.changes.split("            built:\n", 1)[1].split("      - id: update-code\n", 1)[0]
-        listed = [line.strip()[3:-1] for line in built.splitlines() if line.strip().startswith("- '")]
-        for required in ("futureagi/**/migrations/**", "futureagi/tfc/settings/**", "futureagi/uv.lock", "**/Dockerfile*",
-                         "**/dockerfile*", "**/entrypoint.sh", "**/docker-entrypoint.sh"):
-            self.assertIn(required, listed)
-        self.assertIn("BUILT_CHANGED: ${{ steps.filter.outputs.built == 'true' }}", self.changes)
-        # Every image build and entrypoint in the repository matches a pattern.
-        tracked = subprocess.run(
-            ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
-        ).stdout.splitlines()
-        for path in tracked:
-            name = path.rsplit("/", 1)[-1]
-            if name.lower().startswith("dockerfile") or name.endswith("entrypoint.sh"):
-                self.assertTrue(
-                    any(fnmatch.fnmatchcase("/" + path, "*" + pattern.lstrip("*")) for pattern in listed), path
-                )
+        classify = runpy.run_path(str(ROOT / '.github/scripts/ci_scope.py'))['rehearsal_inputs']
+        self.assertIn('BUILT_CHANGED: ${{ steps.filter.outputs.built }}', self.changes)
+        tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT).split(b'\0')
+        for path in [b'futureagi/app/migrations/002.py', b'futureagi/tfc/settings/test.py', b'futureagi/uv.lock',
+                     *(p for p in tracked if p.rsplit(b'/', 1)[-1].lower().startswith(b'dockerfile') or p.endswith(b'entrypoint.sh'))]:
+            self.assertTrue(classify([path])[1], path)
 
 if __name__ == "__main__":
     unittest.main()

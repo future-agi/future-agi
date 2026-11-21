@@ -26,9 +26,14 @@ class UpdateSafetyBaseTest(unittest.TestCase):
 
     def test_an_event_ignores_the_other_events_values(self):
         # A merge group carries no pull request and no "before".
-        self.assertEqual(resolve("merge_group", PR_BASE=SHA, PUSH_BEFORE=SHA), (0, "origin/main"))
+        self.assertNotEqual(resolve("merge_group", PR_BASE=SHA, PUSH_BEFORE=SHA)[0], 0)
         self.assertEqual(resolve("schedule", PR_BASE=SHA, PUSH_BEFORE=SHA, MERGE_GROUP_BASE=SHA),
                          (0, "origin/main"))
+
+    def test_candidate_bases_must_be_immutable_commits(self):
+        for event, key in (("pull_request", "PR_BASE"), ("merge_group", "MERGE_GROUP_BASE")):
+            for invalid in ("", ZERO, "origin/dev", "-HEAD", SHA[:12]):
+                self.assertNotEqual(resolve(event, **{key: invalid})[0], 0)
 
     def test_runs_without_a_change_compare_with_the_released_line(self):
         # A scheduled run checks out main. origin/dev made it fail on a release

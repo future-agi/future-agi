@@ -7,6 +7,9 @@ on:
       - "frontend/**"
       - ".github/workflows/frontend-feature.yml"
 
+permissions:
+  contents: read
+
 concurrency:
   # A newer push to the branch cancels the older run.
   group: frontend-feature-${{ github.ref }}
@@ -19,15 +22,7 @@ jobs:
     steps:
       - name: Validate branch name
         run: |
-          echo "🔍 Validating branch name: ${{ github.ref_name }}"
-
-          # Get branch name (handle both push and PR events)
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            branch_name="${{ github.head_ref }}"
-          else
-            branch_name="${{ github.ref_name }}"
-          fi
-
+          branch_name="$GITHUB_REF_NAME"
           echo "Branch name: $branch_name"
 
           # Define the regex pattern for valid branch names
@@ -49,7 +44,8 @@ jobs:
     needs: validate-branch-name
     permissions:
       contents: read
-      pull-requests: read # to see whether the branch has an open pull request
+      pull-requests: read
+      actions: read
     defaults:
       run:
         working-directory: frontend
@@ -58,8 +54,100 @@ jobs:
         with:
           # The design-system check diffs against origin/dev or origin/main.
           fetch-depth: 0
+          persist-credentials: false
+
+      # A PR branch name, or even an open PR at this commit, isn't coverage.
+      # Delegate only after the equivalent PR checks have passed. On a race
+      # or lookup error the feature run keeps its own verdict.
+      - name: Find equivalent frontend PR run
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const assert = require('node:assert/strict');
+            const { execFileSync } = require('node:child_process');
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+            const repo = context.repo;
+            const id = context.payload.repository.id;
+            const sha = context.sha;
+            const branch = process.env.GITHUB_REF_NAME;
+            const samePR = p => p.head?.repo?.id === id && p.base?.repo?.id === id && p.head.ref === branch && p.head.sha === sha;
+            const passed = x => x.status === 'completed' && x.conclusion === 'success';
+            const step = (job, name) => job.steps?.some(s => s.name === name && passed(s));
+            const quality = ['Design system lint (changed lines)', 'Design system opt-outs', 'Type check (advisory)', 'Run all tests'];
+            const marker = p => `PR inputs ${p.base.sha} ${sha} ${p.merge_commit_sha}`;
+            function equivalent(p, run, jobs, nearest, sameTree) {
+              return samePR(p) && p.base.sha === nearest && sameTree && run?.head_repository?.id === id &&
+                run.head_sha === sha && passed(run) && run.pull_requests?.some(r => r.number === p.number &&
+                  r.head.sha === sha && r.base.sha === p.base.sha) &&
+                jobs.some(j => j.name === 'quality-and-tests' && passed(j) && [...quality, marker(p)].every(n => step(j, n))) &&
+                jobs.some(j => j.name === 'build-check' && passed(j) && step(j, 'Build application'));
+            }
+
+            // Exercise the decision independently of API availability. Matching a
+            // branch, a stale job or only the tree of a stacked PR is not proof.
+            const fixture = { number: 1, base: { repo: { id }, sha: 'base' }, head: { repo: { id }, ref: branch, sha }, merge_commit_sha: 'merge' };
+            const success = { status: 'completed', conclusion: 'success' };
+            const pending = { status: 'in_progress', conclusion: null };
+            const proof = { head_repository: { id }, head_sha: sha, ...success, pull_requests: [fixture] };
+            const checks = [
+              { name: 'quality-and-tests', ...success, steps: [...quality, marker(fixture)].map(name => ({ name, ...success })) },
+              { name: 'build-check', ...success, steps: [{ name: 'Build application', ...success }] },
+            ];
+            assert(equivalent(fixture, proof, checks, 'base', true));
+            const unfinished = checks.map(j => ({ ...j, ...pending, steps: j.steps.map(s =>
+              ['Run all tests', 'Build application'].includes(s.name) ? { ...s, ...pending } : s) }));
+            assert(!equivalent(fixture, { ...proof, ...pending }, unfinished, 'base', true));
+            for (const i of [0, 1]) {
+              for (const state of [pending, { ...success, conclusion: 'failure' }, { ...success, conclusion: 'cancelled' }]) {
+                assert(!equivalent(fixture, proof, checks.with(i, { ...checks[i], ...state }), 'base', true));
+              }
+              assert(!equivalent(fixture, proof, checks.with(i, { ...checks[i], steps: unfinished[i].steps }), 'base', true));
+            }
+            assert(!equivalent({ ...fixture, head: { ...fixture.head, repo: { id: -1 } } }, proof, checks, 'base', true));
+            assert(!equivalent(fixture, { ...proof, head_sha: 'old' }, checks, 'base', true));
+            assert(!equivalent(fixture, proof, checks, 'stack-parent', true));
+            assert(!equivalent(fixture, proof, checks, 'base', false));
+            assert(!equivalent(fixture, proof, checks.slice(0, 1), 'base', true));
+            assert(!equivalent(fixture, { ...proof, status: 'completed', conclusion: 'cancelled' }, checks, 'base', true));
+
+            async function lookup() {
+              const { data: pulls } = await github.rest.pulls.list({ ...repo, state: 'open', head: `${repo.owner}:${branch}` });
+              const matches = pulls.filter(samePR);
+              if (matches.length !== 1) return;
+              const [pr] = matches;
+              if (!/^[0-9a-f]{40}$/.test(pr.merge_commit_sha)) return;
+
+              // Match lint-ds-changed's nearest-base contract. If the PR would
+              // lint fewer lines than the feature push, retain the feature check.
+              let nearest, best = Infinity;
+              for (const ref of ['origin/dev', 'origin/main']) {
+                let base;
+                try { base = git('merge-base', 'HEAD', ref); } catch { continue; }
+                const distance = Number(git('rev-list', '--count', `${base}..HEAD`));
+                if (distance < best) { nearest = base; best = distance; }
+              }
+              if (nearest !== pr.base.sha) return;
+              const { data: merge } = await github.rest.git.getCommit({ ...repo, commit_sha: pr.merge_commit_sha });
+              const sameTree = git('rev-parse', 'HEAD^{tree}') === merge.tree.sha;
+              if (!sameTree) return;
+              const { data } = await github.rest.actions.listWorkflowRuns({ ...repo, workflow_id: 'frontend-develop.yml', event: 'pull_request', head_sha: sha, per_page: 1 });
+              const [run] = data.workflow_runs;
+              if (!run || !passed(run)) return;
+              const { data: { jobs } } = await github.request('GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs', {
+                ...repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100,
+              });
+              if (equivalent(pr, run, jobs, nearest, sameTree)) return `${run.html_url}/attempts/${run.run_attempt}`;
+            }
+            let url;
+            try { url = await lookup(); } catch (error) { core.warning(`PR evidence unavailable: ${error.message}`); }
+            core.setOutput('covered', Boolean(url));
+            await core.summary.addRaw(url
+              ? `Frontend lint, type check, tests and build delegated to [the equivalent PR run](${url}); see it for the verdict.`
+              : 'No equivalent PR run confirmed; running the feature checks.').write();
 
       - name: Setup Node.js
+        if: steps.pr.outputs.covered != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "22.18"
@@ -67,95 +155,36 @@ jobs:
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
+        if: steps.pr.outputs.covered != 'true'
         run: yarn install --frozen-lockfile
 
       - name: Design system lint (changed lines)
+        if: steps.pr.outputs.covered != 'true'
         run: yarn lint:ds:changed
 
       - name: Design system opt-outs
+        if: steps.pr.outputs.covered != 'true'
         run: yarn ds:optouts
 
       # The real compiler now runs (frontend/tsconfig.json). 36 generated-contract
       # diagnostics remain, so this stays advisory until they are resolved, as in
       # frontend-develop.yml.
       - name: Type check (advisory)
+        if: steps.pr.outputs.covered != 'true'
         continue-on-error: true
         run: yarn type-check
 
-      - name: Is a pull request open for this branch?
-        # The pull request pipeline (frontend-develop.yml) runs every test on
-        # each push to an open pull request, so the unit tests here would run
-        # the same tests a second time. If the lookup fails, run them.
-        id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Pull requests from this repository only: a fork's branch can carry
-          # the same name, and no pull request pipeline runs for this branch then.
-          if ! count=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --state open \
-            --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length'); then
-            echo "::warning::Could not list pull requests; running the unit tests here."
-            count=0
-          fi
-          if [ "$count" -gt 0 ]; then open=true; else open=false; fi
-          echo "open=$open" >> "$GITHUB_OUTPUT"
-
       - name: Run unit tests
-        if: steps.pr.outputs.open != 'true'
+        if: steps.pr.outputs.covered != 'true'
         run: yarn test:unit
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Build check
+        if: steps.pr.outputs.covered != 'true'
         run: yarn build
         env:
           NODE_OPTIONS: --max-old-space-size=8192
-
-  # Extract branch info and add PR comment
-  branch-info:
-    runs-on: ubuntu-latest
-    needs: [validate-branch-name, essential-tests]
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: Extract branch info and comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const branchName = '${{ github.head_ref }}';
-            const [type, description] = branchName.split('/');
-
-            const typeEmojis = {
-              'feature': '✨',
-              'bugfix': '🐛',
-              'hotfix': '🚨',
-              'refactor': '♻️',
-              'docs': '📚',
-              'test': '🧪',
-              'chore': '🔧',
-              'release': '🚀'
-            };
-
-            const emoji = typeEmojis[type] || '📝';
-
-            const comment = `## ${emoji} Feature Branch Validation Passed
-
-            **Branch Name:** \`${branchName}\`
-            **Type:** ${type}
-            **Description:** ${description}
-
-            ✅ Branch naming convention: PASSED
-            ✅ Type checking: PASSED
-            ✅ Unit tests: PASSED
-            ✅ Build check: PASSED
-
-            Ready for review! 🎉`;
-
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
 
   # Feature branch summary
   feature-summary:
@@ -170,8 +199,7 @@ jobs:
           echo "- Essential Tests: ${{ needs.essential-tests.result }}" >> $GITHUB_STEP_SUMMARY
 
           if [[ "${{ needs.validate-branch-name.result }}" == "success" && "${{ needs.essential-tests.result }}" == "success" ]]; then
-            echo "✅ All feature branch checks passed!" >> $GITHUB_STEP_SUMMARY
-            echo "Ready to merge into develop branch 🚀" >> $GITHUB_STEP_SUMMARY
+            echo "Feature pipeline completed; see Essential Tests for the source of the frontend verdict." >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ Some checks failed - Please fix before merging" >> $GITHUB_STEP_SUMMARY
           fi

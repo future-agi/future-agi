@@ -1,14 +1,20 @@
 """The record of what each shard collected, the comparison, and their workflow wiring."""
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import shutil
 import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
+import zipfile
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CI = ROOT / "futureagi/.ci"
@@ -121,6 +127,196 @@ class RecordTest(unittest.TestCase):
                 self.assertEqual(checker.main(["check", "2", *paths]), 1)
 
 
+class TerminalTest(unittest.TestCase):
+    def test_each_planned_id_needs_a_complete_protocol_and_permitted_outcome(self):
+        expected = [["a", "test_a", "pass"]]
+        phases = [["setup", "passed"], ["call", "passed"], ["teardown", "passed"]]
+        row = ["a", "test_a", phases]
+        checker.check_terminals(expected, [row])
+        checker.check_terminals(
+            [["a", "test_a", "skip"]],
+            [["a", "test_a", [["setup", "declared-skip"], ["teardown", "passed"]]]],
+        )
+        for rows in (
+            [],
+            [row, row],
+            [["b", "other", phases]],
+            [["a", "test_a", phases[:-1]]],
+            [["a", "test_a", [["setup", "declared-skip"], ["teardown", "passed"]]]],
+            [["a", "test_a", [["setup", "runtime-skip"], ["teardown", "passed"]]]],
+        ):
+            with self.assertRaises(ValueError):
+                checker.check_terminals(expected, rows)
+
+
+class ProducerIdentityTest(unittest.TestCase):
+    def test_partial_rerun_needs_the_latest_success_for_each_leg(self):
+        matrix = json.dumps(
+            {
+                "include": [
+                    {"suite": "main", "name": "pytest", "group": n} for n in (1, 2)
+                ]
+            }
+        )
+        env = {
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_RUN_ID": "100",
+            "GITHUB_REPOSITORY": "fixture/repo",
+            "GITHUB_SHA": "c" * 40,
+            "SHARDS": matrix,
+        }
+        common = {
+            "sha": env["GITHUB_SHA"],
+            "run": "100",
+            "suite": "main",
+            "ee": "oss",
+            "db": "schema",
+            "durations": "0" * 64,
+            "temporal": "1" * 64,
+            "matrix": hashlib.sha256(matrix.encode()).hexdigest(),
+        }
+        jobs = [
+            {
+                "name": f"pytest shard {group}",
+                "run_attempt": attempt,
+                "conclusion": "success",
+            }
+            for group, attempt in ((1, 1), (2, 1), (2, 2))
+        ]
+        artifacts = [
+            {"name": f"collected-ids-main-{n}", "id": n, "digest": "sha256:fixture"}
+            for n in (1, 2)
+        ]
+        receipts = [dict(common, group=n, attempt=n) for n in (1, 2)]
+        rows = [
+            [
+                str(n),
+                f"test_{n}",
+                [["setup", "passed"], ["call", "passed"], ["teardown", "passed"]],
+            ]
+            for n in (1, 2)
+        ]
+
+        def artifact(a, repo):
+            n = a["id"]
+            return (
+                receipts[n - 1],
+                [rows[n - 1]],
+                "same-order",
+                [r[:2] + ["pass"] for r in rows] if n == 1 else None,
+            )
+
+        with (
+            patch.dict(os.environ, env),
+            patch.object(
+                checker,
+                "pages",
+                side_effect=lambda _, field: jobs if field == "jobs" else artifacts,
+            ),
+            patch.object(checker, "verify_artifact", side_effect=artifact),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            checker.verify_run()
+            with patch.dict(os.environ, GITHUB_EVENT_NAME="merge_group"):
+                with self.assertRaisesRegex(ValueError, "missing producer"):
+                    checker.verify_run()
+                for job in jobs:
+                    job["name"] = "backend / " + job["name"]
+                checker.verify_run()
+                for job in jobs:
+                    job["name"] = job["name"].removeprefix("backend / ")
+            for field, invalid in (
+                ("attempt", 1),
+                ("sha", "stale"),
+                ("ee", "f" * 40),
+                ("temporal", ""),
+                ("matrix", "other"),
+            ):
+                with (
+                    self.subTest(field=field),
+                    patch.dict(receipts[1], {field: invalid}),
+                    self.assertRaises(ValueError),
+                ):
+                    checker.verify_run()
+            artifacts.pop()
+            with self.assertRaises(ValueError):
+                checker.verify_run()
+
+    def test_failed_inventory_cannot_qualify_even_when_it_wrote_json(self):
+        for status in (None, b"1\n", b"0\n"):
+            with self.subTest(status=status):
+                stream = io.BytesIO()
+                with zipfile.ZipFile(stream, "w") as archive:
+                    archive.writestr("receipt.json", '{"group":1,"suite":"main"}')
+                    archive.writestr("terminal.jsonl", "[]\n")
+                    archive.writestr("collected-ids.txt", "some-id\n")
+                    archive.writestr("eligible.json", "[]")
+                    if status is not None:
+                        archive.writestr("inventory-exit.txt", status)
+                raw = stream.getvalue()
+                artifact = {
+                    "id": 1,
+                    "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+                }
+                with patch.object(checker.subprocess, "check_output", return_value=raw):
+                    if status == b"0\n":
+                        self.assertEqual(
+                            checker.verify_artifact(artifact, "repo")[3], []
+                        )
+                    else:
+                        with self.assertRaises((ValueError, KeyError)):
+                            checker.verify_artifact(artifact, "repo")
+
+    def test_raw_archive_digest_is_mandatory(self):
+        with (
+            patch.object(
+                checker.subprocess, "check_output", return_value=b"wrong bytes"
+            ),
+            self.assertRaisesRegex(ValueError, "digest"),
+        ):
+            checker.verify_artifact({"id": 1, "digest": "sha256:other"}, "fixture/repo")
+
+
+@unittest.skipUnless(plugin, "run with the shard pytest installation")
+class PluginProtocolTest(unittest.TestCase):
+    def test_runtime_skip_differs_from_a_declared_skip_in_real_reports(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            (root / "test_outcome.py").write_text(
+                "import pytest\n@pytest.mark.skip(reason='declared')\ndef test_declared(): pass\ndef test_runtime(): pytest.skip('missing service')\ndef test_ran(): pass\n"
+            )
+            env = {
+                **os.environ,
+                "PYTHONPATH": str(CI),
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                "PYTEST_ADDOPTS": "",
+            }
+            inventory = root / "expected.json"
+            receipt = root / "terminal.jsonl"
+            command = [sys.executable, "-m", "pytest", "-q", "-p", "collected_ids"]
+            subprocess.run(
+                command + ["--collect-only"],
+                cwd=root,
+                env={**env, "ELIGIBLE_IDS_FILE": str(inventory)},
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                command,
+                cwd=root,
+                env={**env, "TERMINAL_IDS_FILE": str(receipt)},
+                check=True,
+                capture_output=True,
+            )
+            rows = [json.loads(line) for line in receipt.read_text().splitlines()]
+            with self.assertRaisesRegex(ValueError, "runtime-skip"):
+                checker.check_terminals(json.loads(inventory.read_text()), rows)
+            self.assertIn(
+                ["setup", "declared-skip"],
+                next(r[2] for r in rows if r[1].endswith("::test_declared")),
+            )
+
+
 class WorkflowTest(unittest.TestCase):
     def test_every_shard_records_its_collection(self):
         shard = WORKFLOW.split("      - name: Run shard\n", 1)[1].split(
@@ -128,7 +324,7 @@ class WorkflowTest(unittest.TestCase):
         )[0]
         self.assertIn("          PYTHONPATH: .ci\n", shard)
         self.assertIn(
-            "          COLLECTED_IDS_FILE: ${{ runner.temp }}/collected-ids.txt\n",
+            "          COLLECTED_IDS_FILE: ${{ runner.temp }}/shard-receipt/collected-ids.txt\n",
             shard,
         )
         self.assertIn(" -p collected_ids ", shard)
@@ -144,50 +340,72 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn(
             "    if: ${{ !cancelled() && needs.test.result != 'skipped' }}\n", job
         )
-        self.assertIn(
-            'check_collected_ids.py "$(jq \'.include | length\' <<<"$SHARDS")"', job
-        )
+        self.assertIn('"$RUNNER_TEMP"/collected/*/collected-ids.txt', job)
+        strict = job.split("  terminal-parity:\n", 1)[1]
+        self.assertIn("check_collected_ids.py --terminal", strict)
+        self.assertIn("SHARDS: ${{ needs.changes.outputs.shards }}", job)
         gate = WORKFLOW.split("  backend-tests:\n", 1)[1]
-        self.assertIn("        collection,\n", gate.split("    if: always()", 1)[0])
+        self.assertIn("        collection,\n", gate.split("    if:", 1)[0])
 
     @unittest.skipUnless(shutil.which("jq"), "needs jq")
     def test_the_gate_requires_the_check_whenever_the_shards_ran(self):
-        # The general filter passes a skipped job; this one must not, for the collection check.
         gate = WORKFLOW.split("  backend-tests:\n", 1)[1]
-        start = gate.index('          echo "$NEEDS" | jq \'if .test.result')
-        end = gate.index("end'\n", start) + len("end'\n")
-        script = "\n".join(line[10:] for line in gate[start:end].splitlines())
+        script = textwrap.dedent(gate.split("        run: |\n", 1)[1])
+        jobs = (
+            "plan",
+            "test",
+            "collection",
+            "terminal-parity",
+            "saml-multiworker",
+            "migrated-database",
+            "agentic-eval",
+            "slim-smoke",
+        )
+        for selected in (True, False):
+            value = str(selected).lower()
+            wanted = "success" if selected else "skipped"
+            needs = {job: {"result": wanted} for job in jobs}
+            needs.update(
+                {
+                    "changes": {
+                        "result": "success",
+                        "outputs": {
+                            "backend": value,
+                            "metrics": value,
+                            "executor_base": "false",
+                            "update_safety": "true",
+                        },
+                    },
+                    "policy-self-test": {"result": "success"},
+                    "update-safety": {"result": "success"},
+                    "code-executor-base-pin": {"result": "skipped"},
+                }
+            )
 
-        def run(test, collection):
-            needs = {"test": {"result": test}, "collection": {"result": collection}}
-            return subprocess.run(
-                ["bash", "-ec", script],
-                env={
-                    "NEEDS": json.dumps(needs),
-                    "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
-                },
-                capture_output=True,
-                text=True,
-                check=False,
-            ).returncode
+            def passed(needs=needs):
+                return (
+                    subprocess.run(
+                        ["bash", "-ec", script],
+                        env={**os.environ, "NEEDS": json.dumps(needs)},
+                        capture_output=True,
+                    ).returncode
+                    == 0
+                )
 
-        self.assertEqual(run("success", "success"), 0)
-        self.assertEqual(run("skipped", "skipped"), 0)
-        for test, collection in (
-            ("success", "skipped"),
-            ("success", "failure"),
-            ("failure", "skipped"),
-            ("failure", "cancelled"),
-            ("success", "cancelled"),
-        ):
-            self.assertNotEqual(run(test, collection), 0, (test, collection))
-        # A failed shard with a passed check is the general filter's business, not this one's.
-        self.assertEqual(run("failure", "success"), 0)
-
-    def test_the_record_is_not_an_input_of_the_database_dump_key(self):
-        # conftest.py and pytest.ini are key inputs; the plugin is loaded with -p instead.
-        dump = load("db_dump")
-        self.assertFalse(any("collected_ids" in spec for spec in dump.INPUTS))
+            self.assertTrue(passed())
+            for job in list(needs):
+                previous = needs[job]["result"]
+                for wrong in {"skipped", "cancelled", "success", "failure"} - {
+                    previous
+                }:
+                    needs[job]["result"] = wrong
+                    self.assertFalse(passed(), (job, wrong))
+                needs[job]["result"] = previous
+            for flag in needs["changes"]["outputs"]:
+                previous = needs["changes"]["outputs"][flag]
+                needs["changes"]["outputs"][flag] = ""
+                self.assertFalse(passed(), flag)
+                needs["changes"]["outputs"][flag] = previous
 
 
 if __name__ == "__main__":

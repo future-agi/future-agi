@@ -22,111 +22,10 @@ name: Update CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     branches: [dev, main]
-    paths:
-      - "bin/update"
-      - "deploy/update/**"
-      - "deploy/tests/test_update_*.py"
-      - "deploy/tests/update_e2e/**"
-      - "scripts/generate_update_manifest.py"
-      - "scripts/check_update_safety.py"
-      - "**/*.py"
-      - "**/*.go"
-      - "**/*.sql"
-      - "**/*.sh"
-      - "bin/**"
-      - "scripts/**"
-      - "deploy/**"
-      - "fi-collector/**"
-      - "agentcc-gateway/**"
-      - "docker-compose*.yml"
-      - "futureagi/**"
-      - "bin/lib/**"
-      - ".github/workflows/backend-ci.yml"
-      - "docker-compose.yml"
-      - "docker-compose.distributed.yml"
-      - "deploy/docker-compose.production.yml"
-      - "deploy/docker-compose.host-status.standalone.yml"
-      - "deploy/docker-compose.host-status.distributed.yml"
-      - "bin/install"
-      - "deploy/setup.sh"
-      - ".env.example"
-      - "deploy/.env.production.example"
-      - "deploy/env-reference.toml"
-      - ".gitignore"
-      # Private retained env files must never enter any Docker build context.
-      - "**/.dockerignore"
-      - "**/*.dockerignore"
-      - "**/Dockerfile*"
-      - ".github/actions/setup-helm-tools/**"
-      - ".github/workflows/release-update-manifest.yml"
-      - ".github/workflows/release-images.yml"
-      - ".github/workflows/update-ci.yml"
-      - ".github/workflows/build-image-multiarch.yml"
-      - ".github/workflows/helm-release.yml"
-      # deploy/update/deployment-files.txt: a release hashes these, and its
-      # generator refuses a git-tracked file the digest of a directory skips.
-      - "agentcc-gateway/config.example.yaml"
-      - "deploy/clickhouse/users.d/**"
-      - "deploy/standalone/clickhouse/**"
-      - "futureagi/.ci/clickhouse-storage-policy.xml"
-      - "futureagi/config/peerdb/temporal-dynamicconfig.yaml"
-      - "futureagi/scripts/property_catalog_oss/**"
-      - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
-      - ".gitattributes"
   push:
     branches: [dev, main]
-    paths:
-      - "bin/update"
-      - "deploy/update/**"
-      - "deploy/tests/test_update_*.py"
-      - "deploy/tests/update_e2e/**"
-      - "scripts/generate_update_manifest.py"
-      - "scripts/check_update_safety.py"
-      - "**/*.py"
-      - "**/*.go"
-      - "**/*.sql"
-      - "**/*.sh"
-      - "bin/**"
-      - "scripts/**"
-      - "deploy/**"
-      - "fi-collector/**"
-      - "agentcc-gateway/**"
-      - "docker-compose*.yml"
-      - "futureagi/**"
-      - "bin/lib/**"
-      - ".github/workflows/backend-ci.yml"
-      - "docker-compose.yml"
-      - "docker-compose.distributed.yml"
-      - "deploy/docker-compose.production.yml"
-      - "deploy/docker-compose.host-status.standalone.yml"
-      - "deploy/docker-compose.host-status.distributed.yml"
-      - "bin/install"
-      - "deploy/setup.sh"
-      - ".env.example"
-      - "deploy/.env.production.example"
-      - "deploy/env-reference.toml"
-      - ".gitignore"
-      # Private retained env files must never enter any Docker build context.
-      - "**/.dockerignore"
-      - "**/*.dockerignore"
-      - "**/Dockerfile*"
-      - ".github/actions/setup-helm-tools/**"
-      - ".github/workflows/release-update-manifest.yml"
-      - ".github/workflows/release-images.yml"
-      - ".github/workflows/update-ci.yml"
-      - ".github/workflows/build-image-multiarch.yml"
-      - ".github/workflows/helm-release.yml"
-      # deploy/update/deployment-files.txt: a release hashes these, and its
-      # generator refuses a git-tracked file the digest of a directory skips.
-      - "agentcc-gateway/config.example.yaml"
-      - "deploy/clickhouse/users.d/**"
-      - "deploy/standalone/clickhouse/**"
-      - "futureagi/.ci/clickhouse-storage-policy.xml"
-      - "futureagi/config/peerdb/temporal-dynamicconfig.yaml"
-      - "futureagi/scripts/property_catalog_oss/**"
-      - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
-      - ".gitattributes"
   merge_group:
   workflow_dispatch:
     inputs:
@@ -142,79 +41,85 @@ permissions:
   contents: read
 
 concurrency:
-  group: update-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  group: update-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # When the two Real rehearsals run. Each takes about three hours, so they are
-  # not part of an ordinary pull request: scripts/update-rehearsal-decision.sh
-  # runs them on every scheduled and dispatched run, on a pull request into
-  # main, on a pull request that carries the update-rehearsal label, and on a
-  # pull request that changes the update tooling (or, for latest-stable -> PR,
-  # what that job builds and boots: see the `built` filter). Never on a push
-  # or a merge group. The other jobs keep the
-  # workflow-level paths above. Fail-open: if this job does not succeed, both
-  # Real jobs run, except on a push or a merge group.
+  # The complete diff selects ordinary jobs; Real rehearsals have a separate
+  # label/tooling/boot-input decision and never gate a merge group.
   changes:
+    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     name: Update-relevant changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-      # dorny/paths-filter reads the PR's file list; the label step its labels.
       pull-requests: read
     outputs:
+      ordinary: ${{ steps.filter.outputs.ordinary_update }}
+      scope: ${{ steps.filter.outputs.scope }}
       upgrade: ${{ steps.decide.outputs.upgrade }}
       abc: ${{ steps.decide.outputs.abc }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
           persist-credentials: false
-          sparse-checkout: scripts/update-rehearsal-decision.sh
-          sparse-checkout-cone-mode: false
-      - id: filter
-        if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            # What both rehearsals execute from the pull request.
-            tooling:
-              - 'bin/update'
-              - 'scripts/generate_update_manifest.py'
-              - 'scripts/check_update_safety.py'
-              - 'scripts/update-rehearsal-decision.sh'
-              - 'deploy/tests/update_e2e/**'
-              - 'deploy/tests/test_update_e2e_automatic.py'
-              - 'docker-compose*.yml'
-              - 'deploy/docker-compose*.yml'
-              - '.github/workflows/update-ci.yml'
-            # What only latest-stable -> PR executes from the pull request: it
-            # builds the images and boots them on real data. Migrations, the
-            # image builds and entrypoints, the locked dependencies, and the
-            # settings the boot reads.
-            built:
-              - 'futureagi/**/migrations/**'
-              - 'futureagi/tfc/settings/**'
-              - 'futureagi/uv.lock'
-              - '**/Dockerfile*'
-              - '**/dockerfile*'
-              - '**/.dockerignore'
-              - '**/*.dockerignore'
-              - '**/entrypoint.sh'
-              - '**/docker-entrypoint.sh'
-      - id: update-code
-        if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
-        with:
-          # Every pattern must match: deploy/update without its documents and
-          # its JSON registers, which ordinary pull requests edit to record a
-          # review and which no rehearsal step reads differently.
-          predicate-quantifier: every
-          filters: |
-            code:
-              - 'deploy/update/**'
-              - '!**/*.md'
-              - '!**/*.json'
+          sparse-checkout: |
+            .github/scripts
+            scripts
+      - name: Plan from the event base and complete candidate diff
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          CI_SCOPE_MODE: ${{ vars.CI_SCOPE_MODE }}
+          STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
+        # Bootstrap is workflow policy; never execute a candidate loader.
+        run: |
+          set -euo pipefail
+          [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
+          case "$GITHUB_EVENT_NAME" in
+            pull_request|merge_group)
+              for sha in "$BASE_SHA" "$HEAD_SHA"; do
+                [[ $sha =~ ^[0-9a-f]{40}$ && ! $sha =~ ^0+$ ]]
+                git cat-file -e "${sha}^{commit}"
+              done
+              if [[ $GITHUB_EVENT_NAME == merge_group ]]; then
+                [[ $HEAD_SHA == "$GITHUB_SHA" ]]
+                git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+              else
+                [[ $(git show -s --format=%P HEAD) == "$BASE_SHA $HEAD_SHA" ]]
+              fi
+              policy=$BASE_SHA ;;
+            *) policy=$GITHUB_SHA; export BASE_SHA=$policy HEAD_SHA=$policy ;;
+          esac
+          file=.github/scripts/ci_scope.py
+          # Check presence separately: a corrupt/missing object is not a legacy base.
+          entry=$(git ls-tree "$policy" -- "$file")
+          if [[ -n $entry ]]; then
+            git show "$policy:$file" > "$RUNNER_TEMP/ci-scope.py"
+            exec python3 -I "$RUNNER_TEMP/ci-scope.py"
+          fi
+          # First landing / stacked PR onto a base predating the planner. Run all suites.
+          # The unpublished executor-tag assertion applies only to changes to its inputs.
+          pin=false
+          if [[ $GITHUB_EVENT_NAME == pull_request || $GITHUB_EVENT_NAME == merge_group ]]; then
+            start=$BASE_SHA
+            if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+              if ! start=$(git merge-base --all "$BASE_SHA" "$HEAD_SHA"); then start=unknown; fi
+            fi
+            if ! [[ $start =~ ^[0-9a-f]{40}$ ]] || ! git diff --quiet --no-renames "$start" "$HEAD_SHA" -- \
+                futureagi/code-executor/{Dockerfile.base,requirements.sandbox.txt} ||
+                ! git diff --quiet --no-renames "$BASE_SHA" "$GITHUB_SHA" -- \
+                futureagi/code-executor/{Dockerfile.base,requirements.sandbox.txt}; then pin=true; fi
+          fi
+          {
+            for key in backend metrics any collector ordinary_update update_safety tooling built python; do echo "$key=true"; done
+            echo "executor_base=$pin"
+            echo "scope=$(jq -cn --arg sha "$GITHUB_SHA" --arg base "$policy" '{version:0,mode:"full",reason:"legacy policy base",tested_commit:$sha,policy_base:$base}')"
+          } >> "$GITHUB_OUTPUT"
       - id: labels
         # The labels the pull request has now, not the ones it had when the
         # event fired: add the label, then re-run this workflow.
@@ -228,13 +133,24 @@ jobs:
       - id: decide
         env:
           EVENT_NAME: ${{ github.event_name }}
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ github.base_ref || github.ref_name }}
+          POLICY: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.sha }}
           LABELLED: ${{ steps.labels.outputs.rehearsal == 'true' }}
-          TOOLING_CHANGED: ${{ steps.filter.outputs.tooling == 'true' || steps.update-code.outputs.code == 'true' }}
-          BUILT_CHANGED: ${{ steps.filter.outputs.built == 'true' }}
-        run: bash scripts/update-rehearsal-decision.sh >> "$GITHUB_OUTPUT"
+          TOOLING_CHANGED: ${{ steps.filter.outputs.tooling }}
+          BUILT_CHANGED: ${{ steps.filter.outputs.built }}
+        run: |
+          # The candidate does not decide whether its own Real rehearsals run.
+          if [[ $(git ls-tree "$POLICY" -- scripts/update-rehearsal-decision.sh) ]]; then
+            git show "$POLICY:scripts/update-rehearsal-decision.sh" > "$RUNNER_TEMP/rehearse.sh"
+            bash "$RUNNER_TEMP/rehearse.sh" >> "$GITHUB_OUTPUT"
+          elif [[ $EVENT_NAME == merge_group ]]; then
+            printf 'upgrade=false\nabc=false\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'upgrade=true\nabc=true\n' >> "$GITHUB_OUTPUT"
+          fi
 
   safety:
+    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     name: Unattended update layout and environment
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -269,6 +185,8 @@ jobs:
           if-no-files-found: error
 
   unit:
+    needs: changes
+    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     name: unit (Python ${{ matrix.python }})
     # Python 3.9 (the oldest bin/update supports) has setup-python builds for
     # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
@@ -326,6 +244,8 @@ jobs:
           python -m unittest discover -s deploy/tests/update_e2e -p 'test_release_metadata.py' -v
 
   compose:
+    needs: changes
+    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     name: compose versions
     # Python 3.9 (the oldest bin/update supports) has setup-python builds for
     # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
@@ -355,6 +275,8 @@ jobs:
   # deploy/tests/update_e2e/harness.py: every resource it creates carries its
   # suite's prefix and is removed at the end, so the suites run side by side.
   e2e:
+    needs: changes
+    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     name: e2e (${{ matrix.suite }}, Compose ${{ matrix.compose }})
     # Python 3.9 (the oldest bin/update supports) has setup-python builds for
     # Ubuntu 22.04 and 24.04 only; ubuntu-latest is moving to 26.04.
@@ -400,7 +322,7 @@ jobs:
   automatic-upgrade:
     name: Real automatic latest-stable to PR and cold restore
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.upgrade == 'true' || (needs.changes.result != 'success' && github.event_name != 'push' && github.event_name != 'merge_group')) }}
+    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.outputs.upgrade == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:
@@ -579,7 +501,7 @@ jobs:
   automatic-a-b-c:
     name: Real one-opt-in v1.53.0 to v1.54.0 to v1.55.0
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.outputs.abc == 'true' || (needs.changes.result != 'success' && github.event_name != 'push' && github.event_name != 'merge_group')) }}
+    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.outputs.abc == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:
@@ -668,6 +590,8 @@ jobs:
           retention-days: 7
 
   daemon-storage:
+    needs: changes
+    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     # Setup and admission need image-store capacity. The non-root installation
     # user cannot read a rootful daemon's /var/lib/docker, so this exercises the
     # fixed daemon-side helper in minutes instead of after a full qualification.
@@ -693,6 +617,8 @@ jobs:
             docker.io/futureagi/standalone:v1.56.1@sha256:3ae9fd984297b9a24a437fd55272a55e24f94288b18d65924d7777c69ec0d515
 
   backup:
+    needs: changes
+    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false') }}
     name: Native vendor cold backup and crash-restore matrices
     runs-on: ubuntu-24.04
     timeout-minutes: 90
