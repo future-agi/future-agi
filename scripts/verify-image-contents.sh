@@ -88,11 +88,11 @@ image_available() {
 }
 
 version_label_matches() {
-  # No entry means a historical image without the label. Prefix a present
-  # value so an explicitly empty label is not mistaken for an absent one.
+  # Prefix distinguishes absent from empty; the final sentinel preserves any
+  # trailing newlines in the label through shell command substitution.
   local label
-  label=$(docker image inspect --format '{{range $k, $v := .Config.Labels}}{{if eq $k "org.opencontainers.image.version"}}version={{$v}}{{end}}{{end}}' "$1") || return 1
-  [[ -z "$label" || "$label" == "version=$2" ]]
+  label=$(docker image inspect --format '{{range $k, $v := .Config.Labels}}{{if eq $k "org.opencontainers.image.version"}}version={{$v}}{{end}}{{end}}|' "$1") || return 1
+  [[ "$label" == '|' || "$label" == "version=$2|" ]]
 }
 
 check_routes() {

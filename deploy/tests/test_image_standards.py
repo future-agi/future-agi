@@ -1200,7 +1200,7 @@ if [ "$1" = run ] && [ "${10}" = -ec ]; then
   exit $?
 fi
 case "$*" in
-  *"org.opencontainers.image.version"*) printf '%s\n' "${FAKE_LABEL+version=$FAKE_LABEL}"; exit 0 ;;
+  *"org.opencontainers.image.version"*) printf '%s|\n' "${FAKE_LABEL+version=$FAKE_LABEL}"; exit 0 ;;
   *"command -v uv"*|*"command -v git"*|*"git --version"*|*"import daytona"*|*omw-1.4*|*get_static_doc*)
     [ "$FAKE_VARIANT" = standard ]; exit $? ;;
   *'test "$SERVICE_VERSION"'*) [ "$FAKE_VERSION" = "${13}" ]; exit $? ;;
@@ -1297,6 +1297,8 @@ exit 0
             ({"FAKE_LABEL": "v1.59.1"}, 0),
             ({"FAKE_LABEL": "v9.9.9"}, 1),
             ({"FAKE_LABEL": ""}, 1),
+            ({"FAKE_LABEL": "v1.59.1\n"}, 1),
+            ({"FAKE_LABEL": "v1.59.1\n\n"}, 1),
         ):
             with self.subTest(env=env):
                 proc = self.run_script("futureagi/future-agi:v1.59.1", **env)
