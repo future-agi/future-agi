@@ -64,6 +64,13 @@ def test_unset_or_blank_date_time_is_none(env):
     assert env_datetime("T", env=env) is None
 
 
+def test_unset_date_time_is_the_default_and_blank_is_none():
+    assert env_datetime("T", "2026-10-14T12:30:00Z", env={}) == datetime(
+        2026, 10, 14, 12, 30, tzinfo=UTC
+    )
+    assert env_datetime("T", "2026-10-14T12:30:00Z", env={"T": ""}) is None
+
+
 @pytest.mark.parametrize(
     "raw",
     [
