@@ -629,6 +629,12 @@ of a run computes the same split, and a re-run repeats it. A spec without a reco
 flow) counts as the median file, so it runs at once. One very long flow fills a shard by itself;
 no number of shards makes a run shorter than its longest flow.
 
+Measured on the standard GitHub runners with four shards (three runs, November 2026): a shard takes
+36 to 48 minutes, about 9 of them the stack boot, and `E2E Tests Pass` reports 47 to 50 minutes
+after the push. The unsharded suite took about 90. The longest shard is the one that holds
+`flows/dashboards/derived-metric.spec.ts` (DASH-E2E-017), which waits 30 minutes by design. More
+shards would add boots without shortening that one.
+
 **Parity is a gate, not an assumption.** The `report` job lists the suite without `E2E_SHARD` and
 compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
 test has no result in any shard, ran in two shards, never started, or when a shard reported a test
