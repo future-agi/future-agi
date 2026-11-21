@@ -415,6 +415,14 @@ def record_decisions(
     return draft_review(environment)
 
 
+def review_in_progress() -> HostedHarnessError:
+    return version_error(
+        "review_in_progress",
+        "Some changes are already accepted or rejected, so finish deciding them in View changes, then Validate.",
+        409,
+    )
+
+
 def review_stale() -> HostedHarnessError:
 
     return version_error(
@@ -454,9 +462,10 @@ def check_review(
 
     changes = review["changes"]
     decided = any(one["decision"] for one in changes)
-    if expected_review_digest != review["review_digest"] and (
-        expected_review_digest or (decided and digest_required)
-    ):
+    if decided and digest_required and not expected_review_digest:
+        # Nothing moved: the request came from outside the review, which is still being decided.
+        raise review_in_progress()
+    if expected_review_digest and expected_review_digest != review["review_digest"]:
         raise review_stale()
     if environment is not None and (
         mismatched := _index_mismatches(environment, changes)
