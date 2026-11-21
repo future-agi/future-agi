@@ -7,7 +7,6 @@ contract remains the source of truth for their request shapes.
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import re
 from pathlib import Path
@@ -330,11 +329,6 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
     catalog_tools = catalog.get("tools")
     if not isinstance(catalog_tools, list):
         raise ToolGenerationError("Catalog must contain a tools list")
-    expected_count = catalog.get("expected_tool_count")
-    if expected_count is not None and expected_count != len(catalog_tools):
-        raise ToolGenerationError(
-            f"Catalog expected {expected_count} tools but contains {len(catalog_tools)}"
-        )
 
     generated_tools: list[dict[str, Any]] = []
     names: set[str] = set()
@@ -415,12 +409,14 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             tool["entitlement"] = entry["entitlement"]
         generated_tools.append(tool)
 
-    contract_bytes = contract_path.read_bytes()
+    # No field here may summarise the whole contract or the whole catalog (a
+    # hash, a count): two pull requests that touch unrelated tools would then
+    # both rewrite it. A hash conflicts on every merge; a count merges cleanly
+    # to a wrong value. `scripts/generate-mcp-tools.py --check` regenerates the
+    # manifest and compares it, which is what keeps the committed file current.
     return {
         "schema_version": 1,
         "source_contract": str(contract_path.name),
-        "source_contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
-        "tool_count": len(generated_tools),
         "tools": generated_tools,
     }
 

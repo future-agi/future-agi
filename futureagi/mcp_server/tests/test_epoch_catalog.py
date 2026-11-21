@@ -123,7 +123,6 @@ def test_discarding_an_import_is_destructive(registry):
 @pytest.mark.parametrize("entitlement", ["", 5])
 def test_generator_rejects_an_invalid_entitlement(tmp_path, entitlement):
     catalog = {
-        "expected_tool_count": 1,
         "tools": [
             {
                 "name": "whoami",

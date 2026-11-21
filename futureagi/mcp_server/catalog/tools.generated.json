@@ -1,8 +1,6 @@
 {
   "schema_version": 1,
   "source_contract": "swagger.json",
-  "source_contract_sha256": "25b4c2829282737c0fc81a416ae02bb10d9b3ad1735e12b137b9f344cbbd1bc0",
-  "tool_count": 128,
   "tools": [
     {
       "name": "whoami",

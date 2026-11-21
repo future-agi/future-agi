@@ -19,7 +19,8 @@ CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog/tools.yaml"
 def test_committed_catalog_generates_expected_tools():
     manifest = generate_tool_manifest(CONTRACT_PATH, CATALOG_PATH)
 
-    assert manifest["tool_count"] == 128
+    # A whole-file hash or count would make unrelated API pull requests collide.
+    assert set(manifest) == {"schema_version", "source_contract", "tools"}
     tool_names = [tool["name"] for tool in manifest["tools"]]
     assert len(tool_names) == len(set(tool_names))
     assert {
@@ -36,7 +37,6 @@ def test_committed_catalog_generates_expected_tools():
         "query_dashboard_widget",
         "get_usage_overview",
     }.issubset(tool_names)
-    assert len(manifest["source_contract_sha256"]) == 64
     for tool in manifest["tools"]:
         Draft7Validator.check_schema(tool["inputSchema"])
 
@@ -106,7 +106,6 @@ def test_open_world_hint_is_reviewed_catalog_metadata():
 @pytest.mark.parametrize("declared", [True, False])
 def test_generator_honours_the_open_world_override(tmp_path, declared):
     catalog = {
-        "expected_tool_count": 1,
         "tools": [
             {
                 "name": "whoami",
@@ -126,7 +125,6 @@ def test_generator_honours_the_open_world_override(tmp_path, declared):
 
 def test_generator_rejects_a_non_boolean_open_world_hint(tmp_path):
     catalog = {
-        "expected_tool_count": 1,
         "tools": [
             {
                 "name": "whoami",
@@ -146,7 +144,6 @@ def test_generator_rejects_a_non_boolean_open_world_hint(tmp_path):
 
 def test_generator_rejects_omitting_a_field_the_response_lacks(tmp_path):
     catalog = {
-        "expected_tool_count": 1,
         "tools": [
             {
                 "name": "get_error_cluster",
@@ -169,7 +166,6 @@ def test_generator_rejects_omitting_a_field_the_response_lacks(tmp_path):
 
 def test_generator_rejects_missing_operation(tmp_path):
     catalog = {
-        "expected_tool_count": 1,
         "tools": [
             {
                 "name": "missing",
@@ -195,7 +191,7 @@ def test_generator_rejects_duplicate_tool_names(tmp_path):
     }
     catalog_path = tmp_path / "tools.json"
     catalog_path.write_text(
-        json.dumps({"expected_tool_count": 2, "tools": [entry, entry]}),
+        json.dumps({"tools": [entry, entry]}),
         encoding="utf-8",
     )
 

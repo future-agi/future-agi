@@ -132,11 +132,6 @@ class GeneratedToolRegistry:
         raw_tools = manifest.get("tools")
         if not isinstance(raw_tools, list):
             raise GeneratedToolRegistryError("Generated manifest must contain tools")
-        declared_count = manifest.get("tool_count")
-        if declared_count != len(raw_tools):
-            raise GeneratedToolRegistryError(
-                f"Manifest declares {declared_count} tools but contains {len(raw_tools)}"
-            )
         return cls(GeneratedTool.from_dict(value) for value in raw_tools)
 
     def get(self, name: str) -> GeneratedTool | None:
