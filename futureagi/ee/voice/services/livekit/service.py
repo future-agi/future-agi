@@ -10,9 +10,10 @@ import json
 import re
 import time
 import uuid
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import structlog
 from livekit.api import (  # type: ignore[attr-defined]
@@ -112,7 +113,9 @@ def _merge_track_view(lk, identity, fields, merged, current):
     original = lk.get("recording")
     visible = original.copy() if isinstance(original, dict) else {}
     source = lk.get("recording_source")
-    previous_egress = _source_for_call(source, identity["call_id"]) and source != identity
+    previous_egress = (
+        _source_for_call(source, identity["call_id"]) and source != identity
+    )
     prior = lk.get("verified_recording_tracks")
     receipts = prior.copy() if isinstance(prior, dict) else {}
     if previous_egress and prior is None:
@@ -130,7 +133,8 @@ def _merge_track_view(lk, identity, fields, merged, current):
         origin = {k: receipt.get(k) for k in ("call_id", "egress_id")}
         if (
             _source_for_call(origin, identity["call_id"])
-            and origin != identity and receipt.get("url") == url
+            and origin != identity
+            and receipt.get("url") == url
         ):
             visible.pop(kind)
             if kind in ("assistant", "customer") and updated.get(field) == url:
@@ -961,7 +965,8 @@ class LivekitService(VoiceServiceBlueprint):
                     # A same-source attempt that produced no tracks may materialize
                     # an empty map. It has not acquired a competing track claim.
                     and (current_map == saved or (saved is None and current_map == {}))
-                    and lk.get("verified_recording_tracks") == provider_data.get("verified_recording_tracks")
+                    and lk.get("verified_recording_tracks")
+                    == provider_data.get("verified_recording_tracks")
                 )
                 if (
                     current.service_provider_call_id != call.service_provider_call_id
@@ -975,7 +980,9 @@ class LivekitService(VoiceServiceBlueprint):
                             or (
                                 reuse_confirmation
                                 and lk.get("recording_cleanup_success")
-                                != _CleanupConfirmation(**identity, recording=cleanup_tracks)
+                                != _CleanupConfirmation(
+                                    **identity, recording=cleanup_tracks
+                                )
                             )
                         )
                     )
@@ -1069,8 +1076,11 @@ class LivekitService(VoiceServiceBlueprint):
                         )
                         owner = owners.get(name)
                         if not _owns_playback(
-                            owner, lk.get("verified_recording_tracks"),
-                            name, call_id_str, observed[field],
+                            owner,
+                            lk.get("verified_recording_tracks"),
+                            name,
+                            call_id_str,
+                            observed[field],
                         ):
                             owners.pop(name, None)
                         if (

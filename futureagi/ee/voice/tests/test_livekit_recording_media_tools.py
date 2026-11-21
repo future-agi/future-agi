@@ -410,7 +410,9 @@ def test_cleanup_replay_rejects_foreign_egress_result(response_id, response_room
     from ee.voice.services.livekit.service import PROVIDER_KEY
 
     first, _, _, _ = _extract(
-        {PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=_output_url, delete_effect=TimeoutError
+        {PROVIDER_KEY: {"egress_id": "EG_1"}},
+        stream=_output_url,
+        delete_effect=TimeoutError,
     )
     no_stream = MagicMock()
     result, _, delete, _ = _extract(
@@ -487,7 +489,10 @@ def test_partial_legacy_playback_survives_until_verified_replacement(
         assert result.recording_fields_persisted and result.recording_url is None
         assert result.error["code"] == "recording_split_failed"
         data = call.provider_call_data
-        assert data[PROVIDER_KEY].get("recording_source") != {"call_id": "call-1", "egress_id": "EG_1"}
+        assert data[PROVIDER_KEY].get("recording_source") != {
+            "call_id": "call-1",
+            "egress_id": "EG_1",
+        }
         for name, url in shortcut.items():
             assert data[PROVIDER_KEY]["recording"][name] == url
         assert call.recording_url == combined
@@ -505,7 +510,9 @@ def test_partial_legacy_playback_survives_until_verified_replacement(
     assert call.recording_url == (combined or stored["recording"]["combined"])
     assert call.stereo_recording_url == (stereo or stored["recording"]["stereo"])
     assert call.recording_available
-    assert serializer.get_recordings(call)[kind] == (legacy if column else stored["recording"][kind])
+    assert serializer.get_recordings(call)[kind] == (
+        legacy if column else stored["recording"][kind]
+    )
 
 
 @pytest.mark.parametrize("incoming_egress", [None, "EG_2"])
