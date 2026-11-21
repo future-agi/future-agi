@@ -188,6 +188,55 @@ def main(samples_dir):
         if len(run([FFMPEG, "-i", src, "-f", "s16le", "-"]).stdout) < 1000:
             sys.exit("FAIL s16le output is empty")
 
+        # Exercise both sides of each codec using repository-owned synthetic
+        # samples. Re-opening each output catches missing demuxers/decoders.
+        for name, encoder, output, codec in (
+            ("video-h264.mp4", "libaom-av1", "clip.ivf", "av1"),
+            ("audio.wav", "wavpack", "audio.wv", "wavpack"),
+            ("video-h264.mp4", "prores_ks", "clip.mov", "prores"),
+        ):
+            target = os.path.join(tmp, output)
+            source = os.path.join(samples_dir, name)
+            opts = ["-vn"] if codec == "wavpack" else ["-an", "-frames:v", "1"]
+            run([FFMPEG, "-i", source, *opts, "-threads", "1", "-c", encoder, target])
+            stream = (
+                run(
+                    [
+                        FFPROBE,
+                        "-v",
+                        "error",
+                        "-show_entries",
+                        "stream=codec_name",
+                        "-of",
+                        "csv=p=0",
+                        target,
+                    ]
+                )
+                .stdout.strip()
+                .decode()
+            )
+            if stream != codec:
+                sys.exit(f"FAIL {encoder}: expected {codec}, got {stream}")
+            if codec == "wavpack":
+                if not run([FFMPEG, "-i", target, "-f", "s16le", "-"]).stdout:
+                    sys.exit("FAIL WavPack: no decoded audio")
+            else:
+                preview = os.path.join(tmp, f"{codec}.png")
+                run(
+                    [
+                        FFMPEG,
+                        "-i",
+                        target,
+                        "-vf",
+                        "transpose=clock,crop=32:32,rotate=0.1",
+                        "-frames:v",
+                        "1",
+                        preview,
+                    ]
+                )
+                if not os.path.getsize(preview):
+                    sys.exit(f"FAIL {codec}: empty preview")
+
         # tfc/utils/storage.py video thumbnail
         for name in VIDEOS:
             thumb = os.path.join(tmp, f"{name}.jpg")

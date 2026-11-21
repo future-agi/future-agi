@@ -210,3 +210,40 @@ def test_all_tracks_made_deletes_the_raw_recording_and_clears_an_old_error():
         "assistant",
         "customer",
     }
+
+
+def test_empty_track_url_keeps_raw_recording():
+    from ee.voice.services.livekit.service import PROVIDER_KEY
+
+    def stream(_config, _key, destination, _args):
+        return "" if "_customer_" in destination else f"https://media/{destination}"
+
+    result, _, delete, _ = _extract(
+        {PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=stream
+    )
+    delete.assert_not_called()
+    assert result.error["tracks"] == ["customer"]
+
+
+def test_interrupted_input_is_not_reported_as_a_successful_split():
+    from io import BytesIO
+
+    from ee.voice.services.livekit import recording
+
+    def interrupted():
+        yield b"valid prefix"
+        raise OSError("interrupted source")
+
+    process = MagicMock(
+        returncode=0, stdin=BytesIO(), stderr=BytesIO(), stdout=BytesIO(b"prefix")
+    )
+    with (
+        patch.object(recording, "require_ffmpeg"),
+        patch.object(recording, "_s3_stream_iter", return_value=interrupted()),
+        patch.object(subprocess, "Popen", return_value=process),
+        patch.object(
+            recording, "upload_stream_to_s3", return_value="https://media/partial"
+        ),
+        pytest.raises(RuntimeError, match="Incomplete egress recording input"),
+    ):
+        recording.stream_egress_to_s3(MagicMock(), "source", "dest", ["-ac", "1"])

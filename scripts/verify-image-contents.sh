@@ -130,6 +130,23 @@ check "Has shared EE package tree" image_test "$OSS_IMAGE" test -d /app/backend/
 check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/backend/ee/cloud
 check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
   "import nltk; [nltk.data.find(p) for p in ('corpora/stopwords/', 'tokenizers/punkt_tab/english/', 'taggers/averaged_perceptron_tagger_eng/', 'corpora/wordnet/')]; assert nltk.word_tokenize('Future AGI') == ['Future', 'AGI']; assert nltk.pos_tag(['Future'])[0][1]"
+# Published releases carry their own version. Do not classify local tags or
+# digests using the verifier checkout's release number. Old images have no
+# flavor marker: identify the active binary rather than guessing a cutoff.
+image_release=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$OSS_IMAGE" 2>/dev/null || true)
+if [[ -n "$image_release" && "$image_release" != '<no value>' ]]; then
+  check "Runtime version matches image metadata ($image_release)" image_test "$OSS_IMAGE" sh -c 'test "$SERVICE_VERSION" = "$1"' sh "$image_release"
+fi
+check "Active ffmpeg and ffprobe match the runtime flavor" image_test "$OSS_IMAGE" sh -ec '
+  marker=/usr/local/lib/futureagi/ffmpeg-flavor
+  if test -f "$marker"; then flavor=$(cat "$marker"); else
+    case $(command -v ffmpeg) in /usr/local/bin/ffmpeg) flavor=minimal ;; /usr/bin/ffmpeg) flavor=debian ;; *) exit 1 ;; esac
+  fi
+  case $flavor in
+    minimal) test "$(command -v ffmpeg)" = /usr/local/bin/ffmpeg && test "$(command -v ffprobe)" = /usr/local/bin/ffprobe && test -s /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1 ;;
+    debian) test "$(command -v ffmpeg)" = /usr/bin/ffmpeg && test "$(command -v ffprobe)" = /usr/bin/ffprobe && dpkg-query -S /usr/bin/ffmpeg ;;
+    *) exit 1 ;;
+  esac'
 check "ffmpeg can encode mp3 and png" image_test "$OSS_IMAGE" sh -c "ffmpeg -hide_banner -encoders | grep -q libmp3lame && ffmpeg -hide_banner -encoders | grep -qw png"
 check "ffprobe starts" image_test "$OSS_IMAGE" ffprobe -hide_banner -version
 if [[ "$OSS_VARIANT" == standard ]]; then
@@ -145,7 +162,6 @@ if [[ "$OSS_VARIANT" == standard ]]; then
   check "Keeps every googleapiclient discovery document" image_python "$OSS_IMAGE" -c \
     "from googleapiclient.discovery_cache import get_static_doc; assert get_static_doc('drive', 'v3')"
 else
-  check "Ships the ffmpeg LGPL notice" image_test "$OSS_IMAGE" test -f /usr/local/share/doc/ffmpeg/COPYING.LGPLv2.1
   check_absent "No uv in the runtime image" image_test "$OSS_IMAGE" sh -c "command -v uv"
   check_absent "No git in the runtime image" image_test "$OSS_IMAGE" sh -c "command -v git"
 fi

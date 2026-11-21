@@ -859,6 +859,12 @@ class LivekitService(VoiceServiceBlueprint):
 
         failures: dict[str, Exception] = {}
         for (track_name, _, _), outcome in zip(track_specs, results):
+            if isinstance(outcome, BaseException) and not isinstance(
+                outcome, Exception
+            ):
+                raise outcome
+            if not isinstance(outcome, Exception) and not outcome:
+                outcome = ValueError("Recording upload returned no URL")
             if isinstance(outcome, Exception):
                 failures[track_name] = outcome
                 missing = find_media_tool_unavailable(outcome)

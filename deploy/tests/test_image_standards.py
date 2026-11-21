@@ -1194,7 +1194,7 @@ case "$*" in
   *-slim*"command -v uv"*|*-slim*"command -v git"*) exit 1 ;;
   *-slim*"git --version"*|*-slim*"import daytona"*) exit 1 ;;
   *-slim*omw-1.4*|*-slim*get_static_doc*) exit 1 ;;
-  *COPYING.LGPLv2.1*) case "$*" in *-slim*) exit 0 ;; *) exit 1 ;; esac ;;
+  *"index .Config.Labels"*) echo v9.9.9; exit 0 ;;
   *"test -e /app/backend/ee/cloud"*) exit 1 ;;
 esac
 exit 0
@@ -1234,6 +1234,7 @@ exit 0
         for check in ("Has uv", "Has git", "Has every NLTK package"):
             self.assertIn(f"PASS: {check}", proc.stdout)
         self.assertNotIn("No uv in the runtime image", proc.stdout)
+        self.assertIn("Runtime version matches image metadata (v9.9.9)", proc.stdout)
         self.assertIn("--user 1000:1000", proc.docker_log)
 
     def test_a_slim_tag_is_checked_as_lean(self):
