@@ -1418,6 +1418,7 @@ def removed_scenarios(
 
     from simulate.models import HarnessSuiteMember, HarnessSuiteVersion
     from simulate.models.harness_versioning import VersionStatus
+    from simulate.services.harness_starting_records import scenario_token
 
     if drafted is not None:
         current = {row.scenario_key for row in drafted}
@@ -1471,12 +1472,18 @@ def removed_scenarios(
     for member in members:
         row = member.scenario
         held = (documents.get(member.suite_version_id) or {}).get("scenarios") or []
+        entries = [one for one in held if isinstance(one, dict)]
+        # Exact key first; an older document saved without keys is matched by its name, as it was read before.
         content = next(
+            (one for one in entries if one.get("scenario_key") == member.scenario_key),
+            None,
+        ) or next(
             (
                 one
-                for one in held
-                if isinstance(one, dict)
-                and one.get("scenario_key") == member.scenario_key
+                for one in entries
+                if not one.get("scenario_key")
+                and scenario_token(one.get("name"))
+                == scenario_token(member.scenario_key)
             ),
             member.content or {},
         )

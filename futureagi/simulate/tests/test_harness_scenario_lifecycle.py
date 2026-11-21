@@ -348,6 +348,33 @@ def test_an_archived_case_a_saved_version_dropped_is_not_offered(
     assert removed_scenarios(environment) == []
 
 
+def test_a_removed_case_saved_in_a_document_without_keys_is_offered_with_that_content(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import removed_scenarios
+
+    environment, older, row, _document = _removed_case(
+        user, workspace, storage, "lc-removed-legacy-doc"
+    )
+    # An older save wrote its document entries by name only, and its member holds other content.
+    legacy = [
+        {
+            **{k: v for k, v in one.items() if k != "scenario_key"},
+            "name": one["scenario_key"],
+            "instruction": "as the legacy document says",
+        }
+        for one in older.documents["scenarios"]
+    ]
+    HarnessSuiteVersion._base_manager.filter(id=older.id).update(
+        documents={**older.documents, "scenarios": legacy}
+    )
+
+    [removed] = removed_scenarios(environment)
+
+    assert removed["suite_version"] == str(older.id)
+    assert removed["content"]["instruction"] == "as the legacy document says"
+
+
 def test_a_removed_case_is_offered_with_its_last_saved_content_not_its_first(
     user, workspace, storage
 ):
