@@ -179,6 +179,11 @@ class RestoreAndDumpTest(Workspace):
         load = [call for call in state()["calls"] if "--single-transaction" in call]
         self.assertEqual(len(load), 1)
         self.assertIn("ON_ERROR_STOP=1", load[0])
+        # psql refuses --single-transaction without -f or -c; "-f -" is the script on stdin.
+        self.assertEqual(
+            load[0][load[0].index("--single-transaction") :],
+            ["--single-transaction", "-f", "-"],
+        )
         self.assertEqual(state()["loaded"], sql())
 
     def test_an_incomplete_dump_never_reaches_the_database(self):
@@ -208,6 +213,43 @@ class RestoreAndDumpTest(Workspace):
         prefix, _ = self.stub(replies=[["0\n", 0], ["0\n", 0]])
         with self.assertRaisesRegex(db_dump.DumpError, "no applied migration"):
             db_dump.restore(self.gz("dump.sql.gz", sql()), "user", "db", prefix)
+
+    def test_the_command_line_passes_a_prefix_with_options_of_its_own(self):
+        # CI's prefix is `docker compose -f <file> -p <project> exec -T <service>`.
+        prefix, state = self.stub()
+        prefix.insert(1, "-I")
+        script = str(ROOT / "futureagi/.ci/db_dump.py")
+        target = self.dir / "cli" / "dump.sql.gz"
+        dumped = subprocess.run(
+            [sys.executable, "-I", script, "dump", str(target), "user", "db", *prefix],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(dumped.returncode, 0, dumped.stdout + dumped.stderr)
+        self.assertEqual(db_dump.read_dump(target), sql())
+        restored = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                script,
+                "restore",
+                str(target),
+                "user",
+                "db",
+                *prefix,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+        self.assertIn("412 applied migrations", restored.stdout)
+        self.assertEqual(state()["loaded"], sql())
+        missing = subprocess.run(
+            [sys.executable, "-I", script, "restore", str(target), "user", "db"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(missing.returncode, 2)
 
     def test_dump_writes_only_a_complete_file(self):
         prefix, state = self.stub()

@@ -634,6 +634,18 @@ jobs:
           python3 -I .ci/db_dump.py dump "$RUNNER_TEMP/fresh-db/dump.sql.gz" test_user test_tfc_test \
             docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
 
+      - name: Keep the fresh dump for inspection
+        # Schema and seed rows of an empty test database built from public
+        # code. It shows what a failed comparison below compared.
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: migrated-db-pytest
+          path: ${{ runner.temp }}/fresh-db/dump.sql.gz
+          retention-days: 3
+          overwrite: true
+          if-no-files-found: warn
+
       - name: The cached dump equals this fresh migrate
         if: steps.db-dump.outputs.cache-hit == 'true'
         run: python3 -I .ci/db_dump.py compare "$RUNNER_TEMP/migrated-db/dump.sql.gz" "$RUNNER_TEMP/fresh-db/dump.sql.gz"

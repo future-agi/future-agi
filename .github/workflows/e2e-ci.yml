@@ -487,6 +487,18 @@ jobs:
           python3 -I futureagi/.ci/db_dump.py dump "$RUNNER_TEMP/fresh-db/dump.sql.gz" \
             futureagi futureagi bin/e2e compose exec -T postgres
 
+      - name: Keep the fresh dump for inspection
+        # Schema and seed rows of an empty install built from public code. It
+        # shows what a failed comparison below compared.
+        if: ${{ !cancelled() && matrix.stack == 'distributed' && env.E2E_LAST_SHARD == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: migrated-db-e2e-${{ matrix.stack }}
+          path: ${{ runner.temp }}/fresh-db/dump.sql.gz
+          retention-days: 3
+          overwrite: true
+          if-no-files-found: warn
+
       - name: The cached dump equals this fresh migrate
         if: steps.db-dump.outputs.cache-hit == 'true' && env.E2E_LAST_SHARD == 'true'
         run: |
@@ -557,6 +569,7 @@ jobs:
           name: redis-diagnostics-${{ matrix.stack }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/redis-diagnostics/redis-diagnostics.json
           retention-days: 3
+          overwrite: true
           if-no-files-found: warn
 
       - name: Upload blob report
@@ -569,6 +582,9 @@ jobs:
           name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}
           path: e2e/blob-report
           retention-days: 3
+          # A re-run of this one leg replaces its earlier blob; the report job
+          # then merges it with the other legs' blobs from the first attempt.
+          overwrite: true
           if-no-files-found: error
 
       - name: Upload report
@@ -580,6 +596,7 @@ jobs:
           name: playwright-report-${{ matrix.stack }}-shard-${{ matrix.shard }}
           path: e2e/playwright-report
           retention-days: 7
+          overwrite: true
           # A job that dies before the suite runs has no report; the real
           # failure is upstream and must not be buried by an upload error.
           if-no-files-found: warn
@@ -692,6 +709,7 @@ jobs:
           name: backend-lifecycle-${{ matrix.stack }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/backend-lifecycle
           retention-days: 7
+          overwrite: true
           if-no-files-found: warn
 
       - name: Dump stack state on failure
@@ -761,6 +779,7 @@ jobs:
           name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
           path: e2e/playwright-report
           retention-days: 7
+          overwrite: true
           if-no-files-found: warn
 
       - name: Upload the merged results (input for scripts/shard-report.mjs durations)
@@ -772,6 +791,7 @@ jobs:
             e2e/merged-report.json
             e2e/listed-suite.json
           retention-days: 7
+          overwrite: true
           if-no-files-found: warn
 
   e2e-tests:

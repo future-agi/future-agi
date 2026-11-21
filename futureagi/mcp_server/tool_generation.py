@@ -7,6 +7,7 @@ contract remains the source of truth for their request shapes.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -329,6 +330,11 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
     catalog_tools = catalog.get("tools")
     if not isinstance(catalog_tools, list):
         raise ToolGenerationError("Catalog must contain a tools list")
+    expected_count = catalog.get("expected_tool_count")
+    if expected_count is not None and expected_count != len(catalog_tools):
+        raise ToolGenerationError(
+            f"Catalog expected {expected_count} tools but contains {len(catalog_tools)}"
+        )
 
     generated_tools: list[dict[str, Any]] = []
     names: set[str] = set()
@@ -409,14 +415,21 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             tool["entitlement"] = entry["entitlement"]
         generated_tools.append(tool)
 
-    # No field here may summarise the whole contract or the whole catalog (a
-    # hash, a count): two pull requests that touch unrelated tools would then
-    # both rewrite it. A hash conflicts on every merge; a count merges cleanly
-    # to a wrong value. `scripts/generate-mcp-tools.py --check` regenerates the
-    # manifest and compares it, which is what keeps the committed file current.
+    # A fingerprint of the tool NAMES, not of the whole contract. The manifest
+    # used to carry a hash of all of swagger.json, so any two pull requests
+    # that touched the API conflicted on that one line. This line changes only
+    # when the set of tools changes. Two pull requests that both add or remove
+    # a tool still conflict here, on purpose: each also set the catalog's
+    # expected_tool_count to the same number, and that edit would otherwise
+    # merge cleanly to a wrong count. `scripts/generate-mcp-tools.py --check`
+    # regenerates the manifest and compares it, which is what keeps the
+    # committed file in step with the contract.
+    tool_names = "\n".join(sorted(tool["name"] for tool in generated_tools))
     return {
         "schema_version": 1,
         "source_contract": str(contract_path.name),
+        "tool_names_sha256": hashlib.sha256(tool_names.encode()).hexdigest(),
+        "tool_count": len(generated_tools),
         "tools": generated_tools,
     }
 

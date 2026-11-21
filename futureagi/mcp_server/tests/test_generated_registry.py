@@ -109,9 +109,9 @@ def test_account_administration_is_not_exposed():
         assert registry.get(name) is None
 
 
-def test_registry_rejects_a_manifest_without_a_tools_list(tmp_path):
+def test_registry_rejects_incorrect_manifest_count(tmp_path):
     path = tmp_path / "tools.generated.json"
-    path.write_text(json.dumps({"schema_version": 1}), encoding="utf-8")
+    path.write_text(json.dumps({"tool_count": 1, "tools": []}), encoding="utf-8")
 
-    with pytest.raises(GeneratedToolRegistryError, match="must contain tools"):
+    with pytest.raises(GeneratedToolRegistryError, match="declares 1 tools"):
         GeneratedToolRegistry.from_manifest(path)

@@ -45,7 +45,7 @@ def main() -> int:
         return 0
 
     write_tool_manifest(manifest, args.output)
-    print(f"Generated {len(manifest['tools'])} MCP tools at {args.output}")
+    print(f"Generated {manifest['tool_count']} MCP tools at {args.output}")
     return 0
 
 

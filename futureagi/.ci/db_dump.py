@@ -209,7 +209,11 @@ def restore(path, user, database, prefix):
             f"{database} is not an empty, reachable database; refusing to restore into it"
         )
     gunzip = subprocess.Popen(["gzip", "-dc", str(path)], stdout=subprocess.PIPE)
-    loaded = _psql(prefix, user, database, "--single-transaction", stdin=gunzip.stdout)
+    # `-f -` reads the script from stdin; psql accepts --single-transaction
+    # only together with -f or -c.
+    loaded = _psql(
+        prefix, user, database, "--single-transaction", "-f", "-", stdin=gunzip.stdout
+    )
     gunzip.stdout.close()
     if gunzip.wait() != 0 or loaded.returncode != 0:
         raise DumpError(
@@ -232,13 +236,19 @@ def main(argv=None):
         sub.add_argument("path")
         sub.add_argument("user")
         sub.add_argument("database")
+        # REMAINDER, not "+": the prefix carries options of its own
+        # (`docker compose -f ... exec -T db`) that argparse must not read.
         sub.add_argument(
-            "prefix", nargs="+", help="command that runs a program beside the database"
+            "prefix",
+            nargs=argparse.REMAINDER,
+            help="command that runs a program beside the database",
         )
     sub = commands.add_parser("compare")
     sub.add_argument("cached")
     sub.add_argument("fresh")
     args = parser.parse_args(argv)
+    if args.command in ("dump", "restore") and not args.prefix:
+        parser.error("a command prefix is required")
     try:
         if args.command == "key":
             print(cache_key(args.flavour))

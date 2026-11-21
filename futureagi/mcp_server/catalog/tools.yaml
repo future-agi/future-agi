@@ -1,4 +1,5 @@
 version: 1
+expected_tool_count: 128
 
 # Pagination is an MCP-only page-size ceiling, so an oversized page is rejected
 # before the REST view queries and serializes it. The generator keeps a stricter
