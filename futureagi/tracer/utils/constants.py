@@ -5,12 +5,14 @@ from tracer.utils.filter_operators import (
     SPAN_ATTR_ALLOWED_OPS as CONTRACT_SPAN_ATTR_ALLOWED_OPS,
 )
 
+# The minimums read FI_TRACES_URL, which a self-hosted snippet sets: older SDKs
+# send spans to FI_BASE_URL, the API, where they are dropped.
 INSTALLATION_GUIDE = {
     "Python": """
-pip install fi-instrumentation-otel
+pip install -U "fi-instrumentation-otel>=1.5.0"
 """,
     "TypeScript": """
-npm install @traceai/openai
+npm install "@traceai/fi-core@^1.4.0" @traceai/openai
 """,
 }
 
@@ -72,11 +74,22 @@ process.env.FI_SECRET_KEY = "{}";
 }
 
 # Appended to ORG_KEYS off Future AGI Cloud (tracer.views.project): both SDKs
-# default FI_BASE_URL to Cloud, so a self-hosted snippet points them at the
-# install's own collector.
-ORG_BASE_URL = {
-    "Python": 'os.environ["FI_BASE_URL"] = "{}"\n',
-    "TypeScript": 'process.env.FI_BASE_URL = "{}";\n',
+# default to Cloud, so a self-hosted snippet points them at the install's own
+# API (FI_BASE_URL) and trace collector (FI_TRACES_URL). An SDK too old to read
+# FI_TRACES_URL sends spans to FI_BASE_URL, hence the comment.
+ORG_SELF_HOSTED_URLS = {
+    "Python": (
+        'os.environ["FI_BASE_URL"] = "{api_url}"\n'
+        'os.environ["FI_TRACES_URL"] = "{traces_url}"\n'
+        "# FI_TRACES_URL needs fi-instrumentation-otel 1.5.0+; with an older SDK,\n"
+        "# set FI_BASE_URL to the collector URL instead.\n"
+    ),
+    "TypeScript": (
+        'process.env.FI_BASE_URL = "{api_url}";\n'
+        'process.env.FI_TRACES_URL = "{traces_url}";\n'
+        "// FI_TRACES_URL needs @traceai/fi-core 1.4.0+; with an older SDK,\n"
+        "// set FI_BASE_URL to the collector URL instead.\n"
+    ),
 }
 
 INSTRUMENTORS = {
