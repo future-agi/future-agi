@@ -634,9 +634,9 @@ compares that with the merged results (`scripts/shard-report.mjs parity`). It fa
 test has no result in any shard, ran in two shards, never started, or when a shard reported a test
 the listing does not have. Quarantined and `@live-llm` flows are out of both sides.
 
-Work that needs to run once per stack runs on the **last** shard: the flow catalog check, the SDK
-live suites and the from-zero database migrate (below). The last shard, because the longest spec
-file always goes to shard 1. A manual run with `host_update_fallibility` stays unsharded.
+Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
+SDK live suites. The last shard, because the longest spec file always goes to shard 1. A manual
+run with `host_update_fallibility` stays unsharded.
 
 To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
 artifact of a green run and regenerate the recorded times:
@@ -645,27 +645,13 @@ artifact of a green run and regenerate the recorded times:
 node scripts/shard-report.mjs durations --merged merged-report.json   # rewrites .test-durations.json
 ```
 
-### The migrated database dump
+### Why the E2E stack still migrates from zero
 
-Booting a Distributed stack used to spend about six minutes on one serial `manage.py migrate`. A
-shard now restores a dump of that same result before the stack boots, when one exists for exactly
-this checkout's inputs. `futureagi/.ci/db_dump.py` holds the rules; Backend CI uses the same tool
-for its pytest shards.
-
-- **The key** is a hash of every tracked migration file plus the lock file, the settings, the image
-  recipe, the compose file, `e2e/stack/` and the tool itself. A different key means there is no
-  dump, and the stack migrates from zero as before. No partial match is ever used.
-- **Restore fails closed.** It loads only a complete dump, only into an empty database, in one
-  transaction. Any error fails the job; nothing falls back to a half-loaded database. The
-  bootstrap's own `migrate` still runs afterwards and applies nothing when the dump is complete.
-- **One shard stays the control.** The last shard never restores. It runs `manage.py migrate` on an
-  empty database in the image built from the PR, saves the dump when the cache had none, and
-  otherwise fails unless the cached dump equals its fresh migrate, in schema and in rows per table.
-  So every run still proves a from-zero migrate, and a dump that no longer matches cannot keep
-  passing. If that comparison fails on your PR, something outside the key's inputs changed the
-  migrated database: raise `VERSION` in `futureagi/.ci/db_dump.py` in the same PR.
-
-The Standalone stack always migrates from zero.
+Backend CI restores a cached dump of a migrated database in its pytest shards
+(`futureagi/.ci/db_dump.py`). The E2E stacks do not, on purpose. The stack's Postgres also holds
+Temporal's own tables, and a migration registers Temporal search attributes while it runs. A
+restored database would skip that registration, or carry another job's Temporal state. Every
+shard therefore boots the way an install does: `manage.py migrate` on an empty database.
 
 ---
 

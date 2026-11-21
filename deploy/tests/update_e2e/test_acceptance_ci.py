@@ -292,6 +292,7 @@ class AcceptancePlanTests(unittest.TestCase):
                (self.latest_release(-5),'no published images'),
                ({'tag_name':'v1.59.1'},'no publication time'),
                ({'tag_name':'v1.59.1','published_at':'yesterday'},'no publication time'),
+               ({'tag_name':'v1.59.1','published_at':1795000000},'no publication time'),
                (self.latest_release(20,draft=True),'not stable'),
                (self.latest_release(20,prerelease=True),'not stable'),
                (dict(self.latest_release(20),tag_name='v1.60.0-rc.1'),'not stable'),
@@ -339,10 +340,22 @@ class AcceptancePlanTests(unittest.TestCase):
             self.assertEqual(sorted(call.args[0] for call in digest.call_args_list),
                 sorted('docker.io/'+repository+':v1.59.1'+COMPONENT_TAG_SUFFIX.get(name,'')
                        for name,repository in COMPONENT_REPOSITORIES.items()))
-            for error in (RuntimeError('native acceptance prerequisite/command 3 failed'),ValueError('registry manifest index is invalid')):
-                missing=[None,None,error]
-                with patch.object(driver,'registry_digest',side_effect=missing):
+            failed=RuntimeError('native acceptance prerequisite/command 3 failed')
+            # The registry says the image is not there: not published yet.
+            for tail in ('no such manifest: docker.io/futureagi/standalone:v1.59.1','manifest unknown: manifest unknown'):
+                driver.diagnostics=[{'outcome':'failed','stderr_tail':tail}]
+                with patch.object(driver,'registry_digest',side_effect=[None,None,failed]):
                     self.assertFalse(driver.images_published('v1.59.1'))
+            # Anything else stays an error, so a rate limit or a bad image set
+            # cannot make the rehearsal start from an older release.
+            for tail in ('toomanyrequests: You have reached your pull rate limit','dial tcp: i/o timeout',''):
+                driver.diagnostics=[{'outcome':'failed','stderr_tail':tail}]
+                with patch.object(driver,'registry_digest',side_effect=[None,None,failed]):
+                    with self.assertRaises(RuntimeError):
+                        driver.images_published('v1.59.1')
+            with patch.object(driver,'registry_digest',side_effect=[None,ValueError('registry manifest index is invalid')]):
+                with self.assertRaisesRegex(ValueError,'manifest index is invalid'):
+                    driver.images_published('v1.59.1')
 
     def test_dispatch_upgrade_source_selects_that_published_stable_release(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:

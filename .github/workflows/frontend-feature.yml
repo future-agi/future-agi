@@ -90,7 +90,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! count=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --state open --json number --jq length); then
+          # Pull requests from this repository only: a fork's branch can carry
+          # the same name, and no pull request pipeline runs for this branch then.
+          if ! count=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --state open \
+            --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length'); then
             echo "::warning::Could not list pull requests; running the unit tests here."
             count=0
           fi

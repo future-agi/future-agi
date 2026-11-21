@@ -123,7 +123,7 @@ class TimingWorkflowTest(unittest.TestCase):
             1,
         )[1].split("\n      - ", 1)[0]
         self.assertIn("if: steps.db-dump.outputs.cache-hit != 'true'\n", migrate)
-        self.assertIn("--create-db", migrate)
+        self.assertIn("uv run pytest .ci/migrated_db.py", migrate)
         self.assertLess(
             job.index("- name: Migrate the test database from zero"),
             job.index("- name: Run shard"),

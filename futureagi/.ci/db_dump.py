@@ -1,18 +1,31 @@
 #!/usr/bin/env python3
-"""A cached dump of a freshly migrated Postgres database, for CI.
+"""A cached dump of pytest's freshly migrated test database, for Backend CI.
 
-Every test job used to spend about six minutes on one serial `migrate`. A job
-now restores a dump of that same result when one exists for exactly its
+Every pytest shard used to spend about six minutes on one serial `migrate`. A
+shard now restores a dump of that result when one exists for exactly its
 inputs, and one job per run still migrates from zero as the control:
 
     key      the cache key for this checkout: a hash of every migration file
-             and of the other inputs that decide the migrated database. A
-             different key means no dump, and the job migrates as before.
-    dump     writes a complete plain-SQL dump of a database, gzipped.
+             and of the other inputs that decide the migrated schema. A
+             different key means no dump, and the shard migrates as before.
+    dump     writes the schema and the list of applied migrations, gzipped.
     restore  loads a dump into an empty database in one transaction. Any
              error fails the job; nothing falls back to a partial database.
-    compare  the control: a cached dump must equal a fresh migrate in schema
-             and in rows per table, or the run fails.
+    compare  the control: a cached dump must equal a fresh migrate, or the
+             run fails.
+
+The dump holds the schema and the rows of django_migrations, and no other
+row. That is deliberate:
+
+- pytest (--reuse-db) runs Django's `migrate` on the restored database. It
+  finds every migration applied, applies nothing, and then sends post_migrate,
+  which seeds content types, permissions and the applications' own reference
+  rows from the code under test. Nothing seeded is ever stale.
+- Rows a data migration wrote are not carried. A shard already loses them at
+  its first transactional test, which truncates every table, so no test can
+  depend on them.
+- Seed rows can come from configuration that is not public, and a cache of a
+  public repository is readable by any pull request. A schema is not.
 
 Standard library only, so it runs before any dependency is installed.
 """
@@ -32,38 +45,28 @@ VERSION = 1
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# What decides the migrated database, per consumer. Tracked files only: the
-# key must not move with a virtualenv or a __pycache__ beside the migrations.
-MIGRATIONS = ":(glob)futureagi/**/migrations/**"
-INPUTS = {
-    # pytest's test database (tfc.settings.test, docker-compose.test.yml).
-    "pytest": [
-        MIGRATIONS,
-        "futureagi/uv.lock",
-        "futureagi/tfc/settings",
-        "futureagi/conftest.py",
-        "futureagi/pytest.ini",
-        "futureagi/docker-compose.test.yml",
-        "futureagi/.ci/db_dump.py",
-    ],
-    # The distributed E2E stack's database after `manage.py migrate` in the
-    # built backend image.
-    "e2e-distributed": [
-        MIGRATIONS,
-        "futureagi/uv.lock",
-        "futureagi/tfc/settings",
-        "futureagi/Dockerfile.oss",
-        "futureagi/entrypoint.sh",
-        "docker-compose.distributed.yml",
-        "e2e/stack",
-        "futureagi/.ci/db_dump.py",
-    ],
-}
-# The private package internal runs check out here. It carries migrations of
-# its own, so a checkout with it and one without it are different databases.
+# What decides the migrated schema of pytest's database (tfc.settings.test,
+# docker-compose.test.yml). Tracked files only: the key must not move with a
+# virtualenv or a __pycache__ beside the migrations.
+INPUTS = [
+    ":(glob)futureagi/**/migrations/**",
+    "futureagi/uv.lock",
+    "futureagi/tfc/settings",
+    "futureagi/conftest.py",
+    "futureagi/pytest.ini",
+    "futureagi/docker-compose.test.yml",
+    "futureagi/.ci/db_dump.py",
+    "futureagi/.ci/migrated_db.py",
+]
+# The private package that internal runs check out. The test settings do not
+# install its application, so it should not change the schema; the key still
+# keeps the two kinds of checkout apart, so neither can restore the other's dump.
 OVERLAY = "futureagi/ee/cloud"
 
+# pg_dump ends each of the two parts of a dump with this line.
 COMPLETE = "-- PostgreSQL database dump complete"
+PARTS = 2
+MIGRATIONS_TABLE = "django_migrations"
 
 
 class DumpError(Exception):
@@ -76,52 +79,49 @@ def _git(cwd, *args):
     ).stdout
 
 
-def cache_key(flavour, root=ROOT):
-    """The cache key for `flavour` in the checkout at `root`."""
-    if flavour not in INPUTS:
-        raise DumpError(f"unknown flavour {flavour!r}; one of {sorted(INPUTS)}")
-    digest = hashlib.sha256(f"{VERSION}\n{flavour}\n".encode())
-    for spec in INPUTS[flavour]:
+def cache_key(root=ROOT):
+    """The cache key for the checkout at `root`."""
+    digest = hashlib.sha256(f"{VERSION}\n".encode())
+    for spec in INPUTS:
         # Mode, blob id and path of every tracked file under the pathspec.
         listed = _git(root, "ls-files", "-s", "-z", "--", spec)
         if not listed:
             raise DumpError(f"key input {spec!r} matches no tracked file")
         digest.update(spec.encode() + b"\n" + listed)
-    overlay = Path(root) / OVERLAY
-    if flavour == "pytest" and (overlay / ".git").exists():
-        digest.update(
-            b"overlay\n"
-            + _git(overlay, "ls-files", "-s", "-z", "--", ":(glob)**/migrations/**")
-        )
-    else:
-        digest.update(b"no overlay\n")
-    return f"migrated-db-{flavour}-v{VERSION}-{digest.hexdigest()[:40]}"
+    overlay = (Path(root) / OVERLAY / ".git").exists()
+    digest.update(b"overlay\n" if overlay else b"no overlay\n")
+    return f"migrated-db-pytest-v{VERSION}-{digest.hexdigest()[:40]}"
 
 
 def read_dump(path):
-    """The SQL of a gzipped dump. Refuses one that pg_dump did not finish."""
+    """The SQL of a gzipped dump. Refuses one that is not complete."""
     try:
         with gzip.open(
-            path, "rt", encoding="utf-8", errors="surrogateescape"
+            path, "rt", encoding="utf-8", errors="surrogateescape", newline="\n"
         ) as handle:
             text = handle.read()
     except (OSError, EOFError) as exc:
         raise DumpError(f"{path}: not a readable gzip dump ({exc})") from exc
-    if COMPLETE not in text.splitlines()[-12:]:
-        raise DumpError(f"{path}: the dump is incomplete (no {COMPLETE!r} at its end)")
+    lines = text.split("\n")
+    if lines.count(COMPLETE) != PARTS or COMPLETE not in lines[-12:]:
+        raise DumpError(
+            f"{path}: the dump is incomplete (it must hold {PARTS} finished pg_dump parts)"
+        )
     return text
 
 
 def normalise(text):
-    """Schema statements as written, each table's rows as a count.
+    """The dump as written, except what differs between two correct migrates.
 
-    Row values are left out on purpose: a migration may stamp the time or a
-    random id, and two correct migrates then differ. pg_dump's comments and
-    its per-dump \\restrict token are left out for the same reason.
+    That is three things: the row values of django_migrations (each row stamps
+    the time it was applied), kept as a count; pg_dump's two version comments;
+    and its per-dump \\restrict token. Every other line is compared verbatim,
+    comments and blank lines included, because a line of a function body or of
+    a multi-line default can look like either.
     """
     out = []
     rows = None
-    for line in text.splitlines():
+    for line in text.split("\n"):
         if rows is not None:
             if line == "\\.":
                 out.append(f"<{rows} rows>")
@@ -129,7 +129,14 @@ def normalise(text):
             else:
                 rows += 1
             continue
-        if not line or line.startswith(("--", "\\restrict", "\\unrestrict")):
+        if line.startswith(
+            (
+                "-- Dumped from database version",
+                "-- Dumped by pg_dump version",
+                "\\restrict ",
+                "\\unrestrict ",
+            )
+        ):
             continue
         out.append(line)
         if line.startswith("COPY ") and line.endswith(" FROM stdin;"):
@@ -154,26 +161,25 @@ def compare(cached, fresh):
 
 
 def dump(path, user, database, prefix):
-    """pg_dump `database` through `prefix` (for example `docker compose exec -T db`)."""
+    """Dump `database` through `prefix` (for example `docker compose exec -T db`).
+
+    Two pg_dump parts in one file: the whole schema, then the rows of
+    django_migrations (with the value of its sequence).
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     partial = path.with_name(path.name + ".partial")
-    command = [
-        *prefix,
-        "pg_dump",
-        "-U",
-        user,
-        "--no-owner",
-        "--no-privileges",
-        database,
-    ]
-    with (
-        gzip.open(partial, "wb") as out,
-        subprocess.Popen(command, stdout=subprocess.PIPE) as proc,
-    ):
-        shutil.copyfileobj(proc.stdout, out)
-    if proc.returncode != 0:
-        raise DumpError(f"pg_dump exited {proc.returncode}")
+    base = [*prefix, "pg_dump", "-U", user, "--no-owner", "--no-privileges"]
+    parts = (
+        [*base, "--schema-only", database],
+        [*base, "--data-only", f"--table={MIGRATIONS_TABLE}", database],
+    )
+    with gzip.open(partial, "wb") as out:
+        for command in parts:
+            with subprocess.Popen(command, stdout=subprocess.PIPE) as proc:
+                shutil.copyfileobj(proc.stdout, out)
+            if proc.returncode != 0:
+                raise DumpError(f"pg_dump exited {proc.returncode}")
     read_dump(partial)
     partial.replace(path)
 
@@ -220,7 +226,12 @@ def restore(path, user, database, prefix):
             f"restore failed (gzip {gunzip.returncode}, psql {loaded.returncode})"
         )
     applied = _psql(
-        prefix, user, database, "-At", "-c", "SELECT count(*) FROM django_migrations"
+        prefix,
+        user,
+        database,
+        "-At",
+        "-c",
+        f"SELECT count(*) FROM {MIGRATIONS_TABLE}",
     )
     if applied.returncode != 0 or int(applied.stdout.strip() or 0) == 0:
         raise DumpError("the restored database records no applied migration")
@@ -230,7 +241,7 @@ def restore(path, user, database, prefix):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("key").add_argument("flavour", choices=sorted(INPUTS))
+    commands.add_parser("key")
     for name in ("dump", "restore"):
         sub = commands.add_parser(name)
         sub.add_argument("path")
@@ -251,10 +262,10 @@ def main(argv=None):
         parser.error("a command prefix is required")
     try:
         if args.command == "key":
-            print(cache_key(args.flavour))
+            print(cache_key())
         elif args.command == "dump":
             dump(args.path, args.user, args.database, args.prefix)
-            print(f"dumped {args.database} to {args.path}")
+            print(f"dumped the schema of {args.database} to {args.path}")
         elif args.command == "restore":
             applied = restore(args.path, args.user, args.database, args.prefix)
             print(
@@ -266,12 +277,12 @@ def main(argv=None):
                 print("\n".join(difference[:200]))
                 print(
                     "::error title=Cached database dump differs from a fresh migrate::"
-                    "Something outside the key's inputs changed the migrated database. "
+                    "Something outside the key's inputs changed the migrated schema. "
                     "Raise VERSION in futureagi/.ci/db_dump.py in this pull request so no job restores the old dump."
                 )
                 return 1
             print(
-                "the cached dump equals a fresh migrate: same schema, same rows per table"
+                "the cached dump equals a fresh migrate: same schema, same applied migrations"
             )
     except (DumpError, subprocess.CalledProcessError) as exc:
         print(f"::error title=Database dump::{exc}")

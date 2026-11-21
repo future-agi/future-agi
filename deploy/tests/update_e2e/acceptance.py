@@ -372,12 +372,20 @@ class NativeAcceptance:
         return manifest,directory
 
     def images_published(self, version):
-        """Whether every component image of `version` resolves in the registry."""
-        try:
-            for name,repository in COMPONENT_REPOSITORIES.items():
+        """Whether every component image of `version` exists in the registry.
+
+        False only when the registry says an image is not there. A rate limit,
+        a network fault or a malformed image is an error, as before: it must
+        not make a rehearsal quietly start from an older release.
+        """
+        for name,repository in COMPONENT_REPOSITORIES.items():
+            try:
                 self.registry_digest('docker.io/'+repository+':'+version+COMPONENT_TAG_SUFFIX.get(name,''))
-        except (RuntimeError,ValueError):
-            return False
+            except RuntimeError:
+                tail = self.diagnostics[-1].get('stderr_tail','') if self.diagnostics else ''
+                if re.search(r'manifest unknown|no such manifest',tail,re.I):
+                    return False
+                raise
         return True
 
     def previous_stable_tag(self, version):
@@ -402,7 +410,7 @@ class NativeAcceptance:
             return release
         try:
             published = datetime.strptime(release.get('published_at') or '','%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=timezone.utc)
-        except ValueError:
+        except (TypeError,ValueError):
             raise ValueError('latest source has no publication time') from None
         age = (datetime.now(timezone.utc)-published).total_seconds()
         if not 0 <= age <= SOURCE_IMAGE_GRACE_SECONDS:

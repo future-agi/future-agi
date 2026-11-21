@@ -368,7 +368,7 @@ jobs:
       - name: Key of the migrated database for this checkout
         id: db-key
         run: |
-          key=$(python3 -I .ci/db_dump.py key pytest)
+          key=$(python3 -I .ci/db_dump.py key)
           echo "key=$key" >> "$GITHUB_OUTPUT"
 
       - name: Look for a dump of the migrated database
@@ -410,10 +410,11 @@ jobs:
 
       - name: Restore the migrated database (exact key hit only)
         # Saves the shard its own six-minute migrate. On a miss this step does
-        # not run and pytest migrates from zero, as before. A failed restore
-        # fails the job: nothing falls back to a half-loaded database. pytest
-        # (--reuse-db) then runs Django's migrate on the restored database,
-        # which applies nothing when the dump is complete.
+        # not run and the next step migrates from zero. A failed restore fails
+        # the job: nothing falls back to a half-loaded database. The dump is
+        # the schema and the list of applied migrations. pytest (--reuse-db)
+        # then runs Django's migrate on it, which applies nothing and sends
+        # post_migrate, so every seed row comes from the code under test.
         if: steps.db-dump.outputs.cache-hit == 'true'
         run: |
           db=(docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db)
@@ -423,9 +424,10 @@ jobs:
       - name: Migrate the test database from zero (no dump for this key)
         # A step of its own, before the shard's pytest run, so no test's
         # recorded time includes the migrate: the recorded times become the
-        # next sharding plan. The pytest-django path, as in the from-zero job.
+        # next sharding plan. .ci/migrated_db.py sets the database up and runs
+        # no test against it.
         if: steps.db-dump.outputs.cache-hit != 'true'
-        run: uv run pytest saml2_auth/tests/test_multiworker.py -m multiworker --create-db -q
+        run: uv run pytest .ci/migrated_db.py -q
 
       - name: Apply pinned sharding plan
         uses: actions/download-artifact@v4
@@ -565,9 +567,9 @@ jobs:
     # shards restore. A shard skips its own migrate only when a dump exists for
     # exactly this checkout's inputs (.ci/db_dump.py key). This job never
     # restores: it always migrates an empty database. On a cache miss it saves
-    # the result. On a hit it compares the cached dump with its fresh migrate
-    # and fails on any difference, so a dump that no longer matches cannot keep
-    # passing. The SAML job migrates from zero as well, without the EE package.
+    # the schema it got. On a hit it compares the cached dump with its fresh
+    # migrate and fails on any difference, so a dump that no longer matches
+    # cannot keep passing. The SAML job migrates from zero as well.
     name: Fresh migrate and database dump
     needs: changes
     if: needs.changes.outputs.backend == 'true'
@@ -613,7 +615,7 @@ jobs:
       - name: Key of the migrated database for this checkout
         id: db-key
         run: |
-          key=$(python3 -I .ci/db_dump.py key pytest)
+          key=$(python3 -I .ci/db_dump.py key)
           echo "key=$key" >> "$GITHUB_OUTPUT"
 
       - name: Look for a dump of the migrated database
@@ -624,10 +626,9 @@ jobs:
           key: ${{ steps.db-key.outputs.key }}
 
       - name: Migrate an empty test database from zero
-        # The pytest-django path a shard takes on a cache miss. Without
-        # SAML_MULTIWORKER every case of this module skips, and --reuse-db
-        # (pytest.ini) keeps the database.
-        run: uv run pytest saml2_auth/tests/test_multiworker.py -m multiworker --create-db -q
+        # What a shard runs on a cache miss, with --create-db so it can never
+        # start from a database that is already there.
+        run: uv run pytest .ci/migrated_db.py --create-db -q
 
       - name: Dump the fresh database
         run: |
@@ -635,8 +636,8 @@ jobs:
             docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
 
       - name: Keep the fresh dump for inspection
-        # Schema and seed rows of an empty test database built from public
-        # code. It shows what a failed comparison below compared.
+        # The schema of the test database and its list of applied migrations;
+        # no other row. It shows what a failed comparison below compared.
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
