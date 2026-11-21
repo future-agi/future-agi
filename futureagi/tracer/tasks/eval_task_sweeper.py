@@ -13,10 +13,14 @@ that makes a stranded task visible at all.
 
 Per tick, bounded and idempotent:
 
-* take tasks in a sweepable status that still have undrained entries, and
-  continuous tasks whose cursor stopped advancing, oldest activity first,
-  capped at ``EVAL_TASK_SWEEP_MAX_TASKS``
-  (``tracer.selectors.eval_tasks.stranded``);
+* require a non-NULL ``start_time`` activation/coverage marker for every
+  automatic recovery candidate, including backlog and opted-in failed tasks;
+  this is not a Temporal acknowledgement, and unstamped legacy or accepted but
+  never activated tasks deliberately require owner-directed activation;
+* share ``EVAL_TASK_SWEEP_MAX_TASKS`` between tasks with undrained entries
+  (oldest activity first) and idle continuous tasks whose cursor is missing or
+  has not moved for ``STALE_CONTINUOUS_CURSOR`` (a rotating liveness check),
+  each task at most once per tick (``tracer.selectors.eval_tasks.stranded``);
 * ask Temporal whether a workflow is progressing, and leave that task alone if
   one is — a healthy task costs one describe and nothing else;
 * for the rest, reclaim entries stuck ``running`` past
@@ -92,6 +96,9 @@ def sweep_stranded_eval_tasks():
         logger.info("eval_task_sweep_disabled")
         return {
             "candidates": 0,
+            "backlog_candidates": 0,
+            "idle_continuous_candidates": 0,
+            "skipped": 0,
             "progressing": 0,
             "restarted": 0,
             "deferred": 0,

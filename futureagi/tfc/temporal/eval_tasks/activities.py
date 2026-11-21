@@ -528,6 +528,12 @@ def _set_task_status_sync(
         qs = EvalTask.objects.filter(id=task_id)
         if expected_status is not None:
             qs = qs.filter(status=expected_status)
+        elif status == EvalTaskStatus.FAILED:
+            # The fail path is unguarded so it can overwrite any running
+            # state, but a user's pause or delete is a decision, not a run
+            # state: a failure that lands after it (for example a FAILED write
+            # still retrying through a database outage) must not replace it.
+            qs = qs.exclude(status__in=(EvalTaskStatus.PAUSED, EvalTaskStatus.DELETED))
         changed = qs.update(**fields)
 
         task = EvalTask.objects.get(id=task_id)
