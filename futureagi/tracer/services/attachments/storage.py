@@ -109,6 +109,39 @@ def _posture(access: BindingAccessConfig, settings, provider):
     )
 
 
+class _NativeRegistry:
+    @staticmethod
+    def admission(settings):
+        config = resolve_attachment_storage_config(settings.FI_ATTACHMENTS_STORAGE)
+        assert config is not None  # Resolution is enabled for admission.
+        provider = _provider(config.storage.backend)
+        reference = settings.FI_ATTACHMENTS_STORAGE.get("posture_credential_ref")
+        supplied = getattr(settings, "FI_ATTACHMENTS_POSTURE_CREDENTIALS", {})
+        posture = supplied.get(reference) if reference is not None else None
+        if posture is not None and not isinstance(
+            posture, _posture_type(config.storage.backend)
+        ):
+            raise ValueError
+        return provider, config, posture
+
+    @staticmethod
+    def historical(binding, settings, *, operation):
+        access = resolve_attachment_binding_config(
+            binding.id, operation=operation, settings=settings
+        )
+        config = materialize_attachment_binding_config(binding=binding, config=access)
+        return _provider(binding.provider)(
+            binding=binding,
+            config=config,
+            posture_credentials=_posture(access, settings, binding.provider),
+        )
+
+
+def _registry(settings):
+    # A Python settings dependency, never an environment selector or fallback.
+    return getattr(settings, "FI_ATTACHMENTS_STORAGE_REGISTRY", _NativeRegistry)
+
+
 def for_binding(
     binding_id: UUID, *, operation: StorageOperation, settings: object | None = None
 ) -> PrivateMediaStorage:
@@ -128,15 +161,7 @@ def for_binding(
         binding = model.objects.get(pk=binding_id)
         if binding.provider == "gcs" and operation == "erase":
             failure_code = "cleanup_unavailable"
-        access = resolve_attachment_binding_config(
-            binding_id, operation=operation, settings=settings
-        )
-        config = materialize_attachment_binding_config(binding=binding, config=access)
-        adapter = _provider(binding.provider)(
-            binding=binding,
-            config=config,
-            posture_credentials=_posture(access, settings, binding.provider),
-        )
+        adapter = _registry(settings).historical(binding, settings, operation=operation)
         adapter.verify_identity(operation=operation)
         if operation in ("admit", "write"):
             adapter.verify_readiness()
@@ -158,17 +183,8 @@ def bind_for_admission(*, settings: _AdmissionSettings) -> UUID:
         if not getattr(settings, "FI_ATTACHMENTS_ENABLED", False):
             raise AttachmentError("disabled", 503)
         model, fields, digest = _schema()
-        config = resolve_attachment_storage_config(settings.FI_ATTACHMENTS_STORAGE)
-        assert config is not None  # Resolution is enabled for admission.
-        provider = _provider(config.storage.backend)
-        # New admissions use an explicit runtime reference, not ambient discovery.
-        reference = settings.FI_ATTACHMENTS_STORAGE.get("posture_credential_ref")
-        supplied = getattr(settings, "FI_ATTACHMENTS_POSTURE_CREDENTIALS", {})
-        posture = supplied.get(reference) if reference is not None else None
-        if posture is not None and not isinstance(
-            posture, _posture_type(config.storage.backend)
-        ):
-            raise ValueError
+        registry = _registry(settings)
+        provider, config, posture = registry.admission(settings)
         values = provider.discover_identity(config=config, posture_credentials=posture)
         if set(values) != set(fields):
             raise ValueError
@@ -185,17 +201,7 @@ def bind_for_admission(*, settings: _AdmissionSettings) -> UUID:
             raise ValueError
         # Check that owners created now will actually be resolvable historically.
         # No fallback to the current config if the deployment omitted references.
-        access = resolve_attachment_binding_config(
-            binding.id, operation="admit", settings=settings
-        )
-        historical = materialize_attachment_binding_config(
-            binding=binding, config=access
-        )
-        provider(
-            binding=binding,
-            config=historical,
-            posture_credentials=_posture(access, settings, binding.provider),
-        ).verify_readiness()
+        registry.historical(binding, settings, operation="admit").verify_readiness()
         return binding.id
     except AttachmentError:
         raise

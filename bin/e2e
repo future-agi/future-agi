@@ -90,6 +90,8 @@ wait_ready() {
 build_target() {
   case "$1" in
     backend)   docker build -t futureagi/future-agi:e2e-base -f "$ROOT/futureagi/Dockerfile.oss" "$ROOT/futureagi"
+               docker run --rm --network none --entrypoint python futureagi/future-agi:e2e-base -c 'from importlib.util import find_spec; import sys; sys.exit(int(any(find_spec(n) is not None for n in ("e2e_attachment_storage", "tfc.settings.e2e"))))'
+               docker build --target attachments-s3 -t futureagi-e2e-attachments-s3:e2e-local -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
                docker build -t futureagi/future-agi:e2e-local --build-arg BASE_TAG=e2e-base -f "$ROOT/e2e/stack/backend/Dockerfile" "$ROOT"
                echo "built. run with: FUTURE_AGI_VERSION=e2e-local bin/e2e up" ;;
     frontend)  docker build -t futureagi/frontend:e2e-local "$ROOT/frontend"

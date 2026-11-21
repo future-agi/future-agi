@@ -1,10 +1,6 @@
 """E2E-image-only provisioning of the private attachment buckets in the S3 double.
 
-The managed stack runs moto (``attachments-s3``) as its native-S3 double: the
-product's ``from_settings`` takes only the ``s3`` backend and no endpoint
-setting, and botocore's standard ``AWS_ENDPOINT_URL_S3`` points it here. The
-buckets get exactly the posture ``PrivateMediaStorage.verify_readiness``
-demands (DEPLOY.md: the deployment, never the application, owns it).
+This provisions the byte-store fixture, not a qualified AWS deployment.
 """
 
 import os
@@ -14,15 +10,15 @@ import time
 import boto3
 from botocore.config import Config
 
-ENDPOINT = "http://attachments-s3:5000"
+ENDPOINT = "https://attachments-s3:5000"
 BUCKETS = ("QUARANTINE", "SERVING")
 
 
 def provision(environ):
     if (
         environ.get("FUTURE_AGI_E2E_FIXTURE") != "attachments-storage"
-        or environ.get("AWS_ENDPOINT_URL_S3") != ENDPOINT
-        or environ.get("FI_ATTACHMENTS_STORAGE_BACKEND") != "s3"
+        or tuple(environ.get(f"FI_ATTACHMENTS_{p}_BUCKET") for p in BUCKETS)
+        != ("e2e-attachments-quarantine", "e2e-attachments-serving")
     ):
         raise ValueError(
             "Attachment storage bootstrap requires the managed E2E configuration."
@@ -31,6 +27,8 @@ def provision(environ):
         bucket = environ[f"FI_ATTACHMENTS_{prefix}_BUCKET"]
         client = boto3.client(
             "s3",
+            endpoint_url=ENDPOINT,
+            verify="/etc/futureagi-e2e/attachments-s3.crt",
             region_name=environ["FI_ATTACHMENTS_STORAGE_REGION"],
             aws_access_key_id=environ[f"FI_ATTACHMENTS_{prefix}_ACCESS_KEY"],
             aws_secret_access_key=environ[f"FI_ATTACHMENTS_{prefix}_SECRET_KEY"],

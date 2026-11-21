@@ -131,10 +131,11 @@ export function readAttachmentRoots(probe: AttachmentReader, project: string, tr
         AND (parent_span_id IS NULL OR parent_span_id = '') ORDER BY id`, { p: project, t: trace });
 }
 export function readAttachmentMessages(probe: AttachmentReader, project: string, trace: string, span: string) {
+  // The collector keeps input.value in attributes_extra, not the indexed string map.
   // Raw carrier and actual input column are separate observations. trace_detail.py:_parse_content
   // projects this input column as observation_span.input (parsed JSON for this fixture).
   return probe.ch<{ id: string; input: string; input_attribute: string }>(
-    `SELECT id, input, attrs_string['input.value'] AS input_attribute FROM spans FINAL
+    `SELECT id, input, JSONExtractString(attributes_extra, 'input.value') AS input_attribute FROM spans FINAL
       WHERE project_id={p:UUID} AND trace_id={t:String} AND id={s:String} AND is_deleted=0 ORDER BY id`,
     { p: project, t: trace, s: span });
 }

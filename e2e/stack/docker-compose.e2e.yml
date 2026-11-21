@@ -4,7 +4,6 @@
 x-e2e-attachments-env: &e2e-attachments-env
   FI_ATTACHMENTS_ENABLED: "true"
   FI_ATTACHMENTS_MEDIA_ORIGIN: https://localhost:23443
-  FI_ATTACHMENTS_STORAGE_BACKEND: s3
   FI_ATTACHMENTS_STORAGE_REGION: us-east-1
   FI_ATTACHMENTS_QUARANTINE_BUCKET: e2e-attachments-quarantine
   FI_ATTACHMENTS_SERVING_BUCKET: e2e-attachments-serving
@@ -13,10 +12,13 @@ x-e2e-attachments-env: &e2e-attachments-env
   FI_ATTACHMENTS_QUARANTINE_SECRET_KEY: e2e-attachments-quarantine-secret
   FI_ATTACHMENTS_SERVING_ACCESS_KEY: e2e-attachments-serving
   FI_ATTACHMENTS_SERVING_SECRET_KEY: e2e-attachments-serving-secret
-  # botocore's standard endpoint/config variables; storage.from_settings has
-  # no endpoint setting of its own, so the product code stays unmodified.
-  AWS_ENDPOINT_URL_S3: http://attachments-s3:5000
-  AWS_CONFIG_FILE: /etc/futureagi-e2e/aws-config
+  # Private decoder scratch (DEPLOY.md: required when enabled). Each container
+  # gets its own tmpfs below, owned by the Distributed image runtime user (root) with mode 0700.
+  FI_ATTACHMENTS_WORK_DIR: /var/lib/futureagi-attachments
+# tmpfs is not a docker "Mount", so backend and worker keep the managed-mock
+# application mount contract (e2e/lib/managed-mock.ts validateApplicationMounts).
+x-e2e-attachments-scratch: &e2e-attachments-scratch
+  - /var/lib/futureagi-attachments:uid=0,gid=0,mode=0700,size=2g
 services:
   clickhouse:
     # Seatbelt on 16GB CI runners: CH is the first OOM-kill victim otherwise.
@@ -70,6 +72,7 @@ services:
       metrics-schema-bootstrap:
         condition: service_completed_successfully
     restart: "no"
+    tmpfs: *e2e-attachments-scratch
     # Replace the production outbox: the ONLY application mount permitted by
     # managed-mock is this public, read-only status directory (never the worker).
     # bin/e2e creates the default directory when no override is supplied.
@@ -123,6 +126,7 @@ services:
     restart: "no"
     # Keep the worker mount-free for the managed-mock attestation as well.
     volumes: !reset []
+    tmpfs: *e2e-attachments-scratch
     environment:
       HARNESS_VERSIONING_ENABLED: "true"
       HARNESS_ACTORS_ENABLED: "true"
@@ -298,7 +302,8 @@ services:
   attachments-s3:
     # Native-S3 double for the private attachment buckets (versioning, SSE,
     # public-access block, ownership controls, lifecycle, conditional PUT).
-    image: motoserver/moto:5.1.4
+    image: futureagi-e2e-attachments-s3:${FUTURE_AGI_VERSION:-latest}
+    pull_policy: never
     restart: "no"
   attachments-storage-bootstrap:
     image: futureagi/future-agi:${FUTURE_AGI_VERSION:-latest}

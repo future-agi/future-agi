@@ -1263,3 +1263,28 @@ def test_minio_quarantine_put_from_request_thread(peer):
     assert [op for op, *_ in peer.calls] == ["PUT", "HEAD"]
     assert "Credential=synthetic-q-access/" in peer.calls[0][2]["Authorization"]
     assert "versionId=peer-version" in peer.calls[1][1]
+
+
+@pytest.mark.parametrize("provider", ["minio", "s3"])
+def test_native_admission_refuses_plain_stack_endpoint(monkeypatch, provider):
+    monkeypatch.setenv("STORAGE_BACKEND", provider)
+    monkeypatch.setenv("S3_ENDPOINT", "http://minio:9000")
+    monkeypatch.setenv("S3_SECURE", "false")
+    fields = {"backend": provider, "region": "us-east-1"}
+    for purpose in ("quarantine", "serving"):
+        fields.update(
+            {
+                f"{purpose}_bucket": f"e2e-{purpose}",
+                f"{purpose}_access_key": "fixture",
+                f"{purpose}_secret_key": "fixture",
+            }
+        )
+    with patch.object(AttachmentStorageBinding.objects, "get_or_create") as persist:
+        with pytest.raises(AttachmentError) as refused:
+            storage.bind_for_admission(
+                settings=SimpleNamespace(
+                    FI_ATTACHMENTS_ENABLED=True, FI_ATTACHMENTS_STORAGE=fields
+                )
+            )
+    assert refused.value.code == "storage_unverified"
+    persist.assert_not_called()
