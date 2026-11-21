@@ -177,7 +177,12 @@ def draft_content(
             "diff": diff,
             "agent_version_id": locked.agent_version_id,
         }
-    diff, summary = suite_change(default, prepared.scenarios, origin)
+    diff, summary = suite_change(
+        default,
+        prepared.scenarios,
+        origin,
+        prepared.suite_documents.get("dropped"),
+    )
     return {
         **prepared.suite_fields,
         "documents": dict(prepared.suite_documents),

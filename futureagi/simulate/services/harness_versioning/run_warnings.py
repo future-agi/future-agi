@@ -16,6 +16,10 @@ from simulate.models import (
     HarnessSuiteValidation,
     HostedHarnessJob,
 )
+from simulate.services.harness_scenario_lifecycle import (
+    lifecycle_counts,
+    scenario_lifecycle,
+)
 from simulate.services.harness_versioning.assembly import bundle_key, certify_enabled
 from simulate.services.harness_versioning.read import (
     _agent_label,
@@ -24,10 +28,7 @@ from simulate.services.harness_versioning.read import (
     version_refs,
 )
 from simulate.services.harness_versioning.review_items import saved_changes
-from simulate.services.harness_versioning.versions import (
-    proof_passes,
-    versioning_enabled,
-)
+from simulate.services.harness_versioning.versions import versioning_enabled
 from simulate.services.hosted_harness import (
     ResolvedPins,
     VersionPicks,
@@ -76,8 +77,9 @@ def _names(names: list[str]) -> str:
 
 
 def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[str]:
-    """The suite's scenarios a saved, graded change touched (on the environment version or the suite version) that hold
-    no proof against this environment version."""
+    """The suite's scenarios a saved, graded change touched (on the environment version or the suite version) that no
+    validation reached on this pair since. A case validated again and held by its own checks says so on its own
+    reason; it is not asked to be proved again."""
     from simulate.models import HarnessSuiteMember
 
     reviewed = [
@@ -114,9 +116,17 @@ def _needs_revalidation(environment_version: Any, suite_version: Any) -> list[st
         for key in members
         if scenario_token(key) in tokens
         and not any(
-            proof_passes(proof) and scenario_token(name) == scenario_token(key)
+            _reached(proof) and scenario_token(name) == scenario_token(key)
             for name, proof in proofs.items()
         )
+    )
+
+
+def _reached(proof: object) -> bool:
+    """Whether a validation reached the case, whatever it found."""
+    return (
+        isinstance(proof, dict)
+        and proof.get("blocked_reason") != "validation_incomplete"
     )
 
 
@@ -211,17 +221,32 @@ def run_warnings(
     environment_version, suite_version = pins.environment_version, pins.suite_version
     environment_label = _message_label(_label(environment_version.version_number))
     warnings = []
-    if not HarnessSuiteValidation.no_workspace_objects.filter(
-        suite_version=suite_version,
-        environment_version=environment_version,
-        status=HarnessSuiteValidation.Status.PASSED,
-    ).exists():
+    suite_label = _message_label(_label(suite_version.version_number))
+    # As the scenario lifecycle reads the pair, so a legacy case kept as written counts as one.
+    counts = lifecycle_counts(
+        scenario_lifecycle(
+            environment,
+            suite_version=suite_version,
+            environment_version=environment_version,
+        ).values()
+    )
+    if not counts["proved"] and not counts["kept_as_written"]:
         warnings.append(
             _warning(
                 "suite_unproved",
-                f"Suite {_message_label(_label(suite_version.version_number))}"
-                " hasn't been proved"
+                f"Suite {suite_label} hasn't been proved"
                 f" against environment {environment_label}",
+                "suite",
+            )
+        )
+    elif counts["kept_as_written"] or counts["not_proved"]:
+        # Validated, but not every case proved: say how the cases stand, not "not proved".
+        warnings.append(
+            _warning(
+                "suite_partly_proved",
+                f"Suite {suite_label} on environment {environment_label}:"
+                f" {counts['proved']} proved, {counts['kept_as_written']} kept as written,"
+                f" {counts['not_proved']} not proved",
                 "suite",
             )
         )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from itertools import count
 from typing import TYPE_CHECKING, Any, cast
@@ -691,7 +691,7 @@ def _rows_held(
     used: set[Any] = set()
 
     def take(index: int, row: HostedHarnessScenario | None) -> None:
-        if row is not None and row.id not in used:
+        if row is not None and row.id not in used and may_take_back(row, docs[index]):
             held_rows[index] = row
             used.add(row.id)
 
@@ -765,6 +765,42 @@ class PlannedPair:
     doc: dict[str, Any]
 
 
+def restores_own_key(document: Mapping[str, Any]) -> bool:
+    """Whether a scenario is a removed one restored under its own key (`restored_from.key` is its `scenario_key`):
+    the only scenario that takes back a key the environment gave before, with its row and history."""
+    restored = document.get("restored_from")
+    key = str(document.get("scenario_key") or "").strip()
+    return (
+        bool(key)
+        and isinstance(restored, Mapping)
+        and str(restored.get("key") or "").strip() == key
+    )
+
+
+def may_take_back(row: HostedHarnessScenario, doc: Mapping[str, Any]) -> bool:
+    """Whether a document may be written into ``row``: any live row, but a removed or archived one only when the
+    document restores it under its own key or comes back exactly as it was, never a new case that shares its key."""
+    if not row.deleted and row.archived_at is None:
+        return True
+    return restores_own_key(doc) or _comes_back_as_it_was(row, doc)
+
+
+def _comes_back_as_it_was(row: HostedHarnessScenario, doc: Mapping[str, Any]) -> bool:
+    """Whether a document is the removed scenario ``row`` back exactly as its last saved suite held it, as a rebuild
+    restores one whose capability returned: the same case, so it keeps its row. A row no saved suite ever held (an
+    environment from before versions) has nothing to compare with, so it is read as before."""
+    from simulate.models import HarnessSuiteMember
+    from simulate.services.harness_versioning.versions import _member_content
+
+    last = (
+        HarnessSuiteMember.no_workspace_objects.filter(scenario_id=row.id)
+        .order_by("-suite_version__created_at")
+        .values_list("content", flat=True)
+        .first()
+    )
+    return last is None or last == _member_content(doc)
+
+
 def plan_pairs(
     job: HostedHarnessJob,
     docs: list[dict[str, Any]],
@@ -831,6 +867,14 @@ def plan_pairs(
             )
         elif exact:
             held = by_token.get(_scenario_token(doc.get("name")))
+        if (
+            exact
+            and held is not None
+            and held.id not in owned
+            and not may_take_back(held, doc)
+        ):
+            # A new case whose key or name a removed one held: a fresh key and row, never the old one's history.
+            held = None
         if (
             exact
             and held is not None
@@ -920,9 +964,12 @@ def pair_scenarios(
     # soft-deleted even when history points at it, so old Runs retain their foreign key
     # while active-suite reads and new Run selection no longer expose it.
     if prune:
+        # An archived row keeps its identity, runs and evidence: it is never pruned.
         HostedHarnessScenario.no_workspace_objects.filter(job=job).exclude(
             scenario_key__in=seen
-        ).update(deleted=True, deleted_at=timezone.now())
+        ).exclude(archived_at__isnull=False).update(
+            deleted=True, deleted_at=timezone.now()
+        )
     return pairs
 
 
@@ -1008,6 +1055,9 @@ def _default_member_rows(
 
 class ScenarioRows(list):
     """Draft scenario rows, read the way the list, coverage and catalogue read rows."""
+
+    # The draft they come from: its id and revision.
+    draft: dict[str, Any] | None = None
 
     def values(self, *paths: str) -> list[dict[str, Any]]:
         return [{path: _row_value(row, path) for path in paths} for row in self]

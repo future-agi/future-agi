@@ -404,6 +404,23 @@ def platform_model_gateway() -> tuple[str, str]:
     return url.rstrip("/"), key
 
 
+# The harness's own settings, sent from the platform's environment to the guest: in the simulator material, and to every
+# command that builds, certifies or proves in the sandbox.
+ALK_GUEST_SETTINGS = (
+    # Off has to travel: decided here, enforced inside the sandbox.
+    "ALK_VOICEMAIL_SCENARIOS",
+    "ALK_HARNESS_WORKERS_AT_ONCE",
+    # Runtime instances in the one sandbox for validation and proving (a ceiling; its own limits decide), the
+    # offline pass's budget, and the time and rounds a build hands held cases back to the writer.
+    "ALK_VALIDATION_INSTANCES",
+    "ALK_PROVE_SUITE_SECONDS",
+    "ALK_HELD_CASE_REPAIR_SECONDS",
+    "ALK_HELD_CASE_ROUNDS",
+    # The guest waits this long for the build; unset, it falls back to its own default.
+    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+)
+
+
 def _platform_simulator_material() -> dict[str, str]:
     """Return control-process-only simulator config.
 
@@ -488,12 +505,7 @@ def _platform_simulator_material() -> dict[str, str]:
         "ALK_BACKGROUND_NOISE",
         "HARNESS_BACKGROUND_NOISE_VOLUME",
         "HARNESS_CALLER_BARGE_IN_RATE",
-        # Off has to travel: decided here, enforced inside the sandbox.
-        "ALK_VOICEMAIL_SCENARIOS",
-        "ALK_HARNESS_WORKERS_AT_ONCE",
-        "ALK_VALIDATION_INSTANCES",
-        # The guest waits this long for the build; unset, it falls back to its own default.
-        "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
+        *ALK_GUEST_SETTINGS,
     ):
         value = str(os.environ.get(name) or "").strip()
         if value:
@@ -2420,7 +2432,12 @@ class HostedHarnessGateway:
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
-                    _with_simulation_mark(guest_job_document(payload), simulation_mark),
+                    _with_used_scenario_keys(
+                        _with_simulation_mark(
+                            guest_job_document(payload), simulation_mark
+                        ),
+                        job,
+                    ),
                     sort_keys=True,
                     separators=(",", ":"),
                 ).encode(),
@@ -2586,13 +2603,16 @@ class HostedHarnessGateway:
         from simulate.services.harness_versioning import assembly as bundle_cache
         from simulate.services.harness_versioning.validation import (
             certify_only,
+            check_deadline,
+            proves_scenarios,
+            proving_only,
             reading_only,
             reads_agent,
         )
 
         validation = certify_only(job)
-        # A certified pairing's check only reads its agent version's tools.
-        only_reading = validation and reading_only(job)
+        # A certified pairing's check only reads its agent version's tools, or only proves its scenarios.
+        only_reading = validation and (reading_only(job) or proving_only(job))
         if validation and not only_reading and bundle_cache.assembled_bundle_ready(job):
             # Certified meanwhile, by a run or another validation: nothing to launch.
             return self._complete_without_sandbox(job, endpoint_base_url)
@@ -2872,6 +2892,14 @@ class HostedHarnessGateway:
                 sandbox.fs.upload_file(adjustment_body, _ADJUSTMENTS_PATH)
             if authoring_archive is not None:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
+            agent_document = (
+                bundle_cache.stored_agent_document(job.agent_version_id)
+                if validation
+                else None
+            )
+            if agent_document is not None:
+                # Proving reads the version's tools from here; a reading in this sandbox replaces it.
+                sandbox.fs.upload_file(agent_document, bundle_cache.AGENT_READING_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -2914,16 +2942,14 @@ class HostedHarnessGateway:
                 for name, value in simulator_env.items()
                 if name
                 in {
+                    *ALK_GUEST_SETTINGS,
                     "ALK_HARNESS",
                     "ALK_SIMULATOR_FUNDING",
                     "ALK_HARNESS_MODEL",
-                    "ALK_HARNESS_WORKERS_AT_ONCE",
-                    "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS",
                     "AGENTCC_BASE_URL",
                     "AGENTCC_API_KEY",
                     "ALK_CLAUDE_GATEWAY_URL",
                     "ALK_CLAUDE_GATEWAY_API_KEY",
-                    "ALK_VOICEMAIL_SCENARIOS",
                     "ALK_CAB_GUEST_POC_TARGET_PHONE_NUMBER",
                     "ALK_CAB_GUEST_POC_PIN",
                 }
@@ -2961,8 +2987,32 @@ class HostedHarnessGateway:
                     "cp -a /work/bundle /work/authoring/environment-bundle"
                 )
             )
+            # ALK stops proving before the outer stop and the check's own end, so what it proved is written and read.
+            deadline_at = (
+                check_deadline(job).timestamp()
+                - bundle_cache.ALK_DEADLINE_MARGIN_SECONDS
+                if validation
+                else None
+            )
             if certify:
-                bundle_command = bundle_cache.certify_command()
+                # A run's own certify on a cache miss never proves: its proofs would be discarded.
+                bundle_command = bundle_cache.certify_command(
+                    prove=validation and proves_scenarios(job), deadline_at=deadline_at
+                )
+                if reads_agent(job):
+                    bundle_command = (
+                        bundle_cache.agent_reading_command() + bundle_command
+                    )
+            elif validation and proving_only(job):
+                bundle_command = (
+                    bundle_cache.prove_suite_command(
+                        deadline_at=deadline_at,
+                        keys=((job.payload or {}).get("metadata") or {}).get(
+                            "scenario_keys"
+                        ),
+                    )
+                    + "true"
+                )
                 if reads_agent(job):
                     bundle_command = (
                         bundle_cache.agent_reading_command() + bundle_command
@@ -3189,11 +3239,10 @@ class HostedHarnessGateway:
             for name, value in simulator_env.items()
             if name
             in {
+                *ALK_GUEST_SETTINGS,
                 "ALK_HARNESS",
                 "ALK_HARNESS_MODEL",
-                "ALK_HARNESS_WORKERS_AT_ONCE",
                 "ALK_SIMULATOR_FUNDING",
-                "ALK_VOICEMAIL_SCENARIOS",
                 "AGENTCC_BASE_URL",
                 "AGENTCC_API_KEY",
                 "ALK_CLAUDE_GATEWAY_URL",
@@ -4050,6 +4099,7 @@ class HostedHarnessGateway:
         cli_spend = _json(_AUTHORING_SPEND_PATH)
         builder_spend = _json(_BUILDER_SPEND_PATH)
         coverage = _json("/work/authoring/coverage.json")
+        build_yield = _json("/work/authoring/generic-harness/yield.json")
         invariants = _json("/work/authoring/source-data-invariants.json")
         certified = _json("/work/authoring/generic-harness/certification.json")
         _read_harness_usage(attempt, sandbox)
@@ -4077,7 +4127,7 @@ class HostedHarnessGateway:
         authoring_complete = (
             isinstance(bundle, dict)
             and isinstance(scenarios, list)
-            and len(scenarios) == job.scenario_count
+            and len(scenarios) == scenarios_to_build(job, build_yield)
         )
 
         # Unified hosted execution authors the contract/world/scenarios in the same
@@ -4131,6 +4181,7 @@ class HostedHarnessGateway:
             build_output=build_output,
             coverage=coverage,
             call_actors=call_actors,
+            build_yield=build_yield,
         )
         activities = _activity_events()
         if activities:
@@ -4154,7 +4205,9 @@ class HostedHarnessGateway:
         if isinstance(environment, dict):
             stage = "generating_scenarios"
         if isinstance(scenarios, list):
-            written = len(scenarios) >= (job.scenario_count or len(scenarios))
+            written = len(scenarios) >= (
+                scenarios_to_build(job, build_yield) or len(scenarios)
+            )
             world_ir = _json("/work/authoring/generic-harness/world-ir.json")
             if certified is not None:
                 stage = "validating_scenarios"
@@ -5043,6 +5096,55 @@ class HostedHarnessGateway:
                 "harness tool routing not kept attempt=%s", attempt.id, exc_info=True
             )
 
+    def _keep_scenario_proofs(self, attempt: HostedHarnessAttempt) -> None:
+        """Record the proofs this validation made of every scenario, read before the sandbox is
+        deleted. Never raises: without a readable file the lifecycle stays as it was."""
+        from simulate.services.harness_versioning import assembly as bundle_cache
+        from simulate.services.harness_versioning.validation import proves_scenarios
+        from simulate.services.harness_versioning.versions import record_proofs
+
+        job = attempt.job
+        if not proves_scenarios(job):
+            return
+        recorded = False
+        try:
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+            proofs = bundle_cache.scenario_proofs(sandbox)
+            if (
+                proofs is not None
+                and job.suite_version is not None
+                and job.environment_version is not None
+            ):
+                record_proofs(job.suite_version, job.environment_version, proofs, job)
+                recorded = True
+            else:
+                logger.warning(
+                    "harness_scenario_proofs_unread job=%s reason=no_file", job.id
+                )
+        except Exception:  # noqa: BLE001 - the lifecycle stays as it was
+            logger.warning(
+                "harness_scenario_proofs_unread job=%s", job.id, exc_info=True
+            )
+        try:
+            with transaction.atomic():
+                locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                    id=job.id
+                )
+                payload = dict(locked.payload or {})
+                payload["metadata"] = {
+                    **(payload.get("metadata") or {}),
+                    "scenario_proofs_recorded": recorded,
+                }
+                locked.payload = payload
+                locked.save(update_fields=["payload", "updated_at"])
+        except Exception:  # noqa: BLE001 - the status endpoint then reads "not recorded"
+            logger.warning(
+                "harness_scenario_proofs_flag_unsaved job=%s", job.id, exc_info=True
+            )
+
     def _store_agent_reading(self, attempt: HostedHarnessAttempt) -> None:
         """Store the tools a validation read for its agent version, before its sandbox
         is deleted. Never raises: an unread version stays unread."""
@@ -5083,6 +5185,7 @@ class HostedHarnessGateway:
 
         if bundle_cache.assembled_bundle_ready(attempt.job):
             self._keep_tool_routing(attempt)
+            self._keep_scenario_proofs(attempt)
             attempt.terminal_stage = "completed"
             attempt.terminal_failure = None
         else:
@@ -5876,6 +5979,18 @@ def call_actors_summary(listing: dict[str, Any]) -> str:
     return f"{count} actor" + ("" if count == 1 else "s")
 
 
+def scenarios_to_build(job: HostedHarnessJob, build_yield: Any = None) -> int:
+    """What a build finishes with: the count it asked for, or fewer when its yield says the agent supports only that
+    many distinct cases."""
+    asked = int(job.scenario_count or 0)
+    supports = build_yield.get("supports") if isinstance(build_yield, dict) else None
+    try:
+        cases = int((supports or {}).get("cases") or 0)
+    except (AttributeError, TypeError, ValueError):
+        cases = 0
+    return min(asked, cases) if asked and cases > 0 else asked
+
+
 def authoring_stage_outputs(
     contract: Any,
     environment: Any,
@@ -5888,6 +6003,7 @@ def authoring_stage_outputs(
     action_certification: Any = None,
     coverage: Any = None,
     call_actors: Any = None,
+    build_yield: Any = None,
 ) -> list[dict[str, Any]]:
     """Build the complete, secret-safe snapshots shown by the hosted-run UI."""
     outputs: list[dict[str, Any]] = []
@@ -5977,6 +6093,42 @@ def authoring_stage_outputs(
                 "data": _secret_safe(coverage),
             }
         )
+    if isinstance(build_yield, dict):
+        # ALK's `generic-harness/yield.json`: what the build was asked for, what runs, what is held and why,
+        # and, when that is fewer than were asked for, how many distinct cases the agent supports and why.
+        supports = build_yield.get("supports")
+        supports = supports if isinstance(supports, dict) else {}
+        summary = "; ".join(
+            str(line)
+            for line in (build_yield.get("line"), supports.get("line"))
+            if line
+        )
+        if supports.get("why"):
+            summary = (
+                f"{summary}. {supports['why']}" if summary else str(supports["why"])
+            )
+        outputs.append(
+            {
+                "id": "00000000-0000-0000-0000-000000000008",
+                "kind": "yield",
+                "title": "Runnable cases",
+                "summary": summary,
+                "data": _secret_safe(
+                    {
+                        field: build_yield.get(field)
+                        for field in (
+                            "asked",
+                            "runnable",
+                            "cases",
+                            "held",
+                            "line",
+                            "rounds",
+                            "supports",
+                        )
+                    }
+                ),
+            }
+        )
     if isinstance(certification, dict):
         status = str(certification.get("status") or "unknown")
         repairs = (
@@ -6057,6 +6209,7 @@ def authoring_stage_outputs_from_archive(
         "repair-history.json",
         "action-certification.json",
         "coverage.json",
+        "yield.json",
     }
     with tarfile.open(fileobj=io.BytesIO(body), mode="r:gz") as archive:
         for member in archive.getmembers():
@@ -6104,6 +6257,7 @@ def authoring_stage_outputs_from_archive(
         action_certification=documents.get("action-certification.json"),
         coverage=documents.get("coverage.json"),
         call_actors=all_actors(documents.get("actors.json")),
+        build_yield=documents.get("yield.json"),
     )
 
 
@@ -6203,8 +6357,10 @@ _SEALED_ARCHIVE_ROOTS = frozenset({"environment-bundle", "generic-harness"})
 
 
 def _scenario_token(value: object) -> str:
-    """One spelling for a scenario's folder, name and key, which older outputs wrote differently."""
-    return Path(str(value or "").strip()).name.lower().replace("-", "_")
+    """One spelling for a scenario's folder, name and key: the one ``harness_starting_records.scenario_token``."""
+    from simulate.services.harness_starting_records import scenario_token
+
+    return scenario_token(str(value or ""))
 
 
 def _suite_tokens(suite: list[dict]) -> set[str]:

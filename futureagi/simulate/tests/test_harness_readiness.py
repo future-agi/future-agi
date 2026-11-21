@@ -103,6 +103,10 @@ def _environment(user, workspace, storage, key):
     """Legacy A1 is the default; its pairing with E1 and S1 is certified."""
     environment = _agent_env(user, workspace, key, storage, body=_sealed_authoring())
     assert _row(environment).state == "ready"
+    # Its build proved every case on this pair, so a run sends them.
+    from simulate.tests.harness_validation import prove_pair
+
+    prove_pair(environment)
     return environment
 
 
@@ -1073,6 +1077,10 @@ class TestApi:
             "dropped",
             "grading",
             "requirements_recorded",
+            "next",
+            "running",
+            "held_back",
+            "reasons",
         }
         # A single agent's workers hold nothing back.
         assert body["selection"]["held_by"] == []
@@ -3803,7 +3811,7 @@ def test_a_scenario_with_an_acting_actor_on_an_in_process_agent_is_held_back():
     placed = _place(
         _case(acting),
         {},
-        proved=True,
+        view=None,
         voice=False,
         many=False,
         pair_validating=False,

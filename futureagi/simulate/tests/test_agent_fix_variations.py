@@ -61,6 +61,7 @@ from simulate.services.hosted_harness_conversation import (
     publish_conversation_workspace,
 )
 from simulate.temporal.types.agent_fix import VariationsStep
+from simulate.tests.harness_validation import prove_pair
 from simulate.tests.test_agent_fix_services import (  # noqa: F401 - fixture
     KEYS,
     _move_default_suite,
@@ -117,7 +118,10 @@ def environment(user, workspace, storage):
             },
         },
     )
-    return _environment(user, workspace, "variations-env", storage, body=body)
+    environment = _environment(user, workspace, "variations-env", storage, body=body)
+    # Its cases are validated on the defaults, so the runs the fix measures them with may start.
+    prove_pair(environment)
+    return environment
 
 
 @pytest.fixture

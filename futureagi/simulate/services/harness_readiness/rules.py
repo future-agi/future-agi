@@ -629,8 +629,8 @@ _OBSERVED: dict[str, dict[str, str]] = {
         " on an open stream",
         "unavailable:voice_call": "Voice cases are heard over the call; no chat stream"
         " applies",
-        "unavailable:transport_not_qualified": "This transport is not supported for"
-        " runs until it is approved for runs",
+        "unavailable:transport_not_qualified": "This connection is not supported for runs until it is"
+        " approved",
         "untested": "How this connection replies is not recorded, so where a case ends"
         " is not verified",
     },

@@ -49,6 +49,9 @@ const toPage = (data) => ({
   fields: Array.isArray(data?.fields) ? data.fields : [],
   scenarioEditing: data?.scenario_editing ?? null,
   levelLabels: data?.level_labels ?? {},
+  // Proved, kept as written and not proved over the whole suite; the lifecycle counts carry the
+  // same three keys plus the four states and replace the proof counts when present.
+  proofCounts: data?.lifecycle_counts ?? data?.proof_counts ?? null,
 });
 
 export function useHarnessScenarios({

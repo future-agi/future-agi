@@ -927,3 +927,34 @@ class TestRunListSummary:
         }
         assert oldest["status"] == "Completed"
         assert oldest["suite_version"]["id"] == str(first.suite_version_id)
+
+
+def test_edited_case_reads_changed_test(monkeypatch):
+    rows = {
+        "suite-a": [
+            ("refund", {"instruction": "Refund O-10."}),
+            ("lookup", {"instruction": "Look up O-10."}),
+        ],
+        "suite-b": [
+            ("refund", {"instruction": "Refund O-20."}),
+            ("lookup", {"instruction": "Look up O-10."}),
+        ],
+    }
+
+    class _Members:
+        def filter(self, *, suite_version_id, scenario_key__in):
+            self.suite = suite_version_id
+            return self
+
+        def values_list(self, *fields):
+            return rows[self.suite]
+
+    monkeypatch.setattr(
+        run_compare.HarnessSuiteMember, "no_workspace_objects", _Members()
+    )
+
+    changed = run_compare.changed_tests(
+        "suite-a", "suite-b", "env-1", "env-1", ["refund", "lookup"]
+    )
+
+    assert changed == {"refund"}

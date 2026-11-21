@@ -9,7 +9,7 @@ runnable until Save promotes it.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 from django.utils import timezone
 
@@ -61,6 +61,8 @@ class CandidateSet(TypedDict):
     # Per piece with a draft: the draft and the revision the candidates were built from.
     drafts: dict[str, CandidateDraft]
     review_digest: str
+    # The decisions the drafts kept at Validate, so a read checks them without building the review.
+    decisions_digest: NotRequired[str]
     job_id: str | None
     at: str
     # The check ended on our side for a cause that repeats: the set may be saved uncertified, as a run may go ahead.
@@ -158,12 +160,42 @@ def unavailable_on_our_side(entry: CandidateSet, bundle: Any) -> bool:
     return bool(bundle is not None and validation.repeats_unavailable(bundle))
 
 
+def proof_state(entry: CandidateSet) -> str:
+    """Whether this set's versions carry their scenarios' proofs: `proving` while the set's own validation job runs
+    (its bundle can be ready before the job records each proof), `proved` once the pair holds recorded proofs or
+    the job that proved exactly this pair completed, else `unproved` (a pairing certified earlier for other
+    versions: saved now, its cases would carry no proofs). Read from typed rows only."""
+    job_id = entry.get("job_id")
+    job = (
+        HostedHarnessJob.no_workspace_objects.filter(id=job_id).first()
+        if job_id
+        else None
+    )
+    if job is not None and validation.is_live(job):
+        return "proving"
+    if validation.has_proofs(
+        entry["environment_version_id"], entry["suite_version_id"]
+    ):
+        return "proved"
+    # Completed, never failed or stopped: a job that ended any other way recorded nothing for these versions.
+    if (
+        job is not None
+        and job.state == HostedHarnessJob.State.COMPLETED
+        and str(job.suite_version_id) == str(entry["suite_version_id"])
+        and str(job.environment_version_id) == str(entry["environment_version_id"])
+    ):
+        return "proved"
+    return "unproved"
+
+
 def validation_state(
     environment: HostedHarnessJob, entry: CandidateSet | None = None
 ) -> CandidateValidation | None:
-    """Where the live set's validation stands: `validating`, `retry` (a job ended before any check ran), `ready`,
+    """Where the live set's validation stands: `validating`, `retry` (a job ended before any check ran, or the
+    pairing was certified for other versions and nothing proved this set's: Validate proves it), `ready`,
     `failed`, `check_unavailable` (the check ended on our side for a cause that repeats; the set may save
-    uncertified), or `superseded` once the defaults moved under it. A failed validation names the actions that failed and
+    uncertified), `superseded` once the defaults moved under it, or `outdated` once the drafts or decisions moved
+    since the set was validated (Save would refuse it). A failed validation names the actions that failed and
     the scenarios that need one of them on every path; a ready one names the scenarios certifying dropped.
     """
     entry = entry or live_set(environment)
@@ -177,11 +209,16 @@ def validation_state(
     if current_defaults(environment) != entry["base_defaults"]:
         state = "superseded"
     elif bundle is not None and bundle.state == HarnessAssembledBundle.State.READY:
-        state = "ready"
+        state = {"proving": "validating", "proved": "ready", "unproved": "retry"}[
+            proof_state(entry)
+        ]
     elif bundle is not None and bundle.state == HarnessAssembledBundle.State.FAILED:
         state = "failed"
     elif unavailable_on_our_side(entry, bundle):
         state = "check_unavailable"
+    if state in ("ready", "check_unavailable") and _drafts_moved(environment, entry):
+        # Save would refuse these candidates: what it would save is no longer what was validated.
+        state = "outdated"
     body = CandidateValidation(
         state=state,
         job_id=entry.get("job_id"),
@@ -216,6 +253,34 @@ def validation_state(
     return body
 
 
+def _drafts_moved(environment: HostedHarnessJob, entry: CandidateSet) -> bool:
+    """Whether the drafts or the review decisions moved since this set was validated, as Save checks them. Cheap on
+    every drafts read: the drafts' ids and revisions, then the decisions they keep; a set stored before it kept its
+    decisions is checked against the whole review."""
+    from simulate.services.harness_versioning import review
+    from simulate.services.harness_versioning.draft_pieces import open_draft
+
+    current = {}
+    for piece, seen in entry["drafts"].items():
+        draft = open_draft(environment, piece)
+        if (
+            draft is None
+            or str(draft.id) != seen["id"]
+            or draft.revision != seen["revision"]
+        ):
+            return True
+        current[piece] = draft
+    # A piece opened since, such as a chat turn's environment change, is a change Validate did not see.
+    if any(
+        piece not in entry["drafts"] and open_draft(environment, piece) is not None
+        for piece in DRAFT_PIECES
+    ):
+        return True
+    if "decisions_digest" in entry:
+        return review.decisions_digest(current) != entry["decisions_digest"]
+    return review.draft_review(environment)["review_digest"] != entry["review_digest"]
+
+
 def _affected_scenarios(
     environment: HostedHarnessJob, entry: CandidateSet, tools: set[str]
 ) -> list[str]:
@@ -237,4 +302,7 @@ def candidate_states(environment: HostedHarnessJob) -> Mapping[str, str]:
         return {}
     current = validation_state(environment, entry)
     state = current["state"] if current is not None else "validating"
+    # History's labels know a set set aside, not why: one whose changes moved is set aside like a superseded one.
+    if state == "outdated":
+        state = "superseded"
     return {entry["environment_version_id"]: state, entry["suite_version_id"]: state}

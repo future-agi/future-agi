@@ -1075,6 +1075,11 @@ ALK_HOSTED_EGRESS_UNRESTRICTED = os.getenv(
 ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = int(
     os.getenv("ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", "10800")
 )
+# How long a Validate (a check of an environment's cases) may run before it is stopped: generous, so a suite of a
+# thousand cases is proved; cases a stopped check did not reach keep their earlier proofs.
+HARNESS_VALIDATION_CHECK_SECONDS = int(
+    os.getenv("HARNESS_VALIDATION_CHECK_SECONDS", "") or 7200
+)
 # Derived from the budget above so the two cannot disagree.
 ALK_HOSTED_AUTHORING_TIMEOUT = int(
     os.getenv("ALK_HOSTED_AUTHORING_TIMEOUT", "")
@@ -1248,7 +1253,9 @@ HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
 ).lower() in ("1", "true", "yes")
 # Most scenarios × trials one simulation Run may submit.
-HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
+HARNESS_MAX_EXECUTIONS_PER_RUN = int(
+    os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "1000")
+)
 # Each profile is an operator-certified size/connector/snapshot combination.
 HARNESS_RESOURCE_PROFILES = json.loads(os.getenv("HARNESS_RESOURCE_PROFILES", "[]"))
 # Comma-separated allowlist of provider runtime identifiers certified for W>1.

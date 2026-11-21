@@ -12,6 +12,7 @@ from simulate.services.harness_versioning.review_items import (
     SavedChange,
     SourceAgent,
     SourceUsed,
+    UsedFile,
     item_index,
     saved_changes,
     whole_documents,
@@ -117,10 +118,12 @@ def record_sources(
     revision: int,
     at: str,
     message_id: str = "",
+    used_files: list[UsedFile] | None = None,
 ) -> dict[str, list[ChangeSource]]:
     """Where each change came from: every item this write moved gets one source (who, through what, at which draft
     revision), appended to the sources it already had. A retried write at the same revision adds nothing. A chat
-    write names the person's message it answered (`message_id`)."""
+    write names the person's message it answered (`message_id`); a file import names each file and row it read
+    (`used_files`, each `{"file_id", "row"}`, the row ``None`` for a whole file)."""
     out = {key: list(value) for key, value in (provenance or {}).items()}
     whole = whole_documents(before, after)
     old, new = item_index(before, whole), item_index(after, whole)
@@ -142,6 +145,14 @@ def record_sources(
             if user is not None
             else SourceAgent(kind="harness")
         )
+    used = [
+        *used,
+        *(
+            SourceUsed(kind="file", id=str(one["file_id"]), row=one.get("row"))
+            for one in used_files or []
+            if one.get("file_id")
+        ),
+    ]
     source = ChangeSource(origin=origin, agent=agent, at=at, draft_revision=revision)
     if used:
         source["used"] = list(used)

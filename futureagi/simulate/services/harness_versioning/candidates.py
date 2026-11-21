@@ -231,6 +231,7 @@ def validate_drafts(
                 for piece, draft in opened.items()
             },
             "review_digest": reviewed["review_digest"],
+            "decisions_digest": review.decisions_digest(opened),
             "job_id": str(started.job.id) if started.job is not None else None,
             "at": timezone.now().isoformat(),
         }

@@ -291,6 +291,59 @@ def sub_goal_digests(environment_version_ids: Iterable[Any]) -> dict[str, Any]:
     return {str(version_id): digests for version_id, digests in rows}
 
 
+def changed_tests(
+    suite_id: Any,
+    other_suite_id: Any,
+    environment_id: Any,
+    other_environment_id: Any,
+    keys: Iterable[str],
+) -> set[str]:
+    """Keys whose case is not the same test in the two runs: its content differs between the two
+    suite versions, or the environment versions differ and a rule or file it cites changed."""
+    from simulate.services.canonical_json import canonical_digest
+    from simulate.services.harness_scenario_lifecycle import changed_refs
+
+    keys = list(keys)
+    if not keys:
+        return set()
+
+    def contents(suite: Any) -> dict[str, Any]:
+        if not suite:
+            return {}
+        return dict(
+            HarnessSuiteMember.no_workspace_objects.filter(
+                suite_version_id=suite, scenario_key__in=keys
+            ).values_list("scenario_key", "content")
+        )
+
+    now, then = contents(suite_id), contents(other_suite_id)
+    changed = {
+        key
+        for key in now.keys() & then.keys()
+        if canonical_digest(now[key] or {}) != canonical_digest(then[key] or {})
+    }
+    if (
+        environment_id
+        and other_environment_id
+        and environment_id != other_environment_id
+    ):
+        versions = {
+            str(one.id): one
+            for one in HarnessEnvironmentVersion._base_manager.filter(
+                id__in=[environment_id, other_environment_id]
+            )
+        }
+        version, other = (
+            versions.get(str(environment_id)),
+            versions.get(str(other_environment_id)),
+        )
+        if version is not None and other is not None:
+            changed |= set(
+                changed_refs(version, now, parent_documents=other.documents or {})
+            )
+    return changed
+
+
 def suite_members(suite_id: Any, keys: Iterable[str]) -> set[str]:
     """Which of ``keys`` are scenarios of this suite version."""
     keys = set(keys)

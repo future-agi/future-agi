@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
+from django.conf import settings
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 
@@ -274,6 +276,10 @@ class HostedHarnessAttempt(BaseModel):
 
 
 class HostedHarnessScenario(BaseModel):
+    # Set only on the unsaved rows a draft lists, never stored: the change the draft makes and what the case cites.
+    draft_change: str | None
+    draft_sources: list[Any]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     job = models.ForeignKey(
         HostedHarnessJob,
@@ -324,6 +330,21 @@ class HostedHarnessScenario(BaseModel):
     keywords = models.JSONField(null=True, blank=True)
     background_noise = models.CharField(max_length=64, blank=True, default="")
     max_turns = models.PositiveIntegerField(null=True, blank=True)
+    # Archived: out of future selection, identity, runs and evidence kept; restore puts it back.
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    archive_reason = models.CharField(
+        max_length=255, blank=True, default="", db_default=""
+    )
+    archived_content = models.JSONField(null=True, blank=True)
+    # The document's sources, plus each file source's stored resolution and matched digest.
+    sources = models.JSONField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_scenario"
@@ -334,6 +355,9 @@ class HostedHarnessScenario(BaseModel):
         ]
         indexes = [
             models.Index(fields=["job", "number"], name="idx_harness_scenario_order"),
+            models.Index(
+                fields=["job", "archived_at"], name="idx_harness_scenario_archived"
+            ),
             GinIndex(fields=["persona"], name="idx_harness_scenario_persona"),
             GinIndex(fields=["coverage"], name="idx_harness_scenario_coverage"),
             GinIndex(fields=["keywords"], name="idx_harness_scenario_keywords"),

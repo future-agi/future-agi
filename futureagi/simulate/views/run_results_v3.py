@@ -347,6 +347,10 @@ class RunExecutionSerializer(serializers.Serializer):
     summary = RunSummarySerializer()
     # Set on a fix's check run, which is not one of the user's runs; null otherwise.
     fix_run = RunFixRunSerializer(allow_null=True, required=False)
+    # Names of the must-pass cases this run failed; a failure here blocks the release.
+    must_pass_failed = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
 
 
 class PersonaDetailsSerializer(serializers.Serializer):
@@ -779,6 +783,12 @@ def _execution_for_request(request, execution_id) -> TestExecution:
     )
 
 
+def must_pass_failures(execution: TestExecution) -> list[str]:
+    from simulate.services.harness_scenario_lifecycle import must_pass_failures as read
+
+    return read(execution)
+
+
 def _execution_payload(
     execution: TestExecution, summary: dict[str, Any], *, coding_agent: bool = False
 ) -> dict[str, Any]:
@@ -832,6 +842,7 @@ def _execution_payload(
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
+        "must_pass_failed": must_pass_failures(execution),
         # Said when the run replayed a build without its environment's actors.
         "build_notice": (
             ((job.payload or {}).get("metadata") or {}).get("assembly") or {}

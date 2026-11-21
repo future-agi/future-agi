@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+import structlog
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -48,8 +49,13 @@ from simulate.utils.transcript_parse import (
 from tracer.models.project import Project
 from tracer.selectors.observe_evidence import SourceEvidence, SourceKind
 
+logger = structlog.get_logger(__name__)
+
 # The environment's record of recent adds, keyed by request key, beside Save's own.
 EVIDENCE_ADDS = "evidence_adds"
+# Save refusals a later Save from the unsaved changes could not clear either: the whole add is refused and rolled back,
+# so no open draft is left to block Fix my agent and the cases can be added again.
+_REFUSE_WHOLE_ADD = frozenset({"draft_not_runnable"})
 
 
 def create_evidence_import(
@@ -499,7 +505,8 @@ def add_to_suite(
     transaction under the environment's lock. ``expected`` is the unsaved changes
     the person saw; any edit since refuses. When they saw none, the suite is saved
     as well, so no open draft is left to block Fix my agent; beside other edits it
-    joins the draft only, since nobody else's changes are made live for them. A
+    joins the draft only, since nobody else's changes are made live for them, and
+    so it does where a Save must be validated first or a validation runs. A
     refused save leaves everything as it was. The same ``idempotency_key`` repeats
     the first answer, so a retry after a lost response is not refused. Returns
     whether it was saved.
@@ -581,8 +588,29 @@ def add_to_suite(
         EvidenceImportCase.objects.filter(id__in=[case.id for case in cases]).update(
             status=EvidenceImportCase.Status.ADDED, updated_at=timezone.now()
         )
-        saved = all(ref == drafts.NO_DRAFT for ref in seen.values())
+        from simulate.services.harness_scenario_actions import live_validation
+
+        # Where the Save cannot be made now (it must go through Validate, a validation of the defaults runs, or any
+        # other refusal), the cases wait in the unsaved changes as they do beside other edits, to be saved from there.
+        # The checks only skip an attempt bound to be refused; the savepoint keeps the cases whatever refuses.
+        saved = (
+            all(ref == drafts.NO_DRAFT for ref in seen.values())
+            and not drafts.must_validate(locked)
+            and live_validation(locked) is None
+        )
         if saved:
+            saved = _save_added(locked, write, idempotency_key, user)
+        _record_add(locked.id, evidence_import, wanted, saved, idempotency_key)
+        transaction.on_commit(lambda: drafts.retire_chat_runtime(locked))
+    return saved
+
+
+def _save_added(
+    locked: HostedHarnessJob, write: drafts.DraftWrite, idempotency_key: str, user
+) -> bool:
+    """Save the drafts the add wrote; a Save refused for now is undone alone and leaves them unsaved."""
+    try:
+        with transaction.atomic():
             drafts.save_drafts(
                 locked,
                 {
@@ -599,9 +627,16 @@ def add_to_suite(
                 idempotency_key=idempotency_key,
                 user=user,
             )
-        _record_add(locked.id, evidence_import, wanted, saved, idempotency_key)
-        transaction.on_commit(lambda: drafts.retire_chat_runtime(locked))
-    return saved
+    except HostedHarnessError as refused:
+        if refused.status_code >= 500 or refused.code in _REFUSE_WHOLE_ADD:
+            raise
+        logger.info(
+            "evidence_add_left_unsaved",
+            environment_id=str(locked.id),
+            code=refused.code,
+        )
+        return False
+    return True
 
 
 def _earlier_add(

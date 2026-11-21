@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, get_args
 
 from django.conf import settings
 from rest_framework import serializers
@@ -12,6 +12,7 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 from simulate.services.harness_credentials import agent_version_secret_ref
+from simulate.types import UnprovedNext
 from tfc.utils.serializer_fields import JsonValueField
 
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
@@ -936,9 +937,17 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
     count = serializers.IntegerField(min_value=0)
     keys = serializers.ListField(child=serializers.CharField())
     truncated = serializers.BooleanField()
+    names = serializers.DictField(
+        child=serializers.CharField(),
+        help_text="Each listed case's current name, by its key; a case without one is shown by its key.",
+    )
     by = serializers.DictField(
         child=serializers.IntegerField(min_value=0),
-        help_text="Held-back cases per readiness row that held them.",
+        help_text=(
+            "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, "
+            "no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and "
+            "unreadable for a case whose cited seed records could not be read just now)."
+        ),
     )
 
 
@@ -949,6 +958,12 @@ class HarnessRunReadinessSelectionSerializer(HarnessCapabilityScopeSerializer):
     reasons = serializers.DictField(
         child=serializers.CharField(),
         help_text="Each holding row's reason, in plain words.",
+    )
+    next = serializers.ChoiceField(
+        choices=get_args(UnprovedNext),
+        allow_null=True,
+        required=False,
+        help_text="As the run preview's selection.next.",
     )
 
 

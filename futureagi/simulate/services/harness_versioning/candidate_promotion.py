@@ -15,7 +15,11 @@ import structlog
 from django.db import transaction
 from django.utils import timezone
 
-from simulate.models import HarnessAssembledBundle, HostedHarnessJob
+from simulate.models import (
+    HarnessAssembledBundle,
+    HarnessSuiteValidation,
+    HostedHarnessJob,
+)
 from simulate.models.harness_versioning import DiscardReason, VersionStatus
 from simulate.services.harness_versioning import review
 from simulate.services.harness_versioning.candidate_sets import (
@@ -23,6 +27,7 @@ from simulate.services.harness_versioning.candidate_sets import (
     CandidateSet,
     current_defaults,
     live_set,
+    proof_state,
     set_bundle,
     set_versions,
     store_set,
@@ -52,6 +57,7 @@ from simulate.services.harness_versioning.versions import (
     lock_environment,
     next_number,
     pair_archive,
+    record_proofs,
 )
 from simulate.services.hosted_harness import HostedHarnessError
 
@@ -136,6 +142,9 @@ def promote_candidates(
         if replayed is not None:
             return replayed
         require_idle(locked, "environment")
+        from simulate.services.harness_scenario_actions import require_no_validation
+
+        require_no_validation(locked)
         entry = live_set(locked)
         if entry is None or any(
             str(candidates.get(f"{piece}_version_id") or "")
@@ -185,6 +194,13 @@ def _promote_set(
         bundle is not None and bundle.state == HarnessAssembledBundle.State.READY
     )
     if not certified and not unavailable_on_our_side(entry, bundle):
+        raise _not_validated()
+    proofs = proof_state(entry)
+    if proofs == "proving":
+        from simulate.services.harness_scenario_actions import validation_running
+
+        raise validation_running()
+    if proofs == "unproved" and certified:
         raise _not_validated()
     opened = {piece: open_draft(locked, piece, lock=True) for piece in entry["drafts"]}
     for piece, seen in entry["drafts"].items():
@@ -240,9 +256,17 @@ def _promote_set(
             created_suite=suite_version if created_suite else None,
             moved=moved,
             outgoing_agent_version_id=locked.agent_version_id,
+            # Its validation proved only the changed cases: the others keep theirs, never reading not validated.
+            carry_proofs=True,
         )
     else:
         store_set(locked, None)
+    proved = HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=built["suite"], environment_version=built["environment"]
+    ).first()
+    if proved is not None and proved.proofs:
+        # Proved before Save paired its cases with rows: recorded again, on what was saved.
+        record_proofs(suite_version, environment_version, proved.proofs, proved.job)
     created = {"environment": created_environment, "suite": created_suite}
     for piece, draft in opened.items():
         discard_version(draft, user=user, saved_version_id=str(targets[piece].id))

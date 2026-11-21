@@ -279,10 +279,26 @@ class HarnessConversationScenarioQuerySerializer(serializers.Serializer):
     page = serializers.IntegerField(required=False, min_value=1)
     page_size = serializers.IntegerField(required=False, min_value=1, max_value=100)
     full = serializers.BooleanField(required=False, default=False)
+    removed = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Read instead the cases the environment had and no longer holds, to restore or copy one.",
+    )
+
+
+class HarnessConversationFailedScenarioSerializer(serializers.Serializer):
+    scenario_key = serializers.CharField(max_length=255)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
 
 
 class HarnessConversationPublishSerializer(serializers.Serializer):
     digest = serializers.CharField(max_length=128)
+    # Scenarios the builder could not apply in this save.
+    failed_scenarios = serializers.ListField(
+        child=HarnessConversationFailedScenarioSerializer(),
+        required=False,
+        max_length=200,
+    )
 
 
 class HarnessConversationRunsQuerySerializer(serializers.Serializer):
@@ -309,6 +325,22 @@ class HarnessConversationOverviewQuerySerializer(serializers.Serializer):
     pass
 
 
+class HarnessLifecycleCountsSerializer(serializers.Serializer):
+    """Cases per state, and proved / not proved over every case not archived."""
+
+    draft = serializers.IntegerField()
+    validated = serializers.IntegerField()
+    active = serializers.IntegerField()
+    kept_as_written = serializers.IntegerField()
+    archived = serializers.IntegerField()
+    proved = serializers.IntegerField()
+    not_proved = serializers.IntegerField()
+    legacy_without_control = serializers.IntegerField(
+        help_text="Legacy cases running kept as written with no negative control: Validate and rebuild keep them "
+        "running as written, each with a warning that it has no negative control."
+    )
+
+
 class HarnessConversationOverviewSerializer(serializers.Serializer):
     environment = serializers.DictField()
     scenario_count = serializers.IntegerField()
@@ -320,4 +352,9 @@ class HarnessConversationOverviewSerializer(serializers.Serializer):
     drafts = serializers.DictField(
         required=False,
         help_text="The unsaved changes by piece, where the environment has drafts.",
+    )
+    lifecycle_counts = HarnessLifecycleCountsSerializer(
+        required=False,
+        allow_null=True,
+        help_text="Cases per lifecycle state, as the Scenarios tab counts them; null for an environment without versions.",
     )
