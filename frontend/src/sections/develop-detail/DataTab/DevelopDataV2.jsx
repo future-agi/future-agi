@@ -101,6 +101,9 @@ const getResultSyntheticPercentage = (result) =>
   result?.synthetic_dataset_percentage ?? 100;
 const getResultIsSyntheticRegenerate = (result) =>
   Boolean(result?.synthetic_regenerate);
+// Why the last synthetic generation failed, recorded by the backend task.
+const getResultSyntheticGenerationError = (result) =>
+  result?.dataset_config?.synthetic_generation_error;
 const getRowId = (row) => row?.row_id ?? row?.rowId;
 const getColumnSourceId = (column) =>
   column?.source_id !== undefined ? column.source_id : column?.sourceId;
@@ -158,9 +161,14 @@ const CustomRowOverlay = ({
     getDatasetQueryOptions(dataset, 0, [], [], "", { enabled: false }),
   );
 
+  const failureReason = getResultSyntheticGenerationError(
+    tableData?.data?.result,
+  );
+
   const getStatus = () => {
     const result = tableData?.data?.result;
-    if (failedToGenerateData) return "failed-to-generate-synthetic";
+    if (failedToGenerateData || failureReason)
+      return "failed-to-generate-synthetic";
     if (getResultIsSyntheticRegenerate(result)) return "regenerating-synthetic";
     return "default-synthetic";
   };
@@ -190,6 +198,7 @@ const CustomRowOverlay = ({
           tableData?.data?.result,
         ),
         updateProcessingSyntheticData,
+        failureReason,
       })}
     </Box>
   );
