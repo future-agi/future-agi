@@ -14,6 +14,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 
+import jwt
 import structlog
 from asgiref.sync import async_to_sync
 from django.conf import settings
@@ -715,6 +716,17 @@ class LiveKitWebhookView(AsyncAPIView):
             event = receiver.receive(
                 body=request.body.decode("utf-8"),
                 auth_token=token,
+            )
+        except jwt.exceptions.PyJWTError as exc:
+            logger.warning(
+                "livekit_webhook_verification_failed",
+                error_type=type(exc).__name__,
+                error_msg=str(exc),
+            )
+            return _gm.custom_error_response(
+                status.HTTP_401_UNAUTHORIZED,
+                f"Webhook verification failed: {type(exc).__name__}: {exc}",
+                code="not_authenticated",
             )
         except Exception as exc:
             logger.exception(
