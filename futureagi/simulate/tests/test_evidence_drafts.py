@@ -531,6 +531,44 @@ class TestAddToSuite:
         assert drafted.scenario_key in keys
         assert EvidenceImportCase.objects.get(id=drafted.id).status == "added"
 
+    @pytest.mark.parametrize("gate", ["validate_before_save", "validation_running"])
+    def test_where_a_save_cannot_be_made_now_the_cases_wait_in_the_unsaved_changes(
+        self, environment, cases, storage, user, gate
+    ):
+        from simulate.services import harness_scenario_actions
+
+        drafted, _blocked = _landed(environment, cases, storage)
+        suite_before = environment.suite_version_id
+        patched = (
+            patch.object(drafts, "validation_available", return_value=True)
+            if gate == "validate_before_save"
+            else patch.object(
+                harness_scenario_actions, "live_validation", return_value=object()
+            )
+        )
+        with (
+            _certifies(),
+            patched,
+            override_settings(HARNESS_REQUIRE_VALIDATE_BEFORE_SAVE=True),
+        ):
+            saved = add_to_suite(
+                drafted.evidence_import,
+                [str(drafted.id)],
+                expected={},
+                idempotency_key=f"add-{gate}",
+                user=user,
+            )
+
+        assert saved is False
+        environment.refresh_from_db()
+        assert environment.suite_version_id == suite_before
+        draft = drafts.open_draft(environment, "suite")
+        assert any(
+            one.get("scenario_key") == drafted.scenario_key
+            for one in draft.documents["scenarios"]
+        )
+        assert EvidenceImportCase.objects.get(id=drafted.id).status == "added"
+
     def test_an_add_that_waited_on_a_discard_adds_nothing(
         self, environment, cases, storage, user
     ):

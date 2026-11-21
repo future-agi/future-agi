@@ -499,7 +499,8 @@ def add_to_suite(
     transaction under the environment's lock. ``expected`` is the unsaved changes
     the person saw; any edit since refuses. When they saw none, the suite is saved
     as well, so no open draft is left to block Fix my agent; beside other edits it
-    joins the draft only, since nobody else's changes are made live for them. A
+    joins the draft only, since nobody else's changes are made live for them, and
+    so it does where a Save must be validated first or a validation runs. A
     refused save leaves everything as it was. The same ``idempotency_key`` repeats
     the first answer, so a retry after a lost response is not refused. Returns
     whether it was saved.
@@ -581,7 +582,15 @@ def add_to_suite(
         EvidenceImportCase.objects.filter(id__in=[case.id for case in cases]).update(
             status=EvidenceImportCase.Status.ADDED, updated_at=timezone.now()
         )
-        saved = all(ref == drafts.NO_DRAFT for ref in seen.values())
+        from simulate.services.harness_scenario_actions import live_validation
+
+        # Where a Save must go through Validate, or a validation of the defaults runs, the cases wait in the unsaved
+        # changes as they do beside other edits, to be validated and saved from there.
+        saved = (
+            all(ref == drafts.NO_DRAFT for ref in seen.values())
+            and not drafts.must_validate(locked)
+            and live_validation(locked) is None
+        )
         if saved:
             drafts.save_drafts(
                 locked,
