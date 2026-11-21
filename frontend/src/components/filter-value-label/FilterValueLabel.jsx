@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
@@ -21,6 +27,7 @@ function useLabelContinuation(key, cursor, query) {
     fetchStatus,
     isFetchNextPageError,
     isFetchingNextPage,
+    onNextPageError,
     tryStartNextPage,
   } = query;
   const [walk, setWalk] = useState(() => newWalk(key));
@@ -35,8 +42,24 @@ function useLabelContinuation(key, cursor, query) {
   }
   const canStart =
     cursor && !spent && !failed && walk.count < MAX_LABEL_CONTINUATION_READS;
+  const peerFailed = useRef(false);
+  useLayoutEffect(() => {
+    if (!canStart) return;
+    peerFailed.current = false;
+    // A peer can start an ordinary refetch in its settlement callback, before
+    // React ever renders the forward error. Capture it at cache dispatch.
+    return onNextPageError(cursor, () => {
+      peerFailed.current = true;
+      setWalk((current) =>
+        current.key === key && current.cursor !== cursor
+          ? { ...current, cursor, pending: false }
+          : current,
+      );
+    });
+  }, [canStart, cursor, key, onNextPageError]);
+
   useEffect(() => {
-    if (!canStart || fetchStatus !== "idle") return;
+    if (!canStart || peerFailed.current || fetchStatus !== "idle") return;
     const request = tryStartNextPage();
     if (!request) return;
 

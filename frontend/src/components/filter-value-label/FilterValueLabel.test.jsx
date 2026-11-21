@@ -36,6 +36,7 @@ vi.mock("src/hooks/useDashboards", () => ({
       queryIdentity: args.propertyId,
       fetchStatus: isLoading || isFetchingNextPage ? "fetching" : "idle",
       // These unit cases publish progress explicitly by changing the cursor.
+      onNextPageError: () => () => {},
       tryStartNextPage: () =>
         mockState.current.fetchNextPage() ?? new Promise(() => {}),
       ...mockState.current,
@@ -291,6 +292,32 @@ describe("FilterValueLabel", () => {
     continuationKey: "cursor-0",
     isFetchingNextPage: false,
     fetchNextPage,
+  });
+
+  it("stops watching a peer cursor when the row switches query or unmounts", () => {
+    const stopFirst = vi.fn();
+    const stopSecond = vi.fn();
+    const onNextPageError = vi
+      .fn()
+      .mockReturnValueOnce(stopFirst)
+      .mockReturnValueOnce(stopSecond);
+    mockState.current = {
+      ...unresolvedChain(vi.fn()),
+      isFetchingNextPage: true,
+      onNextPageError,
+    };
+    const filter = { ...baseFilter, registryId: "first", value: ["saved-id"] };
+    const view = renderLabel(filter);
+    view.rerender(
+      <FilterValueLabel
+        filter={{ ...filter, registryId: "second" }}
+        source="traces"
+      />,
+    );
+    expect(stopFirst).toHaveBeenCalledOnce();
+    expect(stopSecond).not.toHaveBeenCalled();
+    view.unmount();
+    expect(stopSecond).toHaveBeenCalledOnce();
   });
 
   it.each(["fetching", "paused"])(

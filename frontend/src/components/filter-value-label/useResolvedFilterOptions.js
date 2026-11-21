@@ -205,6 +205,7 @@ export function useResolvedFilterOptions(
     queryReadState: valueQuery.queryReadState,
     fetchNextPage: valueQuery.fetchNextPage,
     tryStartNextPage: valueQuery.tryStartNextPage,
+    onNextPageError: valueQuery.onNextPageError,
     hasNextPage: valueQuery.hasNextPage,
     continuationKey: valueQuery.continuationKey,
     isFetchingNextPage: valueQuery.isFetchingNextPage,
