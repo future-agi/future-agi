@@ -1145,6 +1145,22 @@ def _check_media_strings(str_values, media_type):
     return True
 
 
+def _check_document_data_urls(str_values):
+    """All values are document data URLs (data:application/... or data:text/...).
+
+    Mirrors `_check_media_strings`, which covers only image and audio, and stays
+    off the network: `is_document_url` treats the same two prefixes as a
+    document, but calling it here would run a blocking HEAD per value for
+    anything else.
+    """
+    if not str_values:
+        return False
+    return all(
+        isinstance(value, str) and value.startswith(("data:application/", "data:text/"))
+        for value in str_values
+    )
+
+
 # is_document_url is the only network-bound check below; cap how many values it ever runs against so a big column can't cost hundreds of blocking HEAD requests (TH-5648 follow-up).
 _MAX_DOCUMENT_CHECK_SAMPLES = 20
 
@@ -1231,11 +1247,13 @@ def determine_data_type(column_values):
     if _is_float_string_column(non_null_strs):
         return DataTypeChoices.FLOAT.value
 
-    # 6. Check for image/audio data URLs and base64
+    # 6. Check for image/audio/document data URLs and base64
     if _check_media_strings(non_null_strs, "image"):
         return DataTypeChoices.IMAGE.value
     if _check_media_strings(non_null_strs, "audio"):
         return DataTypeChoices.AUDIO.value
+    if _check_document_data_urls(non_null_strs):
+        return DataTypeChoices.DOCUMENT.value
 
     # 7. Check for document/image/audio URLs
     if non_null_strs and all(
