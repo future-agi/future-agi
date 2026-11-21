@@ -6,6 +6,8 @@ import {
   format,
   parseISO,
   isValid,
+  endOfDay,
+  isAfter,
   startOfDay,
   subMilliseconds,
 } from "date-fns";
@@ -28,6 +30,8 @@ export default function CustomDateRangePicker({
   const [range, setRange] = useState({ start: null, end: null });
   const [currentDate1, setCurrentDate1] = useState(new Date());
   const [currentDate2, setCurrentDate2] = useState(addMonths(new Date(), 1));
+  // No data exists after today, so no later day can be picked or typed.
+  const maxDate = new Date();
 
   // Seed only on the open false→true transition so a caller passing a fresh
   // value array each render can't clobber an in-progress selection.
@@ -74,7 +78,7 @@ export default function CustomDateRangePicker({
 
   const handleInputChange = (value, type) => {
     const parsedDate = parseISO(value);
-    if (!isValid(parsedDate)) {
+    if (!isValid(parsedDate) || isAfter(parsedDate, endOfDay(maxDate))) {
       setRange((prev) => ({ ...prev, [type]: null, original: null }));
       return;
     }
@@ -173,6 +177,7 @@ export default function CustomDateRangePicker({
               }}
               range={range}
               onSelect={handleSelectDate}
+              maxDate={maxDate}
             />
           </Box>
 
@@ -211,6 +216,7 @@ export default function CustomDateRangePicker({
               }}
               range={range}
               onSelect={handleSelectDate}
+              maxDate={maxDate}
             />
           </Box>
         </Box>
