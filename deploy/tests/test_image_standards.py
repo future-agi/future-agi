@@ -1270,7 +1270,8 @@ if [ "$1" = run ] && [ "${10}" = -ec ]; then
       fi
       case "$*" in
         -version) echo "$tool version 7.1.5 Copyright"
-          echo "configuration: --disable-everything --enable-encoder=$(echo "$enc" | tr " " ,) --enable-decoder=$(echo "$dec" | tr " " ,)" ;;
+          q=$(printf "\047")
+          echo "configuration: --disable-everything --enable-encoder=$q$(echo "$enc" | tr " " ,)$q --enable-decoder=$q$(echo "$dec" | tr " " ,)$q" ;;
         *-encoders) for id in $enc; do echo " A..... ${id/libaom_av1/libaom-av1}"; done ;;
         *-decoders) for id in $dec; do [ "$id" = "${MISSING_DECODER:-}" ] || echo " V..... ${id/libaom_av1/libaom-av1}"; done ;;
       esac

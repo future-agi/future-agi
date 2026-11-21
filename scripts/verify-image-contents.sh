@@ -169,6 +169,10 @@ check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" 
     for kind in encoder decoder; do
       case "$kind" in encoder) wanted=$3 ;; decoder) wanted=$4 ;; esac
       got=$(printf "%s\n" "$options" | tr " " "\n" | sed -n "s/^--enable-$kind=//p")
+      # FFmpeg prints comma-list arguments wrapped in literal single quotes.
+      # Remove one matched pair as data; never evaluate configuration output.
+      quote=$(printf "\047")
+      case "$got" in "$quote"*"$quote") got=${got#"$quote"}; got=${got%"$quote"} ;; esac
       # Compare as sets: ordering is irrelevant. Reject repeated option lines
       # and malformed lists instead of merging conflicting declarations.
       case "$got" in ""|*[!a-z0-9_,]*|,*|*,|*,,*) exit 1 ;; esac
