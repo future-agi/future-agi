@@ -255,6 +255,59 @@ def test_a_case_removed_two_saves_ago_is_still_offered_from_the_last_saved_versi
     )
 
 
+def test_a_case_removed_only_in_the_open_draft_is_offered_from_the_default_version(
+    user, workspace, storage
+):
+    """The live shape: a case removed in the unsaved draft, every saved version still holding it and no row marked
+    deleted. Restoring it exactly needs its removed record, read from the default version."""
+    from types import SimpleNamespace
+
+    from simulate.services.hosted_harness_conversation import removed_scenarios
+
+    environment = _environment(user, workspace, storage, "lc-removed-in-draft")
+    _suite(environment, _ten())
+    default = environment.suite_version
+    case = REFUND_KEYS[0]
+    drafted = [
+        SimpleNamespace(scenario_key=member.scenario_key)
+        for member in HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version=default
+        )
+        if member.scenario_key != case
+    ]
+
+    [removed] = removed_scenarios(environment, drafted)
+
+    assert (removed["scenario_key"], removed["suite_version"]) == (
+        case,
+        str(default.id),
+    )
+    assert removed["content"]["scenario_key"] == case
+    # With no draft open, the default version still holds it: nothing is removed.
+    assert removed_scenarios(environment) == []
+
+
+def test_a_case_a_saved_version_dropped_is_offered_though_its_row_was_never_marked_deleted(
+    user, workspace, storage
+):
+    from simulate.services.hosted_harness_conversation import removed_scenarios
+
+    environment, older, row, _document = _removed_case(
+        user, workspace, storage, "lc-removed-not-flagged"
+    )
+    HostedHarnessScenario.all_objects.filter(id=row.id).update(
+        deleted=False, deleted_at=None
+    )
+    environment.refresh_from_db()
+
+    [removed] = removed_scenarios(environment)
+
+    assert (removed["scenario_key"], removed["suite_version"]) == (
+        row.scenario_key,
+        str(older.id),
+    )
+
+
 def test_a_removed_case_is_offered_with_its_last_saved_content_not_its_first(
     user, workspace, storage
 ):

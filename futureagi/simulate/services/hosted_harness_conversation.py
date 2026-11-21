@@ -1394,28 +1394,49 @@ def _lifecycle_line(row: Any, lifecycle: Any) -> dict[str, Any] | None:
 def removed_scenarios(
     environment: HostedHarnessJob, drafted: Any = None
 ) -> list[dict[str, Any]]:
-    """The cases the environment had and no longer holds (nor does its open draft), each with its key, name, the last
-    saved suite version that held it and its document there, so the chat can restore one under its key or copy it."""
+    """The cases the environment had and no longer holds, each with its key, name, the last saved suite version that
+    held it and its document there, so the chat can restore one under its key or copy it.
+
+    Read from the saved suite versions, not from a row's deleted flag: a case any saved version held that the current
+    suite does not. The current suite is the open draft when there is one (a case removed only in the draft is
+    offered from the default version), else the default saved version, else the live rows. An archived case is not
+    removed and is not offered."""
     from simulate.models import HarnessSuiteMember
     from simulate.models.harness_versioning import VersionStatus
     from simulate.services.harness_starting_records import scenario_token
 
-    held = {row.scenario_key for row in drafted} if drafted is not None else set()
-    removed = []
-    for row in HostedHarnessScenario.all_objects.filter(
-        job=environment, deleted=True
-    ).order_by("number"):
-        if row.scenario_key in held:
-            continue
-        member = (
+    if drafted is not None:
+        current = {row.scenario_key for row in drafted}
+    elif environment.suite_version_id:
+        current = set(
             HarnessSuiteMember.no_workspace_objects.filter(
-                scenario_id=row.id, suite_version__status=VersionStatus.ACTIVE
-            )
-            .select_related("suite_version")
-            .order_by("-suite_version__created_at")
-            .first()
+                suite_version_id=environment.suite_version_id
+            ).values_list("scenario_key", flat=True)
         )
-        if member is None:
+    else:
+        current = set(
+            HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment
+            ).values_list("scenario_key", flat=True)
+        )
+    members = (
+        HarnessSuiteMember.no_workspace_objects.filter(
+            suite_version__job=environment,
+            suite_version__status=VersionStatus.ACTIVE,
+        )
+        .exclude(scenario_key__in=current)
+        .select_related("suite_version", "scenario")
+        .order_by("-suite_version__created_at")
+    )
+    removed: list[tuple[int, dict[str, Any]]] = []
+    seen: set[str] = set()
+    for member in members:
+        # Newest saved version first: the first member of a key is the last saved version that held it.
+        if member.scenario_key in seen:
+            continue
+        seen.add(member.scenario_key)
+        row = member.scenario
+        if row is not None and row.archived_at is not None:
             continue
         documents = (member.suite_version.documents or {}).get("scenarios") or []
         content = next(
@@ -1424,19 +1445,23 @@ def removed_scenarios(
                 for one in documents
                 if isinstance(one, dict)
                 and scenario_token(one.get("scenario_key") or one.get("name"))
-                == scenario_token(row.scenario_key)
+                == scenario_token(member.scenario_key)
             ),
             member.content or {},
         )
         removed.append(
-            {
-                "scenario_key": row.scenario_key,
-                "name": row.name,
-                "suite_version": str(member.suite_version_id),
-                "content": content,
-            }
+            (
+                member.number or 0,
+                {
+                    "scenario_key": member.scenario_key,
+                    "name": (row.name if row is not None else "")
+                    or member.scenario_key,
+                    "suite_version": str(member.suite_version_id),
+                    "content": content,
+                },
+            )
         )
-    return removed
+    return [entry for _, entry in sorted(removed, key=lambda pair: pair[0])]
 
 
 def conversation_scenarios(
