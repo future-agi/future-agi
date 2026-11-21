@@ -500,6 +500,30 @@ def _proved_with(
     return False
 
 
+def _has_proofs(
+    environment_version: HarnessEnvironmentVersion, suite_version: HarnessSuiteVersion
+) -> bool:
+    """Whether this pair holds recorded proofs of its scenarios."""
+    from simulate.models import HarnessSuiteValidation
+
+    return HarnessSuiteValidation.no_workspace_objects.filter(
+        suite_version=suite_version, environment_version=environment_version
+    ).exists()
+
+
+def _proves_pair(
+    job: HostedHarnessJob,
+    environment_version: HarnessEnvironmentVersion,
+    suite_version: HarnessSuiteVersion,
+) -> bool:
+    """Whether a running job records its proofs on this pair: a job proving other versions of the same bundle
+    leaves this pair's cases unproved, so it is never joined."""
+    return (
+        job.suite_version_id == suite_version.id
+        and job.environment_version_id == environment_version.id
+    )
+
+
 def start_validation(
     environment: HostedHarnessJob,
     agent_version: AgentVersion,
@@ -570,12 +594,20 @@ def start_validation(
                     agent_version.id, environment_version, suite_version
                 )
             )
+            or (
+                purpose == "save"
+                and not _has_proofs(environment_version, suite_version)
+            )
         ):
             # A person pressing Validate after a fix needs a new proof, never the certified shortcut; so does a move
             # to an agent version that never proved this pair's cases, which waits for the proof as it would for a
             # certify.
             live = live_check(bundle.id)
-            if live is not None and (move is None or _carry_move(live, move)):
+            if (
+                live is not None
+                and _proves_pair(live, environment_version, suite_version)
+                and (move is None or _carry_move(live, move))
+            ):
                 return Validation("validating", bundle, purpose, live)
             job = _create_job(
                 locked,
