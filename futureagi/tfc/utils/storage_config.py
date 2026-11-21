@@ -744,13 +744,10 @@ def resolve_attachment_posture_credentials(
     *,
     supplied: Mapping[str, object],
     expected_type: type[_PostureCredentials],
-    required: bool = True,
 ) -> _PostureCredentials | None:
     """Select an already-supplied, typed runtime object; never create/discover it.
 
-    No reference returns None. Optional historical GCS erase may proceed with
-    a missing named object, but never with a wrong type or malformed mapping.
-    Its adapter still requires additional proof before reporting completion.
+    No reference returns None; a named object must exist and match its type.
     Data env values, paths, dicts and credential constructors are not runtime
     posture objects. A match is NOT native readiness evidence.
     """
@@ -758,11 +755,10 @@ def resolve_attachment_posture_credentials(
         raise StorageConfigurationError("attachment_storage_binding_access_invalid")
     if config.posture_credential_ref is None:
         return None
-    if not isinstance(supplied, Mapping):
-        raise StorageConfigurationError("attachment_storage_posture_reference_missing")
-    if config.posture_credential_ref not in supplied:
-        if not required:
-            return None
+    if (
+        not isinstance(supplied, Mapping)
+        or config.posture_credential_ref not in supplied
+    ):
         raise StorageConfigurationError("attachment_storage_posture_reference_missing")
     credentials = supplied[config.posture_credential_ref]
     if (

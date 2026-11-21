@@ -12,11 +12,10 @@ Bindings use //storage.googleapis.com/projects/_/buckets/<name>, project number
 as owner, the observed timeCreated, actual lower-case location, and encryption
 mode google-managed or google-kms (the latter pins a cryptoKeys resource).
 No provisioning, SDK discovery, token refresh, OAuth minting or JSON writes.
-Cleanup uses HMAC project bucket listing to check incarnation and attempt
-physical deletion without current admission policy. Missing storage.buckets.list
-authority fails closed. Completion additionally requires supplied JSON read
-credentials to prove absence of retained bytes. A DELETE acknowledgement alone
-never releases cleanup charges, including after soft delete has been disabled.
+Cleanup reads the bound bucket's JSON metadata with supplied read-only OAuth
+before using its purpose-specific HMAC credentials. It checks incarnation, not
+current admission policy. A DELETE acknowledgement alone never releases cleanup
+charges: retained absence must be proven even after soft delete is disabled.
 
 PUT runs in a short-lived, supervised interpreter: killing a Python thread does
 not stop an accepted socket write. Only the bounded data request runs there;
@@ -399,11 +398,9 @@ class GCSPrivateMediaStorage:
             _generation(value.version)
         return getattr(self._binding, f"{value.purpose}_bucket")
 
-    def _xml_request(
-        self, purpose, method, *, key=None, query=None, headers=None, service=False
-    ):
+    def _xml_request(self, purpose, method, *, key=None, query=None, headers=None):
         bucket = getattr(self._binding, f"{purpose}_bucket")
-        path = "/" if service else "/" + quote(bucket, safe="~")
+        path = "/" + quote(bucket, safe="~")
         if key is not None:
             path += "/" + quote(key, safe="/~")
         query = _query(query or {})
@@ -563,28 +560,8 @@ class GCSPrivateMediaStorage:
             raise ValueError
         return status, data
 
-    def _erase_identity(self, purpose):
-        # XML service listing supplies project ownership and CreationDate.
-        # It is read-only, capped by GCS at 1000 buckets and by our byte bound.
-        # Missing/truncated-away bucket never counts as proven absence.
-        root = self._xml_get(
-            purpose,
-            "ListAllMyBucketsResult",
-            service=True,
-            headers={"x-goog-project-id": self._binding.account_identity},
-        )
-        bucket = getattr(self._binding, f"{purpose}_bucket")
-        matches = [
-            item
-            for item in root.findall("./Buckets/Bucket")
-            if item.findtext("Name") == bucket
-        ]
-        if len(matches) != 1 or _timestamp(
-            matches[0].findtext("CreationDate")
-        ) != getattr(self._binding, f"{purpose}_created_at"):
-            raise ValueError
-
-    def _metadata(self, purpose, *, private):
+    def _bucket_identity(self, purpose):
+        # Historical erasure needs the same bucket incarnation, not admission policy.
         status, data = self._json_get(purpose)
         bucket = getattr(self._binding, f"{purpose}_bucket")
         if (
@@ -595,7 +572,14 @@ class GCSPrivateMediaStorage:
             or str(data.get("projectNumber")) != self._binding.account_identity
             or _timestamp(data["timeCreated"])
             != getattr(self._binding, f"{purpose}_created_at")
-            or data.get("location", "").lower() != self._binding.region
+        ):
+            raise ValueError
+        return data
+
+    def _metadata(self, purpose, *, private):
+        data = self._bucket_identity(purpose)
+        if (
+            data.get("location", "").lower() != self._binding.region
             or data.get("hierarchicalNamespace", {}).get("enabled") is True
         ):
             raise ValueError
@@ -614,13 +598,16 @@ class GCSPrivateMediaStorage:
                 raise ValueError
             for purpose in ("quarantine", "serving"):
                 if operation == "erase":
-                    self._erase_identity(purpose)
+                    self._bucket_identity(purpose)
                 else:
                     self._metadata(purpose, private=True)
             if operation in ("admit", "write"):
                 self.verify_readiness()
         except Exception:  # noqa: BLE001 - provider boundary, fails closed
-            raise AttachmentError("storage_unverified", 503) from None
+            raise AttachmentError(
+                "cleanup_unavailable" if operation == "erase" else "storage_unverified",
+                503,
+            ) from None
 
     def _write_posture(self, purpose):
         data = self._metadata(purpose, private=True)
@@ -916,7 +903,7 @@ class GCSPrivateMediaStorage:
             bucket = self._locator(locator)
             if type(limit) is not int or not 1 <= limit <= 100:
                 raise ValueError
-            self._erase_identity(locator.purpose)
+            self._bucket_identity(locator.purpose)
             query = {
                 # Native V1 uses Generation/NextGenerationMarker. Do not mix
                 # this cursor with V2 continuation tokens or interop VersionId.
@@ -1024,7 +1011,7 @@ class GCSPrivateMediaStorage:
             self._locator(identity)
             if not isinstance(identity, ObjectIdentity):
                 raise ValueError
-            self._erase_identity(identity.purpose)
+            self._bucket_identity(identity.purpose)
             response = self._xml_request(
                 identity.purpose,
                 "DELETE",
@@ -1205,8 +1192,7 @@ class GCSPrivateMediaStorage:
     def _versions(self, locator, *, delete):
         cursor, seen, found = None, set(), False
         for _ in range(MAX_PAGES):
-            # Full erasure still attempts physical cleanup without optional
-            # posture; its own retained-absence check gates completion below.
+            # Full erasure checks retained absence after deleting live generations.
             page = self._list_live_versions(locator, cursor=cursor)
             for identity in page.versions:
                 found = True
@@ -1225,7 +1211,7 @@ class GCSPrivateMediaStorage:
     def erase_all_versions(self, locator):
         try:
             self._locator(locator)
-            self._erase_identity(locator.purpose)
+            self._bucket_identity(locator.purpose)
             self._versions(locator, delete=True)
             self._multipart(locator, delete=True)
             # A successful DELETE is not evidence that either enumeration is

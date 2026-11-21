@@ -144,7 +144,7 @@ class HTTP:
         self.put_status = 200
         self.delete_status = 204
         self.delete_error = "NoSuchKey"
-        self.incarnation = CREATED.isoformat()
+        self.bucket_status = 200
         self.version_pages = []
         self.multipart_pages = []
         self.soft_pages = []
@@ -200,24 +200,15 @@ class HTTP:
                     else (200, {"kind": "storage#objects"})
                 )
             else:
-                status, data = 200, self.meta[purpose]
+                assert parsed.path == f"/storage/v1/b/{bucket}"
+                status, data = self.bucket_status, self.meta[purpose]
             response = Response(status, json.dumps(data).encode())
         else:
             assert kwargs["headers"]["authorization"].startswith(
                 "GOOG4-HMAC-SHA256 Credential=SYNTHETIC"
             )
-            if parsed.path == "/":
-                assert kwargs["headers"]["x-goog-project-id"] == self.b.account_identity
-                response = xml(
-                    "ListAllMyBucketsResult",
-                    "<Buckets>"
-                    + "".join(
-                        f"<Bucket><Name>{getattr(self.b, p + '_bucket')}</Name><CreationDate>{self.incarnation}</CreationDate></Bucket>"
-                        for p in ("quarantine", "serving")
-                    )
-                    + "</Buckets>",
-                )
-            elif "uploads" in query:
+            assert parsed.path.split("/")[1] == bucket
+            if "uploads" in query:
                 response = (
                     self.multipart_pages.pop(0)
                     if self.multipart_pages
@@ -441,11 +432,12 @@ def test_historical_cleanup_without_posture_or_default(monkeypatch):
     http = HTTP(b)
     s = g.GCSPrivateMediaStorage(binding=b, config=config(b), http=http)
     assert_error("cleanup_unavailable", s.erase_version, identity(b))
-    assert "101" not in http.objects
-    assert all("/storage/v1/" not in url for _, url, _ in http.calls)
-    assert not s.erase_all_versions(
-        ObjectLocator(b.id, "serving", "original/test")
-    ).empty
+    assert_error("cleanup_unavailable", s.verify_identity, operation="erase")
+    result = s.erase_all_versions(ObjectLocator(b.id, "serving", "original/test"))
+    assert (
+        not result.empty and result.retryable and result.reason == "cleanup_unavailable"
+    )
+    assert "101" in http.objects and http.calls == []
 
 
 def test_binding_instance_mutation_cannot_redirect_adapter(setup):
@@ -546,7 +538,7 @@ def test_expired_posture_never_refreshes(setup, monkeypatch):
     assert_error("storage_unverified", s.verify_readiness)
     assert http.calls == []
     assert_error("cleanup_unavailable", s.erase_version, identity(b))
-    assert "101" not in http.objects
+    assert "101" in http.objects and http.calls == []
 
 
 def test_exact_range_inclusive_checked_and_detached(setup):
@@ -845,11 +837,38 @@ def test_exact_delete_absence_vs_ambiguous(setup, status, code, success):
     assert delete[2]["headers"]["x-goog-if-generation-match"] == "101"
 
 
-def test_incarnation_change_blocks_exact_delete(setup):
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("name", "different"),
+        ("id", "different"),
+        ("projectNumber", "999"),
+        ("timeCreated", "2026-01-01T00:00:00Z"),  # Recreated under the same name.
+    ],
+)
+def test_bucket_identity_mismatch_blocks_exact_delete(setup, field, value):
     s, http, b = setup
-    http.incarnation = "2026-01-01T00:00:00Z"
+    http.meta["serving"][field] = value
     assert_error("cleanup_unavailable", s.erase_version, identity(b))
-    assert all(method != "DELETE" for method, _, _ in http.calls)
+    assert [(m, urlsplit(url).path) for m, url, _ in http.calls] == [
+        ("GET", f"/storage/v1/b/{b.serving_bucket}")
+    ]
+    assert "101" in http.objects
+
+
+@pytest.mark.parametrize("status", [403, 404, 500])
+def test_unavailable_bucket_blocks_cleanup_before_data_requests(setup, status):
+    s, http, b = setup
+    # Even an otherwise matching metadata body is not proof on non-200.
+    http.bucket_status = status
+    result = s.erase_all_versions(ObjectLocator(b.id, "serving", "original/test"))
+    assert (
+        not result.empty and result.retryable and result.reason == "cleanup_unavailable"
+    )
+    assert [(m, urlsplit(url).path) for m, url, _ in http.calls] == [
+        ("GET", f"/storage/v1/b/{b.serving_bucket}")
+    ]
+    assert "101" in http.objects
 
 
 def test_native_generation_pagination_exact_key(setup):

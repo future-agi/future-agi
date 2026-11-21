@@ -99,14 +99,13 @@ def _settings(supplied):
     return supplied
 
 
-def _posture(access: BindingAccessConfig, settings, provider, *, operation):
+def _posture(access: BindingAccessConfig, settings, provider):
     # Identity/incarnation verification can need read-only provider metadata even
     # for historical erasure. It never needs decoder/source/default credentials.
     return resolve_attachment_posture_credentials(
         access,
         supplied=getattr(settings, "FI_ATTACHMENTS_POSTURE_CREDENTIALS", {}),
         expected_type=_posture_type(provider),
-        required=not (provider == "gcs" and operation == "erase"),
     )
 
 
@@ -114,6 +113,7 @@ def for_binding(
     binding_id: UUID, *, operation: StorageOperation, settings: object | None = None
 ) -> PrivateMediaStorage:
     """Resolve only the persisted tuple and its explicit credential references."""
+    failure_code = "storage_unverified"
     try:
         outside_transaction()
         if not isinstance(binding_id, UUID) or operation not in (
@@ -126,6 +126,8 @@ def for_binding(
         settings = _settings(settings)
         model, _, _ = _schema()
         binding = model.objects.get(pk=binding_id)
+        if binding.provider == "gcs" and operation == "erase":
+            failure_code = "cleanup_unavailable"
         access = resolve_attachment_binding_config(
             binding_id, operation=operation, settings=settings
         )
@@ -133,9 +135,7 @@ def for_binding(
         adapter = _provider(binding.provider)(
             binding=binding,
             config=config,
-            posture_credentials=_posture(
-                access, settings, binding.provider, operation=operation
-            ),
+            posture_credentials=_posture(access, settings, binding.provider),
         )
         adapter.verify_identity(operation=operation)
         if operation in ("admit", "write"):
@@ -143,7 +143,7 @@ def for_binding(
         return adapter
     except Exception:  # noqa: BLE001 - provider boundary, fails closed
         # Provider/configuration exceptions may carry secrets or locators.
-        raise AttachmentError("storage_unverified", 503) from None
+        raise AttachmentError(failure_code, 503) from None
 
 
 def bind_for_admission(*, settings: _AdmissionSettings) -> UUID:
@@ -194,9 +194,7 @@ def bind_for_admission(*, settings: _AdmissionSettings) -> UUID:
         provider(
             binding=binding,
             config=historical,
-            posture_credentials=_posture(
-                access, settings, binding.provider, operation="admit"
-            ),
+            posture_credentials=_posture(access, settings, binding.provider),
         ).verify_readiness()
         return binding.id
     except AttachmentError:

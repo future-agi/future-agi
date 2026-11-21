@@ -28,6 +28,24 @@ Lookback and grace use whole hours (1–876000); audit retention uses whole
 days (1–36500). Unset or
 blank uses the default; other invalid values prevent enabled startup.
 
+### GCS permissions for historical cleanup
+
+On **each bound bucket** (quarantine and serving), grant the read-only posture
+identity `storage.buckets.get`. Cleanup fetches that bucket by name and checks
+its name, project number and creation time against the persisted binding before
+using HMAC credentials. Neither identity needs project-wide `storage.buckets.list`.
+
+Keep `posture_credential_ref` in the binding's `FI_ATTACHMENTS_BINDING_ACCESS`
+entry pointed at a valid OAuth credential in `FI_ATTACHMENTS_POSTURE_CREDENTIALS`
+on the cleanup workers, including for retired bindings. A missing or expired
+token, an unreadable bucket or a different incarnation leaves cleanup pending;
+there is no fallback to the current default or to HMAC-only deletion.
+
+Object permissions remain bucket-scoped: the purpose-specific HMAC identity
+lists and deletes object generations and lists and aborts multipart uploads.
+The posture identity also needs `storage.objects.get` and `storage.objects.list`
+to verify that no soft-deleted data remains before releasing cleanup charges.
+
 ## Lifecycle schedules
 
 Three Temporal schedules (`tfc/temporal/schedules/attachment_lifecycle.py`)

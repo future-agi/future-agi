@@ -112,7 +112,6 @@ class NativeHTTP:
         self.exact_override = None
         self.retain_deletes = False
         self.after_list = lambda: None
-        self.incarnation = CREATED.isoformat()
         self.meta = {}
         for purpose in ("quarantine", "serving"):
             bucket = getattr(b, purpose + "_bucket")
@@ -222,23 +221,15 @@ class NativeHTTP:
                     )
                 self.after_list()
             else:
+                assert parsed.path == f"/storage/v1/b/{bucket}"
                 status, data = 200, deepcopy(self.meta[purpose])
             response = Response(status, json.dumps(data).encode())
         else:
             assert kw["headers"]["authorization"].startswith(
                 "GOOG4-HMAC-SHA256 Credential=SYNTHETIC"
             )
-            if parsed.path == "/":
-                response = xml(
-                    "ListAllMyBucketsResult",
-                    "<Buckets>"
-                    + "".join(
-                        f"<Bucket><Name>{getattr(self.b, p + '_bucket')}</Name><CreationDate>{self.incarnation}</CreationDate></Bucket>"
-                        for p in ("quarantine", "serving")
-                    )
-                    + "</Buckets>",
-                )
-            elif "versions" in query:
+            assert parsed.path.split("/")[1] == bucket
+            if "versions" in query:
                 assert (
                     query.get("list-type", "1") == "1"
                     and query["encoding-type"] == "url"
@@ -485,17 +476,17 @@ def test_exact_ambiguous_proof_never_success(native, status, data):
     assert (KEY, "101") not in http.live
 
 
-def test_without_posture_attempts_hmac_delete_but_stays_pending(native):
+def test_without_posture_refuses_hmac_delete(native):
     adapter, http, b = native
     adapter._posture = None
     pending(adapter.erase_version, identity(b))
-    assert (KEY, "101") not in http.live and (KEY, "102") in http.live
-    assert all(not path.startswith("/storage/v1/") for _, path, _, _ in http.calls)
+    assert (KEY, "101") in http.live and (KEY, "102") in http.live
+    assert http.calls == []
 
 
 def test_incarnation_mismatch_blocks_delete(native):
     adapter, http, b = native
-    http.incarnation = "2026-01-01T00:00:00+00:00"
+    http.meta["serving"]["timeCreated"] = "2026-01-01T00:00:00+00:00"
     pending(adapter.erase_version, identity(b))
     assert not any(m == "DELETE" for m, _, _, _ in http.calls)
 
@@ -598,23 +589,30 @@ def test_admission_checks_named_historical_posture(native, monkeypatch, historic
         storage.bind_for_admission(settings=settings)
 
 
-def test_factory_optional_missing_posture_still_deletes_historical_generation(
+def test_factory_erase_reads_only_bound_buckets_with_historical_posture(
     native, monkeypatch
 ):
-    _, http, b = native
-    settings = install_settings(monkeypatch, b, {})
+    adapter, http, b = native
+    settings = install_settings(monkeypatch, b, {"retired.readonly": adapter._posture})
+    settings.FI_ATTACHMENTS_BINDING_ACCESS[b.identity_sha256][
+        "posture_credential_ref"
+    ] = "retired.readonly"
     settings.FI_ATTACHMENTS_STORAGE = {"backend": "broken-default-b"}
     monkeypatch.setenv("STORAGE_BACKEND", "broken-default-b")
     monkeypatch.setattr(g, "storage_http_client", lambda **kw: http)
     resolved = storage.for_binding(b.id, operation="erase", settings=settings)
     assert type(resolved) is g.GCSPrivateMediaStorage
-    pending(resolved.erase_version, identity(b))
+    assert [(m, path, query) for m, path, query, _ in http.calls] == [
+        ("GET", f"/storage/v1/b/{b.quarantine_bucket}", {}),
+        ("GET", f"/storage/v1/b/{b.serving_bucket}", {}),
+    ]
+    resolved.erase_version(identity(b))
     assert (KEY, "101") not in http.live and (KEY, "102") in http.live
-    assert not resolved.erase_all_versions(loc(b)).empty
+    assert resolved.erase_all_versions(loc(b)).empty
 
 
 @pytest.mark.parametrize("operation", ["admit", "write", "read"])
-def test_missing_posture_not_optional_for_other_operations(
+def test_missing_posture_prevents_admission_write_and_read(
     native, monkeypatch, operation
 ):
     _, http, b = native
@@ -625,14 +623,29 @@ def test_missing_posture_not_optional_for_other_operations(
     assert not http.calls
 
 
-def test_wrong_posture_type_not_downgraded_to_optional(native, monkeypatch):
-    _, http, b = native
+@pytest.mark.parametrize(
+    "reference,supplied",
+    [
+        (None, {}),
+        ("retired.readonly", {}),
+        ("retired.readonly", {"retired.readonly": "not-a-runtime-object"}),
+        ("retired.readonly", {"retired.readonly": Credentials(None)}),
+    ],
+    ids=["no-ref", "missing", "wrong-type", "invalid-token"],
+)
+def test_factory_refuses_erase_without_historical_posture(
+    native, monkeypatch, reference, supplied
+):
+    adapter, http, b = native
+    # Valid current posture must never substitute for historical credentials.
     settings = install_settings(
-        monkeypatch, b, {"gcs.readonly-v1": "not-a-runtime-object"}
+        monkeypatch, b, {"gcs.readonly-v1": adapter._posture, **supplied}
     )
+    settings.FI_ATTACHMENTS_BINDING_ACCESS[b.identity_sha256][
+        "posture_credential_ref"
+    ] = reference
     monkeypatch.setattr(g, "storage_http_client", lambda **kw: http)
-    with pytest.raises(AttachmentError, match="storage_unverified"):
-        storage.for_binding(b.id, operation="erase", settings=settings)
+    pending(storage.for_binding, b.id, operation="erase", settings=settings)
     assert not http.calls
 
 
@@ -707,13 +720,13 @@ def test_orphan_cleanup_retry_cannot_release_after_xml_hides_retained_bytes(nati
     assert released == [True] and (KEY, "102") in http.live
 
 
-def test_full_cleanup_without_posture_deletes_live_versions_and_keeps_pending(native):
+def test_full_cleanup_without_posture_preserves_live_versions_and_keeps_pending(native):
     adapter, http, b = native
     adapter._posture = None
     result = adapter.erase_all_versions(loc(b))
     assert not result.empty and result.retryable
-    assert not any(key == KEY for key, _ in http.live)
-    assert (KEY + "-neighbor", "103") in http.live
+    assert result.reason == "cleanup_unavailable" and http.calls == []
+    assert http.live == {(KEY, "101"), (KEY, "102"), (KEY + "-neighbor", "103")}
 
 
 def test_unknown_history_terminal_page_never_certifies_orphan_settlement(native):
