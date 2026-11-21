@@ -1,0 +1,84 @@
+# Native merge queue: dev pilot
+
+**Default: off.** Committing `dev.ruleset.json` changes no setting. It describes one **additional repository branch ruleset**, covering `refs/heads/dev` only. It is not an update to classic protection or to the inherited review ruleset. Only a separately authorized repository administrator may activate it, after the disposable-branch canary below. This pilot grants no merge, bypass, or settings authority to a factory or bot.
+
+| Setting | Pilot |
+| --- | --- |
+| Speculative candidate builds | 2; a build tests a cumulative tree, not just the last PR |
+| Landing size / wait for more entries | min 1, max 1, wait 0 minutes; one landing per push, not CI batching |
+| Grouping / merge method | `ALLGREEN` / `MERGE` |
+| Check response timeout | 240 minutes, provisional; includes scheduling, not just test execution |
+| Bypass actors | None |
+
+## 1. Record the baseline; stop on unknowns
+
+Name the administrator, queue operator (including coverage for manual admissions), CI-policy owner, capacity owner and deployment owner before starting. Keep ordinary PR qualification and human review throughout the pilot. Use a trusted checkout of the checker, Python 3 and authenticated `gh` supporting `api --paginate --slurp`. Commands below assume the repo root. Keep dated, private evidence outside the checkout. `D` must name a new evidence directory, not a previous snapshot.
+
+```sh
+set -eu
+umask 077
+: "${D:?set D to a new evidence directory}"
+mkdir "$D"
+repo=future-agi/future-agi
+checker=.github/merge-queue/verify-queue.py
+python3 -I "$checker" --repo "$repo" --expect inactive > "$D/before.json"
+base=$(gh api -X GET "repos/$repo/commits/dev" --jq '.sha')
+for file in backend-ci.yml e2e-ci.yml python-lint.yml; do
+  gh api -X GET "repos/$repo/contents/.github/workflows/$file?ref=$base" \
+    --jq '[.path,.sha,.git_url] | @tsv'
+done > "$D/workflows-$base.tsv"
+gh api -X GET --paginate --slurp "repos/$repo/rulesets?includes_parents=true&per_page=100" > "$D/rulesets.json"
+```
+
+* A successful checker run writes JSON to stdout; a failed/empty file is **not** a baseline. It reads the full classic dev protection, rules effective on dev (including inherited rules), repo merge switches, and the named repository ruleset if present. It expects classic `strict=false`, exactly `Backend Tests Pass`, `E2E Tests Pass`, `Python Lint Pass` from GitHub Actions app `15368`, and effective inherited organization rule `2289447` requiring one approval and dismissal of stale reviews. Both repo and effective review rules must permit merge commits. Inactive means the named ruleset is absent or exactly the disabled template, no merge-queue ruleset applies, and GitHub’s independent `repository.mergeQueue(branch: "dev")` lookup returns null. An enabled but empty classic queue fails this gate. Missing permissions/fields (including a hidden bypass list), API errors or drift stop the pilot; use an authorized operator with visibility, not weaker assertions. The checker uses REST GETs and one read-only GraphQL query; it is **not** a required check.
+* Separately export existing ruleset details (including relevant bypass lists), branch protections and effective rules for `main` and each release target. Save queue state from the GitHub queue UI: branches, PR numbers, positions, head OIDs, pending builds and timestamps, including an empty/absent queue. Repeat after activation and rollback; compare policy, not the dates/ETags. Only the new exact-dev rule may differ. Do not edit org ruleset `2289447`, classic protection, auto-merge, bypasses, `main`, release settings or required contexts. Investigate pre-existing exceptions before proceeding.
+* Record CI revision and effective settings **again immediately before** enabling. The pilot branch at `e21ecf1b` had three workflow subscribers; the 21 Nov dev snapshot lacked group lint. Neither snapshot proves today's target is ready. Check all workflows/actions, planner, policy, receipt verifiers and CODEOWNERS itself at the target revision. A check name plus an Actions app ID identifies an issuer, **not an immutable verifier**. Require evidence of effective CI-owner review on all verdict-producing policy (including changes to the ownership rules), or an independently controlled required workflow/issuer under separate approval. Until then hold policy changes for named CI-owner verification on the exact tree; do not claim independent enforcement or open unattended activation. An ordinary approval alone is insufficient.
+
+## 2. Qualify the combined CI tree and capacity
+
+* Land the candidate gate, runner trust, selection and full push/nightly control changes on target first. Each required aggregate must always report for `merge_group: checks_requested`, on the immutable event head SHA, with the diff and trusted policy bound to the event base SHA. Enumerate the union plan, successful receipts and justified skips. Unknown/shared/missing diffs run the full relevant suites; missing mandatory evidence fails. Preserve real services, ordinary PR gates and full dev/main, schedule and release qualification. Do not substitute a ref tip, skip on exhausted budget, or blanket-retry a failed candidate.
+* Reconcile #4263 and #4289 on **one tested tree**. The Skills producer and contract audit must verify the actual Swagger bytes; retain `source_contract_sha256` unless both consumers and fixtures migrate together. Regenerate the catalog, reconcile sharding/discovery and native/cohort exclusions, verify SDK/traceAI branch pairs, and see every registered journey in the strict E2E receipts. Exercise the base-pinned lint gate/config/version and updated self-tests when dev has advanced past the event base. Keep Skills in full mode until certified; if it cannot run safely, do not activate. Fork-origin code, including in a cumulative candidate, must never receive paid runners or secrets. Missing private proof is a hold, not a pass.
+* Frontend, Go, Update and other optional workflows are **not** required merely because they subscribe to the event. A blocking proof belongs in one of the three strict aggregates with explicit ownership or needs separate protection-policy approval. The existing 355-minute Real rehearsal cannot be counted inside a 240-minute required chain.
+* Size admission and timeout from arrival bursts, reserved human/release capacity and measured **combined** queue-to-verdict p99 (runner wait + longest required dependency chain) plus operating margin. If that does not fit 240 minutes, stop; resize/retest and review the settings before activation. Measure ordinary-only and Skills-eligible populations separately and weight by observed eligibility. An ordinary 48-minute occupancy with zero invalidations gives at most ~60 entries/day at 2 slots (~120 at 4), not a combined-workload forecast. Build slots are not runner slots. For broad Skills heads price the producer, two hosted waves (8 cohorts, parallelism 4), executor and seven registered journeys; avoid double-counting journeys inside their cohorts. The observed 223.7 hosted + 20.5 executor runner-minutes alone replace a 60-minute allowance: 1,100.75 becomes **1,284.95** before other ancillary work. Runner-minutes are not wall time. Resolve the two historical heads whose sampled E2E verdict postdated landing (run attempts, SHAs and protections in effect) before treating those times as enforced wait; timestamps alone do not prove bypass.
+
+## 3. Real-queue canary — not workflow dispatch
+
+Use an isolated canary repository with a disposable **protected branch named `dev`**. Backend and E2E push filters match `dev`/`main`, not an arbitrary canary branch. Use the unmodified combined workflows, equivalent contexts/app bindings, review rules, trust controls and an independently authorized queue scoped only to its `dev`. Isolate deployment destinations and credentials from production. Run this section in a separate shell with `repo` set to the canary repository and its own evidence directory `D`; confirm the target before any admission. Check actual event/branch filters there. Never apply a wildcard rule to make the canary work. Have the queue operator practice both drain and dequeue here, including an already-building entry and a manually admitted entry. Record who can stop manual admissions; if these controls or full qualification capacity are unavailable, stop.
+
+1. Enqueue two reviewed, independently safe changes in order (no jump). Save the genuine event type/action, delivery or run IDs, base/head refs and SHAs, PR head SHAs/order, candidate tree OIDs and union plans for both speculative builds. Save all three **completed successful** aggregate check-run IDs, app IDs, run attempts, head SHAs, workflow identities and underlying receipts, including planned skips. Confirm a later build includes its predecessor while queued. An ordinary pull request run on another SHA is not proof.
+2. For each landing, get the exact `after` SHA from its base push event (not the current branch tip). Compare **tree** OIDs, not commit IDs, with the last valid passing candidate for that entry. Merge commits can legitimately have different SHAs. For example, given event-derived `candidate` and `landed` full SHAs:
+
+   ```sh
+   gh api -X GET --paginate --slurp "repos/$repo/actions/runs?event=merge_group&head_sha=$candidate&per_page=100" > "$D/$candidate-runs.json"
+   gh api -X GET --paginate --slurp "repos/$repo/commits/$candidate/check-runs?filter=all&per_page=100" > "$D/$candidate-checks.json"
+   gh api -X GET --paginate --slurp "repos/$repo/actions/runs?event=push&branch=dev&head_sha=$landed&per_page=100" > "$D/$landed-push-runs.json"
+   ct=$(gh api -X GET "repos/$repo/git/commits/$candidate" --jq '.tree.sha')
+   lt=$(gh api -X GET "repos/$repo/git/commits/$landed" --jq '.tree.sha')
+   test -n "$ct" && test "$ct" = "$lt" || exit 1
+   printf '%s %s %s\n' "$candidate" "$landed" "$ct" >> "$D/landings.txt"
+   ```
+
+   Correlate check suite IDs with the expected workflow runs and the latest applicable attempts on the **same** group SHA. Inspect receipts, not just check names. Missing, duplicate/ambiguous, stale, skipped or wrong-tree verdicts are not passes. Record the candidate tree before the temporary ref disappears.
+3. Separately introduce a real failing product assertion for backend, E2E, and an enabled production lint rule. Show the corresponding group aggregate goes red and the failing entry cannot land (use individually PR-green but cumulatively incompatible changes where needed; never bypass PR gates). Remove a failing earlier entry: capture invalidation, new event endpoints, new plan and all fresh receipts for the survivor on the new base, then prove landed-tree parity again. Old green evidence must not carry over.
+4. Canary a policy-changing PR: verify an ordinary non-owner approval cannot qualify a verifier change, and record the effective independent decision on the exact revision. Exercise a fork/no-private-proof entry and confirm no paid capacity/credentials were used and no false green landed. For each landing, retain the `backend-ci.yml` and `e2e-ci.yml` **push** run IDs, attempts, conclusions and full-suite receipts for the exact landed `after` SHA on `dev`. Confirm both full suites ran; a missing push run or a green merge-group run is not proof. Record detection, operator response and recovery for a deliberately red push control. Clean up only the disposable pilot resources. A synthetic test or a static YAML inspection is not this canary.
+
+## 4. Enable and observe
+
+After canary sign-off, return to the production repository and evidence directory. The operator freezes **manual and automated admissions** (including pending automation) and confirms the hold with everyone able to enqueue. Do not activate if the freeze cannot be maintained through readback and the first-PR go. While frozen, record the start time and dev tip, recheck the inactive baseline and confirm there are no entries or in-flight groups. The administrator creates the standalone repository rule disabled (or inspects the existing disabled rule), records its ID, then changes **only its enforcement** to active. Never replace the classic protection document. Keep the freeze in force while verifying:
+
+```sh
+python3 -I "$checker" --repo "$repo" --expect active --baseline "$D/before.json" > "$D/active.json"
+```
+
+Match the active ruleset ID to the staged ID and cross-check main/release snapshots, bypass visibility and current policy ownership. Before releasing the hold, verify the queue is empty and the dev tip is unchanged. Check admission history, merge-group activity and dev push history from the freeze timestamp: an empty queue now does not prove no entry appeared or landed. If evidence is missing or there was any unexpected activity, keep all admissions frozen and follow rollback. On explicit operator go, release **only the designated first PR**. Keep other manual and automated admissions on hold until its candidate and full push receipts are verified. Only then authorize the next pair. Verify the real dev event, three receipts and push tree for every landing as above. No jumps, manual bypass or relaxed review. Keep at most **four outstanding** across all admissions at two builds; reserve headroom for humans/releases. If manual arrivals make the cap unenforceable, hold factory admissions.
+
+Observe at least two representative busy windows. Track arrivals/backlog, eligibility mix, queue-to-verdict, p95 runner wait, shared utilization, invalidations/rebuilds, time to land and **runner-minutes per successful landing**. Page immediately on absent/wrong-tree contexts, any escaped failure or p95 runner wait >10 min; page on shared utilization >80% for two consecutive 15-minute windows. Stop unsafe admissions. Only trial **2→4 builds and 4→8 outstanding** after measured backlog and verified headroom, with a separately reviewed template/checker and operator go; retain the increase only if p95 improves without harming controls. Otherwise stay at two or reduce. No automatic jump to 100. Native verification adds candidate work; credit only observed avoided rebases/retests, not a promised cost saving or 10,000 landings/day.
+
+## Rollback or escaped failure
+
+1. Queue operator freezes factory **and manual** admissions. Inspect the native queue and in-flight groups directly; stopping the factory does not stop GitHub. If there is a bad or unverified candidate, dequeue it and affected successors immediately, save invalidations and verify they cannot land. Recheck the queue and base push history for races. If admissions cannot be frozen, escalate to the authorized administrator and keep recovery on hold.
+2. Disable all lightweight PR modes and restore broad ordinary PR qualification. Require a **fresh full verdict on each applicable current tree**, not a prior thin green. Drain only already-verified safe entries; otherwise dequeue and invalidate stale receipts. Verify no pending native entries or in-flight landing remains.
+3. Administrator disables **only** the recorded dev queue ruleset; do not delete, rename or recreate it. Run `python3 -I "$checker" --repo "$repo" --expect inactive --baseline "$D/before.json" --active-snapshot "$D/active.json" > "$D/rollback.json"`. This requires the same ruleset ID now disabled, an absent native queue and unchanged baseline protections and repository merge switches. Compare the separate main/release and permissions snapshots. If activation failed before a valid active snapshot was saved, still disable the staged rule by ID; keep admissions frozen for administrator reconciliation against the staged ID and baseline rather than treating a standalone inactive snapshot as rollback proof. Resume only the prior human-approved merge path after protections, app IDs, review rules, queue absence and broad checks are confirmed.
+4. A red post-merge control **detects**, not prevents. `frontend-dev-cdn.yaml` can start independently on a dev push and check out a moving ref; neither the native queue nor deployment automatically pauses. Contact the deployment owner immediately to stop further promotion, identify the tree actually deployed and reconcile it with event SHAs. Revert or repair the landed change on a tested tree and verify full controls before resumption. Disabling a queue rule does not undo a merge or deployment. Preventive promotion gating requires separate deployment-owner approval and a full receipt for the exact push SHA at the actual consumer.
+
+References: [GitHub merge queue semantics](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue), [repository rulesets API](https://docs.github.com/en/rest/repos/rules), [effective code-owner reviews](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
