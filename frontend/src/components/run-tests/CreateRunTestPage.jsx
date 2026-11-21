@@ -222,6 +222,17 @@ const CreateRunTestPage = ({ open, onClose }) => {
     setPagination: setScenariosPagination,
   } = useSearchedPagination();
 
+  // A new search term can shrink the result set below the current page, and
+  // the API answers an out-of-range page with "Invalid page." instead of
+  // clamping. Reset to page 1 during render rather than in an effect: an
+  // effect runs after commit, so the query would fire once for the stale page
+  // before the reset landed.
+  const [prevScenarioSearch, setPrevScenarioSearch] = useState(debouncedSearch);
+  if (debouncedSearch !== prevScenarioSearch) {
+    setPrevScenarioSearch(debouncedSearch);
+    setScenariosPagination((prev) => ({ ...prev, page: 1 }));
+  }
+
   // Fetch scenarios with pagination
   const {
     data: scenariosData,
