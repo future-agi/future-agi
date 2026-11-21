@@ -112,6 +112,8 @@ def _extract(
             stereo_recording_url=None,
             recording_available=False,
         )
+    call.test_execution.run_test.organization_id = "test-org"
+    call.test_execution.run_test.workspace_id = None
     call.provider_call_data = provider_call_data
     call.asave = AsyncMock()
     egress_info = MagicMock(egress_id=response_id, room_name=response_room)
@@ -414,6 +416,8 @@ def test_cleanup_replay_rejects_foreign_egress_result(response_id, response_room
         stream=_output_url,
         delete_effect=TimeoutError,
     )
+    # An unsigned key cannot authorize a listing-free replay.
+    first.provider_call_data[PROVIDER_KEY]["recording_cleanup_intent"] = "forged/key"
     no_stream = MagicMock()
     result, _, delete, _ = _extract(
         first.provider_call_data,
@@ -440,8 +444,9 @@ def test_retry_does_not_reuse_another_recording_source():
     delete.assert_not_called()
     assert retry.error["tracks"] == ["assistant", "customer", "mono", "stereo"]
     stored = call.provider_call_data[PROVIDER_KEY]
-    assert stored["recording"] == {}
-    assert "https://old/" not in str(stored)
+    assert stored["recording"] == first.provider_call_data[PROVIDER_KEY]["recording"]
+    assert all(r["egress_id"] == "EG_1" for r in stored["verified_recording_tracks"].values())
+    assert "EG_2" not in stored["recording_history"]
     assert "recording_cleanup_success" not in stored
     assert call.recording_url is None and call.stereo_recording_url is None
     assert not call.recording_available

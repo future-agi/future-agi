@@ -1346,7 +1346,7 @@ class TestFetchAndPersistCallResultActivity:
         delete.assert_called_once_with(service.config, "raw/one.ogg")
         assert writes[-1] == ({"provider_call_data"}, 1)
         if cleanup_only:
-            assert len(writes) == 1
+            assert writes == [({"provider_call_data"}, 1)] * 2  # intent, confirmation
         elif partial_first:
             assert [count for _, count in writes] == [1, 1, 1]
         else:
@@ -1446,6 +1446,168 @@ class TestFetchAndPersistCallResultActivity:
                 stream=stream,
                 delete=delete,
             )
+
+    async def _roll_to_second_egress(self, call, io):
+        assert (await io.run()).recording_error is None
+        await call.arefresh_from_db()
+        lk = call.provider_call_data["livekit"]
+        first = dict(lk["recording"])
+        # Simulate the upgrade from a valid single map. Its recorded source,
+        # not the egress currently advertised by the webhook, identifies E1.
+        lk.pop("recording_history", None)
+        lk["egress_id"] = io.info.egress_id = "EG_2"
+        io.info.file_results[0].filename = "raw/two.ogg"
+        await call.asave(update_fields=["provider_call_data"])
+        io.delete.reset_mock()
+        return first
+
+    @pytest.mark.parametrize("timeout", [False, True])
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_rollover_preserves_unreplaced_tracks(
+        self, call_execution, recording_activity, timeout
+    ):
+        from simulate.serializers.test_execution import CallExecutionDetailSerializer
+        from simulate.temporal.activities.xl import _build_transcript_data
+
+        io = recording_activity
+        first = await self._roll_to_second_egress(call_execution, io)
+        if timeout:
+            io.poll.return_value = None
+        io.stream.side_effect = lambda _c, _key, dest, _args: (
+            "https://media/stereo-two" if "_stereo_" in dest else None
+        )
+        result = await io.run()
+        assert result.success and result.recording_error["tracks"] == (
+            ["assistant", "customer", "mono", "stereo"] if timeout
+            else ["assistant", "customer", "mono"]
+        )
+        io.delete.assert_not_called()
+        await call_execution.arefresh_from_db()
+        lk = call_execution.provider_call_data["livekit"]
+        second = {} if timeout else {"stereo": "https://media/stereo-two"}
+        assert lk["recording"] == {**first, **second}
+        history = lk["recording_history"]
+        assert history["EG_1"]["tracks"] == first
+        assert history.get("EG_2", {}).get("tracks", {}) == second
+        detail = await sync_to_async(CallExecutionDetailSerializer().get_recordings)(call_execution)
+        inputs = await sync_to_async(_build_transcript_data)(call_execution)
+        for kind in first:
+            url = lk["recording"][kind]
+            receipt = lk["verified_recording_tracks"][kind]
+            assert receipt == {
+                "call_id": str(call_execution.pk),
+                "egress_id": "EG_2" if kind in second else "EG_1", "url": url,
+            }
+            assert detail[kind] == url
+            if kind in ("assistant", "customer"):
+                assert lk[f"{kind}_recording_url"] == inputs[f"{kind}_recording"] == url
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_rollover_success_retries_cas_after_failed_peer(
+        self, call_execution, recording_activity
+    ):
+        from django.db.models.query import QuerySet
+
+        io = recording_activity
+        first = await self._roll_to_second_egress(call_execution, io)
+        update = QuerySet.aupdate
+        produced = {}
+
+        async def interleave(query, **changes):
+            lk = (changes.get("provider_call_data") or {}).get("livekit", {})
+            if not produced and (lk.get("recording_source") or {}).get("egress_id") == "EG_2":
+                produced.update(lk["recording"])
+                io.poll.return_value = None
+                failed = await io.run()
+                assert failed.success and len(failed.recording_error["tracks"]) == 4
+                matched = await update(query, **changes)
+                assert matched == 0
+                return matched
+            return await update(query, **changes)
+
+        with patch.object(QuerySet, "aupdate", new=interleave):
+            result = await io.run()
+        assert result.success and result.recording_error is None
+        await call_execution.arefresh_from_db()
+        lk = call_execution.provider_call_data["livekit"]
+        assert len(produced) == 4 and lk["recording"] == produced
+        assert lk["recording_history"]["EG_1"]["tracks"] == first
+        assert lk["recording_history"]["EG_2"]["tracks"] == produced
+        assert lk["recording_cleanup_success"]["recording"] == produced
+        io.delete.assert_called_once()
+        assert io.delete.call_args.args[1] == "raw/two.ogg"
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_preupgrade_json_only_handoff_repairs_empty_playback(
+        self, call_execution, recording_activity
+    ):
+        from simulate.serializers.test_execution import CallExecutionDetailSerializer
+
+        io = recording_activity
+        legacy = {k: f"https://legacy/{k}" for k in ("combined", "stereo", "assistant", "customer")}
+        lk = call_execution.provider_call_data["livekit"]
+        lk.update(recording=legacy, recording_files=["untrusted/file.ogg"])
+        await CallExecution.objects.filter(pk=call_execution.pk).aupdate(
+            provider_call_data=call_execution.provider_call_data,
+            recording_url=None, stereo_recording_url=None, recording_available=False,
+        )
+        result = await io.run()
+        assert result.success and result.recording_error is None
+        io.poll.assert_awaited_once()
+        assert io.stream.call_count == 4
+        assert {c.args[1] for c in io.stream.call_args_list} == {"raw/one.ogg"}
+        await call_execution.arefresh_from_db()
+        lk = call_execution.provider_call_data["livekit"]
+        tracks = lk["recording_history"]["EG_1"]["tracks"]
+        assert tracks == lk["recording"] and not set(legacy.values()).intersection(tracks.values())
+        assert call_execution.recording_available
+        assert call_execution.recording_url == tracks["combined"]
+        assert call_execution.stereo_recording_url == tracks["stereo"]
+        serializer = CallExecutionDetailSerializer()
+        detail = await sync_to_async(serializer.get_recordings)(call_execution)
+        assert all(detail[k] == v for k, v in tracks.items())
+        assert serializer.fields["audio_url"].get_attribute(call_execution) == tracks["combined"]
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
+    async def test_acknowledged_delete_replays_without_listing(
+        self, call_execution, recording_activity
+    ):
+        import asyncio
+        from django.db.models.query import QuerySet
+
+        io = recording_activity
+        objects = {"raw/one.ogg"}
+        io.delete.side_effect = lambda _config, key: objects.discard(key)
+        update = QuerySet.aupdate
+
+        async def stop_before_confirmation(query, **changes):
+            lk = (changes.get("provider_call_data") or {}).get("livekit", {})
+            if lk.get("recording_cleanup_success"):
+                assert not objects
+                raise asyncio.CancelledError
+            return await update(query, **changes)
+
+        with patch.object(QuerySet, "aupdate", new=stop_before_confirmation):
+            with pytest.raises(asyncio.CancelledError):
+                await io.run()
+        await call_execution.arefresh_from_db()
+        before = call_execution.provider_call_data["livekit"]
+        assert not before.get("recording_cleanup_success")
+        playback = (call_execution.recording_url, call_execution.stereo_recording_url)
+        io.api.egress.list_egress.return_value = MagicMock(items=[])
+        replay = await io.run()
+        assert replay.success and replay.recording_error is None
+        io.api.egress.list_egress.assert_not_awaited()
+        assert [c.args[1] for c in io.delete.call_args_list] == ["raw/one.ogg"] * 2
+        await call_execution.arefresh_from_db()
+        after = call_execution.provider_call_data["livekit"]
+        assert after["recording_cleanup_success"]["recording"] == before["recording"] == after["recording"]
+        assert playback == (call_execution.recording_url, call_execution.stereo_recording_url)
+        assert call_execution.recording_available
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
@@ -1746,7 +1908,7 @@ class TestFetchAndPersistCallResultActivity:
             assert intermediate[0] is None
         else:
             assert intermediate[0]["code"] == "recording_cleanup_failed"
-        assert delete.call_args_list == [((service.config, "raw/one.ogg"), {})] * 2
+        assert delete.call_args_list == [((service.config, "raw/one.ogg"), {})] * (1 if peer_succeeds else 2)
         await call_execution.arefresh_from_db()
         stored = call_execution.provider_call_data["livekit"]
         assert stored["recording_source"] == source and stored["recording"] == tracks
@@ -1922,7 +2084,7 @@ class TestFetchAndPersistCallResultActivity:
                 )
             )
 
-        if phase == "upload" or (phase == "handoff" and split == "partial"):
+        if phase in ("upload", "cleanup") or (phase == "handoff" and split == "partial"):
             delete.assert_not_called()
         else:
             delete.assert_called_once_with(service.config, "raw/one.ogg")
