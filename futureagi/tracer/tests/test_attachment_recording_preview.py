@@ -101,3 +101,50 @@ def test_peaks_header_matches_only_the_permitted_immutable_bytes(api, monkeypatc
     api.client.cookies.clear()
     refused = f01.gateway(api, peaks)
     assert refused.status_code == 404 and "X-Attachment-Peaks" not in refused
+
+
+def test_long_standalone_preview_tiles_one_authorized_file(api, monkeypatch):
+    import io
+    import subprocess
+    import wave
+
+    stream = io.BytesIO()
+    with wave.open(stream, "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(8000)
+        output.writeframes(b"\x00\x01" * (8000 * 31))
+    # PCM WAV uploads have a deliberate 30 s bound; exercise a supported
+    # longer standalone container, without weakening that validation.
+    ogg = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "wav",
+            "-i",
+            "pipe:0",
+            "-c:a",
+            "libopus",
+            "-f",
+            "ogg",
+            "pipe:1",
+        ],
+        input=stream.getvalue(),
+        stdout=subprocess.PIPE,
+        check=True,
+        timeout=30,
+    ).stdout
+    monkeypatch.setattr(f01, "wav_bytes", lambda: ogg)
+    _, _, _, row = f01.ready_occurrence(
+        api, purpose="conversation_recording", mime_type="audio/ogg"
+    )
+    result = preview(api, row.client_id).json()
+    assert result["state"] == "ready" and result["occurrence_id"] == str(row.client_id)
+    assert result["manifest"]["duration_ms"] == 31000
+    assert [
+        (s["start_ms"], s["duration_ms"], s["occurrence_id"])
+        for s in result["manifest"]["segments"]
+    ] == [(0, 30000, str(row.client_id)), (30000, 1000, str(row.client_id))]

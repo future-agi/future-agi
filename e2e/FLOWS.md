@@ -2960,12 +2960,13 @@
 1. create a voice project and an observe project (SDK source, not simulator) and opt both into attachments (operator step, test-image endpoint)
 2. with the org API key, bootstrap an F01 capture session per trace and upload a LiveKit and a Pipecat Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)
 3. send through the collector a LiveKit call (untyped job_entrypoint root with lk.job_id, agent_session child carrying the recording), a Pipecat call (CONVERSATION root carrying the recording) and the model trace
-4. on the https app origin, open the LiveKit trace, select agent_session, seek within its Conversation timeline, play to the end and inspect real peaks
-5. open the Pipecat trace and play the root's recording to the end
-6. open the model trace, select the model span, switch to Chat and see the PNG inside user message 2
-7. play the WAV beside turn.audio in Attributes, and download the PDF, which has no inline preview
-8. open each call on the dedicated Voice full-page route and play its Attachment recording to the end
-9. delete only the LiveKit CH session through the supported session API
+4. on the https app origin, open the LiveKit trace, select agent_session, seek while paused in Conversation and play its recording to the native end
+5. open the Pipecat trace and play the root's recording to the end with peaks unavailable
+6. revisit the LiveKit recording after its derivative is ready and inspect the waveform while real audio plays
+7. open the model trace, select the model span, switch to Chat and see the PNG inside user message 2
+8. play the WAV beside turn.audio in Attributes, and download the PDF, which has no inline preview
+9. open each call on the dedicated Voice full-page route and play its Attachment recording to the end
+10. delete only the LiveKit CH session through the supported session API
 
 **Backend state verified:**
 
@@ -2973,6 +2974,7 @@
 - CH spans FINAL: each parent carries exactly the seeded refs, both voice roots remain parentless conversation roots, and stored input plus trace-detail input retain image/PDF fi-attachment occurrence URIs independently of placement and carrier construction
 - API: voice detail projects each call's recording as ready on its own parent span with a 200 ms mixed Ogg/Opus manifest, and the trace detail projects exactly the seeded attachments as ready
 - API: the viewer gateway serves all five originals with fixture length/MIME/sha256, recording Range/HEAD and renewal preserve exact bytes, anonymous media is denied and resolve without credentials is 401; a known authorized attachment UUID used as an occurrence is not_found
+- API: the waveform uses the selected peaks grant, its actual gateway bytes and their dimension header; the unavailable-peaks slider remains keyboard operable
 - API: every media request the page made went through the gateway for exactly the three loaded audio occurrences (zero legacy requests)
 - API and PG: deleting the CH-only LiveKit session returns 204, immediately denies the unchanged unexpired cookie/grant and tombstones its occurrence while complete immutable facts survive; Pipecat remains playable with unchanged bytes. Physical erasure is separate storage qualification
 
