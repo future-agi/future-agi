@@ -61,10 +61,16 @@ export default function FilterValueLabel({
   // chain ends; only then fall back to the raw value.
   // Bounded per chip: a value that no longer exists must not make every mount
   // walk the whole workspace vocabulary.
-  const continuationReads = useRef(0);
-  useEffect(() => {
-    continuationReads.current = 0;
-  }, [values]);
+  // Keyed on the selection's contents, not the array's identity: a parent
+  // that rebuilds `filter.value` on every render must not restart the chain.
+  const valuesKey = useMemo(() => JSON.stringify(values), [values]);
+  // Reset during render, not in an effect: `canReadMore` below reads the
+  // counter in this same render, so a new selection must see its fresh
+  // budget immediately rather than after some unrelated re-render.
+  const continuationReads = useRef({ key: valuesKey, count: 0 });
+  if (continuationReads.current.key !== valuesKey) {
+    continuationReads.current = { key: valuesKey, count: 0 };
+  }
   const hasUnresolved =
     hasValue && !labelsAreValues && values.some((v) => !byValue.has(v));
   const canReadMore =
@@ -72,10 +78,10 @@ export default function FilterValueLabel({
     Boolean(hasNextPage) &&
     !isFetchNextPageError &&
     !cursorChainStopped &&
-    continuationReads.current < MAX_LABEL_CONTINUATION_READS;
+    continuationReads.current.count < MAX_LABEL_CONTINUATION_READS;
   useEffect(() => {
     if (canReadMore && !isLoading && !isFetchingNextPage) {
-      continuationReads.current += 1;
+      continuationReads.current.count += 1;
       // Chips sharing one query must not cancel each other's page read.
       void fetchNextPage?.({ cancelRefetch: false });
     }

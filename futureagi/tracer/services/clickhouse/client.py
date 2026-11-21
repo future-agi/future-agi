@@ -4,11 +4,13 @@ ClickHouse Client for Analytics Backend
 Provides connection management and query execution for ClickHouse.
 """
 
+import logging
 import queue
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from typing import Any
 
 import structlog
@@ -60,6 +62,31 @@ except ImportError:
     CHDriver = None
     CHError = Exception
     CLICKHOUSE_AVAILABLE = False
+
+
+_quiet_retained_read = ContextVar("quiet_retained_read", default=False)
+
+
+def _allow_native_log(_record: logging.LogRecord) -> bool:
+    return not _quiet_retained_read.get()
+
+
+@contextmanager
+def _quiet_retained_driver_logs():
+    # The driver logs substituted SQL, server messages and result-column names.
+    # Filter at the emitters: ancestor logger filters don't see propagated records.
+    for name in (
+        "clickhouse_driver.connection",
+        "clickhouse_driver.client",
+        "clickhouse_driver.log",
+        "clickhouse_driver.streams.native",
+    ):
+        logging.getLogger(name).addFilter(_allow_native_log)  # idempotent
+    token = _quiet_retained_read.set(True)
+    try:
+        yield
+    finally:
+        _quiet_retained_read.reset(token)
 
 
 def _bounded_read_timeout_ms(
@@ -371,6 +398,9 @@ class ClickHouseClient:
         self._pool_lock = threading.Lock()
         self._pool_initialized = False
         self._read_admission = threading.BoundedSemaphore(self._pool_size)
+        # One extra native read may be in flight for the optional retained
+        # window. Its caller can time out before the driver returns.
+        self._retained_lookup_admission = threading.BoundedSemaphore(1)
 
     @property
     def is_available(self) -> bool:
@@ -561,16 +591,20 @@ class ClickHouseClient:
         params: dict[str, Any] | None = None,
         timeout_ms: int | None = None,
         settings: dict[str, Any] | None = None,
+        *,
+        retained_lookup: bool = False,
     ) -> tuple[list[tuple], list[tuple], float, int | None, int | None]:
         """Execute a guarded read and include native rows/bytes progress."""
 
-        result = self._execute_read(
-            query,
-            params,
-            timeout_ms=timeout_ms,
-            settings=settings,
-            include_progress=True,
-        )
+        with _quiet_retained_driver_logs() if retained_lookup else nullcontext():
+            result = self._execute_read(
+                query,
+                params,
+                timeout_ms=timeout_ms,
+                settings=settings,
+                include_progress=True,
+                retained_lookup=retained_lookup,
+            )
         assert len(result) == 5
         return result
 
@@ -582,6 +616,7 @@ class ClickHouseClient:
         settings: dict[str, Any] | None = None,
         *,
         include_progress: bool,
+        retained_lookup: bool = False,
     ) -> (
         tuple[list[tuple], list[tuple], float]
         | tuple[list[tuple], list[tuple], float, int | None, int | None]
@@ -676,22 +711,28 @@ class ClickHouseClient:
         admission_acquired = False
         client = None
 
+        admission = (
+            self._retained_lookup_admission if retained_lookup else self._read_admission
+        )
         try:
-            admission_acquired = self._read_admission.acquire(
-                # Queue admission stays bounded independently of statement
-                # execution. Do not exhaust all HTTP workers waiting for a slot.
-                timeout=max(
-                    (timeout_ms or self.read_timeout_ceiling_ms) / 1000.0, 0.001
+            if retained_lookup:
+                admission_acquired = admission.acquire(blocking=False)
+            else:
+                # Queue admission stays bounded independently of statement execution.
+                admission_acquired = admission.acquire(
+                    timeout=max(
+                        (timeout_ms or self.read_timeout_ceiling_ms) / 1000.0, 0.001
+                    )
                 )
-            )
             if not admission_acquired:
                 raise TimeoutError("ClickHouse read admission deadline exhausted")
             client = self._get_client()
-            logger.debug(
-                "Executing ClickHouse read query",
-                query=query[:200],
-                timeout_ms=timeout_ms,
-            )
+            if not retained_lookup:
+                logger.debug(
+                    "Executing ClickHouse read query",
+                    query=query[:200],
+                    timeout_ms=timeout_ms,
+                )
             retry_attempt = 0
             while True:
                 try:
@@ -705,6 +746,8 @@ class ClickHouseClient:
                     )
                     break
                 except CHError as exc:
+                    if retained_lookup:
+                        raise
                     if getattr(
                         exc, "code", None
                     ) != _TOO_MANY_SIMULTANEOUS_QUERIES_CODE or retry_attempt >= len(
@@ -757,15 +800,16 @@ class ClickHouseClient:
             read_rows = progress_metric("rows")
             read_bytes = progress_metric("bytes")
 
-            logger.info(
-                "ClickHouse read query completed",
-                query=query[:200],
-                query_time_ms=round(query_time_ms, 2),
-                rows_returned=rows_returned,
-                read_rows=read_rows,
-                read_bytes=read_bytes,
-                backend="clickhouse",
-            )
+            if not retained_lookup:
+                logger.info(
+                    "ClickHouse read query completed",
+                    query=query[:200],
+                    query_time_ms=round(query_time_ms, 2),
+                    rows_returned=rows_returned,
+                    read_rows=read_rows,
+                    read_bytes=read_bytes,
+                    backend="clickhouse",
+                )
 
             rounded_query_time_ms = round(query_time_ms, 2)
             if include_progress:
@@ -780,19 +824,20 @@ class ClickHouseClient:
 
         except CHError as e:
             query_time_ms = (time.monotonic() - t_start) * 1000
-            logger.error(
-                "ClickHouse read query failed",
-                error=str(e),
-                query=query[:200],
-                query_time_ms=round(query_time_ms, 2),
-                backend="clickhouse",
-            )
+            if not retained_lookup:
+                logger.error(
+                    "ClickHouse read query failed",
+                    error=str(e),
+                    query=query[:200],
+                    query_time_ms=round(query_time_ms, 2),
+                    backend="clickhouse",
+                )
             raise
         finally:
             if client is not None:
                 self._return_client(client)
             if admission_acquired:
-                self._read_admission.release()
+                admission.release()
 
     @staticmethod
     def _execute_native_read_with_remaining_timeout(
