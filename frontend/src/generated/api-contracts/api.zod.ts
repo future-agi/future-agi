@@ -23138,7 +23138,7 @@ export const ModelHubDevelopsGetRowDataCreateBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]))
@@ -27599,7 +27599,7 @@ export const ModelHubGetEvalMetricsCreateBody = zod.object({
             .string()
             .optional()
             .describe(
-              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+              "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
             ),
           attribute_value_types: zod
             .array(zod.enum(["string", "number", "boolean"]))
