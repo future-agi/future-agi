@@ -600,7 +600,9 @@ async def fetch_and_persist_call_result(
                     # the drawer's provider chip depending on whether the rehost
                     # succeeded.
                     recording_provider = (
-                        input.client_provider if use_customer_account else input.provider
+                        input.client_provider
+                        if use_customer_account
+                        else input.provider
                     )
                     pdata = provider_data.setdefault(recording_provider, {})
                     pdata["recording"] = rec

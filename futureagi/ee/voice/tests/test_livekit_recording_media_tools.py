@@ -83,8 +83,14 @@ def _livekit_service():
 
 
 def _extract(
-    provider_call_data, *, stream=None, real_split=False, delete_effect=None,
-    response_id="EG_1", response_room="call_call-1", on_save=None,
+    provider_call_data,
+    *,
+    stream=None,
+    real_split=False,
+    delete_effect=None,
+    response_id="EG_1",
+    response_room="call_call-1",
+    on_save=None,
 ):
     """Run extract_and_persist_recordings on a stubbed call and egress.
 
@@ -114,7 +120,9 @@ def _extract(
         return 1
 
     with (
-        patch("simulate.models.test_execution.CallExecution.objects.filter") as filtered,
+        patch(
+            "simulate.models.test_execution.CallExecution.objects.filter"
+        ) as filtered,
         patch(
             "simulate.models.test_execution.CallExecution.objects.aget",
             new=AsyncMock(return_value=call),
@@ -135,7 +143,9 @@ def _extract(
         patch.object(
             subprocess, "Popen", side_effect=AssertionError("ffmpeg must not start")
         ),
-        patch.object(client.return_value, "delete_object", side_effect=delete_effect) as delete,
+        patch.object(
+            client.return_value, "delete_object", side_effect=delete_effect
+        ) as delete,
     ):
         filtered.return_value.aupdate = AsyncMock(side_effect=update_fields)
         client.return_value.get_object.return_value = {"Body": MagicMock()}
@@ -267,7 +277,9 @@ def test_retry_completes_with_complementary_track_successes():
     def partial(_config, _key, destination, _args):
         return None if "_assistant_" in destination else f"https://first/{destination}"
 
-    first, _, delete, _ = _extract({PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=partial)
+    first, _, delete, _ = _extract(
+        {PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=partial
+    )
     delete.assert_not_called()
     assert first.error["tracks"] == ["assistant"]
 
@@ -310,11 +322,15 @@ def test_retry_after_raw_deletion_returns_persisted_tracks():
         return {"ResponseMetadata": {"HTTPStatusCode": 204}}
 
     first, _, _, _ = _extract(
-        {PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=_output_url, delete_effect=delete_object,
+        {PROVIDER_KEY: {"egress_id": "EG_1"}},
+        stream=_output_url,
+        delete_effect=delete_object,
     )
     assert not objects
     missing_raw = MagicMock(side_effect=FileNotFoundError)
-    second, _, delete, _ = _extract(first.provider_call_data, stream=missing_raw, delete_effect=delete_object)
+    second, _, delete, _ = _extract(
+        first.provider_call_data, stream=missing_raw, delete_effect=delete_object
+    )
     missing_raw.assert_not_called()
     delete.assert_called_once_with(Bucket="livekit-egress", Key="raw/room.ogg")
     assert second == first and second.error is None
@@ -335,7 +351,12 @@ def test_complete_map_saved_before_cleanup_survives_worker_stop():
 
     before_crash = MagicMock()
     with pytest.raises(asyncio.CancelledError):
-        _extract(data, stream=_output_url, on_save=stop_after_save, delete_effect=before_crash)
+        _extract(
+            data,
+            stream=_output_url,
+            on_save=stop_after_save,
+            delete_effect=before_crash,
+        )
     before_crash.assert_not_called()
     no_stream = MagicMock()
     replay, _, delete, _ = _extract(persisted, stream=no_stream)
@@ -349,29 +370,42 @@ def test_transient_cleanup_failure_then_replay_preserves_all_urls():
     from ee.voice.services.livekit.service import PROVIDER_KEY
 
     first, call, _, _ = _extract(
-        {PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=_output_url, delete_effect=TimeoutError,
+        {PROVIDER_KEY: {"egress_id": "EG_1"}},
+        stream=_output_url,
+        delete_effect=TimeoutError,
     )
     saved = dict(call.provider_call_data[PROVIDER_KEY]["recording"])
     _assert_returned_tracks(first, saved)
-    assert first.error["code"] == "recording_cleanup_failed" and first.error["tracks"] == []
+    assert (
+        first.error["code"] == "recording_cleanup_failed"
+        and first.error["tracks"] == []
+    )
     assert call.provider_call_data[PROVIDER_KEY]["recording_error"] == first.error
     no_stream = MagicMock()
     second, call, delete, _ = _extract(first.provider_call_data, stream=no_stream)
     no_stream.assert_not_called()
     delete.assert_called_once_with(Bucket="livekit-egress", Key="raw/room.ogg")
     _assert_returned_tracks(second, saved)
-    assert second.error is None and "recording_error" not in call.provider_call_data[PROVIDER_KEY]
+    assert (
+        second.error is None
+        and "recording_error" not in call.provider_call_data[PROVIDER_KEY]
+    )
     call.asave.assert_not_awaited()
 
 
-@pytest.mark.parametrize(("response_id", "response_room"), [("EG_2", "call_call-1"), ("EG_1", "call_other")])
+@pytest.mark.parametrize(
+    ("response_id", "response_room"), [("EG_2", "call_call-1"), ("EG_1", "call_other")]
+)
 def test_cleanup_replay_rejects_foreign_egress_result(response_id, response_room):
     from ee.voice.services.livekit.service import PROVIDER_KEY
 
     first, _, _, _ = _extract({PROVIDER_KEY: {"egress_id": "EG_1"}}, stream=_output_url)
     no_stream = MagicMock()
     result, _, delete, _ = _extract(
-        first.provider_call_data, stream=no_stream, response_id=response_id, response_room=response_room,
+        first.provider_call_data,
+        stream=no_stream,
+        response_id=response_id,
+        response_room=response_room,
     )
     delete.assert_not_called()
     no_stream.assert_not_called()
@@ -429,17 +463,26 @@ def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
     prefix = "https://media/call-recordings/call-1/20260101T000000"
     saved = {
         "combined": f"{prefix}_recording.mp3",
-        **{k: f"{prefix}_{k}_recording.mp3" for k in ("stereo", "assistant", "customer")},
+        **{
+            k: f"{prefix}_{k}_recording.mp3"
+            for k in ("stereo", "assistant", "customer")
+        },
     }
     call = MagicMock(
-        asave=AsyncMock(), recording_available=True, recording_url=saved["combined"],
-        stereo_recording_url=saved["stereo"], simulation_call_type="voice",
+        asave=AsyncMock(),
+        recording_available=True,
+        recording_url=saved["combined"],
+        stereo_recording_url=saved["stereo"],
+        simulation_call_type="voice",
         call_metadata={"call_direction": "inbound"},
-        provider_call_data={PROVIDER_KEY: {
-            "egress_id": "EG_1", "recording": saved.copy(),
-            "assistant_recording_url": saved["assistant"],
-            "customer_recording_url": saved["customer"],
-        }},
+        provider_call_data={
+            PROVIDER_KEY: {
+                "egress_id": "EG_1",
+                "recording": saved.copy(),
+                "assistant_recording_url": saved["assistant"],
+                "customer_recording_url": saved["customer"],
+            }
+        },
     )
     service = _livekit_service()
     serializer = CallExecutionDetailSerializer()
@@ -455,9 +498,14 @@ def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
         patch("ee.voice.services.livekit.recording.delete_egress_recording") as delete,
     ):
         transcripts.return_value.acount = AsyncMock(return_value=0)
-        asyncio.run(service.fetch_and_store_call_data(
-            "call-1", "call_call-1", "completed", provider_data=feeder_data,
-        ))
+        asyncio.run(
+            service.fetch_and_store_call_data(
+                "call-1",
+                "call_call-1",
+                "completed",
+                provider_data=feeder_data,
+            )
+        )
         call.asave.reset_mock()
         result = asyncio.run(service.extract_and_persist_recordings("call-1"))
         api.assert_not_called()
@@ -467,8 +515,14 @@ def test_feeder_retry_preserves_completed_preupgrade_call(incoming_egress):
     assert result.error["code"] == "recording_source_unverified"
     assert result.error["tracks"] == []
     assert result.provider_call_data is None
-    assert not any((result.recording_url, result.stereo_recording_url,
-                    result.assistant_recording_url, result.customer_recording_url))
+    assert not any(
+        (
+            result.recording_url,
+            result.stereo_recording_url,
+            result.assistant_recording_url,
+            result.customer_recording_url,
+        )
+    )
     bucket = call.provider_call_data[PROVIDER_KEY]
     assert bucket["egress_id"] == (incoming_egress or "EG_1")
     assert "recording_source" not in bucket and "recording_error" not in bucket

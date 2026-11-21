@@ -751,12 +751,12 @@ class LivekitService(VoiceServiceBlueprint):
         from livekit.api import ListEgressRequest
         from livekit.protocol.egress import EgressStatus
 
-        from simulate.models.test_execution import CallExecution
         from ee.voice.services.livekit.recording import (
             delete_egress_recording,
             poll_egress_completion,
             stream_egress_to_s3,
         )
+        from simulate.models.test_execution import CallExecution
 
         result = RecordingUrls()
         call_id_str = str(call_execution_id)
@@ -801,7 +801,9 @@ class LivekitService(VoiceServiceBlueprint):
                     "tracks": [],  # no split was attempted
                 }
             )
-        if provider_data.get("recording_source") == identity and isinstance(saved, dict):
+        if provider_data.get("recording_source") == identity and isinstance(
+            saved, dict
+        ):
             for name, field in fields.items():
                 url = saved.get(name)
                 if isinstance(url, str) and url.strip():
@@ -810,7 +812,9 @@ class LivekitService(VoiceServiceBlueprint):
         # Bridges can expose a customer-side display ID; egress still runs
         # in call_<id>. SIP outbound can instead use the persisted SIP room.
         call_rooms = {_room_name(call_id_str)}
-        if call.service_provider_call_id and call.service_provider_call_id.startswith("sip_"):
+        if call.service_provider_call_id and call.service_provider_call_id.startswith(
+            "sip_"
+        ):
             call_rooms.add(call.service_provider_call_id)
 
         def source_key(info):
@@ -843,10 +847,14 @@ class LivekitService(VoiceServiceBlueprint):
                 if not object_key:
                     raise ValueError("No verified completed egress file")
                 # S3 DeleteObject succeeds for a missing key. No HEAD/GET race.
-                await asyncio.to_thread(delete_egress_recording, self.config, object_key)
+                await asyncio.to_thread(
+                    delete_egress_recording, self.config, object_key
+                )
             except Exception:  # noqa: BLE001 - cleanup must not discard completed tracks
                 logger.warning(
-                    "livekit_egress_cleanup_failed", call_id=call_id_str, egress_id=egress_id
+                    "livekit_egress_cleanup_failed",
+                    call_id=call_id_str,
+                    egress_id=egress_id,
                 )
                 result.error = {
                     "code": "recording_cleanup_failed",
@@ -985,7 +993,12 @@ class LivekitService(VoiceServiceBlueprint):
             results = await asyncio.gather(
                 *(
                     loop.run_in_executor(
-                        None, stream_egress_to_s3, self.config, object_key, s3_key, ffargs
+                        None,
+                        stream_egress_to_s3,
+                        self.config,
+                        object_key,
+                        s3_key,
+                        ffargs,
                     )
                     for _, s3_key, ffargs in track_specs
                 ),
@@ -1102,8 +1115,8 @@ class LivekitService(VoiceServiceBlueprint):
         pricing rates.  LLM rates come from litellm; STT/TTS/storage rates
         are configured in ``simulate.services.livekit.pricing.RATES``.
         """
-        from simulate.models.test_execution import CallExecution
         from ee.voice.services.livekit.pricing import calculate_call_costs
+        from simulate.models.test_execution import CallExecution
 
         call = await CallExecution.objects.aget(id=call_execution_id)
         provider_data = (
