@@ -52,33 +52,6 @@ def _token_from(message):
     return parse_qs(urlparse(header.strip("<>")).query)["token"][0]
 
 
-@pytest.fixture
-def monitor(db, organization, workspace):
-    from model_hub.models.ai_model import AIModel
-    from tracer.models.monitor import UserAlertMonitor
-    from tracer.models.project import Project
-
-    project = Project.objects.create(
-        name="Unsub Observe",
-        organization=organization,
-        workspace=workspace,
-        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-        trace_type="observe",
-    )
-    return UserAlertMonitor.objects.create(
-        organization=organization,
-        workspace=workspace,
-        project=project,
-        name="Errors",
-        metric_type="count_of_errors",
-        threshold_operator="greater_than",
-        threshold_type="static",
-        critical_threshold_value=0.1,
-        alert_frequency=60,
-        notification_emails=["oncall@example.com", "Lead@Example.com"],
-    )
-
-
 @pytest.mark.django_db
 class TestHeaders:
     @override_settings(FI_API_PUBLIC_URL="https://api.acme.test")
