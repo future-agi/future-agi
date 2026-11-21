@@ -33,7 +33,7 @@ from tracer.models.attachment import (
 )
 from tracer.models.project import Project
 from tracer.services.attachments import bootstrap as broker
-from tracer.services.attachments import retention, uploads, validation
+from tracer.services.attachments import retention, sandbox, uploads, validation
 from tracer.services.attachments.contract import (
     AttachmentError,
     CapturePolicy,
@@ -41,6 +41,7 @@ from tracer.services.attachments.contract import (
     span_id,
     trace_uuid,
 )
+from tracer.services.attachments.interfaces import DecoderRequirements
 from tracer.services.attachments.probe import probe
 from tracer.tests.attachment_fixtures import (
     MemoryObjectStore,
@@ -286,6 +287,74 @@ def test_recording_separate_from_import():
             source_kind="Bytes",
             creates_recording=True,
         )
+
+
+def test_upload_admission_does_not_start_media_processes(setup, monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("admission started a media process")
+
+    monkeypatch.setattr(sandbox, "self_test", unexpected)
+    monkeypatch.setattr(validation, "sandbox_probe", unexpected)
+    monkeypatch.setattr(validation.subprocess, "run", unexpected)
+    upload, _, _, _ = initialized(setup)
+    assert upload.state == "pending_upload"
+
+
+@pytest.mark.parametrize("location", ["missing", "relative", "too-small"])
+def test_upload_admission_requires_scratch_for_declared_bytes(
+    setup, settings, tmp_path, monkeypatch, location
+):
+    if location == "too-small":
+        monkeypatch.setattr(
+            os, "fstatvfs", lambda fd: SimpleNamespace(f_bavail=1, f_frsize=1)
+        )
+    else:
+        settings.FI_ATTACHMENTS_WORK_DIR = (
+            str(tmp_path / "missing") if location == "missing" else "relative"
+        )
+    with pytest.raises(AttachmentError) as error:
+        initialized(setup)
+    assert (error.value.code, error.value.status) == ("validation_unavailable", 503)
+    assert not AttachmentUpload.objects.exists()
+
+
+@pytest.mark.parametrize(
+    "module,name,installed",
+    [
+        (validation, "BWRAP", False),
+        (validation, "BWRAP", True),
+        (validation, "PRLIMIT", False),
+        (validation, "PRLIMIT", True),
+        (validation, "PROBE_SCRIPT", False),
+        (sandbox, "WORKER", False),
+    ],
+)
+def test_upload_admission_requires_installed_media_files(
+    setup, tmp_path, monkeypatch, module, name, installed
+):
+    path = tmp_path / name
+    if installed:
+        path.touch(mode=0o600)  # Present but not executable.
+    monkeypatch.setattr(module, name, str(path))
+    with pytest.raises(AttachmentError) as error:
+        initialized(setup)
+    assert (error.value.code, error.value.status) == ("validation_unavailable", 503)
+    assert not AttachmentUpload.objects.exists()
+
+
+@pytest.mark.parametrize("mime", ["audio/L16", "application/octet-stream"])
+def test_decoder_admission_refuses_unsupported_plan_before_scratch(settings, mime):
+    settings.FI_ATTACHMENTS_WORK_DIR = ""
+    with pytest.raises(AttachmentError) as error:
+        validation.require_admission_ready(DecoderRequirements("validate", mime, 1024))
+    assert (error.value.code, error.value.status) == ("unsupported_media", 422)
+
+
+def test_upload_admission_refuses_unsupported_audio(setup):
+    with pytest.raises(AttachmentError) as error:
+        initialized(setup, mime_type="audio/L16")
+    assert (error.value.code, error.value.status) == ("unsupported_media", 403)
+    assert not AttachmentUpload.objects.exists()
 
 
 def test_default_off_creates_nothing(setup, settings):

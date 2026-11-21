@@ -359,9 +359,11 @@ def initialize(
         raise AttachmentError("throttled", 429)
     from tracer.services.attachments.interfaces import DecoderRequirements
     from tracer.services.attachments.readiness import require_new_admission
-    from tracer.services.attachments.validation import require_decoder
+    from tracer.services.attachments.validation import require_admission_ready
 
-    require_decoder(DecoderRequirements("validate", body["mime_type"], expected_bytes))
+    require_admission_ready(
+        DecoderRequirements("validate", body["mime_type"], expected_bytes)
+    )
     if binding_id is None:
         binding_id = require_new_admission(operation="upload")
     with transaction.atomic():

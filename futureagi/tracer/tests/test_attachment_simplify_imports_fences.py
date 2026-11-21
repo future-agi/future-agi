@@ -564,11 +564,13 @@ def test_atomic_admission_target_and_neutral_transfer(lane, monkeypatch, whole):
     ready = types.ModuleType("tracer.services.attachments.readiness")
     ready.require_new_admission = lambda **_: binding
     validation = types.ModuleType("tracer.services.attachments.validation")
-    validation.require_supported_plan = lambda mime: (
-        mime == "audio/wav" or pytest.fail(mime)
-    )
-    validation.require_decoder = lambda req: validation.require_supported_plan(
-        req.mime_type
+
+    def supported_plan(mime):
+        assert mime == "audio/wav"
+
+    validation.__dict__.update(
+        require_supported_plan=supported_plan,
+        require_admission_ready=lambda req: supported_plan(req.mime_type),
     )
     db = types.ModuleType("tracer.services.attachments.capacity_db")
     db.count_attempt = lambda **_: True

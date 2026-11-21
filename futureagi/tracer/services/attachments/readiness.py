@@ -25,9 +25,6 @@ def require_new_admission(*, operation, settings=None):
     # Format-specific decoder and source readiness are separately requested by
     # the producer once its immutable plan/source is known. They cannot be
     # guessed from 'import' (ProviderFile need not use a URL envelope).
-    from tracer.services.attachments import sandbox
-
-    sandbox.self_test()
     _scratch(settings, 0)
     return bind_for_admission(settings=settings)
 
@@ -66,12 +63,16 @@ def snapshot_file(*, named):
         raise AttachmentError("validation_unavailable", 503) from None
 
 
-def require_decoder(requirements: DecoderRequirements) -> None:
-    from tracer.services.attachments import sandbox
-
+def require_decoder_scratch(requirements: DecoderRequirements) -> None:
     if not isinstance(requirements, DecoderRequirements):
         raise AttachmentError("validation_unavailable", 503)
     _scratch(django_settings, requirements.scratch_bytes)
+
+
+def require_decoder(requirements: DecoderRequirements) -> None:
+    from tracer.services.attachments import sandbox
+
+    require_decoder_scratch(requirements)
     sandbox.self_test()
 
 

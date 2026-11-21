@@ -51,6 +51,9 @@ from tracer.services.attachments.uploads import (
 VALIDATED_MIME_TYPES = frozenset(
     mime for types in SERVER_MODALITIES.values() for mime in types
 )
+BWRAP = "/usr/bin/bwrap"
+PRLIMIT = "/usr/bin/prlimit"
+PROBE_SCRIPT = Path(__file__).with_name("probe.py")
 SANDBOX_NPROC = 16
 MAX_VALIDATION_ATTEMPTS = 5
 VALIDATION_LEASE_SECONDS = 60
@@ -72,13 +75,13 @@ def sandbox_probe(path):
     interpreter) is the sandbox failing and is retryable, never a rejection.
     """
     command = [
-        "/usr/bin/prlimit",
+        PRLIMIT,
         "--as=536870912",
         "--cpu=10",
         "--fsize=8192",
         "--nofile=32",
         "--",
-        "/usr/bin/bwrap",
+        BWRAP,
         "--unshare-all",
         "--die-with-parent",
         "--new-session",
@@ -100,14 +103,14 @@ def sandbox_probe(path):
         "--tmpfs",
         "/tmp",
         "--ro-bind",
-        str(Path(__file__).with_name("probe.py")),
+        str(PROBE_SCRIPT),
         "/probe.py",
         "--ro-bind",
         str(path),
         "/input",
         "--chdir",
         "/tmp",
-        "/usr/bin/prlimit",
+        PRLIMIT,
         f"--nproc={SANDBOX_NPROC}",
         "--",
         "/usr/bin/python3",
@@ -155,6 +158,24 @@ def require_supported_plan(mime_type):
         # No trusted PCM description in SourceFacts; never guess rate/channels
         # from a caller's MIME or body. Full L16 qualification remains blocked.
         raise AttachmentError("unsupported_media", 422)
+
+
+def require_admission_ready(requirements: DecoderRequirements) -> None:
+    """Check the declared plan and local installation, without running media code."""
+    from tracer.services.attachments import readiness, sandbox
+
+    require_supported_plan(requirements.mime_type)
+    if requirements.mime_type not in VALIDATED_MIME_TYPES:
+        raise AttachmentError("unsupported_media", 422)
+    readiness.require_decoder_scratch(requirements)
+    for path, mode in (
+        (BWRAP, os.X_OK),
+        (PRLIMIT, os.X_OK),
+        (PROBE_SCRIPT, os.R_OK),
+        (sandbox.WORKER, os.R_OK),
+    ):
+        if not os.path.isfile(path) or not os.access(path, mode):
+            raise AttachmentError("validation_unavailable", 503)
 
 
 def require_decoder(requirements):

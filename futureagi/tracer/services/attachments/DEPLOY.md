@@ -54,11 +54,20 @@ configured, the `validate` and `erase` rows stay queued (the tick logs
 
 ### The validate drain needs the sandbox on `tasks_s`
 
+Upload and import admission on API pods check the requested format, available
+space in `FI_ATTACHMENTS_WORK_DIR`, the executables `/usr/bin/bwrap` and
+`/usr/bin/prlimit`, and the installed media scripts. Admission does not start
+a decoder, create a user namespace or install a seccomp filter. API pods need
+these files and the private scratch directory, but no extra privileges.
+Passing admission does not certify a worker can decode the attachment.
+
 `validate` runs `sandbox_probe` (bubblewrap, unprivileged user namespaces).
 There is no in-process fallback: on a worker without it every upload settles
-`failed` after 5 attempts. The `tasks_s` worker image needs `bwrap`, and the
-host must allow unprivileged user namespaces (on Ubuntu 24.04:
-`kernel.apparmor_restrict_unprivileged_userns=0`).
+`failed` after 5 attempts. The `tasks_s` worker needs both executables and the private
+scratch directory. Its runtime must allow the media worker's seccomp self-test
+and bubblewrap's unprivileged user namespaces. Before reading a snapshot,
+validation checks confinement and probes a known WAV; it then probes the
+snapshot itself.
 
 ### Tuning
 

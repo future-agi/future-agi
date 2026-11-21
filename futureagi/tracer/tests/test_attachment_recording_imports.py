@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import struct
+import subprocess
 import sys
 import time
 import uuid
@@ -381,6 +382,19 @@ def cleanup_import_job(job, store, monkeypatch):
         counts = imports.sweep()
     job.refresh_from_db()
     return counts
+
+
+def test_import_admission_does_not_start_media_processes(env, monkeypatch):
+    current = session(env)
+    data = wav_bytes(seconds=1)
+    request = body(current, data=data, envelope_id=envelope(env, data, current=current))
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("import admission started a subprocess")
+
+    monkeypatch.setattr(subprocess, "run", unexpected)
+    response, job = submit_job(env[2], scope_id=env[0].id, body=request)
+    assert response["state"] == "importing" and job.recording_id is not None
 
 
 def test_completed_import_publishes_bounded_segments_once(env, monkeypatch):

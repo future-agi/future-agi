@@ -899,7 +899,7 @@ def submit(importer, *, scope_id, body):
     ):
         raise AttachmentError("throttled", 429)
     binding_id = readiness.require_new_admission(operation="import")
-    validation.require_decoder(
+    validation.require_admission_ready(
         DecoderRequirements(
             "normalize" if whole else "validate", facts.mime_type, limits.window
         )

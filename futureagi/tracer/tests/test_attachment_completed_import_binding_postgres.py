@@ -469,6 +469,7 @@ def services(binding_case, monkeypatch):
     install(
         "validation",
         require_supported_plan=lambda _: None,
+        require_admission_ready=lambda _: None,
         require_decoder=lambda _: None,
     )
     install("uploads")
@@ -1233,7 +1234,10 @@ def accepted_independent(services, monkeypatch):
             sys.modules["tracer.services.attachments.readiness"],
             ("require_new_admission",),
         ),
-        (sys.modules["tracer.services.attachments.validation"], ("require_decoder",)),
+        (
+            sys.modules["tracer.services.attachments.validation"],
+            ("require_admission_ready", "require_decoder"),
+        ),
         (s.case.model("AttachmentImportJob"), ("save",)),
         (s.case.model("AttachmentRecording"), ("save",)),
     ):
