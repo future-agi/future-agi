@@ -198,9 +198,11 @@ jobs:
         shard: ${{ fromJSON(needs.changes.outputs.shards) }}
     runs-on: ubuntu-latest
     # One job is the image builds, the stack boot and the suite; the unsharded
-    # job (a fallibility dispatch) also runs the whole suite. DASH-E2E-017
-    # waits out the 30-minute metric settle on one worker; its own
-    # test.setTimeout ceiling is 65 min, so 89 + 65 = 154 if it lands last.
+    # job (a fallibility dispatch) also runs the whole suite. The longest
+    # single test, DASH-E2E-017, waits out a 5-minute metric settle on one
+    # worker; its own test.setTimeout ceiling is 28 min, so 89 + 28 = 117 if
+    # it lands last. The value below predates that (the flow's ceiling was
+    # 65 min) and scripts/host-update-fallibility.test.mjs pins it.
     timeout-minutes: 155
     permissions:
       contents: read

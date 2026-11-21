@@ -22,7 +22,7 @@
   "flows/dashboards/catalog-source-parity.spec.ts": 36.7,
   "flows/dashboards/conversation-attribute-widget.spec.ts": 93,
   "flows/dashboards/dataset-catalog-widget.spec.ts": 30.6,
-  "flows/dashboards/derived-metric.spec.ts": 101.9,
+  "flows/dashboards/derived-metric.spec.ts": 400,
   "flows/dashboards/numeric-attribute-widget.spec.ts": 41.2,
   "flows/dashboards/trace-backed-session-widget.spec.ts": 48.1,
   "flows/dashboards/trace-backed-user-widget.spec.ts": 63.8,

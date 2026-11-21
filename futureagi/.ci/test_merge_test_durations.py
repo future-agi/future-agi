@@ -2,7 +2,9 @@
 
 import importlib.util
 import json
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,18 @@ SCRIPT = ROOT / "futureagi/.ci/merge_test_durations.py"
 SPEC = importlib.util.spec_from_file_location("merge_test_durations", SCRIPT)
 merger = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(merger)
+FALLBACK = "futureagi/.test_durations"
+
+
+def committed_fallback(root=ROOT):
+    """The COMMITTED fallback, as bytes. Never the working copy: Backend CI
+    replaces that file with the saved timings (every test, about 10 MB) in the
+    plan job before these tests run, and in every shard."""
+    return subprocess.run(
+        ["git", "-C", str(root), "show", f"HEAD:{FALLBACK}"],
+        check=True,
+        capture_output=True,
+    ).stdout
 
 
 class MergeTest(unittest.TestCase):
@@ -60,26 +74,109 @@ class MergeTest(unittest.TestCase):
         self.assertEqual((merged, by), ({"a::one": 3.0}, {"a::one": 0}))
 
     def test_the_committed_fallback_is_compact_and_clean(self):
-        path = ROOT / "futureagi/.test_durations"
-        floor = json.loads(path.read_text())
+        blob = committed_fallback()
+        floor = json.loads(blob)
         self.assertGreater(len(floor), 1000)
         self.assertLessEqual(max(len(test) for test in floor), merger.MAX_ID_LENGTH)
         # Compact: far fewer than the 70,000 tests of the suite, and a few megabytes.
         self.assertLess(len(floor), 30_000)
-        self.assertLess(path.stat().st_size, 4_000_000)
+        self.assertLess(len(blob), 4_000_000)
         # The Metrics suite is whole, so it holds near-instant tests.
         instant = [
             test for test, seconds in floor.items() if seconds < merger.MIN_SECONDS
         ]
         self.assertGreater(len(instant), 1000)
-        # No test of the fallback carries a from-zero migrate (about 330 s, on tests that take milliseconds).
-        self.assertLess(
-            floor.get(
-                "accounts/tests/test_2fa_enforcement.py::TestOrgTwoFactorEnforcement::test_enable_2fa_policy",
-                0,
-            ),
-            60,
+
+    def test_no_case_of_the_fallback_carries_a_from_zero_migrate(self):
+        # On the old layout the first database test of a shard was charged the
+        # migrate (about 330 s). That lands on an arbitrary case, so it shows
+        # as one very long case of a parametrized test whose other cases are
+        # all near-instant or absent.
+        floor = json.loads(committed_fallback())
+        families = {}
+        for test, seconds in floor.items():
+            if "[" in test:
+                families.setdefault(test.split("[", 1)[0], []).append(seconds)
+        suspect = sorted(
+            test
+            for test, seconds in floor.items()
+            if "[" in test
+            and seconds >= 100
+            and sum(1 for other in families[test.split("[", 1)[0]] if other >= 1) == 1
         )
+        self.assertEqual(suspect, [])
+
+
+@unittest.skipIf(os.environ.get("TIMINGS_DRY_RUN"), "this is the dry run itself")
+class SavedTimingsDryRunTest(unittest.TestCase):
+    def test_the_plan_job_test_step_passes_over_restored_saved_timings(self):
+        # The plan job restores the saved timings over the fallback's path and
+        # then runs these tests; every shard does the same with the plan
+        # artifact. Do exactly that in a throwaway repository: commit the
+        # fallback, replace the working copy with a 70,000-test file, run the
+        # plan job's command on this test file.
+        with tempfile.TemporaryDirectory(prefix="timings-dry-run-") as tmp:
+            repo = pathlib.Path(tmp)
+            (repo / "futureagi/.ci").mkdir(parents=True)
+            (repo / ".github/workflows").mkdir(parents=True)
+            for name in ("merge_test_durations.py", "test_merge_test_durations.py"):
+                shutil.copy(
+                    ROOT / "futureagi/.ci" / name, repo / "futureagi/.ci" / name
+                )
+            shutil.copy(
+                ROOT / ".github/workflows/backend-ci.yml",
+                repo / ".github/workflows/backend-ci.yml",
+            )
+            (repo / FALLBACK).write_bytes(committed_fallback())
+
+            def git(*args):
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(repo),
+                        "-c",
+                        "user.name=ci",
+                        "-c",
+                        "user.email=ci@example.invalid",
+                        "-c",
+                        "commit.gpgsign=false",
+                        *args,
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+
+            git("init", "-q")
+            git("add", "-A")
+            git("commit", "-q", "--no-verify", "-m", "fallback")
+            saved = {
+                f"suite/tests/test_module_{n // 50}.py::test_case_{n}[{'x' * 90}]": 0.0123
+                for n in range(70_000)
+            }
+            (repo / FALLBACK).write_text(
+                json.dumps(saved, indent=4, sort_keys=True) + "\n"
+            )
+            self.assertGreater((repo / FALLBACK).stat().st_size, 9_000_000)
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-m",
+                    "unittest",
+                    "discover",
+                    "-s",
+                    "futureagi/.ci",
+                    "-p",
+                    "test_merge_test_durations.py",
+                ],
+                cwd=repo,
+                env={**os.environ, "TIMINGS_DRY_RUN": "1"},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+            self.assertIn("OK", proc.stderr)
 
 
 class CommandLineTest(unittest.TestCase):

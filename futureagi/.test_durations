@@ -6,7 +6,6 @@
     "accounts/tests/test_account_recovery_commands.py::test_create_user_reads_the_password_the_installers_pipe_in[bash]": 14.9169,
     "accounts/tests/test_account_recovery_commands.py::test_create_user_reads_the_password_the_installers_pipe_in[powershell]": 15.485,
     "accounts/tests/test_account_recovery_commands.py::test_reset_password_as_documented_sets_the_new_password": 20.6221,
-    "accounts/tests/test_api_key_expiry_boundaries.py::test_expiry_boundary_and_timezone[-1-0-mcp]": 331.0436,
     "accounts/tests/test_authentication.py::TestAuthenticatedEndpoints::test_token_store_timeout_authenticates_when_database_confirms_token[django_redis]": 0.0829,
     "accounts/tests/test_authentication.py::TestAuthenticatedEndpoints::test_user_info_with_jwt_token": 0.0729,
     "accounts/tests/test_comprehensive_login_rbac_e2e.py::TestFullLifecycleScenarios::test_invite_accept_work_remove_recover": 0.1283,
