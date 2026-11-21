@@ -562,6 +562,32 @@ def setup_source(m, monkeypatch):
     return f, scope, session, envelope, parent
 
 
+@pytest.mark.parametrize(
+    "change,reason",
+    [
+        ("scope", "source_unavailable"),
+        ("creator_id", "not_found"),
+        ("creator_kind", "not_found"),
+    ],
+)
+def test_sealed_inspection_requires_same_scope_and_creator(
+    modules, monkeypatch, change, reason
+):
+    facts, scope, _, envelope, _ = setup_source(modules, monkeypatch)
+    writer = SimpleNamespace(kind=facts.creator_kind, id=facts.creator_id)
+    scope_id = scope.id
+    if change == "scope":
+        scope_id = uuid4()
+    elif change == "creator_id":
+        writer.id = uuid4()
+    else:
+        writer.kind = "api_key"
+    with pytest.raises(modules.contract.AttachmentError, match=f"^{reason}$"):
+        modules.provider_recordings.inspect_envelope(
+            writer, scope_id=scope_id, envelope_id=envelope.id
+        )
+
+
 def test_resolution_is_metadata_only(modules, monkeypatch):
     f, scope, session, _, parent = setup_source(modules, monkeypatch)
     monkeypatch.setattr(
@@ -1274,18 +1300,52 @@ def test_watchdog_shuts_detached_http_response_socket(modules, monkeypatch):
     sock.close.assert_called_once()
 
 
-def test_lookup_document_contains_only_opaque_identifiers(
-    modules, completed_registration
+@pytest.mark.parametrize(
+    ("state", "linked"),
+    [
+        ("registered", False),
+        ("active", False),
+        ("ending", False),
+        ("failed", False),
+        ("aborted", False),
+        ("limit_reached", False),
+        ("complete", False),
+        ("complete", True),
+    ],
+)
+def test_lookup_projection_has_exact_fields_for_state_and_job_link(
+    modules, completed_registration, state, linked
 ):
     registrar, session, registration, job_id, imports = completed_registration
-    registration.import_job_id = job_id
-    imports._registered_job.return_value = row(id=job_id)
+    registration.provider_state = state
+    if linked:
+        registration.import_job_id = job_id
+        imports._registered_job.return_value = row(id=job_id)
     doc = modules.provider_recordings.registration_document(
         registration, registrar=registrar, scope_id=session.scope_id
     )
     modules.wire.validate("ImportSource", doc["source"])
     assert "http" not in json.dumps(doc)
-    assert set(doc) == {"source", "state", "job_id"}
+    assert doc["source"] == {
+        "kind": "ProviderFile",
+        "connection_id": str(registration.connection_id),
+        "registered_output_id": str(registration.registered_output_id),
+    }
+    assert doc["state"] == state and doc["dispatch_mode"] == registration.dispatch_mode
+    assert doc["binding"] == {
+        "provider": "livekit",
+        "egress_id": registration.egress_id,
+        "room_digest": registration.room_digest,
+    }
+    expected = {"source", "state", "dispatch_mode", "binding"}
+    if state == "complete":
+        expected.add("import_request")
+        modules.wire.validate("RecordingImportRequest", doc["import_request"])
+        assert doc["import_request"]["source"] == doc["source"]
+    if linked:
+        expected.add("job_id")
+        assert doc["job_id"] == str(job_id)
+    assert set(doc) == expected
 
 
 def test_dns_timeout_is_bounded(modules):

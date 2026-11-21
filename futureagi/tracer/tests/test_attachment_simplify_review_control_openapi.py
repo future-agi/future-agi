@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import jwt
 import pytest
@@ -134,24 +134,41 @@ def test_registration_has_six_required_fields_and_optional_dispatch_mode(swagger
     ]
 
 
-def test_source_envelope_is_only_opaque_provider_file(swagger):
+def test_source_envelope_documents_only_provider_resolution_and_sealed_inspection(
+    swagger,
+):
+    uuid_schema = wire._schema()["$defs"]["UUID"]
+
+    def variant(kind, *identifiers):
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", *identifiers],
+            "properties": {
+                "kind": {"enum": [kind]},
+                **dict.fromkeys(identifiers, uuid_schema),
+            },
+        }
+
     schema = body_schema(swagger, ROUTES[2][0])
-    assert schema["required"] == ["source"]
-    assert set(schema["properties"]) == {"source"}
-    assert schema["additionalProperties"] is False
-    source = schema["properties"]["source"]
-    canonical = wire._schema()["$defs"]["ImportSource"]["oneOf"][1]
-    assert source["additionalProperties"] is False
-    assert set(source["required"]) == set(canonical["required"])
-    assert set(source["properties"]) == set(canonical["properties"])
-    assert source["properties"]["kind"]["enum"] == ["ProviderFile"]
-    for name in ("connection_id", "registered_output_id"):
-        assert (
-            source["properties"][name]["pattern"]
-            == wire._schema()["$defs"]["UUID"]["pattern"]
-        )
-    assert "url" not in source["properties"]
-    assert "envelope_id" not in source["properties"]
+    assert schema == {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["source"],
+        "properties": {
+            "source": {
+                "title": "Source",
+                "type": "object",
+                "x-oneOf": [
+                    variant("RemoteUrlEnvelope", "envelope_id"),
+                    variant("ProviderFile", "connection_id", "registered_output_id"),
+                ],
+            }
+        },
+    }
+    sealed, provider = schema["properties"]["source"]["x-oneOf"]
+    assert "url" not in sealed["properties"] and "url" not in provider["properties"]
+    assert "envelope_id" not in provider["properties"]
 
 
 def test_webhook_documents_provider_extensions_and_integer_variants(swagger):
@@ -427,42 +444,140 @@ def test_control_authorization_remains_before_body_access(view, monkeypatch):
         view().post(RawRequest(b"{}"), UID)
 
 
+@pytest.fixture
+def envelope_route(monkeypatch):
+    writer = SimpleNamespace(kind="user", id=uuid4())
+    scope = SimpleNamespace(id=uuid4())
+    view = views.AttachmentSourceEnvelopeView()
+    monkeypatch.setattr(view, "writer", lambda *_: (writer, scope))
+    monkeypatch.setattr(views.broker, "check_writer", lambda *_: None)
+
+    def post(body):
+        return view.post(SimpleNamespace(method="POST", data=body), UID)
+
+    return post, writer, scope
+
+
+def test_envelope_route_resolves_completed_provider_file(envelope_route, monkeypatch):
+    from tracer.models.attachment import CaptureSession
+    from tracer.services.attachments import source_providers
+    from tracer.services.attachments.interfaces import SourceRef
+
+    post, writer, scope = envelope_route
+    connection_id, registered_output_id = uuid4(), uuid4()
+    row = SimpleNamespace(
+        id=uuid4(),
+        capture_session_client_id=uuid4(),
+        correlation_nonce=uuid4(),
+        output_envelope_id=uuid4(),
+    )
+    completed = Mock(return_value=row)
+    monkeypatch.setattr(provider_recordings, "completed_output", completed)
+    session = SimpleNamespace(id=uuid4())
+    sessions = Mock()
+    sessions.return_value.first.return_value = session
+    monkeypatch.setattr(CaptureSession.objects, "filter", sessions)
+    resolve = Mock()
+    monkeypatch.setattr(source_providers, "resolve", resolve)
+
+    response = post(
+        {
+            "source": {
+                "kind": "ProviderFile",
+                "connection_id": str(connection_id),
+                "registered_output_id": str(registered_output_id),
+            }
+        }
+    )
+    assert response.status_code == 200
+    assert json.loads(response.content) == {
+        "source": {
+            "kind": "RemoteUrlEnvelope",
+            "envelope_id": str(row.output_envelope_id),
+        }
+    }
+    completed.assert_called_once_with(
+        writer,
+        scope,
+        connection_id=connection_id,
+        registered_output_id=registered_output_id,
+    )
+    sessions.assert_called_once_with(
+        scope_id=scope.id,
+        client_id=row.capture_session_client_id,
+        correlation_nonce=row.correlation_nonce,
+        writer_kind=writer.kind,
+        writer_id=writer.id,
+    )
+    resolve.assert_called_once_with(
+        source=SourceRef("ProviderFile", row.id),
+        scope_id=scope.id,
+        importer=writer,
+        capture_session_id=session.id,
+    )
+
+
+def test_envelope_route_inspects_sealed_reference_as_current_writer(
+    envelope_route, monkeypatch
+):
+    post, writer, scope = envelope_route
+    source = {"kind": "RemoteUrlEnvelope", "envelope_id": UID}
+    document = {"source": source, "registration": None}
+    inspect = Mock(return_value=document)
+    monkeypatch.setattr(provider_recordings, "inspect_envelope", inspect)
+
+    response = post({"source": source})
+    assert response.status_code == 200
+    assert json.loads(response.content) == document
+    inspect.assert_called_once_with(writer, scope_id=scope.id, envelope_id=UUID(UID))
+
+
+_PROVIDER_FILE = {
+    "kind": "ProviderFile",
+    "connection_id": UID,
+    "registered_output_id": UID,
+}
+_SEALED = {"kind": "RemoteUrlEnvelope", "envelope_id": UID}
+_RAW_URL = "https://example.test/file"
+
+
 @pytest.mark.parametrize(
     "body",
     [
-        {"source": {"kind": "RemoteUrlEnvelope", "envelope_id": UID}},
-        {
-            "source": {
-                "kind": "ProviderFile",
-                "connection_id": UID,
-                "registered_output_id": UID,
-                "url": "https://example.test/file",
-            }
-        },
-        {
-            "source": {
-                "kind": "ProviderFile",
-                "connection_id": UID,
-                "registered_output_id": UID,
-            },
-            "url": "https://example.test/file",
-        },
+        {"url": _RAW_URL},
+        {"source": _RAW_URL},
+        {"source": {**_PROVIDER_FILE, "url": _RAW_URL}},
+        {"source": _PROVIDER_FILE, "url": _RAW_URL},
+        {"source": {**_SEALED, "url": _RAW_URL}},
+        {"source": {**_SEALED, "envelope_id": _RAW_URL}},
+        {"source": {**_PROVIDER_FILE, "registered_output_id": _RAW_URL}},
+        {"source": {**_SEALED, "locator": _RAW_URL}},
+        {"source": {**_PROVIDER_FILE, "envelope_id": UID}},
+        {"source": _PROVIDER_FILE, "mode": "completed_recording", "recording": {}},
+        *(
+            {"source": {"kind": kind, "envelope_id": UID}}
+            for kind in (
+                "Bytes",
+                "Blob",
+                "RemoteUrl",
+                "LocalFile",
+                "OwnedRecordingFile",
+                "Unknown",
+            )
+        ),
     ],
 )
-def test_envelope_route_rejects_locators_and_other_import_variants(body, monkeypatch):
-    monkeypatch.setattr(
-        views.AttachmentSourceEnvelopeView, "writer", lambda *args: (object(), object())
-    )
-    monkeypatch.setattr(views.broker, "check_writer", lambda *args: None)
-    lookup = Mock(
-        side_effect=AssertionError("Invalid source must not resolve a registration")
-    )
-    monkeypatch.setattr(provider_recordings, "completed_output", lookup)
-    with pytest.raises(AttachmentError):
-        views.AttachmentSourceEnvelopeView().post(
-            SimpleNamespace(method="POST", data=body), UID
-        )
-    lookup.assert_not_called()
+def test_envelope_route_refuses_raw_locators_and_non_envelope_requests(
+    body, envelope_route, monkeypatch
+):
+    post, _, _ = envelope_route
+    completed, inspect = Mock(), Mock()
+    monkeypatch.setattr(provider_recordings, "completed_output", completed)
+    monkeypatch.setattr(provider_recordings, "inspect_envelope", inspect)
+    with pytest.raises(AttachmentError, match="^invalid_request$"):
+        post(body)
+    completed.assert_not_called()
+    inspect.assert_not_called()
 
 
 @pytest.mark.parametrize(
