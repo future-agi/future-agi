@@ -160,7 +160,11 @@ export default function LaunchFixDialog({
   return (
     <SideDrawer open={open} onClose={onClose} width={640}>
       {/* Header and footer stay put; the form between them scrolls. */}
-      <Stack sx={{ height: "100%", minHeight: 0 }}>
+      <Stack
+        role="dialog"
+        aria-labelledby="launch-fix-title"
+        sx={{ height: "100%", minHeight: 0 }}
+      >
         <Stack
           direction="row"
           alignItems="flex-start"
@@ -173,6 +177,7 @@ export default function LaunchFixDialog({
         >
           <Box flex={1} minWidth={0} sx={{ pr: 4 }}>
             <Typography
+              id="launch-fix-title"
               sx={{ typography: "s1", fontWeight: 600 }}
             >{`Run Epoch on ${agent.name}`}</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
