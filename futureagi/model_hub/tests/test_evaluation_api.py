@@ -229,6 +229,27 @@ class TestAddUserEvalView:
 
         assert response.status_code == status.HTTP_200_OK
 
+    def test_add_user_eval_accepts_blank_model(
+        self, auth_client, dataset, output_column, valid_eval_config, eval_template
+    ):
+        """A code eval added from the dataset eval picker sends model "" when no
+        judge model applies (OSS has no Turing models); that must not be a 400."""
+        payload = {
+            "name": "code-eval-blank-model",
+            "template_id": str(eval_template.id),
+            "config": valid_eval_config,
+            "model": "",
+            "run": False,
+        }
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+
     def test_add_user_eval_with_template(
         self, auth_client, dataset, output_column, eval_template
     ):
