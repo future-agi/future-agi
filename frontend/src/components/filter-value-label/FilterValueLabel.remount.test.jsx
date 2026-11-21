@@ -20,7 +20,9 @@ import { useResolvedFilterOptions } from "./useResolvedFilterOptions";
 
 vi.mock("src/utils/axios", () => ({
   default: {},
-  endpoints: { dashboard: { filterValues: "/tracer/dashboard/filter_values/" } },
+  endpoints: {
+    dashboard: { filterValues: "/tracer/dashboard/filter_values/" },
+  },
   readQuery: vi.fn(),
 }));
 
