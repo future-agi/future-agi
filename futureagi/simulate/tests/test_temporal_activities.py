@@ -1270,7 +1270,9 @@ class TestFetchAndPersistCallResultActivity:
             service = LivekitService()
             voice = manager.return_value
             voice.fetch_and_store_call_data = AsyncMock(return_value=(2, True, True))
-            voice.extract_and_persist_recordings = service.extract_and_persist_recordings
+            voice.extract_and_persist_recordings = (
+                service.extract_and_persist_recordings
+            )
             voice.extract_costs = AsyncMock(return_value=CostBreakdown(total=0.25))
             request = FetchAndPersistCallResultInput(
                 call_id=call_id,
@@ -1363,7 +1365,7 @@ class TestFetchAndPersistCallResultActivity:
                     "recording_source": source,
                     "recording": tracks,
                 }
-            }
+            },
         )
         info = MagicMock(
             room_name=f"call_{call_id}",
