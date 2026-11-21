@@ -9,6 +9,7 @@ from math import isfinite
 from numbers import Real
 from time import monotonic
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -1542,7 +1543,7 @@ def _read_dashboard_rollup_fast_path(
     project_ids = frozen_config.get("project_ids", [])
     builder = DashboardQueryBuilderV2(frozen_config)
     if not project_ids:
-        metric_results = []
+        metric_results: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
         for item in prepared:
             metric_info = builder.metric_info(item["metric"])
             metric_info.update(
@@ -1586,7 +1587,7 @@ def _read_dashboard_rollup_fast_path(
             refresh_state=refresh_state,
         )
 
-    grouped = {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
     for item in prepared:
         grouped.setdefault(item["source"], []).append(item)
     if len(grouped) > _DASHBOARD_ROLLUP_MAX_QUERIES:
@@ -1606,7 +1607,9 @@ def _read_dashboard_rollup_fast_path(
             error_code="read_budget_exceeded",
             refresh_state=refresh_state,
         )
-    rows_by_index = {item["index"]: [] for item in prepared}
+    rows_by_index: dict[int, list[dict[str, Any]]] = {
+        item["index"]: [] for item in prepared
+    }
     started = monotonic()
     query_count = 0
     rows_returned = 0
@@ -1834,7 +1837,7 @@ def _read_public_dashboard_query(
 def _complete_empty_metric_results(builder, source):
     """Return exact empty rows for a concrete resource scope with no members."""
 
-    results = []
+    results: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     for metric in builder.metrics:
         metric_info = builder.metric_info(metric)
         metric_info.update(
@@ -2072,7 +2075,7 @@ class DashboardReadQuerySerializer(DashboardQuerySerializer):
                 )
 
             if isinstance(metrics, list):
-                metric_errors = [{} for _metric in metrics]
+                metric_errors: list[dict[str, list[str]]] = [{} for _metric in metrics]
                 has_metric_filter_error = False
                 for index, metric in enumerate(metrics):
                     if (

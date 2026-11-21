@@ -878,6 +878,7 @@ def _resolve_scope(
     ids = data.get("ids")
     if ids:
         ids = list(dict.fromkeys(str(i) for i in ids if i))
+        pinned: list[dict]
         pinned, start, end = [], None, None
         if unit == "users":
             pinned, start, end = rows_service._frozen_filters(
