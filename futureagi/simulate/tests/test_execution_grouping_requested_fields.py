@@ -296,6 +296,75 @@ def test_legacy_group_ids_keep_field_names_and_filters(
     assert "overall_score" not in row or field == "overall_score"
 
 
+@pytest.mark.parametrize(
+    ("field", "key"),
+    [
+        ("callType", ["chat"]),
+        ("overall_score", "not-a-number"),
+        ("overallScore", True),
+        ("overallScore", 10**310),
+        ("response_time", {}),
+        ("responseTime", False),
+        ("responseTime", "inf"),
+        ("responseTime", "nan"),
+        ("responseTime", 200.5),
+        ("responseTime", "200.00000000000000001"),
+        ("responseTime", 2**31),
+        ("responseTime", "1e500"),
+        ("timestamp", []),
+        ("timestamp", "not-a-date"),
+        ("timestamp", "2025-02-29"),
+    ],
+)
+def test_unmatchable_key_selects_no_groups(auth_client, chat_run, field, key):
+    execution, add = chat_run
+    add()
+    other = add(name="1", score=1)
+    CallExecution.objects.filter(pk=other.pk).update(response_time_ms=0)
+
+    data = _detail(
+        auth_client,
+        execution,
+        row_groups=["status", field],
+        group_keys=["completed", key],
+    )
+    assert (data["count"], data["results"]) == (0, [])
+
+
+@pytest.mark.parametrize(
+    ("field", "key", "column", "expected"),
+    [
+        ("scenario", 1, "scenario__name", "1"),
+        ("overallScore", "-2", "overall_score", -2),
+        ("responseTime", "0e3", "response_time_ms", 0),
+        ("responseTime", "-2.00", "response_time_ms", -2),
+    ],
+)
+def test_matching_key_coercions(auth_client, chat_run, field, key, column, expected):
+    execution, add = chat_run
+    for value in (0, -2):
+        call = add(name="1" if value == 0 else "Other", score=value)
+        CallExecution.objects.filter(pk=call.pk).update(response_time_ms=value)
+
+    data = _detail(auth_client, execution, row_groups=[field], group_keys=[key])
+    assert _groups(data, column) == [(expected, 1)]
+
+
+@pytest.mark.parametrize("value", ["inf", "nan"])
+def test_nonfinite_key_is_not_a_score_bucket(chat_run, value):
+    from simulate.utils.test_execution_utils import TestExecutionUtils
+
+    execution, add = chat_run
+    call = add()
+    CallExecution.objects.filter(pk=call.pk).update(overall_score=float(value))
+    groups = TestExecutionUtils()._apply_basic_grouping(
+        CallExecution.objects.filter(test_execution=execution),
+        ["overall_score"],
+        [value],
+    )
+    assert groups == []
+
+
 @pytest.mark.parametrize("params", [{}, {"row_groups": []}], ids=["omitted", "empty"])
 def test_ungrouped_calls_keep_newest_updated_order(auth_client, chat_run, params):
     execution, add = chat_run
