@@ -95,6 +95,8 @@ def publish_verified_locked(
         elif fence is not None:
             raise AttachmentError("validation_fenced", 409)
     elif isinstance(allocation, AttachmentRecordingSegment):
+        if allocation.import_job_id is None:
+            raise AttachmentImportJob.DoesNotExist
         job = AttachmentImportJob.objects.get(
             pk=allocation.import_job_id, scope_id=scope.id
         )

@@ -200,8 +200,14 @@ def identity_for(*, attachment_id, representation):
         raise AttachmentError("not_found", 404)
     asset = row.attachment
     if (
-        asset.state != AttachmentState.READY
+        asset is None
+        or asset.state != AttachmentState.READY
         or asset.deleted_at
+        or asset.storage_binding_id is None
+        or row.storage_version is None
+        or row.byte_length is None
+        or row.mime_type is None
+        or row.sha256 is None
         or row.scope_id != asset.scope_id
         or row.policy_version != asset.policy_version
         or row.deletion_generation != asset.deletion_generation
@@ -344,6 +350,8 @@ def _locked(derivative_id, scope_id, *, capacity=False, authorized=None):
                 .filter(pk__in=session_ids, scope_id=scope_id)
                 .order_by("id")
             }
+        if seed.attachment_id is None:
+            raise Attachment.DoesNotExist
         asset = Attachment.objects.select_for_update().get(
             pk=seed.attachment_id, scope_id=scope_id
         )

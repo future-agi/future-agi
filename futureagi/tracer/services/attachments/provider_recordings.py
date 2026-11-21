@@ -977,6 +977,8 @@ def reconcile_registered(*, limit=2):
             url = envelopes.open_url(
                 scope_id=row.scope_id, envelope_id=row.output_envelope_id
             )
+            if row.output_bytes is None or row.source_generation_kind is None:
+                raise AttachmentError("source_unavailable", 403)
             source = safe_fetch.RangeSource(
                 safe_fetch.parse_destination(
                     url,
@@ -1302,6 +1304,9 @@ def apply_pending_completion(*, scope_id, connection_id, event_id, now=None):
         current_time = timezone.now()
         if pending.pending_ciphertext is None or pending.pending_due_at != claim:
             return None
+        # The pending-group constraint pairs ciphertext with an expiry.
+        if pending.pending_expires_at is None:
+            raise AttachmentError("source_unavailable", 403)
         if pending.pending_expires_at <= current_time:
             _clear_pending(pending)
             return None

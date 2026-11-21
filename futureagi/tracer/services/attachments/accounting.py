@@ -152,6 +152,8 @@ def consume_admission(event_id):
     ref = AttachmentOutbox.objects.filter(pk=event_id, event="admitted").first()
     if ref is None:
         return False
+    if ref.upload_id is None:
+        raise AttachmentUpload.DoesNotExist
     upload = AttachmentUpload.objects.select_for_update().get(
         pk=ref.upload_id, scope_id=ref.scope_id
     )

@@ -445,7 +445,7 @@ class AttachmentProviderEvent(ScopedAttachmentRecord):
             ),
             models.CheckConstraint(
                 condition=models.Q(pending_ciphertext__isnull=True)
-                | (
+                | models.Q(
                     Exact(
                         models.Func(
                             models.F("pending_nonce"),
@@ -453,23 +453,23 @@ class AttachmentProviderEvent(ScopedAttachmentRecord):
                             output_field=models.IntegerField(),
                         ),
                         12,
-                    )
-                    & GreaterThan(
+                    ),
+                    GreaterThan(
                         models.Func(
                             models.F("pending_ciphertext"),
                             function="OCTET_LENGTH",
                             output_field=models.IntegerField(),
                         ),
                         16,
-                    )
-                    & LessThanOrEqual(
+                    ),
+                    LessThanOrEqual(
                         models.Func(
                             models.F("pending_ciphertext"),
                             function="OCTET_LENGTH",
                             output_field=models.IntegerField(),
                         ),
                         65552,
-                    )
+                    ),
                 ),
                 name="att_provider_pending_lengths",
             ),

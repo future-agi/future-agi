@@ -28,6 +28,7 @@ INT64_MAX = 9_223_372_036_854_775_807
 INT32_MAX = 2_147_483_647
 INT16_MAX = 32_767
 
+SourceKind: TypeAlias = Literal["RemoteUrlEnvelope", "ProviderFile"]
 StoragePurpose: TypeAlias = Literal["quarantine", "serving"]
 StorageOperation: TypeAlias = Literal["admit", "write", "read", "erase"]
 RecordPutResult: TypeAlias = Literal["recorded", "already_owned", "stale_unowned"]
@@ -45,8 +46,17 @@ def _integer(value: int, maximum: int, *, minimum: int = 0) -> None:
         _invalid()
 
 
-def _uuid(value: UUID) -> None:
-    if not isinstance(value, UUID):
+def _instance(value: object, expected: type) -> None:
+    if not isinstance(value, expected):
+        _invalid()
+
+
+def _uuid(value: object) -> None:
+    _instance(value, UUID)
+
+
+def _boolean(value: object) -> None:
+    if type(value) is not bool:
         _invalid()
 
 
@@ -116,8 +126,7 @@ class StoredObject:
     sha256: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.identity, ObjectIdentity):
-            _invalid()
+        _instance(self.identity, ObjectIdentity)
         _integer(self.byte_length, INT64_MAX)
         _hash(self.sha256)
 
@@ -153,8 +162,8 @@ class EraseResult:
     checked_at: datetime
 
     def __post_init__(self) -> None:
-        if type(self.empty) is not bool or type(self.retryable) is not bool:
-            _invalid()
+        _boolean(self.empty)
+        _boolean(self.retryable)
         if self.reason is not None:
             _text(self.reason)
         _utc(self.checked_at)
@@ -196,16 +205,14 @@ class PutPermit:
     def __post_init__(self) -> None:
         _choice(self.allocation_kind, ("upload", "segment", "derivative"))
         _uuid(self.allocation_id)
-        if not isinstance(self.locator, ObjectLocator):
-            _invalid()
+        _instance(self.locator, ObjectLocator)
         _integer(self.write_attempt, 3, minimum=1)
         _utc(self.deadline_at)
         if self.fence is None:
             if self.allocation_kind != "upload":
                 _invalid()
             return
-        if not isinstance(self.fence, LeaseFence):
-            _invalid()
+        _instance(self.fence, LeaseFence)
         expected = "derivative" if self.allocation_kind == "derivative" else "import"
         if (
             self.fence.owner_kind != expected
@@ -247,8 +254,7 @@ class ResourceVector:
             _integer(value, INT32_MAX)
 
     def __add__(self, other: ResourceVector) -> ResourceVector:
-        if not isinstance(other, ResourceVector):
-            _invalid()
+        _instance(other, ResourceVector)
         return ResourceVector(
             self.bytes + other.bytes,
             self.transfers + other.transfers,
@@ -259,8 +265,7 @@ class ResourceVector:
         )
 
     def __sub__(self, other: ResourceVector) -> ResourceVector:
-        if not isinstance(other, ResourceVector):
-            _invalid()
+        _instance(other, ResourceVector)
         # Construction rejects underflow in ANY component; never clamp to zero.
         return ResourceVector(
             self.bytes - other.bytes,
@@ -308,8 +313,7 @@ class VerifiedAssetFacts:
     frame_count: int | None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.object, StoredObject):
-            _invalid()
+        _instance(self.object, StoredObject)
         _text(self.mime_type, 64)
         _utc(self.validated_at)
         audio = self.mime_type.startswith("audio/")
@@ -328,7 +332,7 @@ class VerifiedAssetFacts:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class SourceRef:
-    kind: Literal["RemoteUrlEnvelope", "ProviderFile"]
+    kind: SourceKind
     id: UUID
 
     def __post_init__(self) -> None:
@@ -345,7 +349,7 @@ class SourceFacts:
     owner. Whole-audio admission additionally requires a positive duration.
     """
 
-    source_kind: Literal["RemoteUrlEnvelope", "ProviderFile"]
+    source_kind: SourceKind
     source_id: UUID
     creator_kind: Literal["user", "api_key"]
     creator_id: UUID
@@ -467,6 +471,9 @@ class PrivateMediaStorage(Protocol):
     verification and cleanup fencing remain implementation obligations. An
     erase result alone never authorizes capacity release.
     """
+
+    @property
+    def binding_id(self) -> UUID: ...
 
     def verify_identity(self, *, operation: StorageOperation) -> None: ...
     def verify_readiness(self) -> None: ...

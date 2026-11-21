@@ -354,7 +354,8 @@ def pcm_stream(input_path, mime_type, facts, *, deadline):
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait()
-            process.stdout.close()
+            if process.stdout is not None:  # Popen was given stdout=PIPE.
+                process.stdout.close()
         os.close(source)
 
 

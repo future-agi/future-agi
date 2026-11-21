@@ -258,7 +258,9 @@ class RangeSource:
             or offset + length > self.total_bytes
         ):
             raise AttachmentError("validation_failed", 422)
-        if not valid_generation(self.generation_kind, self.generation):
+        if self.generation is None or not valid_generation(
+            self.generation_kind, self.generation
+        ):
             raise unavailable()
         if self._bucket is None:
             self._bucket = TokenBucket(self.bytes_per_second)

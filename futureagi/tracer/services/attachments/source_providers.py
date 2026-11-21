@@ -112,7 +112,7 @@ def _session(scope_id, importer, capture_session_id):
     return scope, session, policy
 
 
-def _envelope_facts(row):
+def _envelope_facts(row) -> SourceFacts:
     try:
         return SourceFacts(
             source_kind="RemoteUrlEnvelope",
@@ -135,7 +135,7 @@ def _envelope_facts(row):
         raise _denied() from None
 
 
-def _provider_facts(row, session, importer):
+def _provider_facts(row, session, importer) -> SourceFacts:
     connection = AttachmentProviderConnection.objects.filter(
         pk=row.connection_id,
         scope_id=row.scope_id,
@@ -204,7 +204,9 @@ def _provider_facts(row, session, importer):
     return facts
 
 
-def _resolve(*, source, scope_id, importer, capture_session_id):
+def _resolve(
+    *, source, scope_id, importer, capture_session_id
+) -> tuple[SourceFacts, AttachmentScope]:
     if not isinstance(source, SourceRef):
         raise _denied()
     scope, session, policy = _session(scope_id, importer, capture_session_id)
@@ -394,7 +396,7 @@ class SourceReader:
             url,
             approved_hosts=getattr(settings, "FI_ATTACHMENTS_IMPORT_HOSTS", ()),
         )
-        self._source = safe_fetch.RangeSource(
+        self._source: safe_fetch.RangeSource | None = safe_fetch.RangeSource(
             destination=destination,
             total_bytes=self.facts.byte_length,
             window=safe_fetch.MAX_RANGE_BYTES,
@@ -412,6 +414,8 @@ class SourceReader:
         _check_job(job, self.fence)
         if _job_facts(job) != self.facts:
             raise AttachmentError("snapshot_changed", 409)
+        if job.capture_session_id is None:
+            raise _denied()
         revalidate(
             facts=self.facts,
             scope_id=job.scope_id,
@@ -419,10 +423,15 @@ class SourceReader:
             capture_session_id=job.capture_session_id,
         )
 
+    def _range_source(self) -> safe_fetch.RangeSource:
+        if self._source is None:
+            raise _denied()
+        return self._source
+
     def verify_remote(self):
         """Call immediately before publication, outside DB locks as for reads."""
         self._check()
-        revision, length, mime = safe_fetch.inspect_metadata(self._source)
+        revision, length, mime = safe_fetch.inspect_metadata(self._range_source())
         if (revision, length, mime) != (
             self.facts.generation,
             self.facts.byte_length,
@@ -443,7 +452,7 @@ class SourceReader:
             raise AttachmentError("validation_failed", 422)
         self.verify_remote()
         with io.BytesIO() as sink:
-            self._source.read_range(start, end - start + 1, sink)
+            self._range_source().read_range(start, end - start + 1, sink)
             self.verify_remote()
             return sink.getvalue()
 

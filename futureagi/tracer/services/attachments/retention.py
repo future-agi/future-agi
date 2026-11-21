@@ -523,7 +523,7 @@ def _cleanup_plan(scope, asset, uploads, jobs, segments, derivatives):
     # A terminal unpublished allocation has its own persisted accepted-write
     # horizon. Do not tombstone failure metadata to manufacture an asset clock.
     horizons = [] if unpublished else [asset.deleted_at + ATTACHMENT_ERASE_HORIZON]
-    signature = [
+    signature: list[tuple[object, ...]] = [
         (
             scope.deletion_generation,
             asset.pk,

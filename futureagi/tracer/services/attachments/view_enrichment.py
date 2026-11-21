@@ -6,6 +6,7 @@ URL, inferred provider, new route or playback grant is manufactured here.
 
 from datetime import UTC, datetime
 from itertools import islice
+from typing import Any
 from uuid import UUID, uuid5
 
 from . import wire
@@ -273,7 +274,9 @@ def enrich_voice_detail(*, request, result, reader=None):
         observations=observations,
         reader=reader,
     )
-    recordings = {}
+    recordings: dict[
+        tuple[str | None, str | None], list[tuple[ReadTarget, dict[str, Any]]]
+    ] = {}
     for target, items in authorized.items():
         for item in items:
             reference = item["reference"]

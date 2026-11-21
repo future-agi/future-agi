@@ -9,9 +9,11 @@ safely erase its exact unreferenced result without holding a DB lock during IO.
 import hashlib
 import os
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
+from typing import TypeVar, cast
 
 import structlog
 from django.conf import settings
@@ -54,6 +56,7 @@ from tracer.services.attachments.interfaces import (
     ReservationOwner,
     ResourceVector,
     SourceFacts,
+    SourceKind,
     SourceRef,
     StoredObject,
     VerifiedAssetFacts,
@@ -172,6 +175,25 @@ def _source_ref(scope_id, source):
     if row is None:
         raise AttachmentError("source_unavailable", 403)
     return SourceRef("ProviderFile", row.id)
+
+
+_T = TypeVar("_T")
+
+
+def _required(value: _T | None) -> _T:
+    """A required contract field can be nullable on a historical job row."""
+    if value is None:
+        raise ValueError("invalid attachment value")
+    return value
+
+
+def _job_source_ref(job: AttachmentImportJob) -> SourceRef:
+    kind = job.source_kind
+    if kind not in ("RemoteUrlEnvelope", "ProviderFile"):
+        raise ValueError("invalid attachment value")
+    return SourceRef(
+        cast(SourceKind, kind), _required(job.envelope_id or job.provider_recording_id)
+    )
 
 
 def _facts(job):
@@ -307,7 +329,17 @@ def _check_job(job, scope, session, target, asset, now):
 
 
 @contextmanager
-def _locked_job_rows(job_id, *, scope_id=None, require_creator=True):
+def _locked_job_rows(
+    job_id, *, scope_id=None, require_creator=True
+) -> Iterator[
+    tuple[
+        AttachmentImportJob,
+        AttachmentScope,
+        CaptureSession,
+        AttachmentRecording | AttachmentUpload,
+        Attachment | None,
+    ]
+]:
     """One lock order for claim, record, publish and stale reference checks.
 
     The caller starts the transaction and, if needed, takes capacity locks first.
@@ -322,15 +354,12 @@ def _locked_job_rows(job_id, *, scope_id=None, require_creator=True):
         Importer(before.importer_kind, before.importer_id),
         required=require_creator,
     )
+    if before.capture_session_id is None:
+        raise CaptureSession.DoesNotExist
     session = CaptureSession.objects.select_for_update().get(
         pk=before.capture_session_id
     )
-    _lock_source(
-        before.scope_id,
-        SourceRef(
-            before.source_kind, before.envelope_id or before.provider_recording_id
-        ),
-    )
+    _lock_source(before.scope_id, _job_source_ref(before))
     job = AttachmentImportJob.objects.select_for_update().get(pk=before.id)
     if (
         job.scope_id,
@@ -345,11 +374,14 @@ def _locked_job_rows(job_id, *, scope_id=None, require_creator=True):
     ):
         raise AttachmentError("conflict", 409)
     asset = None
+    target: AttachmentRecording | AttachmentUpload
     if job.recording_id:
         target = AttachmentRecording.objects.select_for_update().get(
             pk=job.recording_id
         )
     else:
+        if job.upload_id is None:
+            raise AttachmentUpload.DoesNotExist
         upload_before = AttachmentUpload.objects.get(pk=job.upload_id)
         if upload_before.recording_id:
             AttachmentRecording.objects.select_for_update().get(
@@ -497,6 +529,7 @@ def _independent_replay_locked(
         job is None
         or session.scope_id != scope_id
         or job.request_fingerprint != digest
+        or job.recording_id is None
         or ref.kind != "RemoteUrlEnvelope"
         or job.envelope_id != ref.id
         or _independent_replay_facts(job, importer, session) != facts
@@ -1000,7 +1033,7 @@ def submit(importer, *, scope_id, body):
             capacity_db.transfer_locked(
                 locks,
                 from_owner=_owner(job),
-                to_owner=ReservationOwner("upload", job.upload_id, scope_id),
+                to_owner=ReservationOwner("upload", _required(job.upload_id), scope_id),
                 amount=upload_amount,
             )
     return _response(job), True
@@ -1953,15 +1986,11 @@ def run(job_id, *, scope_id, storage=None, source_factory=None):
             validation.require_decoder(
                 DecoderRequirements(
                     "normalize" if job.recording_id else "validate",
-                    job.source_mime_type,
+                    _required(job.source_mime_type),
                     job.window_bytes,
                 )
             )
-            readiness.require_source_keys(
-                source=SourceRef(
-                    job.source_kind, job.envelope_id or job.provider_recording_id
-                )
-            )
+            readiness.require_source_keys(source=_job_source_ref(job))
             with (source_factory or source_providers.open_source)(
                 job_id=job.id, fence=fence
             ) as reader:

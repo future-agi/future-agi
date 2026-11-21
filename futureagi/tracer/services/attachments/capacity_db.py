@@ -40,7 +40,12 @@ OWNER_FIELDS = (
     "reservation_objects",
     "reservation_links",
 )
-_MODELS = {
+_MODELS: dict[
+    str,
+    type[AttachmentUpload]
+    | type[AttachmentImportJob]
+    | type[AttachmentRecordingDerivative],
+] = {
     "upload": AttachmentUpload,
     "import": AttachmentImportJob,
     "derivative": AttachmentRecordingDerivative,
@@ -184,7 +189,8 @@ def _owner(locks, owner):
         raise RuntimeError("owner pool was not locked or reservation unresolved")
     expected_pool = (
         capacity.upload_pool_key(row.id)
-        if owner.kind == "upload" and row.producer_kind == "authenticated_stream"
+        if isinstance(row, AttachmentUpload)
+        and row.producer_kind == "authenticated_stream"
         else capacity.DERIVATIVE_POOL_KEY
         if owner.kind == "derivative"
         else capacity.IMPORT_POOL_KEY
