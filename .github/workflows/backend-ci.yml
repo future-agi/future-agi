@@ -28,8 +28,10 @@ env:
   # measured at about 368 test-minutes; its two longest cases run about 19
   # minutes each against the real pass deadline, which bounds every shard.
   # The main suite was measured at about 196 test-minutes (dev, 21 Nov 2026),
-  # so 16 legs carry about 12 minutes of tests each.
-  SPLITS: "16"
+  # so 24 legs carry about 8 minutes of tests each, on top of about 5.5
+  # minutes that every leg pays (dependency install, and pytest collecting
+  # the whole suite before it deselects).
+  SPLITS: "24"
   METRICS_SPLITS: "16"
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
   # adds its suite's term (futureagi/.ci/test_backend_ci_output.py pins this).

@@ -20,8 +20,8 @@ class MergeTest(unittest.TestCase):
         plan = {"a::one": 1.0, "a::two": 2.0, "b::three": 3.0, "c::gone": 9.0}
         first = {**plan, "a::one": 1.5, "d::new": 4.0}
         second = {**plan, "b::three": 0.5}
-        merged, measured = merger.merge(plan, [first, second])
-        self.assertEqual(measured, 3)
+        merged, measured_by = merger.merge(plan, [first, second])
+        self.assertEqual(measured_by, {"a::one": 0, "d::new": 0, "b::three": 1})
         self.assertEqual(
             merged,
             {
@@ -33,35 +33,46 @@ class MergeTest(unittest.TestCase):
             },
         )
 
-    def test_near_instant_tests_and_giant_ids_are_left_out(self):
-        plan = {"a::slow": 1.0}
+    def test_every_measured_test_is_kept_and_only_giant_ids_are_left_out(self):
+        # A test without a time gets its suite's average from pytest-split, so
+        # the saved timings hold the near-instant tests too.
         giant = "a::case[" + "x" * merger.MAX_ID_LENGTH + "]"
-        shard = {
-            **plan,
-            "a::instant": merger.MIN_SECONDS / 2,
-            "a::edge": merger.MIN_SECONDS,
-            giant: 5.0,
-            "a::long": 1.23456789,
+        times = {"a::instant": 0.0012345, giant: 5.0, "a::long": 1.23456789}
+        self.assertEqual(merger.tidy(times), {"a::instant": 0.0012, "a::long": 1.2346})
+
+    def test_the_compact_form_keeps_the_slow_tests_and_the_whole_suites(self):
+        times = {
+            "main::instant": merger.MIN_SECONDS / 2,
+            "main::edge": merger.MIN_SECONDS,
+            "main::slow": 3.0,
+            "metrics::instant": merger.MIN_SECONDS / 2,
         }
-        merged, measured = merger.merge(plan, [shard])
-        self.assertEqual(measured, 4)
+        self.assertEqual(sorted(merger.compact(times)), ["main::edge", "main::slow"])
         self.assertEqual(
-            merged,
-            {"a::slow": 1.0, "a::edge": merger.MIN_SECONDS, "a::long": 1.2346},
+            sorted(merger.compact(times, whole={"metrics::instant"})),
+            ["main::edge", "main::slow", "metrics::instant"],
         )
 
     def test_two_shards_that_disagree_keep_the_longer_time(self):
-        merged, _ = merger.merge({"a::one": 1.0}, [{"a::one": 2.0}, {"a::one": 3.0}])
-        self.assertEqual(merged, {"a::one": 3.0})
-        merged, _ = merger.merge({"a::one": 1.0}, [{"a::one": 3.0}, {"a::one": 2.0}])
-        self.assertEqual(merged, {"a::one": 3.0})
+        merged, by = merger.merge({"a::one": 1.0}, [{"a::one": 2.0}, {"a::one": 3.0}])
+        self.assertEqual((merged, by), ({"a::one": 3.0}, {"a::one": 1}))
+        merged, by = merger.merge({"a::one": 1.0}, [{"a::one": 3.0}, {"a::one": 2.0}])
+        self.assertEqual((merged, by), ({"a::one": 3.0}, {"a::one": 0}))
 
-    def test_the_committed_floor_follows_the_same_rules(self):
-        floor = json.loads((ROOT / "futureagi/.test_durations").read_text())
+    def test_the_committed_fallback_is_compact_and_clean(self):
+        path = ROOT / "futureagi/.test_durations"
+        floor = json.loads(path.read_text())
         self.assertGreater(len(floor), 1000)
-        self.assertGreaterEqual(min(floor.values()), merger.MIN_SECONDS)
         self.assertLessEqual(max(len(test) for test in floor), merger.MAX_ID_LENGTH)
-        # No test of the floor carries a from-zero migrate (about 330 s, on tests that take milliseconds).
+        # Compact: far fewer than the 70,000 tests of the suite, and a few megabytes.
+        self.assertLess(len(floor), 30_000)
+        self.assertLess(path.stat().st_size, 4_000_000)
+        # The Metrics suite is whole, so it holds near-instant tests.
+        instant = [
+            test for test, seconds in floor.items() if seconds < merger.MIN_SECONDS
+        ]
+        self.assertGreater(len(instant), 1000)
+        # No test of the fallback carries a from-zero migrate (about 330 s, on tests that take milliseconds).
         self.assertLess(
             floor.get(
                 "accounts/tests/test_2fa_enforcement.py::TestOrgTwoFactorEnforcement::test_enable_2fa_policy",
@@ -72,7 +83,7 @@ class MergeTest(unittest.TestCase):
 
 
 class CommandLineTest(unittest.TestCase):
-    def run_merge(self, *documents):
+    def run_merge(self, *documents, options=()):
         with tempfile.TemporaryDirectory(prefix="merge-durations-test-") as tmp:
             paths = []
             for index, document in enumerate(documents):
@@ -82,7 +93,7 @@ class CommandLineTest(unittest.TestCase):
                 )
                 paths.append(str(path))
             return subprocess.run(
-                [sys.executable, "-I", str(SCRIPT), *paths],
+                [sys.executable, "-I", str(SCRIPT), *options, *paths],
                 capture_output=True,
                 text=True,
             )
@@ -91,6 +102,26 @@ class CommandLineTest(unittest.TestCase):
         proc = self.run_merge({"a::one": 1.0}, {"a::one": 2.0, "a::two": 0.5})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout), {"a::one": 2.0, "a::two": 0.5})
+
+    def test_the_saved_timings_hold_every_test_and_the_compact_form_does_not(self):
+        plan = {"a::slow": 1.0}
+        shards = (
+            {"a::slow": 2.0, "a::instant": 0.001},
+            {"a::slow": 1.0, "m::instant": 0.002},
+        )
+        proc = self.run_merge(plan, *shards)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            json.loads(proc.stdout),
+            {"a::slow": 2.0, "a::instant": 0.001, "m::instant": 0.002},
+        )
+        proc = self.run_merge(plan, *shards, options=("--compact",))
+        self.assertEqual(json.loads(proc.stdout), {"a::slow": 2.0})
+        # The second shard file is 2.json: its tests stay whole.
+        proc = self.run_merge(plan, *shards, options=("--compact", "--whole", "2.json"))
+        self.assertEqual(json.loads(proc.stdout), {"a::slow": 2.0, "m::instant": 0.002})
+        proc = self.run_merge(plan, *shards, options=("--whole", "2.json"))
+        self.assertEqual(proc.returncode, 2)
 
     def test_it_refuses_to_save_a_plan_no_shard_measured(self):
         # Every shard failed before its upload: saving would only re-save old times as new.
