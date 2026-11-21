@@ -85,6 +85,7 @@ const EvalRow = ({
   onEdit,
   onDelete,
   showRun,
+  selectable,
   hideStatus,
   isProjectEvals,
   allColumns,
@@ -153,12 +154,13 @@ const EvalRow = ({
           py: 0.85,
         }}
       >
-        {showRun && !isProjectEvals && (
+        {selectable && !isProjectEvals && (
           <Checkbox
             size="small"
             checked={selected}
             onClick={(e) => e.stopPropagation()}
             onChange={() => onToggle(item)}
+            inputProps={{ "aria-label": `Select ${item.name}` }}
             sx={{ p: 0 }}
           />
         )}
@@ -705,6 +707,10 @@ const SavedEvalsList = ({
   onAddClick,
   isProjectEvals = false,
   showRun = true,
+  // Checkboxes follow showRun unless a caller that runs evals itself asks
+  // for them alone and reads the choice through onSelectionChange.
+  selectable = showRun,
+  onSelectionChange,
   hideStatus = false,
   hideHeader = false,
   allColumns,
@@ -742,6 +748,9 @@ const SavedEvalsList = ({
     });
     onAutoSelectApplied(applied.map(({ token }) => token));
   }, [evals, autoSelectRequests, onAutoSelectApplied]);
+  useEffect(() => {
+    onSelectionChange?.(Array.from(sel));
+  }, [sel, onSelectionChange]);
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const toggle = (item) =>
     setSel((p) => {
@@ -786,12 +795,13 @@ const SavedEvalsList = ({
             gap: 0.75,
           }}
         >
-          {showRun && !isProjectEvals && evals.length > 0 && (
+          {selectable && !isProjectEvals && evals.length > 0 && (
             <Checkbox
               size="small"
               checked={sel.size === evals.length && evals.length > 0}
               indeterminate={hasSel && sel.size < evals.length}
               onChange={toggleAll}
+              inputProps={{ "aria-label": "Select all evaluations" }}
               sx={{ p: 0 }}
             />
           )}
@@ -839,6 +849,7 @@ const SavedEvalsList = ({
             onEdit={onEditEvalClick}
             onDelete={onDeleteEvalClick}
             showRun={showRun}
+            selectable={selectable}
             hideStatus={hideStatus}
             isProjectEvals={isProjectEvals}
             allColumns={allColumns}
@@ -933,6 +944,8 @@ SavedEvalsList.propTypes = {
   onAddClick: PropTypes.func,
   isProjectEvals: PropTypes.bool,
   showRun: PropTypes.bool,
+  selectable: PropTypes.bool,
+  onSelectionChange: PropTypes.func,
   hideStatus: PropTypes.bool,
   hideHeader: PropTypes.bool,
   allColumns: PropTypes.array,

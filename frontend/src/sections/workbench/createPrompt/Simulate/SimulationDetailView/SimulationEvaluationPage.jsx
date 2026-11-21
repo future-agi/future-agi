@@ -48,6 +48,7 @@ const SimulationEvaluationPage = ({
   const [openConfirmDialog, setOpenConfirmDialog] = useState(false);
   const [openConfirmRunEvaluations, setOpenConfirmRunEvaluations] =
     useState(false);
+  const [selectedEvalIds, setSelectedEvalIds] = useState([]);
 
   const { mutate: deleteEval, isPending: isDeleting } = useMutation({
     mutationFn: (evalId) =>
@@ -113,6 +114,14 @@ const SimulationEvaluationPage = ({
       })),
     [simulation],
   );
+
+  // Run only the checked evals; with none checked, run them all.
+  const evalsToConfirm = useMemo(() => {
+    const checked = evals.filter((evalItem) =>
+      selectedEvalIds.includes(evalItem.id),
+    );
+    return checked.length > 0 ? checked : evals;
+  }, [evals, selectedEvalIds]);
 
   const handleDeleteEval = (evalId) => {
     setOpenConfirmDialog(evalId);
@@ -209,6 +218,8 @@ const SimulationEvaluationPage = ({
             onEditEvalClick={(evalItem) => onEditEvaluation?.(evalItem)}
             onDeleteEvalClick={(evalItem) => handleDeleteEval(evalItem.id)}
             showRun={false}
+            selectable
+            onSelectionChange={setSelectedEvalIds}
           />
         </ShowComponent>
       </Box>
@@ -292,7 +303,7 @@ const SimulationEvaluationPage = ({
       <ConfirmRunEvaluations
         open={openConfirmRunEvaluations}
         onClose={() => setOpenConfirmRunEvaluations(false)}
-        selectedUserEvalList={evals}
+        selectedUserEvalList={evalsToConfirm}
         loading={isRunningEvals}
         onConfirm={(evalsToRun) => {
           runEvals({
