@@ -115,11 +115,11 @@ const ACTION_ITEMS = [
     icon: "solar:pen-new-square-linear",
     spanTypes: ["llm"],
   },
-  // {
-  //   id: "playground",
-  //   label: "Iterate in agent playground",
-  //   icon: "solar:gamepad-linear",
-  // },
+  {
+    id: "playground",
+    label: "Iterate in agent playground",
+    icon: "solar:gamepad-linear",
+  },
   { id: "tags", label: "Add Tags", icon: "solar:tag-linear" },
   { id: "annotate", label: "Annotate", icon: "solar:chat-round-line-linear" },
   {
