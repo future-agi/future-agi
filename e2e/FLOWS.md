@@ -1831,6 +1831,30 @@
 
 - the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
 
+### GW-E2E-024 — Add/Edit Provider saves only the models the user picked or typed
+
+**Goal:** A platform engineer adds and then edits a provider, and only the models they deliberately picked or typed are saved: hovering a listed model and clicking away neither selects it nor drops a selected one, and a typed model ID is kept, trimmed and once, whether they click away or press Save directly
+
+**Spec:** `flows/gateway/provider-model-selection.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway providers and start adding a custom provider with a base URL and API key
+2. pick one listed model, hover another listed model and click away
+3. type a model ID with surrounding spaces and click away
+4. add the provider
+5. edit the provider, hover a selected and an unselected listed model and click away
+6. type another model ID and press Save Changes directly
+7. reopen the provider and see exactly the picked and typed models
+
+**Backend state verified:**
+
+- the Add save posts config.models exactly [listedA, typedOne] to update-provider (typed ID trimmed, hovered listedB absent) and gets 200
+- the gateway config API returns the added provider with models exactly [listedA, typedOne]
+- the Edit direct save posts and persists models exactly [listedA, typedOne, typedTwo]: update-provider body and gateway config API agree
+
 ## knowledge-base
 
 ### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
