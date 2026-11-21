@@ -12,7 +12,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, TypedDict
 
 import structlog
 from livekit.api import (  # type: ignore[attr-defined]
@@ -58,6 +58,114 @@ PROVIDER_KEY = ProviderChoices.LIVEKIT.value  # "livekit"
 
 
 RECORDING_SPLIT_FAILED = "recording_split_failed"
+
+
+class _RecordingSource(TypedDict):
+    call_id: str
+    egress_id: str
+
+
+class _TrackReceipt(_RecordingSource):
+    url: str
+
+
+class _CleanupConfirmation(_RecordingSource):
+    recording: dict[str, str]
+
+
+def _verified_tracks(
+    lk: dict[str, Any], identity: _RecordingSource, kinds: Iterable[str]
+) -> dict[str, str]:
+    """Read verified outputs, never infer identity from a playback URL."""
+    visible = lk.get("recording")
+    source = lk.get("recording_source")
+    if not isinstance(visible, dict) or (source is not None and source != identity):
+        return {}
+    receipts = lk.get("verified_recording_tracks")
+    tracks = {}
+    for kind in kinds:
+        url = visible.get(kind)
+        if not isinstance(url, str) or not url.strip():
+            continue
+        if isinstance(receipts, dict):
+            if receipts.get(kind) == _TrackReceipt(**identity, url=url):
+                tracks[kind] = url
+        elif receipts is None and source == identity:
+            # Previous whole-map format proves track origin, not column authorship.
+            tracks[kind] = url
+    return tracks
+
+
+def _source_for_call(value, call_id: str) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"call_id", "egress_id"}
+        and value["call_id"] == call_id
+        and isinstance(value["egress_id"], str)
+        and bool(value["egress_id"].strip())
+    )
+
+
+def _merge_track_view(lk, identity, fields, merged, current):
+    """Project verified results onto the public shortcut without attributing legacy links."""
+    updated = lk.copy()
+    original = lk.get("recording")
+    visible = original.copy() if isinstance(original, dict) else {}
+    source = lk.get("recording_source")
+    previous_egress = _source_for_call(source, identity["call_id"]) and source != identity
+    prior = lk.get("verified_recording_tracks")
+    receipts = prior.copy() if isinstance(prior, dict) else {}
+    if previous_egress and prior is None:
+        receipts = {
+            k: _TrackReceipt(**source, url=v)
+            for k, v in _verified_tracks(lk, source, fields).items()
+        }
+    # Retire known previous-egress outputs from the active view. A legacy
+    # reference has no such evidence and stays until replaced by kind.
+    for kind, field in fields.items():
+        receipt = receipts.get(kind)
+        url = visible.get(kind)
+        if not isinstance(receipt, dict) or not isinstance(url, str) or not url.strip():
+            continue
+        origin = {k: receipt.get(k) for k in ("call_id", "egress_id")}
+        if (
+            _source_for_call(origin, identity["call_id"])
+            and origin != identity and receipt.get("url") == url
+        ):
+            visible.pop(kind)
+            if kind in ("assistant", "customer") and updated.get(field) == url:
+                updated.pop(field)
+            if kind not in ("combined", "stereo") or getattr(current, field) != url:
+                receipts.pop(kind)
+    visible.update(merged)
+    updated["recording"] = visible
+    receipts.update({k: _TrackReceipt(**identity, url=v) for k, v in merged.items()})
+    if receipts:
+        updated["verified_recording_tracks"] = receipts
+    else:
+        updated.pop("verified_recording_tracks", None)
+    if visible == merged and merged:
+        updated["recording_source"] = identity
+    elif merged or previous_egress:
+        updated.pop("recording_source", None)
+    for kind in ("assistant", "customer"):
+        if kind in merged:
+            updated[fields[kind]] = merged[kind]
+    return updated
+
+
+def _owns_playback(owner, tracks, name, call_id, url) -> bool:
+    # A produced track need never have been installed in the playback column.
+    # Require both the actual column-write receipt and its matching track.
+    return (
+        isinstance(owner, dict)
+        and owner.get("call_id") == call_id
+        and isinstance(owner.get("egress_id"), str)
+        and bool(owner["egress_id"].strip())
+        and owner.get("url") == url
+        and isinstance(tracks, dict)
+        and owner == tracks.get(name)
+    )
 
 
 def _recording_error(failures: dict[str, Exception]) -> dict[str, Any]:
@@ -771,24 +879,16 @@ class LivekitService(VoiceServiceBlueprint):
 
         # fetch_and_store_call_data may already have replaced egress_id. Bind
         # the outputs to their source independently of that mutable field.
-        identity = {"call_id": call_id_str, "egress_id": egress_id}
+        identity = _RecordingSource(call_id=call_id_str, egress_id=egress_id)
         fields = {
             "stereo": "stereo_recording_url",
             "combined": "recording_url",
             "assistant": "assistant_recording_url",
             "customer": "customer_recording_url",
         }
-        tracks = {}
         saved = provider_data.get("recording")
         source = provider_data.get("recording_source")
-        valid_source = (
-            isinstance(source, dict)
-            and set(source) == {"call_id", "egress_id"}
-            and source["call_id"] == call_id_str
-            and bool(call_id_str.strip())
-            and isinstance(source["egress_id"], str)
-            and bool(source["egress_id"].strip())
-        )
+        valid_source = _source_for_call(source, call_id_str)
         playback_fields = (
             "recording_url",
             "stereo_recording_url",
@@ -797,15 +897,10 @@ class LivekitService(VoiceServiceBlueprint):
         # Snapshot before any external I/O. A CAS retry may refresh its SQL
         # predicate, but must never adopt a peer's playback change as our baseline.
         initial_playback = {key: getattr(call, key) for key in playback_fields}
-        legacy_tracks = set()
-        if not valid_source:
-            for name, field in fields.items():
-                shortcut = saved.get(name) if isinstance(saved, dict) else None
-                column = initial_playback.get(field)
-                if any(isinstance(v, str) and v.strip() for v in (shortcut, column)):
-                    legacy_tracks.add(name)
+        tracks = _verified_tracks(provider_data, identity, fields)
         if (
             not valid_source
+            and not tracks
             and isinstance(saved, dict)
             and all(isinstance(saved.get(k), str) and saved[k].strip() for k in fields)
         ):
@@ -825,11 +920,6 @@ class LivekitService(VoiceServiceBlueprint):
         if not isinstance(egress_id, str) or not egress_id.strip():
             logger.warning("livekit_no_egress_id", call_id=call_id_str)
             return RecordingUrls(recording_fields_persisted=True)
-        if source == identity and isinstance(saved, dict):
-            for name in fields:
-                url = saved.get(name)
-                if isinstance(url, str) and url.strip():
-                    tracks[name] = url
         # Bridges can expose a customer-side display ID; egress still runs
         # in call_<id>. SIP outbound can instead use the persisted SIP room.
         call_rooms = {_room_name(call_id_str)}
@@ -854,7 +944,7 @@ class LivekitService(VoiceServiceBlueprint):
         failures: dict[str, Exception] = {}
 
         async def persist(
-            *, cleanup_tracks=None, cleanup_error=None, observed_success=None
+            *, cleanup_tracks=None, cleanup_error=None, reuse_confirmation=False
         ):
             # Only the read/compare/update is retried. Never hold a row lock
             # over LiveKit, S3, or the activity's subsequent cost lookup.
@@ -864,17 +954,28 @@ class LivekitService(VoiceServiceBlueprint):
                 lk = data.get(PROVIDER_KEY, {})
                 source = lk.get("recording_source")
                 current_map = lk.get("recording")
-                bound = source == identity
+                verified = _verified_tracks(lk, identity, fields)
+                bound = source == identity or bool(verified)
                 unchanged_origin = (
                     source == provider_data.get("recording_source")
                     and current_map == saved
+                    and lk.get("verified_recording_tracks") == provider_data.get("verified_recording_tracks")
                 )
                 if (
-                    lk.get("egress_id") != egress_id
+                    current.service_provider_call_id != call.service_provider_call_id
+                    or lk.get("egress_id") != egress_id
                     or (not bound and not unchanged_origin)
                     or (
                         cleanup_tracks is not None
-                        and (not bound or current_map != cleanup_tracks)
+                        and (
+                            verified != cleanup_tracks
+                            or current_map != cleanup_tracks
+                            or (
+                                reuse_confirmation
+                                and lk.get("recording_cleanup_success")
+                                != _CleanupConfirmation(**identity, recording=cleanup_tracks)
+                            )
+                        )
                     )
                 ):
                     logger.warning(
@@ -893,35 +994,19 @@ class LivekitService(VoiceServiceBlueprint):
                         },
                     )
 
-                merged = uploaded.copy()
-                if bound and isinstance(current_map, dict):
-                    for name in fields:
-                        url = current_map.get(name)
-                        if isinstance(url, str) and url.strip():
-                            merged[name] = url
+                merged = {**uploaded, **verified}
                 updated = lk.copy()
+                confirmation = _CleanupConfirmation(**identity, recording=merged)
+                confirmed = (
+                    merged.keys() == fields.keys()
+                    and current_map == merged
+                    and lk.get("recording_cleanup_success") == confirmation
+                )
                 error = cleanup_error
                 if cleanup_tracks is None:
-                    if not bound and legacy_tracks - merged.keys():
-                        # A legacy shortcut can be the serializer's only URL.
-                        # Keep the visible map until each old track has a verified
-                        # replacement; don't bind unverified links to this egress.
-                        return RecordingUrls(
-                            recording_fields_persisted=True,
-                            error={
-                                "code": "recording_source_unverified",
-                                "message": "Existing call recordings were kept pending verified replacements.",
-                                "tracks": sorted(failures),
-                            },
-                        )
-                    if not bound or current_map != merged:
+                    updated = _merge_track_view(lk, identity, fields, merged, current)
+                    if not confirmed:
                         updated.pop("recording_cleanup_success", None)
-                    updated.update(recording_source=identity, recording=merged)
-                    for name in ("assistant", "customer"):
-                        if name in merged:
-                            updated[fields[name]] = merged[name]
-                        else:
-                            updated.pop(fields[name], None)
                     missing = {
                         name: failures.get(name, ValueError("Missing recording track"))
                         for name in ("mono", "stereo", "assistant", "customer")
@@ -933,21 +1018,17 @@ class LivekitService(VoiceServiceBlueprint):
                         not missing
                         and bound
                         and current_map == merged
+                        and not confirmed
                         and isinstance(prior_error, dict)
                         and prior_error.get("code") == "recording_cleanup_failed"
                     ):
                         error = prior_error
+                elif confirmed:
+                    error = None  # A later timeout cannot undo a confirmed deletion.
                 elif cleanup_error is None:
-                    # Only a confirmed DeleteObject advances the success token.
-                    # A completed split alone does not prove cleanup succeeded.
-                    updated["recording_cleanup_success"] = uuid.uuid4().hex
-                elif (
-                    lk.get("recording_cleanup_success")
-                    and lk["recording_cleanup_success"] != observed_success
-                ):
-                    # Another delete succeeded after this attempt's snapshot.
-                    # Keep the current outcome, including any subsequent failure.
-                    error = lk.get("recording_error")
+                    updated["recording_cleanup_success"] = confirmation
+                else:
+                    updated.pop("recording_cleanup_success", None)
                 if error:
                     updated["recording_error"] = error
                 else:
@@ -959,9 +1040,11 @@ class LivekitService(VoiceServiceBlueprint):
                     error=error,
                 )
                 changes: dict[str, Any] = {}
-                if updated != lk:
-                    changes["provider_call_data"] = {**data, PROVIDER_KEY: updated}
-                predicate = {"id": call_execution_id, "provider_call_data": data}
+                predicate = {
+                    "id": call_execution_id,
+                    "provider_call_data": current.provider_call_data,
+                    "service_provider_call_id": current.service_provider_call_id,
+                }
                 if cleanup_tracks is None:
                     observed = {key: getattr(current, key) for key in playback_fields}
                     predicate.update(observed, call_metadata=current.call_metadata)
@@ -973,6 +1056,8 @@ class LivekitService(VoiceServiceBlueprint):
                     )
                     # Merge the source-bound map independently of playback.
                     # A peer's column wins even if it never touched provider JSON.
+                    owners = lk.get("recording_playback_writes")
+                    owners = owners.copy() if isinstance(owners, dict) else {}
                     for name in ("combined", "stereo"):
                         field = fields[name]
                         # An ALK upload can predate this attempt. Its per-kind
@@ -980,6 +1065,12 @@ class LivekitService(VoiceServiceBlueprint):
                         artifact = (
                             artifacts.get(name) if isinstance(artifacts, dict) else None
                         )
+                        owner = owners.get(name)
+                        if not _owns_playback(
+                            owner, lk.get("verified_recording_tracks"),
+                            name, call_id_str, observed[field],
+                        ):
+                            owners.pop(name, None)
                         if (
                             isinstance(artifact, dict)
                             and artifact.get("sha256")
@@ -987,20 +1078,28 @@ class LivekitService(VoiceServiceBlueprint):
                             and observed[field]
                             and artifact.get("recording_url") == observed[field]
                         ):
+                            owners.pop(name, None)
                             continue
                         value = merged.get(name)
-                        if observed[field] == initial_playback[field] != value:
+                        if (
+                            value
+                            and observed[field] == initial_playback[field] != value
+                            and (not observed[field] or name in owners)
+                        ):
                             changes[field] = value
+                            owners[name] = _TrackReceipt(**identity, url=value)
+                    if owners:
+                        updated["recording_playback_writes"] = owners
+                    else:
+                        updated.pop("recording_playback_writes", None)
                     available = any(
                         changes.get(field, observed[field])
                         for field in playback_fields[:2]
                     )
-                    if (
-                        observed["recording_available"]
-                        == initial_playback["recording_available"]
-                        != available
-                    ):
+                    if observed["recording_available"] != available:
                         changes["recording_available"] = available
+                if updated != lk:
+                    changes["provider_call_data"] = {**data, PROVIDER_KEY: updated}
                 if changes and not await CallExecution.objects.filter(
                     **predicate
                 ).aupdate(**changes):
@@ -1020,6 +1119,11 @@ class LivekitService(VoiceServiceBlueprint):
                 return result
 
         async def cleanup(snapshot, object_key=None):
+            complete = snapshot["recording"]
+            if snapshot.get("recording_cleanup_success") == _CleanupConfirmation(
+                **identity, recording=complete
+            ):
+                return await persist(cleanup_tracks=complete, reuse_confirmation=True)
             error = None
             try:
                 if object_key is None:
@@ -1056,7 +1160,6 @@ class LivekitService(VoiceServiceBlueprint):
             return await persist(
                 cleanup_tracks=snapshot["recording"],
                 cleanup_error=error,
-                observed_success=snapshot.get("recording_cleanup_success"),
             )
 
         if tracks.keys() == fields.keys():
