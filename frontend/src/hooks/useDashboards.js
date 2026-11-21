@@ -106,19 +106,25 @@ const validPropertyCatalogCategoryCounts = (page) => {
     !counts ||
     typeof counts !== "object" ||
     Array.isArray(counts) ||
-    Object.keys(counts).length !== PROPERTY_CATALOG_COUNT_KEYS.length ||
-    !PROPERTY_CATALOG_COUNT_KEYS.every(
-      (key) => Number.isSafeInteger(counts[key]) && counts[key] >= 0,
+    !PROPERTY_CATALOG_COUNT_KEYS.every((key) =>
+      Object.prototype.hasOwnProperty.call(counts, key),
+    ) ||
+    !Object.keys(counts).every(
+      (key) =>
+        (PROPERTY_CATALOG_COUNT_KEYS.includes(key) || key === "metric") &&
+        Number.isSafeInteger(counts[key]) &&
+        counts[key] >= 0,
     )
   ) {
     return false;
   }
   return (
     counts.all ===
-    PROPERTY_CATALOG_COUNT_KEYS.slice(1).reduce(
-      (total, key) => total + counts[key],
-      0,
-    )
+    // Accept the legacy vocabulary and the current one with optional metric.
+    // Sum only present categories; no other extra or missing keys are allowed.
+    Object.keys(counts)
+      .filter((key) => key !== "all")
+      .reduce((total, key) => total + counts[key], 0)
   );
 };
 

@@ -18,6 +18,9 @@ class EvidenceImport(BaseModel):
     class SourceKind(models.TextChoices):
         SESSION = "session", "Session"
         CALL = "call", "Call"
+        # One trace read as one exchange: an SDK agent's trace with no session
+        # and no conversation root.
+        TRACE = "trace", "Trace"
         TRANSCRIPT = "transcript", "Transcript"
         DATASET = "dataset", "Dataset rows"
 
@@ -56,6 +59,15 @@ class EvidenceImport(BaseModel):
         related_name="+",
     )
     dataset_columns = models.JSONField(null=True, blank=True)
+    # The Error Feed issue whose traces these are, when an epoch was run from it
+    # (AgentFixIssueJob). Read through its redirect_to, as the feed reads it.
+    source_issue = models.ForeignKey(
+        "tracer.TraceErrorGroup",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="epoch_imports",
+    )
     # The environment's agent version when the import was made.
     agent_version = models.ForeignKey(
         "simulate.AgentVersion",

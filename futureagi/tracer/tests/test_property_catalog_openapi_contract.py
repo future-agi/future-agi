@@ -13,6 +13,8 @@ def test_unified_property_catalog_openapi_is_cursor_complete() -> None:
     swagger = _swagger()
     metrics = swagger["paths"]["/tracer/dashboard/metrics/"]["get"]
     metric_params = {item["name"] for item in metrics["parameters"]}
+    # Pin the GET fields declared by DashboardMetricsCatalogQuerySerializer;
+    # context and level are accepted only in cursor mode.
     assert metric_params == {
         "workflow",
         "project_ids",
@@ -21,6 +23,8 @@ def test_unified_property_catalog_openapi_is_cursor_complete() -> None:
         "exclude_custom_attributes",
         "search",
         "category",
+        "context",
+        "level",
         "role",
         "source",
         "page",

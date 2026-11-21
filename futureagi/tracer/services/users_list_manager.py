@@ -13,7 +13,7 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.conf import settings
@@ -49,6 +49,9 @@ from tracer.services.users_matching_walk import (
     walk_matching_activity_page,
 )
 from tracer.services.users_walk_witness import WalkedTypedFilter, typed_walk_filter
+
+if TYPE_CHECKING:
+    from tracer.services.derived_metrics.base_list_current import CurrentFactsRead
 
 logger = structlog.get_logger(__name__)
 
@@ -733,6 +736,23 @@ class UsersListManager:
             }
         )
 
+    def bind_current_facts(self, read: "CurrentFactsRead | None") -> None:
+        """Borrow BL01-Q's pin; this manager never issues source authority.
+
+        The owner must retain the pin across the entire request and validate
+        source/remap freshness through publication. Native exact remains default.
+        """
+        from tracer.services.derived_metrics.base_list_current import CurrentFactsRead
+
+        if read is not None and not isinstance(read, CurrentFactsRead):
+            raise TypeError("expected a qualified current-fact read")
+        self._current_facts = read
+
+    def _bind_current_facts(self, builder: UserListQueryBuilderV2) -> None:
+        read = getattr(self, "_current_facts", None)
+        if read is not None:
+            builder.bind_current_facts(read)
+
     @staticmethod
     def _resolve_scope(
         project_id: str | None, allowed_project_ids: list[str]
@@ -793,6 +813,7 @@ class UsersListManager:
         )
         if self.empty_scope:
             return [], 0, builder
+        self._bind_current_facts(builder)
         # Build the page first: a filter/sort this path refuses is refused by
         # its shape, before any read, whether or not the window has user spans.
         query, params = builder.build_candidate_page_query()
@@ -1598,6 +1619,7 @@ class UsersListManager:
             filters=self.filters,
             empty_scope=self.empty_scope,
         )
+        self._bind_current_facts(builder)
         query, params = builder.build_dimension_candidate_query(
             limit=limit,
             before_first_seen=before_first_seen,

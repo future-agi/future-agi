@@ -112,6 +112,26 @@ describe("headline", () => {
     ).toBe(
       "This epoch stopped because of a problem on our side, not your agent. Nothing changed. It was retried once already. Run a new epoch from the run's Debug failures.",
     );
+    // The retry itself, once it started: it was the one retry.
+    const retry = {
+      ...byId("fix-failed"),
+      retryable: false,
+      retried_from_id: "fix-earlier",
+      failure: { code: "fix_engine_died", message: "x" },
+    };
+    expect(headline(retry)).toBe(
+      "This epoch stopped because of a problem on our side, not your agent. Nothing changed. This epoch was the retry. Run a new epoch from the run's Debug failures.",
+    );
+    // A retry that never started took no retry: another one did since.
+    expect(
+      headline({
+        ...retry,
+        started_at: null,
+        failure: { code: "fix_queue_timeout", message: "x" },
+      }),
+    ).toBe(
+      "Too many epochs were running, so this one could not start. Nothing changed. It was retried once already. Run a new epoch from the run's Debug failures.",
+    );
     for (const state of [
       "not_reproduced",
       "out_of_budget",

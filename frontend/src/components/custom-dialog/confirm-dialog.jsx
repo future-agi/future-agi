@@ -43,6 +43,7 @@ export default function ConfirmDialog({
               {title}
             </Typography>
             <IconButton
+              aria-label="Close dialog"
               sx={{
                 color: "text.primary",
               }}
