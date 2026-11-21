@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+- **annotations:** Open returned disagreed items from the Agreement tab in the appropriate workspace mode, show when the returned list is capped, and offer persistent recovery for unavailable items.
+- **evals:** In template usage, two multi-choice runs scored 75% and 0% now average to 37.5%. Older mapped selections still use the mean of their choice weights; empty or malformed results do not count as scored runs.
+- **gateway:** Keep a provider out of routing until the cooldown from its latest failure has elapsed, including failures from calls already in flight. Existing readmission and recovery callbacks are unchanged.
+
 ## [1.56.1](https://github.com/future-agi/future-agi/compare/v1.56.0...v1.56.1) (2026-10-28)
 
 

@@ -21,9 +21,12 @@ PRIVATE_RULE = '**/.futureagi-updates/'
 # bin/lib/build-local.{sh,ps1}, bin/e2e, Compose build contexts and release/base
 # workflows. The E2E backend and frontend overlays are the Dockerfiles outside
 # their context: bin/e2e and e2e-ci.yml build both from the repository root.
+# futureagi/ee/cloud is the git-ignored private EE overlay checkout; when it is
+# present its Dockerfile.cloud and Dockerfile.ee build from the overlay root, so
+# the overlay's own .dockerignore must carry the private rule too.
 CONTEXTS = ('.', 'futureagi', 'frontend', 'agentcc-gateway', 'fi-collector',
             'futureagi/model_serving', 'futureagi/code-executor', 'deploy/standalone',
-            'deploy/tests/update_e2e/fakeapp')
+            'deploy/tests/update_e2e/fakeapp', 'futureagi/ee/cloud')
 CONTEXT_OVERRIDES = {'e2e/stack/backend/Dockerfile': '.',
                      'e2e/stack/frontend/Dockerfile': '.'}
 
@@ -78,18 +81,41 @@ class ProbeExportTests(unittest.TestCase):
 
 class BuildContextPolicyTests(unittest.TestCase):
     def test_every_dockerfile_has_a_guarded_effective_ignore_policy(self):
-        dockerfiles = sorted(p for p in ROOT.rglob('Dockerfile*') if p.is_file() and
+        self.assert_dockerfiles_guarded(ROOT)
+
+    def assert_dockerfiles_guarded(self, root):
+        dockerfiles = sorted(p for p in root.rglob('Dockerfile*') if p.is_file() and
                              not p.name.endswith('.dockerignore'))
         self.assertTrue(dockerfiles)
         for dockerfile in dockerfiles:
-            rel = dockerfile.relative_to(ROOT).as_posix()
-            context = CONTEXT_OVERRIDES.get(rel, dockerfile.parent.relative_to(ROOT).as_posix())
+            rel = dockerfile.relative_to(root).as_posix()
+            context = CONTEXT_OVERRIDES.get(rel, dockerfile.parent.relative_to(root).as_posix())
             with self.subTest(dockerfile=rel, context=context):
                 self.assertIn(context, CONTEXTS, 'inventory the new repository build context')
                 specific = dockerfile.with_name(dockerfile.name + '.dockerignore')
-                policy = specific if specific.exists() else ROOT / context / '.dockerignore'
+                policy = specific if specific.exists() else root / context / '.dockerignore'
                 self.assertTrue(policy.is_file(), str(policy))
                 self.assert_guarded(policy)
+
+    def ee_overlay_checkout(self, ignore_rules):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        overlay = Path(temporary.name) / 'futureagi/ee/cloud'
+        overlay.mkdir(parents=True)
+        for name in ('Dockerfile.cloud', 'Dockerfile.ee'):
+            (overlay / name).write_text('FROM scratch\nCOPY . /app/backend/ee/cloud\n')
+        (overlay / '.dockerignore').write_text('\n'.join(ignore_rules) + '\n')
+        return Path(temporary.name)
+
+    def test_private_ee_overlay_checkout_contexts_are_inventoried(self):
+        # The overlay is git-ignored, so CI never sees it; a developer checkout does.
+        root = self.ee_overlay_checkout(['.git', '*.md', PRIVATE_RULE])
+        self.assert_dockerfiles_guarded(root)
+
+    def test_private_ee_overlay_without_private_rule_is_rejected(self):
+        root = self.ee_overlay_checkout(['.git', '*.md'])
+        with self.assertRaises(AssertionError):
+            self.assert_guarded(root / 'futureagi/ee/cloud/.dockerignore')
 
     def assert_guarded(self, policy):
         self.assertTrue(policy.is_file(), f'missing build-context policy: {policy}')

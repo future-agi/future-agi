@@ -363,6 +363,11 @@
       "sha256": "5b07c307516303c563206aeeb72b970bb66b190133d719d6d37ba54bfc9753a4"
     },
     {
+      "pattern": "fi-collector/test/standalone/seed.sql",
+      "reason": "Only the standalone development Compose service mounts this seed, as a PostgreSQL init script for the collector's authentication and project lookup. It does not run against ClickHouse or in the root deployment.",
+      "sha256": "38c11c74bcde3785807a41421732216cb7f7e794651cb3ccb74b89e2668fa8fb"
+    },
+    {
       "pattern": "fi-collector/pkg/auth/pgresolver_test.go",
       "reason": "Inspected testing.T disposable PostgreSQL resolver fixtures, not a shipping entrypoint.",
       "sha256": "674edfe923e198209e909f1579bde79d0af4028dc98c9d38a594b1f4d6e69afd"
@@ -385,7 +390,7 @@
     {
       "pattern": "futureagi/tracer/services/clickhouse/v2/test_property_catalog_schema_contract.py",
       "reason": "Inspected pytest test functions asserting schema data; not a shipping schema runner.",
-      "sha256": "f7545e5eeeb450d1fe865417b8def57fd236e0f9b63f5660ce274b14906f348b"
+      "sha256": "79cfbf6a4012f8b3dc8dfc5ca37e55e6d395307e28c3da337a92448b0d869923"
     },
     {
       "pattern": "scripts/qa/test_long_text_index_contract_readonly.py",
@@ -430,7 +435,7 @@
     {
       "pattern": "futureagi/tfc/utils/error_codes.py",
       "reason": "Inspected old and new blobs: CREATE USER occurs only in the user-evaluation-template error text returned by get_error_message to the API response; the added Jev error mapping and API key expiry messages do not execute SQL. No removed ClickHouse operation.",
-      "sha256": "a2a7302cd7c94823b460af4faf16a103e78e9fe0bf290ef5681cc35e85559b40"
+      "sha256": "b74ce57a9a4cefeb8010898f4d26e925d9e0f89902eb5be1570c593d8fd6147e"
     },
     {
       "pattern": "fi-collector/pkg/ingestbench/bench_test.go",

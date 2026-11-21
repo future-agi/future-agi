@@ -22,6 +22,54 @@ from tracer.models.observability_provider import ProviderChoices
 logger = structlog.get_logger(__name__)
 
 
+def is_stored_tool_result(item: dict) -> bool:
+    """Whether a stored chat content item is a tool's result.
+
+    Native chat stores a result as ``role="tool"`` with its ``tool_call_id``.
+    Harness chat (stored by ``_store_alk_chat_messages``) folds it into the
+    assistant row as ``kind="tool_call_result"``, usually without an id.
+    """
+    return item.get("role") == "tool" or item.get("kind") == "tool_call_result"
+
+
+def is_stored_tool_activity(item: dict) -> bool:
+    """Whether a stored chat content item is tool traffic rather than speech:
+    a tool result, or a harness item that only records the tool calls."""
+    return is_stored_tool_result(item) or item.get("kind") == "tool_calls"
+
+
+def stored_tool_result_call_id(item: dict, pending_ids: list[str]) -> str | None:
+    """The id of the tool call a stored tool result answers.
+
+    ``pending_ids`` holds the tool calls seen so far that have no result yet, in
+    call order; the answered one is removed. A result that names its call is
+    matched by id. A harness result that names none answers the earliest call
+    still waiting, as tool results come back in call order.
+    """
+    tool_call_id: str | None = item.get("tool_call_id") or None
+    if tool_call_id:
+        if tool_call_id in pending_ids:
+            pending_ids.remove(tool_call_id)
+        return tool_call_id
+    if item.get("kind") == "tool_call_result" and pending_ids:
+        return pending_ids.pop(0)
+    return None
+
+
+def stored_tool_call_function(tool_call: dict) -> dict:
+    """A stored tool call's ``{name, arguments}``.
+
+    Chat-completions calls nest them under ``function``; harness receipts send
+    them flat on the call (``{id, name, arguments}``).
+    """
+    function: Any = tool_call.get("function")
+    if isinstance(function, dict):
+        return function
+    if hasattr(function, "__dict__"):
+        return dict(function)
+    return tool_call
+
+
 class ToolCallDataAdapter(ABC):
     """Extracts customer's tool call data from their voice provider."""
 
@@ -208,6 +256,8 @@ class ChatToolCallAdapter:
 
         result: list[TranscriptMessage] = []
         message_idx = 0
+        # Tool calls with no result yet, in call order.
+        pending_ids: list[str] = []
 
         for chat_msg in chat_messages:
             content_array = chat_msg.content
@@ -240,15 +290,7 @@ class ChatToolCallAdapter:
                                 else {}
                             )
 
-                        function_info = tool_call_dict.get("function", {})
-                        if isinstance(function_info, dict):
-                            function_dict = function_info
-                        else:
-                            function_dict = (
-                                dict(function_info)
-                                if hasattr(function_info, "__dict__")
-                                else {}
-                            )
+                        function_dict = stored_tool_call_function(tool_call_dict)
 
                         arguments_raw = function_dict.get("arguments", "{}")
                         if isinstance(arguments_raw, str):
@@ -261,33 +303,45 @@ class ChatToolCallAdapter:
                         else:
                             arguments = {}
 
+                        tool_call_id = tool_call_dict.get(
+                            "id", f"tool_call_{message_idx}"
+                        )
+                        pending_ids.append(tool_call_id)
                         result.append(
                             TranscriptMessage(
                                 role="tool_call",
                                 content=function_dict.get("name", "unknown"),
                                 time=time_sec,
-                                tool_call_id=tool_call_dict.get(
-                                    "id", f"tool_call_{message_idx}"
-                                ),
+                                tool_call_id=tool_call_id,
                                 arguments=arguments,
                             )
                         )
 
                 # Handle tool results
-                if role == "tool" and msg_dict.get("tool_call_id"):
+                is_tool_result = is_stored_tool_result(msg_dict)
+                result_call_id = (
+                    stored_tool_result_call_id(msg_dict, pending_ids)
+                    if is_tool_result
+                    else None
+                )
+                if result_call_id:
                     content = msg_dict.get("content", "")
                     result.append(
                         TranscriptMessage(
                             role="tool_call_result",
                             content=content,
                             time=time_sec,
-                            tool_call_id=msg_dict.get("tool_call_id"),
+                            tool_call_id=result_call_id,
                         )
                     )
 
                 # Handle regular messages
                 content = msg_dict.get("content", "")
-                if content and role in ("user", "assistant"):
+                if (
+                    content
+                    and role in ("user", "assistant")
+                    and not is_stored_tool_activity(msg_dict)
+                ):
                     result.append(
                         TranscriptMessage(
                             role="bot" if role == "assistant" else role,
