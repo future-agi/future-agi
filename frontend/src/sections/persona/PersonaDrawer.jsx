@@ -13,6 +13,7 @@ import Iconify from "src/components/iconify";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 import { Collapse } from "@mui/material";
 import PersonaCreateEditForm from "./PersonaCreateEdit/PersonaCreateEditForm";
+import { normalizePersona } from "./personaApiShape";
 
 const PersonaListContent = ({
   personaCreateEditType,
@@ -20,26 +21,11 @@ const PersonaListContent = ({
   onClose,
   onAddPersonas,
   onCreatePersona,
-  preSelectedPersonas,
+  selectedPersonas,
+  onToggleSelect,
 }) => {
-  const [selectedPersonas, setSelectedPersonas] = useState(
-    preSelectedPersonas ?? [],
-  );
-
-  const handleToggleSelect = (persona, newValue) => {
-    setSelectedPersonas((prev) => {
-      if (newValue) {
-        return prev.some((p) => p.id === persona.id)
-          ? prev
-          : [...prev, persona];
-      }
-      return prev.filter((p) => p.id !== persona.id);
-    });
-  };
-
   const handleAddPersonas = () => {
     onAddPersonas(selectedPersonas);
-    setSelectedPersonas([]);
   };
 
   return (
@@ -75,7 +61,7 @@ const PersonaListContent = ({
         <PersonaListView
           onCreatePersona={onCreatePersona}
           selectedPersonas={selectedPersonas}
-          onToggleSelect={handleToggleSelect}
+          onToggleSelect={onToggleSelect}
           isSelectable
           personaCreateEditType={personaCreateEditType}
           lockedFilters={lockedFilters}
@@ -128,10 +114,11 @@ PersonaListContent.propTypes = {
   onClose: PropTypes.func,
   onAddPersonas: PropTypes.func,
   onCreatePersona: PropTypes.func,
-  preSelectedPersonas: PropTypes.array,
+  selectedPersonas: PropTypes.array,
+  onToggleSelect: PropTypes.func,
 };
 
-const PersonaCreateContent = ({ onCancel, type }) => {
+const PersonaCreateContent = ({ onCancel, onCreated, type }) => {
   return (
     <Box sx={{ width: "700px", height: "100vh" }}>
       <IconButton
@@ -147,7 +134,7 @@ const PersonaCreateContent = ({ onCancel, type }) => {
       </IconButton>
       <PersonaCreateEditForm
         onCancel={onCancel}
-        onSuccess={onCancel}
+        onSuccess={onCreated}
         type={type}
       />
     </Box>
@@ -156,6 +143,7 @@ const PersonaCreateContent = ({ onCancel, type }) => {
 
 PersonaCreateContent.propTypes = {
   onCancel: PropTypes.func,
+  onCreated: PropTypes.func,
   type: PropTypes.string,
 };
 
@@ -168,6 +156,37 @@ const PersonaDrawer = ({
   preSelectedPersonas = [],
 }) => {
   const [createEditOpen, setCreateEditOpen] = useState(false);
+  // Kept here, not in the list panel: the list unmounts while the inline
+  // create form is open, and the selection has to survive that round trip.
+  const [selectedPersonas, setSelectedPersonas] = useState(
+    preSelectedPersonas ?? [],
+  );
+  const [wasOpen, setWasOpen] = useState(open);
+
+  // Each time the drawer opens, start from the personas already chosen.
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setSelectedPersonas(preSelectedPersonas ?? []);
+  }
+
+  const handleToggleSelect = (persona, newValue) => {
+    setSelectedPersonas((prev) => {
+      if (newValue) {
+        return prev.some((p) => p.id === persona.id)
+          ? prev
+          : [...prev, persona];
+      }
+      return prev.filter((p) => p.id !== persona.id);
+    });
+  };
+
+  // The create form passes the POST response; select the new persona so the
+  // user can add it straight away.
+  const handlePersonaCreated = (response) => {
+    const created = response?.data?.result;
+    if (created?.id) handleToggleSelect(normalizePersona(created), true);
+    setCreateEditOpen(false);
+  };
 
   const handleDrawerClose = () => {
     onClose();
@@ -194,6 +213,7 @@ const PersonaDrawer = ({
       >
         <PersonaCreateContent
           onCancel={handleCreateEditClose}
+          onCreated={handlePersonaCreated}
           type={personaCreateEditType}
         />
       </Collapse>
@@ -208,7 +228,8 @@ const PersonaDrawer = ({
           onClose={handleDrawerClose}
           onAddPersonas={onAddPersonas}
           onCreatePersona={() => setCreateEditOpen(true)}
-          preSelectedPersonas={preSelectedPersonas}
+          selectedPersonas={selectedPersonas}
+          onToggleSelect={handleToggleSelect}
         />
       </Collapse>
     </Drawer>
