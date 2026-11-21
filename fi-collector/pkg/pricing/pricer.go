@@ -64,8 +64,8 @@ func (p *Pricer) tokenCost(
 	if p.custom != nil && orgID != "" {
 		// Use the resolved project, not the sender's project_type hint. Unknown
 		// and non-Observe projects keep their existing custom estimate.
-		resolved := auth.FromContext(ctx)
-		observe := resolved != nil && resolved.ProjectTypeInWorkspace(resolved.WorkspaceID, projectID) == auth.ProjectTypeObserve
+		types, _ := ctx.Value(projectTypesKey{}).(map[string]string)
+		observe := types[projectID] == auth.ProjectTypeObserve
 		// An org's own price for the exact name beats the prefix fallbacks.
 		if c, ok := p.custom.Cost(ctx, orgID, model, promptTokens, completionTokens, observe); ok {
 			return c, true

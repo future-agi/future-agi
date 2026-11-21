@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 )
@@ -14,7 +15,53 @@ import (
 func observePricingContext() context.Context {
 	resolved := &auth.ResolveResult{WorkspaceID: "workspace"}
 	resolved.SetProjectTypesInWorkspace("workspace", map[string]string{"project": auth.ProjectTypeObserve, "experiment": "experiment"})
-	return auth.WithResolvedContext(context.Background(), resolved, "")
+	return WithProjectTypes(auth.WithResolvedContext(context.Background(), resolved, ""), pricingTraces("project", "experiment"))
+}
+
+func pricingTraces(ids ...string) ptrace.Traces {
+	td := ptrace.NewTraces()
+	for _, id := range ids {
+		r := td.ResourceSpans().AppendEmpty()
+		r.Resource().Attributes().PutStr("fi.project_id", id)
+		r.Resource().Attributes().PutStr("project_type", "observe")
+		r.ScopeSpans().AppendEmpty().Spans().AppendEmpty().SetName("test")
+	}
+	return td
+}
+
+func TestTokenCostUsesRequestSnapshot(t *testing.T) {
+	resolved := &auth.ResolveResult{WorkspaceID: "ws"}
+	resolved.SetProjectTypesInWorkspace("ws", map[string]string{"p": auth.ProjectTypeObserve})
+	ctx := auth.WithResolvedContext(context.Background(), resolved, "")
+	td := pricingTraces("p", "p", "unknown")
+	marshaler := &ptrace.ProtoMarshaler{}
+	before, err := marshaler.MarshalTraces(td)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := WithProjectTypes(ctx, td)
+	p := newTestPricer(t, &fakeDB{row: fakeRow{in: 2.5}})
+	price := func(c context.Context, id string, want float64) {
+		t.Helper()
+		got, ok := p.TokenCost(c, "org", "custom", 1_000_000, 0, id)
+		if !ok || got != want {
+			t.Fatalf("%s: got %v, found %v; want %v", id, got, ok, want)
+		}
+	}
+	price(batch, "p", 2.5)
+	resolved.SetProjectTypesInWorkspace("ws", map[string]string{"p": "experiment", "unknown": auth.ProjectTypeObserve})
+	price(batch, "p", 2.5)
+	price(batch, "unknown", 2500)
+	fresh := WithProjectTypes(ctx, td)
+	price(fresh, "p", 2500)
+	price(fresh, "unknown", 2.5)
+	after, err := marshaler.MarshalTraces(td)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("pricing changed the accepted payload")
+	}
 }
 
 func newTestPricer(t *testing.T, db rowQuerier) *Pricer {

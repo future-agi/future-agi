@@ -124,30 +124,32 @@ func (r *ResolveResult) SetProjects(projects map[string]string) {
 	}
 }
 
-// SetProjectsInWorkspace records names whose types are not known.
+// SetProjectsInWorkspace merges only when the caller proves the same
+// workspace scope as the authentication result.
 func (r *ResolveResult) SetProjectsInWorkspace(workspaceID string, projects map[string]string) bool {
-	return r.setResolvedProjects(workspaceID, projects, nil)
-}
-
-// SetProjectTypesInWorkspace records trace types for known project IDs.
-func (r *ResolveResult) SetProjectTypesInWorkspace(workspaceID string, types map[string]string) bool {
-	return r.setResolvedProjects(workspaceID, nil, types)
-}
-
-// Publish names and their known types under one lock. Once another request
-// finds a name it skips resolution and can immediately price that project's spans.
-func (r *ResolveResult) setResolvedProjects(workspaceID string, projects, types map[string]string) bool {
 	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
 		return false
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.Projects == nil && len(projects) > 0 {
+	if r.Projects == nil {
 		r.Projects = make(map[string]string, len(projects))
 	}
 	for name, id := range projects {
 		r.Projects[name] = id
 	}
+	return true
+}
+
+// SetProjectTypesInWorkspace records trace_types by project id, under the
+// same workspace-scope proof as SetProjectsInWorkspace. Empty types are
+// skipped.
+func (r *ResolveResult) SetProjectTypesInWorkspace(workspaceID string, types map[string]string) bool {
+	if r == nil || workspaceID == "" || workspaceID != r.WorkspaceID {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for id, traceType := range types {
 		if id == "" || traceType == "" {
 			continue

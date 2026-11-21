@@ -115,13 +115,23 @@ func (c *cache) projectEntry(key string, expected *ResolveResult) *cacheEntry {
 // addProjectsScoped merges only into the exact result this request authenticated
 // with. Even a same-scope refresh must be retried: a stale lookup may not update
 // a replacement authentication result or resurrect an invalidated cache entry.
-func (c *cache) addProjectsScoped(key string, expected *ResolveResult, projects, types map[string]string) bool {
+func (c *cache) addProjectsScoped(key string, expected *ResolveResult, projects map[string]string) bool {
 	e := c.projectEntry(key, expected)
-	if e == nil || !expected.setResolvedProjects(expected.WorkspaceID, projects, types) {
+	if e == nil || !expected.SetProjectsInWorkspace(expected.WorkspaceID, projects) {
 		return false
 	}
 	// Confirm that the same live entry survived the merge. Never store it back:
 	// revocation, expiry or refresh may have happened during the merge.
+	return c.projectEntry(key, expected) == e
+}
+
+// addProjectTypesScoped mirrors project trace_types into a cache entry under
+// the same scope check as addProjectsScoped.
+func (c *cache) addProjectTypesScoped(key string, expected *ResolveResult, types map[string]string) bool {
+	e := c.projectEntry(key, expected)
+	if e == nil || !expected.SetProjectTypesInWorkspace(expected.WorkspaceID, types) {
+		return false
+	}
 	return c.projectEntry(key, expected) == e
 }
 

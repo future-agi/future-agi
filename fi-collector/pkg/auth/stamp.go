@@ -97,11 +97,7 @@ func StampResourceAttrs(ctx context.Context, a *Authenticator, cacheKey string, 
 
 		attrs.PutStr("fi.project_id", projectID)
 		attrs.PutStr("fi.org_id", result.OrgID)
-		// Hidden simulation projects use their resolved type for pricing only.
-		// Keep their original resource attributes (and end-user linkage).
-		if result.KeyType != keyTypeIngest {
-			stampObserveProjectType(attrs, result, projectID)
-		}
+		stampObserveProjectType(attrs, result, projectID)
 	}
 
 	if len(unresolvable) == 0 {
