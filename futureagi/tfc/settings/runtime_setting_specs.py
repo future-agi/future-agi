@@ -801,7 +801,58 @@ INTERACTIVE_READ_SETTING_SPECS = {
     ),
 }
 
+# Deployment rollout switches use bounded integers so the existing settings
+# loader validates them at startup: 0 is off, 1 is on. These are not plan gates.
+# METRICS_BACKFILL_MAX_SPANS is the largest project (spans in the 90-day
+# history window) that still gets a history backfill for a new metric version;
+# larger projects start with no history and fill forward from enrollment.
+# METRICS_MAX_DELTAS_BEFORE_COMPACTION is how many deltas a project's committed
+# head carries before its next pass compacts it (the chain's limit is 20).
+# METRICS_PASS_MAX_CAPTURES bounds the capture statements one pass plans (a
+# larger arrival window goes to the paged burst sweep); a pass stops cleanly
+# METRICS_PASS_SOFT_MARGIN_SECONDS before its deadline.
+# METRICS_BUSY_MAX_YIELDS pauses an unchanged pending frontier after consecutive
+# nonpublishing passes (at least two). METRICS_BUSY_CAPTURE_MS is an operator
+# capacity hint for diagnostics and retrying paused work when settings improve,
+# NEVER an admission threshold. Neither setting changes the pass deadline or
+# the soft-yield reserve.
+# METRICS_EXPIRY_INTERVAL_SECONDS is how far physical metric expiry may trail
+# the retention policy (batched, like raw spans' daily parts); reads always
+# apply the exact cutoff and erasure stays prompt.
+# METRICS_HISTORY_GC_GRACE_SECONDS is how long a closed attempt no reader can
+# reach keeps its ClickHouse rows before maintenance deletes them (lightweight);
+# METRICS_GC_MASK_PARTITIONS_PER_RUN partitions are then rewritten per cleanup.
+# METRICS_MAX_CHECKPOINT_ROWS is the most stored metric rows a project may hold;
+# above it the project's metrics pause as too_large (expiry and erasure still
+# run) until the limit is raised.
+# METRICS_SERVER_SIDE_COMPACTION=1 lets compaction copy checkpoints inside
+# ClickHouse for heads of at least METRICS_SERVER_SIDE_MIN_ROWS rows; smaller
+# heads, and 0, keep the legacy batch copy through the PG ledger.
+# METRICS_BURST_* bound one pass of a forward-only burst sweep: its wall budget,
+# its page count and the source keys per page.
+METRICS_FEATURE_SETTING_SPECS = _specs(
+    (
+        ("METRICS_ENABLED", 0, 0, 1),
+        ("METRICS_BACKFILL_MAX_SPANS", 150_000, 1, 10_000_000),
+        ("METRICS_MAX_DELTAS_BEFORE_COMPACTION", 19, 1, 19),
+        ("METRICS_PASS_MAX_CAPTURES", 48, 1, 10_000),
+        ("METRICS_PASS_SOFT_MARGIN_SECONDS", 200, 30, 500),
+        ("METRICS_BUSY_MAX_YIELDS", 3, 2, 100),
+        ("METRICS_BUSY_CAPTURE_MS", 2500, 1, 60_000),
+        ("METRICS_EXPIRY_INTERVAL_SECONDS", 86_400, 60, 604_800),
+        ("METRICS_HISTORY_GC_GRACE_SECONDS", 1_800, 600, 604_800),
+        ("METRICS_GC_MASK_PARTITIONS_PER_RUN", 4, 0, 64),
+        ("METRICS_MAX_CHECKPOINT_ROWS", 800_000, 1, 10_000_000_000),
+        ("METRICS_SERVER_SIDE_COMPACTION", 1, 0, 1),
+        ("METRICS_SERVER_SIDE_MIN_ROWS", 300_000, 0, 10_000_000_000),
+        ("METRICS_BURST_PASS_SECONDS", 20, 1, 300),
+        ("METRICS_BURST_MAX_PAGES", 19, 1, 200),
+        ("METRICS_BURST_PAGE_KEYS", 5_000, 1, 10_000),
+    )
+)
+
 RUNTIME_NUMERIC_SETTING_SPECS = {
+    **METRICS_FEATURE_SETTING_SPECS,
     **PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
     **DATASET_READ_SETTING_SPECS,
     **INTERACTIVE_READ_SETTING_SPECS,
@@ -812,6 +863,7 @@ if len(RUNTIME_NUMERIC_SETTING_SPECS) != sum(
     map(
         len,
         (
+            METRICS_FEATURE_SETTING_SPECS,
             PROPERTY_CATALOG_RUNTIME_SETTING_SPECS,
             DATASET_READ_SETTING_SPECS,
             INTERACTIVE_READ_SETTING_SPECS,

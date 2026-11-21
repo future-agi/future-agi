@@ -13,6 +13,8 @@ import {
   readable,
 } from "src/pages/dashboard/harness/harnessShared";
 
+import { failureDetail } from "./failureWords";
+
 export const PIPELINE_PHASE = { SETUP: "setup", RUN: "run" };
 
 export const MILESTONE = {
@@ -214,7 +216,12 @@ export const jobToBuildProgress = (job) => {
     failure = {
       stepId: step?.id || BUILD_PIPELINE[0].id,
       title: readable(failStage || "build"),
-      detail: status.failure?.message || readable(failStage || ""),
+      // A named cause, or our infrastructure, reads in plain words; a person also reads what
+      // their agent printed. Any other failure reads as recorded.
+      detail:
+        failureDetail(status.failure) ||
+        status.failure?.message ||
+        readable(failStage || ""),
       retryable: status.failure?.domain === "infrastructure",
     };
   }

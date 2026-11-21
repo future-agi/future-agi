@@ -390,7 +390,7 @@
     {
       "pattern": "futureagi/tracer/services/clickhouse/v2/test_property_catalog_schema_contract.py",
       "reason": "Inspected pytest test functions asserting schema data; not a shipping schema runner.",
-      "sha256": "f7545e5eeeb450d1fe865417b8def57fd236e0f9b63f5660ce274b14906f348b"
+      "sha256": "79cfbf6a4012f8b3dc8dfc5ca37e55e6d395307e28c3da337a92448b0d869923"
     },
     {
       "pattern": "scripts/qa/test_long_text_index_contract_readonly.py",

@@ -1961,6 +1961,43 @@ export const endpoints = {
     create: apiPath("/accounts/workspaces/"),
     switch: apiPath("/accounts/workspace/switch/"),
   },
+  derivedMetrics: {
+    list: apiPath("/tracer/derived-metrics/"),
+    detail: (id) => apiPath("/tracer/derived-metrics/{id}/", { id }),
+    validate: apiPath("/tracer/derived-metrics/validate/"),
+    evaluators: apiPath("/tracer/derived-metrics/evaluators/"),
+    capabilities: apiPath("/tracer/derived-metrics/capabilities/"),
+    draftPreview: apiPath("/tracer/derived-metrics/preview/"),
+    cancelDraftPreview: apiPath("/tracer/derived-metrics/preview/cancel/"),
+    preview: (id) => apiPath("/tracer/derived-metrics/{id}/preview/", { id }),
+    cancelPreview: (id) =>
+      apiPath("/tracer/derived-metrics/{id}/preview/cancel/", { id }),
+    kpi: (id) => apiPath("/tracer/derived-metrics/{id}/kpi/", { id }),
+    trend: (id) => apiPath("/tracer/derived-metrics/{id}/trend/", { id }),
+    drivers: (id) => apiPath("/tracer/derived-metrics/{id}/drivers/", { id }),
+    history: (id) => apiPath("/tracer/derived-metrics/{id}/history/", { id }),
+    fields: (id) => apiPath("/tracer/derived-metrics/{id}/fields/", { id }),
+    unitValues: (id) =>
+      apiPath("/tracer/derived-metrics/{id}/unit-values/", { id }),
+    refresh: (id) => apiPath("/tracer/derived-metrics/{id}/refresh/", { id }),
+    activate: (id) => apiPath("/tracer/derived-metrics/{id}/activate/", { id }),
+    snapshots: (id) =>
+      apiPath("/tracer/derived-metrics/{id}/snapshots/", { id }),
+    snapshot: (id, snapshotId) =>
+      apiPath("/tracer/derived-metrics/{id}/snapshots/{snapshot_id}/", {
+        id,
+        snapshot_id: snapshotId,
+      }),
+    // Legacy snapshot/run consumers remain intact until their own migration.
+    runs: (id) => apiPath("/tracer/derived-metrics/{id}/runs/", { id }),
+    run: (id) => apiPath("/tracer/derived-metric-runs/{id}/", { id }),
+    results: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/results/", { id }),
+    contributors: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/contributors/", { id }),
+    recompute: (id) =>
+      apiPath("/tracer/derived-metric-runs/{id}/recompute/", { id }),
+  },
   dashboard: {
     list: apiPath("/tracer/dashboard/"),
     create: apiPath("/tracer/dashboard/"),
