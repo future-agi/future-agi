@@ -844,6 +844,48 @@ def copy_retained_files(source, destination, execution):
         p.equal(hash_path(destination,name),digest,'copied deployment hash differs')
 
 
+def locked_dependency_ref(service, reference, locks):
+    """The name@digest a retained lock fixes for this Compose service, else None.
+
+    Only a lock row for this service, with the same canonical repository and
+    tag as the Compose reference, applies. Any other row is not applied here,
+    so the caller's lock comparison still refuses it.
+    """
+    from deploy.update.manifest import parse_image_ref
+    wanted = parse_image_ref(reference)
+    if wanted.digest is not None or wanted.tag is None:
+        return None
+    rows = []
+    for row in locks or ():
+        if not isinstance(row, dict) or row.get('service') != service:
+            continue
+        image = parse_image_ref(row['image'])
+        if (image.name, image.tag, image.digest) == (wanted.name, wanted.tag, None):
+            rows.append(row)
+    if len(rows) != 1:
+        return None
+    return str(parse_image_ref(wanted.name+'@'+rows[0]['digest']))
+
+
+def pull_compose_image(docker, platform, service, reference, locks=()):
+    """Pull one Compose service image; a locked dependency is pulled by digest.
+
+    Retained Compose files name dependencies by tag (postgres:16). The tag can
+    be pushed again upstream after a release locked the digest it qualified,
+    and pulling the tag would then boot another image. A locked dependency is
+    fetched as name@digest and tagged locally as the Compose reference, so
+    `up --pull never` boots the locked image. Callers still compare the
+    daemon's RepoDigests with the lock. Returns the pinned reference or None.
+    """
+    pinned = locked_dependency_ref(service, reference, locks)
+    if pinned is None:
+        docker('pull','--platform',platform,reference)
+        return None
+    docker('pull','--platform',platform,pinned)
+    docker('image','tag',pinned,reference)
+    return pinned
+
+
 class ShippingRehearsal:
     """One owned stack. Mutation methods delegate to the actual shipping APIs."""
     def __init__(self,workspace,row,target,*,docker_context,resource_prefix,budgets,deadline,registry):
@@ -1031,7 +1073,8 @@ class ShippingRehearsal:
         from deploy.update.manifest import parse_image_ref
         dependencies=[]
         for name,service in model['services'].items():
-            self.installation.docker_run('pull','--platform',self.row.platform,service['image'])
+            pull_compose_image(self.installation.docker_run,self.row.platform,name,service['image'],
+                               () if name=='app' else self.dependencies)
             inspection=self._json('image','inspect',service['image'])[0]
             p.equal(inspection['Os']+'/'+inspection['Architecture'],self.row.platform,'non-native image')
             if name=='app':
