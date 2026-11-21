@@ -129,71 +129,71 @@ async function readDwellCounters(page: Page): Promise<{ pointerdown: number; poi
 }
 
 /**
- * A raw mouse press-dwell-release on `button`, standing in for a real user's
- * imprecise click. `locator.click()` cannot reproduce the bug INT-01/INT-02
- * exist for: it resolves the element and presses+releases within a single
- * tick, so it passes even on a build where the label remounts between press
- * and release. A dwell gives an in-flight ancestor re-render (the pager's
- * parent re-renders ~26x/s from AG Grid's `ColumnAnimationService` loop — see
- * `assertAncestorIsChurning`) a real window to land inside.
+ * INT-06: resize the viewport while observing the label or holding the mouse
+ * down. TraceGrid's useFitHeight resize listener writes the fitted height to
+ * React state; its Box wraps both AgGridReact and CursorGridPagination. Since
+ * the Box uses `sx`, React commits that height as a new MUI class. Checking
+ * both the class and the rendered height rules out a CSS-only viewport resize
+ * (including the hook's unmeasured `calc(100vh - 270px)` fallback).
  */
-async function dwellClick(page: Page, button: Locator): Promise<void> {
-  const box = await button.boundingBox();
-  if (!box) throw new Error('dwellClick: button has no bounding box (not visible?)');
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-  await page.mouse.down();
-  // Deliberate dwell — the only hardcoded wait in this file. 250-400ms gives
-  // the ~26/s ancestor re-render loop several chances to land between
-  // pointerdown and pointerup, which is exactly the window the pre-fix build
-  // loses the click in (see CursorGridPagination.jsx's BackLabel/NextLabel
-  // comment and commit e7256001b). A shorter dwell risks missing every
-  // re-render by luck; a longer one buys nothing back.
-  await page.waitForTimeout(300);
-  await page.mouse.up();
-}
+async function driveGridRenders(page: Page, durationMs: number): Promise<void> {
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error('INT-06 requires a resizable viewport');
+  const grid = page.locator('.clean-data-table:visible').locator('xpath=..');
+  const snapshot = () => grid.evaluate((el) => ({
+    height: el.getBoundingClientRect().height,
+    className: el.className,
+  }));
+  const initial = await snapshot();
+  const deadline = Date.now() + durationMs;
+  // Five out-and-back cycles prove at least ten React commits.
+  let cycles = 0;
 
-// The ~26/s ancestor re-render loop INT-01/INT-02/INT-03 depend on is a
-// pre-existing AG Grid `ColumnAnimationService` feedback loop, not something
-// this suite drives — so a quiet render tree (e.g. a future fix that damps
-// it) must not make these tests pass vacuously. `.clean-data-table`'s own
-// parent Box is the nearest true DOM ancestor of *both* the grid and the
-// pager (siblings under the same `gridElementRef` in TraceGrid.jsx), so
-// mutations there track the same re-render frequency that broke the pager.
-const CHURN_WINDOW_MS = 1_000;
-const CHURN_MIN_MUTATIONS = 10;
+  // Move only one pixel: a pointer at the center of Next/Back stays over the
+  // same spot on its label. Wait for the React commit in each direction so a
+  // busy runner cannot coalesce the resizes and pass without a re-render.
+  do {
+    await page.setViewportSize({ ...viewport, height: viewport.height + 1 });
+    await expect.poll(async () => {
+      const current = await snapshot();
+      return {
+        height: current.height,
+        changedClass: current.className !== initial.className,
+      };
+    }, {
+      message: 'INT-06: TraceGrid must commit the taller fitted height',
+      intervals: [16, 32, 64],
+    }).toEqual({ height: initial.height + 1, changedClass: true });
 
-function observeAncestor(page: Page): Locator {
-  return page.locator('.clean-data-table:visible').locator('xpath=..');
+    // Start the next cycle (or release the mouse) at the original size.
+    await page.setViewportSize(viewport);
+    await expect.poll(snapshot, {
+      message: 'INT-06: TraceGrid must restore its original fitted height',
+      intervals: [16, 32, 64],
+    }).toEqual(initial);
+    cycles += 1;
+  } while (cycles < 5 || Date.now() < deadline);
 }
 
 /**
- * INT-06 guard: proves the pager's ancestor is actually re-rendering before
- * INT-01/INT-02 trust a passing dwell-click. If this loop is ever damped or
- * fixed, those tests would otherwise silently degrade into plain click tests
- * that pass whether or not the label-remount bug is still guarded against.
- * Skips (with a clear reason) instead of asserting nothing.
+ * A raw mouse press-dwell-release on `button`, standing in for a real user's
+ * imprecise click. `locator.click()` presses and releases within one tick and
+ * cannot exercise the race where React remounts the label under the pointer.
  */
-async function assertAncestorIsChurning(page: Page): Promise<void> {
-  const handle = await observeAncestor(page).elementHandle();
-  if (!handle) throw new Error('assertAncestorIsChurning: pager ancestor not found');
-  const mutations = await handle.evaluate((el, windowMs) => new Promise<number>((resolve) => {
-    let count = 0;
-    const observer = new MutationObserver((records) => {
-      count += records.length;
-    });
-    observer.observe(el, { childList: true, subtree: true, attributes: true });
-    setTimeout(() => {
-      observer.disconnect();
-      resolve(count);
-    }, windowMs);
-  }), CHURN_WINDOW_MS);
-  test.skip(
-    mutations < CHURN_MIN_MUTATIONS,
-    `pager ancestor did not churn (${mutations} DOM mutations/${CHURN_WINDOW_MS}ms, need >= `
-    + `${CHURN_MIN_MUTATIONS}) — the pre-existing AG Grid re-render loop this guard depends on `
-    + 'was not observed, so INT-01/INT-02 would pass vacuously rather than exercising the '
-    + 'label-remount race. Skipping instead of asserting nothing (brief: implement INT-06 as a guard).',
-  );
+async function dwellClick(page: Page, button: Locator): Promise<void> {
+  await expect(button).toBeEnabled();
+  const box = await button.boundingBox();
+  if (!box) throw new Error('dwellClick: button has no bounding box (not visible?)');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+
+  await page.mouse.down();
+  try {
+    // Prove real ancestor commits between pointerdown and pointerup on this
+    // particular press, not just in a preflight before the interaction.
+    await driveGridRenders(page, 300);
+  } finally {
+    await page.mouse.up();
+  }
 }
 
 // Pinned off the running app (2026-09-07 capture against Sessions, 136 rows at
@@ -675,9 +675,9 @@ test('OBS-E2E-031: the Next label DOM node survives ~1.5s of ancestor re-render 
     userGoal: "A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it",
     steps: ['seed 15 traces into one project over OTLP',
             "open the project's trace list at page size 10 (Next enabled)",
-            "confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)",
-            "capture the Next label's DOM node and watch the pager subtree for ~1.5s",
-            'confirm the node is never removed from the DOM and stays connected'],
+            'capture the Next label node and watch the button subtree for removals',
+            'resize the viewport back and forth for at least 1.5s, verifying the grid re-renders after each resize',
+            'confirm the original label was never removed and is still connected inside Next'],
     backendChecks: ['all 15 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -699,37 +699,37 @@ test('OBS-E2E-031: the Next label DOM node survives ~1.5s of ancestor re-render 
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
   expect((await readPager(page)).nextDisabled).toBe(false);
 
-  await assertAncestorIsChurning(page);
-
   const nextButton = pagerButton(page, 'Next page');
-  const buttonHandle = await nextButton.elementHandle();
-  if (!buttonHandle) throw new Error('Next button not found');
-  const labelHandle = await nextButton.evaluateHandle((el) => el.querySelector('div'));
+  // Install the observer before sending any resize and retain the original
+  // node. A fresh locator after the resize would happily resolve a new label.
+  const finishObservation = await nextButton.evaluateHandle((button) => {
+    const label = button.querySelector('div');
+    if (!label) throw new Error('Next label not found');
 
-  // Watch specifically for *this* node being removed, not just "something
-  // changed" in the button's subtree — MUI's own ripple `<span>` legitimately
-  // mounts/unmounts on focus/hover independent of this bug, so a raw
-  // mutation/removedNodes *count* would over-fire on a correct build. ~1.5s
-  // of live churn is long enough to comfortably exceed the >= 10
-  // mutations/1s the INT-06 guard above already proved is happening, giving
-  // several ancestor re-renders a real chance to have remounted this node if
-  // the label were still an inline-arrow `slots` component (pre-fix shape).
-  const labelSurvived = await buttonHandle.evaluate((button, label) => new Promise<boolean>((resolve) => {
     let removed = false;
-    const observer = new MutationObserver((records) => {
+    const observeRemovals = (records: MutationRecord[]) => {
       for (const record of records) {
-        if (Array.from(record.removedNodes).includes(label as Node)) removed = true;
+        // Ignore other descendants such as MUI's ripple span.
+        for (const node of Array.from(record.removedNodes)) {
+          if (node.contains(label)) removed = true;
+        }
       }
-    });
+    };
+    const observer = new MutationObserver(observeRemovals);
     observer.observe(button, { childList: true, subtree: true });
-    setTimeout(() => {
+    return () => {
+      observeRemovals(observer.takeRecords());
       observer.disconnect();
-      resolve(!removed);
-    }, 1500);
-  }), labelHandle);
+      return !removed && label.isConnected && button.contains(label);
+    };
+  });
 
+  // The observation spans every resize and ends only after the last React
+  // commit. A quiet grid is a failed prerequisite, not a reason to skip.
+  await driveGridRenders(page, 1500);
+  const labelSurvived = await finishObservation.evaluate((finish) => finish());
   expect(labelSurvived).toBe(true);
-  expect(await labelHandle.evaluate((el) => el?.isConnected)).toBe(true);
+  await finishObservation.dispose();
 
   await req.dispose();
 });
@@ -741,10 +741,10 @@ test('OBS-E2E-032: a real dwell-click on Next/Back actually fires a click, not j
     userGoal: "A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render",
     steps: ['seed 15 traces into one project over OTLP',
             "open the project's trace list at page size 10",
-            "confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)",
-            'install capture-phase pointer/click counters on the pager root',
-            'press-dwell-release on Next and confirm the page advanced with pointerdown === click === 1',
-            'repeat the same dwell-click on Back'],
+            'install capture-phase pointer and click counters on the pager root',
+            'hold the mouse down on Next while resizing the viewport and verifying grid re-renders, then release',
+            'confirm page 2 is selected with one pointerdown and one click',
+            'reset the counters and repeat on Back, confirming page 1 with one pointerdown and one click'],
     backendChecks: ['all 15 seeded trace_ids present in CH `spans` (FINAL) under the auto-created project'],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -765,16 +765,16 @@ test('OBS-E2E-032: a real dwell-click on Next/Back actually fires a click, not j
   await resized;
   await expect(traceNames).toHaveCount(SIZE, { timeout: UI_READY });
 
-  await assertAncestorIsChurning(page);
+  // The counters must be in place before any pointer event or driven render.
   await installDwellCounters(page);
 
   await test.step('INT-01/INT-02: dwell-click Next actually advances the page', async () => {
     await resetDwellCounters(page);
-    const advanced = page.waitForResponse(
-      (r) => isTraceListResponse(r, { project_id: projectId }),
-      { timeout: UI_READY });
-    await dwellClick(page, pagerButton(page, 'Next page'));
-    await advanced;
+    await Promise.all([
+      page.waitForResponse((r) => isTraceListResponse(r, { project_id: projectId }),
+        { timeout: UI_READY }),
+      dwellClick(page, pagerButton(page, 'Next page')),
+    ]);
     await waitForCurrentPage(page, 2);
     const counts = await readDwellCounters(page);
     // INT-02: distinguishes "the press landed but no click fired" (the bug)

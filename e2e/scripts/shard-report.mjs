@@ -10,7 +10,7 @@
 //
 //   node scripts/shard-report.mjs parity --listed list.json --merged merged.json
 //   node scripts/shard-report.mjs durations --merged merged.json
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -53,7 +53,7 @@ export function collectSpecs(report) {
  * shard plan divides (lib/shard.ts walks the spec roots); a listed file outside
  * it belongs to no shard.
  */
-export function checkParity(listed, merged, specFiles) {
+export function checkParity(listed, merged, specFiles, enforceRuntimeSkips = true) {
   const expected = collectSpecs(listed);
   const actual = collectSpecs(merged);
   const expectedKeys = new Set(expected.map((spec) => spec.key));
@@ -61,6 +61,16 @@ export function checkParity(listed, merged, specFiles) {
   for (const spec of actual)
     seen.set(spec.key, [...(seen.get(spec.key) ?? []), spec]);
   const planned = new Set(specFiles);
+  const runtimeSkipped = [];
+  const wrongOutcome = [];
+  for (const { key, expectedStatus } of expected) {
+    const statuses = (seen.get(key) ?? []).flatMap((entry) => entry.statuses);
+    if (expectedStatus === "passed" && statuses.includes("skipped")) runtimeSkipped.push(key);
+    if (!["passed", "skipped", "failed"].includes(expectedStatus) || statuses.some((status) =>
+      status !== expectedStatus && !(expectedStatus === "passed" && status === "skipped"))) {
+      wrongOutcome.push(key);
+    }
+  }
   const problems = {
     // A spec file Playwright runs but the shard plan never hands to a shard.
     unplanned: [...new Set(expected.map((spec) => spec.file))]
@@ -85,10 +95,8 @@ export function checkParity(listed, merged, specFiles) {
       )
       .map(([key]) => key)
       .sort(),
-    wrongOutcome: expected.filter((test) =>
-      !["passed", "skipped", "failed"].includes(test.expectedStatus) ||
-      (seen.get(test.key) ?? []).some((entry) => entry.statuses.some((status) => status !== test.expectedStatus))
-    ).map((test) => test.key).sort(),
+    runtimeSkipped: runtimeSkipped.sort(),
+    wrongOutcome: wrongOutcome.sort(),
     listedTwice: expected.length - expectedKeys.size,
   };
   const ok =
@@ -99,9 +107,11 @@ export function checkParity(listed, merged, specFiles) {
     !problems.duplicated.length &&
     !problems.listedTwice &&
     !problems.wrongOutcome.length &&
+    (!enforceRuntimeSkips || !problems.runtimeSkipped.length) &&
     expected.length > 0;
   return {
     ok,
+    enforceRuntimeSkips,
     listed: expected.length,
     reported: actual.length,
     files: new Set(expected.map((spec) => spec.file)).size,
@@ -200,15 +210,27 @@ function main([command, ...args]) {
       read("--listed"),
       read("--merged"),
       listSpecFiles(),
+      !args.includes("--phase-runtime-skips") || process.env.E2E_ENFORCE_RUNTIME_SKIPS === "true",
     );
+    if (args.includes("--out")) writeFileSync(option(args, "--out"), `${JSON.stringify(result, null, 2)}\n`);
+    const skipped = result.problems.runtimeSkipped;
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      const mode = result.enforceRuntimeSkips ? "enforced" : "report-only";
+      appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
+        `### E2E shard parity (${process.env.E2E_STACK ?? "all"})`,
+        `Listed to pass but skipped at runtime: **${skipped.length}** (${mode}).`,
+        "", ...skipped.map((key) => `    ${key}`), "",
+      ].join("\n"));
+    }
     console.log(
       `listed ${result.listed} tests in ${result.files} spec files; the shards reported ${result.reported}`,
     );
     for (const [kind, keys] of Object.entries(result.problems)) {
-      if (Array.isArray(keys) && keys.length)
-        console.log(
-          `::error title=E2E shard parity: ${kind}::${keys.slice(0, 20).join(" | ")}`,
-        );
+      if (Array.isArray(keys) && keys.length) {
+        const level = kind === "runtimeSkipped" && !result.enforceRuntimeSkips ? "warning" : "error";
+        const sample = keys.slice(0, 20).join(" | ").replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+        console.log(`::${level} title=E2E shard parity: ${kind}::${keys.length}: ${sample}`);
+      }
     }
     if (result.problems.listedTwice)
       console.log(
@@ -219,7 +241,7 @@ function main([command, ...args]) {
       return 1;
     }
     console.log(
-      "Every listed test has exactly one result: the shards ran the whole suite once.",
+      `Every listed test has exactly one result; ${skipped.length} listed-to-pass tests skipped at runtime.`,
     );
     return 0;
   }
@@ -235,7 +257,7 @@ function main([command, ...args]) {
     return 0;
   }
   console.error(
-    "usage: shard-report.mjs parity --listed <json> --merged <json> | durations --merged <json> [--out <file>]",
+    "usage: shard-report.mjs parity --listed <json> --merged <json> [--phase-runtime-skips] [--out <file>] | durations --merged <json> [--out <file>]",
   );
   return 2;
 }

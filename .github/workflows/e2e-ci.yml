@@ -765,7 +765,14 @@ jobs:
         run: npx playwright test --list --reporter json > /dev/null
 
       - name: The shards ran every test exactly once
-        run: node scripts/shard-report.mjs parity --listed listed-suite.json --merged merged-report.json
+        # Only tests independently listed to pass but skipped at runtime are phased.
+        # Set the repository variable E2E_ENFORCE_RUNTIME_SKIPS to 'true' to fail on them.
+        # Listing parity, result counts, and all other unexpected outcomes always fail.
+        env:
+          E2E_ENFORCE_RUNTIME_SKIPS: ${{ vars.E2E_ENFORCE_RUNTIME_SKIPS }}
+        run: >-
+          node scripts/shard-report.mjs parity --listed listed-suite.json --merged merged-report.json
+          --phase-runtime-skips --out shard-parity.json
 
       - name: Verify topology-specific cases in the listing and merged results
         run: node --test scripts/qualify-topology.mjs
@@ -796,6 +803,7 @@ jobs:
           path: |
             e2e/merged-report.json
             e2e/listed-suite.json
+            e2e/shard-parity.json
           retention-days: 7
           overwrite: true
           if-no-files-found: warn

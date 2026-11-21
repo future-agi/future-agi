@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import test from "node:test";
 import { parse as parseYaml } from "yaml";
@@ -294,11 +295,52 @@ test("parity checks the listed project and declared outcome, not just result cou
   plan.tests[0].projectId = actual.tests[0].projectId = "chromium";
   actual.tests[0].results[0].status = "skipped";
   actual.tests[0].expectedStatus = "skipped";
-  assert.equal(checkParity(report(plan), report(actual), FILES).ok, false);
+  for (const enforce of [false, true]) {
+    const result = checkParity(report(plan), report(actual), FILES, enforce);
+    assert.equal(result.ok, !enforce);
+    assert.deepEqual(result.problems.runtimeSkipped, [JSON.stringify([FILES[0], 1, 1, "one", "chromium"])]);
+    assert.deepEqual(result.problems.wrongOutcome, []);
+  }
+  // Other outcomes remain blocking, even with the runtime-skip gate off.
+  for (const status of ["failed", "timedOut", "interrupted"]) {
+    actual.tests[0].results[0].status = status;
+    assert.equal(checkParity(report(plan), report(actual), FILES, false).ok, false);
+  }
+  actual.tests[0].results[0].status = "skipped";
+  plan.tests[0].annotations = [{type: "fail"}];
+  assert.equal(checkParity(report(plan), report(actual), FILES, false).ok, false);
   plan.tests[0].annotations = [{type: "skip", description: "not in this topology"}];
-  assert.equal(checkParity(report(plan), report(actual), FILES).ok, true);
+  const declared = checkParity(report(plan), report(actual), FILES);
+  assert.equal(declared.ok, true);
+  assert.deepEqual(declared.problems.runtimeSkipped, []);
   actual.tests[0].projectId = "different";
-  assert.equal(checkParity(report(plan), report(actual), FILES).ok, false);
+  assert.equal(checkParity(report(plan), report(actual), FILES, false).ok, false);
+});
+
+test("the phased parity CLI reports the same runtime skips in warning and enforced modes", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "e2e-runtime-skips-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = listSpecFiles()[0];
+  const actual = spec(file, 1, "runtime skip", [0]);
+  actual.tests[0].results[0].status = actual.tests[0].expectedStatus = "skipped";
+  writeFileSync(path.join(dir, "listed.json"), JSON.stringify(report(spec(file, 1, "runtime skip", []))));
+  writeFileSync(path.join(dir, "merged.json"), JSON.stringify(report(actual)));
+  for (const enforce of [false, true]) {
+    const summary = path.join(dir, `summary-${enforce}`);
+    const run = spawnSync(process.execPath, [
+      fileURLToPath(new URL("./shard-report.mjs", import.meta.url)), "parity", "--phase-runtime-skips",
+      "--listed", "listed.json", "--merged", "merged.json", "--out", "parity.json",
+    ], { cwd: dir, encoding: "utf8", env: { ...process.env,
+      GITHUB_STEP_SUMMARY: summary, E2E_ENFORCE_RUNTIME_SKIPS: enforce ? "true" : "",
+    } });
+    assert.equal(run.status, enforce ? 1 : 0, run.stderr);
+    assert.match(run.stdout, enforce ? /::error .*runtimeSkipped/ : /::warning .*runtimeSkipped/);
+    const receipt = JSON.parse(readFileSync(path.join(dir, "parity.json"), "utf8"));
+    assert.equal(receipt.enforceRuntimeSkips, enforce);
+    assert.equal(receipt.ok, !enforce);
+    assert.deepEqual(receipt.problems.runtimeSkipped, [JSON.stringify([file, 1, 1, "runtime skip", ""])]);
+    assert.ok(readFileSync(summary, "utf8").includes(receipt.problems.runtimeSkipped[0]));
+  }
 });
 
 test("parity names a test that no shard ran, ran twice, never started or was not listed", () => {
@@ -316,7 +358,7 @@ test("parity names a test that no shard ran, ran twice, never started or was not
     ["duplicated", report(one, two, spec("flows/b.spec.ts", 3, "one", [1, 1]))],
   ];
   for (const [kind, merged] of cases) {
-    const result = checkParity(listed, merged, FILES);
+    const result = checkParity(listed, merged, FILES, false);
     assert.equal(result.ok, false, kind);
     assert.equal(
       result.problems[kind].length,
@@ -373,6 +415,10 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
   const parity = step(jobs.report, "The shards ran every test exactly once");
   assert.equal(parity.if, undefined);
   assert.match(parity.run, /shard-report\.mjs parity/);
+  assert.match(parity.run, /--phase-runtime-skips --out shard-parity\.json/);
+  assert.equal(parity.env.E2E_ENFORCE_RUNTIME_SKIPS, "${{ vars.E2E_ENFORCE_RUNTIME_SKIPS }}");
+  assert.ok(jobs.report.steps.some((entry) => entry.uses?.startsWith("actions/upload-artifact@") &&
+    entry.with.path.split("\n").includes("e2e/shard-parity.json")));
   assert.ok(jobs.report.steps.every((entry) => !entry["continue-on-error"]));
   assert.equal(
     jobs.report.if,

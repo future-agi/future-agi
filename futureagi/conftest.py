@@ -293,12 +293,16 @@ def _resolve_ch_test_port(
 
 
 def _ch_test_native_port(
-    environ: Mapping[str, str] = os.environ,
+    environ: Mapping[str, str] = os.environ, *, allow_legacy_ch_port: bool = False
 ) -> ClickHouseTestPort:
+    # Only legacy callers that explicitly named a CH25 host used CH_PORT.
+    general = _GENERAL_CH_NATIVE_PORT_VARIABLES
+    if allow_legacy_ch_port and environ.get("CH25_HOST"):
+        general += ("CH_PORT",)
     return _resolve_ch_test_port(
         environ,
         opt_in=CH_TEST_SIDECAR_NATIVE_PORT_VARIABLE,
-        general=_GENERAL_CH_NATIVE_PORT_VARIABLES,
+        general=general,
     )
 
 
@@ -339,6 +343,7 @@ def _open_ch_test_native_client(
     *,
     database: str = "default",
     owned_database: str | None = None,
+    allow_legacy_ch_port: bool = False,
     environ: Mapping[str, str] = os.environ,
     **client_kwargs,
 ):
@@ -352,7 +357,7 @@ def _open_ch_test_native_client(
 
     from clickhouse_driver import Client
 
-    target = _ch_test_native_port(environ)
+    target = _ch_test_native_port(environ, allow_legacy_ch_port=allow_legacy_ch_port)
     host = environ.get("CH25_HOST", "127.0.0.1")
     _require_safe_ch25_test_target(host=host, database=owned_database or database)
     options = {

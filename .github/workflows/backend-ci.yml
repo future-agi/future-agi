@@ -467,7 +467,6 @@ jobs:
         if: matrix.group == 1
         env:
           PYTHONPATH: .ci
-          ELIGIBLE_IDS_FILE: ${{ runner.temp }}/shard-receipt/eligible.json
           SUITE_MARKERS: ${{ matrix.markers }}
         run: |
           mkdir -p "$RUNNER_TEMP/shard-receipt"
@@ -475,6 +474,7 @@ jobs:
           # The terminal verifier requires a successful exit as well as the inventory.
           status=0
           uv run pytest --collect-only -q --ignore=tests/stress -p collected_ids \
+            --ci-eligible-ids="$RUNNER_TEMP/shard-receipt/eligible.json" \
             -m "($PYTEST_MARKERS) and $SUITE_MARKERS" > "$RUNNER_TEMP/collection.log" || status=$?
           printf '%s\n' "$status" > "$RUNNER_TEMP/shard-receipt/inventory-exit.txt"
           if [[ $status != 0 ]]; then tail -c 8192 "$RUNNER_TEMP/collection.log"; fi
@@ -489,8 +489,6 @@ jobs:
           SUITE_SPLITS: ${{ matrix.splits }}
           DB_KEY: ${{ steps.db-key.outputs.key }}
           PYTHONPATH: .ci
-          COLLECTED_IDS_FILE: ${{ runner.temp }}/shard-receipt/collected-ids.txt
-          TERMINAL_IDS_FILE: ${{ runner.temp }}/shard-receipt/terminal.jsonl
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/shard-receipt"
@@ -507,6 +505,8 @@ jobs:
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
           # processing after the tests have passed. Keep full JUnit results.
           uv run pytest -q -ra --ignore=tests/stress -p collected_ids \
+            --ci-collected-ids="$RUNNER_TEMP/shard-receipt/collected-ids.txt" \
+            --ci-terminal-ids="$RUNNER_TEMP/shard-receipt/terminal.jsonl" \
             -m "($PYTEST_MARKERS) and $SUITE_MARKERS" \
             --splits "$SUITE_SPLITS" --group "${{ matrix.group }}" \
             --splitting-algorithm least_duration \
@@ -938,10 +938,25 @@ jobs:
         with:
           sparse-checkout: futureagi/.ci
       - name: Verify each planned shard receipt
+        id: qualification
         env:
           GH_TOKEN: ${{ github.token }}
           SHARDS: ${{ needs.changes.outputs.shards }}
+          # Set this repository variable to 'true' to fail on unexpected runtime
+          # skips. Until then they are warnings with a summary and JSON evidence.
+          # Inventory, collection parity and complete exactly-once protocols
+          # are mandatory in both modes, as are all other outcome checks.
+          BACKEND_ENFORCE_RUNTIME_SKIPS: ${{ vars.BACKEND_ENFORCE_RUNTIME_SKIPS }}
         run: python3 -I futureagi/.ci/check_collected_ids.py --terminal
+      - name: Upload unexpected runtime skips
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-runtime-skips
+          path: ${{ runner.temp }}/backend-runtime-skips.json
+          overwrite: true
+          # An early qualification error (e.g. listing artifacts failed) has no report.
+          if-no-files-found: ${{ steps.qualification.outcome == 'success' && 'error' || 'ignore' }}
 
   backend-tests:
     name: ${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && 'Backend metadata edit' || 'Backend Tests Pass' }} # the ONLY required status check

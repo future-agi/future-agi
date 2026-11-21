@@ -2258,9 +2258,9 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10 (Next enabled)
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. capture the Next label's DOM node and watch the pager subtree for ~1.5s
-5. confirm the node is never removed from the DOM and stays connected
+3. capture the Next label node and watch the button subtree for removals
+4. resize the viewport back and forth for at least 1.5s, verifying the grid re-renders after each resize
+5. confirm the original label was never removed and is still connected inside Next
 
 **Backend state verified:**
 
@@ -2278,10 +2278,10 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. install capture-phase pointer/click counters on the pager root
-5. press-dwell-release on Next and confirm the page advanced with pointerdown === click === 1
-6. repeat the same dwell-click on Back
+3. install capture-phase pointer and click counters on the pager root
+4. hold the mouse down on Next while resizing the viewport and verifying grid re-renders, then release
+5. confirm page 2 is selected with one pointerdown and one click
+6. reset the counters and repeat on Back, confirming page 1 with one pointerdown and one click
 
 **Backend state verified:**
 
