@@ -3,6 +3,10 @@ set -euo pipefail
 
 # Verify the three published backend image boundaries without source mounts.
 # The image references may be tags for local checks or immutable digests in CI.
+# For minimal builds this checks the reported version and explicit codec configure
+# lists of both tools, plus required registrations in ffmpeg. It is not a binary
+# identity check. Unrelated configure options and implicit registrations may vary;
+# the only additional explicit IDs accepted are native (non-AudioToolbox) PCM decoders.
 #
 # Usage: ./scripts/verify-image-contents.sh [version] [oss|ee|cloud|all]
 # Overrides: OSS_IMAGE, EE_IMAGE, CLOUD_IMAGE, CLOUD_DEPLOYMENT_SECRET,
@@ -160,9 +164,18 @@ check "Active ffmpeg and ffprobe match expected $EXPECTED_FFMPEG_FLAVOR flavor" 
     test "$(command -v "$tool")" = "/usr/local/bin/$tool"
     info=$("$tool" -version)
     case "$info " in "$tool version $2 "*) ;; *) exit 1 ;; esac
+    options=$(printf "%s\n" "$info" | sed -n "s/^[[:blank:]]*configuration: //p")
+    case " $options " in *" --disable-everything "*) ;; *) exit 1 ;; esac
     for kind in encoder decoder; do
       case "$kind" in encoder) wanted=$3 ;; decoder) wanted=$4 ;; esac
-      got=$(printf "%s\n" "$info" | tr " " "\n" | sed -n "s/^--enable-$kind=//p")
+      got=$(printf "%s\n" "$options" | tr " " "\n" | sed -n "s/^--enable-$kind=//p")
+      # Compare as sets: ordering is irrelevant. Reject repeated option lines
+      # and malformed lists instead of merging conflicting declarations.
+      case "$got" in ""|*[!a-z0-9_,]*|,*|*,|*,,*) exit 1 ;; esac
+      for id in $(printf "%s" "$got" | tr , " "); do
+        case ",$wanted," in *",$id,"*) continue ;; esac
+        case "$kind:$id" in decoder:pcm_*_at) exit 1 ;; decoder:pcm_?*) ;; *) exit 1 ;; esac
+      done
       for id in $(printf "%s" "$wanted" | tr , " "); do
         case ",$got," in *",$id,"*) ;; *) exit 1 ;; esac
       done

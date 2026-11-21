@@ -1212,6 +1212,34 @@ class VerifyImageContents(unittest.TestCase):
             subprocess.run(['git', '-C', cls.repo, '-c', 'user.name=fixture',
                             '-c', 'user.email=fixture@invalid', *args], check=True, capture_output=True)
         git('init')
+        docker = cls.repo / 'futureagi/Dockerfile.oss'
+        workflow = cls.repo / '.github/workflows/release-images.yml'
+        variant_sources = docker.read_text(), workflow.read_text()
+        workflow.write_text("""jobs:
+  build:
+    uses: ./.github/workflows/build-image.yml
+    strategy:
+      matrix:
+        include:
+          - {name: backend, image: futureagi/future-agi, context: ./futureagi, dockerfile: ./futureagi/Dockerfile.oss}
+    with:
+      image: ${{ matrix.image }}
+      context: ${{ matrix.context }}
+      dockerfile: ${{ matrix.dockerfile }}
+      version: ${{ needs.guard.outputs.version }}
+      ref: ${{ github.ref }}
+""")
+        base = 'FROM python:3.11-slim-bookworm'
+        install = ('RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git '
+                   '&& rm -rf /var/lib/apt/lists/* && apt-get clean')
+        for tag, stages in [('v1.42.0', [base + ' AS builder', base, install]),
+                            ('v1.42.1', [base + ' AS builder', install, base])]:
+            docker.write_text('\n'.join(stages) + '\n')
+            git('add', '.')
+            git('commit', '-m', 'matrix release ' + tag)
+            git('tag', tag)
+        docker.write_text(variant_sources[0])
+        workflow.write_text(variant_sources[1])
         config = cls.repo / 'futureagi/docker/ffmpeg/configure-minimal.sh'
         current = config.read_text()
         old = current
@@ -1235,14 +1263,14 @@ if [ "$1" = run ] && [ "${10}" = -ec ]; then
     dpkg-query() { printf "%032d  usr/bin/%s\n" 0 ffmpeg 0 ffprobe; }
     md5sum() { read -r digest file; [ "$file" != "${BAD_CHECKSUM:-}" ]; }
     media() {
-      tool=$1; shift; enc=$OLD_ENC; dec=$OLD_DEC
+      tool=$1; shift; enc=$OLD_ENC; dec="$OLD_DEC pcm_alaw pcm_s16be pcm_s16le pcm_mulaw pcm_f32be"
       if [ "${OLD_PAIR:-}" != yes ] && [ "${OLD_TOOL:-}" != "$tool" ]; then
         enc="$enc prores prores_aw prores_ks wavpack libaom_av1"
         dec="$dec speex cinepak prores wavpack libaom_av1"
       fi
       case "$*" in
         -version) echo "$tool version 7.1.5 Copyright"
-          echo "configuration: --enable-encoder=$(echo "$enc" | tr " " ,) --enable-decoder=$(echo "$dec" | tr " " ,)" ;;
+          echo "configuration: --disable-everything --enable-encoder=$(echo "$enc" | tr " " ,) --enable-decoder=$(echo "$dec" | tr " " ,)" ;;
         *-encoders) for id in $enc; do echo " A..... ${id/libaom_av1/libaom-av1}"; done ;;
         *-decoders) for id in $dec; do [ "$id" = "${MISSING_DECODER:-}" ] || echo " V..... ${id/libaom_av1/libaom-av1}"; done ;;
       esac
@@ -1297,8 +1325,12 @@ exit 0
     def test_old_pair_only_satisfies_the_old_build(self):
         image = 'futureagi/future-agi:v1.59.1-slim'
         self.assertEqual(self.run_script(image, OLD_PAIR='yes').returncode, 0)
+        substituted = self.run_script(image)
+        self.assertEqual(substituted.returncode, 1, substituted.stdout)
+        self.assertIn('FAIL: Active ffmpeg and ffprobe', substituted.stdout)
         override = dict(OSS_VARIANT='slim', EXPECTED_FFMPEG_FLAVOR='minimal', FAKE_MARKER='minimal')
-        for bad in ({'OLD_PAIR': 'yes'}, {'OLD_TOOL': 'ffprobe'}, {'MISSING_DECODER': 'libaom_av1'}):
+        for bad in ({'OLD_PAIR': 'yes'}, {'OLD_TOOL': 'ffprobe'},
+                    {'MISSING_DECODER': 'libaom_av1'}, {'MISSING_DECODER': 'pcm_s16le'}):
             with self.subTest(bad=bad):
                 proc = self.run_script(image, **override, **bad)
                 self.assertEqual(proc.returncode, 1, proc.stderr)
@@ -1331,6 +1363,25 @@ exit 0
             with self.subTest(replacement=replacement), self.assertRaises(ValueError):
                 resolve(workflow.replace('        IMAGE_VARIANT=slim', '        ' + replacement), '-slim', 'standard')
 
+    def test_pre_variant_tag_uses_runtime_package_not_builder_package(self):
+        for tag, suffix, expected in [('v1.42.0', '', 0), ('v1.42.0', '-slim', 2),
+                                      ('v1.42.1', '', 2)]:
+            with self.subTest(tag=tag, suffix=suffix):
+                proc = self.run_script(f'futureagi/future-agi:{tag}{suffix}', version=tag)
+                self.assertEqual(proc.returncode, expected, proc.stdout + proc.stderr)
+                if expected:
+                    self.assertFalse(proc.docker_log)
+                else:
+                    self.assertIn('PASS: Active ffmpeg and ffprobe match expected debian', proc.stdout)
+
+    def test_archived_pre_variant_source(self):
+        revision = '0ba21537d449835392dc8301b4122936a79db307'
+        if subprocess.run(['git', '-C', ROOT, 'cat-file', '-e', revision], capture_output=True).returncode:
+            self.skipTest('release history not present')
+        helper = runpy.run_path(str(ROOT / 'scripts/oss-media-contract.py'))
+        self.assertEqual(helper['from_source'](ROOT, revision, False, '', '', ''),
+                         ('standard', 'debian', '-', '-', '-'))
+
     def test_archived_release_sources(self):
         # Exercise the actual release blobs when available in a history checkout.
         helper = runpy.run_path(str(ROOT / 'scripts/oss-media-contract.py'))
@@ -1357,7 +1408,7 @@ exit 0
 
     def test_a_slim_tag_is_checked_as_lean(self):
         for image, env in (
-            ("futureagi/future-agi:v1.59.1-slim", {}),
+            ("futureagi/future-agi:v1.59.1-slim", {"OLD_PAIR": "yes"}),
             (
                 "futureagi/future-agi:local-slim",
                 {"OSS_VARIANT": "slim", "EXPECTED_FFMPEG_FLAVOR": "minimal"},

@@ -21,7 +21,7 @@ def one(pattern, text):
     return matches[0]
 
 
-def release_variant(workflow, suffix, default):
+def release_jobs(workflow):
     import yaml  # Only automatic release lookup requires PyYAML on the host.
 
     class UniqueLoader(yaml.SafeLoader):
@@ -32,10 +32,13 @@ def release_variant(workflow, suffix, default):
             return mapping
 
     try:
-        jobs = yaml.load(workflow, Loader=UniqueLoader)['jobs']
+        return yaml.load(workflow, Loader=UniqueLoader)['jobs']
     except yaml.YAMLError as exc:
         raise ValueError('unrecognized release workflow') from exc
-    job = jobs['backend' + suffix]
+
+
+def release_variant(workflow, suffix, default):
+    job = release_jobs(workflow)['backend' + suffix]
     inputs = job['with']
     if (job['uses'] != './.github/workflows/build-image-multiarch.yml'
             or inputs['image'] != 'futureagi/future-agi'
@@ -52,6 +55,39 @@ def release_variant(workflow, suffix, default):
     if not match:
         raise ValueError('unrecognized release build arguments')
     return match[1]
+
+
+def pre_variant_debian(workflow, docker, suffix):
+    """Recognize the unsuffixed matrix build and its unconditional runtime install."""
+    jobs = release_jobs(workflow)
+    job = jobs['build']
+    matrix = job['strategy']['matrix']
+    rows = [row for row in matrix['include'] if row['name'] == 'backend'
+            or row['image'] == 'futureagi/future-agi']
+    inputs = job['with']
+    if (suffix or 'backend' in jobs or set(matrix) != {'include'} or len(rows) != 1
+            or job['uses'] != './.github/workflows/build-image.yml'
+            or set(inputs) - {'image', 'context', 'dockerfile', 'version', 'ref', 'platforms',
+                              'push-latest', 'free-disk', 'cache-scope'}
+            or inputs['version'] != '${{ needs.guard.outputs.version }}'
+            or inputs['ref'] != '${{ github.ref }}'
+            or rows[0]['name'] != 'backend'):
+        raise ValueError('unrecognized pre-variant release build')
+    for key, expected in [('image', 'futureagi/future-agi'), ('context', './futureagi'),
+                          ('dockerfile', './futureagi/Dockerfile.oss')]:
+        if rows[0][key] != expected or inputs[key] != '${{ matrix.' + key + ' }}':
+            raise ValueError('unrecognized pre-variant backend input')
+
+    instructions = '\n'.join(line for line in docker.splitlines() if not line.lstrip().startswith('#'))
+    instructions = instructions.replace('\\\n', ' ')
+    stages = re.split(r'^FROM ', instructions, flags=re.M)
+    if (len(stages) != 3 or not stages[-1].startswith('python:3.11-slim-bookworm\n')
+            or re.search(r'IMAGE_VARIANT|FFMPEG_FLAVOR', instructions)):
+        raise ValueError('unrecognized pre-variant runtime stage')
+    packages = one(r'^RUN apt-get update && apt-get install -y --no-install-recommends '
+                   r'([a-z0-9+ .-]+)&& rm -rf /var/lib/apt/lists/\* +&& apt-get clean$', stages[-1])
+    if 'ffmpeg' not in packages.split() or instructions.lower().count('ffmpeg') != 1:
+        raise ValueError('ambiguous pre-variant ffmpeg installation')
 
 
 def contract(version, image, variant, flavor):
@@ -95,8 +131,12 @@ def from_source(repo, ref, explicit, suffix, variant, flavor):
 
     docker = source('futureagi/Dockerfile.oss')
     if not explicit:
+        workflow = source('.github/workflows/release-images.yml')
+        if 'IMAGE_VARIANT' not in docker:
+            pre_variant_debian(workflow, docker, suffix)
+            return 'standard', 'debian', '-', '-', '-'
         default = one(r'^ARG IMAGE_VARIANT=(standard|slim)$', docker)
-        variant = release_variant(source('.github/workflows/release-images.yml'), suffix, default)
+        variant = release_variant(workflow, suffix, default)
         if ('ARG FFMPEG_FLAVOR=""' not in docker.splitlines()
                 or 'FROM ffmpeg-${FFMPEG_FLAVOR:-${IMAGE_VARIANT}} AS ffmpeg' not in docker.splitlines()):
             raise ValueError('unrecognized ffmpeg stage selection')
@@ -113,14 +153,26 @@ def from_source(repo, ref, explicit, suffix, variant, flavor):
         return variant, flavor, '-', '-', '-'
     config = source('futureagi/docker/ffmpeg/configure-minimal.sh')
 
+    configure = config.partition('if ! ./configure ')[2].partition('>"$LOG"')[0]
+    if '--disable-everything' not in configure.split():
+        raise ValueError('unrecognized minimal configure invocation')
+
     def codecs(name):
+        kind = name.lower().removesuffix('s')
+        if f'--enable-{kind}="$(csv "${name}")"' not in configure:
+            raise ValueError('unrecognized configure option for ' + name)
         # The sole dynamic addition in the supported recipes is the native PCM
         # decoder family. Never expand shell syntax to discover these names.
         assignments = re.findall('^' + name + '=.*$', config, re.MULTILINE)
         extra = '''DECODERS="$DECODERS $(list decoder | grep '^pcm_' | grep -v '_at$' | tr '\\n' ' ')"'''
         if assignments[1:] != ([extra] if name == 'DECODERS' else []):
             raise ValueError('unrecognized ' + name + ' assignments')
-        return ','.join(one('^' + name + r'="([a-z0-9_\s]+)"$', config).split())
+        names = one('^' + name + r'="([a-z0-9_\s]+)"$', config).split()
+        if name == 'DECODERS':
+            # Bounded native PCM contract: WAV, A-law WAV, AIFF and AU samples
+            # in docker/ffmpeg/selftest.py. The full list is source-generated.
+            names.extend(('pcm_s16le', 'pcm_alaw', 'pcm_s16be', 'pcm_mulaw'))
+        return ','.join(names)
 
     return variant, flavor, one(r'^ARG FFMPEG_VERSION=([\d.]+)$', docker), codecs('ENCODERS'), codecs('DECODERS')
 
