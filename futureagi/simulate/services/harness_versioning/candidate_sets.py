@@ -160,6 +160,17 @@ def unavailable_on_our_side(entry: CandidateSet, bundle: Any) -> bool:
     return bool(bundle is not None and validation.repeats_unavailable(bundle))
 
 
+def still_proving(entry: CandidateSet) -> bool:
+    """Whether this set's own validation job is still live. Its bundle is ready once certifying passes, but the job
+    records each scenario's proof only as it finishes, so until then the set is not yet validated: saved earlier, the
+    new versions would carry no proofs and every case would read not proved."""
+    job_id = entry.get("job_id")
+    if not job_id:
+        return False
+    job = HostedHarnessJob.no_workspace_objects.filter(id=job_id).first()
+    return job is not None and validation.is_live(job)
+
+
 def validation_state(
     environment: HostedHarnessJob, entry: CandidateSet | None = None
 ) -> CandidateValidation | None:
@@ -180,7 +191,7 @@ def validation_state(
     if current_defaults(environment) != entry["base_defaults"]:
         state = "superseded"
     elif bundle is not None and bundle.state == HarnessAssembledBundle.State.READY:
-        state = "ready"
+        state = "validating" if still_proving(entry) else "ready"
     elif bundle is not None and bundle.state == HarnessAssembledBundle.State.FAILED:
         state = "failed"
     elif unavailable_on_our_side(entry, bundle):

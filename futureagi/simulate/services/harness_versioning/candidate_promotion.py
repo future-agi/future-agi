@@ -29,6 +29,7 @@ from simulate.services.harness_versioning.candidate_sets import (
     live_set,
     set_bundle,
     set_versions,
+    still_proving,
     store_set,
     supersede_candidates,
     unavailable_on_our_side,
@@ -196,6 +197,12 @@ def _promote_set(
     )
     if not certified and not unavailable_on_our_side(entry, bundle):
         raise _not_validated()
+    if still_proving(entry):
+        from simulate.services.harness_scenario_actions import VALIDATION_RUNNING
+
+        raise HostedHarnessError(
+            "validation_running", VALIDATION_RUNNING, status_code=409, retryable=True
+        )
     opened = {piece: open_draft(locked, piece, lock=True) for piece in entry["drafts"]}
     for piece, seen in entry["drafts"].items():
         draft = opened[piece]
