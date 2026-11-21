@@ -471,11 +471,9 @@ const AddProviderDialog = ({
       setModelInput("");
       const timeoutRaw = c.default_timeout ?? c.defaultTimeout;
       setTimeoutVal(timeoutRaw != null ? String(timeoutRaw) : "");
-      setMaxConcurrent(
-        c.max_concurrent != null
-          ? String(c.max_concurrent ?? c.maxConcurrent ?? "")
-          : "",
-      );
+      // Stored negative concurrency already inherits the gateway's base limit.
+      const storedLimit = c.max_concurrent;
+      setMaxConcurrent(String(storedLimit < 0 ? 0 : storedLimit ?? ""));
       const vertexSettings = vertexSettingsFromUrl(c.base_url ?? c.baseUrl);
       setGcpProject(vertexSettings.project);
       setGcpLocation(vertexSettings.location);

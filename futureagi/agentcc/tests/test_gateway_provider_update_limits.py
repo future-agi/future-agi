@@ -47,6 +47,9 @@ def test_negative_limit_does_not_create(auth_client, rows, push, field):
         URL, {"name": NAME, "config": {"api_key": "fixture", field: -1}}, format="json"
     )
     assert response.status_code == 400, response.data
+    assert response.data["details"] == {
+        "config": [f"{field}: Must be greater than or equal to zero."]
+    }
     assert not rows.exists()
     push.assert_not_called()
 
@@ -75,6 +78,10 @@ def test_negative_limit_does_not_update_or_push(
         format="json",
     )
     assert response.status_code == 400, response.data
+    field = next(key for key, value in limits.items() if int(value) < 0)
+    assert response.data["details"] == {
+        "config": [f"{field}: Must be greater than or equal to zero."]
+    }
     assert rows.values().get() == before
     push.assert_not_called()
 
@@ -99,4 +106,28 @@ def test_supported_limits_keep_dashboard_defaults_and_precedence(
     )
     assert response.status_code == 200, response.data
     assert rows.values_list(*LIMITS).get() == expected
+    push.assert_called_once()
+
+
+def test_legacy_concurrency_read_then_model_edit(auth_client, credential, rows, push):
+    rows.update(default_timeout_seconds=60, max_concurrent=-1, models_list=["original"])
+    config_url = "/agentcc/gateways/default/config/"
+    read = auth_client.get(config_url)
+    assert read.status_code == 200
+    config = read.data["result"]["providers"][NAME]
+    assert config["max_concurrent"] == -1
+    assert rows.get().max_concurrent == -1
+    push.assert_not_called()
+
+    response = auth_client.post(
+        URL,
+        {"name": NAME, "config": {"default_timeout": config["default_timeout"],
+         "max_concurrent": 0, "models": [*config["models"], "additional"]}},
+        format="json",
+    )
+    assert response.status_code == 200
+    assert response.data["result"]["gateway_synced"] is True
+    assert rows.values_list("pk", "max_concurrent", "default_timeout_seconds", "models_list").get() == (
+        credential.pk, 0, 60, ["original", "additional"]
+    )
     push.assert_called_once()

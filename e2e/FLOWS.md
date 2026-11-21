@@ -1835,7 +1835,7 @@
 
 **Goal:** A platform engineer adds and then edits a provider, and only the models they deliberately picked or typed are saved: hovering a listed model and clicking away neither selects it nor drops a selected one, and a typed model ID is kept, trimmed and once, whether they click away or press Save directly
 
-**Spec:** `flows/gateway/provider-model-selection.spec.ts:28`
+**Spec:** `flows/gateway/provider-model-selection.spec.ts:29`
 
 **Tags:** —
 
@@ -1848,12 +1848,14 @@
 5. edit the provider, hover a selected and an unselected listed model and click away
 6. type another model ID and press Save Changes directly
 7. reopen the provider and see exactly the picked and typed models
+8. in the isolated legacy case, edit only the model list of a provider with stored negative concurrency, then exercise positive, typed-negative and zero controls
 
 **Backend state verified:**
 
 - the Add save posts config.models exactly [listedA, typedOne] to update-provider (typed ID trimmed, hovered listedB absent) and gets 200
 - the gateway config API returns the added provider with models exactly [listedA, typedOne]
 - the Edit direct save posts and persists models exactly [listedA, typedOne, typedTwo]: update-provider body and gateway config API agree
+- legacy concurrency is read without mutation, saved as explicit zero on the wire, persisted in PG, and inherited in the pushed tenant config; a new negative returns a field error without changing positive nine
 
 ## knowledge-base
 

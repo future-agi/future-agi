@@ -1,5 +1,6 @@
 import type { Locator, Page, Request, Route } from "@playwright/test";
 import { test, expect } from "../../lib/fixtures";
+import { E2E } from "../../lib/env";
 import { flowAnnotation } from "../../lib/flow-meta";
 
 // Pinned facts:
@@ -42,11 +43,13 @@ test(
         "edit the provider, hover a selected and an unselected listed model and click away",
         "type another model ID and press Save Changes directly",
         "reopen the provider and see exactly the picked and typed models",
+        "in the isolated legacy case, edit only the model list of a provider with stored negative concurrency, then exercise positive, typed-negative and zero controls",
       ],
       backendChecks: [
         "the Add save posts config.models exactly [listedA, typedOne] to update-provider (typed ID trimmed, hovered listedB absent) and gets 200",
         "the gateway config API returns the added provider with models exactly [listedA, typedOne]",
         "the Edit direct save posts and persists models exactly [listedA, typedOne, typedTwo]: update-provider body and gateway config API agree",
+        "legacy concurrency is read without mutation, saved as explicit zero on the wire, persisted in PG, and inherited in the pushed tenant config; a new negative returns a field error without changing positive nine",
       ],
     }),
   },
@@ -213,3 +216,263 @@ test(
     );
   },
 );
+
+// Public synthetic fixture credential used only by the local managed stack.
+const LOCAL_FIXTURE_TOKEN = "local-dev-only-admin-token-replace-me";
+
+// A companion case of the existing catalog entry, not a second @flow ID.
+test("GW-E2E-024: model-only edit of stored negative concurrency preserves inheritance", async ({
+  page,
+  actor,
+  probe,
+}, testInfo) => {
+  // 6 × 60s UI stages, 6 × 30s storage/sync polls, 120s setup and cleanup.
+  test.setTimeout(660_000);
+  const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
+  const name = `e2e-gw24l-${suffix}`;
+  const first = `initial-${suffix}`,
+    second = `extra-${suffix}`;
+  const models = [first, second];
+  const scope = [actor.organizationId, name];
+  const where =
+    "organization_id = $1 AND provider_name = $2 AND deleted = false";
+  const table = "agentcc_provider_credential"; // AgentccProviderCredential.Meta.db_table
+  type Limits = {
+    max_concurrent?: number;
+    timeout?: number;
+    default_timeout?: number;
+    models?: string[];
+  };
+  const readPG = () =>
+    probe.pg<{ limit: number; timeout: number; models: string[] }>(
+      `SELECT max_concurrent AS limit, default_timeout_seconds AS timeout, models_list AS models FROM ${table} WHERE ${where}`,
+      scope,
+    );
+  const readConfig = async () =>
+    (
+      await actor.api.get<{ result: { providers: Record<string, Limits> } }>(
+        GATEWAY_CONFIG,
+      )
+    ).result.providers[name];
+  const reload = async () =>
+    expect(
+      (
+        await actor.api.post<{ result: { gateway_synced: boolean } }>(
+          "/agentcc/gateways/default/reload/",
+          {},
+        )
+      ).result.gateway_synced,
+    ).toBe(true);
+  // Same managed fixture as key-guardrail-policy.spec.ts. Use native fetch so a
+  // Playwright failure trace cannot capture the admin header or full org list.
+  const tenant = async () => {
+    const res = await fetch(new URL("/-/orgs/configs", E2E.gatewayUrl), {
+      headers: { Authorization: `Bearer ${LOCAL_FIXTURE_TOKEN}` },
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      data: Record<string, { providers?: Record<string, Limits> }>;
+    };
+    const provider = data.data[actor.organizationId]?.providers?.[name];
+    return provider
+      ? {
+          limit: provider.max_concurrent ?? null,
+          timeout: provider.timeout,
+          models: provider.models,
+        }
+      : null;
+  };
+  const receipt = (label: string, value: unknown) =>
+    testInfo.attach(label, {
+      contentType: "application/json",
+      body: JSON.stringify(value),
+    });
+  const checkState = async (
+    limit: number,
+    expectedModels: string[],
+    label: string,
+  ) => {
+    const expectedPG = [{ limit, timeout: 60, models: expectedModels }];
+    const expectedTenant = {
+      limit: limit === 0 ? null : limit,
+      timeout: 60,
+      models: expectedModels,
+    };
+    // PG + pushed state from actual reads, one bounded poll per transition.
+    const snapshot = async () => ({
+      pg: await readPG(),
+      tenant: await tenant(),
+    });
+    let last: Awaited<ReturnType<typeof snapshot>> | undefined;
+    await expect
+      .poll(async () => (last = await snapshot()), { timeout: 30_000 })
+      .toEqual({ pg: expectedPG, tenant: expectedTenant });
+    await receipt(label, last);
+  };
+  const dialog = page.getByRole("dialog");
+  const edit = async () => {
+    const card = page
+      .locator("div")
+      .filter({ hasText: name })
+      .filter({ has: page.getByTitle("Edit provider") })
+      .last();
+    await card.getByTitle("Edit provider").click({ timeout: UI_READY });
+    await expect(dialog.getByText("(2 available)")).toBeVisible({
+      timeout: UI_READY,
+    });
+  };
+  const field = dialog.getByLabel("Max Concurrent");
+  const picker = dialog.locator(".MuiAutocomplete-root input");
+  const save = async (
+    button: string,
+    limit: number,
+    expectedModels: string[],
+    status = 200,
+  ) => {
+    const pending = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname.endsWith(UPDATE_PROVIDER) &&
+        r.request().method() === "POST",
+      { timeout: UI_READY },
+    );
+    await dialog.getByRole("button", { name: button, exact: true }).click();
+    const r = await pending;
+    const wire = r.request().postDataJSON() as { name: string; config: Limits };
+    const safe = {
+      name: wire.name,
+      limit: wire.config.max_concurrent,
+      timeout: wire.config.default_timeout,
+      models: wire.config.models,
+      status: r.status(),
+    };
+    await receipt(`save-${limit}-${status}`, safe);
+    expect(safe).toEqual({
+      name,
+      limit,
+      timeout: 60,
+      models: expectedModels,
+      status,
+    });
+    if (status === 400)
+      expect((await r.json()).details).toEqual({
+        config: ["max_concurrent: Must be greater than or equal to zero."],
+      });
+    else {
+      expect((await r.json()).result.gateway_synced).toBe(true);
+      await expect(dialog).toBeHidden({ timeout: UI_READY });
+    }
+  };
+  await page.route(
+    (url) => url.pathname.endsWith(FETCH_MODELS),
+    (route) =>
+      route.fulfill({
+        json: { status: true, result: { models: [first, second] } },
+      }),
+  );
+  try {
+    await test.step(
+      "Add a scoped provider at seven",
+      async () => {
+        await page.goto("/dashboard/gateway/providers/config");
+        await page
+          .getByRole("button", { name: "Add Provider" })
+          .first()
+          .click();
+        await dialog.getByRole("combobox", { name: /^Provider/ }).click();
+        await page
+          .getByRole("option", { name: "Custom / Self-hosted" })
+          .click();
+        await dialog.getByLabel(/^Name/).fill(name);
+        await dialog.getByLabel(/^Base URL/).fill(`https://${name}.invalid`);
+        await dialog.getByLabel(/^API Key/).fill(`synthetic-${suffix}`);
+        await expect(dialog.getByText("(2 available)")).toBeVisible();
+        await picker.click();
+        await page.getByRole("option", { name: first, exact: true }).click();
+        await dialog.getByLabel("Timeout").fill("60");
+        await field.fill("7");
+        await save("Add Provider", 7, [first]);
+      },
+      { timeout: UI_READY },
+    );
+    await checkState(7, [first], "positive-create");
+    const seeded = await probe.pg<{ id: string; max_concurrent: number }>(
+      `UPDATE ${table} SET max_concurrent = -1 WHERE ${where} RETURNING id,max_concurrent`,
+      scope,
+    );
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0].max_concurrent).toBe(-1);
+    await receipt("legacy-id", {
+      org: actor.organizationId,
+      provider: name,
+      ...seeded[0],
+    });
+    await reload();
+    await checkState(-1, [first], "legacy-reloaded");
+    expect((await readConfig()).max_concurrent).toBe(-1);
+    expect((await readPG())[0].limit).toBe(-1);
+    await test.step(
+      "Save the actual model-only edit",
+      async () => {
+        await page.reload();
+        await edit();
+        await picker.fill(second);
+        await save("Save Changes", 0, models);
+      },
+      { timeout: UI_READY },
+    );
+    await checkState(0, models, "legacy-saved");
+    expect(await readConfig()).toMatchObject({
+      max_concurrent: 0,
+      default_timeout: 60,
+      models,
+    });
+    await test.step(
+      "Reopen zero; establish nine before rejection",
+      async () => {
+        await edit();
+        await expect(field).toHaveValue("0");
+        await field.fill("9");
+        await save("Save Changes", 9, models);
+      },
+      { timeout: UI_READY },
+    );
+    await checkState(9, models, "positive-before-rejection");
+    await test.step(
+      "Negative submission gives a field-specific error",
+      async () => {
+        await edit();
+        await field.fill("-5");
+        await save("Save Changes", -5, models, 400);
+      },
+      { timeout: UI_READY },
+    );
+    await checkState(9, models, "still-nine");
+    await test.step(
+      "Explicit zero persists",
+      async () => {
+        await field.fill("0");
+        await save("Save Changes", 0, models);
+      },
+      { timeout: UI_READY },
+    );
+    await checkState(0, models, "explicit-zero");
+  } finally {
+    if ((await readPG()).length) {
+      const result = await actor.api.request(
+        "post",
+        "/agentcc/gateways/default/remove-provider/",
+        { data: { name } },
+      );
+      if (result.status !== 200)
+        await probe.pg(
+          `UPDATE ${table} SET deleted = true, deleted_at = now() WHERE ${where}`,
+          scope,
+        );
+    }
+    await reload();
+    expect(await readPG()).toEqual([]);
+    expect(await tenant()).toBeNull();
+  }
+});
