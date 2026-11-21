@@ -8,11 +8,15 @@ import base64
 import hashlib
 import io
 import json
+import ssl
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from tempfile import TemporaryFile
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -337,6 +341,13 @@ def test_ambient_sdk_inputs_ignored(monkeypatch, tmp_path):
     assert client.meta.config.read_timeout == 10
 
 
+def put_request(adapter, client, permit, stream, length, digest):
+    # Substitute the in-process SDK transport only; use the real request,
+    # response, exact-version HEAD verification and deadline logic.
+    with patch.object(adapter, "_supervised_put", partial(s3._put_and_head, client)):
+        return adapter._put_request(permit, stream, length, digest)
+
+
 def test_put_request_uses_create_only_checksum_revision_and_exact_head(adapter):
     p = permit(adapter)
     with Stubber(adapter.serving) as stub:
@@ -371,8 +382,8 @@ def test_put_request_uses_create_only_checksum_revision_and_exact_head(adapter):
                 "VersionId": "new",
             },
         )
-        result = adapter._put_request(
-            adapter.serving, p, io.BytesIO(DATA), len(DATA), HASH
+        result = put_request(
+            adapter, adapter.serving, p, io.BytesIO(DATA), len(DATA), HASH
         )
         assert result == ObjectIdentity(
             adapter.binding_id, "serving", p.locator.key, "new"
@@ -399,7 +410,7 @@ def test_put_response_never_adopts_ambiguous_revision(adapter, change):
     client = Mock()
     client.put_object.return_value = response
     with pytest.raises(ValueError):
-        adapter._put_request(client, permit(adapter), io.BytesIO(DATA), len(DATA), HASH)
+        put_request(adapter, client, permit(adapter), io.BytesIO(DATA), len(DATA), HASH)
     client.head_object.assert_not_called()
 
 
@@ -414,7 +425,7 @@ def test_put_response_never_adopts_ambiguous_revision(adapter, change):
 def test_put_hash_length_preflight_never_dispatches(adapter, body, length, digest):
     client = Mock()
     with pytest.raises(ValueError):
-        adapter._put_request(client, permit(adapter), io.BytesIO(body), length, digest)
+        put_request(adapter, client, permit(adapter), io.BytesIO(body), length, digest)
     client.put_object.assert_not_called()
 
 
@@ -422,8 +433,13 @@ def test_put_hash_length_preflight_never_dispatches(adapter, body, length, diges
 def test_put_expired_or_unbounded_permit_never_dispatches(adapter, seconds):
     client = Mock()
     with pytest.raises(ValueError):
-        adapter._put_request(
-            client, permit(adapter, seconds=seconds), io.BytesIO(DATA), len(DATA), HASH
+        put_request(
+            adapter,
+            client,
+            permit(adapter, seconds=seconds),
+            io.BytesIO(DATA),
+            len(DATA),
+            HASH,
         )
     client.put_object.assert_not_called()
 
@@ -798,10 +814,10 @@ def test_no_stale_key_only_erase_wrapper(adapter):
     assert not adapter.erase_upload(uuid4()).empty
 
 
-def minio_posture():
+def minio_posture(endpoint="private-minio.test:9443"):
     http = sc.storage_http_client(connect_timeout=3, read_timeout=10, retries=0)
     admin = MinioAdmin(
-        endpoint="private-minio.test:9443",
+        endpoint=endpoint,
         credentials=StaticProvider("synthetic-meta-access", "synthetic-meta-secret"),
         region="us-east-1",
         http_client=http,
@@ -1026,6 +1042,9 @@ class PeerHandler(BaseHTTPRequestHandler):
     def do_PUT(self):
         data = self.rfile.read(int(self.headers["Content-Length"]))
         self.server.calls.append(("PUT", self.path, dict(self.headers), data))
+        if self.server.mode == "provider":
+            self.send_error(503, "synthetic-provider-details")
+            return
         if self.server.mode == "stall":
             self.server.release.wait(10)
         if self.server.mode == "redirect":
@@ -1044,15 +1063,30 @@ class PeerHandler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.server.calls.append(("HEAD", self.path, dict(self.headers), b""))
         self.send_response(200)
-        self.send_header("x-amz-version-id", "peer-version")
-        self.send_header("x-amz-server-side-encryption", "AES256")
-        self.send_header("Content-Length", str(len(DATA)))
+        self.send_header(
+            "x-amz-version-id",
+            "wrong" if self.server.mode == "revision" else "peer-version",
+        )
+        self.send_header(
+            "x-amz-server-side-encryption",
+            "wrong" if self.server.mode == "encryption" else "AES256",
+        )
+        self.send_header(
+            "Content-Length", str(len(DATA) + int(self.server.mode == "length"))
+        )
         self.end_headers()
 
 
 @pytest.fixture
-def peer():
+def peer(tmp_path):
+    from tracer.tests.test_attachment_safe_fetch import _certificate
+
+    cert, key = _certificate(tmp_path, "localhost")
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(cert, key)
     server = ThreadingHTTPServer(("127.0.0.1", 0), PeerHandler)
+    server.socket = tls.wrap_socket(server.socket, server_side=True)
+    server.ca = str(cert)
     server.calls, server.mode, server.release = [], "normal", threading.Event()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -1071,32 +1105,64 @@ def loopback_adapter(adapter, peer, monkeypatch):
         adapter.config,
         storage=replace(
             adapter.config.storage,
-            endpoint=f"127.0.0.1:{peer.server_port}",
-            secure=False,
+            endpoint=f"localhost:{peer.server_port}",
+            ca_certs=peer.ca,
         ),
     )
-    # Synthetic HTTP peer is transport testing only. Production constructor
-    # independently rejects HTTP and non-native S3 endpoints above.
+    # Synthetic TLS peer is transport testing only; constructor guards are tested above.
     return adapter
 
 
+@pytest.mark.parametrize(
+    "request_thread", [False, True], ids=["main", "request-thread"]
+)
 def test_actual_loopback_signed_create_only_put_and_version_head(
-    adapter, peer, monkeypatch
+    adapter, peer, monkeypatch, request_thread
 ):
     adapter = loopback_adapter(adapter, peer, monkeypatch)
-    result = adapter.promote(
-        io.BytesIO(DATA),
-        permit=permit(adapter),
-        expected_length=len(DATA),
-        expected_sha256=HASH,
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "synthetic-ambient-credential")
+    credentials = replace(
+        adapter.config.serving_credentials, session_token="synthetic-session-token"
     )
+    adapter.config = replace(adapter.config, serving_credentials=credentials)
+    with (
+        TemporaryFile() as snapshot,
+        patch.object(s3.subprocess, "Popen", wraps=s3.subprocess.Popen) as launch,
+    ):
+        snapshot.write(DATA)
+        put = partial(
+            adapter.promote,
+            snapshot,
+            permit=permit(adapter),
+            expected_length=len(DATA),
+            expected_sha256=HASH,
+        )
+        if request_thread:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(put).result(timeout=30)
+        else:
+            result = put()
+        launch.assert_called_once()
+        argv, options = launch.call_args.args[0], launch.call_args.kwargs
+        assert options["env"] == {}
+        assert options["pass_fds"] == (snapshot.fileno(),)
+        for value in (
+            credentials.access_key,
+            credentials.secret_key,
+            credentials.session_token,
+            "synthetic-ambient-credential",
+        ):
+            assert value not in repr((argv, options["env"]))
     assert result.version == "peer-version"
     assert [c[0] for c in peer.calls] == ["PUT", "HEAD"]
     put, head = peer.calls
     assert put[2]["If-None-Match"] == "*"
     assert put[2]["x-amz-checksum-sha256"] == CHECKSUM
     assert put[2]["x-amz-server-side-encryption"] == "AES256"
-    assert put[2]["Authorization"].startswith("AWS4-HMAC-SHA256 ")
+    assert put[2]["Authorization"].startswith(
+        f"AWS4-HMAC-SHA256 Credential={credentials.access_key}/"
+    )
+    assert put[2]["X-Amz-Security-Token"] == credentials.session_token
     assert put[3] == DATA
     assert "versionId=peer-version" in head[1]
 
@@ -1108,9 +1174,10 @@ def test_actual_transport_deadline_or_redirect_never_retry(
     adapter = loopback_adapter(adapter, peer, monkeypatch)
     peer.mode = mode
     started = time.monotonic()
-    with pytest.raises(AttachmentError):
+    with TemporaryFile() as snapshot, pytest.raises(AttachmentError):
+        snapshot.write(DATA)
         adapter.promote(
-            io.BytesIO(DATA),
+            snapshot,
             permit=permit(adapter, seconds=3 if mode == "stall" else 10),
             expected_length=len(DATA),
             expected_sha256=HASH,
@@ -1118,3 +1185,81 @@ def test_actual_transport_deadline_or_redirect_never_retry(
     assert time.monotonic() - started < 4.5
     assert len(peer.calls) == 1
     assert peer.calls[0][0] == "PUT"
+
+
+@pytest.mark.parametrize("failure", ["revision", "encryption", "length"])
+def test_supervised_put_refuses_wrong_head(adapter, peer, monkeypatch, failure):
+    adapter = loopback_adapter(adapter, peer, monkeypatch)
+    peer.mode = failure
+    with (
+        TemporaryFile() as snapshot,
+        pytest.raises(AttachmentError, match="^storage_unverified$"),
+    ):
+        snapshot.write(DATA)
+        adapter.put_quarantine(
+            permit(adapter, purpose="quarantine"), snapshot, len(DATA)
+        )
+    assert [op for op, *_ in peer.calls] == ["PUT", "HEAD"]
+
+
+@pytest.mark.parametrize(
+    "data,expected_length,bad_digest,provider_error,code,status",
+    [
+        (b"ab", 3, False, False, "snapshot_changed", 409),
+        (b"abcd", 3, False, False, "snapshot_changed", 409),
+        (b"abc", 3, True, False, "snapshot_changed", 409),
+        (b"abc", 3, False, True, "storage_unverified", 503),
+    ],
+)
+def test_supervised_promotion_classifies_failures(
+    adapter,
+    peer,
+    monkeypatch,
+    data,
+    expected_length,
+    bad_digest,
+    provider_error,
+    code,
+    status,
+):
+    adapter = loopback_adapter(adapter, peer, monkeypatch)
+    if provider_error:
+        peer.mode = "provider"
+    with TemporaryFile() as snapshot, pytest.raises(AttachmentError) as error:
+        snapshot.write(data)
+        adapter.promote(
+            snapshot,
+            permit=permit(adapter),
+            expected_length=expected_length,
+            expected_sha256="0" * 64
+            if bad_digest
+            else hashlib.sha256(data).hexdigest(),
+        )
+    assert [op for op, *_ in peer.calls] == (["PUT"] if provider_error else [])
+    assert (error.value.code, error.value.status) == (code, status)
+
+
+def test_minio_quarantine_put_from_request_thread(peer):
+    endpoint = f"localhost:{peer.server_port}"
+    row = record("minio", endpoint=f"https://{endpoint}")
+    config_value = config(row)
+    adapter = MinIOPrivateMediaStorage(
+        binding=row,
+        config=replace(
+            config_value, storage=replace(config_value.storage, ca_certs=peer.ca)
+        ),
+        posture_credentials=minio_posture(endpoint),
+    )
+    adapter.posture = posture_client()
+    allocation = permit(adapter, purpose="quarantine")
+    with TemporaryFile() as snapshot, ThreadPoolExecutor(max_workers=1) as pool:
+        snapshot.write(DATA)
+        result = pool.submit(
+            adapter.put_quarantine, allocation, snapshot, len(DATA)
+        ).result(timeout=30)
+    assert result == ObjectIdentity(
+        row.id, "quarantine", allocation.locator.key, "peer-version"
+    )
+    assert [op for op, *_ in peer.calls] == ["PUT", "HEAD"]
+    assert "Credential=synthetic-q-access/" in peer.calls[0][2]["Authorization"]
+    assert "versionId=peer-version" in peer.calls[1][1]

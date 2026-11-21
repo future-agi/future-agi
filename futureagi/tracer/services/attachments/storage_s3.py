@@ -12,12 +12,15 @@ import contextlib
 import hashlib
 import io
 import json
-import multiprocessing
 import os
 import re
+import stat
+import subprocess
+import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from types import MappingProxyType
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -28,6 +31,7 @@ from botocore.exceptions import ClientError
 
 from tfc.utils.storage_config import (
     AttachmentStorageConfig,
+    StorageConfig,
     StorageCredentials,
     _environment_proxy,
 )
@@ -107,11 +111,17 @@ def _optional(client, method, bucket, absent):
 
 
 def _client(config, credentials):
+    transport = config.storage
+    return _transport_client(
+        transport, credentials, _environment_proxy(transport.endpoint_url)
+    )
+
+
+def _transport_client(transport, credentials, proxy):
     if not isinstance(credentials, StorageCredentials) or not (
         credentials.access_key and credentials.secret_key
     ):
         raise ValueError
-    transport = config.storage
     session = botocore.session.Session()
     # These instance settings override SDK environment/profile file discovery.
     session.set_config_variable("config_file", os.devnull)
@@ -122,7 +132,6 @@ def _client(config, credentials):
     # can influence authentication, endpoints or service options.
     session._config = {"profiles": {"attachment-explicit": {}}}
     session.set_config_variable("region", transport.region)
-    proxy = _environment_proxy(transport.endpoint_url)
     client = session.create_client(
         "s3",
         region_name=transport.region,
@@ -187,22 +196,79 @@ def _hash_stream(stream, length):
     return base64.b64encode(digest.digest()).decode(), digest.hexdigest()
 
 
-def _put_child(pipe, adapter, permit, stream, length, digest):
+# A valid reply contains only an opaque revision and selected HEAD metadata.
+# Keep it small enough to fit in an empty pipe before the child exits.
+_MAX_ACK = 4096
+_MAX_REQUEST = 65536
+
+
+def _remaining(request):
+    seconds = min(
+        request["expires"] - time.monotonic(), request["deadline"] - time.time()
+    )
+    if seconds <= 0:
+        raise ValueError
+    return seconds
+
+
+def _put_and_head(client, request, stream):
+    length = _length(request["length"])
+    _remaining(request)
+    checksum, actual = _hash_stream(stream, length)
+    if request["digest"] is not None and actual != request["digest"]:
+        raise _SnapshotMismatch
+    _remaining(request)  # recheck after hashing, immediately before dispatch
+    target = {"Bucket": request["bucket"], "Key": request["key"]}
+    encryption = request["encryption"]
+    result = client.put_object(
+        **target,
+        Body=stream,
+        ContentLength=length,
+        ContentType="application/octet-stream",
+        IfNoneMatch="*",
+        ChecksumSHA256=checksum,
+        **encryption,
+    )
+    version = _revision(result.get("VersionId"))
+    if result.get("ChecksumSHA256") != checksum or any(
+        result.get(k) != v for k, v in encryption.items()
+    ):
+        raise ValueError
+    # Keep *both* provider calls killable. The parent verifies the exact-version
+    # HEAD against its own permit, length and encryption policy after a clean exit.
+    _remaining(request)
+    head = client.head_object(**target, VersionId=version)
+    return {
+        "version": version,
+        "head": {k: head.get(k) for k in ("VersionId", "ContentLength", *encryption)},
+    }
+
+
+def _put_worker():
     try:
-        # Construct a fresh client in the child, never use inherited live sockets.
-        client = _client(
-            adapter.config,
-            getattr(adapter.config, permit.locator.purpose + "_credentials"),
-        )
-        result = adapter._put_request(client, permit, stream, length, digest)
-        pipe.send((True, result.version))
+        payload = sys.stdin.buffer.read(_MAX_REQUEST + 1)
+        if len(payload) > _MAX_REQUEST:
+            raise ValueError
+        request = json.loads(payload)
+        with (
+            os.fdopen(request["fd"], "rb") as stream,
+            contextlib.closing(
+                _transport_client(
+                    StorageConfig(**request["transport"]),
+                    StorageCredentials(**request["credentials"]),
+                    request["proxy"],
+                )
+            ) as client,
+        ):
+            result = _put_and_head(client, request, stream)
+        ack = json.dumps(result, ensure_ascii=False).encode()
+        if len(ack) > _MAX_ACK:
+            raise ValueError
     except _SnapshotMismatch:
-        pipe.send((False, "snapshot_changed"))
-    except BaseException:  # noqa: BLE001 - worker process boundary, fails closed
-        # Never serialize raw provider exceptions, credentials or response bodies.
-        pipe.send((False, None))
-    finally:
-        pipe.close()
+        ack = b'{"error":"snapshot_changed"}'
+    except Exception:  # noqa: BLE001 - child boundary; no provider exception crosses the pipe
+        raise SystemExit(1) from None
+    sys.stdout.buffer.write(ack)
 
 
 class S3PrivateMediaStorage:
@@ -540,80 +606,93 @@ class S3PrivateMediaStorage:
             raise ValueError
         return min(remaining, 30)
 
-    def _put_request(self, client, permit, stream, length, digest):
-        # Runs in the supervised process, with a second check at dispatch.
-        self._permit(permit, permit.locator.purpose)
-        checksum, actual = _hash_stream(stream, length)
-        if digest is not None and actual != digest:
+    def _put_request(self, permit, stream, length, digest):
+        purpose = permit.locator.purpose
+        timeout = self._permit(permit, purpose)
+        request = {
+            "purpose": purpose,
+            "expires": time.monotonic() + timeout,
+            "deadline": permit.deadline_at.timestamp(),
+            "length": length,
+            "digest": digest,
+            "key": permit.locator.key,
+            "bucket": getattr(self, purpose + "_bucket"),
+            "encryption": self._encryption(purpose),
+        }
+        result = self._supervised_put(request, stream)
+        _remaining(request)
+        if result == {"error": "snapshot_changed"}:
             raise _SnapshotMismatch
-        self._permit(permit, permit.locator.purpose)
-        bucket = getattr(self, permit.locator.purpose + "_bucket")
-        result = client.put_object(
-            Bucket=bucket,
-            Key=permit.locator.key,
-            Body=stream,
-            ContentLength=length,
-            ContentType="application/octet-stream",
-            IfNoneMatch="*",
-            ChecksumSHA256=checksum,
-            **self._encryption(permit.locator.purpose),
-        )
-        version = _revision(result.get("VersionId"))
-        self._check_encryption(result, permit.locator.purpose)
-        if result.get("ChecksumSHA256") != checksum:
+        version, head = _revision(result["version"]), result["head"]
+        if (
+            head.get("VersionId") != version
+            or _length(head.get("ContentLength")) != length
+        ):
             raise ValueError
-        head = client.head_object(
-            Bucket=bucket, Key=permit.locator.key, VersionId=version
-        )
-        if head.get("VersionId") != version or head.get("ContentLength") != length:
-            raise ValueError
-        self._check_encryption(head, permit.locator.purpose)
-        return ObjectIdentity(
-            self.binding_id, permit.locator.purpose, permit.locator.key, version
-        )
+        self._check_encryption(head, purpose)
+        return ObjectIdentity(self.binding_id, purpose, permit.locator.key, version)
 
-    def _supervised_put(self, permit, stream, length, digest):
-        timeout = self._permit(permit, permit.locator.purpose)
-        context = multiprocessing.get_context("fork")
-        parent, child = context.Pipe(duplex=False)
-        process = context.Process(
-            target=_put_child, args=(child, self, permit, stream, length, digest)
+    def _supervised_put(self, request, stream):
+        # Hand off the open scratch file, not a pathname that could be replaced.
+        # Snapshot producers finish writing before transfer; flush buffered writes.
+        fd = stream.fileno()
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError
+        stream.flush()
+        transport = self.config.storage
+        payload = json.dumps(
+            {
+                **request,
+                "fd": fd,
+                "transport": asdict(transport),
+                "credentials": asdict(
+                    getattr(self.config, request["purpose"] + "_credentials")
+                ),
+                "proxy": _environment_proxy(transport.endpoint_url),
+            }
+        ).encode()
+        if len(payload) > _MAX_REQUEST:
+            raise ValueError
+        worker = (
+            "import sys;sys.path.insert(0,sys.argv[1]);"
+            "from tracer.services.attachments.storage_s3 import _put_worker;_put_worker()"
         )
-        expires = time.monotonic() + timeout
-        try:
-            process.start()
-            child.close()
-            if not parent.poll(max(0, expires - time.monotonic())):
-                raise ValueError
-            success, version = parent.recv()
-            process.join(max(0, expires - time.monotonic()))
-            if (
-                process.is_alive()
-                or process.exitcode != 0
-                or time.monotonic() >= expires
-            ):
-                raise ValueError
-            if not success:
-                if version == "snapshot_changed":
-                    raise _SnapshotMismatch
-                raise ValueError
-            return ObjectIdentity(
-                self.binding_id,
-                permit.locator.purpose,
-                permit.locator.key,
-                _revision(version),
-            )
-        finally:
-            if process.pid is not None and process.is_alive():
-                process.terminate()
-                process.join(0.2)
-                if process.is_alive():
-                    process.kill()
-                    process.join()
-            parent.close()
-            child.close()
-            if process.pid is not None:
-                process.close()
+        _remaining(request)
+        # communicate handles partial stdin writes and timeout. Give stdout a
+        # separate pipe: communicate must never accumulate unbounded child output.
+        read_fd, write_fd = os.pipe()
+        with (
+            os.fdopen(read_fd, "rb", buffering=0) as reader,
+            os.fdopen(write_fd, "wb") as writer,
+        ):
+            with subprocess.Popen(
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    worker,
+                    str(Path(__file__).resolve().parents[3]),
+                ],
+                stdin=subprocess.PIPE,
+                stdout=writer,
+                stderr=subprocess.DEVNULL,
+                env={},
+                pass_fds=(fd,),
+            ) as process:
+                writer.close()
+                try:
+                    process.communicate(payload, timeout=_remaining(request))
+                    if process.returncode != 0:
+                        raise ValueError
+                    os.set_blocking(read_fd, False)
+                    output = reader.read(_MAX_ACK + 1)
+                    if not output or len(output) > _MAX_ACK:
+                        raise ValueError
+                    return json.loads(output)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
 
     def _put(self, permit, stream, length, purpose, expected_sha256=None):
         try:
@@ -624,7 +703,7 @@ class S3PrivateMediaStorage:
             # Hashing/length inspection is inside the same killable deadline as
             # the single PUT and exact-version confirmation, not an unbounded
             # preflight read in the worker process.
-            return self._supervised_put(permit, stream, length, expected_sha256)
+            return self._put_request(permit, stream, length, expected_sha256)
         except _SnapshotMismatch:
             if purpose == "serving":
                 raise AttachmentError("snapshot_changed", 409) from None

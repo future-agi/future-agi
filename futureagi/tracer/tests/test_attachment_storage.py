@@ -3,8 +3,15 @@
 import base64
 import hashlib
 import io
+import json
+import signal
+import sys
+import time
 from copy import deepcopy
+from dataclasses import replace
 from datetime import timedelta
+from functools import partial
+from tempfile import TemporaryFile
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -129,9 +136,7 @@ def storage(client):
         service = storage_s3.S3PrivateMediaStorage(binding=binding, config=config)
     # Request-level component seam only: the real request/hash/privacy code runs.
     # Process supervision has separate tests; this double makes calls observable.
-    service._supervised_put = lambda permit, stream, length, digest: (
-        service._put_request(client, permit, stream, length, digest)
-    )
+    service._supervised_put = partial(storage_s3._put_and_head, client)
     return service
 
 
@@ -293,34 +298,53 @@ def test_unknown_backend_never_uses_legacy_credentials():
             )
 
 
-@pytest.mark.parametrize(
-    "data,expected_length,bad_digest,provider_error,code,status",
-    [
-        (b"ab", 3, False, False, "snapshot_changed", 409),
-        (b"abcd", 3, False, False, "snapshot_changed", 409),
-        (b"abc", 3, True, False, "snapshot_changed", 409),
-        (b"abc", 3, False, True, "storage_unverified", 503),
-    ],
-)
-def test_supervised_promotion_classifies_failures(
-    data, expected_length, bad_digest, provider_error, code, status
-):
-    client = private_client()
-    service = storage(client)
-    del service._supervised_put  # exercise the real supervised child and its pipe
-    if provider_error:
-        client.put_object.side_effect = RuntimeError("provider failure")
-    with patch.object(storage_s3, "_client", return_value=client):
-        with pytest.raises(AttachmentError) as error:
-            service.promote(
-                io.BytesIO(data),
-                permit=permit("serving"),
-                expected_length=expected_length,
-                expected_sha256="0" * 64
-                if bad_digest
-                else hashlib.sha256(data).hexdigest(),
-            )
-    assert (error.value.code, error.value.status) == (code, status)
+@pytest.mark.parametrize("outcome", ["hang", "ack-nonzero", "no-ack", "oversize"])
+def test_supervisor_requires_bounded_ack_and_clean_exit(monkeypatch, outcome):
+    service = storage(private_client())
+    del service._supervised_put
+    real_popen = storage_s3.subprocess.Popen
+    children = []
+    ack = json.dumps(
+        {
+            "version": "v1",
+            "head": {
+                "VersionId": "v1",
+                "ContentLength": 3,
+                "ServerSideEncryption": "AES256",
+            },
+        }
+    )
+    program = (
+        "import sys,time;sys.stdin.buffer.read();"
+        + {
+            "hang": f"print({ack!r},flush=True);time.sleep(60)",
+            "ack-nonzero": f"print({ack!r},flush=True);sys.exit(1)",
+            "no-ack": "sys.exit(0)",
+            "oversize": f"print({ack!r} + ' ' * 4096)",
+        }[outcome]
+    )
+
+    def launch(argv, **kwargs):
+        child = real_popen([sys.executable, "-I", "-c", program], **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(storage_s3.subprocess, "Popen", launch)
+    allocation = replace(permit(), deadline_at=timezone.now() + timedelta(seconds=2))
+    start = time.monotonic()
+    with (
+        TemporaryFile() as snapshot,
+        pytest.raises(AttachmentError, match="^storage_unverified$"),
+    ):
+        snapshot.write(b"abc")
+        service.put_quarantine(allocation, snapshot, 3)
+    assert len(children) == 1
+    assert children[0].returncode is not None
+    if outcome == "hang":
+        assert children[0].returncode == -signal.SIGKILL
+        assert time.monotonic() - start < 10
+    elif outcome == "ack-nonzero":
+        assert children[0].returncode == 1
 
 
 def test_promotion_requires_exact_snapshot():
@@ -345,8 +369,6 @@ def test_promotion_requires_exact_snapshot():
     ids=["foreign-binding", "wrong-purpose", "wrong-version"],
 )
 def test_component_store_keeps_identity_negative_controls(change, reason):
-    from dataclasses import replace
-
     from tracer.tests.attachment_fixtures import MemoryObjectStore
 
     store = MemoryObjectStore()
@@ -372,8 +394,6 @@ def test_component_store_retains_exact_bytes_digest_and_range():
 
 
 def test_component_store_never_erases_another_revision():
-    from dataclasses import replace
-
     from tracer.tests.attachment_fixtures import MemoryObjectStore
 
     store = MemoryObjectStore()
