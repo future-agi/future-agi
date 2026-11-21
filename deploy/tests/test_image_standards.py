@@ -1264,6 +1264,7 @@ class VerifyImageContents(unittest.TestCase):
             ("v1.34.0", [base, install]),
             ("v1.42.0", [base + " AS builder", base, install]),
             ("v1.42.1", [base + " AS builder", install, base]),
+            ("v1.42.2", [base, install, "  from python:3.11-slim-bookworm"]),
         ]:
             docker.write_text("\n".join(stages) + "\n")
             git("add", ".")
@@ -1459,6 +1460,7 @@ exit 0
             ("v1.42.0", "", 0),
             ("v1.42.0", "-slim", 2),
             ("v1.42.1", "", 2),
+            ("v1.42.2", "", 2),
         ]:
             with self.subTest(tag=tag, suffix=suffix):
                 proc = self.run_script(
