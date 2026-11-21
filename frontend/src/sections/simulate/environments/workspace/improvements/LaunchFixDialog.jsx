@@ -196,6 +196,8 @@ export default function LaunchFixDialog({
     setBudget(options.defaults.budget_credits);
     setMinutes(options.defaults.max_minutes);
     setModels(seenModelsOf(options));
+    // `?? 0` (No increase) only covers a backend older than dev, which leaves the
+    // margin defaults out; remove once every environment runs current dev.
     setLatencyMargin(options.defaults.reply_latency_margin_pct ?? 0);
     setCostMargin(options.defaults.cost_margin_pct ?? 0);
     setCostLimit("");

@@ -107,7 +107,8 @@ export const marginSteps = (value) => [
 ];
 
 // The models the run's spans show the agent called: the lock a fix starts from.
-// A run whose options don't list them reads as one that saw none.
+// Fallback for a backend older than dev, which doesn't send allowed_models yet
+// (the current schema requires it). Remove once every environment runs current dev.
 export const seenModelsOf = (options) =>
   options?.defaults?.allowed_models ?? [];
 export const seesModels = (options) => seenModelsOf(options).length > 0;
@@ -155,7 +156,8 @@ export function launchError({
 }) {
   if (!targets.length) return "Pick at least one failing case to fix.";
   if (targets.length < limits.scenarios_min) {
-    // Older launch options leave out how variations fill the gap: say only the minimum.
+    // Only for a backend older than dev: the current schema requires cases_min and
+    // variations_per_case. Remove this branch once every environment runs current dev.
     if (limits.variations_per_case == null || limits.cases_min == null) {
       return `Needs at least ${limits.scenarios_min} failing cases.`;
     }
