@@ -308,7 +308,21 @@ def test_finished_and_dead_segments_leave_the_queue_and_stay(rec, monkeypatch):
         expires_at=timezone.now() - timedelta(seconds=1)
     )
     assert retention.expire_occurrences(scope_id=rec.scope.id) == 1
-    assert derivatives.pending(limit=20) == [(open_.id, open_.scope_id)]
+    # Published rows never need production again, but each has a deadline to
+    # clean up unowned versions. Pin only the clock used to read the queue;
+    # generation, erasure and their database fences still use real time.
+    deadlines = (done.unowned_cleanup_due_at, lost.unowned_cleanup_due_at)
+    assert all(deadline is not None for deadline in deadlines)
+    before_cleanup = min(deadlines) - timedelta(microseconds=1)
+    cleanup_due = max(deadlines)
+
+    def assert_pending_at(instant, *expected):
+        with monkeypatch.context() as clock:
+            clock.setattr(timezone, "now", lambda: instant)
+            pending = derivatives.pending(limit=20)
+        assert sorted(pending) == sorted((row.id, row.scope_id) for row in expected)
+
+    assert_pending_at(before_cleanup, open_)
     assert derivatives.purge(limit=100) == 1
     dead.refresh_from_db()
     assert dead.state == "cleanup" and dead.published_at is None
@@ -331,16 +345,18 @@ def test_finished_and_dead_segments_leave_the_queue_and_stay(rec, monkeypatch):
         404,
         "not_found",
     )
-    # A disabled scope never starts work, but does not destroy its queued rows.
+    # Disabling the scope hides production, not due cleanup of published rows.
     AttachmentScope.objects.filter(pk=rec.scope.pk).update(
         enabled=False, policy_version=F("policy_version") + 1
     )
-    assert derivatives.pending(limit=20) == []
+    assert_pending_at(before_cleanup)
+    assert_pending_at(cleanup_due, done, lost)
     assert derivatives.purge(limit=100) == 0
     AttachmentScope.objects.filter(pk=rec.scope.pk).update(
         enabled=True, policy_version=F("policy_version") + 1
     )
-    assert derivatives.pending(limit=20) == [(open_.id, open_.scope_id)]
+    assert_pending_at(before_cleanup, open_)
+    assert_pending_at(cleanup_due, done, lost, open_)
 
 
 def test_the_recording_sweep_purges_the_derivative_queue(rec, settings):
