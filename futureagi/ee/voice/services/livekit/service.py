@@ -964,11 +964,30 @@ class LivekitService(VoiceServiceBlueprint):
                 predicate = {"id": call_execution_id, "provider_call_data": data}
                 if cleanup_tracks is None:
                     observed = {key: getattr(current, key) for key in playback_fields}
-                    predicate.update(observed)
+                    predicate.update(observed, call_metadata=current.call_metadata)
+                    metadata = current.call_metadata
+                    artifacts = (
+                        metadata.get("alk_recording_artifacts")
+                        if isinstance(metadata, dict)
+                        else None
+                    )
                     # Merge the source-bound map independently of playback.
                     # A peer's column wins even if it never touched provider JSON.
                     for name in ("combined", "stereo"):
                         field = fields[name]
+                        # An ALK upload can predate this attempt. Its per-kind
+                        # receipt owns only the matching URL on this call.
+                        artifact = (
+                            artifacts.get(name) if isinstance(artifacts, dict) else None
+                        )
+                        if (
+                            isinstance(artifact, dict)
+                            and artifact.get("sha256")
+                            and artifact.get("object_key")
+                            and observed[field]
+                            and artifact.get("recording_url") == observed[field]
+                        ):
+                            continue
                         value = merged.get(name)
                         if observed[field] == initial_playback[field] != value:
                             changes[field] = value

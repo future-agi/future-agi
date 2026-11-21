@@ -1136,7 +1136,9 @@ class TestFetchAndPersistCallResultActivity:
         await sync_to_async(create_call.refresh_from_db)()
         assert create_call.status == CreateCallExecution.CallStatus.COMPLETED
 
-    @pytest.mark.parametrize("phase", ["cleanup_wait", "split_wait", "split_cas"])
+    @pytest.mark.parametrize(
+        "phase", ["cleanup_wait", "split_wait", "split_cas", "retry", "retry_detached"]
+    )
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
     async def test_alk_upload_keeps_playback_through_recording_activity(
@@ -1163,6 +1165,8 @@ class TestFetchAndPersistCallResultActivity:
             k: f"https://media/{k}"
             for k in ("stereo", "combined", "assistant", "customer")
         }
+        partial_first = phase in ("retry", "retry_detached")
+        retrying = False
         cleanup_only = phase == "cleanup_wait"
         lk = {"egress_id": "EG_1", "recording_files": ["raw/one.ogg"]}
         lk.update(
@@ -1200,7 +1204,7 @@ class TestFetchAndPersistCallResultActivity:
         )
 
         async def poll(*_args):
-            if phase == "split_wait":
+            if phase == "split_wait" or (partial_first and not retrying):
                 await upload_b()
             return info
 
@@ -1209,6 +1213,8 @@ class TestFetchAndPersistCallResultActivity:
             return MagicMock(items=[info])
 
         def split(_config, _key, destination, _args):
+            if partial_first and not retrying and "_customer_" in destination:
+                raise OSError("customer track unavailable")
             for k in ("stereo", "assistant", "customer"):
                 if f"_{k}_" in destination:
                     return tracks[k]
@@ -1250,7 +1256,7 @@ class TestFetchAndPersistCallResultActivity:
             patch(
                 "ee.voice.services.livekit.recording.stream_egress_to_s3",
                 side_effect=split,
-            ),
+            ) as stream,
             patch(
                 "ee.voice.services.livekit.recording.delete_egress_recording",
                 side_effect=lambda _config, key: objects.pop(key),
@@ -1266,21 +1272,46 @@ class TestFetchAndPersistCallResultActivity:
             voice.fetch_and_store_call_data = AsyncMock(return_value=(2, True, True))
             voice.extract_and_persist_recordings = service.extract_and_persist_recordings
             voice.extract_costs = AsyncMock(return_value=CostBreakdown(total=0.25))
-            result = await activity_module.fetch_and_persist_call_result(
-                FetchAndPersistCallResultInput(
-                    call_id=call_id,
-                    provider_call_id=room,
-                    status="COMPLETED",
-                    provider="livekit",
-                    call_type=CallType.INBOUND,
-                )
+            request = FetchAndPersistCallResultInput(
+                call_id=call_id,
+                provider_call_id=room,
+                status="COMPLETED",
+                provider="livekit",
+                call_type=CallType.INBOUND,
             )
+            result = await activity_module.fetch_and_persist_call_result(request)
+            if partial_first:
+                assert result.success
+                assert result.recording_error["tracks"] == ["customer"]
+                delete.assert_not_called()
+                await call_execution.arefresh_from_db()
+                partial = call_execution.provider_call_data["livekit"]
+                assert partial["recording_source"] == source
+                assert partial["recording"] == {
+                    k: v for k, v in tracks.items() if k != "customer"
+                }
+                assert call_execution.recording_url == url_b
+                receipt = call_execution.call_metadata["alk_recording_artifacts"][
+                    "combined"
+                ]
+                if phase == "retry_detached":
+                    # The receipt for B does not own another column value.
+                    await CallExecution.objects.filter(pk=call_id).aupdate(
+                        recording_url="https://media/other"
+                    )
+                stream.reset_mock()
+                retrying = True
+                result = await activity_module.fetch_and_persist_call_result(request)
+                stream.assert_called_once()
+                assert "_customer_" in stream.call_args.args[2]
 
         assert result.success and result.recording_error is None
         delete.assert_called_once_with(service.config, "raw/one.ogg")
         assert writes[-1] == ({"provider_call_data"}, 1)
         if cleanup_only:
             assert len(writes) == 1
+        elif partial_first:
+            assert [count for _, count in writes] == [1, 1, 1]
         else:
             counts = [count for _, count in writes]
             assert counts == ([0, 1, 1] if phase == "split_cas" else [1, 1])
@@ -1290,16 +1321,19 @@ class TestFetchAndPersistCallResultActivity:
         assert stored["egress_id"] == "EG_1" and stored["recording_source"] == source
         assert stored["recording"] == tracks and stored["recording_cleanup_success"]
         assert stored["recording_files"] == ["raw/one.ogg"]
-        assert call_execution.recording_url == url_b
+        playback = tracks["combined"] if phase == "retry_detached" else url_b
+        assert call_execution.recording_url == playback
         assert call_execution.recording_available
         assert call_execution.stereo_recording_url == tracks["stereo"]
         artifact = call_execution.call_metadata["alk_recording_artifacts"]["combined"]
+        if partial_first:
+            assert artifact == receipt
         assert artifact["recording_url"] == url_b
         assert artifact["sha256"] == hashlib.sha256(audio).hexdigest()
         assert objects == {artifact["object_key"]: audio}
         serialize = sync_to_async(CallExecutionDetailSerializer().get_recordings)
         recordings = await serialize(call_execution)
-        assert recordings["combined"] == url_b
+        assert recordings["combined"] == playback
         assert recordings["stereo"] == tracks["stereo"]
 
     @pytest.mark.parametrize("peer_succeeds", [True, False])
