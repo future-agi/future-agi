@@ -25,16 +25,26 @@ class FileProcessor:
         """
         Rename duplicate column names by appending _1, _2, etc.
         E.g., ["id", "name", "id"] -> ["id", "name", "id_1"]
+
+        Names are compared with surrounding whitespace removed, because some
+        callers strip headers afterwards, and a generated name never takes a
+        name used elsewhere in the header:
+        ["a", "a", "a_1"] -> ["a", "a_2", "a_1"].
         """
-        seen: dict[str, int] = {}
+        reserved = {col.strip() for col in columns}
+        used: set[str] = set()
+        next_suffix: dict[str, int] = {}
         result = []
         for col in columns:
-            if col in seen:
-                seen[col] += 1
-                result.append(f"{col}_{seen[col]}")
-            else:
-                seen[col] = 0
-                result.append(col)
+            name = col
+            if name.strip() in used:
+                suffix = next_suffix.get(col.strip(), 0)
+                while name.strip() in used or name.strip() in reserved:
+                    suffix += 1
+                    name = f"{col}_{suffix}"
+                next_suffix[col.strip()] = suffix
+            used.add(name.strip())
+            result.append(name)
         return result
 
     @staticmethod
