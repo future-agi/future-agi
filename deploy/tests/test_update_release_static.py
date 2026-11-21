@@ -3934,12 +3934,42 @@ class ClosingDeploymentFileCoverageTests(unittest.TestCase):
     def entries(self) -> List[str]:
         return read_deployment_file_list(ROOT)
 
+    def ci_paths(self, event: str) -> List[str]:
+        text = (ROOT / ".github/workflows/update-ci.yml").read_text(encoding="utf-8")
+        block = re.search(rf"^  {event}:\n(?:    .*\n)*?    paths:\n((?:      .*\n)+)", text, re.M)
+        self.assertIsNotNone(block, event)
+        return [m.group(1) for m in re.finditer(r'^      - "([^"]+)"$', block.group(1), re.M)]
+
+    @staticmethod
+    def covered(path: str, patterns: List[str], directory: bool) -> bool:
+        probe = f"{path}/any-file" if directory else path
+        for pattern in patterns:
+            if pattern.endswith("/**") and probe.startswith(pattern[:-2]):
+                return True
+            if pattern == probe:
+                return True
+        return False
+
+    def test_update_ci_runs_for_every_deployment_file(self):
+        for event in ("pull_request", "push"):
+            paths = self.ci_paths(event)
+            for entry in self.entries():
+                with self.subTest(event=event, entry=entry):
+                    self.assertTrue(self.covered(entry, paths, (ROOT / entry).is_dir()), paths)
+
+    def test_update_ci_runs_for_the_workflows_whose_contracts_these_tests_pin(self):
+        for event in ("pull_request", "push"):
+            paths = self.ci_paths(event)
+            for workflow in ("release-images.yml", "release-update-manifest.yml", "build-image-multiarch.yml",
+                             "helm-release.yml", "update-ci.yml"):
+                with self.subTest(event=event, workflow=workflow):
+                    self.assertIn(f".github/workflows/{workflow}", paths)
+
     def test_update_ci_receives_every_candidate_and_control_diff(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text()
         triggers = text.split("permissions:", 1)[0]
         for event in ("pull_request", "push", "merge_group"):
             self.assertIn(f"  {event}:\n", triggers)
-        self.assertNotRegex(triggers, r"(?m)^\s*(?:paths|paths-ignore):")
         self.assertIn("ordinary: ${{ steps.filter.outputs.ordinary_update }}", text)
         # Changes to the manifest itself or anything it covers must select the
         # whole ordinary Update suite even after activating the scope policy.
