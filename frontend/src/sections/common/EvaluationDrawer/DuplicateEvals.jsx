@@ -19,6 +19,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import Iconify from "src/components/iconify";
 import HelperText from "src/sections/develop-detail/Common/HelperText";
 import axios, { endpoints } from "src/utils/axios";
+import { getSafeActionErrorMessage } from "src/utils/errorUtils";
 import { z } from "zod";
 
 const DuplicateEvals = ({ open, onClose, evalId, onSubmit }) => {
@@ -40,6 +41,15 @@ const DuplicateEvals = ({ open, onClose, evalId, onSubmit }) => {
       });
       handleClose();
       onSubmit(data?.data?.result);
+    },
+    // Report every failure here, including ones with no backend message
+    // (network errors), and keep the app-level toast from doubling it.
+    meta: { errorHandled: true },
+    onError: (error) => {
+      enqueueSnackbar(
+        getSafeActionErrorMessage(error, "Failed to duplicate evaluation"),
+        { variant: "error" },
+      );
     },
   });
 

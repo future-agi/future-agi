@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, userEvent } from "src/utils/test-utils";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
+import {
+  MutationCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+import { enqueueSnackbar } from "notistack";
+import { handleError } from "src/utils/queryErrorHandler";
 import DuplicateEvals from "./DuplicateEvals";
 
 const mockPost = vi.fn();
@@ -30,7 +36,10 @@ const DEFAULT_PROPS = {
 };
 
 function renderComponent(props = {}) {
+  // Same app-level MutationCache handler as src/app.jsx, so the tests see
+  // exactly the error toasts a user would.
   const queryClient = new QueryClient({
+    mutationCache: new MutationCache({ onError: handleError }),
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
@@ -130,5 +139,75 @@ describe("DuplicateEvals", () => {
       expect.any(String),
       expect.objectContaining({ name: "my_special_eval_" }),
     );
+  });
+
+  // axios is mocked wholesale, so the rejected values below are the shapes
+  // the real axios response interceptor rejects with.
+  it("shows an error toast and keeps the dialog open when the request fails without a response", async () => {
+    mockPost.mockRejectedValueOnce({
+      message: "Network Error",
+      statusCode: undefined,
+      transportCode: "ERR_NETWORK",
+    });
+
+    const onClose = vi.fn();
+    const onSubmit = vi.fn();
+    const user = userEvent.setup();
+    renderComponent({ onClose, onSubmit });
+
+    const input = screen.getByPlaceholderText("Enter evaluation name");
+    await user.type(input, "my_copy");
+    await user.click(screen.getByRole("button", { name: /duplicate/i }));
+
+    await waitFor(() => {
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Failed to duplicate evaluation",
+        expect.objectContaining({ variant: "error" }),
+      );
+    });
+    // The dialog stays open with the typed name so the user can retry.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /duplicate/i })).toBeEnabled();
+    });
+    expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByText("Duplicate evaluation")).toBeInTheDocument();
+    expect(input).toHaveValue("my_copy");
+  });
+
+  it("shows the backend message in a single error toast when the server rejects the duplicate", async () => {
+    // Envelope from GeneralMethods.bad_request (tfc/utils/api_errors.py).
+    mockPost.mockRejectedValueOnce({
+      status: false,
+      code: "invalid",
+      message: "Evaluation template with this name already exists.",
+      result: "Evaluation template with this name already exists.",
+      statusCode: 400,
+      transportCode: "ERR_BAD_REQUEST",
+    });
+
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderComponent({ onClose });
+
+    await user.type(
+      screen.getByPlaceholderText("Enter evaluation name"),
+      "my_copy",
+    );
+    await user.click(screen.getByRole("button", { name: /duplicate/i }));
+
+    await waitFor(() => {
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Evaluation template with this name already exists.",
+        expect.objectContaining({ variant: "error" }),
+      );
+    });
+    // Every onError handler has run once the mutation has settled.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /duplicate/i })).toBeEnabled();
+    });
+    expect(enqueueSnackbar).toHaveBeenCalledTimes(1);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
