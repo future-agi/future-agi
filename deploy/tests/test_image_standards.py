@@ -1462,9 +1462,14 @@ exit 0
                     )
 
     def test_historical_media_does_not_require_later_runtime_features(self):
-        for tag, missing in [("v1.42.0", {"FAKE_VERSION": ""}), ("v1.56.1", {"MISSING_PII": "yes"})]:
+        for tag, missing in [
+            ("v1.42.0", {"FAKE_VERSION": ""}),
+            ("v1.56.1", {"MISSING_PII": "yes"}),
+        ]:
             with self.subTest(tag=tag):
-                proc = self.run_script(f"futureagi/future-agi:{tag}", version=tag, **missing)
+                proc = self.run_script(
+                    f"futureagi/future-agi:{tag}", version=tag, **missing
+                )
                 self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
                 self.assertIn("OSS verification scope: MEDIA_ONLY", proc.stdout)
                 self.assertNotIn("SERVICE_VERSION", proc.docker_log)
@@ -1571,7 +1576,9 @@ exit 0
             ({"FAKE_LABEL": "v2.0.0\n\n"}, 1),
         ):
             with self.subTest(env=env):
-                proc = self.run_script("futureagi/future-agi:v2.0.0", version="v2.0.0", **env)
+                proc = self.run_script(
+                    "futureagi/future-agi:v2.0.0", version="v2.0.0", **env
+                )
                 self.assertEqual(proc.returncode, expected, proc.stdout)
                 outcome = "FAIL" if expected else "PASS"
                 self.assertIn(
@@ -1582,7 +1589,9 @@ exit 0
                 )
 
     def test_mismatched_service_version_fails(self):
-        proc = self.run_script("futureagi/future-agi:v2.0.0", version="v2.0.0", FAKE_VERSION="dev")
+        proc = self.run_script(
+            "futureagi/future-agi:v2.0.0", version="v2.0.0", FAKE_VERSION="dev"
+        )
         self.assertEqual(proc.returncode, 1)
         self.assertIn("FAIL: Runtime version", proc.stdout)
 

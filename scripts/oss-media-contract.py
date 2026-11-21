@@ -126,7 +126,9 @@ def contract(version, image, variant, flavor):
     if explicit:
         if variant not in ("standard", "slim") or flavor not in ("minimal", "debian"):
             raise ValueError("supply both OSS_VARIANT and EXPECTED_FFMPEG_FLAVOR")
-        ref = os.getenv("BUILD_SOURCE_REVISION", os.getenv("OSS_BUILD_REVISION", "HEAD"))
+        ref = os.getenv(
+            "BUILD_SOURCE_REVISION", os.getenv("OSS_BUILD_REVISION", "HEAD")
+        )
         if os.getenv("OSS_BUILD_REVISION", ref) != ref:
             raise ValueError("conflicting build revisions")
         if ref != "HEAD" and not re.fullmatch("[0-9a-f]{40}", ref):
