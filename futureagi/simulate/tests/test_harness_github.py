@@ -1,19 +1,34 @@
-"""The shared, unauthenticated GitHub client: budget, backoff and name checks."""
+"""The GitHub reader: the token each read carries, GitHub's own limits, the errors a
+person sees, the workspace limit and name checks."""
 
+import json
 import time
+import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 from django.core.cache import cache
+from structlog.testing import capture_logs
 
 from simulate.services import harness_github as github
 from simulate.services.harness_github import (
+    NO_CREDENTIAL,
+    ReadCredential,
     github_get,
+    read_credential,
+    read_refused,
+    remaining,
     safe_ref,
     safe_repository,
     short_ref,
+    take_workspace_read,
+    waiting_until,
 )
+from simulate.services.hosted_harness import HostedHarnessError
+
+CRED = ReadCredential("tok-1", "inst-1", workspace_owned=True)
+OURS = ReadCredential("ours", "inst-ours")
 
 
 @pytest.fixture(autouse=True)
@@ -37,22 +52,32 @@ def _get(*responses):
 
 
 class TestGet:
-    def test_200_is_ok_with_its_etag(self):
+    def test_200_is_ok_with_its_etag_and_sends_the_token(self):
         with _get(_response(headers={"ETag": '"e1"'})) as get:
             result = github_get(
-                "/repos/acme/agent", accept="application/vnd.github.sha", purpose="t"
+                "/repos/acme/agent",
+                accept="application/vnd.github.sha",
+                credential=CRED,
+                purpose="t",
             )
         assert (result.status, result.body, result.etag) == ("ok", "a" * 40, '"e1"')
         headers = get.call_args.kwargs["headers"]
-        assert "Authorization" not in headers
+        assert headers["Authorization"] == "Bearer tok-1"
         assert headers["X-GitHub-Api-Version"] == "2022-11-28"
         assert get.call_args.kwargs["timeout"] == (5, 15)
+
+    def test_without_a_token_nothing_is_sent(self):
+        with _get() as get:
+            result = github_get("/x", accept="a", credential=NO_CREDENTIAL, purpose="t")
+        assert result.status == "not_connected"
+        get.assert_not_called()
 
     def test_etag_is_sent_and_304_is_not_modified(self):
         with _get(_response(304)) as get:
             result = github_get(
                 "/repos/acme/agent",
                 accept="application/vnd.github.sha",
+                credential=CRED,
                 etag='"e1"',
                 purpose="t",
             )
@@ -62,214 +87,292 @@ class TestGet:
     @pytest.mark.parametrize("code", [404, 422])
     def test_missing_or_private_is_not_found(self, code):
         with _get(_response(code)):
-            assert github_get("/x", accept="a", purpose="t").status == "not_found"
+            result = github_get("/x", accept="a", credential=CRED, purpose="t")
+        assert result.status == "not_found"
 
-    def test_rate_limit_sets_the_reset_and_stops_later_calls(self):
+    def test_rate_limit_waits_only_that_installation(self):
         reset = int(time.time()) + 900
         limited = _response(
             403,
             headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": str(reset)},
         )
-        with _get(limited) as get:
-            assert github_get("/x", accept="a", purpose="t").status == "rate_limited"
-            assert cache.get(github.RATE_RESET_KEY) == reset
-            # While the reset is ahead, nothing is sent.
-            assert github_get("/x", accept="a", purpose="t").status == "rate_limited"
-        assert get.call_count == 1
+        with _get(limited, _response()) as get:
+            first = github_get("/x", accept="a", credential=CRED, purpose="t")
+            again = github_get("/x", accept="a", credential=CRED, purpose="t")
+            other = github_get("/x", accept="a", credential=OURS, purpose="t")
+        assert (first.status, first.reset_at) == ("rate_limited", reset)
+        assert (again.status, again.reset_at) == ("rate_limited", reset)
+        assert other.status == "ok"
+        assert get.call_count == 2
+        assert waiting_until(CRED) == reset
+        assert waiting_until(OURS) is None
 
     def test_retry_after_also_backs_off(self):
         with _get(_response(429, headers={"Retry-After": "120"})):
-            assert github_get("/x", accept="a", purpose="t").status == "rate_limited"
-        assert cache.get(github.RATE_RESET_KEY) > time.time() + 100
+            result = github_get("/x", accept="a", credential=CRED, purpose="t")
+        assert result.status == "rate_limited"
+        assert result.reset_at > time.time() + 100
 
     def test_a_forbidden_without_rate_headers_is_an_error(self):
         with _get(_response(403)):
-            assert github_get("/x", accept="a", purpose="t").status == "error"
-        assert cache.get(github.RATE_RESET_KEY) is None
+            result = github_get("/x", accept="a", credential=CRED, purpose="t")
+        assert result.status == "error"
+        assert waiting_until(CRED) is None
 
     def test_a_request_exception_is_an_error(self):
         with patch.object(
             github.requests, "get", side_effect=requests.ConnectionError("down")
         ):
-            assert github_get("/x", accept="a", purpose="t").status == "error"
+            result = github_get("/x", accept="a", credential=CRED, purpose="t")
+        assert result.status == "error"
 
-    def test_remaining_is_recorded(self):
-        with _get(_response(headers={"X-RateLimit-Remaining": "37"})):
-            github_get("/x", accept="a", purpose="t")
-        assert github.remaining() == 37
+    def test_a_rejected_workspace_token_is_revoked(self):
+        with _get(_response(401)):
+            result = github_get("/x", accept="a", credential=CRED, purpose="t")
+        assert result.status == "revoked"
 
-    @pytest.mark.parametrize(
-        "reset, timeout",
-        [(lambda: str(int(time.time()) + 300), 300), (lambda: None, 3600)],
-    )
-    def test_remaining_is_kept_until_the_window_resets(self, reset, timeout):
-        headers = {"X-RateLimit-Remaining": "3"}
-        if reset() is not None:
-            headers["X-RateLimit-Reset"] = reset()
+    def test_a_rejected_fallback_token_is_forgotten_and_an_error(self):
         with (
-            _get(_response(headers=headers)),
-            patch.object(github.cache, "set", wraps=github.cache.set) as stored,
+            _get(_response(401)),
+            patch(
+                "integrations.services.github_app.forget_fallback_read_token"
+            ) as forget,
         ):
-            github_get("/x", accept="a", purpose="t")
-        [kept] = [
-            one
-            for one in stored.call_args_list
-            if one.args[0] == "harness:gh-remaining"
+            result = github_get("/x", accept="a", credential=OURS, purpose="t")
+        assert result.status == "error"
+        forget.assert_called_once()
+
+    def test_remaining_is_recorded_per_installation(self):
+        with _get(_response(headers={"X-RateLimit-Remaining": "37"})):
+            github_get("/x", accept="a", credential=CRED, purpose="t")
+        assert remaining(CRED) == 37
+        assert remaining(OURS) is None
+
+    def test_low_headroom_is_warned_once(self):
+        low = {"X-RateLimit-Remaining": "900", "X-RateLimit-Limit": "5000"}
+        with (
+            _get(_response(headers=low), _response(headers=low)),
+            capture_logs() as logs,
+        ):
+            github_get("/x", accept="a", credential=CRED, purpose="t")
+            github_get("/x", accept="a", credential=CRED, purpose="t")
+        warned = [one for one in logs if one["event"] == "harness_github_headroom_low"]
+        assert len(warned) == 1
+        assert (warned[0]["remaining"], warned[0]["limit"]) == (900, 5000)
+
+    def test_enough_headroom_is_not_warned(self):
+        fine = {"X-RateLimit-Remaining": "4000", "X-RateLimit-Limit": "5000"}
+        with _get(_response(headers=fine)), capture_logs() as logs:
+            github_get("/x", accept="a", credential=CRED, purpose="t")
+        assert not [
+            one for one in logs if one["event"] == "harness_github_headroom_low"
         ]
-        assert timeout - 2 <= kept.args[2] <= timeout
 
 
-class TestBudget:
-    @pytest.fixture(autouse=True)
-    def one_hour(self):
-        with patch.object(github, "_hour_key", return_value="h:fixed"):
-            yield
+class TestReadCredential:
+    def _patched(self, *, installation, token=None, token_error=None, fallback=None):
+        from integrations.services import github_app
 
-    def test_the_51st_call_in_an_hour_is_refused_unsent(self, settings):
-        settings.HARNESS_GITHUB_HOURLY_BUDGET = 50
-        with patch.object(github.requests, "get", return_value=_response()) as get:
-            results = [
-                github_get("/x", accept="a", purpose="t").status for _ in range(51)
-            ]
-        assert results[:50] == ["ok"] * 50
-        assert results[50] == "budget"
-        assert get.call_count == 50
+        mint = MagicMock(return_value=token, side_effect=token_error)
+        revoke = MagicMock()
+        return (
+            patch.object(github, "_workspace_installation", return_value=installation),
+            patch.object(github_app, "installation_token", mint),
+            patch.object(github_app, "revoke_installation_token", revoke),
+            patch.object(github_app, "fallback_read_token", return_value=fallback),
+            mint,
+            revoke,
+        )
 
-    def test_a_reserve_leaves_calls_for_others(self):
-        with patch.object(github.requests, "get", return_value=_response()) as get:
-            results = [
-                github_get("/x", accept="a", purpose="poll", reserve=20).status
-                for _ in range(31)
-            ]
-            # Without a reserve the rest of the hour is still there.
-            assert github_get("/x", accept="a", purpose="t").status == "ok"
-        assert results.count("ok") == 30
-        assert results[30] == "budget"
-        assert get.call_count == 31
-
-    def test_push_re_reads_have_a_cap_of_their_own(self, settings):
-        settings.HARNESS_GITHUB_WEBHOOK_BUDGET = 10
-        with patch.object(github.requests, "get", return_value=_response()):
-            pushes = [
-                github_get("/x", accept="a", purpose="webhook").status
-                for _ in range(11)
-            ]
-            # The poller still gets every call it is left.
-            polls = [
-                github_get("/x", accept="a", purpose="poll", reserve=20).status
-                for _ in range(31)
-            ]
-        assert pushes == ["ok"] * 10 + ["budget"]
-        assert polls == ["ok"] * 30 + ["budget"]
-
-    def test_one_owner_gets_a_share_of_the_push_re_reads(self, settings):
-        settings.HARNESS_GITHUB_WEBHOOK_BUDGET = 4
-        settings.HARNESS_GITHUB_WEBHOOK_SHARE = 2
-        with patch.object(github.requests, "get", return_value=_response()) as get:
-            greedy = [
-                github_get("/x", accept="a", purpose="webhook", owner="Evil").status
-                for _ in range(5)
-            ]
-            others = [
-                github_get("/x", accept="a", purpose="webhook", owner=owner).status
-                for owner in ("acme", "acme", "beta")
-            ]
-        assert greedy == ["ok", "ok", "budget", "budget", "budget"]
-        # The share sits inside the cap the push re-reads have in all.
-        assert others == ["ok", "ok", "budget"]
-        assert get.call_count == 4
-
-    def test_comparisons_have_a_cap_and_an_org_share_and_leave_the_poller_its_calls(
-        self,
+    def test_a_connected_workspace_reads_with_its_own_token_and_revokes_it(
+        self, settings
     ):
-        with patch.object(github.requests, "get", return_value=_response()):
-            greedy = [
-                github_get("/x", accept="a", purpose="compare", owner="org-a").status
-                for _ in range(3)
-            ]
-            others = [
-                github_get("/x", accept="a", purpose="compare", owner=owner).status
-                for owner in ("org-b", "org-b", "org-c", "org-d")
-            ]
-            polls = [
-                github_get("/x", accept="a", purpose="poll", reserve=20).status
-                for _ in range(31)
-            ]
-        assert greedy == ["ok", "ok", "budget"]
-        assert others == ["ok", "ok", "ok", "budget"]
-        assert polls == ["ok"] * 30 + ["budget"]
+        settings.GITHUB_APP_FALLBACK_INSTALLATION_ID = "ours"
+        *patches, mint, revoke = self._patched(
+            installation="42", token="ws-tok", fallback="ours-tok"
+        )
+        with patches[0], patches[1], patches[2], patches[3]:
+            with read_credential("org", "ws") as credential:
+                assert credential == ReadCredential(
+                    "ws-tok", "42", workspace_owned=True
+                )
+                revoke.assert_not_called()
+        mint.assert_called_once_with("42")
+        revoke.assert_called_once_with("ws-tok")
 
-    def test_creation_checks_have_a_cap_and_an_org_share_of_their_own(self, settings):
-        settings.HARNESS_GITHUB_CREATE_BUDGET = 4
-        settings.HARNESS_GITHUB_CREATE_SHARE = 2
-        with patch.object(github.requests, "get", return_value=_response()) as get:
-            greedy = [
-                github_get("/x", accept="a", purpose="create", owner="org-a").status
-                for _ in range(5)
-            ]
-            others = [
-                github_get("/x", accept="a", purpose="create", owner=owner).status
-                for owner in ("org-b", "org-b", "org-c")
-            ]
-            # The poller still gets every call it is left.
-            polls = [
-                github_get("/x", accept="a", purpose="poll", reserve=20).status
-                for _ in range(31)
-            ]
-        assert greedy == ["ok", "ok", "budget", "budget", "budget"]
-        assert others == ["ok", "ok", "budget"]
-        assert polls == ["ok"] * 30 + ["budget"]
-        assert get.call_count == 34
+    def test_a_workspace_token_github_refuses_falls_back_to_ours(self, settings):
+        from integrations.services.github_app import GitHubAppError
 
-    def test_creation_checks_by_default_still_leave_the_poller_calls(self):
-        with patch.object(github.requests, "get", return_value=_response()):
-            creates = [
-                github_get("/x", accept="a", purpose="create", owner=f"org-{n}").status
-                for n in range(26)
-            ]
-            for _ in range(10):
-                github_get("/x", accept="a", purpose="webhook")
-            polls = [
-                github_get("/x", accept="a", purpose="poll", reserve=20).status
-                for _ in range(16)
-            ]
-        assert creates == ["ok"] * 25 + ["budget"]
-        assert polls == ["ok"] * 15 + ["budget"]
+        settings.GITHUB_APP_FALLBACK_INSTALLATION_ID = "ours"
+        *patches, _mint, revoke = self._patched(
+            installation="42",
+            token_error=GitHubAppError("github_installation_token_failed", "no"),
+            fallback="ours-tok",
+        )
+        with patches[0], patches[1], patches[2], patches[3]:
+            with read_credential("org", "ws") as credential:
+                assert credential == ReadCredential("ours-tok", "ours")
+        revoke.assert_not_called()
 
-    def test_every_cap_full_by_default_still_leaves_the_poller_calls(self):
-        with patch.object(github.requests, "get", return_value=_response()):
-            for n in range(25):
-                github_get("/x", accept="a", purpose="create", owner=f"org-{n}")
-            for _ in range(10):
-                github_get("/x", accept="a", purpose="webhook")
-            compares = [
-                github_get("/x", accept="a", purpose="compare", owner=f"org-{n}").status
-                for n in range(6)
-            ]
-            polls = [
-                github_get("/x", accept="a", purpose="poll", reserve=20).status
-                for _ in range(11)
-            ]
-        assert compares == ["ok"] * 5 + ["budget"]
-        assert polls == ["ok"] * 10 + ["budget"]
+    def test_without_a_connection_ours_is_used(self, settings):
+        settings.GITHUB_APP_FALLBACK_INSTALLATION_ID = "ours"
+        *patches, mint, _revoke = self._patched(installation=None, fallback="ours-tok")
+        with patches[0], patches[1], patches[2], patches[3]:
+            with read_credential("org", "ws") as credential:
+                assert credential == ReadCredential("ours-tok", "ours")
+        mint.assert_not_called()
 
-    def test_a_new_hour_starts_a_new_count(self):
-        with patch.object(github.requests, "get", return_value=_response()):
-            with patch.object(github, "_hour_key", return_value="h:2026101610"):
-                for _ in range(50):
-                    github_get("/x", accept="a", purpose="t")
-                assert github_get("/x", accept="a", purpose="t").status == "budget"
-            with patch.object(github, "_hour_key", return_value="h:2026101611"):
-                assert github_get("/x", accept="a", purpose="t").status == "ok"
+    def test_with_neither_there_is_no_credential(self):
+        *patches, _mint, _revoke = self._patched(installation=None, fallback=None)
+        with patches[0], patches[1], patches[2], patches[3]:
+            with read_credential("org", "ws") as credential:
+                assert credential == NO_CREDENTIAL
 
-    def test_low_remaining_stops_a_reserving_caller(self):
-        cache.set(github.REMAINING_KEY, 20, 3600)
-        with patch.object(github.requests, "get") as get:
-            assert (
-                github_get("/x", accept="a", purpose="poll", reserve=20).status
-                == "budget"
-            )
-        get.assert_not_called()
+    def test_the_workspace_token_is_revoked_when_the_read_fails(self):
+        *patches, _mint, revoke = self._patched(installation="42", token="ws-tok")
+        with patches[0], patches[1], patches[2], patches[3]:
+            with pytest.raises(RuntimeError), read_credential("org", "ws"):
+                raise RuntimeError("read failed")
+        revoke.assert_called_once_with("ws-tok")
+
+
+class TestReadRefused:
+    def test_not_connected(self):
+        error = read_refused("not_connected")
+        assert (error.code, error.status_code) == ("github_not_connected", 422)
+        assert "Connect GitHub" in error.message
+
+    def test_revoked(self):
+        error = read_refused("revoked")
+        assert (error.code, error.status_code) == ("github_installation_revoked", 422)
+        assert "reconnect GitHub" in error.message
+
+    def test_rate_limited_says_when(self):
+        error = read_refused("rate_limited", time.time() + 610)
+        assert (error.code, error.status_code) == ("github_rate_limited", 429)
+        assert error.retryable
+        assert "try again in 11 minutes" in error.message
+        assert 600 <= error.details["retry_after"] <= 611
+        assert error.headers() == {"Retry-After": str(error.details["retry_after"])}
+
+    def test_rate_limited_never_says_less_than_a_minute(self):
+        error = read_refused("rate_limited", time.time() + 5)
+        assert "try again in 1 minute" in error.message
+        assert error.details["retry_after"] == 60
+
+    def test_error(self):
+        error = read_refused("error")
+        assert (error.code, error.status_code) == ("source_unreachable", 503)
+        assert error.retryable
+
+    @pytest.mark.parametrize("status", ["ok", "not_modified", "not_found"])
+    def test_an_answer_is_not_refused(self, status):
+        assert read_refused(status) is None
+
+
+class TestWorkspaceLimit:
+    def test_past_the_limit_is_refused_until_the_next_hour(self, settings):
+        settings.HARNESS_GITHUB_WORKSPACE_HOURLY_LIMIT = 2
+        workspace = uuid.uuid4()
+        take_workspace_read(workspace)
+        take_workspace_read(workspace)
+        with pytest.raises(HostedHarnessError) as refused:
+            take_workspace_read(workspace)
+        error = refused.value
+        assert (error.code, error.status_code) == ("github_workspace_limit", 429)
+        assert 0 < error.details["retry_after"] <= 3600
+        assert error.headers() == {"Retry-After": str(error.details["retry_after"])}
+
+    def test_each_workspace_counts_on_its_own(self, settings):
+        settings.HARNESS_GITHUB_WORKSPACE_HOURLY_LIMIT = 1
+        take_workspace_read(uuid.uuid4())
+        take_workspace_read(uuid.uuid4())
+
+    def test_a_limit_of_zero_or_no_workspace_counts_nothing(self, settings):
+        settings.HARNESS_GITHUB_WORKSPACE_HOURLY_LIMIT = 0
+        workspace = uuid.uuid4()
+        for _ in range(5):
+            take_workspace_read(workspace)
+        settings.HARNESS_GITHUB_WORKSPACE_HOURLY_LIMIT = 1
+        for _ in range(5):
+            take_workspace_read(None)
+
+
+class TestErrorHeaders:
+    def test_only_a_429_with_a_wait_has_retry_after(self):
+        assert HostedHarnessError(
+            "x", "m", status_code=429, details={"retry_after": 30}
+        ).headers() == {"Retry-After": "30"}
+        assert HostedHarnessError("x", "m", status_code=429).headers() == {}
+        assert (
+            HostedHarnessError(
+                "x", "m", status_code=503, details={"retry_after": 30}
+            ).headers()
+            == {}
+        )
+
+
+class TestCredentialNeverReachesSentry:
+    def test_the_token_is_not_in_the_repr(self):
+        assert "tok-1" not in repr(CRED)
+        assert "inst-1" in repr(CRED)
+
+    @pytest.mark.parametrize("workspace_owned", [True, False])
+    def test_an_error_inside_a_read_sends_no_token_to_sentry(
+        self, settings, workspace_owned
+    ):
+        import sentry_sdk
+        from sentry_sdk.transport import Transport
+
+        from integrations.services import github_app
+        from tfc.logging.sentry import _event_scrubber, _get_before_send
+
+        secret = "ghs_" + "s3cr3tV4lue" * 3
+        events = []
+
+        class Capture(Transport):
+            def capture_envelope(self, envelope):
+                events.append(envelope.get_event())
+
+        client = sentry_sdk.Client(
+            dsn="https://key@sentry.example.com/1",
+            transport=Capture,
+            include_local_variables=True,
+            send_default_pii=True,
+            event_scrubber=_event_scrubber(),
+            before_send=_get_before_send(),
+            default_integrations=False,
+        )
+        settings.GITHUB_APP_FALLBACK_INSTALLATION_ID = "ours"
+        with (
+            patch.object(
+                github,
+                "_workspace_installation",
+                return_value="42" if workspace_owned else None,
+            ),
+            patch.object(github_app, "installation_token", return_value=secret),
+            patch.object(github_app, "revoke_installation_token"),
+            patch.object(github_app, "fallback_read_token", return_value=secret),
+            patch.object(
+                github.requests, "get", side_effect=RuntimeError("read failed")
+            ),
+            sentry_sdk.isolation_scope() as scope,
+        ):
+            scope.set_client(client)
+            try:
+                with read_credential("org", "ws") as credential:
+                    github_get("/x", accept="a", credential=credential, purpose="t")
+            except RuntimeError:
+                sentry_sdk.capture_exception()
+
+        [event] = events
+        frames = [
+            frame
+            for value in event["exception"]["values"]
+            for frame in value["stacktrace"]["frames"]
+        ]
+        assert any("credential" in (frame.get("vars") or {}) for frame in frames)
+        assert secret not in json.dumps(event, default=str)
 
 
 class TestNames:
