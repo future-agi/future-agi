@@ -170,6 +170,7 @@ def _merge_track_view(lk, tenant, identity, fields, merged):
         }
     if history:
         updated["recording_history"] = history
+        updated["recording_scope"] = {**tenant, "call_id": identity["call_id"]}
     visible.update(merged)
     updated["recording"] = visible
     receipts.update({k: _TrackReceipt(**identity, url=v) for k, v in merged.items()})
@@ -793,7 +794,6 @@ class LivekitService(VoiceServiceBlueprint):
         utterance end times, we estimate speech duration from word count
         and the persona's conversation_speed (stored in call_metadata).
         """
-        from asgiref.sync import sync_to_async
 
         from simulate.models.test_execution import CallExecution, CallTranscript
 
@@ -931,6 +931,12 @@ class LivekitService(VoiceServiceBlueprint):
         # predicate, but must never adopt a peer's playback change as our baseline.
         initial_playback = {key: getattr(call, key) for key in playback_fields}
         tenant = await _recording_tenant(call)
+        scope = {**tenant, "call_id": call_id_str}
+        if provider_data.get("recording_scope", scope) != scope:
+            return RecordingUrls(
+                recording_fields_persisted=True,
+                error={"code": "recording_source_changed", "message": "Recording scope changed.", "tracks": []},
+            )
         tracks = _source_tracks(provider_data, tenant, identity, fields)
         if (
             not valid_source
@@ -1022,11 +1028,13 @@ class LivekitService(VoiceServiceBlueprint):
                 if (
                     current.service_provider_call_id != call.service_provider_call_id
                     or lk.get("egress_id") != egress_id
+                    or lk.get("recording_scope", scope) != scope
+                    or current.test_execution_id != call.test_execution_id
                     or await _recording_tenant(current) != tenant
                     or (
                         cleanup_tracks is not None
                         and (
-                            verified != cleanup_tracks
+                            _verified_tracks(lk, identity, fields) != cleanup_tracks
                             or current_map != cleanup_tracks
                             or (expected_intent is not None and lk.get(intent_field) != expected_intent)
                             or (
@@ -1061,6 +1069,7 @@ class LivekitService(VoiceServiceBlueprint):
                 confirmed = (
                     merged.keys() == fields.keys()
                     and current_map == merged
+                    and _verified_tracks(lk, identity, fields) == merged
                     and lk.get("recording_cleanup_success") == confirmation
                 )
                 error = cleanup_error
@@ -1092,6 +1101,7 @@ class LivekitService(VoiceServiceBlueprint):
                 elif confirmed:
                     error = None  # A later timeout cannot undo a confirmed deletion.
                 elif prepare_key is not None:
+                    updated["recording_scope"] = scope
                     if not verified_intent_key(lk.get(intent_field), merged):
                         updated[intent_field] = signer.sign_object({**intent_binding(merged), "key": prepare_key})
                 elif cleanup_error is None:
@@ -1250,7 +1260,7 @@ class LivekitService(VoiceServiceBlueprint):
             )
 
         if tracks.keys() == fields.keys():
-            if saved == tracks:
+            if saved == tracks and _verified_tracks(provider_data, identity, fields) == tracks:
                 return await cleanup(provider_data)
             object_key = None
             restored = await persist()
@@ -1468,7 +1478,6 @@ class LivekitService(VoiceServiceBlueprint):
 
         Returns (message_count, has_agent_message, has_customer_message).
         """
-        from asgiref.sync import sync_to_async
 
         from simulate.models.test_execution import CallExecution, CallTranscript
 
