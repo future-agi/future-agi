@@ -163,10 +163,8 @@ def unavailable_on_our_side(entry: CandidateSet, bundle: Any) -> bool:
 def proof_state(entry: CandidateSet) -> str:
     """Whether this set's versions carry their scenarios' proofs: `proving` while the set's own validation job runs
     (its bundle can be ready before the job records each proof), `proved` once the pair holds recorded proofs or
-    the job that proved exactly this pair has finished, else `unproved` (a pairing certified earlier for other
+    the job that proved exactly this pair completed, else `unproved` (a pairing certified earlier for other
     versions: saved now, its cases would carry no proofs). Read from typed rows only."""
-    from simulate.models import HarnessSuiteValidation
-
     job_id = entry.get("job_id")
     job = (
         HostedHarnessJob.no_workspace_objects.filter(id=job_id).first()
@@ -175,13 +173,14 @@ def proof_state(entry: CandidateSet) -> str:
     )
     if job is not None and validation.is_live(job):
         return "proving"
-    if HarnessSuiteValidation.no_workspace_objects.filter(
-        suite_version_id=entry["suite_version_id"],
-        environment_version_id=entry["environment_version_id"],
-    ).exists():
+    if validation.has_proofs(
+        entry["environment_version_id"], entry["suite_version_id"]
+    ):
         return "proved"
+    # Completed, never failed or stopped: a job that ended any other way recorded nothing for these versions.
     if (
         job is not None
+        and job.state == HostedHarnessJob.State.COMPLETED
         and str(job.suite_version_id) == str(entry["suite_version_id"])
         and str(job.environment_version_id) == str(entry["environment_version_id"])
     ):

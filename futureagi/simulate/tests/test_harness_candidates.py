@@ -801,6 +801,70 @@ def test_a_set_nothing_proved_reads_validate_again_and_never_saves(
     assert refused.status_code == 409 and refused.json()["error"] == "not_validated"
 
 
+@pytest.mark.parametrize(
+    "ended", [HostedHarnessJob.State.FAILED, HostedHarnessJob.State.CANCELED]
+)
+def test_a_set_whose_proving_job_ended_without_completing_is_not_saveable(
+    user, workspace, storage, auth_client, ended
+):
+    environment = _with_world(user, workspace, f"cand-ended-{ended}", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    # The bundle is certified, but the job that was to prove these versions failed or was stopped.
+    environment.refresh_from_db()
+    HostedHarnessJob.no_workspace_objects.filter(
+        id=live_set(environment)["job_id"]
+    ).update(state=ended)
+
+    state = _drafts(auth_client, environment)["validation"]["state"]
+    refused = _save(auth_client, environment, candidates, digest=digest)
+
+    assert state == "retry"
+    assert refused.status_code == 409 and refused.json()["error"] == "not_validated"
+
+
+def test_validate_proves_its_own_versions_beside_a_job_proving_others_on_the_bundle(
+    user, workspace, storage, auth_client
+):
+    environment = _with_world(user, workspace, "cand-two-provers", storage)
+    _two_actors(auth_client, environment)
+    _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    environment.refresh_from_db()
+    other_job = live_set(environment)["job_id"]
+    # That job is still proving the first set's versions when the same changes are made again.
+    HostedHarnessJob.no_workspace_objects.filter(id=other_job).update(
+        state=HostedHarnessJob.State.RUNNING
+    )
+    for piece in ("environment", "suite"):
+        auth_client.delete(f"{BASE}/{environment.id}/drafts/{piece}/")
+    _two_actors(auth_client, environment)
+    digest = _decided(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    again = _validate(auth_client, environment, digest)
+    environment.refresh_from_db()
+    own = live_set(environment)["job_id"]
+
+    # Never joined: the running job records its proofs on other versions, so this set gets its own.
+    assert again.status_code == 202, again.content
+    assert own != other_job
+    job = HostedHarnessJob.no_workspace_objects.get(id=own)
+    assert (
+        str(job.environment_version_id)
+        == _result(again)["candidates"]["environment_version_id"]
+    )
+
+
 def test_save_refused_unless_validated(user, workspace, storage, auth_client):
     environment = _with_world(user, workspace, "cand-unvalidated", storage)
     _two_actors(auth_client, environment)

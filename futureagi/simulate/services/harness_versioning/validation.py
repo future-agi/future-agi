@@ -500,14 +500,14 @@ def _proved_with(
     return False
 
 
-def _has_proofs(
-    environment_version: HarnessEnvironmentVersion, suite_version: HarnessSuiteVersion
-) -> bool:
-    """Whether this pair holds recorded proofs of its scenarios."""
+def has_proofs(environment_version_id: Any, suite_version_id: Any) -> bool:
+    """Whether this pair holds recorded proofs of its scenarios: the one reading of "proved" that Validate and Save
+    both use."""
     from simulate.models import HarnessSuiteValidation
 
     return HarnessSuiteValidation.no_workspace_objects.filter(
-        suite_version=suite_version, environment_version=environment_version
+        suite_version_id=suite_version_id,
+        environment_version_id=environment_version_id,
     ).exists()
 
 
@@ -596,7 +596,7 @@ def start_validation(
             )
             or (
                 purpose == "save"
-                and not _has_proofs(environment_version, suite_version)
+                and not has_proofs(environment_version.id, suite_version.id)
             )
         ):
             # A person pressing Validate after a fix needs a new proof, never the certified shortcut; so does a move
