@@ -442,6 +442,11 @@ urlpatterns = [
         name="attachment-occurrence",
     ),
     path(
+        "v1/projects/<str:project_id>/attachments/occurrences/<str:occurrence_id>/recording-preview",
+        attachments.RecordingPreviewView.as_view(),
+        name="attachment-recording-preview",
+    ),
+    path(
         "v1/projects/<str:project_id>/attachments/resolve",
         attachments.AttachmentResolveView.as_view(),
         name="attachment-resolve",

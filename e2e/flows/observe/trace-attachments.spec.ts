@@ -16,7 +16,7 @@ import { flowAnnotation } from '../../lib/flow-meta';
 // the sandboxed worker) is in docker-compose.e2e.yml only.
 test.skip(process.env.E2E_STACK === 'standalone', 'Attachment storage and the https media origin are Distributed-only');
 // E2E.attachmentsAppUrl is served with Caddy's internal CA (e2e/stack/attachments/Caddyfile).
-test.use({ ignoreHTTPSErrors: true });
+test.use({ ignoreHTTPSErrors: true, viewport: {width: 1440, height: 900} });
 
 // tracer/urls.py (F01 routes); bodies are tracer/services/attachments/f01/contract.schema.json
 // BootstrapRequest, UploadRequest and CompleteRequest.
@@ -263,10 +263,10 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       'create a voice project and an observe project (SDK source, not simulator) and opt both into attachments (operator step, test-image endpoint)',
       'with the org API key, bootstrap an F01 capture session per trace and upload a LiveKit and a Pipecat Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)',
       'send through the collector a LiveKit call (untyped job_entrypoint root with lk.job_id, agent_session child carrying the recording), a Pipecat call (CONVERSATION root carrying the recording) and the model trace',
-      'on the https app origin, open the LiveKit trace, select agent_session, load its recording and play it to the end',
+      'on the https app origin, open the LiveKit trace, select agent_session, seek within its Conversation timeline, play to the end and inspect real peaks',
       'open the Pipecat trace and play the root\'s recording to the end',
       'open the model trace, select the model span, switch to Chat and see the PNG inside user message 2',
-      'load the WAV, and download the PDF, which has no inline preview',
+      'play the WAV beside turn.audio in Attributes, and download the PDF, which has no inline preview',
       'open each call on the dedicated Voice full-page route and play its Attachment recording to the end',
       'delete only the LiveKit CH session through the supported session API',
     ],
@@ -353,7 +353,11 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
           // No fi.span.kind: the LiveKit SDK marks no root; the collector maps it.
           span(livekitTrace, livekitRoot, LIVEKIT_ROOT, [str(LIVEKIT_JOB_ID, jobId), str('session.id', livekitSessionName)]),
           span(livekitTrace, livekitSession, LIVEKIT_SESSION,
-            [str('session.id', livekitSessionName), ...carriers(livekit.session, [livekitRecording])], livekitRoot),
+            [str('session.id', livekitSessionName), str('fi.conversation.transcript', JSON.stringify([
+              {role:'user',content:'Is my order on its way?',start_ms:0},
+              {role:'assistant',speaker_name:'Fulfillment',content:'It shipped today.',start_ms:100},
+            ])), ...carriers(livekit.session, [livekitRecording])], livekitRoot),
+          span(livekitTrace, hex(8), "lookup_order", [str("fi.span.kind", "tool")],livekitSession),
         ] }, {
         scope: { name: 'pipecat' }, spans: [
           span(pipecatTrace, pipecatRoot, PIPECAT_ROOT, [str('fi.span.kind', PIPECAT_KIND), str('gen_ai.span.kind', PIPECAT_KIND),
@@ -364,7 +368,7 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
           span(trace, traceRoot, `e2e.att-agent-${suffix}`, [str('fi.span.kind', 'agent')]),
           span(trace, llmSpan, `e2e.att-llm-${suffix}`, [str('fi.span.kind', 'llm'), str('input.value', messages),
             str('input.mime_type', 'application/json'), str('output.value', `e2e-att-answer-${suffix}`),
-            ...carriers(traced.session, [image, audio, document])], traceRoot),
+            str('turn.audio', `fi-attachment:${audio.occurrenceId}`), ...carriers(traced.session, [image, audio, document])], traceRoot),
         ] }] }] });
       const livekitTraceId = dashed(livekitTrace), pipecatTraceId = dashed(pipecatTrace), traceId = dashed(trace);
       const voiceSeeded = [livekitRecording, pipecatRecording];
@@ -447,22 +451,75 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       return { spans: flatten(body.result.observation_spans),
         drawer: page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByText(id, { exact: true }) }) };
     };
-    /** Load the span's recording and play it to the end; returns the browser's grant and resolve headers. */
+    const snapshot = async (name: string) => {
+      const path = testInfo.outputPath(`${name}.png`);
+      await page.screenshot({path});
+      await testInfo.attach(name, {path, contentType:'image/png'});
+    };
+    const exactResolve = (project:string, item:Seeded, traceKey:string, representation:string) => (r:Response) => {
+      if (!isResolve(project)(r)) return false;
+      const items = r.request().postDataJSON()?.items;
+      return items?.length===1 && items[0].occurrence_id===item.occurrenceId && items[0].representation===representation
+        && items[0].parent?.trace_id.replaceAll('-','')===traceKey.replaceAll('-','') && items[0].parent?.span_id===item.parentSpanId;
+    };
     const playRecording = async (drawer: Locator, item: Seeded, name: string) => {
-      const listed = drawer.getByLabel('Span attachments');
-      const resolved = page.waitForResponse(isResolve(voiceProject), { timeout: UI_READY });
-      await listed.getByRole('button', { name: 'Load audio: Mixed recording' }).click({ timeout: UI_READY });
+      const live = item===livekitRecording, traceKey = live?livekitTraceId:pipecatTraceId;
+      await expect(drawer.getByRole('button',{name:'Load audio: Mixed recording'})).toHaveCount(0);
+      await expect(drawer.getByLabel('Span attachments')).toHaveCount(0);
+      // Exercise an optional derivative outage without intercepting any playable grant or audio byte.
+      const fallbackRoute = F01.resolve(voiceProject);
+      if(!live) await page.route(`**${fallbackRoute}`,route=>route.request().postDataJSON()?.items?.every((i:{representation:string})=>i.representation==='peaks') ? route.abort() : route.continue());
+      const resolved = page.waitForResponse(exactResolve(voiceProject,item,traceKey,'playable'), { timeout: UI_READY });
+      const tab=drawer.getByRole('tab',{name:'Conversation',exact:true});
+      await tab.click();
       const response = await resolved;
       const grants = await response.json() as { items: Grant[] };
       expect(grants.items.map(g => [g.occurrence_id, g.status])).toStrictEqual([[item.occurrenceId, 'ready']]);
-      const player = listed.getByLabel('Mixed recording').and(listed.locator('audio'));
+      const panel=drawer.getByRole('tabpanel',{name:'Conversation',exact:true});
+      const play=panel.getByRole('button',{name:'Play recording',exact:true});
+      const player=panel.locator('audio');
       await expect(player).toHaveCount(1);
+      const slider=panel.getByRole('slider',{name:'Recording position'});
+      if(live){
+        await expect(panel.getByText('lookup_order',{exact:true})).toBeVisible();
+        await panel.getByRole('button',{name:'Seek to 0:00.1, Fulfillment, It shipped today.'}).click();
+        await expect(slider).toHaveValue('0.1');
+        await expect(play).toBeVisible();
+        await panel.getByRole('button',{name:'Seek to 0:00, User, Is my order on its way?'}).click();
+        await expect(slider).toHaveValue('0');
+        await snapshot('conversation');
+      } else {await expect(panel.getByTestId('recording-waveform')).toHaveCount(0); await snapshot('seek-bar');}
+      await slider.focus(); await slider.press('End'); await expect(slider).toHaveValue('0.2');
+      await slider.press('Home'); await expect(slider).toHaveValue('0');
+      await play.click();
       await expect.poll(() => player.evaluate((node: HTMLAudioElement) => node.readyState >= 1), { timeout: UI_READY }).toBe(true);
-      await player.evaluate((node: HTMLAudioElement) => node.play());
       await expect.poll(() => player.evaluate((node: HTMLAudioElement) =>
         [node.ended, node.played.length > 0 ? Math.round(node.played.end(node.played.length - 1) * 1000) >= 150 : false]),
       { timeout: UI_READY }).toStrictEqual([true, true]);
       await testInfo.attach(name, { body: await page.screenshot(), contentType: 'image/png' });
+      if(live){
+        // Playback above has already completed without waiting on derivatives. Reopen
+        // only after the worker publishes this asset's independent representation.
+        await expect.poll(()=>probe.pg<{state:string}>(`SELECT d.state FROM tracer_attachmentrecordingderivative d JOIN tracer_attachment a ON a.id=d.attachment_id WHERE a.client_id=$1 AND d.representation='peaks'`,[item.attachmentId]),POLL.ASYNC_JOB).toEqual([{state:'ready'}]);
+        await drawer.getByRole('tab',{name:'Preview',exact:true}).click();
+        const peakGrant=page.waitForResponse(exactResolve(voiceProject,item,traceKey,'peaks'));
+        const peakBytes=page.waitForResponse(r=>new URL(r.url()).pathname.includes(`/${item.occurrenceId}/`) && r.headers()['content-type']==='application/octet-stream');
+        await tab.click();
+        const [peak]=((await (await peakGrant).json()) as {items:Grant[]}).items;
+        const bytes=await peakBytes;
+        expect(new URL(bytes.url()).pathname).toBe(peak.gateway_path);
+        const descriptor=JSON.parse(bytes.headers()['x-attachment-peaks']);
+        expect(descriptor.v).toBe(1);
+        expect((await bytes.body()).length).toBe(4*descriptor.channels*descriptor.levels.reduce((sum:number,l:{buckets:number})=>sum+l.buckets,0));
+        await expect(panel.getByTestId('recording-waveform')).toBeVisible();
+        await slider.focus(); await slider.press('ArrowRight'); expect(Number(await slider.inputValue())).toBeGreaterThan(0);
+        await slider.press('Home'); await expect(slider).toHaveValue('0');
+        // Slow only the screenshot replay; the duration proof above uses normal speed.
+        await player.evaluate((n:HTMLAudioElement)=>{n.defaultPlaybackRate=0.25;n.playbackRate=0.25;});
+        await play.click();
+        await expect(panel.getByRole('button',{name:'Pause recording'})).toBeVisible();
+        await snapshot('waveform-playing');
+      }else await page.unroute(`**${fallbackRoute}`);
       const headers = await browserResolveHeaders(response, E2E.attachmentsAppUrl);
       // The grant names exactly the session this resolve selected.
       expect(gatewayIds(grants.items[0].gateway_path!)[0]).toBe(headers[MEDIA_SESSION_HEADER]);
@@ -559,22 +616,29 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         { timeout: UI_READY }).toStrictEqual([true, 8, 6]);
       await expect(drawer.getByLabel('Message images').getByRole('img')).toHaveCount(1);
       traceViewerHeaders = await browserResolveHeaders(await resolved, E2E.attachmentsAppUrl);
-      await testInfo.attach('inline-image', { body: await page.screenshot(), contentType: 'image/png' });
+      await snapshot('inline-image');
     }, { timeout: UI_READY });
 
     await test.step('UI: the span lists exactly the WAV and the download-only PDF', async () => {
       const drawer = page.locator('.MuiDrawer-paper:visible').filter({ has: page.getByText(traceId, { exact: true }) });
       const listed = drawer.getByLabel('Span attachments');
-      // groupByPosition: message 2 (the PDF) sorts before the unplaced WAV.
-      await expect(listed.getByRole('button')).toHaveText(['Download', 'Load audio'], { timeout: UI_READY });
+      // The WAV lives only in Attributes. The remaining attachment list contains just the PDF.
+      await expect(listed.getByRole('button')).toHaveText(['Download'], { timeout: UI_READY });
       await expect(listed.getByText('Preview unavailable · download to inspect', { exact: true })).toHaveCount(1);
       await expect(listed.getByRole('img')).toHaveCount(0);
       await expect(drawer.locator('iframe, embed, object')).toHaveCount(0);
-      await listed.getByRole('button', { name: 'Load audio: Input audio' }).click();
-      const player = listed.locator('audio');
+      const resolved=page.waitForResponse(exactResolve(traceProject,audio,traceId,'playable'));
+      const clip=drawer.getByRole('button',{name:'Play clip: turn.audio',exact:true});
+      await expect(clip).toHaveCount(1);
+      await clip.scrollIntoViewIfNeeded(); await snapshot('attribute-clip');
+      await clip.click();
+      expect((await (await resolved).json()).items.map((g:Grant)=>[g.occurrence_id,g.status])).toStrictEqual([[audio.occurrenceId,'ready']]);
+      const player = drawer.getByLabel('Clip: turn.audio').and(drawer.locator('audio'));
+      await expect(listed.locator('audio')).toHaveCount(0);
       await expect(player).toHaveCount(1);
       await expect.poll(() => player.evaluate((node: HTMLAudioElement) => [node.readyState >= 1, Math.round(node.duration * 10)]),
         { timeout: UI_READY }).toStrictEqual([true, 5]);
+      await expect.poll(()=>player.evaluate((n:HTMLAudioElement)=>n.played.length>0 && n.played.end(n.played.length-1)>0)).toBe(true);
       const downloading = page.waitForEvent('download', { timeout: UI_READY });
       await listed.getByRole('button', { name: 'Download Input · message 2 · part 3 PDF' }).click();
       const download = await downloading;

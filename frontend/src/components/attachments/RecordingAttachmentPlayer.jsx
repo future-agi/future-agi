@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { recordingClock } from "./recordingClock";
+import RecordingSeekBar from "./RecordingSeekBar";
+import useRecordingPeaks from "./useRecordingPeaks";
+import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
 import { Box, Button, Slider, Stack, Typography } from "@mui/material";
 import {
@@ -76,6 +80,7 @@ function playoutAt(playout, ms) {
 export default function RecordingAttachmentPlayer({
   projectId,
   attachment,
+  variant = "voice",
   onInstance,
 }) {
   // I04 shape: {occurrence_id, parent, state} plus manifest only when ready,
@@ -107,6 +112,8 @@ export default function RecordingAttachmentPlayer({
     <ReadyRecording
       key={identity}
       projectId={projectId}
+      variant={variant}
+      parent={parsed.parent}
       plan={parsed.plan}
       manifest={parsed.manifest}
       onInstance={onInstance}
@@ -114,12 +121,21 @@ export default function RecordingAttachmentPlayer({
   );
 }
 RecordingAttachmentPlayer.propTypes = {
+  variant: PropTypes.oneOf(["voice", "trace"]),
   projectId: PropTypes.string,
   attachment: PropTypes.object,
   onInstance: PropTypes.func,
 };
 
-function ReadyRecording({ projectId, plan, manifest, onInstance }) {
+function ReadyRecording({
+  projectId,
+  parent,
+  variant,
+  plan,
+  manifest,
+  onInstance,
+}) {
+  const trace = variant === "trace";
   const container = useRef(null);
   const playerRef = useRef(null);
   const [status, setStatus] = useState("loading");
@@ -129,6 +145,12 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
   const [buffering, setBuffering] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [retryable, setRetryable] = useState(false);
+  const peaks = useRecordingPeaks({
+    projectId,
+    parent,
+    manifest,
+    enabled: trace && status === "ready",
+  });
   const durationMs = manifest.duration_ms;
   const duration = durationMs / 1000;
   const planKey = JSON.stringify(plan);
@@ -228,16 +250,18 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
         </>
       ) : (
         <>
-          <Stack
-            direction="row"
-            justifyContent="space-between"
-            alignItems="center"
-            spacing={2}
-          >
-            <Typography variant="body2" fontWeight="fontWeightMedium">
-              {layoutLabels[manifest.layout]}
-            </Typography>
-          </Stack>
+          {!trace && (
+            <Stack
+              direction="row"
+              justifyContent="space-between"
+              alignItems="center"
+              spacing={2}
+            >
+              <Typography variant="body2" fontWeight="fontWeightMedium">
+                {layoutLabels[manifest.layout]}
+              </Typography>
+            </Stack>
+          )}
           <Stack direction="row" alignItems="center" spacing={2}>
             <Button
               variant="contained"
@@ -249,23 +273,42 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
               }
               aria-label={playing ? "Pause recording" : "Play recording"}
             >
-              {playing ? "Pause" : "Play"}
+              {trace ? (
+                <Iconify
+                  icon={playing ? "solar:pause-bold" : "solar:play-bold"}
+                  width={16}
+                />
+              ) : playing ? (
+                "Pause"
+              ) : (
+                "Play"
+              )}
             </Button>
-            <Slider
-              aria-label="Recording position"
-              min={0}
-              max={duration}
-              step={0.1}
-              value={time}
-              onChange={(_, value) => playerRef.current?.setTime(value)}
-              getAriaValueText={timeLabel}
-              sx={{ color: "text.primary" }}
-            />
+            {trace ? (
+              <RecordingSeekBar
+                seconds={time}
+                duration={duration}
+                onSeek={(v) => playerRef.current?.setTime(v)}
+                peaks={peaks}
+              />
+            ) : (
+              <Slider
+                aria-label="Recording position"
+                min={0}
+                max={duration}
+                step={0.1}
+                value={time}
+                onChange={(_, value) => playerRef.current?.setTime(value)}
+                getAriaValueText={timeLabel}
+                sx={{ color: "text.primary" }}
+              />
+            )}
             <Typography
               variant="caption"
               sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
             >
-              {timeLabel(time)} / {timeLabel(duration)}
+              {trace ? recordingClock(time, duration) : timeLabel(time)} /{" "}
+              {trace ? recordingClock(duration, duration) : timeLabel(duration)}
             </Typography>
           </Stack>
           {buffering && (
@@ -273,34 +316,43 @@ function ReadyRecording({ projectId, plan, manifest, onInstance }) {
               Buffering recording…
             </Typography>
           )}
-          <Typography variant="caption" color="text.secondary">
-            {manifest.tracks
-              .map((track) => trackLabels[track.role])
-              .join(" · ")}
-          </Typography>
+          {!trace && (
+            <Typography variant="caption" color="text.secondary">
+              {manifest.tracks
+                .map((track) => trackLabels[track.role])
+                .join(" · ")}
+            </Typography>
+          )}
           {(!manifest.capture_complete || manifest.gaps.length > 0) && (
             <Typography variant="caption" color="warning.main">
               Partial recording — some audio is missing
               {missingText ? ` (${missingText} at this position)` : ""}.
             </Typography>
           )}
-          <Typography variant="caption" color="text.secondary">
-            {manifest.playout.length > 0 &&
-            manifest.playout.every((part) => part.evidence === "played")
-              ? "Playout confirmed for recorded intervals"
-              : "Recording does not confirm what participants heard"}
-          </Typography>
-          {playout && (
+          {!trace && (
             <Typography variant="caption" color="text.secondary">
-              {playout}
+              {manifest.playout.length > 0 &&
+              manifest.playout.every((part) => part.evidence === "played")
+                ? "Playout confirmed for recorded intervals"
+                : "Recording does not confirm what participants heard"}
             </Typography>
           )}
+          {playout &&
+            (!trace ||
+              playout === playoutLabels.truncated ||
+              playout.startsWith("Playout not confirmed")) && (
+              <Typography variant="caption" color="text.secondary">
+                {playout}
+              </Typography>
+            )}
         </>
       )}
     </Stack>
   );
 }
 ReadyRecording.propTypes = {
+  parent: PropTypes.object.isRequired,
+  variant: PropTypes.string.isRequired,
   projectId: PropTypes.string.isRequired,
   plan: PropTypes.object.isRequired,
   manifest: PropTypes.object.isRequired,

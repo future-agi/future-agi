@@ -4,6 +4,7 @@ import {
   gatewaySessionId,
   occurrencePageSchema,
   parentSchema,
+  recordingProjectionSchema,
   resolveItemSchema,
   resolveResponseSchema,
   uuid,
@@ -157,4 +158,42 @@ export async function listAttachments(projectId, parent, cursor, signal) {
   } catch {
     throw new AttachmentUnavailable();
   }
+}
+
+// This application read is outside the F01 contract. Resolve the selection, not the trace root.
+export async function readRecordingPreview(projectId, parent, item, signal) {
+  const occurrence = uuid.parse(item.reference.occurrence_id);
+  const captured = captureMediaContext();
+  if (!captured || window.location.pathname.startsWith("/shared/"))
+    throw new AttachmentUnavailable();
+  const url = `/tracer/v1/projects/${uuid.parse(projectId)}/attachments/occurrences/${occurrence}/recording-preview`;
+  let response;
+  try {
+    response = await axios.get(url, {
+      ...pinnedRequestConfig(captured, signal),
+      params: parentSchema.parse(parent),
+    });
+  } catch (error) {
+    const unavailable = new AttachmentUnavailable();
+    unavailable.retryable =
+      !error.response ||
+      error.response.status >= 500 ||
+      error.response.status === 429;
+    throw unavailable;
+  }
+  const p = recordingProjectionSchema.parse(response.data);
+  if (
+    !isCurrentMediaContext(captured) ||
+    !p.parent ||
+    p.parent.span_id !== parent.span_id ||
+    p.parent.trace_id.replaceAll("-", "") !==
+      parent.trace_id.replaceAll("-", "") ||
+    (p.state === "ready"
+      ? p.manifest.recording_id !== (item.recording_id || occurrence) ||
+        p.manifest.segments[0]?.occurrence_id !== p.occurrence_id ||
+        !p.manifest.segments.some((s) => s.occurrence_id === occurrence)
+      : p.occurrence_id !== occurrence)
+  )
+    throw new AttachmentUnavailable();
+  return p;
 }

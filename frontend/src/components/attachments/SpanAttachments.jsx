@@ -1,5 +1,4 @@
 import {
-  createContext,
   useCallback,
   useContext,
   useLayoutEffect,
@@ -8,6 +7,9 @@ import {
 } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
+import { SpanAttachmentsContext } from "./spanAttachmentsContext";
+import InlineClipPlayer from "./InlineClipPlayer";
+import { clipPlacement } from "./clipPlacement";
 import { uuid } from "./contract";
 import AttachmentImage, { canRenderImage } from "./AttachmentImage";
 import AttachmentMedia, { AttachmentFile } from "./AttachmentMedia";
@@ -40,8 +42,6 @@ const imageGrid = {
   gap: 1,
 };
 
-const SpanAttachmentsContext = createContext(null);
-
 /**
  * Shared state for one observation span's attachments.
  *
@@ -56,6 +56,7 @@ export function SpanAttachmentsProvider({
   projectId,
   span,
   enabled = true,
+  traceMedia = false,
   children,
 }) {
   const active = enabled && uuid.safeParse(projectId).success;
@@ -65,6 +66,14 @@ export function SpanAttachmentsProvider({
   const items = useMemo(
     () => (active ? readSpanAttachments(span) : []),
     [active, span],
+  );
+  const [clipId, setClipId] = useState(null);
+  const clips = useMemo(
+    () =>
+      active && traceMedia && spanId && traceId
+        ? clipPlacement({ ...span?.metadata, ...span?.span_attributes }, items)
+        : null,
+    [span, items, active, traceMedia, spanId, traceId],
   );
   const imageRequests = useMemo(
     () =>
@@ -130,6 +139,9 @@ export function SpanAttachmentsProvider({
       projectId,
       parent: traceId && spanId ? { trace_id: traceId, span_id: spanId } : null,
       items,
+      clips,
+      clipId,
+      setClipId,
       images,
       imageResults,
       placed,
@@ -141,6 +153,9 @@ export function SpanAttachmentsProvider({
       traceId,
       spanId,
       items,
+      clips,
+      clipId,
+      setClipId,
       images,
       imageResults,
       placed,
@@ -157,7 +172,33 @@ SpanAttachmentsProvider.propTypes = {
   projectId: PropTypes.string,
   span: PropTypes.object,
   enabled: PropTypes.bool,
+  traceMedia: PropTypes.bool,
   children: PropTypes.node,
+};
+
+export function ClipControl({ item, label }) {
+  const { projectId, parent, clipId, setClipId } = useContext(
+    SpanAttachmentsContext,
+  );
+  const id = item.reference.occurrence_id;
+  useLayoutEffect(
+    () => () => setClipId((current) => (current === id ? null : current)),
+    [id, setClipId],
+  );
+  return (
+    <InlineClipPlayer
+      projectId={projectId}
+      parent={parent}
+      item={item}
+      label={label}
+      active={clipId === id}
+      onActivate={setClipId}
+    />
+  );
+}
+ClipControl.propTypes = {
+  item: PropTypes.object.isRequired,
+  label: PropTypes.string.isRequired,
 };
 
 function SpanImage({ context, item, label }) {
@@ -267,7 +308,7 @@ function SpanAttachmentsBody({
   traceStartTime,
   onSelectSpan,
 }) {
-  const { active, projectId, parent, items, placed } = context;
+  const { active, projectId, parent, items, placed, clips } = context;
   const frames = useMemo(
     () => (active ? collectScreenshots(allSpans) : []),
     [allSpans, active],
@@ -278,10 +319,16 @@ function SpanAttachmentsBody({
         items.filter(
           (item) =>
             attachmentKind(item.reference) !== "screenshot" &&
-            !placed.has(item.reference.occurrence_id),
+            !placed.has(item.reference.occurrence_id) &&
+            !(
+              clips &&
+              ((item.reference.modality === "audio" &&
+                item.reference.purpose === "conversation_recording") ||
+                clips.placed.has(item.reference.occurrence_id))
+            ),
         ),
       ),
-    [items, placed],
+    [items, placed, clips],
   );
 
   const spanFrame = frames.findIndex(

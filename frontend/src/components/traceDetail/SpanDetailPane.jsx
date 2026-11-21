@@ -2,6 +2,8 @@ import React, {
   useState,
   useCallback,
   useDeferredValue,
+  useSyncExternalStore,
+  useId,
   useEffect,
   useMemo,
   useRef,
@@ -40,10 +42,21 @@ import { enqueueSnackbar } from "notistack";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
+import ConversationTab from "./ConversationTab";
+import { discoverRecordings } from "./conversationTimeline";
+import {
+  mediaContextGeneration,
+  subscribeMediaContext,
+  captureMediaContext,
+} from "../attachments/mediaSession";
+import { uuid } from "../attachments/contract";
 import SmartPreview from "./SmartPreview";
 import SpanAttachments, {
   SpanAttachmentsProvider,
+  ClipControl,
 } from "src/components/attachments/SpanAttachments";
+import { useSpanClips } from "../attachments/spanAttachmentsContext";
+import { reservedClipValue } from "../attachments/clipPlacement";
 import { isOpenAIMessages } from "./ChatMessageView";
 import useSearchHighlight from "./useSearchHighlight";
 import ScoresListSection from "src/components/ScoresListSection/ScoresListSection";
@@ -1679,6 +1692,7 @@ EventCard.propTypes = { event: PropTypes.object };
 
 const SpanDetailPane = ({
   entry,
+  conversationTree,
   allSpans,
   traceStartTime,
   isRootSpan,
@@ -1786,11 +1800,45 @@ const SpanDetailPane = ({
     return all.filter(Boolean);
   }, [span]);
 
+  const tabId = useId();
+  const mediaGeneration = useSyncExternalStore(
+    subscribeMediaContext,
+    mediaContextGeneration,
+  );
+  const traceMedia = Boolean(
+    conversationTree &&
+      drawerOpen &&
+      !readOnly &&
+      uuid.safeParse(projectId).success &&
+      !window.location.pathname.startsWith("/shared/") &&
+      captureMediaContext(),
+  );
+  const recordings = useMemo(
+    () =>
+      traceMedia ? discoverRecordings(conversationTree, span, isRootSpan) : [],
+    [traceMedia, conversationTree, span, isRootSpan],
+  );
+  const eligible = recordings.length > 0;
+  const selectionKey = `${mediaGeneration}/${projectId}/${span.trace}/${span.id}`;
+  const [conversationKey, setConversationKey] = useState(null);
+  const showConversation = eligible && selectionKey === conversationKey;
+  const visibleTab =
+    activeTab === "conversation" && !showConversation ? "preview" : activeTab;
+  useEffect(() => {
+    if (activeTab === "conversation" && !showConversation)
+      setActiveTab("preview");
+  }, [activeTab, showConversation]);
   const hasLogView = allSpans?.length > 0;
   const TAB_CONFIG = useMemo(() => {
     const tabs = [
       { key: "preview", label: "Preview", icon: "solar:document-text-linear" },
     ];
+    if (eligible)
+      tabs.push({
+        key: "conversation",
+        label: "Conversation",
+        icon: "solar:chat-round-line-linear",
+      });
     if (hasLogView) {
       tabs.push({
         key: "log",
@@ -1812,7 +1860,7 @@ const SpanDetailPane = ({
       { key: "events", label: "Events", icon: "solar:bell-linear" },
     );
     return tabs.filter(Boolean);
-  }, [hasLogView, readOnly]);
+  }, [eligible, hasLogView, readOnly]);
 
   if (!span) return null;
 
@@ -1916,12 +1964,16 @@ const SpanDetailPane = ({
 
       {/* ── Tab Bar ────────────────────────────────── */}
       <Tabs
-        value={activeTab}
-        onChange={(_, v) => setActiveTab(v)}
+        value={visibleTab}
+        onChange={(_, v) => {
+          if (v === "conversation") setConversationKey(selectionKey);
+          setActiveTab(v);
+        }}
         variant="scrollable"
         scrollButtons="auto"
         allowScrollButtonsMobile
-        sx={{ boxShadow: "none",
+        sx={{
+          boxShadow: "none",
           borderBottom: "1px solid",
           borderColor: "divider",
           "& .MuiTabs-flexContainer": { gap: 0 },
@@ -1941,6 +1993,8 @@ const SpanDetailPane = ({
         {TAB_CONFIG.map((t) => (
           <Tab
             key={t.key}
+            id={`${tabId}-${t.key}`}
+            aria-controls={`${tabId}-panel`}
             value={t.key}
             icon={<Iconify icon={t.icon} width={14} />}
             iconPosition="start"
@@ -1951,6 +2005,9 @@ const SpanDetailPane = ({
 
       {/* ── Tab Content ────────────────────────────── */}
       <Box
+        role="tabpanel"
+        id={`${tabId}-panel`}
+        aria-labelledby={`${tabId}-${visibleTab}`}
         sx={{
           flex: 1,
           overflow: "auto",
@@ -1961,7 +2018,14 @@ const SpanDetailPane = ({
         }}
       >
         {/* Preview Tab */}
-        {activeTab === "preview" && (
+        {visibleTab === "conversation" && (
+          <ConversationTab
+            key={selectionKey}
+            projectId={projectId}
+            recordings={recordings}
+          />
+        )}
+        {visibleTab === "preview" && (
           <Box sx={{ px: 2, py: 1.5 }}>
             {/* Search + Format toggle — pinned to the top of the scroll
                 container so find-in-page controls stay reachable while
@@ -2084,7 +2148,11 @@ const SpanDetailPane = ({
             <SpanAttachmentsProvider
               projectId={projectId}
               span={span}
-              enabled={!readOnly}
+              key={selectionKey}
+              traceMedia={traceMedia}
+              enabled={
+                !readOnly && drawerOpen && (!conversationTree || traceMedia)
+              }
             >
               <Box ref={previewContentRef}>
                 <SmartPreview
@@ -2135,52 +2203,52 @@ const SpanDetailPane = ({
               />
             )}
             <EvalsTabView
-            evals={collectAllEvalsFromEntry(entry)}
-            onSelectSpan={onSelectSpan}
-            emptyMessage="No evaluations for this span or its children"
-            showErrorLocalization={!readOnly}
-            showFixWithFalcon={!readOnly}
-            onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
-              const traceId = span?.trace;
-              if (level === "eval" && ev) {
+              evals={collectAllEvalsFromEntry(entry)}
+              onSelectSpan={onSelectSpan}
+              emptyMessage="No evaluations for this span or its children"
+              showErrorLocalization={!readOnly}
+              showFixWithFalcon={!readOnly}
+              onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
+                const traceId = span?.trace;
+                if (level === "eval" && ev) {
+                  openFixWithFalcon({
+                    level: "eval",
+                    context: {
+                      trace_id: traceId,
+                      span_id: ev.spanId || ev.observation_span_id || span?.id,
+                      eval_log_id: ev.eval_log_id || ev.cell_id || ev.log_id,
+                      custom_eval_config_id:
+                        ev.custom_eval_config_id || ev.eval_config_id,
+                      eval_name: ev.eval_name,
+                      score: ev.score,
+                      explanation: ev.explanation || ev.eval_explanation,
+                      span_name: ev.spanName,
+                      project_id: projectId,
+                    },
+                  });
+                  return;
+                }
+                // Span-level or trace-level — include pass/fail summary so
+                // Falcon can gate (no fabricated failures when everything passes).
+                const total = (allEvals || []).length;
+                const passCount = (allEvals || []).filter(
+                  (e) => e.score != null && e.score >= 50,
+                ).length;
                 openFixWithFalcon({
-                  level: "eval",
+                  level: isRootSpan ? "trace" : "span",
                   context: {
                     trace_id: traceId,
-                    span_id: ev.spanId || ev.observation_span_id || span?.id,
-                    eval_log_id: ev.eval_log_id || ev.cell_id || ev.log_id,
-                    custom_eval_config_id:
-                      ev.custom_eval_config_id || ev.eval_config_id,
-                    eval_name: ev.eval_name,
-                    score: ev.score,
-                    explanation: ev.explanation || ev.eval_explanation,
-                    span_name: ev.spanName,
+                    span_id: isRootSpan ? undefined : span?.id,
+                    span_name: isRootSpan ? undefined : span?.name,
+                    evals_summary: `${passCount}/${total} passed`,
+                    failing_evals: (failingEvals || []).map((e) => ({
+                      name: e.eval_name,
+                      score: e.score,
+                    })),
                     project_id: projectId,
                   },
                 });
-                return;
-              }
-              // Span-level or trace-level — include pass/fail summary so
-              // Falcon can gate (no fabricated failures when everything passes).
-              const total = (allEvals || []).length;
-              const passCount = (allEvals || []).filter(
-                (e) => e.score != null && e.score >= 50,
-              ).length;
-              openFixWithFalcon({
-                level: isRootSpan ? "trace" : "span",
-                context: {
-                  trace_id: traceId,
-                  span_id: isRootSpan ? undefined : span?.id,
-                  span_name: isRootSpan ? undefined : span?.name,
-                  evals_summary: `${passCount}/${total} passed`,
-                  failing_evals: (failingEvals || []).map((e) => ({
-                    name: e.eval_name,
-                    score: e.score,
-                  })),
-                  project_id: projectId,
-                },
-              });
-            }}
+              }}
             />
           </>
         )}
@@ -2247,10 +2315,47 @@ const AttrValueCell = ({
   onToggle,
   searchQuery: _sq,
   path,
+  parts = [path],
   spanId,
   traceId,
   audioCache,
 }) => {
+  const clips = useSpanClips();
+  const matches = clips?.paths.get(JSON.stringify(parts));
+  const carrier = parts.length === 1 && parts[0] === "fi.attachment.refs";
+  if (carrier && clips?.refs && typeof value === "string")
+    return (
+      <>
+        <Typography variant="caption" sx={{ overflowWrap: "anywhere" }}>
+          {value}
+        </Typography>
+        <AttrValueCell
+          value={clips.refs}
+          expanded={expanded}
+          onToggle={onToggle}
+          path={path}
+          parts={parts}
+        />
+      </>
+    );
+  if (
+    matches ||
+    (reservedClipValue(parts, value) && !(carrier && Array.isArray(value)))
+  )
+    return (
+      <Box sx={{ overflowWrap: "anywhere" }}>
+        <Typography variant="caption">
+          {typeof value === "string" ? value : JSON.stringify(value)}
+        </Typography>
+        {matches?.map((item) => (
+          <ClipControl
+            key={item.reference.occurrence_id}
+            label={parts.join(".")}
+            item={item}
+          />
+        ))}
+      </Box>
+    );
   if (value === null || value === undefined) {
     return (
       <Typography variant="caption" color="text.disabled" sx={{ fontSize: 12 }}>
@@ -2296,11 +2401,20 @@ const AttrValueCell = ({
     return (
       <Box>
         <Box
-          onClick={onToggle}
+          component="button"
+          type="button"
+          aria-expanded={!!expanded}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle();
+          }}
           sx={{
             display: "flex",
             alignItems: "center",
             gap: 0.5,
+            bgcolor: "transparent",
+            border: 0,
+            p: 0,
             cursor: "pointer",
             "&:hover": { opacity: 0.7 },
           }}
@@ -2339,6 +2453,7 @@ const AttrValueCell = ({
               <AttrNestedRow
                 key={k}
                 path={k}
+                parts={[...parts, k]}
                 value={v}
                 spanId={spanId}
                 traceId={traceId}
@@ -2371,6 +2486,7 @@ const AttrValueCell = ({
 };
 
 AttrValueCell.propTypes = {
+  parts: PropTypes.array,
   value: PropTypes.any,
   expanded: PropTypes.bool,
   onToggle: PropTypes.func,
@@ -2383,7 +2499,7 @@ AttrValueCell.propTypes = {
 
 /* ── AttrNestedRow — recursive nested row ── */
 
-const AttrNestedRow = ({ path, value, spanId, traceId, audioCache }) => {
+const AttrNestedRow = ({ path, parts, value, spanId, traceId, audioCache }) => {
   const [open, setOpen] = useState(false);
   const isComplex = value !== null && typeof value === "object";
 
@@ -2425,6 +2541,7 @@ const AttrNestedRow = ({ path, value, spanId, traceId, audioCache }) => {
             expanded={open}
             onToggle={() => setOpen(!open)}
             path={path}
+            parts={parts}
             spanId={spanId}
             traceId={traceId}
             audioCache={audioCache}
@@ -2436,6 +2553,7 @@ const AttrNestedRow = ({ path, value, spanId, traceId, audioCache }) => {
 };
 
 AttrNestedRow.propTypes = {
+  parts: PropTypes.array,
   path: PropTypes.string,
   value: PropTypes.any,
   spanId: PropTypes.string,
@@ -2495,6 +2613,7 @@ const AttributesCard = ({
     return attributes;
   }, [attributes]);
 
+  const clips = useSpanClips();
   const allEntries = Object.entries(parsed);
 
   // Filter by search. When inline search is hidden the parent owns the
@@ -2559,18 +2678,27 @@ const AttributesCard = ({
                 color="text.disabled"
               />
             </IconButton>
-            <Iconify
-              icon={
-                expanded
-                  ? "solar:alt-arrow-up-linear"
-                  : "solar:alt-arrow-down-linear"
-              }
-              width={16}
-              sx={{ color: "text.disabled", ml: 0.25 }}
-            />
+            <IconButton
+              size="small"
+              aria-label="Toggle attributes"
+              aria-expanded={expanded}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded((x) => !x);
+              }}
+            >
+              <Iconify
+                icon={
+                  expanded
+                    ? "solar:alt-arrow-up-linear"
+                    : "solar:alt-arrow-down-linear"
+                }
+                width={16}
+              />
+            </IconButton>
           </Stack>
 
-          <Collapse in={expanded}>
+          <Collapse in={expanded} unmountOnExit timeout={0}>
             {/* Search within attributes — hidden when parent owns the query */}
             {!hideInlineSearch && (
               <Box sx={{ px: 1.5, pb: 0.75 }}>
@@ -2655,7 +2783,24 @@ const AttributesCard = ({
 
               {/* Rows */}
               <Box sx={{ maxHeight: 350, overflowY: "auto" }}>
-                {filteredEntries.length === 0 ? (
+                {(!query || "turn audio".includes(query)) &&
+                  clips?.fallback.map((item, i) => (
+                    <Stack
+                      key={item.reference.occurrence_id}
+                      direction="row"
+                      sx={{ px: 1.5, py: 0.5 }}
+                    >
+                      <Typography variant="caption" sx={{ width: "40%" }}>
+                        Turn audio
+                      </Typography>
+                      <ClipControl item={item} label={`Turn audio ${i + 1}`} />
+                    </Stack>
+                  ))}
+                {filteredEntries.length === 0 &&
+                !(
+                  clips?.fallback.length &&
+                  (!query || "turn audio".includes(query))
+                ) ? (
                   <Typography
                     variant="caption"
                     color="text.disabled"
@@ -2757,6 +2902,7 @@ AttributesCard.propTypes = {
 };
 
 SpanDetailPane.propTypes = {
+  conversationTree: PropTypes.array,
   entry: PropTypes.shape({
     observation_span: PropTypes.object,
     observationSpan: PropTypes.object,

@@ -2960,10 +2960,10 @@
 1. create a voice project and an observe project (SDK source, not simulator) and opt both into attachments (operator step, test-image endpoint)
 2. with the org API key, bootstrap an F01 capture session per trace and upload a LiveKit and a Pipecat Ogg/Opus call recording, a WAV, a placed PNG and a PDF (initialize, PUT, complete)
 3. send through the collector a LiveKit call (untyped job_entrypoint root with lk.job_id, agent_session child carrying the recording), a Pipecat call (CONVERSATION root carrying the recording) and the model trace
-4. on the https app origin, open the LiveKit trace, select agent_session, load its recording and play it to the end
+4. on the https app origin, open the LiveKit trace, select agent_session, seek within its Conversation timeline, play to the end and inspect real peaks
 5. open the Pipecat trace and play the root's recording to the end
 6. open the model trace, select the model span, switch to Chat and see the PNG inside user message 2
-7. load the WAV, and download the PDF, which has no inline preview
+7. play the WAV beside turn.audio in Attributes, and download the PDF, which has no inline preview
 8. open each call on the dedicated Voice full-page route and play its Attachment recording to the end
 9. delete only the LiveKit CH session through the supported session API
 

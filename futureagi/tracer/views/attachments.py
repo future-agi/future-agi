@@ -64,6 +64,11 @@ from tracer.services.attachments import (
 )
 from tracer.services.attachments.authority import LiveAuthority
 from tracer.services.attachments.contract import AttachmentError
+from tracer.services.attachments.control_plane import standalone_audio_facts
+from tracer.services.attachments.view_enrichment import (
+    RECORDING_PURPOSE,
+    recording_projection,
+)
 from tracer.views import attachment_media
 
 logger = structlog.get_logger(__name__)
@@ -589,6 +594,66 @@ class AttachmentOccurrenceView(AttachmentView):
             viewer, authority(), occurrence_id=occurrence_id, parent=parent
         )
         return empty_response(204)
+
+
+class RecordingPreviewView(AttachmentView):
+    """Lazy app projection for one authorized recording; never returns byte grants."""
+
+    @swagger_auto_schema(
+        tags=[TAG],
+        manual_parameters=PARENT_QUERY,
+        operation_description="Selected recording state and finalized authorized manifest, if ready.",
+        responses={200: "Recording preview", **ERRORS},
+    )
+    def get(self, request, project_id, occurrence_id):
+        viewer = self.viewer(request, project_id)
+        auth = authority()
+        parent = occurrences.Parent.parse(self.parent_query(request))
+        row, scope, expiry = occurrences.get_occurrence(
+            viewer, auth, occurrence_id, parent
+        )
+        item = occurrences.metadata(row, scope, expiry)
+        if (
+            row.purpose != RECORDING_PURPOSE
+            or row.attachment.modality != "audio"
+            or item["state"] in {"expired", "deleted", "rejected"}
+        ):
+            raise occurrences.not_found()
+        status = item["state"]
+        if status == "ready" and not item["capture_complete"]:
+            status = "partial"
+
+        def load_manifest():
+            try:
+                return manifests.read_manifest(
+                    viewer,
+                    auth,
+                    recording_id=item["recording_id"],
+                    parent=item["parent"],
+                    finalized_only=True,
+                )
+            except AttachmentError as exc:
+                if exc.code != "not_found":
+                    raise
+                return None
+
+        def load_facts():
+            current, _, _ = occurrences.get_occurrence(
+                viewer, auth, occurrence_id, parent, ready=True
+            )
+            return standalone_audio_facts(current)
+
+        return json_response(
+            recording_projection(
+                item["parent"],
+                [str(row.client_id)],
+                item.get("recording_id"),
+                status,
+                complete=False,
+                load_manifest=load_manifest,
+                load_facts=load_facts,
+            )
+        )
 
 
 class AttachmentResolveView(AttachmentView):

@@ -47,7 +47,14 @@ def _segment_bytes(duration_ms):
 
 
 def _recording(
-    setup, user, monkeypatch, durations, *, reject_last=False, leave_last_unbound=False
+    setup,
+    user,
+    monkeypatch,
+    durations,
+    *,
+    reject_last=False,
+    leave_last_unbound=False,
+    observe=None,
 ):
     scope, _ = setup
     scope.record_audio, scope.policy_version = True, scope.policy_version + 1
@@ -174,6 +181,8 @@ def _recording(
 
     # Fully uploaded and bound segments alone cannot imply SDK finalization.
     prefix = detail()
+    if observe is not None:
+        observe("prefix", reader, rows)
     incomplete = prefix["recording_attachment"]
     assert all(
         not item["capture_complete"]
@@ -204,6 +213,8 @@ def _recording(
         assert incomplete["state"] != "ready" and "manifest" not in incomplete
         assert control_plane.reconcile_tick(span_reader=spans)["bound"] == 1
         assert detail()["recording_attachment"]["state"] == "ready"
+    if observe is not None:
+        observe("final", reader, rows)
     return body, rows, detail
 
 
@@ -357,3 +368,63 @@ def test_long_recording_stays_playable_when_metadata_page_is_short(
     assert len(result["observation_span"][0]["attachments"]) == 1
     assert result["recording_attachment"]["state"] == "ready"
     assert result["recording_attachment"]["manifest"] == body
+
+
+def test_trace_preview_of_nonanchor_segment_requires_the_entire_finalized_recording(
+    setup, user, monkeypatch
+):
+    import json
+
+    from rest_framework.test import APIRequestFactory
+
+    from tracer.views import attachments as views
+
+    scope, _ = setup
+    monkeypatch.setattr(control_plane, "MAX_READ_ROWS", 1)
+
+    def observe(stage, reader, rows):
+        selected = rows[1]
+        monkeypatch.setattr(
+            views.RecordingPreviewView,
+            "viewer",
+            lambda self, request, project_id: reader.viewer,
+        )
+        monkeypatch.setattr(
+            views,
+            "authority",
+            lambda: reader._authority(
+                reader.viewer, {selected.span_id}, trace_ids={selected.trace_id}
+            ),
+        )
+
+        def preview():
+            request = APIRequestFactory().get(
+                "/recording-preview",
+                {"trace_id": str(selected.trace_id), "span_id": selected.span_id},
+            )
+            reply = views.RecordingPreviewView.as_view()(
+                request,
+                project_id=str(scope.project_id),
+                occurrence_id=str(selected.client_id),
+            )
+            assert reply.status_code == 200
+            return json.loads(reply.content)
+
+        if stage == "prefix":
+            projection = preview()
+            assert projection["state"] == "waiting" and "manifest" not in projection
+        else:
+            projection = preview()
+            assert projection["occurrence_id"] == str(rows[0].client_id)
+            assert projection["state"] == "ready"
+            assert [s["occurrence_id"] for s in projection["manifest"]["segments"]] == [
+                str(row.client_id) for row in rows
+            ]
+            # Outside the one-item discovery page and not the selected segment.
+            last = rows[-1]
+            last.deleted_at = timezone.now()
+            last.save(update_fields=["deleted_at"])
+            refused = preview()
+            assert refused["state"] != "ready" and "manifest" not in refused
+
+    _recording(setup, user, monkeypatch, (1000, 1500, 1000), observe=observe)

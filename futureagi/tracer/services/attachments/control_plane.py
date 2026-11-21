@@ -421,7 +421,7 @@ def reconcile_tick(*, now=None, span_reader=read_spans):
     return totals
 
 
-def _audio_facts(row):
+def standalone_audio_facts(row):
     """Validated blob facts of a READY standalone audio upload, else None.
 
     Only what the sandboxed probe proved (type, rate, channels, frames); the
@@ -744,4 +744,4 @@ class ControlPlaneReader:
             )
         except (AttachmentError, ValueError, TypeError, AttributeError):
             return None
-        return _audio_facts(row)
+        return standalone_audio_facts(row)

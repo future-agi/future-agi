@@ -115,9 +115,8 @@ export const resolveItemSchema = z
   .object({
     occurrence_id: uuid,
     parent: parentSchema,
-    // F01 also defines peaks/thumbnail; the backend serves only original and
-    // playable, so the UI never requests a derivative that cannot exist.
-    representation: z.enum(["original", "playable", "channel"]),
+    // Supported gateway representations; only channel requires an index.
+    representation: z.enum(["original", "playable", "channel", "peaks"]),
     channel: z.number().int().min(0).max(31).optional(),
   })
   .strict()

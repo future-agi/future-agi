@@ -317,25 +317,39 @@ def enrich_voice_detail(*, request, result, reader=None):
         (value for value in statuses if value not in {"ready", "partial"}),
         "partial" if "partial" in statuses else "ready",
     )
+    same_parent = all(
+        other == target and entry.get("recording_id") == recording_id
+        for other, entry in owned
+    )
+    result["recording_attachment"] = recording_projection(
+        {"trace_id": parent.trace_id, "span_id": parent.span_id},
+        [entry["reference"]["occurrence_id"] for entry in items],
+        recording_id,
+        status,
+        complete=complete,
+        load_manifest=lambda: (
+            reader.recording_manifest(request, target, recording_id)
+            if same_parent
+            else None
+        ),
+        load_facts=lambda: reader.standalone_recording(request, target, occurrence_id),
+    )
+
+
+def recording_projection(
+    parent, occurrence_ids, recording_id, status, *, complete, load_manifest, load_facts
+):
+    """Project only freshly authorized facts; never promote an unfinished prefix."""
+    occurrence_id = occurrence_ids[0]
     projection = {
         "occurrence_id": occurrence_id,
-        "parent": {"trace_id": parent.trace_id, "span_id": parent.span_id},
+        "parent": parent,
         "state": _COARSE_RECORDING_STATES.get(status, "pending"),
     }
     if status in {"ready", "partial"}:
         playable = False
-        if "recording_id" in item:
-            # A manifest has one exact parent. Never borrow authorization from
-            # another span, even if a reader reports the same recording id.
-            same_parent = all(
-                other == target and entry.get("recording_id") == recording_id
-                for other, entry in owned
-            )
-            manifest = (
-                reader.recording_manifest(request, target, recording_id)
-                if same_parent
-                else None
-            )
+        if recording_id is not None:
+            manifest = load_manifest()
             # The authorized manifest reader must check EVERY occurrence, not
             # only the bounded (64/parent) metadata page. A complete 120-part
             # recording therefore remains playable, while a denied later part
@@ -344,7 +358,7 @@ def enrich_voice_detail(*, request, result, reader=None):
                 manifest is not None
                 and _playable(
                     manifest,
-                    [entry["reference"]["occurrence_id"] for entry in items],
+                    occurrence_ids,
                     recording_id,
                     complete_page=complete,
                 )
@@ -353,10 +367,10 @@ def enrich_voice_detail(*, request, result, reader=None):
             if playable and manifest is not None:
                 # Stable anchor: database row order is not timeline order.
                 projection["occurrence_id"] = manifest["segments"][0]["occurrence_id"]
-        elif status == "ready" and len(items) == 1:
+        elif status == "ready" and len(occurrence_ids) == 1:
             # Re-authorized for this exact occurrence (ready only); any denial
             # leaves the projection not-ready.
-            facts = reader.standalone_recording(request, target, occurrence_id)
+            facts = load_facts()
             manifest = standalone_manifest(occurrence_id, facts) if facts else None
             playable = manifest is not None and _playable_standalone(
                 manifest, occurrence_id
@@ -364,7 +378,7 @@ def enrich_voice_detail(*, request, result, reader=None):
         if playable:
             projection["state"] = "ready"
             projection["manifest"] = manifest
-    result["recording_attachment"] = projection
+    return projection
 
 
 def enrich_voice_page(*, request, project_id, entries, reader=None):

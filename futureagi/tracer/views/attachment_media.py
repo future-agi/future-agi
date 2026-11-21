@@ -21,6 +21,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from tracer.services.attachments import egress, playback
 from tracer.services.attachments.contract import AttachmentError
+from tracer.services.attachments.derivatives import peaks_descriptor
 from tracer.services.attachments.occurrences import not_found
 from tracer.services.attachments.storage import for_binding
 
@@ -321,6 +322,12 @@ def media_response(
     )
     private(response)
     response["Content-Type"] = blob.mime_type
+    if request.method == "GET" and grant.representation == "peaks":
+        descriptor = peaks_descriptor(blob)
+        if descriptor is not None:
+            response["X-Attachment-Peaks"] = json.dumps(
+                descriptor, separators=(",", ":")
+            )
     disposition = "inline" if served.inline else "attachment"
     response["Content-Disposition"] = f'{disposition}; filename="{served.filename}"'
     if not served.inline:

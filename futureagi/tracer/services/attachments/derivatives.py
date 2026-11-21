@@ -182,6 +182,54 @@ def enqueue_for_asset_locked(attachment):
     return tuple(rows)
 
 
+def peaks_descriptor(selection):
+    """Header for the *selected* immutable peaks object, never a new selection."""
+    if selection.representation != "peaks" or not selection.derivative_id:
+        return None
+    facts = (
+        AttachmentRecordingDerivative.objects.filter(
+            pk=selection.derivative_id,
+            state="ready",
+            representation="peaks",
+            storage_version=selection.identity.version,
+            storage_key=selection.identity.key,
+            sha256=selection.sha256,
+            byte_length=selection.byte_length,
+        )
+        .values_list("facts", flat=True)
+        .first()
+    )
+    if not isinstance(facts, dict):
+        return None
+    rate, channels, frames = (
+        facts.get(k) for k in ("sample_rate", "channels", "frame_count")
+    )
+    if (
+        any(type(v) is not int for v in (rate, channels, frames))
+        or not 8000 <= rate <= 96000
+        or channels not in (1, 2)
+        or not 0 < frames <= rate * 30
+    ):
+        return None
+    levels = []
+    for factor in (1, 10, 100):
+        width = rate // 100 * factor
+        levels.append(
+            {"frames_per_bucket": width, "buckets": (frames + width - 1) // width}
+        )
+    if facts.get("levels") != levels or selection.byte_length != 4 * channels * sum(
+        level["buckets"] for level in levels
+    ):
+        return None
+    return {
+        "v": 1,
+        "sample_rate": rate,
+        "channels": channels,
+        "frame_count": frames,
+        "levels": levels,
+    }
+
+
 def identity_for(*, attachment_id, representation):
     """Selection metadata, never read authority. No imported-only segment filter."""
     if representation not in (*REPRESENTATIONS, "playable"):
