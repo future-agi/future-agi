@@ -106,7 +106,7 @@ def _extract(
     service = _livekit_service()
     call = MagicMock(service_provider_call_id="call_call-1")
     call.provider_call_data = provider_call_data
-    call.asave = AsyncMock(side_effect=on_save)
+    call.asave = AsyncMock()
     egress_info = MagicMock(egress_id=response_id, room_name=response_room)
     egress_info.status = EgressStatus.EGRESS_COMPLETE
     egress_info.file_results = [MagicMock(filename="raw/room.ogg")]
@@ -117,6 +117,8 @@ def _extract(
     async def update_fields(**changes):
         for field, value in changes.items():
             setattr(call, field, value)
+        if on_save:
+            on_save(**changes)
         return 1
 
     with (
@@ -345,8 +347,8 @@ def test_complete_map_saved_before_cleanup_survives_worker_stop():
     data = {PROVIDER_KEY: {"egress_id": "EG_1", "recording_files": ["other/raw.ogg"]}}
     persisted = {}
 
-    def stop_after_save(**_kwargs):
-        persisted.update(deepcopy(data))
+    def stop_after_save(**changes):
+        persisted.update(deepcopy(changes["provider_call_data"]))
         raise asyncio.CancelledError
 
     before_crash = MagicMock()
@@ -429,8 +431,8 @@ def test_retry_does_not_reuse_another_recording_source(changed):
     retry, call, delete, _ = _extract(data, stream=MagicMock(side_effect=OSError))
     delete.assert_not_called()
     assert retry.error["tracks"] == ["assistant", "customer", "mono", "stereo"]
-    assert data[PROVIDER_KEY]["recording"] == {}
-    assert "https://old/" not in str(data)
+    assert call.provider_call_data[PROVIDER_KEY]["recording"] == {}
+    assert "https://old/" not in str(call.provider_call_data)
     assert call.recording_url is None and call.stereo_recording_url is None
     assert not call.recording_available
 

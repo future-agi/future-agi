@@ -13,6 +13,7 @@ Environment variables:
 - VAPI_API_KEY: VAPI API key for test fixtures (default: test-api-key-for-testing)
 """
 
+import asyncio
 import os
 import uuid
 from datetime import timedelta
@@ -1073,6 +1074,19 @@ class TestFetchAndPersistCallResultActivity:
             status=CreateCallExecution.CallStatus.ONGOING,
         )
 
+        async def extract_recordings(call_id):
+            await CallExecution.objects.filter(pk=call_id).aupdate(
+                stereo_recording_url=stereo,
+                recording_available=True,
+                provider_call_data=engine_data,
+            )
+            return RecordingUrls(
+                stereo_recording_url=stereo,
+                provider_call_data=engine_data,
+                recording_fields_persisted=True,
+                error=error,
+            )
+
         with (
             patch("temporalio.activity.info"),
             patch("temporalio.activity.heartbeat"),
@@ -1088,13 +1102,7 @@ class TestFetchAndPersistCallResultActivity:
         ):
             mock_vsm = MagicMock()
             mock_vsm.fetch_and_store_call_data = AsyncMock(return_value=(2, True, True))
-            mock_vsm.extract_and_persist_recordings = AsyncMock(
-                return_value=RecordingUrls(
-                    stereo_recording_url=stereo,
-                    provider_call_data=engine_data,
-                    error=error,
-                )
-            )
+            mock_vsm.extract_and_persist_recordings = extract_recordings
             mock_vsm.extract_costs = AsyncMock(
                 return_value=MagicMock(
                     total=0.25,
@@ -1129,15 +1137,23 @@ class TestFetchAndPersistCallResultActivity:
         assert create_call.status == CreateCallExecution.CallStatus.COMPLETED
 
     @pytest.mark.parametrize(
-        "during_cleanup", [True, False], ids=["cleanup", "handoff"]
-    )
-    @pytest.mark.parametrize(
-        "delete_fails", [False, True], ids=["clear-error", "set-error"]
+        ("phase", "split", "delete_fails"),
+        [
+            ("cleanup", None, False),
+            ("cleanup", None, True),
+            ("handoff", None, False),
+            ("handoff", None, True),
+            ("upload", "complete", False),
+            ("upload", "initial", False),
+            ("upload", "partial", False),
+            ("handoff", "partial", False),
+            ("same-source", "partial", False),
+        ],
     )
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
-    async def test_cleanup_retry_preserves_new_egress_through_activity_save(
-        self, call_execution, delete_fails, during_cleanup
+    async def test_recording_writers_preserve_current_egress_through_activity_save(
+        self, call_execution, phase, split, delete_fails
     ):
         activity_module = _ee_voice_large()
         from livekit.protocol.egress import EgressStatus
@@ -1157,12 +1173,14 @@ class TestFetchAndPersistCallResultActivity:
             "egress_id": "EG_1",
             "recording_files": ["raw/one.ogg"],
             "recording_source": {"call_id": call_id, "egress_id": "EG_1"},
-            "recording": old,
+            "recording": {k: old[k] for k in ("combined", "stereo")} if split else old,
         }
+        if split == "initial":
+            del lk["recording_source"], lk["recording"]
         if not delete_fails:
             lk["recording_error"] = {"code": "recording_cleanup_failed"}
         await CallExecution.objects.filter(pk=call_id).aupdate(
-            provider_call_data={"livekit": lk}
+            provider_call_data={"livekit": lk}, cost_cents=71
         )
 
         async def publish_new_recording():
@@ -1183,36 +1201,61 @@ class TestFetchAndPersistCallResultActivity:
             current_lk.update(
                 recording_source={"call_id": call_id, "egress_id": "EG_2"},
                 recording=new,
+                assistant_recording_url=new["assistant"],
+                customer_recording_url=new["customer"],
+                webhook_metadata="preserve",
             )
             current_lk.pop("recording_error", None)
-            current.recording_url, current.stereo_recording_url = (
-                new["combined"],
-                new["stereo"],
+            await CallExecution.objects.filter(pk=call_id).aupdate(
+                provider_call_data=current.provider_call_data,
+                recording_url=new["combined"],
+                stereo_recording_url=new["stereo"],
+                recording_available=True,
             )
-            await current.asave(
-                update_fields=[
-                    "provider_call_data",
-                    "recording_url",
-                    "stereo_recording_url",
-                ]
-            )
+
+        async def publish_customer():
+            current = await CallExecution.objects.aget(pk=call_id)
+            current_lk = current.provider_call_data["livekit"]
+            current_lk["recording"]["customer"] = "https://peer/customer"
+            current_lk["webhook_metadata"] = "preserve"
+            await current.asave(update_fields=["provider_call_data"])
+
+        loop = asyncio.get_running_loop()
+
+        def upload(_config, _source, destination, _ffargs):
+            if "_assistant_" in destination:
+                if phase in ("upload", "same-source"):
+                    write = (
+                        publish_customer
+                        if phase == "same-source"
+                        else publish_new_recording
+                    )
+                    asyncio.run_coroutine_threadsafe(write(), loop).result(timeout=30)
+                return "https://upload/assistant"
+            if split == "initial":
+                return f"https://upload/{destination}"
+            assert "_customer_" in destination
+            if split == "partial":
+                raise OSError("Incomplete customer track")
+            return "https://upload/customer"
+
+        info = MagicMock(
+            room_name=room,
+            egress_id="EG_1",
+            status=EgressStatus.EGRESS_COMPLETE,
+            file_results=[MagicMock(filename="raw/one.ogg")],
+        )
 
         async def list_egress(_request):
-            if during_cleanup:
+            if phase == "cleanup":
                 await publish_new_recording()
-            return MagicMock(
-                items=[
-                    MagicMock(
-                        room_name=room,
-                        egress_id="EG_1",
-                        status=EgressStatus.EGRESS_COMPLETE,
-                        file_results=[MagicMock(filename="raw/one.ogg")],
-                    )
-                ]
-            )
+            return MagicMock(items=[info])
 
         async def fetch_costs(_call_id):
-            if not during_cleanup:
+            before_costs = await CallExecution.objects.aget(pk=call_id)
+            assert before_costs.cost_cents == 71
+            assert before_costs.status == CallExecution.CallStatus.PENDING
+            if phase == "handoff":
                 await publish_new_recording()
             return CostBreakdown(total=0.25)
 
@@ -1224,6 +1267,14 @@ class TestFetchAndPersistCallResultActivity:
             patch.object(Heartbeater, "__aenter__", new=AsyncMock()),
             patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
             patch("ee.voice.services.livekit.service.LiveKitConfig.from_env"),
+            patch(
+                "ee.voice.services.livekit.recording.stream_egress_to_s3",
+                side_effect=upload,
+            ),
+            patch(
+                "ee.voice.services.livekit.recording.poll_egress_completion",
+                new=AsyncMock(return_value=info),
+            ),
             patch.object(LivekitService, "_create_api", return_value=api),
             patch(
                 "ee.voice.services.livekit.recording.delete_egress_recording",
@@ -1251,26 +1302,45 @@ class TestFetchAndPersistCallResultActivity:
                 )
             )
 
-        delete.assert_called_once_with(service.config, "raw/one.ogg")
+        if phase == "upload" or (phase == "handoff" and split == "partial"):
+            delete.assert_not_called()
+        else:
+            delete.assert_called_once_with(service.config, "raw/one.ogg")
         assert result.success
-        if during_cleanup:
+        if phase in ("cleanup", "upload"):
             assert result.recording_error["code"] == "recording_source_changed"
         elif delete_fails:
             assert result.recording_error["code"] == "recording_cleanup_failed"
+        elif phase == "handoff" and split == "partial":
+            assert result.recording_error["tracks"] == ["customer"]
         else:
             assert result.recording_error is None
         await call_execution.arefresh_from_db()
         stored = call_execution.provider_call_data["livekit"]
-        assert stored["egress_id"] == stored["recording_source"]["egress_id"] == "EG_2"
-        assert stored["recording_files"] == ["raw/two.ogg"]
-        assert stored["recording"] == new and "recording_error" not in stored
-        assert (call_execution.recording_url, call_execution.stereo_recording_url) == (
-            new["combined"],
-            new["stereo"],
-        )
-        assert (
-            call_execution.cost_cents == 25
-        )  # the activity still saved its unrelated update
+        if phase == "same-source":
+            expected = {
+                **old,
+                "customer": "https://peer/customer",
+                "assistant": "https://upload/assistant",
+            }
+            expected_id, raw = "EG_1", "raw/one.ogg"
+        else:
+            expected = new
+            expected_id, raw = "EG_2", "raw/two.ogg"
+        assert stored["recording_source"] == {
+            "call_id": call_id,
+            "egress_id": expected_id,
+        }
+        assert stored["egress_id"] == expected_id and stored["recording_files"] == [raw]
+        assert stored["recording"] == expected and "recording_error" not in stored
+        assert stored["assistant_recording_url"] == expected["assistant"]
+        assert stored["customer_recording_url"] == expected["customer"]
+        assert stored["webhook_metadata"] == "preserve"
+        assert call_execution.recording_available
+        assert call_execution.recording_url == expected["combined"]
+        assert call_execution.stereo_recording_url == expected["stereo"]
+        assert call_execution.cost_cents == 25
+        assert call_execution.status == CallExecution.CallStatus.PENDING
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio

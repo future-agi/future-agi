@@ -565,7 +565,8 @@ async def fetch_and_persist_call_result(
             if recording_urls.recording_fields_persisted is True:
                 # Use the engine's fresh snapshot for costs, not for a second
                 # recording write after another egress may have arrived.
-                call.provider_call_data = recording_urls.provider_call_data
+                if recording_urls.provider_call_data is not None:
+                    call.provider_call_data = recording_urls.provider_call_data
             else:
                 if recording_urls.recording_url:
                     call.recording_url = recording_urls.recording_url
