@@ -1644,6 +1644,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     project__organization=_get_request_organization(self.request),
                 )
 
+                # A sender's Observe cost, including zero, takes precedence over an estimate.
+                if (
+                    observation_span["project"].trace_type == "observe"
+                    and observation_span.get("cost") is not None
+                ):
+                    continue
+
                 prompt_tokens = observation_span.get("prompt_tokens") or 0
                 completion_tokens = observation_span.get("completion_tokens") or 0
                 model = observation_span.get("model")
@@ -1651,6 +1658,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                     model=model,
+                    project_type=observation_span["project"].trace_type,
                     organization_id=(
                         getattr(request, "organization", None)
                         or request.user.organization
