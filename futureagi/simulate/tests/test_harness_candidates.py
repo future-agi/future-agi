@@ -643,6 +643,36 @@ def test_failed_validation_keeps_draft_and_names_affected_scenarios(
 # --- step 5: Save --------------------------------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("moved", ["draft_written", "decision_changed"])
+def test_a_validated_set_reads_superseded_once_what_save_would_save_moved(
+    user, workspace, storage, auth_client, moved
+):
+    environment = _with_world(user, workspace, f"cand-moved-{moved}", storage)
+    _two_actors(auth_client, environment)
+    candidates, digest = _validated(
+        auth_client,
+        environment,
+        {"actor:manager": "accepted", "actor:auditor": "accepted"},
+    )
+    before = _drafts(auth_client, environment)["validation"]["state"]
+
+    if moved == "draft_written":
+        # A later write to the draft, such as a restore: its revision moves.
+        draft = drafts.open_draft(environment, "environment")
+        type(draft).no_workspace_objects.filter(id=draft.id).update(
+            revision=draft.revision + 1
+        )
+    else:
+        digest = _decided(auth_client, environment, {"actor:auditor": "rejected"})
+    after = _drafts(auth_client, environment)["validation"]["state"]
+    refused = _save(auth_client, environment, candidates, digest=digest)
+
+    assert before == "ready"
+    # Save refuses these candidates, so they no longer read as validated: the page asks to Validate again.
+    assert after == "superseded"
+    assert refused.status_code == 409
+
+
 def test_save_refused_unless_validated(user, workspace, storage, auth_client):
     environment = _with_world(user, workspace, "cand-unvalidated", storage)
     _two_actors(auth_client, environment)
