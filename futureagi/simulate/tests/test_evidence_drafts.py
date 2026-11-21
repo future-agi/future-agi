@@ -532,12 +532,19 @@ class TestAddToSuite:
         assert EvidenceImportCase.objects.get(id=drafted.id).status == "added"
 
     @pytest.mark.parametrize(
-        "gate", ["validate_before_save", "validation_running", "run_in_progress"]
+        "gate",
+        [
+            "validate_before_save",
+            "validation_running",
+            "run_in_progress",
+            "fix_waiting",
+        ],
     )
     def test_where_a_save_cannot_be_made_now_the_cases_wait_in_the_unsaved_changes(
         self, environment, cases, storage, user, gate
     ):
         from simulate.services import harness_scenario_actions
+        from simulate.services.harness_readiness import fix_runs
 
         drafted, _blocked = _landed(environment, cases, storage)
         suite_before = environment.suite_version_id
@@ -555,6 +562,16 @@ class TestAddToSuite:
                 side_effect=HostedHarnessError(
                     "environment_busy",
                     "The environment is being built or extended",
+                    status_code=409,
+                ),
+            ),
+            # A run readiness fix waits on the person's answer in chat.
+            "fix_waiting": lambda: patch.object(
+                fix_runs,
+                "require_no_fix_waiting",
+                side_effect=HostedHarnessError(
+                    "fix_waiting",
+                    "The builder chat is waiting for your answer to a fix",
                     status_code=409,
                 ),
             ),
