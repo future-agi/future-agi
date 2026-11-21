@@ -147,7 +147,8 @@ class _ReadLimitExceeded(ValueError):
 
 def _read(response, limit=MAX_METADATA):
     """Always bound reads, including untrusted error/metadata responses."""
-    chunks, size = [], 0
+    chunks: list[bytes] = []
+    size = 0
     try:
         while True:
             part = response.read(min(CHUNK, limit - size + 1), decode_content=False)
@@ -1246,12 +1247,11 @@ class GCSPrivateMediaStorage:
             raise AttachmentError("cleanup_unavailable", 503) from None
         results = [
             self.erase_all_versions(
-                ObjectLocator(self.binding_id, purpose, f"{prefix}/{upload_id}")
-            )
-            for purpose, prefix in (
-                ("quarantine", "quarantine"),
-                ("serving", "original"),
-            )
+                ObjectLocator(self.binding_id, "quarantine", f"quarantine/{upload_id}")
+            ),
+            self.erase_all_versions(
+                ObjectLocator(self.binding_id, "serving", f"original/{upload_id}")
+            ),
         ]
         empty = all(result.empty for result in results)
         return EraseResult(

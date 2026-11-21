@@ -7,7 +7,7 @@ is still required; an empty enumeration is NOT proof of a stopped writer.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 from uuid import UUID, uuid4
 
 from django.db import connections
@@ -26,7 +26,12 @@ from tracer.services.attachments.interfaces import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
     from tfc.utils.storage_config import BindingAccessConfig
+    from tracer.models.attachment_storage import AttachmentStorageBinding
+    from tracer.services.attachments.storage_gcs import GCSPrivateMediaStorage
+    from tracer.services.attachments.storage_s3 import S3PrivateMediaStorage
 
 __all__ = ["ObjectIdentity", "PrivateMediaStorage", "bind_for_admission", "for_binding"]
 
@@ -37,7 +42,14 @@ def outside_transaction():
         raise AttachmentError("storage_unverified", 503)
 
 
-def _schema():
+class _AdmissionSettings(Protocol):
+    @property
+    def FI_ATTACHMENTS_STORAGE(self) -> Mapping[str, str | None]: ...
+
+
+def _schema() -> tuple[
+    type[AttachmentStorageBinding], tuple[str, ...], Callable[[dict[str, object]], str]
+]:
     from tracer.models.attachment_storage import (
         BINDING_IDENTITY_FIELDS,
         AttachmentStorageBinding,
@@ -47,7 +59,9 @@ def _schema():
     return AttachmentStorageBinding, BINDING_IDENTITY_FIELDS, binding_identity_sha256
 
 
-def _provider(provider):
+def _provider(
+    provider: str,
+) -> type[S3PrivateMediaStorage] | type[GCSPrivateMediaStorage]:
     if provider == "s3":
         from tracer.services.attachments.storage_s3 import S3PrivateMediaStorage
 
@@ -132,7 +146,7 @@ def for_binding(
         raise AttachmentError("storage_unverified", 503) from None
 
 
-def bind_for_admission(*, settings: object) -> UUID:
+def bind_for_admission(*, settings: _AdmissionSettings) -> UUID:
     """Observe current resources, verify posture, then persist the immutable tuple.
 
     Observation and readiness happen BEFORE the short get-or-create transaction.
@@ -145,6 +159,7 @@ def bind_for_admission(*, settings: object) -> UUID:
             raise AttachmentError("disabled", 503)
         model, fields, digest = _schema()
         config = resolve_attachment_storage_config(settings.FI_ATTACHMENTS_STORAGE)
+        assert config is not None  # Resolution is enabled for admission.
         provider = _provider(config.storage.backend)
         # New admissions use an explicit runtime reference, not ambient discovery.
         reference = settings.FI_ATTACHMENTS_STORAGE.get("posture_credential_ref")

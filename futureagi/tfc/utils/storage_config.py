@@ -15,7 +15,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import urlparse, urlsplit
 from uuid import UUID
 
@@ -30,6 +30,9 @@ from requests.utils import (
 )
 
 if TYPE_CHECKING:
+    from urllib3.response import BaseHTTPResponse
+
+    from tracer.models.attachment_storage import AttachmentStorageBinding
     from tracer.services.attachments.interfaces import StorageOperation
 
 
@@ -96,6 +99,8 @@ def _parse_endpoint(raw_endpoint: str) -> tuple[str, bool | None]:
 
 
 def _is_loopback(host: str | None) -> bool:
+    if host is None:
+        return False
     if host == "localhost":
         return True
     try:
@@ -133,7 +138,9 @@ class _EnvironmentProxyPoolManager(urllib3.PoolManager):
         super().__init__(**connection_pool_kw)
         self._through: dict[str, urllib3.ProxyManager] = {}
 
-    def urlopen(self, method, url, redirect=True, **kw):
+    def urlopen(  # type: ignore[override]  # Match PoolManager; its RequestMethods ancestor has a different positional API.
+        self, method: str, url: str, redirect: bool = True, **kw: Any
+    ) -> BaseHTTPResponse:
         proxy = _environment_proxy(url)
         if proxy is None:
             return super().urlopen(method, url, redirect=redirect, **kw)
@@ -148,7 +155,9 @@ class _EnvironmentProxyPoolManager(urllib3.PoolManager):
                 proxy,
                 urllib3.ProxyManager(
                     proxy,
-                    proxy_headers=auth and urllib3.make_headers(proxy_basic_auth=auth),
+                    proxy_headers=urllib3.make_headers(proxy_basic_auth=auth)
+                    if auth is not None
+                    else None,
                     **self.connection_pool_kw,
                 ),
             )
@@ -297,7 +306,13 @@ _CREDENTIAL_PARTS = ("access_key", "secret_key", "session_token")
 _PURPOSES = ("quarantine", "serving")
 
 
-def _attachment_credential(config, key, env, *, required):
+def _attachment_credential(
+    config: Mapping[str, str | None],
+    key: str,
+    env: Mapping[str, str],
+    *,
+    required: bool,
+) -> str | None:
     direct = config.get(key, "")
     reference = config.get(f"{key}_env", "")
     if direct and reference:
@@ -326,8 +341,15 @@ def _attachment_credential(config, key, env, *, required):
     return direct or None
 
 
+def _storage_credentials(values: Mapping[str, str | None]) -> StorageCredentials:
+    access_key, secret_key = values["access_key"], values["secret_key"]
+    # _attachment_credential has already required both; only the token is optional.
+    assert access_key is not None and secret_key is not None
+    return StorageCredentials(access_key, secret_key, values["session_token"])
+
+
 def resolve_attachment_storage_config(
-    config: Mapping[str, str],
+    config: Mapping[str, str | None],
     *,
     enabled: bool = True,
     environ: Mapping[str, str] | None = None,
@@ -356,13 +378,15 @@ def resolve_attachment_storage_config(
         region=config.get("region") or None,
         environ=env,
     )
-    if not storage.region or any(
-        not config.get(f"{purpose}_bucket") for purpose in _PURPOSES
+    if (
+        not storage.region
+        or not (quarantine_bucket := config.get("quarantine_bucket"))
+        or not (serving_bucket := config.get("serving_bucket"))
     ):
         raise StorageConfigurationError("attachment_storage_configuration_missing")
     credentials = {
-        purpose: StorageCredentials(
-            **{
+        purpose: _storage_credentials(
+            {
                 part: _attachment_credential(
                     config, f"{purpose}_{part}", env, required=part != "session_token"
                 )
@@ -373,8 +397,8 @@ def resolve_attachment_storage_config(
     }
     return AttachmentStorageConfig(
         storage=storage,
-        quarantine_bucket=config["quarantine_bucket"],
-        serving_bucket=config["serving_bucket"],
+        quarantine_bucket=quarantine_bucket,
+        serving_bucket=serving_bucket,
         quarantine_credentials=credentials["quarantine"],
         serving_credentials=credentials["serving"],
     )
@@ -422,8 +446,7 @@ def attachment_storage_settings(
                 # References are already resolved. Do not represent two
                 # simultaneous credential sources in this legacy flat view.
                 config.pop(f"{key}_env")
-    config["resolved"] = resolved
-    return config
+    return {**config, "resolved": resolved}
 
 
 # Historical access is deliberately separate from new-admission selectors.
@@ -653,7 +676,9 @@ def resolve_attachment_binding_config(
     )
 
 
-def _materialize_credentials(refs, env):
+def _materialize_credentials(
+    refs: CredentialRefs, env: Mapping[str, str]
+) -> StorageCredentials:
     # Reuse the existing purpose-credential validator, including missing-token
     # and shared/root-reference rejection. Never call the default resolver.
     references = {
@@ -669,12 +694,12 @@ def _materialize_credentials(refs, env):
         if value is not None and (not isinstance(value, str) or not value.strip()):
             raise StorageConfigurationError("attachment_storage_credentials_invalid")
         values[part] = value
-    return StorageCredentials(**values)
+    return _storage_credentials(values)
 
 
 def materialize_attachment_binding_config(
     *,
-    binding: object,
+    binding: AttachmentStorageBinding,
     config: BindingAccessConfig,
     environ: Mapping[str, str] | None = None,
 ) -> AttachmentStorageConfig:

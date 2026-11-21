@@ -13,6 +13,8 @@ Exit codes: 0 success, 2 rejected input, 3 sandbox unavailable (never a
 permissive fallback). Nothing derived from the input is written to stderr.
 """
 
+from __future__ import annotations
+
 import ctypes
 import io
 import json
@@ -21,6 +23,12 @@ import os
 import resource
 import struct
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from types import ModuleType
+    from typing import Literal
 
 HEADER_BYTES = 44
 SEGMENT_MAX_BYTES = 8 * 1024 * 1024
@@ -307,7 +315,7 @@ FORMATS = {
     "audio/webm": ("matroska", {"opus", "vorbis"}),
     "audio/flac": ("flac", {"flac"}),
 }
-AV = None
+AV: ModuleType | None = None
 
 
 class DescriptorReader(io.RawIOBase):
@@ -352,7 +360,7 @@ def _pcm_chunks(frame):
     multi-thread filter graph for planar/float input, which seccomp correctly
     kills. Keep that prohibition and convert bounded blocks here instead.
     """
-    formats = {
+    formats: dict[str, tuple[Literal["B", "h", "i", "q", "f", "d"], int]] = {
         "u8": ("B", 8),
         "s16": ("h", 16),
         "s32": ("i", 32),
@@ -393,10 +401,9 @@ def _pcm_chunks(frame):
                     if planar
                     else planes[0][(start + index) * channels + channel]
                 )
-                if kind == "u8":
-                    value = (value - 128) << 8
-                elif bits:
-                    value >>= bits - 16
+                # memoryview returns int for B/h/i/q and float for f/d.
+                if isinstance(value, int):
+                    value = (value - 128) << 8 if kind == "u8" else value >> (bits - 16)
                 else:
                     if not math.isfinite(value):
                         raise Rejected
@@ -410,7 +417,7 @@ def _pcm_chunks(frame):
         yield output
 
 
-def decoded(fd, mime):
+def decoded(fd: int, mime: str) -> Iterator[tuple[int, int, memoryview | bytearray]]:
     if AV is None or mime not in FORMATS:
         # L16 is not self-describing. The frozen SourceFacts has no trusted
         # rate/channels/endianness parameters: do not guess them from a URL.
@@ -462,7 +469,7 @@ def op_source(fd_in, _fd_out, args):
         for observed_rate, observed_channels, chunk in decoded(fd_in, mime):
             rate, channels = observed_rate, observed_channels
             size += len(chunk)
-        if not size:
+        if not size or channels is None:
             raise Rejected
         facts = {
             "mime_type": mime,

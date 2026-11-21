@@ -328,7 +328,10 @@ def _claim(event_id):
     ).first()
     if ref is None:
         return None, False
-    upload = AttachmentUpload.objects.get(pk=ref.upload_id, scope_id=ref.scope_id)
+    upload = AttachmentUpload.objects.get(
+        pk=ref.upload_id,  # type: ignore[misc]  # Django accepts pk=None (no match); preserve DoesNotExist for an unowned event.
+        scope_id=ref.scope_id,
+    )
     if upload.producer_kind != "authenticated_stream":
         raise AttachmentError("validation_fenced", 409)
     # Reconciliation of already terminal uploads is not another admission.
@@ -517,6 +520,7 @@ def validate(upload_id, *, scope_id, storage=None, _claim_event=None):
         if ref.serving_version:
             # Only the previously recorded immutable result, never an unrecorded
             # version discovered by listing, can be reused by a new worker.
+            assert ref.serving_key is not None  # Prewrite locator fence (0142).
             identity = ObjectIdentity(
                 storage.binding_id, "serving", ref.serving_key, ref.serving_version
             )
@@ -646,6 +650,7 @@ def validate_import_snapshot(*, upload_id, scope_id, fence):
     with snapshot_file(named=True) as snapshot:
         digest, probe = _snapshot(ref, storage, snapshot)
         if ref.serving_version:
+            assert ref.serving_key is not None  # Prewrite locator fence (0142).
             identity = ObjectIdentity(
                 storage.binding_id, "serving", ref.serving_key, ref.serving_version
             )
@@ -750,6 +755,7 @@ def consume_validation(event_id, *, storage=None):
         return False
     upload = AttachmentUpload.objects.get(pk=claim.upload_id, scope_id=claim.scope_id)
     if upload.reservation_settled_at is None:
+        assert upload.cleanup_not_before is not None  # Prewrite locator fence (0142).
         _finish(
             claim,
             retry_at=max(

@@ -159,7 +159,7 @@ class MinIOPrivateMediaStorage(S3PrivateMediaStorage):
             return
         raise ValueError
 
-    def _privacy(self, client, bucket):
+    def _privacy(self, client, bucket):  # type: ignore[override]  # MinIO needs instance credentials; the S3 base uses a static method.
         self._server(self.posture_credentials, cors=True)
         # MinIO does not implement AWS account-level public-access blocks or
         # ownership controls. Verify its actual ACL/policy/global CORS instead.
