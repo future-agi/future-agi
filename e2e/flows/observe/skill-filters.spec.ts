@@ -45,7 +45,7 @@ test('OBS-E2E-064: reconcile scoped spans and skill-version cohorts', { tag:['@f
   const other = s.emit('python',[s.agent('writing',[s.tone],false)])!;
   const [project] = await probe.pg<{id:string}>('SELECT id FROM tracer_project WHERE name=$1',[s.project]);
   const params = {t,v:s.refund.version.id};
-  const read = () => probe.ch<{id:string;name:string}>('SELECT id,name FROM spans FINAL WHERE trace_id={t:String} AND has(JSONExtract(attributes_extra,'fi.skills.version_ids','Array(String)'),{v:String}) ORDER BY id',params);
+  const read = () => probe.ch<{id:string;name:string}>("SELECT id,name FROM spans FINAL WHERE trace_id={t:String} AND has(JSONExtract(attributes_extra,'fi.skills.version_ids','Array(String)'),{v:String}) ORDER BY id",params);
   await expect.poll(async () => (await read()).map(r=>r.name),POLL.SPAN_VISIBLE).toContain('prepare answer');
   const filter = [item('in_scope',s.refund.version.id)];
   const versionFilter = [item('version_id',s.refund.version.id)];
