@@ -934,7 +934,7 @@ jobs:
     # the same test ids; a random value in an id lets a test run twice or
     # never, with every job green. Each shard records what it collected
     # (.ci/collected_ids.py) and this job compares the records. It runs
-    # whenever the shards ran, so it is never skipped past the gate.
+    # whenever the shards ran, and the gate fails if it did not succeed then.
     name: Every shard collected the same tests
     needs: [changes, test]
     if: ${{ !cancelled() && needs.test.result != 'skipped' }}
@@ -985,3 +985,8 @@ jobs:
             | map(select(.value != "success" and .value != "skipped"))
             | if length > 0 then ("failing: " + (map(.key) | join(", ")) | halt_error)
               else "all dependencies green (or legitimately skipped)" end'
+          # A skipped collection check passes the filter above. It may be
+          # skipped only when the shards were.
+          echo "$NEEDS" | jq 'if .test.result != "skipped" and .collection.result != "success"
+            then ("the shards ran but the collection check is " + .collection.result | halt_error)
+            else "collection check: " + .collection.result end'

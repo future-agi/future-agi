@@ -2,10 +2,12 @@
 
 Every shard collects the whole suite in its own process, and pytest-split
 then keeps one group of it. That runs each test exactly once only when all
-shards collect the same ids. An id that holds a per-process random value (a
-uuid4() in a parametrize list) breaks it without any failure: one case runs in
-two shards and another in none. Each shard records what it collected, and
-check_collected_ids.py fails the run when two records differ.
+shards collect the same ids in the same order (pytest-split breaks ties
+between equal times by position). An id that holds a per-process random value
+(a uuid4() in a parametrize list) breaks it without any failure: one case runs
+in two shards and another in none. Each shard records what it collected, in
+collection order, and check_collected_ids.py fails the run when two records
+differ.
 
     PYTHONPATH=.ci COLLECTED_IDS_FILE=ids.txt pytest -p collected_ids ...
 """
@@ -21,14 +23,13 @@ SHOWN_ID_LENGTH = 300
 
 
 def record(nodeids, path):
-    lines = sorted(
-        hashlib.sha256(nodeid.encode("utf-8", "surrogateescape")).hexdigest()[:24]
-        + " "
-        + nodeid[:SHOWN_ID_LENGTH]
-        for nodeid in nodeids
-    )
+    """One line per collected test, in collection order; no line for no test."""
     with open(path, "w", encoding="utf-8", errors="surrogateescape") as out:
-        out.write("\n".join(lines) + "\n")
+        for nodeid in nodeids:
+            digest = hashlib.sha256(
+                nodeid.encode("utf-8", "surrogateescape")
+            ).hexdigest()[:24]
+            out.write(f"{digest} {nodeid[:SHOWN_ID_LENGTH]}\n")
 
 
 @pytest.hookimpl(tryfirst=True)

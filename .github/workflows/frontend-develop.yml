@@ -61,7 +61,8 @@ jobs:
   # cannot be trusted with it. With coverage on, vitest converts the coverage
   # on its main thread after the last test (70 to 105 seconds here). Past its
   # 60-second worker RPC limit it exits 1 with every test passed. So this job
-  # fails only when no coverage file was written.
+  # ignores vitest's exit code and fails when no coverage file was written.
+  # vitest writes none when a test failed, so a real failure is red here too.
   coverage:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest

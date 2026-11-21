@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fails unless every shard of a Backend CI run collected the same test ids.
+"""Fails unless every shard of a Backend CI run collected the same test ids in the same order.
 
     check_collected_ids.py EXPECTED_SHARDS RECORD [RECORD ...]
 
@@ -38,20 +38,41 @@ def main(argv):
     records = []
     for path in paths:
         with open(path, encoding="utf-8", errors="surrogateescape") as handle:
-            records.append(handle.read().splitlines())
-    odd = differing(records)
-    if not odd and records[0]:
+            records.append([line for line in handle.read().splitlines() if line])
+    if not all(records):
         sys.stdout.write(
-            f"{expected} shards collected the same {len(records[0])} tests\n"
+            "::error title=Collection records::a shard collected no test at all;"
+            " a run that collects nothing proves nothing\n"
+        )
+        return 1
+    odd = differing(records)
+    if not odd and all(record == records[0] for record in records):
+        sys.stdout.write(
+            f"{expected} shards collected the same {len(records[0])} tests in the same order\n"
         )
         return 0
     for line, count in odd[:SHOWN]:
         sys.stdout.write(f"in {count} of {expected} shards: {line.partition(' ')[2]}\n")
+    if odd:
+        problem = (
+            f"{len(odd)} test ids are not the same in every shard."
+            " The usual cause is a random value in a parametrize list, such as uuid4():"
+            " use a fixed value or pass ids=."
+        )
+    else:
+        other = next(record for record in records if record != records[0])
+        at = next(
+            i for i, (a, b) in enumerate(zip(records[0], other, strict=True)) if a != b
+        )
+        sys.stdout.write(
+            f"position {at + 1}: {records[0][at].partition(' ')[2]}\n"
+            f"         against: {other[at].partition(' ')[2]}\n"
+        )
+        problem = "the shards collected the same tests in a different order."
     sys.stdout.write(
-        f"::error title=Shards collected different tests::{len(odd)} test ids are not the same in every shard"
-        " (or no test was collected), so pytest-split can run a test twice or never."
-        " The usual cause is a random value in a parametrize list, such as uuid4():"
-        " use a fixed value or pass ids=.\n"
+        f"::error title=Shards collected different tests::{problem}"
+        " pytest-split can then run a test twice or never."
+        " After the fix, re-run all jobs: a re-run of the failed jobs reads the same records.\n"
     )
     return 1
 

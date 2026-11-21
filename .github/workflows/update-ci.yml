@@ -151,7 +151,8 @@ jobs:
   # runs them on every scheduled and dispatched run, on a pull request into
   # main, on a pull request that carries the update-rehearsal label, and on a
   # pull request that changes the update tooling (or, for latest-stable -> PR,
-  # a migration). Never on a push or a merge group. The other jobs keep the
+  # what that job builds and boots: see the `built` filter). Never on a push
+  # or a merge group. The other jobs keep the
   # workflow-level paths above. Fail-open: if this job does not succeed, both
   # Real jobs run, except on a push or a merge group.
   changes:
@@ -189,10 +190,12 @@ jobs:
               - '.github/workflows/update-ci.yml'
             # What only latest-stable -> PR executes from the pull request: it
             # builds the images and boots them on real data. Migrations, the
-            # image builds and entrypoints, and the settings the boot reads.
+            # image builds and entrypoints, the locked dependencies, and the
+            # settings the boot reads.
             built:
               - 'futureagi/**/migrations/**'
               - 'futureagi/tfc/settings/**'
+              - 'futureagi/uv.lock'
               - '**/Dockerfile*'
               - '**/dockerfile*'
               - '**/.dockerignore'

@@ -108,7 +108,7 @@ class RehearsalWorkflowTest(unittest.TestCase):
     def test_what_the_images_build_and_boot_triggers_latest_stable_only(self):
         built = self.changes.split("            built:\n", 1)[1].split("      - id: update-code\n", 1)[0]
         listed = [line.strip()[3:-1] for line in built.splitlines() if line.strip().startswith("- '")]
-        for required in ("futureagi/**/migrations/**", "futureagi/tfc/settings/**", "**/Dockerfile*",
+        for required in ("futureagi/**/migrations/**", "futureagi/tfc/settings/**", "futureagi/uv.lock", "**/Dockerfile*",
                          "**/dockerfile*", "**/entrypoint.sh", "**/docker-entrypoint.sh"):
             self.assertIn(required, listed)
         self.assertIn("BUILT_CHANGED: ${{ steps.filter.outputs.built == 'true' }}", self.changes)
