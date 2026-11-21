@@ -77,6 +77,9 @@ const countMessages = (turns) =>
  * Scrolling up stops the list following new events, so the user keeps their
  * place; a bar above the composer shows work continuing or a new message.
  */
+// The placeholder while an open question with options also takes an answer of the person's own.
+const PICK_OR_TYPE = "Pick an option above, or type your own answer";
+
 export default function BuilderConsole({
   turns,
   running,
@@ -170,6 +173,18 @@ export default function BuilderConsole({
   // blocks the composer exactly like `running`, but persists across turns.
   // An open question that takes only its options holds the composer too, saying so.
   const blocked = running || frozen || answerWithOptions;
+  // An open question with options that also takes free text: the box stays usable, pointing at the options first.
+  const pickOrType =
+    !blocked &&
+    (turns || []).some((turn) =>
+      (turn.steps || []).some(
+        (step) =>
+          step.kind === "ask" &&
+          step.open &&
+          !step.resolved &&
+          step.question?.options?.length > 0,
+      ),
+    );
   const reason = frozenReason || CONSOLE_COPY.frozen;
 
   const hasContent = draft.trim() || scaffolds.length > 0;
@@ -404,7 +419,9 @@ export default function BuilderConsole({
                 ? reason
                 : answerWithOptions
                   ? CONSOLE_COPY.answerWithOptions
-                  : CONSOLE_COPY.placeholder
+                  : pickOrType
+                    ? PICK_OR_TYPE
+                    : CONSOLE_COPY.placeholder
             }
             value={draft}
             disabled={blocked}

@@ -55,14 +55,23 @@ function normalizeQuestion(message, blocking) {
   };
 }
 
+// The builder's question tool: its card shows the question, so its row speaks to the person, never by tool name.
+const QUESTION_TOOL = "AskUserQuestion";
+const QUESTION_LABEL = "Question for you";
+const toolLabel = (name) => (name === QUESTION_TOOL ? QUESTION_LABEL : name);
+
 // Demote any tool step still marked "running" to a terminal "interrupted" state,
 // so its dot stops pulsing. Used when a turn ends or the run is no longer
 // working: a tool left "running" never received its result (the run moved on).
-function finalizeRunningSteps(steps) {
+// The question tool did not fail to finish: it waits on the person while the conversation does, and says nothing
+// once it no longer does.
+function finalizeRunningSteps(steps, waiting) {
   for (const step of steps || []) {
     if (step.kind === "tool" && step.state === "running") {
       step.state = "interrupted";
-      if (!step.result) step.result = "Didn't finish";
+      if (step.label === QUESTION_LABEL) {
+        if (waiting) step.result = "Waiting for your answer";
+      } else if (!step.result) step.result = "Didn't finish";
     }
   }
 }
@@ -214,6 +223,8 @@ export function projectConversation(conversation) {
           kind: "ask",
           question: normalizeQuestion(m, blocking),
           replyTo: m.message_id,
+          // The question the server is waiting on now; an earlier one left unanswered is not.
+          open: Boolean(blocking) && blocking.message_id === m.message_id,
           confirmation: m.kind === "confirmation",
           resolved: answered,
           answerText: answered ? answerFor[m.message_id].content : undefined,
@@ -252,7 +263,7 @@ export function projectConversation(conversation) {
         const step = {
           id: `tool-${e.function_call_id || e.event_id}`,
           kind: "tool",
-          label: e.payload?.label || e.payload?.tool || "Tool",
+          label: toolLabel(e.payload?.label || e.payload?.tool || "Tool"),
           state: "running",
         };
         if (e.function_call_id) toolByCall.set(e.function_call_id, step);
@@ -275,7 +286,7 @@ export function projectConversation(conversation) {
           b.steps.push({
             id: `tool-${e.function_call_id || e.event_id}`,
             kind: "tool",
-            label: e.payload?.tool || "Tool",
+            label: toolLabel(e.payload?.tool || "Tool"),
             state: isError ? "failed" : "completed",
             result,
           });
@@ -331,7 +342,7 @@ export function projectConversation(conversation) {
     // Not actively working (stopped, failed, or waiting on the user): nothing is
     // in flight, so no tool dot should keep pulsing. Finalize any lingering
     // "running" step across every turn (the last one is never ended otherwise).
-    turns.forEach((t) => finalizeRunningSteps(t.steps));
+    turns.forEach((t) => finalizeRunningSteps(t.steps, waiting));
   }
 
   turns.forEach((t, ti) => {

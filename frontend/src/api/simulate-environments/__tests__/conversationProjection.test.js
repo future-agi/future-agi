@@ -298,6 +298,62 @@ describe("projectConversation", () => {
     expect(tool.state).toBe("interrupted");
   });
 
+  it("shows the builder's pending question as waiting on the person, never by tool name or as unfinished", () => {
+    const question = (state, blocking) =>
+      projectConversation({
+        state,
+        blocking_input: blocking,
+        messages: [],
+        events: [
+          evt({
+            event_id: "e1",
+            kind: "tool_started",
+            function_call_id: "c1",
+            emitted_at: "2026-09-22T10:00:00Z",
+            payload: { tool: "AskUserQuestion" },
+          }),
+        ],
+      })
+        .flatMap((t) => t.steps || [])
+        .find((s) => s.kind === "tool");
+
+    const pending = question("waiting_for_user", { message_id: "q1" });
+    expect([pending.label, pending.result]).toEqual([
+      "Question for you",
+      "Waiting for your answer",
+    ]);
+    const left = question("idle", null);
+    expect(left.label).toBe("Question for you");
+    expect(left.result).toBeUndefined();
+  });
+
+  it("marks only the question the server waits on as open", () => {
+    const asks = projectConversation({
+      state: "waiting_for_user",
+      blocking_input: { message_id: "q2" },
+      messages: [
+        msg({
+          message_id: "q1",
+          kind: "question",
+          content: "Earlier?",
+          payload: { options: ["A"] },
+          created_at: "2026-09-22T10:00:00Z",
+        }),
+        msg({
+          message_id: "q2",
+          kind: "question",
+          content: "Now?",
+          payload: { options: ["B"] },
+          created_at: "2026-09-22T10:00:05Z",
+        }),
+      ],
+      events: [],
+    })
+      .flatMap((t) => t.steps)
+      .filter((s) => s.kind === "ask");
+    expect(asks.map((s) => s.open)).toEqual([false, true]);
+  });
+
   it("keeps a running tool pulsing while the run is actively responding", () => {
     const turns = projectConversation({
       state: "responding",
