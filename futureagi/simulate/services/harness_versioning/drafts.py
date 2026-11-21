@@ -370,7 +370,7 @@ def edits_moved(piece: str) -> HostedHarnessError:
     """A draft the person read moved before they acted on it."""
     return version_error(
         "draft_changed",
-        "Someone changed these edits a moment ago; review them and try again",
+        "These changes moved since this page read them; look at them again, then try again.",
         409,
         piece=piece,
     )

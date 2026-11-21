@@ -165,8 +165,8 @@ def validation_state(
 ) -> CandidateValidation | None:
     """Where the live set's validation stands: `validating`, `retry` (a job ended before any check ran), `ready`,
     `failed`, `check_unavailable` (the check ended on our side for a cause that repeats; the set may save
-    uncertified), or `superseded` once the defaults moved under it, or once the drafts or decisions moved since the set
-    was validated (Save would refuse it). A failed validation names the actions that failed and
+    uncertified), `superseded` once the defaults moved under it, or `outdated` once the drafts or decisions moved
+    since the set was validated (Save would refuse it). A failed validation names the actions that failed and
     the scenarios that need one of them on every path; a ready one names the scenarios certifying dropped.
     """
     entry = entry or live_set(environment)
@@ -187,7 +187,7 @@ def validation_state(
         state = "check_unavailable"
     if state in ("ready", "check_unavailable") and _drafts_moved(environment, entry):
         # Save would refuse these candidates: what it would save is no longer what was validated.
-        state = "superseded"
+        state = "outdated"
     body = CandidateValidation(
         state=state,
         job_id=entry.get("job_id"),
@@ -271,4 +271,7 @@ def candidate_states(environment: HostedHarnessJob) -> Mapping[str, str]:
         return {}
     current = validation_state(environment, entry)
     state = current["state"] if current is not None else "validating"
+    # History's labels know a set set aside, not why: one whose changes moved is set aside like a superseded one.
+    if state == "outdated":
+        state = "superseded"
     return {entry["environment_version_id"]: state, entry["suite_version_id"]: state}

@@ -658,7 +658,7 @@ def test_failed_validation_keeps_draft_and_names_affected_scenarios(
 
 
 @pytest.mark.parametrize("moved", ["draft_written", "decision_changed", "piece_opened"])
-def test_a_validated_set_reads_superseded_once_what_save_would_save_moved(
+def test_a_validated_set_reads_outdated_once_what_save_would_save_moved(
     user, workspace, storage, auth_client, moved
 ):
     environment = _with_world(user, workspace, f"cand-moved-{moved}", storage)
@@ -694,8 +694,11 @@ def test_a_validated_set_reads_superseded_once_what_save_would_save_moved(
 
     assert before == "ready"
     # Save refuses these candidates, so they no longer read as validated: the page asks to Validate again.
-    assert after == "superseded"
+    assert after == "outdated"
     assert refused.status_code == 409
+    if moved == "draft_written":
+        # Its refusal blames nobody: the changes moved since the page read them.
+        assert "Someone" not in refused.json()["message"]
 
 
 def test_save_refused_unless_validated(user, workspace, storage, auth_client):

@@ -21839,7 +21839,7 @@ export interface HarnessDraftItemApi {
 }
 
 /**
- * ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check.
+ * ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check; outdated: the changes or their decisions moved since they were validated, so Validate again.
  */
 export type HarnessDraftValidationApiState =
   (typeof HarnessDraftValidationApiState)[keyof typeof HarnessDraftValidationApiState];
@@ -21851,6 +21851,7 @@ export const HarnessDraftValidationApiState = {
   failed: "failed",
   check_unavailable: "check_unavailable",
   superseded: "superseded",
+  outdated: "outdated",
   unavailable: "unavailable",
 } as const;
 
@@ -21866,7 +21867,7 @@ export interface HarnessValidationErrorApi {
 }
 
 export interface HarnessDraftValidationApi {
-  /** ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check. */
+  /** ready: certified, Save may go ahead; check_unavailable: the check failed on our side for a cause that repeats, so Save may go ahead uncertified, as a run may; failed: the agent failed the check; outdated: the changes or their decisions moved since they were validated, so Validate again. */
   state: HarnessDraftValidationApiState;
   /**
    * The validation job, while one runs.
