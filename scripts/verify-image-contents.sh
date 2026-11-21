@@ -63,7 +63,7 @@ check_absent() {
 image_test() {
   local image="$1"
   shift
-  docker run --rm --entrypoint /bin/sh "$image" -c "$*"
+  docker run --rm --entrypoint /bin/sh "$image" -c '"$@"' sh "$@"
 }
 
 image_python() {
@@ -131,6 +131,7 @@ check_absent "No cloud-private package" image_test "$OSS_IMAGE" test -e /app/bac
 check "Has required NLTK runtime corpora" image_python "$OSS_IMAGE" -c \
   "import nltk; [nltk.data.find(p) for p in ('corpora/stopwords/', 'tokenizers/punkt_tab/english/', 'taggers/averaged_perceptron_tagger_eng/', 'corpora/wordnet/')]; assert nltk.word_tokenize('Future AGI') == ['Future', 'AGI']; assert nltk.pos_tag(['Future'])[0][1]"
 check "ffmpeg can encode mp3 and png" image_test "$OSS_IMAGE" sh -c "ffmpeg -hide_banner -encoders | grep -q libmp3lame && ffmpeg -hide_banner -encoders | grep -qw png"
+check "ffprobe starts" image_test "$OSS_IMAGE" ffprobe -hide_banner -version
 if [[ "$OSS_VARIANT" == standard ]]; then
   # A drop-in for what builds on it: the EE and cloud images run
   # `uv pip install` in it, and the simulation runner's hosted-harness jobs

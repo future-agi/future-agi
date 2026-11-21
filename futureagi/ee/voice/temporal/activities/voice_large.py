@@ -549,6 +549,18 @@ async def fetch_and_persist_call_result(
             recording_urls = await voice_manager.extract_and_persist_recordings(
                 input.call_id
             )
+            recording_error = getattr(recording_urls, "error", None)
+            if not isinstance(recording_error, dict):
+                recording_error = None
+            if recording_error:
+                # Not raised: the transcript, costs and status below still
+                # persist, and a retry cannot install a missing ffmpeg.
+                activity.logger.warning(
+                    f"Recordings incomplete for call_id={input.call_id}: "
+                    f"code={recording_error.get('code')}, "
+                    f"tracks={recording_error.get('tracks')}: "
+                    f"{recording_error.get('message')}"
+                )
 
             if recording_urls.recording_url:
                 call.recording_url = recording_urls.recording_url
@@ -744,6 +756,7 @@ async def fetch_and_persist_call_result(
             message_count=message_count,
             has_agent_message=has_agent_message,
             has_customer_message=has_customer_message,
+            recording_error=recording_error,
         )
 
     except CallExecution.DoesNotExist:

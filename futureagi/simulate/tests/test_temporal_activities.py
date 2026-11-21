@@ -1036,6 +1036,100 @@ class TestFetchAndPersistCallResultActivity:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
+    async def test_incomplete_recordings_are_recorded_and_the_call_still_persists(
+        self, call_execution
+    ):
+        """LiveKit tracks that ffmpeg could not cut: the activity saves the
+        stereo recording and the recording_error the engine stored, returns
+        the error, and still persists costs and the call status."""
+        fetch_and_persist_call_result = _ee_voice_large().fetch_and_persist_call_result
+        from ee.voice.services.types.voice import RecordingUrls
+        from simulate.temporal.types.activities import FetchAndPersistCallResultInput
+        from tfc.temporal.common.heartbeat import Heartbeater
+
+        error = {
+            "code": "ffmpeg_unavailable",
+            "message": "ffmpeg is not installed in this backend image, so call "
+            "recording channel split is unavailable.",
+            "tracks": ["assistant", "customer", "mono"],
+        }
+        stereo = "https://media/call-recordings/c/t_stereo_recording.mp3"
+        # What the engine stored on the call while this activity held an
+        # older copy of it.
+        engine_data = {
+            "livekit": {
+                "egress_id": "EG_1",
+                "recording": {"stereo": stereo},
+                "recording_error": error,
+            }
+        }
+        create_call = await sync_to_async(CreateCallExecution.objects.create)(
+            phone_number_id=VAPI_PHONE_NUMBER_ID,
+            to_number="+1234567890",
+            system_prompt="prompt",
+            metadata={},
+            voice_settings={},
+            call_execution=call_execution,
+            status=CreateCallExecution.CallStatus.ONGOING,
+        )
+
+        with (
+            patch("temporalio.activity.info"),
+            patch("temporalio.activity.heartbeat"),
+            patch.object(
+                Heartbeater,
+                "__aenter__",
+                new=AsyncMock(return_value=MagicMock(details=None)),
+            ),
+            patch.object(Heartbeater, "__aexit__", new=AsyncMock(return_value=None)),
+            patch(
+                "ee.voice.services.voice_service_manager.VoiceServiceManager"
+            ) as mock_vsm_class,
+        ):
+            mock_vsm = MagicMock()
+            mock_vsm.fetch_and_store_call_data = AsyncMock(return_value=(2, True, True))
+            mock_vsm.extract_and_persist_recordings = AsyncMock(
+                return_value=RecordingUrls(
+                    stereo_recording_url=stereo,
+                    provider_call_data=engine_data,
+                    error=error,
+                )
+            )
+            mock_vsm.extract_costs = AsyncMock(
+                return_value=MagicMock(
+                    total=0.25,
+                    stt=None,
+                    llm=None,
+                    tts=None,
+                    transport=None,
+                    storage=None,
+                )
+            )
+            mock_vsm_class.return_value = mock_vsm
+
+            result = await fetch_and_persist_call_result(
+                FetchAndPersistCallResultInput(
+                    call_id=str(call_execution.id),
+                    provider_call_id="lk-call-1",
+                    status="COMPLETED",
+                    provider="livekit",
+                    call_type=CallType.INBOUND,
+                )
+            )
+
+        assert result.success is True
+        assert result.recording_error == error
+        await sync_to_async(call_execution.refresh_from_db)()
+        assert call_execution.stereo_recording_url == stereo
+        assert call_execution.recording_available is True
+        assert call_execution.recording_url in (None, "")
+        assert call_execution.provider_call_data["livekit"]["recording_error"] == error
+        assert call_execution.cost_cents == 25
+        await sync_to_async(create_call.refresh_from_db)()
+        assert create_call.status == CreateCallExecution.CallStatus.COMPLETED
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
     async def test_fetch_and_persist_call_result_handles_failed_call(
         self, call_execution
     ):

@@ -71,7 +71,7 @@ def raise_non_retryable_if_media_tool_missing(exc: BaseException) -> None:
     Retrying cannot install ffmpeg, so the workflow fails at once with the
     message instead of retrying until its timeout. Does nothing otherwise, so
     the caller re-raises ``exc`` with its usual retry policy."""
-    missing = _find_media_tool_unavailable(exc)
+    missing = find_media_tool_unavailable(exc)
     if missing is None:
         return
     from temporalio.exceptions import ApplicationError
@@ -81,9 +81,10 @@ def raise_non_retryable_if_media_tool_missing(exc: BaseException) -> None:
     ) from exc
 
 
-def _find_media_tool_unavailable(
+def find_media_tool_unavailable(
     exc: BaseException | None,
 ) -> MediaToolUnavailable | None:
+    """Find the named tool error in a wrapped recording or activity failure."""
     seen: set[int] = set()
     while exc is not None and id(exc) not in seen:
         if isinstance(exc, MediaToolUnavailable):
