@@ -116,6 +116,12 @@ del _runtime_numeric_setting_specs
 _validate_runtime_numeric_settings(_runtime_numeric_settings)
 globals().update(_runtime_numeric_settings)
 
+# B10 resolves the current source policy through the maintained optional-EE
+# boundary on every call. Missing policy support fails closed, never unlimited.
+METRICS_RETENTION_DAYS_PROVIDER = (
+    "tfc.capabilities.retention.current_trace_retention_days"
+)
+
 # Optional ClickHouse cluster whose entries intentionally expose each physical
 # replica as one read shard. Dashboard heavy reads use it only after validating
 # the identifier in the query builder; an empty value keeps the local-table
@@ -1013,6 +1019,12 @@ ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
 GITHUB_APP_WEBHOOK_SECRET = os.getenv("GITHUB_APP_WEBHOOK_SECRET", "")
+GITHUB_APP_SLUG = os.getenv("GITHUB_APP_SLUG", "")
+GITHUB_APP_CLIENT_ID = os.getenv("GITHUB_APP_CLIENT_ID", "")
+GITHUB_APP_CLIENT_SECRET = os.getenv("GITHUB_APP_CLIENT_SECRET", "")
+GITHUB_APP_FALLBACK_INSTALLATION_ID = os.getenv(
+    "GITHUB_APP_FALLBACK_INSTALLATION_ID", ""
+)
 ALK_HOSTED_SOURCE_MAX_BYTES = int(
     os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
 )
@@ -1151,6 +1163,9 @@ AGENT_FIX_WORST_CASE_USD_PER_EVAL = os.getenv(
 # Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
 # cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.
 AGENT_FIX_MIN_FAILING_CASES = int(os.getenv("AGENT_FIX_MIN_FAILING_CASES", "12"))
+# Scenarios an environment's suite may hold from Error Feed issues: each one guards every
+# later epoch there, so Run Epoch from an issue asks for older ones to go first.
+AGENT_FIX_ISSUE_SCENARIOS_MAX = int(os.getenv("AGENT_FIX_ISSUE_SCENARIOS_MAX", "36"))
 # Models the engine may call through its fix's API; Future AGI pays for them. The list holds
 # the engine's planner, coder and reviewer, and the backups its profile moves to when one
 # loses a call.
@@ -1239,6 +1254,32 @@ HARNESS_ACTORS_SHARE = (
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Accepting source.subfolder on a build; only once the sandbox's agent-learning-kit
+# reads it, else the harness would silently build from the repository root.
+HARNESS_SOURCE_SUBFOLDER_ENABLED = os.getenv(
+    "HARNESS_SOURCE_SUBFOLDER_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Reading every new code version of an Agents-page agent in the sandbox before its
+# check; only once the sandbox's agent-learning-kit has the read-only mode. Off, a
+# version keeps today's check and its document arrives with its first build.
+HARNESS_AGENT_READING_ENABLED = os.getenv(
+    "HARNESS_AGENT_READING_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Charging a customer for each reading of an agent and each scan for agents. Off, nothing
+# is charged for any reading, background ones included, and one log line per reading says
+# what it would have cost. Not to be turned on until the rule for which outcomes are
+# charged is built: today a reading is charged before its outcome is known, so a failed
+# or "not supported" reading would be charged too.
+HARNESS_AGENT_READING_CHARGE_ENABLED = os.getenv(
+    "HARNESS_AGENT_READING_CHARGE_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Starting a build from a version's stored reading instead of reading the agent
+# again; only once the sandbox's agent-learning-kit takes --seed-contract.
+HARNESS_SEED_CONTRACT_ENABLED = os.getenv(
+    "HARNESS_SEED_CONTRACT_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# How long one reading of an agent, or one scan for the agents in a source, may run.
+ALK_HOSTED_READING_TIMEOUT = int(os.getenv("ALK_HOSTED_READING_TIMEOUT", "2400"))
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.

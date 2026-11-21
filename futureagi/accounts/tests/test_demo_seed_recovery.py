@@ -331,10 +331,11 @@ def test_legacy_reseed_works_before_publication_table_exists(signup):
             )
         assert DemoTracePublication.objects.count() == 2
     finally:
-        # Back to the latest accounts migration, not to 0030: a later one must not
-        # stay unapplied for the rest of the test session.
+        # Back to every app's latest migration, not to 0030 or accounts alone:
+        # rolling accounts back also unapplies other apps' migrations that depend
+        # on it, and none may stay unapplied for the rest of the test session.
         executor = MigrationExecutor(connection)
-        executor.migrate(executor.loader.graph.leaf_nodes("accounts"))
+        executor.migrate(executor.loader.graph.leaf_nodes())
 
 
 @pytest.mark.django_db(transaction=True)

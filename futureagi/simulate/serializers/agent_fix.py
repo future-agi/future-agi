@@ -27,6 +27,7 @@ from simulate.selectors.agent_fix import (
     overridable_regressions,
     verdict_tiers,
 )
+from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
 from simulate.serializers.harness_environment import HarnessVersionPersonSerializer
 from simulate.services.harness_environment import environment_name
 
@@ -125,6 +126,8 @@ class AgentFixRequestSerializer(serializers.Serializer):
     cost_limit_usd = serializers.FloatField(allow_null=True, default=None)
     observes_models = serializers.BooleanField(default=False)
     meters_agent_cost = serializers.BooleanField(default=False)
+    # Only the sandbox's own measuring saw the source run's model calls.
+    measured_automatically = serializers.BooleanField(default=False)
 
 
 class AgentFixVerdictTierPartSerializer(serializers.Serializer):
@@ -260,6 +263,8 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
     agent_version_id = serializers.UUIDField()
     version_number = serializers.IntegerField(source="agent_version.version_number")
     verdict = AgentFixVerdictSerializer(allow_null=True)
+    # Blank until a pull request is opened for it, so not always a URL.
+    pull_request_url = serializers.CharField(allow_blank=True)
     check_runs = serializers.SerializerMethodField()
     override = serializers.SerializerMethodField()
 
@@ -312,7 +317,18 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
         ]
 
 
+class AgentFixEpochIssueSerializer(serializers.Serializer):
+    """The Error Feed issue an epoch was run from, as the feed shows it now."""
+
+    job_id = serializers.UUIDField()
+    cluster_id = serializers.CharField()
+    project_id = serializers.UUIDField()
+
+
 class AgentFixRunSerializer(serializers.ModelSerializer):
+    """An epoch. A list passes ``issue_links`` (selectors.agent_fix_issue.jobs_of_epochs
+    for its page) in the context, so its issues are read once."""
+
     environment_id = serializers.UUIDField()
     # The run's test execution, as for launch.
     source_run_id = serializers.UUIDField(
@@ -342,10 +358,31 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     # Some cases held back, but too few to call the fix verified, whatever its verdict
     # says. With none held back it is proven on the targets only, and this is false.
     limited_validation = serializers.SerializerMethodField()
+    # The Error Feed issue it was run from; null for an epoch run from a run.
+    issue = serializers.SerializerMethodField()
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_retryable(self, fix_run: AgentFixRun) -> bool:
         return is_retryable(fix_run)
+
+    @swagger_serializer_method(
+        serializer_or_field=AgentFixEpochIssueSerializer(allow_null=True)
+    )
+    def get_issue(self, fix_run: AgentFixRun) -> dict | None:
+        links = self.context.get("issue_links")
+        job = (links if links is not None else jobs_of_epochs([fix_run])).get(
+            fix_run.id
+        )
+        if job is None:
+            return None
+        issue = live_issue(job.evidence_import.source_issue)
+        if issue is None:
+            return None
+        return {
+            "job_id": job.id,
+            "cluster_id": issue.cluster_id,
+            "project_id": issue.project_id,
+        }
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_limited_validation(self, fix_run: AgentFixRun) -> bool:
@@ -407,6 +444,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "retried_from_id",
             "retryable",
             "limited_validation",
+            "issue",
             "check_runs",
             "candidates",
             "started_at",
