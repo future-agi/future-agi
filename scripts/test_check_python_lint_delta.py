@@ -333,6 +333,29 @@ class WorkflowTests(unittest.TestCase):
         # Stacked PRs into feature branches get the check too.
         self.assertNotRegex(on, r"(?m)^\s*(branches|branches-ignore)\s*:")
 
+    def test_the_workflow_reports_on_a_merge_group(self):
+        # A merge queue waits for every required check on the merge-group
+        # commit; without this trigger "Python Lint Pass" never reports there.
+        on = top_level_block(self.text, "on")
+        self.assertRegex(on, r"(?m)^  merge_group:\s*$")
+        # A merge group has no pull request file list, so it always runs Ruff.
+        changes = job_block(self.text, "changes")
+        self.assertRegex(
+            changes,
+            r"(?m)^      - id: always\n"
+            r"        if: github\.event_name != 'pull_request'\n"
+            r"        run: echo \"python=true\" >> \"\$GITHUB_OUTPUT\"\s*$",
+        )
+        self.assertRegex(
+            changes,
+            r"(?m)^      - id: filter\n        if: github\.event_name == 'pull_request'\s*$",
+        )
+        ruff = job_block(self.text, "ruff-delta")
+        self.assertIn(
+            "BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref }}",
+            ruff,
+        )
+
     def test_the_header_names_the_check_to_require(self):
         header = self.text.split("\non:", 1)[0]
         self.assertIn('The check to require is "Python Lint Pass"', header)
@@ -344,7 +367,8 @@ class WorkflowTests(unittest.TestCase):
         self.assertRegex(changes, r"(?m)^      pull-requests: read\b")
         self.assertRegex(
             changes,
-            r"(?m)^      python: \$\{\{ steps\.filter\.outputs\.python \}\}\s*$",
+            r"(?m)^      python: \$\{\{ steps\.filter\.outputs\.python "
+            r"\|\| steps\.always\.outputs\.python \}\}\s*$",
         )
         self.assertNotRegex(changes, r"(?m)^    if:", "the changes job must always run")
         filters = changes.split("            python:\n", 1)[1]
@@ -1826,7 +1850,7 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
         self.commit()
         return self.run_step("Report new violations", head_version)
 
-    def run_step(self, name, workflow_version="99.99.99"):
+    def run_step(self, name, workflow_version="99.99.99", base_ref="main"):
         step = (
             job_block(
                 WORKFLOW.read_text(),
@@ -1856,7 +1880,7 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
                 "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
                 "RUNNER_TEMP": str(self.runner),
                 "GITHUB_STEP_SUMMARY": "",
-                "BASE_REF": "main",
+                "BASE_REF": base_ref,
                 "RUFF_VERSION": workflow_version,
                 "HEAD_RUFF_VERSION": workflow_version,
                 "REAL_RUFF": RUFF,
@@ -1864,6 +1888,14 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
                 "INSTALL_LOG": str(self.installs),
             },
         )
+
+    def test_a_merge_group_names_its_base_as_a_full_ref(self):
+        self.base()
+        self.write("futureagi/app/mod.py", 'value = 1\nprint("new")\n')
+        self.commit()
+        proc = self.run_step("Report new violations", base_ref="refs/heads/main")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("title=ruff T201", proc.stdout)
 
     def test_head_self_tests_use_head_pin_not_merge_workflow_pin(self):
         self.write("scripts/test_check_python_lint_delta.py", "# Fixture self-test.\n")

@@ -272,14 +272,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Resolve explicit PR base
+      - name: Resolve the comparison base for this event
         env:
+          EVENT_NAME: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-          DEFAULT_BASE: origin/dev
+          PUSH_BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
-          base="${PR_BASE:-${BEFORE:-$DEFAULT_BASE}}"
-          if [[ "$base" =~ ^0+$ ]]; then base="$DEFAULT_BASE"; fi
+          base=$(bash scripts/update-safety-base.sh)
           git rev-parse --verify "${base}^{commit}"
           echo "UPDATE_SAFETY_BASE=$base" >> "$GITHUB_ENV"
       - name: Daemon-free safety fixtures
