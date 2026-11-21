@@ -11,6 +11,8 @@ import { LoadingScreen } from "src/components/loading-screen";
 import EmptyContent from "src/components/empty-content";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
 import HarnessToEnvironment from "../components/harness-to-environment";
+import LegacyMetricsRedirect from "../components/legacy_metrics_redirect";
+import MetricsGate from "src/sections/derived-metrics/MetricsGate";
 import RoleProtection from "../components/role-protection";
 import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
@@ -452,6 +454,16 @@ const QueueDetailPage = lazyWithRetry(
 );
 const AnnotateWorkspacePage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/annotate-workspace"),
+);
+
+const MetricsListPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricsListPage"),
+);
+const MetricDetailPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricDetailPage"),
+);
+const MetricBuilderPage = lazyWithRetry(
+  () => import("src/sections/derived-metrics/MetricBuilderPage"),
 );
 
 const DashboardsListView = lazyWithRetry(
@@ -1711,6 +1723,28 @@ export const dashboardRoutes = (
           ],
         },
       ],
+    },
+    {
+      path: "metrics",
+      element: (
+        <MetricsGate>
+          <Outlet />
+        </MetricsGate>
+      ),
+      children: [
+        { index: true, element: <MetricsListPage /> },
+        { path: "new", element: <MetricBuilderPage /> },
+        { path: ":metricId", element: <MetricDetailPage /> },
+        { path: ":metricId/edit", element: <MetricBuilderPage /> },
+      ],
+    },
+    {
+      path: "derived-metrics/*",
+      element: (
+        <MetricsGate>
+          <LegacyMetricsRedirect />
+        </MetricsGate>
+      ),
     },
     {
       path: "dashboards",
