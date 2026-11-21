@@ -1201,8 +1201,8 @@ class TestFetchAndPersistCallResultActivity:
         await call_execution.arefresh_from_db()
         stored = call_execution.provider_call_data["livekit"]
         assert stored["recording_source"] == source and stored["recording"] == tracks
-        assert stored["recording_cleanup_success"]
         assert "recording_error" not in stored and result.error is None
+        assert stored.get("recording_cleanup_success")
         assert call_execution.recording_url == tracks["combined"]
         assert call_execution.stereo_recording_url == tracks["stereo"]
         assert call_execution.recording_available

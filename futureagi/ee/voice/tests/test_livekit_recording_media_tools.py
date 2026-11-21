@@ -509,14 +509,25 @@ def test_feeder_retry_preserves_completed_preupgrade_call(
     feeder_data = {"room_name": "call_call-1"}
     if incoming_egress:
         feeder_data["egress_id"] = incoming_egress
+
+    async def apply_update(**changes):
+        for field, value in changes.items():
+            setattr(call, field, value)
+        return 1
+
+    # Model the old worker truthfully: polling finds no remaining raw object,
+    # and a conditional update would really change the saved playback fields.
+    unavailable = AsyncMock()
+    unavailable.egress.list_egress.return_value = MagicMock(items=[])
     with (
         patch.object(CallExecution.objects, "aget", new=AsyncMock(return_value=call)),
         patch.object(CallExecution.objects, "filter") as writes,
         patch.object(CallTranscript.objects, "filter") as transcripts,
         patch("ee.voice.services.livekit.recording.stream_egress_to_s3") as stream,
-        patch.object(service, "_create_api") as api,
+        patch.object(service, "_create_api", return_value=unavailable) as api,
         patch("ee.voice.services.livekit.recording.delete_egress_recording") as delete,
     ):
+        writes.return_value.aupdate = AsyncMock(side_effect=apply_update)
         transcripts.return_value.acount = AsyncMock(return_value=0)
         asyncio.run(
             service.fetch_and_store_call_data(
@@ -529,6 +540,7 @@ def test_feeder_retry_preserves_completed_preupgrade_call(
         call.asave.reset_mock()
         snapshot = deepcopy(call.provider_call_data)
         result = asyncio.run(service.extract_and_persist_recordings("call-1"))
+        assert call.recording_available and serializer.get_recordings(call) == before
         writes.assert_not_called()
         stream.assert_not_called()
         api.assert_not_called()
