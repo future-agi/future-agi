@@ -4,7 +4,7 @@ Dev QA follow-up to the voice graph scope (40a21c8ae/6371884d0). A black-box run
 on the local e2e stack (api-tester D5x-call2) posted one voice call whose
 ``conversation`` root has one ``llm`` child: ``get_graph_methods`` with
 ``observe_type="voice"`` summed traffic 2 while ``list_voice_calls`` returned 1.
-The trace graph's traffic counts every contributing span of a matched trace, so
+The trace graph's traffic counted every contributing span of a matched trace, so
 the Voice chart equalled the call count only while each call was one span.
 
 The Voice list also honours ``remove_simulation_calls`` (simulator phone
@@ -232,7 +232,7 @@ def _voice_scope(remove_simulation_calls):
     return scope
 
 
-def _graph(client, fixture, metric_id, **scope):
+def _graph(client, fixture, metric_id, *, filters=None, **scope):
     response = client.post(
         "/tracer/trace/get_graph_methods/",
         {
@@ -245,7 +245,7 @@ def _graph(client, fixture, metric_id, **scope):
                 "property_id": f"system_attribute:traces:{metric_id}",
                 "source": "traces",
             },
-            "filters": _window_filter(fixture["window"]),
+            "filters": [*_window_filter(fixture["window"]), *(filters or [])],
             **scope,
         },
         format="json",
@@ -442,10 +442,172 @@ def test_voice_membership_chart_cost_gate_prices_the_simulator_raw_log(
         assert probed == []
 
 
-def test_trace_chart_still_counts_every_span(auth_client, voice_fixture):
-    traffic = _graph(auth_client, voice_fixture, "traffic")
+@pytest.mark.parametrize(
+    "child_filter", [False, True], ids=["unfiltered", "child-match"]
+)
+def test_trace_chart_counts_roots_not_spans(auth_client, voice_fixture, child_filter):
+    filters = (
+        [
+            {
+                "column_id": "provider",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "openai",
+                },
+            }
+        ]
+        if child_filter
+        else []
+    )
+    traffic = _graph(auth_client, voice_fixture, "traffic", filters=filters)
 
-    assert sum(point["value"] for point in traffic) == len(_FIXTURE)
+    # A matching child selects its trace, but only its root contributes.
+    assert sum(point["value"] for point in traffic) == (1 if child_filter else 3)
+    assert sum(point["primary_traffic"] for point in traffic) == (
+        1 if child_filter else 3
+    )
+
+
+@pytest.mark.parametrize(
+    "child_filter", [False, True], ids=["unfiltered", "child-match"]
+)
+def test_trace_traffic_keeps_empty_kind_roots(
+    auth_client, observe_project, voice_fixture, child_filter
+):
+    trace_id = str(uuid.uuid4())
+    root_id = uuid.uuid4().hex[:16]
+    start = voice_fixture["window"][1] - timedelta(days=1)
+    seed_ch_spans(
+        [
+            _span_row(
+                observe_project,
+                trace_id,
+                root_id,
+                "",
+                ("empty-kind-root", "", "", 500, None),
+                start,
+                start,
+            ),
+            _span_row(
+                observe_project,
+                trace_id,
+                uuid.uuid4().hex[:16],
+                root_id,
+                ("matching-child", "llm", "openai", 100, None),
+                start + timedelta(minutes=1),
+                start + timedelta(minutes=1),
+            ),
+        ]
+    )
+    filters = (
+        [
+            {
+                "column_id": "provider",
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": "openai",
+                },
+            }
+        ]
+        if child_filter
+        else []
+    )
+    # The trace-list validator rejects empty kinds; exercise Traffic directly.
+    traffic = _graph(auth_client, voice_fixture, "traffic", filters=filters)
+
+    # The matching child selects the empty-kind root's trace; both filtered
+    # and date-only Traffic count it once, without counting the child.
+    expected_count = 2 if child_filter else 4
+    assert sum(point["value"] for point in traffic) == expected_count
+    assert sum(point["primary_traffic"] for point in traffic) == expected_count
+
+
+def test_trace_traffic_uses_root_bucket_not_child_bucket(
+    auth_client, observe_project, voice_fixture
+):
+    start = voice_fixture["window"][1] - timedelta(days=1)
+    seed_ch_spans(
+        [
+            _span_row(
+                observe_project,
+                voice_fixture["trace_ids"]["voice-call"],
+                uuid.uuid4().hex[:16],
+                "existing-root",
+                ("late-child", "llm", "", 10, None),
+                start + timedelta(days=1),
+                start + timedelta(days=1),
+            ),
+            _span_row(
+                observe_project,
+                str(uuid.uuid4()),
+                uuid.uuid4().hex[:16],
+                "missing-root",
+                ("orphan", "llm", "", 10, None),
+                start,
+                start,
+            ),
+            _span_row(
+                observe_project,
+                str(uuid.uuid4()),
+                uuid.uuid4().hex[:16],
+                "",
+                ("empty-parent-root", "chain", "", 10, None),
+                start,
+                start,
+            ),
+        ]
+    )
+    fixture = {**voice_fixture, "window": (start, start + timedelta(days=2))}
+    traffic = _graph(auth_client, fixture, "traffic")
+
+    # Both NULL and empty parents are roots. Neither an orphan nor a child on
+    # the following day adds a trace or creates another nonzero traffic bucket.
+    assert len(traffic) == 1
+    assert traffic[0]["value"] == 4
+
+
+def test_trace_chart_counts_repolled_roots_once(auth_client, repolled_fixture):
+    traffic = _graph(auth_client, repolled_fixture, "traffic")
+
+    assert sum(point["value"] for point in traffic) == 2
+
+
+def test_trace_latency_keeps_its_span_population(auth_client, voice_fixture):
+    latency = _graph(auth_client, voice_fixture, "latency")
+
+    assert [point["value"] for point in latency] == [18_340]
+    assert sum(point["primary_traffic"] for point in latency) == len(_FIXTURE)
+
+
+@override_settings(EXACT_AGGREGATION_TASK_QUEUE="exact_aggregation")
+def test_refreshed_trace_graph_worker_counts_roots(auth_client, voice_fixture):
+    from tracer.tasks import exact_aggregation
+
+    with patch(
+        "tracer.tasks.exact_aggregation.refresh_exact_aggregation_snapshot.apply_async"
+    ) as enqueue:
+        response = auth_client.post(
+            "/tracer/trace/get_graph_methods/?refresh=true",
+            {
+                "project_id": voice_fixture["project_id"],
+                "interval": "day",
+                "req_data_config": {"id": "traffic", "type": "SYSTEM_METRIC"},
+                "filters": _window_filter(voice_fixture["window"]),
+            },
+            format="json",
+        )
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert enqueue.call_count == 1
+    task = enqueue.call_args.kwargs["kwargs"]
+    payload = exact_aggregation._observe_payload(task["namespace"], task["identity"])
+
+    assert payload["query_status"] == "complete"
+    assert sum(point["value"] for point in payload["data"]) == 3
 
 
 def test_simulator_toggle_is_a_voice_graph_parameter(auth_client, voice_fixture):
