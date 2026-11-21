@@ -557,6 +557,7 @@ const VoiceDetailDrawerV2 = ({
           onClose={() => setTagsAnchorEl(null)}
           traceId={data.trace_id}
           currentTags={data?.tags || data?.trace?.tags || []}
+          projectId={projectId}
           onSuccess={() =>
             queryClient.invalidateQueries({ queryKey: ["voiceCallDetail"] })
           }
