@@ -1,5 +1,7 @@
+import contextlib
 import html as _html
 import re
+import smtplib
 
 import structlog
 from django.conf import settings
@@ -194,10 +196,9 @@ def email_helper(
                 last_error = exc
                 # An SMTP server that dropped the session fails every later
                 # send on it; closing makes the next send open a fresh one.
-                try:
+                # Closing a dead session can itself fail; the reopen is the point.
+                with contextlib.suppress(OSError, smtplib.SMTPException):
                     connection.close()
-                except Exception:
-                    pass
                 logger.exception(
                     "notification_email_send_failed",
                     category=notification_category,
