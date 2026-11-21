@@ -67,6 +67,22 @@ export const initPostHog = () => {
   }
 };
 
+// Read the identity restored by this document's SDK, without sending an event.
+export const hasPostHogMember = (id, orgId, workspaceId) => {
+  try {
+    if (!initialized || posthog.has_opted_out_capturing() !== false)
+      return false;
+    const groups = posthog.getGroups();
+    return (
+      posthog.get_distinct_id() === id &&
+      groups.organization === orgId &&
+      (groups.workspace ?? null) === workspaceId
+    );
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Identify user + set org & workspace as groups
  */
@@ -132,6 +148,7 @@ export const identifyPostHogUser = (userData = {}) => {
         organization_id: organization?.id,
       });
     }
+    return hasPostHogMember(id, organization?.id, default_workspace_id);
   } catch (error) {
     logger.error("PostHog identify error:", error);
   }

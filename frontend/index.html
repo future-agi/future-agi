@@ -6,6 +6,71 @@
          Only the address changes; nothing is captured or stored here.
          Callbacks without a saml_code parameter keep their existing flow. -->
     <meta name="referrer" content="no-referrer" />
+    <!-- GTM here and GA4 in the app use both the arrival decision and the live
+         address check. Decide before callback cleanup; don't retain the URL. -->
+    <script id="analytics-url-policy">
+      (function () {
+        var params = ["saml_code", "oauth_code", "oauth_provider", "sso_token", "access_token", "refresh_token", "auth", "token", "code"];
+        var marketplaceParams = ["onboarding_token", "onboarding_gcp_token"];
+        var paths = /^\/(?:auth\/jwt\/(?:verify|invitation\/accept|invitation\/set-password)\/|shared\/|sos(?:\/|$))/i;
+        var consentPath = /^\/mcp\/(?:oauth\/)?authorize(?:\/|$)/i;
+        function restriction(value, depth, base) {
+          try {
+            if (depth > 4) return "auth";
+            // URLSearchParams decodes once; login/register also read an encoded path.
+            if (depth && /^%2f/i.test(value)) value = decodeURIComponent(value);
+            var url = new URL(value, base || document.baseURI);
+            var fragment = new URLSearchParams(url.hash.slice(1));
+            function present(key) { return url.searchParams.has(key) || fragment.has(key); }
+            var path;
+            try { path = decodeURIComponent(url.pathname).replace(/\/{2,}/g, "/"); }
+            catch (error) { /* An unclassifiable path is denied below. */ }
+            // A return to another origin is not a handoff to this app's consent page.
+            var local = !depth || url.origin === new URL(base).origin;
+            if (consentPath.test(path)) return local ? "consent" : "document";
+            // A forwarding page inherits consent only from an actual consent
+            // destination. Other restricted or unclassifiable returns stay tag-free.
+            var next = url.searchParams.get("returnTo");
+            var forwarded = next && restriction(next, depth + 1, url.href);
+            if (local && forwarded === "consent") return "consent";
+            if (forwarded || marketplaceParams.some(present)) return "document";
+            return path === undefined || paths.test(path) || params.some(present) ? "auth" : null;
+          } catch (error) {
+            return "auth";
+          }
+        }
+        function allowed(value) {
+          return !window.__authHandoffScrubFailed && !window.__authLateMarkerScrubFailed && !restriction(value, 0);
+        }
+        var arrival = restriction(window.location.href, 0);
+        Object.defineProperty(window, "__analyticsAllowedAtLoad", {
+          value: !window.__authHandoffScrubFailed && !window.__authLateMarkerScrubFailed && !arrival
+        });
+        Object.defineProperty(window, "__analyticsConsentHandoffAtLoad", { value: arrival === "consent" });
+        Object.defineProperty(window, "__analyticsUrlAllowed", { value: allowed });
+        Object.defineProperty(window, "__analyticsNeedsFreshDocument", {
+          value: function (url) {
+            if (window.__analyticsTagStarted !== true) return false;
+            var kind = restriction(url, 0);
+            return kind === "document" || kind === "consent";
+          }
+        });
+        Object.defineProperty(window, "__analyticsNavigateDocument", {
+          value: function (method, href) {
+            var cancel;
+            try {
+              if (restriction(href, 0) === "consent") cancel = window.__prepareConsentIdentityHandoff?.();
+            } catch (error) { /* Analytics is optional. */ }
+            try {
+              return method === "reload" ? window.location.reload() : window.location.replace(href);
+            } catch (error) {
+              try { if (typeof cancel === "function") cancel(); } catch (ignored) { /* Preserve the navigation error. */ }
+              throw error;
+            }
+          }
+        });
+      })();
+    </script>
     <script id="saml-initial-marker-guard">
       (function () {
         var reserved = ["saml_code", "oauth_code", "oauth_provider", "sso_token", "access_token", "refresh_token", "auth"];
@@ -31,13 +96,16 @@
         }
       })();
     </script>
-    <!-- Normalize callback parameters added after start-up. Installed before other listeners. -->
+    <!-- Install auth navigation guards before other history wrappers and listeners. -->
     <script id="saml-late-marker-guard">
       (function () {
         var history = window.history;
         var nativePush = history.pushState;
         var nativeReplace = history.replaceState;
         var scrubCodeUrl = window.__takeSamlUrlSanitizer();
+        var navigateDocument = window.__analyticsNavigateDocument || function (method, href) {
+          return method === "reload" ? window.location.reload() : window.location.replace(href);
+        };
 
         function scrubbed(value) {
           var url = new URL(value, document.baseURI);
@@ -64,28 +132,72 @@
           return true;
         }
 
+        var needsFreshDocument = window.__analyticsNeedsFreshDocument;
+        function canRewrite(current, target) {
+          if (target.protocol !== current.protocol || target.host !== current.host ||
+              target.username !== current.username || target.password !== current.password) return false;
+          if (current.protocol === "https:" || current.protocol === "http:") return true;
+          if (current.protocol === "file:") return current.pathname === target.pathname;
+          return current.href.split("#")[0] === target.href.split("#")[0];
+        }
         function guard(nativeMethod, receiver, args) {
-          // Let native conversion/argument/structured-clone errors occur once,
-          // before changing any state. Ordinary calls keep their exact values.
-          if (receiver === history && args.length >= 3 && typeof args[2] === "string") {
+          var result;
+          // Brand, arity and nullable URL checks precede Web IDL conversions.
+          // Without a tag, leave object conversion and late callback cleanup to
+          // the existing native path. With a tag we must inspect *any* URL type.
+          if (receiver === history && args.length >= 3 && args[2] !== null && args[2] !== undefined &&
+              (typeof args[2] === "string" || window.__analyticsTagStarted === true)) {
+            // DOMString title, then nullable USVString URL. ToString with the
+            // string hint (unlike String(Symbol())) rejects symbols. Pass the
+            // primitives on so native code never invokes caller conversions twice.
+            args[1] = `${args[1]}`;
+            args[2] = `${args[2]}`;
             var target;
-            try { target = new URL(args[2], document.baseURI); } catch (error) { /* Native call below owns errors. */ }
+            // The empty History URL keeps the document URL, even with <base>.
+            try { if (args[2] !== "") target = new URL(args[2], document.baseURI); } catch (error) { /* Native owns invalid URLs. */ }
             var current = new URL(window.location.href);
-            if (target && target.origin === current.origin && target.username === current.username && target.password === current.password) {
+            // Invalid rewrites (including a blob URL with the same origin) go
+            // through History unchanged so it owns serialization and URL errors.
+            if (target && canRewrite(current, target)) {
               var clean = scrubbed(target.href);
               if (clean) {
-                args = Array.prototype.slice.call(args);
+                target = clean;
                 args[2] = clean.href;
               }
+              if (target.href !== current.href && needsFreshDocument && needsFreshDocument(target.href)) {
+                // Let History serialize for storage and enforce its own limits
+                // before starting a handoff. Push creates the slot; replace reuses
+                // it. Never put the protected URL into this document's history.
+                var previousState = history.state;
+                args[2] = current.href;
+                if (target.href.split("#")[0] === current.href.split("#")[0]) {
+                  // Location.replace of a fragment alone is not a document load.
+                  var slot = new URL(current.href);
+                  slot.searchParams.append("__document_navigation", "");
+                  args[2] = slot.href;
+                }
+                result = Reflect.apply(nativeMethod, receiver, args);
+                try { navigateDocument("replace", target.href); }
+                catch (error) {
+                  // Recover the visible entry, not by traversing the stack (which
+                  // would be async and could move a different, later navigation).
+                  try { nativeReplace.call(history, previousState, "", current.href); } catch (ignored) { /* Preserve the original error. */ }
+                  throw error;
+                }
+                return result;
+              }
+              // Keep the inspected destination pinned if serializing caller state
+              // synchronously changes the document's base URL.
+              if (window.__analyticsTagStarted === true) args[2] = target.href;
             }
           }
-          var result = Reflect.apply(nativeMethod, receiver, args);
+          result = Reflect.apply(nativeMethod, receiver, args);
           if (receiver === history) discardLateMarker();
           return result;
         }
 
-        history.pushState = function pushState() { return guard(nativePush, this, arguments); };
-        history.replaceState = function replaceState() { return guard(nativeReplace, this, arguments); };
+        history.pushState = function pushState() { "use strict"; return guard(nativePush, this, arguments); };
+        history.replaceState = function replaceState() { "use strict"; return guard(nativeReplace, this, arguments); };
         function onNavigation(event) {
           // HashChangeEvent.newURL retains the original marker even after the
           // address is scrubbed. Stop only these rejected protocol events before
@@ -97,11 +209,13 @@
             // already been scrubbed. Their captured old/new URLs still count.
             rejected = Boolean(scrubbed(event.oldURL) || scrubbed(event.newURL)) || rejected;
           }
-          if (!rejected) return;
-          // Stop the event first, so later listeners do not receive its URLs
-          // even if the address update below fails.
+          // On a browser traversal the address has already changed. Start the
+          // guarded destination afresh before the router renders it here.
+          var newDocument = needsFreshDocument && needsFreshDocument(clean ? clean.href : window.location.href);
+          if (!rejected && !newDocument) return;
           event.stopImmediatePropagation();
           if (clean) safelyReplace(clean);
+          if (newDocument && !window.__authLateMarkerScrubFailed) navigateDocument("reload", window.location.href);
         }
         window.addEventListener("hashchange", onNavigation, true);
         window.addEventListener("popstate", onNavigation, true);
@@ -110,37 +224,15 @@
     <!-- Load global styles outside the guarded application import. A blocked
          optional font must not reject main's CSS preload and loop on reload. -->
     <link rel="stylesheet" href="/src/global.css" />
-    <!-- Analytics tags (Google Tag Manager, Google Analytics) stay off for a
-         page load whose address is a one-time link or carries sign-in
-         parameters. src/utils/googleAnalytics.js reuses the same check for
-         later in-app navigation. -->
-    <script id="analytics-url-policy">
-      (function () {
-        var params = ["saml_code", "oauth_code", "oauth_provider", "sso_token", "access_token", "refresh_token", "auth", "token", "code"];
-        var paths = /^\/(?:auth\/jwt\/(?:verify|invitation\/accept|invitation\/set-password)\/|shared\/|sos(?:\/|$))/i;
-        function allowed(value) {
-          try {
-            var url = new URL(value, document.baseURI);
-            if (paths.test(url.pathname)) return false;
-            var fragment = new URLSearchParams(url.hash.slice(1));
-            for (var i = 0; i < params.length; i++) {
-              if (url.searchParams.has(params[i]) || fragment.has(params[i])) return false;
-            }
-            return true;
-          } catch (error) {
-            return false;
-          }
-        }
-        Object.defineProperty(window, "__analyticsUrlAllowed", { value: allowed });
-        Object.defineProperty(window, "__analyticsAllowedAtLoad", { value: allowed(window.location.href) });
-      })();
-    </script>
     <!-- Google Tag Manager (gated on VITE_GTM_ID at build time so OSS
          builds don't load third-party tracking) -->
-    <script>(function(){
+    <script id="google-tag-manager">(function(){
       var GTM_ID = "%VITE_GTM_ID%";
       if (!GTM_ID || GTM_ID === "%" + "VITE_GTM_ID%") return;
-      if (window.__analyticsAllowedAtLoad !== true) return;
+      if (window.__analyticsAllowedAtLoad !== true ||
+          typeof window.__analyticsUrlAllowed !== "function" ||
+          window.__analyticsUrlAllowed(window.location.href) !== true) return;
+      window.__analyticsTagStarted = true;
       (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
         new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
         j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
