@@ -13,6 +13,7 @@ const state = {
 };
 const validateMutate = vi.fn();
 const saveValidatedMutate = vi.fn();
+const saveValidatedReset = vi.fn();
 const saveMutate = vi.fn();
 const discardMutate = vi.fn();
 const saveReset = vi.fn();
@@ -61,6 +62,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     })),
     useSaveCandidates: vi.fn(() => ({
       mutate: saveValidatedMutate,
+      reset: saveValidatedReset,
       isPending: false,
       error: null,
       ...state.saveValidated,
@@ -353,12 +355,39 @@ describe("DraftBar", () => {
       );
       await userEvent.click(saveButton());
 
-      expect(saveValidatedMutate).toHaveBeenCalledWith({
+      expect(saveValidatedMutate.mock.calls.at(-1)[0]).toEqual({
         candidates: { environmentVersionId: "e9", suiteVersionId: "s9" },
         expectedReviewDigest: DIGEST,
         name: "Finance controller",
       });
       expect(saveMutate).not.toHaveBeenCalled();
+    });
+
+    it("drops a candidate save refused as moved, rereading the drafts so the bar asks to Validate again", async () => {
+      decided();
+      withValidation(
+        { state: "ready" },
+        { environment_version_id: "e9", suite_version_id: "s9" },
+      );
+      render(<DraftBar env={ENV} />);
+      await userEvent.type(
+        screen.getByRole("textbox", { name: DRAFTS_COPY.versionName }),
+        "Finance controller",
+      );
+      await userEvent.click(saveButton());
+      queryClient.invalidateQueries.mockClear();
+      saveValidatedReset.mockClear();
+
+      saveValidatedMutate.mock.calls.at(-1)[1].onError({
+        error: "draft_changed",
+      });
+
+      const keys = queryClient.invalidateQueries.mock.calls.map(([arg]) =>
+        JSON.stringify(arg.queryKey),
+      );
+      expect(keys).toContain(JSON.stringify(["harness-draft-review", "env-1"]));
+      expect(keys.some((key) => key.includes('"drafts"'))).toBe(true);
+      expect(saveValidatedReset).toHaveBeenCalled();
     });
 
     it("says a validated change needs a name before Save", () => {
