@@ -971,6 +971,13 @@ ERROR_FEED_OMEGA_LEASE_SECONDS = int(os.getenv("ERROR_FEED_OMEGA_LEASE_SECONDS",
 ERROR_FEED_OMEGA_PROJECT_CONCURRENCY = int(
     os.getenv("ERROR_FEED_OMEGA_PROJECT_CONCURRENCY", "2")
 )
+# Reader pipeline for Omega investigations: one-call readers beside the loop and a
+# final check of every finding. Needs a worker with OMEGA_CHECK_MODEL_ID; without one
+# the worker runs the loop alone. A reported finding needs at least this check score.
+ERROR_FEED_READER_PIPELINE = os.getenv("ERROR_FEED_READER_PIPELINE", "false") == "true"
+ERROR_FEED_READER_MIN_CHECK_SCORE = min(
+    5, max(1, int(os.getenv("ERROR_FEED_READER_MIN_CHECK_SCORE", "5")))
+)
 # Group completed Omega findings once all enforced budget caps are configured.
 ERROR_FEED_GROUPING_ENABLED = os.getenv("ERROR_FEED_GROUPING_ENABLED", "true") == "true"
 ERROR_FEED_GROUPING_ALL_PROJECTS = (

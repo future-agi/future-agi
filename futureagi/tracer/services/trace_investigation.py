@@ -57,6 +57,21 @@ _DEFAULT_LIMITS = {
     "max_output_tokens_total": 8_000,
     "max_evidence_bytes": 64 * 1024 * 1024,
     "max_tool_result_bytes": 16 * 1024,
+    # Reader pipeline (worker readers.mjs): calls for the one-call readers that run
+    # beside the investigation loop, calls for the final check that grades every
+    # finding, and the lowest check score a reported finding needs. 0 calls = off.
+    "max_reader_calls": 0,
+    "max_check_calls": 0,
+    "min_check_score": 5,
+}
+# ERROR_FEED_READER_PIPELINE turns the reader pipeline on for every claim; a project's
+# omega_limits can still set these keys itself. Five reader passes and one check,
+# each allowed one retry; the loop keeps max_model_calls. The deadline adds the
+# check (one call over the whole record) to the loop's 300 s.
+_READER_PIPELINE_LIMITS = {
+    "deadline_seconds": 420,
+    "max_reader_calls": 10,
+    "max_check_calls": 2,
 }
 _LIMIT_CEILINGS = {
     "deadline_seconds": 600,
@@ -67,7 +82,18 @@ _LIMIT_CEILINGS = {
     "max_output_tokens_total": 50_000,
     "max_evidence_bytes": 128 * 1024 * 1024,
     "max_tool_result_bytes": 1024 * 1024,
+    "max_reader_calls": 20,
+    "max_check_calls": 4,
+    "min_check_score": 5,
 }
+
+
+def _default_limits() -> dict:
+    limits = dict(_DEFAULT_LIMITS)
+    if settings.ERROR_FEED_READER_PIPELINE:
+        limits.update(_READER_PIPELINE_LIMITS)
+    limits["min_check_score"] = settings.ERROR_FEED_READER_MIN_CHECK_SCORE
+    return limits
 # Delay before each automatic retry. A trace job stops after one more unread
 # attempt in a row than there are delays.
 _RETRY_DELAYS = (timedelta(minutes=1), timedelta(minutes=5))
@@ -381,13 +407,15 @@ def _pinned_context(config: TraceScanConfig) -> tuple[str, str, list, dict]:
         _DEFAULT_LIMITS
     ):
         raise InvestigationConflict("project Omega limits are invalid")
-    limits = {**_DEFAULT_LIMITS, **configured_limits}
+    limits = {**_default_limits(), **configured_limits}
     for key, value in limits.items():
         minimum = {
             "max_children": 0,
             "max_parallel_children": 0,
             "max_model_calls": 2,
             "max_tool_result_bytes": 512,
+            "max_reader_calls": 0,
+            "max_check_calls": 0,
         }.get(key, 1)
         if (
             isinstance(value, bool)
@@ -402,6 +430,9 @@ def _pinned_context(config: TraceScanConfig) -> tuple[str, str, list, dict]:
         )
     if limits["max_parallel_children"] > limits["max_children"]:
         raise InvestigationConflict("max_parallel_children cannot exceed max_children")
+    # Reader claims reach the report only through the check.
+    if limits["max_reader_calls"] > 0 and limits["max_check_calls"] == 0:
+        raise InvestigationConflict("max_reader_calls needs max_check_calls")
 
     return (
         str(snapshot_id),
@@ -663,7 +694,7 @@ def claim_due_investigations(
                 ),
                 memory_digest=memory_digest,
                 memory=memory,
-                limits=_DEFAULT_LIMITS.copy(),
+                limits=_default_limits(),
             )
             job.state = TraceInvestigationJobState.RUNNING
             job.save(update_fields=["state", "updated_at"])
