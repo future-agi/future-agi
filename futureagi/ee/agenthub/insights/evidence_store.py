@@ -23,7 +23,10 @@ document that fails the check is never served.
   there. Never the upload bucket, whose objects anyone may read by their URL:
   that, or no bucket, is refused (``configuration_error``), and so is a
   bucket whose policy lets anyone in (``probe``, when a run is created, and
-  on first use). Server-side encryption is asked for on S3; GCS always
+  on first use). ``INSIGHTS_EVIDENCE_STORAGE_BACKEND`` may put the bucket
+  on GCS (the ``GCS_HMAC_*`` keys) while the platform's own storage stays
+  where ``STORAGE_BACKEND`` says; empty, it follows ``STORAGE_BACKEND``.
+  Server-side encryption is asked for on S3; GCS always
   encrypts at rest; MinIO encrypts when its operator set it up. The bucket
   belongs to one deployment: its sweep deletes the documents of every run
   its own database does not know.
@@ -135,6 +138,62 @@ def _bucket() -> str:
     return str(_setting("INSIGHTS_EVIDENCE_BUCKET", "")).strip()
 
 
+def _platform_storage() -> str:
+    from tfc.utils import storage_client
+
+    return storage_client.STORAGE_BACKEND
+
+
+def _storage() -> str:
+    """The object storage that holds the evidence bucket: the override, or
+    the platform's own (``STORAGE_BACKEND``)."""
+    override = str(_setting("INSIGHTS_EVIDENCE_STORAGE_BACKEND", "")).strip().lower()
+    return override or _platform_storage()
+
+
+def _gcs_keys() -> tuple[str, str]:
+    return (
+        os.getenv("GCS_HMAC_ACCESS_KEY", ""),
+        os.getenv("GCS_HMAC_SECRET_KEY", ""),
+    )
+
+
+_gcs_client = None
+
+
+def _evidence_gcs_client():
+    """A GCS client for the evidence bucket when the platform's own storage
+    is elsewhere. The region is always "auto": never looked up, because the
+    bucket's ``storage.objectAdmin`` grant does not allow reading its
+    location, and never ``MINIO_REGION``, which names the platform's own
+    storage region (an S3 region on a deployment still on S3)."""
+    global _gcs_client
+    if _gcs_client is None:
+        from minio import Minio
+
+        from tfc.utils.storage_client import storage_http_client
+
+        access_key, secret_key = _gcs_keys()
+        _gcs_client = Minio(
+            "storage.googleapis.com",
+            access_key=access_key,
+            secret_key=secret_key,
+            region="auto",
+            secure=True,
+            http_client=storage_http_client(),
+        )
+    return _gcs_client
+
+
+def _storage_client():
+    """The client for the evidence bucket's storage."""
+    if _storage() == _platform_storage():
+        from tfc.utils.storage_client import get_storage_client
+
+        return get_storage_client()
+    return _evidence_gcs_client()
+
+
 def configuration_error() -> str | None:
     """Why the configured store refuses to start, or None. The object store
     needs its own bucket: never none, never the upload bucket."""
@@ -148,6 +207,13 @@ def configuration_error() -> str | None:
         return "bucket_unset"
     if bucket.lower() == str(_setting("UPLOAD_BUCKET_NAME", "")).strip().lower():
         return "bucket_is_upload_bucket"
+    storage = _storage()
+    if storage != _platform_storage():
+        # Only GCS has keys of its own (GCS_HMAC_*) apart from the platform's.
+        if storage != "gcs":
+            return "unknown_storage_backend"
+        if not all(_gcs_keys()):
+            return "gcs_keys_unset"
     return None
 
 
@@ -606,9 +672,7 @@ def _sse():
     """Server-side encryption for an upload, where the backend takes the
     header: S3's own keys. GCS encrypts every object at rest by itself, and a
     MinIO without a KMS refuses the header."""
-    from tfc.utils import storage_client
-
-    if storage_client.STORAGE_BACKEND != "s3":
+    if _storage() != "s3":
         return None
     from minio.sse import SseS3
 
@@ -660,9 +724,7 @@ class ObjectStore:
         self.bucket = bucket
 
     def _client(self):
-        from tfc.utils.storage_client import get_storage_client
-
-        client = get_storage_client()
+        client = _storage_client()
         if self.bucket not in _checked_buckets:
             self._check_policy(client)
         return client
