@@ -42,10 +42,10 @@ env:
   # The suite runs as this many matrix legs per stack, split by measured time
   # (e2e/lib/shard.ts). The report job proves the legs together ran every test
   # exactly once. Raise it only with measurements: each leg pays the fixed cost
-  # of building, pulling and booting a stack (about 15 minutes, 6 of them the
-  # database migrate), and no leg is shorter than that plus its longest spec
-  # file. At 6 the longest file and an even share of the rest take about the
-  # same time; more legs would add cost and no speed.
+  # of building, pulling and booting a stack before its first test (11 to 15
+  # minutes; the boot alone took 7 to 11, most of it the database migrate).
+  # Measured at 6 legs: 22 to 30 minutes per leg, 10 to 15 of them tests. Two
+  # more legs would cut about 3 minutes and cost about 25 runner-minutes.
   E2E_SHARDS: "6"
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
