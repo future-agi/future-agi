@@ -621,12 +621,16 @@ class BackendWorkflowTest(unittest.TestCase):
         self.assertIn("actions: read", queue)
         self.assertIn("\n    name: backend\n", queue)
         self.assertIn("VERDICT: ${{ needs.backend.outputs.verdict }}", queue)
-        self.assertIn('test "$BACKEND_RESULT" = success && test "$VERDICT" = success', queue)
+        self.assertIn(
+            'test "$BACKEND_RESULT" = success && test "$VERDICT" = success', queue
+        )
         self.assertIn("value: ${{ jobs.backend-tests.outputs.verdict }}", self.workflow)
         self.assertIn("verdict: ${{ steps.verdict.outcome }}", self.workflow)
 
     def test_every_optional_ee_checkout_requires_a_known_internal_event(self):
-        self.assertIn("IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}", self.workflow)
+        self.assertIn(
+            "IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}", self.workflow
+        )
         checkout = "uses: future-agi/future-agi/.github/actions/checkout-ee@"
         steps = [step for step in self.workflow.split("\n      - ") if checkout in step]
         self.assertEqual(len(steps), 3)
@@ -640,9 +644,7 @@ class BackendWorkflowTest(unittest.TestCase):
             self.assertNotIn("||", condition)
 
     def test_main_bound_queue_uses_target_branch_for_checkout_and_tests(self):
-        step = self.workflow.split("      - id: queue\n")[1].split(
-            "\n      - "
-        )[0]
+        step = self.workflow.split("      - id: queue\n")[1].split("\n      - ")[0]
         self.assertIn("if: github.event_name == 'merge_group'", step)
         self.assertIn("BASE_REF: ${{ github.event.merge_group.base_ref }}", step)
         script = textwrap.dedent(step.split("        run: |\n")[1])
@@ -702,23 +704,39 @@ class BackendWorkflowTest(unittest.TestCase):
         )
 
     def test_the_from_zero_job_creates_its_database_as_a_shard_does(self):
-        control_job = self.workflow.split("\n  migrated-database:\n")[1].split("\n  agentic-eval:")[0]
-        env = self.workflow.split("env: &backend_database_env\n")[1].split("\n    steps:")[0]
+        control_job = self.workflow.split("\n  migrated-database:\n")[1].split(
+            "\n  agentic-eval:"
+        )[0]
+        env = self.workflow.split("env: &backend_database_env\n")[1].split(
+            "\n    steps:"
+        )[0]
         for line in (
-            "LITELLM_MODE: PRODUCTION", "CH25_DATABASE: test_tfc", "CH_DATABASE: test_tfc",
-            'PYTHONHASHSEED: "0"', 'FI_CH25_SCHEMA_APPLY_STRICT: "1"',
+            "LITELLM_MODE: PRODUCTION",
+            "CH25_DATABASE: test_tfc",
+            "CH_DATABASE: test_tfc",
+            'PYTHONHASHSEED: "0"',
+            'FI_CH25_SCHEMA_APPLY_STRICT: "1"',
         ):
             self.assertIn(line, env)
         for job in (self.shard, control_job):
             self.assertIn("env: *backend_database_env", job)
             self.assertIn("with: *ee_checkout", job)
-        self.assertIn("uses: ./.github/actions/backend-test-packages/database\n", control_job)
+        self.assertIn(
+            "uses: ./.github/actions/backend-test-packages/database\n", control_job
+        )
         for job in (self.control, self.shard):
-            self.assertIn("uses: ./.github/actions/backend-test-packages/environment\n", job)
-        self.assertIn("uv sync --frozen --all-extras", (self.jobs / "environment/setup.sh").read_text())
+            self.assertIn(
+                "uses: ./.github/actions/backend-test-packages/environment\n", job
+            )
+        self.assertIn(
+            "uv sync --frozen --all-extras",
+            (self.jobs / "environment/setup.sh").read_text(),
+        )
         self.assertIn("database/key.sh)", self.shard)
         self.assertIn('bash "$GITHUB_ACTION_PATH/key.sh"', self.control)
-        self.assertIn("python3 -I .ci/db_dump.py key", (self.jobs / "database/key.sh").read_text())
+        self.assertIn(
+            "python3 -I .ci/db_dump.py key", (self.jobs / "database/key.sh").read_text()
+        )
 
     def test_only_public_qualified_output_is_transferred(self):
         self.assertIn("--create-db", self.producer)

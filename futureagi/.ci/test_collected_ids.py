@@ -254,10 +254,15 @@ class ProducerIdentityTest(unittest.TestCase):
                     if status is not None:
                         archive.writestr("inventory-exit.txt", status)
                 raw = stream.getvalue()
-                artifact = {"id": 1, "digest": "sha256:" + hashlib.sha256(raw).hexdigest()}
+                artifact = {
+                    "id": 1,
+                    "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+                }
                 with patch.object(checker.subprocess, "check_output", return_value=raw):
                     if status == b"0\n":
-                        self.assertEqual(checker.verify_artifact(artifact, "repo")[3], [])
+                        self.assertEqual(
+                            checker.verify_artifact(artifact, "repo")[3], []
+                        )
                     else:
                         with self.assertRaises((ValueError, KeyError)):
                             checker.verify_artifact(artifact, "repo")
@@ -364,12 +369,12 @@ class WorkflowTest(unittest.TestCase):
                 {
                     "changes": {
                         "result": "success",
-                        "outputs": dict(
-                            backend=value,
-                            metrics=value,
-                            executor_base="false",
-                            update_safety="true",
-                        ),
+                        "outputs": {
+                            "backend": value,
+                            "metrics": value,
+                            "executor_base": "false",
+                            "update_safety": "true",
+                        },
                     },
                     "policy-self-test": {"result": "success"},
                     "update-safety": {"result": "success"},
