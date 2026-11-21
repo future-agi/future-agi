@@ -33,7 +33,8 @@ const flow = vi.hoisted(() => ({
   validateError: null,
   refreshIfBehind: vi.fn(),
 }));
-vi.mock("../useDraftsValidation", () => ({
+vi.mock("../useDraftsValidation", async (importOriginal) => ({
+  movedText: (await importOriginal()).movedText,
   validationStateNote: () => null,
   useDraftsValidation: () => ({
     drafts: {
@@ -308,9 +309,22 @@ describe("ReviewChangesDrawer", () => {
 
     flow.saveMutate.mock.calls.at(-1)[1].onError(refused);
 
-    expect(flow.refreshIfBehind).toHaveBeenCalledWith(refused, {
-      dropSave: true,
-    });
+    expect(flow.refreshIfBehind).toHaveBeenCalledWith(refused);
+  });
+
+  it("says how the edits moved in the server's words, blaming nobody", () => {
+    flow.validateError = {
+      statusCode: 409,
+      error: "draft_changed",
+      message: "These changes moved since this page read them; look at them again, then try again.",
+    };
+    state.review = review([change({ decision: "accepted" })]);
+    renderDrawer();
+    expect(
+      screen.getByText(/These changes moved since this page read them/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Someone changed/)).toBeNull();
+    flow.validateError = null;
   });
 
   it("holds Save while a validation of the scenarios runs", async () => {

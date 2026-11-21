@@ -20,6 +20,7 @@ import SideDrawer from "../../components/SideDrawer";
 import { refusalText } from "../evals/refusalText";
 import { DRAFTS_COPY, REVIEW_COPY as COPY } from "../workspace.constants";
 import {
+  movedText,
   useDraftsValidation,
   validationStateNote,
 } from "./useDraftsValidation";
@@ -174,10 +175,14 @@ export default function ReviewChangesDrawer({
   // The server's refusal, in its words: a change another needs was rejected, or the review moved.
   const refused =
     decide.error || validation.validate.error || validation.saveValidated.error;
-  const refusedText = refused
-    ? DRAFTS_COPY.errors?.[refused?.error] ||
-      refusalText(refused, DRAFTS_COPY.validateError)
-    : null;
+  // The edits moved: the server's sentence says how, without blaming anyone.
+  let refusedText = null;
+  if (refused?.error === "draft_changed")
+    refusedText = movedText(refused, DRAFTS_COPY.errors.draft_changed);
+  else if (refused)
+    refusedText =
+      DRAFTS_COPY.errors?.[refused?.error] ||
+      refusalText(refused, DRAFTS_COPY.validateError);
   const stateNote = validationStateNote(validation.drafts?.validation);
 
   const goTab = (tab) => {
@@ -204,8 +209,7 @@ export default function ReviewChangesDrawer({
           onClose?.();
         },
         // The validated changes moved: the drawer asks to Validate again.
-        onError: (error) =>
-          validation.refreshIfBehind(error, { dropSave: true }),
+        onError: (error) => validation.refreshIfBehind(error),
       },
     );
   };

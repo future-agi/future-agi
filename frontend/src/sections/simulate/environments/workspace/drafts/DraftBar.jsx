@@ -24,6 +24,7 @@ import { draftSaveRequests } from "./draftSave";
 import ReviewChangesDrawer from "./ReviewChangesDrawer";
 import { useRunningScenarioValidation } from "src/api/harness/scenarios";
 import {
+  movedText,
   useDraftsValidation,
   validationStateNote,
 } from "./useDraftsValidation";
@@ -51,6 +52,9 @@ const staleText = (drafts, piece) => {
 
 const errorText = (error, drafts, fallback) => {
   if (error?.error === "draft_stale") return staleText(drafts, error.piece);
+  // The edits moved: the server's sentence says how, without blaming anyone.
+  if (error?.error === "draft_changed")
+    return movedText(error, COPY.errors.draft_changed);
   return COPY.errors[error?.error] || refusalText(error, fallback);
 };
 
@@ -193,7 +197,8 @@ export default function DraftBar({
   let validationNote = null;
   if (needsValidate && !validationState && !error) {
     validationNote = COPY.errors.validation_required;
-  } else {
+  } else if (!(error && validationState === "outdated")) {
+    // A refused save already says the changes moved; the note would say it twice.
     validationNote = validationStateNote(validation);
   }
 

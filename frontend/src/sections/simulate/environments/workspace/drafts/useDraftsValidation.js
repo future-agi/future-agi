@@ -19,8 +19,17 @@ const BEHIND = new Set([
   "review_undecided",
 ]);
 
+// The changes or their decisions moved since they were validated: Save would refuse the validated versions.
+export const OUTDATED_NOTE =
+  "These changes moved since they were validated. Validate them again, then save.";
+
+// A draft_changed refusal in the server's words, which say how the edits moved without blaming anyone.
+export const movedText = (error, fallback) =>
+  (error?.statusCode != null && error?.message) || fallback;
+
 // Where the validation of the unsaved changes stands, in words; null before any.
 export const validationStateNote = (validation) => {
+  if (validation?.state === "outdated") return OUTDATED_NOTE;
   if (validation?.state === "failed") {
     return COPY.validation.failed(validation.affectedScenarios.length);
   }
@@ -38,13 +47,12 @@ export function useDraftsValidation(envId, { enabled = true } = {}) {
   const validate = useValidateDrafts(envId);
   const saveValidated = useSaveCandidates(envId);
   const state = drafts?.validation?.state ?? null;
-  // A refusal saying this page is behind: read the drafts and the review again. A refused candidate save is then
-  // dropped, so the page shows where the validation stands now (Validate again) rather than a stale refusal.
-  const refreshIfBehind = (error, { dropSave = false } = {}) => {
+  // A refusal saying this page is behind: read the drafts and the review again, so the page shows where the
+  // validation stands now (Validate again) beside the server's own words for the refusal.
+  const refreshIfBehind = (error) => {
     if (!BEHIND.has(error?.error)) return;
     refreshDrafts(queryClient, envId);
     queryClient.invalidateQueries({ queryKey: draftReviewKey(envId) });
-    if (dropSave) saveValidated.reset();
   };
   return {
     drafts,
@@ -72,7 +80,7 @@ export function useDraftsValidation(envId, { enabled = true } = {}) {
           expectedReviewDigest: review?.review_digest,
           name: name.trim(),
         },
-        { onError: (error) => refreshIfBehind(error, { dropSave: true }) },
+        { onError: (error) => refreshIfBehind(error) },
       ),
   };
 }

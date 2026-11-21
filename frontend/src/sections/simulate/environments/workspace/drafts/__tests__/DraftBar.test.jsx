@@ -72,6 +72,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
 
 const { default: DraftBar } = await import("../DraftBar");
 const { DRAFTS_COPY } = await import("../../workspace.constants");
+const { OUTDATED_NOTE } = await import("../useDraftsValidation");
 
 const ENV = { id: "env-1", versioning: { enabled: true } };
 const ENVIRONMENT_DRAFT = {
@@ -224,7 +225,6 @@ describe("DraftBar", () => {
   });
 
   it.each([
-    ["draft_changed", DRAFTS_COPY.errors.draft_changed],
     ["chat_working", DRAFTS_COPY.errors.chat_working],
     ["rebuild_running", DRAFTS_COPY.errors.rebuild_running],
     ["environment_busy", DRAFTS_COPY.errors.environment_busy],
@@ -240,6 +240,19 @@ describe("DraftBar", () => {
     render(<DraftBar env={ENV} />);
     expect(screen.getByRole("alert")).toHaveTextContent(text);
   });
+
+  it.each(["save", "validate", "saveValidated"])(
+    "says how the edits moved in the server's words when a %s is refused with draft_changed",
+    (which) => {
+      state[which] = {
+        error: { statusCode: 409, error: "draft_changed", message: "These changes moved since this page read them; look at them again, then try again." },
+      };
+      if (which !== "save") state.review = { counts: { accepted: 1 } };
+      render(<DraftBar env={ENV} />);
+      expect(screen.getByRole("alert")).toHaveTextContent("These changes moved since this page read them; look at them again, then try again.");
+      expect(screen.queryByText(/Someone changed/)).toBeNull();
+    },
+  );
 
   it("offers Validate when a save is refused for needing it", () => {
     state.save = {
@@ -363,7 +376,7 @@ describe("DraftBar", () => {
       expect(saveMutate).not.toHaveBeenCalled();
     });
 
-    it("drops a candidate save refused as moved, rereading the drafts so the bar asks to Validate again", async () => {
+    it("keeps a candidate save refused as moved, rereading the drafts so the bar asks to Validate again", async () => {
       decided();
       withValidation(
         { state: "ready" },
@@ -387,7 +400,20 @@ describe("DraftBar", () => {
       );
       expect(keys).toContain(JSON.stringify(["harness-draft-review", "env-1"]));
       expect(keys.some((key) => key.includes('"drafts"'))).toBe(true);
-      expect(saveValidatedReset).toHaveBeenCalled();
+      // The refusal stays, in the server's words.
+      expect(saveValidatedReset).not.toHaveBeenCalled();
+    });
+
+    it("asks to Validate again once the validated changes moved, in its own words", () => {
+      decided();
+      withValidation({ state: "outdated" });
+      render(<DraftBar env={ENV} />);
+
+      expect(screen.getByText(OUTDATED_NOTE)).toBeInTheDocument();
+      expect(screen.queryByText(DRAFTS_COPY.validation.superseded)).toBeNull();
+      expect(
+        screen.getByRole("button", { name: DRAFTS_COPY.validate }),
+      ).toBeEnabled();
     });
 
     it("says a validated change needs a name before Save", () => {
