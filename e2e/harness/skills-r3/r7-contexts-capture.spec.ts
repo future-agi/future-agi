@@ -136,7 +136,13 @@ test('R7 context surface states', async ({ browser, request, scopeActors }) => {
     }
     await page.setViewportSize({ width: 1440, height: 900 });
   }
-  await page.getByRole('button', { name: 'Copy apply command', exact: true }).scrollIntoViewIfNeeded();
+  // Returning to the desktop width re-renders the panel; re-resolve the button
+  // until the new layout is attached instead of scrolling a detached node.
+  const copyApply = page.getByRole('button', { name: 'Copy apply command', exact: true });
+  await expect(async () => {
+    await expect(copyApply).toBeVisible();
+    await copyApply.scrollIntoViewIfNeeded({ timeout: 2000 });
+  }).toPass({ timeout: 20000 });
   await shot('context-use-apply');
   await page.getByRole('button', { name: 'Before you install', exact: true }).click();
   await shot('context-use-details-open');
