@@ -626,6 +626,9 @@ export const TestRunLoadingStatus = [
   TestRunExecutionStatus.RUNNING,
   TestRunExecutionStatus.EVALUATING,
   TestRunExecutionStatus.CANCELLING,
+  TestRunExecutionStatus.QUEUED,
+  TestRunExecutionStatus.ONGOING,
+  TestRunExecutionStatus.ANALYZING,
 ];
 
 // Per-call statuses for which eval data may still arrive. Used by cell
