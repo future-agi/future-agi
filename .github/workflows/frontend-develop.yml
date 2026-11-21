@@ -4,17 +4,26 @@ on:
   push:
     branches: [develop, dev]
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-develop.yml'
+      - "frontend/**"
+      - ".github/workflows/frontend-develop.yml"
   pull_request:
     # Every base branch, so stacked PRs into feature branches get CI too.
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-develop.yml'
+      - "frontend/**"
+      - ".github/workflows/frontend-develop.yml"
   workflow_dispatch:
 
+concurrency:
+  # One active run per pull request: a newer push cancels the older run.
+  # Pushes to a branch keep one group per commit and never cancel each other.
+  group: frontend-develop-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  # Quality checks and unit tests
+  # Quality checks and the whole test suite, once. `test:run` is every test:
+  # `test:unit` and `test:integration` only filter the same files by test name,
+  # so running all three ran most tests three times. No coverage here: see the
+  # coverage job for why the verdict must not come from a coverage run.
   quality-and-tests:
     runs-on: ubuntu-latest
     defaults:
@@ -26,8 +35,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.18'
-          cache: 'yarn'
+          node-version: "22.18"
+          cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
@@ -42,23 +51,23 @@ jobs:
         continue-on-error: true
         run: yarn type-check
 
-      - name: Run unit tests
-        run: yarn test:unit --coverage --reporter=verbose
+      - name: Run all tests
+        run: yarn test:run --reporter=verbose
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
-        if: always()
-        with:
-          file: ./frontend/coverage/lcov.info
-          flags: develop-branch
-          name: develop-coverage
-
-  # Integration and component tests
-  integration-tests:
+  # Coverage of the whole suite, on pushes and manual runs. Not on pull
+  # requests: quality-and-tests holds the verdict there, and a coverage run
+  # cannot be trusted with it. With coverage on, vitest converts the coverage
+  # on its main thread after the last test (70 to 105 seconds here). Past its
+  # 60-second worker RPC limit it exits 1 with every test passed. So this job
+  # ignores vitest's exit code and fails only when no coverage file was
+  # written. reportOnFailure makes vitest write the file even when a test
+  # failed: a test that fails here and passes in quality-and-tests (the run is
+  # slower with coverage on) must not turn the coverage job red.
+  coverage:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    needs: quality-and-tests
     defaults:
       run:
         working-directory: frontend
@@ -68,27 +77,30 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.18'
-          cache: 'yarn'
+          node-version: "22.18"
+          cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Run integration tests
-        run: yarn test:integration --reporter=verbose
+      - name: Run all tests with coverage
+        run: |
+          yarn test:run --coverage --coverage.reportOnFailure || echo "::warning::vitest exited $? in the coverage run; quality-and-tests holds the verdict on the tests"
+          test -s coverage/lcov.info
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Run all component tests
-        run: yarn test:run --reporter=verbose
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./frontend/coverage/lcov.info
+          flags: develop-branch
+          name: develop-coverage
 
-  # Build validation
+  # Build validation, in parallel with the tests: neither needs the other.
   build-check:
     runs-on: ubuntu-latest
-    needs: quality-and-tests
     defaults:
       run:
         working-directory: frontend
@@ -98,8 +110,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.18'
-          cache: 'yarn'
+          node-version: "22.18"
+          cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
@@ -131,8 +143,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.18'
-          cache: 'yarn'
+          node-version: "22.18"
+          cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
@@ -159,17 +171,16 @@ jobs:
   # Summary for develop branch
   develop-summary:
     runs-on: ubuntu-latest
-    needs: [quality-and-tests, integration-tests, build-check]
+    needs: [quality-and-tests, build-check]
     if: always()
     steps:
       - name: Develop Branch Summary
         run: |
           echo "## 🔄 Develop Branch Pipeline Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Quality & Tests: ${{ needs.quality-and-tests.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Integration Tests: ${{ needs.integration-tests.result }}" >> $GITHUB_STEP_SUMMARY
           echo "- Build Check: ${{ needs.build-check.result }}" >> $GITHUB_STEP_SUMMARY
 
-          if [[ "${{ needs.quality-and-tests.result }}" == "success" && "${{ needs.integration-tests.result }}" == "success" && "${{ needs.build-check.result }}" == "success" ]]; then
+          if [[ "${{ needs.quality-and-tests.result }}" == "success" && "${{ needs.build-check.result }}" == "success" ]]; then
             echo "✅ All checks passed - Ready for main branch merge!" >> $GITHUB_STEP_SUMMARY
           else
             echo "❌ Some checks failed - Please review before merging" >> $GITHUB_STEP_SUMMARY

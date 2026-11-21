@@ -146,120 +146,93 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Pull requests run the two Real jobs only when they change something those
-  # jobs exercise; every other event runs them exactly as before (pushes still
-  # skip them, schedule, merge_group and workflow_dispatch still run them). The
-  # other jobs keep the workflow-level paths above. a-b-c installs published
-  # releases with this PR's update tooling and builds nothing from the PR, so it
-  # follows the tooling list; latest-stable -> PR builds the backend, frontend,
-  # gateway, collector and standalone images from the PR and migrates real data,
-  # so it also follows the data model, startup and boot-time inputs. Fail-open:
-  # if this job does not succeed, both Real jobs run. To run them for a PR that
-  # skips them, dispatch Update CI on its branch.
+  # When the two Real rehearsals run. Each takes about three hours, so they are
+  # not part of an ordinary pull request: scripts/update-rehearsal-decision.sh
+  # runs them on every scheduled and dispatched run, on a pull request into
+  # main, on a pull request that carries the update-rehearsal label, and on a
+  # pull request that changes the update tooling (or, for latest-stable -> PR,
+  # what that job builds and boots: see the `built` filter). Never on a push
+  # or a merge group. The other jobs keep the
+  # workflow-level paths above. Fail-open: if this job does not succeed, both
+  # Real jobs run, except on a push or a merge group.
   changes:
     name: Update-relevant changes
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
-      # dorny/paths-filter reads the PR's file list.
+      # dorny/paths-filter reads the PR's file list; the label step its labels.
       pull-requests: read
     outputs:
-      tooling: ${{ steps.filter.outputs.tooling || 'true' }}
-      upgrade: ${{ steps.filter.outputs.upgrade || 'true' }}
+      upgrade: ${{ steps.decide.outputs.upgrade }}
+      abc: ${{ steps.decide.outputs.abc }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/update-rehearsal-decision.sh
+          sparse-checkout-cone-mode: false
       - id: filter
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
         with:
           filters: |
-            # The workflow-level paths without its whole-source globs (every
-            # Python and Go file, futureagi/, agentcc-gateway/, fi-collector/).
-            tooling: &tooling
+            # What both rehearsals execute from the pull request.
+            tooling:
               - 'bin/update'
-              - 'deploy/update/**'
-              - 'deploy/tests/test_update_*.py'
-              - 'deploy/tests/update_e2e/**'
               - 'scripts/generate_update_manifest.py'
               - 'scripts/check_update_safety.py'
-              - '**/*.sql'
-              - '**/*.sh'
-              - 'bin/**'
-              - 'scripts/**'
-              - 'deploy/**'
+              - 'scripts/update-rehearsal-decision.sh'
+              - 'deploy/tests/update_e2e/**'
+              - 'deploy/tests/test_update_e2e_automatic.py'
               - 'docker-compose*.yml'
-              - 'bin/lib/**'
-              - '.github/workflows/backend-ci.yml'
-              - 'docker-compose.yml'
-              - 'docker-compose.distributed.yml'
-              - 'deploy/docker-compose.production.yml'
-              - 'deploy/docker-compose.host-status.standalone.yml'
-              - 'deploy/docker-compose.host-status.distributed.yml'
-              - 'bin/install'
-              - 'deploy/setup.sh'
-              - '.env.example'
-              - 'deploy/.env.production.example'
-              - 'deploy/env-reference.toml'
-              - '.gitignore'
+              - 'deploy/docker-compose*.yml'
+              - '.github/workflows/update-ci.yml'
+            # What only latest-stable -> PR executes from the pull request: it
+            # builds the images and boots them on real data. Migrations, the
+            # image builds and entrypoints, the locked dependencies, and the
+            # settings the boot reads.
+            built:
+              - 'futureagi/**/migrations/**'
+              - 'futureagi/tfc/settings/**'
+              - 'futureagi/uv.lock'
+              - '**/Dockerfile*'
+              - '**/dockerfile*'
               - '**/.dockerignore'
               - '**/*.dockerignore'
-              - '**/Dockerfile*'
-              - '.github/actions/setup-helm-tools/**'
-              - '.github/workflows/release-update-manifest.yml'
-              - '.github/workflows/release-images.yml'
-              - '.github/workflows/update-ci.yml'
-              - '.github/workflows/build-image-multiarch.yml'
-              - '.github/workflows/helm-release.yml'
-              - 'agentcc-gateway/config.example.yaml'
-              - 'deploy/clickhouse/users.d/**'
-              - 'deploy/standalone/clickhouse/**'
-              - 'futureagi/.ci/clickhouse-storage-policy.xml'
-              - 'futureagi/config/peerdb/temporal-dynamicconfig.yaml'
-              - 'futureagi/scripts/property_catalog_oss/**'
-              - 'futureagi/tracer/services/clickhouse/v2/observed_catalog/**'
-              - '.gitattributes'
-            upgrade:
-              - *tooling
-              # Images the latest-stable -> PR job builds from this PR
-              - 'agentcc-gateway/**'
-              - 'fi-collector/**'
-              # Dependency manifests and locks
-              - '**/pyproject.toml'
-              - '**/uv.lock'
-              - '**/requirements*.txt'
-              - '**/go.mod'
-              - '**/go.sum'
-              # Backend image root: Dockerfile, entrypoint, manage.py, project and lock.
-              # Not the type-check baseline or the test-duration record: they
-              # change on many pull requests, and futureagi/.dockerignore keeps
-              # both out of the image.
-              - 'futureagi/!(mypy-baseline.txt|.test_durations)'
-              # Data model and migrations, including post_migrate hooks
-              - 'futureagi/**/migrations/**'
-              - 'futureagi/**/models.py'
-              - 'futureagi/**/models/**'
-              - 'futureagi/**/apps.py'
-              - 'futureagi/**/signals.py'
-              - 'futureagi/**/signals/**'
-              # Settings, startup and the commands the images run at boot (bootstrap_install,
-              # migrate, seed_system_evals, register_temporal_schedules, check, ...)
-              - 'futureagi/**/management/**'
-              - 'futureagi/**/settings*.py'
-              - 'futureagi/**/settings/**'
-              - 'futureagi/tfc/**'
-              - 'futureagi/config/**'
-              - 'futureagi/.ci/**'
-              - 'futureagi/scripts/**'
-              # ClickHouse DDL and change data capture, installed by bootstrap_install
-              - 'futureagi/tracer/services/clickhouse/**'
-              # Data those boot commands load
-              - 'futureagi/model_hub/system_evals/**'
-              - 'futureagi/agent_playground/templates/**'
-              - 'futureagi/accounts/utils.py'
-              - 'futureagi/ee/falcon_ai/builtin_skills_loader.py'
-              - 'futureagi/ee/usage/utils/**'
-              # The gateway admin contract the backend pushes to the gateway
-              - 'futureagi/agentcc/contracts/**'
+              - '**/entrypoint.sh'
+              - '**/docker-entrypoint.sh'
+      - id: update-code
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          # Every pattern must match: deploy/update without its documents and
+          # its JSON registers, which ordinary pull requests edit to record a
+          # review and which no rehearsal step reads differently.
+          predicate-quantifier: every
+          filters: |
+            code:
+              - 'deploy/update/**'
+              - '!**/*.md'
+              - '!**/*.json'
+      - id: labels
+        # The labels the pull request has now, not the ones it had when the
+        # event fired: add the label, then re-run this workflow.
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          labelled=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq 'any(.labels[]; .name == "update-rehearsal")')
+          echo "rehearsal=$labelled" >> "$GITHUB_OUTPUT"
+      - id: decide
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          LABELLED: ${{ steps.labels.outputs.rehearsal == 'true' }}
+          TOOLING_CHANGED: ${{ steps.filter.outputs.tooling == 'true' || steps.update-code.outputs.code == 'true' }}
+          BUILT_CHANGED: ${{ steps.filter.outputs.built == 'true' }}
+        run: bash scripts/update-rehearsal-decision.sh >> "$GITHUB_OUTPUT"
 
   safety:
     name: Unattended update layout and environment
@@ -272,14 +245,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Resolve explicit PR base
+      - name: Resolve the comparison base for this event
         env:
+          EVENT_NAME: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-          DEFAULT_BASE: origin/dev
+          PUSH_BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
-          base="${PR_BASE:-${BEFORE:-$DEFAULT_BASE}}"
-          if [[ "$base" =~ ^0+$ ]]; then base="$DEFAULT_BASE"; fi
+          base=$(bash scripts/update-safety-base.sh)
           git rev-parse --verify "${base}^{commit}"
           echo "UPDATE_SAFETY_BASE=$base" >> "$GITHUB_ENV"
       - name: Daemon-free safety fixtures
@@ -427,7 +400,7 @@ jobs:
   automatic-upgrade:
     name: Real automatic latest-stable to PR and cold restore
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.upgrade == 'true') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.upgrade == 'true' || (needs.changes.result != 'success' && github.event_name != 'push' && github.event_name != 'merge_group')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:
@@ -581,6 +554,7 @@ jobs:
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/command-diagnostics.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/pr-image-transport.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/pr-built-images.json
+            ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/upgrade-source.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/platform-images.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/cron-environment.json
             ~/fagi-upd-e2e-real-upgrade-${{ github.run_id }}-${{ github.run_attempt }}/acceptance/fagi-upd-e2e-real-*/acceptance-budgets.json
@@ -605,7 +579,7 @@ jobs:
   automatic-a-b-c:
     name: Real one-opt-in v1.53.0 to v1.54.0 to v1.55.0
     needs: changes
-    if: ${{ !cancelled() && github.event_name != 'push' && (needs.changes.result != 'success' || needs.changes.outputs.tooling == 'true') }}
+    if: ${{ !cancelled() && (needs.changes.outputs.abc == 'true' || (needs.changes.result != 'success' && github.event_name != 'push' && github.event_name != 'merge_group')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:

@@ -4,8 +4,13 @@ on:
   push:
     branches: [feat/*, fix/*, chore/*, docs/*, refactor/*, test/*, perf/*]
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-feature.yml'
+      - "frontend/**"
+      - ".github/workflows/frontend-feature.yml"
+
+concurrency:
+  # A newer push to the branch cancels the older run.
+  group: frontend-feature-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # Branch name validation
@@ -42,6 +47,9 @@ jobs:
   essential-tests:
     runs-on: ubuntu-latest
     needs: validate-branch-name
+    permissions:
+      contents: read
+      pull-requests: read # to see whether the branch has an open pull request
     defaults:
       run:
         working-directory: frontend
@@ -54,8 +62,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.18'
-          cache: 'yarn'
+          node-version: "22.18"
+          cache: "yarn"
           cache-dependency-path: frontend/yarn.lock
 
       - name: Install dependencies
@@ -74,7 +82,26 @@ jobs:
         continue-on-error: true
         run: yarn type-check
 
+      - name: Is a pull request open for this branch?
+        # The pull request pipeline (frontend-develop.yml) runs every test on
+        # each push to an open pull request, so the unit tests here would run
+        # the same tests a second time. If the lookup fails, run them.
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pull requests from this repository only: a fork's branch can carry
+          # the same name, and no pull request pipeline runs for this branch then.
+          if ! count=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$GITHUB_REF_NAME" --state open \
+            --json number,isCrossRepository --jq '[.[] | select(.isCrossRepository | not)] | length'); then
+            echo "::warning::Could not list pull requests; running the unit tests here."
+            count=0
+          fi
+          if [ "$count" -gt 0 ]; then open=true; else open=false; fi
+          echo "open=$open" >> "$GITHUB_OUTPUT"
+
       - name: Run unit tests
+        if: steps.pr.outputs.open != 'true'
         run: yarn test:unit
         env:
           NODE_OPTIONS: --max-old-space-size=4096

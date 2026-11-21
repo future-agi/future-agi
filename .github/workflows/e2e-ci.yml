@@ -39,6 +39,14 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # The suite runs as this many matrix legs per stack, split by measured time
+  # (e2e/lib/shard.ts). The report job proves the legs together ran every test
+  # exactly once. Raise it only with measurements: each leg pays the fixed cost
+  # of building, pulling and booting a stack before its first test (11 to 15
+  # minutes; the boot alone took 7 to 11, most of it the database migrate).
+  # Measured at 6 legs: 22 to 30 minutes per leg, 10 to 15 of them tests. Two
+  # more legs would cut about 3 minutes and cost about 25 runner-minutes.
+  E2E_SHARDS: "6"
   CACHE_REPO: ghcr.io/future-agi/future-agi/e2e-cache
   # The release builds' layer cache, read only (the slim backend's).
   BUILD_CACHE: ghcr.io/future-agi/future-agi/build-cache
@@ -56,6 +64,9 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend || steps.always.outputs.frontend }}
       gateway: ${{ steps.filter.outputs.gateway || steps.always.outputs.gateway }}
       stacks: ${{ steps.stacks.outputs.stacks }}
+      shards: ${{ steps.shards.outputs.shards }}
+      shard_total: ${{ steps.shards.outputs.total }}
+      today: ${{ steps.shards.outputs.today }}
     steps:
       - name: Validate host update fallibility opt-in
         if: github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility && inputs.stack != 'distributed'
@@ -123,22 +134,44 @@ jobs:
             *) stacks='["distributed"]' ;;
           esac
           echo "stacks=$stacks" >> "$GITHUB_OUTPUT"
+      - id: shards
+        env:
+          FALLIBILITY: ${{ github.event_name == 'workflow_dispatch' && inputs.host_update_fallibility }}
+        run: |
+          total=$E2E_SHARDS
+          # The fallibility proof follows the whole suite inside one job.
+          if [ "$FALLIBILITY" = true ]; then total=1; fi
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+          echo "shards=[$(seq -s, 1 "$total")]" >> "$GITHUB_OUTPUT"
+          # One date for the whole run: a quarantine entry that expires today
+          # must be in or out for every shard and for the report job alike.
+          echo "today=$(date -u +%F)" >> "$GITHUB_OUTPUT"
 
   e2e:
-    name: e2e (${{ matrix.stack }})
+    name: e2e (${{ matrix.stack }}, ${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }})
     needs: changes
     if: needs.changes.outputs.any == 'true'
     strategy:
-      # A labelled PR runs both legs; one failing must not cancel the other.
+      # One failing leg must not cancel the others: a labelled PR runs both
+      # stacks, and every shard's result is part of the report job's proof.
       fail-fast: false
       matrix:
         stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
+        # Each shard builds the images from the registry cache, boots its own
+        # stack and runs its share of the spec files (E2E_SHARD below). Work
+        # that runs once per stack runs on the last shard (E2E_LAST_SHARD):
+        # the flow catalog check and the SDK live suites. The last shard,
+        # because the longest spec file always goes to shard 1. On a push
+        # every shard writes the registry cache; they build the same images,
+        # so the writes are equal.
+        shard: ${{ fromJSON(needs.changes.outputs.shards) }}
     runs-on: ubuntu-latest
-    # Image builds (~20 min), the Playwright suite (~70 min and growing with
-    # the flow catalog) and the SDK live suites run in this one job. Dev runs
-    # already finish at 66-89 min, so 90 min cancels healthy runs mid-SDK-suite.
-    # DASH-E2E-017 waits out the 30-minute metric settle on one worker; its own
-    # test.setTimeout ceiling is 65 min, so 89 + 65 = 154 if it lands last.
+    # One job is the image builds, the stack boot and the suite; the unsharded
+    # job (a fallibility dispatch) also runs the whole suite. The longest
+    # single test, DASH-E2E-017, waits out a 5-minute metric settle on one
+    # worker; its own test.setTimeout ceiling is 28 min, so 89 + 28 = 117 if
+    # it lands last. The value below predates that (the flow's ceiling was
+    # 65 min) and scripts/host-update-fallibility.test.mjs pins it.
     timeout-minutes: 155
     permissions:
       contents: read
@@ -159,6 +192,8 @@ jobs:
       # touch agentcc-gateway/ would otherwise run them against a released
       # :latest that predates that behavior.
       BUILD_GATEWAY: "true"
+      E2E_LAST_SHARD: ${{ matrix.shard == needs.changes.outputs.shard_total }}
+      E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
     steps:
       - uses: actions/checkout@v4
 
@@ -178,6 +213,11 @@ jobs:
         # / is the small volume and the backend image alone unpacks ~15GB of
         # CUDA/nvidia libs, so docker moves to /mnt (~65GB free). Must run
         # before setup-buildx creates its builder container under the old root.
+        # The move is done when the step returns; deleting the unused
+        # toolchains goes on in the background (it took 1 to 2 minutes of
+        # every shard, and nothing later reads them).
+        env:
+          RECLAIM_DELETE: background
         run: scripts/reclaim-runner-disk.sh
 
       - uses: docker/setup-buildx-action@v3
@@ -401,6 +441,8 @@ jobs:
           key: playwright-${{ hashFiles('e2e/yarn.lock') }}
 
       - name: Flow catalog is current
+        id: catalog
+        if: env.E2E_LAST_SHARD == 'true'
         working-directory: e2e
         run: yarn catalog:check
 
@@ -426,6 +468,9 @@ jobs:
 
       - name: Run E2E suite
         id: suite
+        env:
+          # This leg's share of the spec files (e2e/lib/shard.ts).
+          E2E_SHARD: ${{ matrix.shard }}/${{ needs.changes.outputs.shard_total }}
         run: bin/e2e test
 
       - name: Prove host update assertion fallibility
@@ -461,18 +506,37 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: redis-diagnostics-${{ matrix.stack }}
+          name: redis-diagnostics-${{ matrix.stack }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/redis-diagnostics/redis-diagnostics.json
           retention-days: 3
+          overwrite: true
           if-no-files-found: warn
 
-      - name: Upload report
-        if: ${{ !cancelled() }}
+      - name: Upload blob report
+        # The report job merges every shard's blob into one report and checks
+        # that the shards ran the whole suite. A leg that never reached the
+        # suite has no blob; the report job then names its tests as missing.
+        if: ${{ !cancelled() && steps.suite.outcome != 'skipped' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
+          name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}
+          path: e2e/blob-report
+          retention-days: 3
+          # A re-run of this one leg replaces its earlier blob; the report job
+          # then merges it with the other legs' blobs from the first attempt.
+          overwrite: true
+          if-no-files-found: error
+
+      - name: Upload report
+        # This leg's own report, right away, when its suite failed. The merged
+        # report of all legs comes from the report job.
+        if: ${{ !cancelled() && steps.suite.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.stack }}-shard-${{ matrix.shard }}
           path: e2e/playwright-report
           retention-days: 7
+          overwrite: true
           # A job that dies before the suite runs has no report; the real
           # failure is upstream and must not be buried by an upload error.
           if-no-files-found: warn
@@ -485,9 +549,10 @@ jobs:
       # Resolve a full SDK commit with the required live suites. Explicit refs
       # fail closed; defaults lacking the harness use the pinned bootstrap from
       # SDK PR #35. Both suites still run after Playwright on a booted stack.
+      # Last shard only: every later SDK step runs only when this one succeeded.
       - name: Resolve the futureagi-sdk ref
         id: sdk-ref
-        if: ${{ !cancelled() && steps.boot.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.boot.outcome == 'success' && env.E2E_LAST_SHARD == 'true' }}
         env:
           SDK_REF_INPUT: ${{ inputs.sdk-ref }}
           HEAD_REF: ${{ github.head_ref || github.ref_name }}
@@ -521,6 +586,7 @@ jobs:
           python sdkgen/local_api_key.py --signup --base-url http://localhost:8100 --label "gh${{ github.run_id }}"
 
       - name: Python SDK live suite
+        id: sdk-python
         if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
         working-directory: futureagi-sdk
         env:
@@ -528,6 +594,7 @@ jobs:
         run: PYTHONPATH=python pytest -q python/tests/platform
 
       - name: TypeScript SDK live suite
+        id: sdk-typescript
         if: ${{ !cancelled() && steps.sdk-ref.outcome == 'success' }}
         working-directory: futureagi-sdk/typescript/futureagi
         env:
@@ -563,6 +630,31 @@ jobs:
               print(f"{len(tools)} MCP tools, same names in the SDK catalog")
           EOF
 
+      - name: Record the once-per-stack steps
+        # The flow catalog check and the SDK suites run on the last shard only.
+        # The report job requires this record, so a change that left no shard
+        # "the last one" fails there instead of skipping those steps unseen.
+        if: ${{ !cancelled() && env.E2E_LAST_SHARD == 'true' }}
+        env:
+          CATALOG: ${{ steps.catalog.outcome }}
+          SDK_PYTHON: ${{ steps.sdk-python.outcome }}
+          SDK_TYPESCRIPT: ${{ steps.sdk-typescript.outcome }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/once-per-stack"
+          jq -n --arg catalog "$CATALOG" --arg python "$SDK_PYTHON" --arg typescript "$SDK_TYPESCRIPT" \
+            '{flow_catalog_check: $catalog, python_sdk_suite: $python, typescript_sdk_suite: $typescript}' \
+            | tee "$RUNNER_TEMP/once-per-stack/record.json"
+
+      - name: Upload the once-per-stack record
+        if: ${{ !cancelled() && env.E2E_LAST_SHARD == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: once-per-stack-${{ matrix.stack }}
+          path: ${{ runner.temp }}/once-per-stack/record.json
+          retention-days: 3
+          overwrite: true
+          if-no-files-found: error
+
       - name: Capture backend lifecycle on failure
         if: failure() && steps.boot.outcome == 'success'
         run: |
@@ -581,9 +673,10 @@ jobs:
         if: failure() && steps.boot.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: backend-lifecycle-${{ matrix.stack }}
+          name: backend-lifecycle-${{ matrix.stack }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/backend-lifecycle
           retention-days: 7
+          overwrite: true
           if-no-files-found: warn
 
       - name: Dump stack state on failure
@@ -594,21 +687,123 @@ jobs:
           bin/e2e ps
           bin/e2e logs --tail 200
 
+  report:
+    # One report for all shards of a stack, and the proof that sharding dropped
+    # nothing: every test an unsharded listing names must have exactly one
+    # result across the shards (e2e/scripts/shard-report.mjs). It runs when a
+    # shard failed too, so the merged report shows the failure.
+    name: e2e report (${{ matrix.stack }})
+    needs: [changes, e2e]
+    if: ${{ !cancelled() && needs.changes.outputs.any == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: ${{ fromJSON(needs.changes.outputs.stacks) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: e2e
+    env:
+      E2E_STACK: ${{ matrix.stack }}
+      E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+          cache: yarn
+          cache-dependency-path: e2e/yarn.lock
+
+      - name: Install harness
+        run: yarn install --frozen-lockfile
+
+      - name: Download the shards' blob reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: blob-report-${{ matrix.stack }}-*
+          path: e2e/all-blob-reports
+          merge-multiple: true
+
+      - name: Merge the shards into one report
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: merged-report.json
+          PLAYWRIGHT_HTML_OPEN: never
+        run: npx playwright merge-reports --reporter html,json all-blob-reports
+
+      - name: List the unsharded suite
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: listed-suite.json
+        run: npx playwright test --list --reporter json > /dev/null
+
+      - name: The shards ran every test exactly once
+        run: node scripts/shard-report.mjs parity --listed listed-suite.json --merged merged-report.json
+
+      - name: Download the once-per-stack record
+        # Fails when no shard uploaded one.
+        uses: actions/download-artifact@v4
+        with:
+          name: once-per-stack-${{ matrix.stack }}
+          path: e2e/once-per-stack
+
+      - name: The flow catalog check and the SDK suites ran and passed
+        run: |
+          cat once-per-stack/record.json
+          if ! jq -e 'length == 3 and all(.[]; . == "success")' once-per-stack/record.json > /dev/null; then
+            echo "::error::A once-per-stack step (flow catalog check, SDK suites) did not succeed on the last shard."
+            exit 1
+          fi
+
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.stack == 'standalone' && 'playwright-report-standalone' || 'playwright-report' }}
+          path: e2e/playwright-report
+          retention-days: 7
+          overwrite: true
+          if-no-files-found: warn
+
+      - name: Upload the merged results (input for scripts/shard-report.mjs durations)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-merged-results-${{ matrix.stack }}
+          path: |
+            e2e/merged-report.json
+            e2e/listed-suite.json
+          retention-days: 7
+          overwrite: true
+          if-no-files-found: warn
+
   e2e-tests:
     name: E2E Tests Pass
-    needs: [changes, e2e]
+    needs: [changes, e2e, report]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Fail closed unless every dependency succeeded or was skipped
+      - name: Fail closed unless the suite and its report passed, or nothing needed to run
         env:
-          NEEDS: ${{ toJSON(needs) }}
+          CHANGES: ${{ needs.changes.result }}
+          E2E_NEEDED: ${{ needs.changes.outputs.any }}
+          E2E: ${{ needs.e2e.result }}
+          REPORT: ${{ needs.report.result }}
         run: |
-          # No -e flag and a non-empty success output: `jq -e` exits 4 when a
-          # filter produces no output, which would fail the gate on green runs.
-          echo "$NEEDS" | jq 'with_entries(.value |= .result)
-            | to_entries
-            | map(select(.value != "success" and .value != "skipped"))
-            | if length > 0 then ("failing: " + (map(.key) | join(", ")) | halt_error)
-              else "all dependencies green (or legitimately skipped)" end'
+          echo "changes: $CHANGES, e2e needed: ${E2E_NEEDED:-<none>}, e2e: $E2E, report: $REPORT"
+          # Stricter than "every dependency succeeded or was skipped": a skip
+          # passes only when the changes job said there was nothing to run. A
+          # skipped report job would otherwise pass without the parity proof.
+          if [ "$CHANGES" != success ]; then
+            echo "::error::The changes job did not succeed ($CHANGES)."
+            exit 1
+          fi
+          if [ "$E2E_NEEDED" = true ] && [ "$E2E" = success ] && [ "$REPORT" = success ]; then
+            echo "Every shard passed and the report job proved they ran the whole suite."
+          elif [ "$E2E_NEEDED" = false ] && [ "$E2E" = skipped ] && [ "$REPORT" = skipped ]; then
+            echo "No path that the E2E suite covers changed, so it was not needed."
+          else
+            echo "::error::E2E did not pass (e2e: $E2E, report: $REPORT, e2e needed: ${E2E_NEEDED:-<none>})."
+            exit 1
+          fi

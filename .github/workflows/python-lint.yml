@@ -12,11 +12,16 @@ name: Python lint
 # e2e-ci.yml.
 #
 # No branches filter: stacked PRs into feature branches get the check too.
+#
+# merge_group: a merge queue waits for every required check on the merge-group
+# commit, so this workflow must report there too. A merge group always runs
+# Ruff: it has no pull request file list to filter on, and the run is short.
 
 on:
   pull_request:
     # edited: a stacked PR moved to another base branch gets a new baseline.
     types: [opened, synchronize, reopened, edited]
+  merge_group:
 
 permissions:
   contents: read
@@ -37,10 +42,14 @@ jobs:
       contents: read
       pull-requests: read # dorny/paths-filter reads the PR's file list
     outputs:
-      python: ${{ steps.filter.outputs.python }}
+      python: ${{ steps.filter.outputs.python || steps.always.outputs.python }}
     steps:
       - uses: actions/checkout@v4
+      - id: always
+        if: github.event_name != 'pull_request'
+        run: echo "python=true" >> "$GITHUB_OUTPUT"
       - id: filter
+        if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@v3
         with:
           filters: |
@@ -69,6 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Empty for a merge group: checkout then takes the merge-group commit.
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
@@ -108,6 +118,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # The PR head, not the merge commit, so annotation lines match the diff.
+          # Empty for a merge group: checkout then takes the merge-group commit.
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
@@ -115,8 +126,10 @@ jobs:
           python-version: "3.11"
       - name: Report new violations
         env:
-          BASE_REF: ${{ github.base_ref }}
+          # A merge group names its base as a full ref (refs/heads/dev).
+          BASE_REF: ${{ github.base_ref || github.event.merge_group.base_ref }}
         run: |
+          BASE_REF="${BASE_REF#refs/heads/}"
           trusted_ref="$(git rev-parse "origin/${BASE_REF}")"
           base="$(git merge-base "$trusted_ref" HEAD)"
           # Take the gate AND its Ruff pin from the same base-branch commit.

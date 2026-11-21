@@ -1,5 +1,7 @@
 """Daemon-free acceptance plumbing; never product compatibility evidence."""
+from contextlib import redirect_stdout
 import copy
+from datetime import datetime, timedelta, timezone
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
@@ -243,6 +245,7 @@ class AcceptancePlanTests(unittest.TestCase):
             old={'version':'v1.55.0'}
             target={'version':'v1.55.1'}
             with patch.object(acceptance,'get_json',return_value={'tag_name':old['version']}), \
+                 patch.object(driver,'images_published',return_value=True), \
                  patch.object(driver,'published',return_value=(old,Path(temp))), \
                  patch.object(driver,'build_pr',return_value=target), \
                  patch.object(acceptance.subprocess,'run',return_value=subprocess.CompletedProcess([],1)), \
@@ -252,6 +255,107 @@ class AcceptancePlanTests(unittest.TestCase):
             self.assertEqual(inputs['candidates'][target['version']],target)
             self.assertEqual(inputs['versions'],[old['version'],target['version']])
             self.assertEqual(inputs['deployment_dirs'][target['version']],str(ROOT))
+            self.assertFalse((Path(temp)/'upgrade-source.json').exists())
+
+    def latest_release(self, minutes_ago, **fields):
+        published=datetime.now(timezone.utc)-timedelta(minutes=minutes_ago)
+        return dict({'tag_name':'v1.59.1','published_at':published.strftime('%Y-%m-%dT%H:%M:%SZ')},**fields)
+
+    def test_a_release_without_images_yet_is_replaced_by_the_release_before_it(self):
+        # v1.59.1 was announced hours before its images existed; every rehearsal in between failed in a minute.
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            fetched=[]
+            def release(url):
+                fetched.append(url)
+                return self.latest_release(20) if url.endswith('/latest') else {'tag_name':'v1.59.0'}
+            tags=b'v1.9.0\nv1.58.0\nv1.59.0\nv1.59.1-rc.1\nv1.59.1\nv1.60.0\nvnext\n'
+            with patch.object(acceptance,'get_json',side_effect=release), \
+                 patch.object(driver,'images_published',return_value=False) as images, \
+                 patch.object(driver,'command',return_value=tags), \
+                 patch.object(driver,'published',return_value=({'version':'v1.59.0'},Path(temp))), \
+                 patch.object(driver,'build_pr',return_value={'version':'v1.59.2'}), \
+                 patch.object(acceptance.subprocess,'run',return_value=subprocess.CompletedProcess([],1)), \
+                 patch.dict(os.environ,{'GITHUB_RUN_ID':'123'}), redirect_stdout(io.StringIO()) as printed:
+                self.assertEqual(driver.run_tests('upgrade',object()),1)
+            images.assert_called_once_with('v1.59.1')
+            self.assertEqual(fetched,[acceptance.RELEASE_API+'latest',acceptance.RELEASE_API+'tags/v1.59.0'])
+            self.assertEqual(json.loads((Path(temp)/'inputs.json').read_bytes())['versions'],['v1.59.0','v1.59.2'])
+            self.assertEqual(json.loads((Path(temp)/'upgrade-source.json').read_bytes()),
+                {'schema_version':1,'latest':'v1.59.1','source':'v1.59.0','reason':'latest_images_not_published'})
+            self.assertIn('::warning title=Upgrade source::v1.59.1',printed.getvalue())
+            self.assertIn('upgrades from v1.59.0',printed.getvalue())
+
+    def test_a_release_still_without_images_after_the_grace_fails_the_rehearsal(self):
+        grace=acceptance.SOURCE_IMAGE_GRACE_SECONDS//60
+        cases=((self.latest_release(grace+5),'no published images'),
+               (self.latest_release(-5),'no published images'),
+               ({'tag_name':'v1.59.1'},'no publication time'),
+               ({'tag_name':'v1.59.1','published_at':'yesterday'},'no publication time'),
+               ({'tag_name':'v1.59.1','published_at':1795000000},'no publication time'),
+               (self.latest_release(20,draft=True),'not stable'),
+               (self.latest_release(20,prerelease=True),'not stable'),
+               (dict(self.latest_release(20),tag_name='v1.60.0-rc.1'),'not stable'),
+               (dict(self.latest_release(20),tag_name='latest'),'invalid version'))
+        for metadata,reason in cases:
+            with tempfile.TemporaryDirectory(dir=Path.home()) as temp, self.subTest(reason=reason,metadata=metadata):
+                driver=acceptance.NativeAcceptance(Path(temp))
+                with patch.object(acceptance,'get_json',return_value=metadata), \
+                     patch.object(driver,'images_published',return_value=False), \
+                     patch.object(driver,'command') as command, patch.object(driver,'published') as published, \
+                     patch.dict(os.environ,{'GITHUB_RUN_ID':'123'}):
+                    with self.assertRaisesRegex(ValueError,reason):
+                        driver.run_tests('upgrade',object())
+                command.assert_not_called(); published.assert_not_called()
+                self.assertFalse((Path(temp)/'upgrade-source.json').exists())
+
+    def test_the_fallback_source_must_itself_be_a_published_stable_release(self):
+        for previous in ({'tag_name':'v1.59.0','draft':True},{'tag_name':'v1.59.0','prerelease':True},{'tag_name':'v1.58.0'}):
+            with tempfile.TemporaryDirectory(dir=Path.home()) as temp, self.subTest(previous=previous):
+                driver=acceptance.NativeAcceptance(Path(temp))
+                with patch.object(acceptance,'get_json',
+                                  side_effect=lambda url: self.latest_release(20) if url.endswith('/latest') else previous), \
+                     patch.object(driver,'images_published',return_value=False), \
+                     patch.object(driver,'command',return_value=b'v1.59.0\nv1.59.1\n'), \
+                     patch.object(driver,'published') as published, patch.dict(os.environ,{'GITHUB_RUN_ID':'123'}):
+                    with self.assertRaisesRegex(ValueError,'not a published stable release'):
+                        driver.run_tests('upgrade',object())
+                published.assert_not_called()
+
+    def test_the_release_before_is_chosen_by_version_and_only_from_stable_tags(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            with patch.object(driver,'command',return_value=b'v1.9.0\nv1.10.0\nv1.11.0-rc.2\nv1.11.0\nvnext\nv01.2.3\n') as command:
+                self.assertEqual(driver.previous_stable_tag('v1.11.0'),'v1.10.0')
+                self.assertEqual(driver.previous_stable_tag('v1.10.0'),'v1.9.0')
+                with self.assertRaisesRegex(ValueError,'no stable release precedes'):
+                    driver.previous_stable_tag('v1.9.0')
+            self.assertEqual(command.call_args.args[0],['git','tag','--list','v*'])
+
+    def test_images_are_published_only_when_every_component_resolves(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            driver=acceptance.NativeAcceptance(Path(temp))
+            with patch.object(driver,'registry_digest',return_value='sha256:'+'a'*64) as digest:
+                self.assertTrue(driver.images_published('v1.59.1'))
+            self.assertEqual(sorted(call.args[0] for call in digest.call_args_list),
+                sorted('docker.io/'+repository+':v1.59.1'+COMPONENT_TAG_SUFFIX.get(name,'')
+                       for name,repository in COMPONENT_REPOSITORIES.items()))
+            failed=RuntimeError('native acceptance prerequisite/command 3 failed')
+            # The registry says the image is not there: not published yet.
+            for tail in ('no such manifest: docker.io/futureagi/standalone:v1.59.1','manifest unknown: manifest unknown'):
+                driver.diagnostics=[{'outcome':'failed','stderr_tail':tail}]
+                with patch.object(driver,'registry_digest',side_effect=[None,None,failed]):
+                    self.assertFalse(driver.images_published('v1.59.1'))
+            # Anything else stays an error, so a rate limit or a bad image set
+            # cannot make the rehearsal start from an older release.
+            for tail in ('toomanyrequests: You have reached your pull rate limit','dial tcp: i/o timeout',''):
+                driver.diagnostics=[{'outcome':'failed','stderr_tail':tail}]
+                with patch.object(driver,'registry_digest',side_effect=[None,None,failed]):
+                    with self.assertRaises(RuntimeError):
+                        driver.images_published('v1.59.1')
+            with patch.object(driver,'registry_digest',side_effect=[None,ValueError('registry manifest index is invalid')]):
+                with self.assertRaisesRegex(ValueError,'manifest index is invalid'):
+                    driver.images_published('v1.59.1')
 
     def test_dispatch_upgrade_source_selects_that_published_stable_release(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:

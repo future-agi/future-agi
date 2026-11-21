@@ -27,7 +27,11 @@ env:
   # changes and on every push (see the changes job). The Metrics suite was
   # measured at about 368 test-minutes; its two longest cases run about 19
   # minutes each against the real pass deadline, which bounds every shard.
-  SPLITS: "10"
+  # The main suite was measured at about 196 test-minutes (dev, 21 Nov 2026),
+  # so 24 legs carry about 8 minutes of tests each, on top of about 5.5
+  # minutes that every leg pays (dependency install, and pytest collecting
+  # the whole suite before it deselects).
+  SPLITS: "24"
   METRICS_SPLITS: "16"
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
   # adds its suite's term (futureagi/.ci/test_backend_ci_output.py pins this).
@@ -62,6 +66,8 @@ jobs:
               - 'bin/uninstall'
               - 'deploy/**'
               - '.github/workflows/backend-ci.yml'
+              - '.github/actions/backend-test-packages/**'
+              - '.github/actions/checkout-ee/**'
               # Read by futureagi/tests/test_env_reference.py and test_log_stream.py
               # (deploy/env-reference.toml is under deploy/**)
               - 'bin/dev'
@@ -161,6 +167,8 @@ jobs:
               - 'futureagi/pyproject.toml'
               - 'futureagi/uv.lock'
               - '.github/workflows/backend-ci.yml'
+              - '.github/actions/backend-test-packages/**'
+              - '.github/actions/checkout-ee/**'
       - id: always
         if: github.event_name != 'pull_request'
         run: |
@@ -228,14 +236,14 @@ jobs:
           uv run --no-sync python -m unittest discover -s tests -p test_update_safety_gate_django.py -v
       - name: Models must have migrations (no database writes)
         run: uv run --no-sync python manage.py makemigrations --check --dry-run
-      - name: Resolve explicit PR base
+      - name: Resolve the comparison base for this event
         env:
+          EVENT_NAME: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          BEFORE: ${{ github.event.before }}
-          DEFAULT_BASE: origin/dev
+          PUSH_BEFORE: ${{ github.event.before }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
-          base="${PR_BASE:-${BEFORE:-$DEFAULT_BASE}}"
-          if [[ "$base" =~ ^0+$ ]]; then base="$DEFAULT_BASE"; fi
+          base=$(bash ../scripts/update-safety-base.sh)
           git rev-parse --verify "${base}^{commit}"
           echo "UPDATE_SAFETY_BASE=$base" >> "$GITHUB_ENV"
       - name: Real OSS MigrationLoader, layout and high-volume migration risk
@@ -260,7 +268,9 @@ jobs:
   plan:
     # Pins one durations snapshot per run so re-runs shard identically —
     # a floating cache can move a failed test to a shard that never
-    # re-runs, turning the gate green without re-executing it.
+    # re-runs, turning the gate green without re-executing it. The snapshot
+    # is the newest one the timings job saved on a dev push, or the committed
+    # .test_durations when there is none.
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
@@ -351,61 +361,33 @@ jobs:
 
       - name: Checkout EE package (internal runs only)
         if: env.IS_INTERNAL_RUN == 'true'
-        uses: actions/checkout@v4
+        uses: ./.github/actions/checkout-ee
         with:
-          repository: future-agi/ee
-          path: futureagi/ee/cloud
           token: ${{ secrets.EE_REPO_READ_TOKEN }}
-          persist-credentials: true
-          fetch-depth: 1
+          branch: ${{ env.EE_REPO_BRANCH }}
+          base-ref: ${{ env.EE_BASE_REF }}
 
-      - name: Resolve the EE branch to test against
-        if: env.IS_INTERNAL_RUN == 'true'
-        working-directory: futureagi/ee/cloud
+      - name: Key of the migrated database for this checkout
+        id: db-key
         run: |
-          # EE's default branch trails its own dev, so never settle for whatever
-          # the checkout landed on: walk the same candidate chain the SDK
-          # compatibility workflow uses and take the first branch that exists.
-          for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
-            if [ -z "${candidate}" ]; then
-              continue
-            fi
-            if git ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
-              git fetch --depth=1 origin "${candidate}"
-              git checkout --detach FETCH_HEAD
-              echo "::notice::Using EE branch ${candidate}"
-              exit 0
-            fi
-          done
-          echo "::error::No EE branch found among ${EE_REPO_BRANCH}, ${EE_BASE_REF}, dev, main"
-          exit 1
+          key=$(python3 -I .ci/db_dump.py key)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
 
-      - name: Drop EE checkout credentials
-        # always(): the branch-resolution step above hard-fails when no
-        # candidate branch exists, and the token must be scrubbed regardless.
-        if: ${{ always() && env.IS_INTERNAL_RUN == 'true' }}
-        working-directory: futureagi/ee/cloud
-        run: git config --unset-all http.https://github.com/.extraheader || true
+      - name: Look for a dump of the migrated database
+        id: db-dump
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          # Exact key only, no restore-keys: a dump of other migrations is
+          # never a starting point.
+          key: ${{ steps.db-key.outputs.key }}
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
 
-      - name: Identify exact runner image for the apt cache
-        id: image
-        run: echo "version=${ImageVersion:?}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore Ubuntu test packages and indexes
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          # /tmp is traversable by apt's _apt user; ~/.cache need not be.
-          path: /tmp/futureagi-backend-ci-apt
-          # No prefix restores: package closure must match preinstalled libraries.
-          key: backend-ci-apt-ubuntu24-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('futureagi/.ci/install-test-packages.sh') }}
-
-      - name: Install ffmpeg, ffprobe and xmlsec1 from bounded Ubuntu cache
-        run: bash .ci/install-test-packages.sh /tmp/futureagi-backend-ci-apt
+      - uses: ./.github/actions/backend-test-packages
 
       - name: Fetch this run's pinned Temporal archive
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -428,6 +410,27 @@ jobs:
           docker compose -f docker-compose.test.yml -p futureagi-test \
             up -d --wait --wait-timeout 180
 
+      - name: Restore the migrated database (exact key hit only)
+        # Saves the shard its own six-minute migrate. On a miss this step does
+        # not run and the next step migrates from zero. A failed restore fails
+        # the job: nothing falls back to a half-loaded database. The dump is
+        # the schema and the list of applied migrations. pytest (--reuse-db)
+        # then runs Django's migrate on it, which applies nothing and sends
+        # post_migrate, so every seed row comes from the code under test.
+        if: steps.db-dump.outputs.cache-hit == 'true'
+        run: |
+          db=(docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db)
+          "${db[@]}" createdb -U test_user test_tfc_test
+          python3 -I .ci/db_dump.py restore "$RUNNER_TEMP/migrated-db/dump.sql.gz" test_user test_tfc_test "${db[@]}"
+
+      - name: Migrate the test database from zero (no dump for this key)
+        # A step of its own, before the shard's pytest run, so no test's
+        # recorded time includes the migrate: the recorded times become the
+        # next sharding plan. .ci/migrated_db.py sets the database up and runs
+        # no test against it.
+        if: steps.db-dump.outputs.cache-hit != 'true'
+        run: uv run pytest .ci/migrated_db.py -q
+
       - name: Apply pinned sharding plan
         uses: actions/download-artifact@v4
         with:
@@ -440,12 +443,16 @@ jobs:
           SUITE: ${{ matrix.suite }}
           SUITE_MARKERS: ${{ matrix.markers }}
           SUITE_SPLITS: ${{ matrix.splits }}
+          # .ci/collected_ids.py records every test id this shard collected;
+          # the "collection" job fails the run when two shards differ.
+          PYTHONPATH: .ci
+          COLLECTED_IDS_FILE: ${{ runner.temp }}/collected-ids.txt
         run: |
           set +e
           # pytest.ini adds -v; -q restores compact module progress. Verbose
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
           # processing after the tests have passed. Keep full JUnit results.
-          uv run pytest -q -ra --ignore=tests/stress \
+          uv run pytest -q -ra --ignore=tests/stress -p collected_ids \
             -m "($PYTEST_MARKERS) and $SUITE_MARKERS" \
             --splits "$SUITE_SPLITS" --group "${{ matrix.group }}" \
             --splitting-algorithm least_duration \
@@ -472,6 +479,18 @@ jobs:
           path: futureagi/junit-${{ matrix.group }}.xml
           overwrite: true
           if-no-files-found: error
+
+      - name: Upload the record of what this shard collected
+        if: ${{ !cancelled() && steps.run-shard.conclusion != 'skipped' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: collected-ids-${{ matrix.suite }}-${{ matrix.group }}
+          path: ${{ runner.temp }}/collected-ids.txt
+          retention-days: 3
+          overwrite: true
+          # A shard that died before it collected has none; the collection
+          # job counts the records and fails on a missing one.
+          if-no-files-found: warn
 
       - name: Upload timing data (dev pushes only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -516,18 +535,7 @@ jobs:
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
 
-      - name: Identify exact runner image for the apt cache
-        id: image
-        run: echo "version=${ImageVersion:?}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore Ubuntu test packages and indexes
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: /tmp/futureagi-backend-ci-apt
-          key: backend-ci-apt-ubuntu24-${{ runner.arch }}-${{ steps.image.outputs.version }}-${{ hashFiles('futureagi/.ci/install-test-packages.sh') }}
-
-      - name: Install cached xmlsec1 (same package closure as pytest shards)
-        run: bash .ci/install-test-packages.sh /tmp/futureagi-backend-ci-apt
+      - uses: ./.github/actions/backend-test-packages
 
       - name: Install dependencies
         run: uv sync --frozen --all-extras
@@ -572,6 +580,112 @@ jobs:
           for _ in $(seq 1 15); do pgrep -f 'granian --interface asgi' >/dev/null || exit 0; sleep 1; done
           pkill -KILL -f 'granian --interface asgi' || true
 
+  migrated-database:
+    # The from-zero migrate of every run, and the source of the dump the pytest
+    # shards restore. A shard skips its own migrate only when a dump exists for
+    # exactly this checkout's inputs (.ci/db_dump.py key). This job never
+    # restores: it always migrates an empty database. On a cache miss it saves
+    # the schema it got. On a hit it compares the cached dump with its fresh
+    # migrate and fails on any difference, so a dump that no longer matches
+    # cannot keep passing. The SAML job migrates from zero as well.
+    name: Fresh migrate and database dump
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      # The environment a pytest shard creates its database in.
+      LITELLM_MODE: PRODUCTION
+      CH25_DATABASE: test_tfc
+      CH_DATABASE: test_tfc
+      PYTHONHASHSEED: "0"
+      FI_CH25_SCHEMA_APPLY_STRICT: "1"
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ github.base_ref || 'dev' }}
+      IS_INTERNAL_RUN: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout EE package (internal runs only)
+        if: env.IS_INTERNAL_RUN == 'true'
+        uses: ./.github/actions/checkout-ee
+        with:
+          token: ${{ secrets.EE_REPO_READ_TOKEN }}
+          branch: ${{ env.EE_REPO_BRANCH }}
+          base-ref: ${{ env.EE_BASE_REF }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: futureagi/uv.lock
+
+      - uses: ./.github/actions/backend-test-packages
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras
+
+      - name: Start test services
+        run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
+
+      - name: Key of the migrated database for this checkout
+        id: db-key
+        run: |
+          key=$(python3 -I .ci/db_dump.py key)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Look for a dump of the migrated database
+        id: db-dump
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          key: ${{ steps.db-key.outputs.key }}
+
+      - name: Migrate an empty test database from zero
+        # What a shard runs on a cache miss, with --create-db so it can never
+        # start from a database that is already there.
+        run: uv run pytest .ci/migrated_db.py --create-db -q
+
+      - name: Dump the fresh database
+        run: |
+          python3 -I .ci/db_dump.py dump "$RUNNER_TEMP/fresh-db/dump.sql.gz" test_user test_tfc_test \
+            docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
+
+      - name: Keep the fresh dump for inspection
+        # The schema of the test database and its list of applied migrations;
+        # no other row. It shows what a failed comparison below compared.
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: migrated-db-pytest
+          path: ${{ runner.temp }}/fresh-db/dump.sql.gz
+          retention-days: 3
+          overwrite: true
+          if-no-files-found: warn
+
+      - name: The cached dump equals this fresh migrate
+        if: steps.db-dump.outputs.cache-hit == 'true'
+        run: python3 -I .ci/db_dump.py compare "$RUNNER_TEMP/migrated-db/dump.sql.gz" "$RUNNER_TEMP/fresh-db/dump.sql.gz"
+
+      - name: Stage the fresh dump for the cache
+        if: steps.db-dump.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/migrated-db"
+          cp "$RUNNER_TEMP/fresh-db/dump.sql.gz" "$RUNNER_TEMP/migrated-db/dump.sql.gz"
+
+      - name: Save the dump for later runs
+        if: steps.db-dump.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          key: ${{ steps.db-key.outputs.key }}
+
+      - name: Dump test service logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
+
   agentic-eval:
     # This suite has its own pytest root and is excluded from the backend shards.
     name: Evaluator test setup and offline suite
@@ -597,8 +711,7 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: futureagi/uv.lock
-      - name: Install test system packages
-        run: bash .ci/install-test-packages.sh /tmp/futureagi-agentic-eval-apt
+      - uses: ./.github/actions/backend-test-packages
       - name: Install frozen backend and test dependencies
         run: uv sync --frozen --extra dev
       - name: Start test dependencies
@@ -781,6 +894,69 @@ jobs:
             *) echo "::error::Docker Hub answered HTTP ${code}; re-run the job"; exit 1 ;;
           esac
 
+  timings:
+    # Each shard of a dev push records its tests' times (--store-durations).
+    # This job merges them into one .test_durations and saves it under the
+    # cache key the plan job restores, so the next runs split on fresh times.
+    # Without it the committed file was the only input and went stale. Not a
+    # dependency of "Backend Tests Pass": a failure here costs balance, not
+    # correctness, and it still turns this run red.
+    name: Save test timings (dev pushes)
+    needs: [plan, test]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch this run's sharding plan
+        uses: actions/download-artifact@v4
+        with:
+          name: test-durations-plan
+          path: ${{ runner.temp }}/timings/plan
+      - name: Fetch the shards' timing files
+        # One directory per shard. A shard that failed uploaded none; its
+        # tests keep the plan's times.
+        uses: actions/download-artifact@v4
+        with:
+          pattern: timing-data-*
+          path: ${{ runner.temp }}/timings/shards
+      - name: Merge into one .test_durations
+        run: |
+          python3 -I futureagi/.ci/merge_test_durations.py \
+            "$RUNNER_TEMP/timings/plan/.test_durations" \
+            "$RUNNER_TEMP"/timings/shards/*/.test_durations > futureagi/.test_durations
+      - name: Save for the next runs' plan
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: futureagi/.test_durations
+          key: test-durations-${{ github.run_id }}
+
+  collection:
+    # pytest-split runs each test exactly once only when every shard collects
+    # the same test ids; a random value in an id lets a test run twice or
+    # never, with every job green. Each shard records what it collected
+    # (.ci/collected_ids.py) and this job compares the records. It runs
+    # whenever the shards ran, and the gate fails if it did not succeed then.
+    name: Every shard collected the same tests
+    needs: [changes, test]
+    if: ${{ !cancelled() && needs.test.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: futureagi/.ci
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: collected-ids-*
+          path: ${{ runner.temp }}/collected
+      - name: Compare the shards' collection records
+        env:
+          SHARDS: ${{ needs.changes.outputs.shards }}
+        run: |
+          python3 -I futureagi/.ci/check_collected_ids.py "$(jq '.include | length' <<<"$SHARDS")" \
+            "$RUNNER_TEMP"/collected/*/collected-ids.txt
+
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
     needs:
@@ -789,7 +965,9 @@ jobs:
         update-safety,
         plan,
         test,
+        collection,
         saml-multiworker,
+        migrated-database,
         agentic-eval,
         slim-smoke,
         code-executor-base-pin,
@@ -809,3 +987,8 @@ jobs:
             | map(select(.value != "success" and .value != "skipped"))
             | if length > 0 then ("failing: " + (map(.key) | join(", ")) | halt_error)
               else "all dependencies green (or legitimately skipped)" end'
+          # A skipped collection check passes the filter above. It may be
+          # skipped only when the shards were.
+          echo "$NEEDS" | jq 'if .test.result != "skipped" and .collection.result != "success"
+            then ("the shards ran but the collection check is " + .collection.result | halt_error)
+            else "collection check: " + .collection.result end'
