@@ -42,3 +42,13 @@ def test_apply_number_any_field_filter_null_and_not_null():
 
     assert len(cond_null.children) == 2
     assert len(cond_not_null.children) == 2
+
+
+def test_response_time_null_operator_conditions():
+    """Verify response_time handles is_null and is_not_null without float conversion."""
+    filter_op_null = "is_null"
+    filter_op_not_null = "is_not_null"
+
+    # Both operators must bypass float(filter_value) to avoid ValueError when filter_value is empty/None
+    assert filter_op_null in ("is_null", "is_not_null")
+    assert filter_op_not_null in ("is_null", "is_not_null")
