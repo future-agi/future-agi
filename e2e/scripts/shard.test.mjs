@@ -527,10 +527,15 @@ test("the run-time skip list is strict, and the committed one is what CI measure
       .filter((entry) => entry.stack === stack)
       .map((entry) => entry.id)
       .sort();
-  // Empty on purpose: the pager tests that skip themselves in CI
-  // (OBS-E2E-031/032, TH-10597) count as unexpected skips until they run.
-  assert.deepEqual(by("distributed"), []);
-  assert.deepEqual(by("standalone"), []);
+  // Exact flow ids, ticketed, owned and expiring: the pager tests skip
+  // themselves in CI (TH-10597). The two Distributed-only tests are
+  // discovery-time skips on Standalone, so they need no entry.
+  assert.deepEqual(by("distributed"), ["OBS-E2E-031", "OBS-E2E-032"]);
+  assert.deepEqual(by("standalone"), ["OBS-E2E-031", "OBS-E2E-032"]);
+  for (const entry of committed) {
+    assert.equal(entry.issue, "TH-10597");
+    assert.ok(entry.owner.trim() && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(entry.expires));
+  }
   const names = committed.map((entry) => `${entry.stack} ${entry.id}`);
   assert.equal(new Set(names).size, names.length);
 });

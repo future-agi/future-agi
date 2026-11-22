@@ -197,7 +197,8 @@ def read_runtime_skip_rules(path=RUNTIME_SKIP_RULES, today=None):
     """The committed rules. Fails closed: a broken rule stops the check.
 
     Every rule names the exact test files it covers, each with the number of
-    tests measured to skip there (its cap), an anchored reason, why, the
+    tests measured to skip there (its cap), optionally the exact node ids it
+    is limited to, an anchored reason, why, the
     ticket that removes it, an owner and an expiry at most 45 days after
     `today` (the run date). An expired rule is still read but allows nothing.
     A rule may name the kind of run it covers: "oss" (a fork, without the
@@ -234,6 +235,21 @@ def read_runtime_skip_rules(path=RUNTIME_SKIP_RULES, today=None):
             raise ValueError(
                 f"{path}: files maps each exact test file to its measured count: {entry!r}"
             )
+        tests = entry.get("tests")
+        if tests is not None and (
+            not isinstance(tests, list)
+            or not tests
+            or any(
+                not isinstance(test, str)
+                or test.split("::", 1)[0] not in files
+                or "::" not in test
+                or re.search(r"[*?]", test)
+                for test in tests
+            )
+        ):
+            raise ValueError(
+                f"{path}: tests lists exact node ids inside the rule's files: {entry!r}"
+            )
         if not entry["reason"].startswith("^"):
             raise ValueError(f"{path}: a reason is anchored at its start: {entry!r}")
         if not DATE.fullmatch(entry["expires"]):
@@ -266,6 +282,7 @@ def covers(row, rule):
     return bool(test) and (
         rule.get("runs", row.get("runs")) == row.get("runs")
         and test.split("::", 1)[0] in rule["files"]
+        and ("tests" not in rule or test in rule["tests"])
         and all(rule["pattern"].search(skip["reason"]) for skip in row["skips"])
     )
 

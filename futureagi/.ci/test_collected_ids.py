@@ -270,7 +270,8 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         # The measured run was an internal one (the private package checked out).
         out = []
         for number, (path, reason) in enumerate(pairs):
-            test = f"{path}::test_{number}"
+            # A pair may name an exact node id instead of a file.
+            test = path if "::" in path else f"{path}::test_{number}"
             out.append(
                 {
                     "suite": "main",
@@ -318,11 +319,23 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                 out.getvalue() + summary.read_text(),
             )
 
+    DATASET_TEST = (
+        "model_hub/tests/test_dataset_huggingface_api.py"
+        "::TestCreateDatasetFromHuggingFaceE2E"
+        "::test_create_dataset_creates_rows_with_integer_keys"
+    )
+
     def measured_rows(self):
         # One row per measured test, so each file reaches its measured count.
+        # The dataset skip is one known test, recorded by its node id.
         return self.rows(
             [
-                (pair["file"], pair["reason"])
+                (
+                    self.DATASET_TEST
+                    if pair["file"] == self.DATASET_TEST.split("::")[0]
+                    else pair["file"],
+                    pair["reason"],
+                )
                 for pair in self.MEASURED["pairs"]
                 for _ in range(pair["tests"])
             ]
@@ -331,23 +344,17 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def measured_files(self):
         return {pair["file"] for pair in self.MEASURED["pairs"]}
 
-    def test_enforced_only_the_rejected_dataset_request_fails(self):
-        # Every skipped test of a real Backend CI run on 22 Nov. The dataset
-        # request the API rejects with a 400 is a failure, not an allowed skip.
+    def test_enforced_the_measured_skips_all_pass(self):
+        # Every skipped test of a real Backend CI run on 22 Nov, each under an
+        # exact, ticketed, owned and expiring rule.
         self.assertEqual(self.MEASURED["total"], 1811)
         error, report, _ = self.report(
             self.measured_rows(), files=self.measured_files()
         )
-        self.assertEqual(
-            error,
-            "1 eligible tests reported unexpected runtime skips; 0 runtime-skip rule problems",
-        )
-        self.assertEqual(
-            [row["test"].split("::")[0] for row in report["tests"]],
-            ["model_hub/tests/test_dataset_huggingface_api.py"],
-        )
+        self.assertIsNone(error)
+        self.assertEqual(report["tests"], [])
         self.assertEqual(report["rule_problems"], [])
-        self.assertEqual(len(report["allowed"]), self.MEASURED["total"] - 1)
+        self.assertEqual(len(report["allowed"]), self.MEASURED["total"])
 
     def test_rules_are_exactly_the_measured_files_and_counts(self):
         rules = self.rules()
@@ -456,13 +463,24 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         row["skips"].append({"phase": "call", "reason": "Skipped: something else"})
         self.assertIsNone(checker.allowing_rule(row, self.rules()))
 
-    def test_a_rejected_dataset_request_is_never_allowed(self):
+    def test_only_that_one_tests_measured_400_is_allowed(self):
+        rules = self.rules()
         pair = self.measured("huggingface")
-        self.assertIsNone(
-            checker.allowing_rule(
-                self.rows([(pair["file"], pair["reason"])])[0], self.rules()
-            )
-        )
+        allowed = self.rows([(self.DATASET_TEST, pair["reason"])])[0]
+        self.assertIsNotNone(checker.allowing_rule(allowed, rules))
+        # The same skip in another test of the file is unexpected.
+        other_test = self.rows([(pair["file"], pair["reason"])])[0]
+        self.assertIsNone(checker.allowing_rule(other_test, rules))
+        # Another 400 in the same test is unexpected.
+        for other in (
+            pair["reason"].replace("model_type", "huggingface_dataset_split"),
+            "Skipped: API returned 400: {'status': False, 'type': 'validation_error'}",
+        ):
+            row = self.rows([(self.DATASET_TEST, other)])[0]
+            self.assertIsNone(checker.allowing_rule(row, rules), other)
+        rule = rules[checker.allowing_rule(allowed, rules)]
+        self.assertEqual(rule["tests"], [self.DATASET_TEST])
+        self.assertEqual(rule["issue"], "TH-10618")
 
     def test_the_missing_table_rule_names_the_expected_tables(self):
         rules = self.rules()
@@ -660,12 +678,27 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                 json.dumps([{**good, "files": {}}]),
                 json.dumps([{**good, "issue": 7}]),
                 json.dumps([{**good, "runs": "both"}]),
+                json.dumps([{**good, "tests": "a/tests/test_a.py::t"}]),
+                json.dumps([{**good, "tests": []}]),
+                json.dumps([{**good, "tests": ["b/tests/test_b.py::t"]}]),
+                json.dumps([{**good, "tests": ["a/tests/test_a.py"]}]),
+                json.dumps([{**good, "tests": ["a/tests/test_a.py::test_*"]}]),
             ):
                 path.write_text(bad)
                 with self.assertRaises((ValueError, re.error), msg=bad):
                     self.rules(path)
             path.write_text(
-                json.dumps([good, {**good, "expires": "2027-01-06", "runs": "oss"}])
+                json.dumps(
+                    [
+                        good,
+                        {
+                            **good,
+                            "expires": "2027-01-06",
+                            "runs": "oss",
+                            "tests": ["a/tests/test_a.py::TestA::test_a[1-x]"],
+                        },
+                    ]
+                )
             )
             self.assertEqual(len(self.rules(path)), 2)
 

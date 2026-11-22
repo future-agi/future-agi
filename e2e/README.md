@@ -657,13 +657,14 @@ the gate when the repository variable `E2E_ENFORCE_RUNTIME_SKIPS` is `true`, unl
 enough. An entry that is not by design names the ticket that removes it, an owner, and an expiry
 at most 45 days ahead; after that date it no longer allows the skip. Each listed skip gets a
 warning on the run, and an entry whose test ran and passed is reported as out of date. Expiry is
-judged on the run's date, so re-running only the report job cannot change its verdict. The list is
-empty today: OBS-E2E-031 and OBS-E2E-032 skip themselves in CI (TH-10597) and count as unexpected
-skips until their bodies run.
+judged on the run's date, so re-running only the report job cannot change its verdict. Today it
+lists OBS-E2E-031 and OBS-E2E-032 on both stacks (TH-10597, expiring 2027-01-06): their churn
+guard measures no DOM mutations in CI, so they skip themselves and their bodies never run.
 
 The backend has a stricter rule for its own skips in `futureagi/.ci/runtime-skips.json`
 (`BACKEND_ENFORCE_RUNTIME_SKIPS`). Each rule names the exact test files it covers, each with the
-number of tests measured to skip there, an anchored reason, the ticket that removes it, an owner
+number of tests measured to skip there, optionally the exact node ids it is limited to, an
+anchored reason, the ticket that removes it, an owner
 and an expiry at most 45 days after the run date; there is no by-design exemption. A skip is
 allowed only for a listed file and a matching reason, for the test path the independent inventory
 recorded, and only up to that file's measured count. An enforced run fails on an unexpected skip
