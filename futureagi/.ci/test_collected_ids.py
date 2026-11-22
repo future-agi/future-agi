@@ -57,6 +57,26 @@ class CheckTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("3 shards collected the same 2 tests in the same order", out)
 
+    def test_equal_records_are_compared_by_digest_and_only_one_is_loaded(self):
+        # 40 shards each upload a record of about 10 MB.
+        record = [f"{n:02x} a.py::t{n}" for n in range(50)]
+        loaded = []
+        real = checker.read
+        checker.read = lambda path: loaded.append(path) or real(path)
+        try:
+            code, out = self.check(4, record, record, record, record)
+            self.assertEqual(code, 0)
+            self.assertIn("4 shards collected the same 50 tests in the same order", out)
+            self.assertEqual(len(loaded), 1)
+            # Records that differ are all loaded, to name the difference.
+            loaded.clear()
+            code, out = self.check(3, record, record, record[:-1] + ["zz a.py::other"])
+            self.assertEqual(code, 1)
+            self.assertEqual(len(loaded), 3)
+            self.assertIn("in 1 of 3 shards: a.py::other", out)
+        finally:
+            checker.read = real
+
     def test_the_same_tests_in_another_order_fail(self):
         # pytest-split breaks ties between equal times by position.
         code, out = self.check(

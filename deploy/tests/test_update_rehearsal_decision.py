@@ -91,10 +91,18 @@ class RehearsalWorkflowTest(unittest.TestCase):
         self.assertIn("""--jq 'any(.labels[]; .name == "update-rehearsal")'""", self.changes)
         self.assertIn("LABELLED: ${{ steps.labels.outputs.rehearsal == 'true' }}", self.changes)
 
-    def test_documents_and_json_registers_under_deploy_update_do_not_trigger(self):
+    def test_documents_and_static_gate_registers_under_deploy_update_do_not_trigger(self):
         classify = runpy.run_path(str(ROOT / '.github/scripts/ci_scope.py'))['rehearsal_inputs']
-        for path in (b'deploy/update/review.json', b'deploy/update/README.md', b'futureagi/example.py'):
+        # The registers that only scripts/check_update_safety.py reads: an
+        # ordinary pull request edits them to record a review.
+        for path in (b'deploy/update/clickhouse-change-reviews.json', b'deploy/update/clickhouse-sources.json',
+                     b'deploy/update/env-generators.json', b'deploy/update/README.md', b'futureagi/example.py'):
             self.assertEqual(classify([path]), (False, False))
+        # Every other JSON file there is input of the update tool or the
+        # qualifier, so a change to one must rehearse.
+        for path in (b'deploy/update/release-policy.json', b'deploy/update/high-volume-tables.json',
+                     b'deploy/update/manifest.schema.json', b'deploy/update/review.json'):
+            self.assertEqual(classify([path]), (True, False), path)
         for path in (b'bin/update', b'deploy/tests/update_e2e/run.py', b'docker-compose.yml',
                      b'scripts/update-rehearsal-decision.sh', b'.github/workflows/update-ci.yml'):
             self.assertEqual(classify([path]), (True, False))

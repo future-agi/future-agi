@@ -397,6 +397,23 @@ test("the phased parity CLI reports the same runtime skips in warning and enforc
   }
 });
 
+test("a test keeps its identity when its line moves, and loses it when its title changes", () => {
+  // Playwright's test id is a hash of the file and the title path, not of the
+  // position. A report without ids (the cases above) falls back to position.
+  const withId = (line, title = "one") => ({
+    ...spec("flows/a.spec.ts", line, title, [1]),
+    id: `id-of-${title}`,
+  });
+  const listedWithIds = report({ ...withId(3), tests: [{ results: [] }] });
+  assert.equal(checkParity(listedWithIds, report(withId(30)), FILES).ok, true);
+  const renamed = checkParity(listedWithIds, report(withId(3, "ONE")), FILES);
+  assert.equal(renamed.ok, false);
+  assert.equal(renamed.problems.missing.length, 1);
+  assert.equal(renamed.problems.extra.length, 1);
+  // The key keeps the title in its fourth position for qualify-topology.mjs.
+  assert.equal(JSON.parse(renamed.problems.extra[0])[3], "ONE");
+});
+
 test("parity names a test that no shard ran, ran twice, never started or was not listed", () => {
   const one = spec("flows/a.spec.ts", 3, "one", [1]);
   const two = spec("flows/a.spec.ts", 9, "two", [1]);
@@ -542,6 +559,10 @@ test("the E2E gate passes only on a green suite with its report, or when nothing
 test("the report job requires proof that the once-per-stack steps ran and passed", () => {
   const jobs = workflow().jobs;
   const step = (job, name) => job.steps.find((entry) => entry.name === name);
+  // What a re-run of the report job downloads from the attempt that made it
+  // must outlive the days in which a failed run is still re-run.
+  for (const name of ["Upload blob report", "Upload the once-per-stack record"])
+    assert.ok(step(jobs.e2e, name).with["retention-days"] >= 14, name);
   // The record names the three steps by their real outcomes.
   const record = step(jobs.e2e, "Record the once-per-stack steps");
   assert.equal(

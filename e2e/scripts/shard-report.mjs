@@ -28,7 +28,13 @@ import { listSpecFiles } from "../lib/shard.ts";
 
 const E2E_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-/** Every spec of a JSON report (a listing or a run), flattened. */
+/**
+ * Every spec of a JSON report (a listing or a run), flattened. A test is
+ * identified by Playwright's own test id, which does not move when a line is
+ * added above the test; a report without ids falls back to line and column.
+ * The key keeps its five positions (file, identity, column, title, project):
+ * qualify-topology.mjs reads the title from it.
+ */
 export function collectSpecs(report) {
   const specs = [];
   const walk = (suite) => {
@@ -41,8 +47,8 @@ export function collectSpecs(report) {
         specs.push({
           key: JSON.stringify([
             spec.file,
-            spec.line,
-            spec.column,
+            spec.id ?? spec.line,
+            spec.id ? "" : spec.column,
             spec.title,
             test.projectId ?? test.projectName ?? "",
           ]),

@@ -11,8 +11,8 @@ on:
       ordinary_shards:
         description: Ordinary shard count for same-ref timing comparisons
         type: choice
-        options: ['1', '2', '4']
-        default: '4'
+        options: ["1", "2", "4"]
+        default: "4"
       ordinary_cold_build:
         description: Compare ordinary shard counts without registry layer imports
         type: boolean
@@ -100,11 +100,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {target: backend, context: futureagi, file: Dockerfile.oss}
-          - {target: code-executor, context: futureagi/code-executor, file: Dockerfile}
-          - {target: fi-collector, context: fi-collector, file: Dockerfile}
-          - {target: frontend, context: frontend, file: Dockerfile}
-          - {target: gateway, context: agentcc-gateway, file: Dockerfile}
+          - { target: backend, context: futureagi, file: Dockerfile.oss }
+          - {
+              target: code-executor,
+              context: futureagi/code-executor,
+              file: Dockerfile,
+            }
+          - { target: fi-collector, context: fi-collector, file: Dockerfile }
+          - { target: frontend, context: frontend, file: Dockerfile }
+          - { target: gateway, context: agentcc-gateway, file: Dockerfile }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -592,7 +596,9 @@ jobs:
         with:
           name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: e2e/blob-report
-          retention-days: 3
+          # The same value as e2e-ci.yml: scripts/stack-cost.test.mjs keeps
+          # this step equal to the one there.
+          retention-days: 14
           if-no-files-found: error
 
       - name: Upload report
@@ -728,7 +734,7 @@ jobs:
         with:
           name: once-per-stack-${{ matrix.stack }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/once-per-stack/record.json
-          retention-days: 3
+          retention-days: 14
           if-no-files-found: error
 
       - name: Capture backend lifecycle on failure

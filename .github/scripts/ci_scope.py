@@ -19,6 +19,31 @@ PIN_INPUTS = {
     b"futureagi/code-executor/requirements.sandbox.txt",
 }
 SUITES = ("backend", "metrics", "any", "collector", "ordinary_update")
+# Registers under deploy/update that only scripts/check_update_safety.py reads.
+# Ordinary pull requests edit them to record a review, and no rehearsal step
+# opens them. Every other file there but a document is input of the update
+# tool or of the qualifier (release-policy.json, high-volume-tables.json, the
+# schemas), so a change to one runs both rehearsals.
+STATIC_GATE_REGISTERS = {
+    b"deploy/update/clickhouse-sources.json",
+    b"deploy/update/clickhouse-change-reviews.json",
+    b"deploy/update/env-generators.json",
+}
+# The ClickHouse schema that a boot installs (manage.py bootstrap_install),
+# and the other things only latest-stable -> PR takes from the pull request
+# beside its migrations, image builds and settings: the Standalone image's
+# own directory and the chart the job packages.
+BOOT_INPUTS = (
+    b"deploy/standalone/",
+    b"deploy/helm/futureagi/",
+    b"futureagi/tracer/services/clickhouse/v2/schema/",
+    b"futureagi/tracer/services/clickhouse/v2/observed_catalog/",
+    b"futureagi/scripts/property_catalog_oss/",
+)
+BOOT_FILES = re.compile(
+    rb"futureagi/(tfc/management/commands/bootstrap_install"
+    rb"|tracer/services/clickhouse/(oss_cdc_install|v2/apply_schema[^/]*|v2/schema_topology))\.py"
+)
 
 
 def git(*args):
@@ -49,6 +74,20 @@ def changes(base, head):
 
 
 def rehearsal_inputs(paths):
+    """(tooling, built): what the two Real rehearsals take from the candidate.
+
+    tooling is what both execute: bin/update with deploy/update, the
+    acceptance driver and every module it imports from scripts/ (the manifest
+    generator, the qualifier and its update_rehearsal_* modules;
+    test_ci_scope.py walks those imports), the Compose files, and the action
+    and workflow that set the jobs up.
+
+    built is what only latest-stable -> PR takes: it builds five images from
+    the candidate and boots the Standalone one on real data. The list is a
+    choice, not a derivation: the rest of the product source is in those
+    images too and waits for the nightly run, because a three-hour job on
+    every backend change is what this decision exists to avoid.
+    """
     tooling = built = False
     for path in paths:
         name = path.rsplit(b"/", 1)[-1]
@@ -58,14 +97,20 @@ def rehearsal_inputs(paths):
                 b"bin/update",
                 b"scripts/generate_update_manifest.py",
                 b"scripts/check_update_safety.py",
+                b"scripts/rehearse_update_compatibility.py",
+                b"scripts/build_update_compatibility_proof.py",
                 b"scripts/update-rehearsal-decision.sh",
                 b"deploy/tests/test_update_e2e_automatic.py",
                 b".github/workflows/update-ci.yml",
                 b".github/scripts/ci_scope.py",
             }
-            or path.startswith(b"deploy/tests/update_e2e/")
+            or re.fullmatch(rb"scripts/update_rehearsal_[^/]*\.py", path) is not None
+            or path.startswith(
+                (b"deploy/tests/update_e2e/", b".github/actions/setup-helm-tools/")
+            )
             or path.startswith(b"deploy/update/")
-            and not path.endswith((b".md", b".json"))
+            and not path.endswith(b".md")
+            and path not in STATIC_GATE_REGISTERS
             or re.fullmatch(rb"(deploy/)?docker-compose[^/]*\.yml", path, re.S)
             is not None
         )
@@ -76,6 +121,8 @@ def rehearsal_inputs(paths):
             and b"/migrations/" in path
             or name.lower().startswith(b"dockerfile")
             or name.endswith((b".dockerignore", b"entrypoint.sh"))
+            or path.startswith(BOOT_INPUTS)
+            or BOOT_FILES.fullmatch(path) is not None
         )
     return tooling, built
 

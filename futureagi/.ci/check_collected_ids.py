@@ -36,6 +36,20 @@ def differing(records):
     return sorted(odd, key=lambda found: found[0].partition(" ")[2])
 
 
+def read(path):
+    with open(path, encoding="utf-8", errors="surrogateescape") as handle:
+        return [line for line in handle.read().splitlines() if line]
+
+
+def file_digest(path):
+    """A digest of a record, read in pieces."""
+    found = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            found.update(block)
+    return found.hexdigest()
+
+
 def main(argv):
     if len(argv) < 3 or not argv[1].isdigit():
         sys.stderr.write(__doc__ or "")
@@ -47,10 +61,17 @@ def main(argv):
             " (a check of fewer than two proves nothing)\n"
         )
         return 1
-    records = []
-    for path in paths:
-        with open(path, encoding="utf-8", errors="surrogateescape") as handle:
-            records.append([line for line in handle.read().splitlines() if line])
+    # Equal digests are equal records. A record is about 10 MB, so the usual,
+    # equal case holds one of them in memory and not one per shard; all of
+    # them are loaded only to say how they differ.
+    if len({file_digest(path) for path in paths}) == 1:
+        collected = read(paths[0])
+        if collected:
+            sys.stdout.write(
+                f"{expected} shards collected the same {len(collected)} tests in the same order\n"
+            )
+            return 0
+    records = [read(path) for path in paths]
     if not all(records):
         sys.stdout.write(
             "::error title=Collection records::a shard collected no test at all;"

@@ -1,6 +1,7 @@
 """The comparison base of the update-safety gate, per GitHub event (stdlib only)."""
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -9,13 +10,58 @@ SHA = "1" * 40
 ZERO = "0" * 40
 
 
-def resolve(event, **env):
+GIT_ENV = {
+    "PATH": "/usr/bin:/bin",
+    "HOME": "/nonexistent",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_SYSTEM": "/dev/null",
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.invalid",
+}
+
+
+def resolve(event, cwd=None, **env):
     result = subprocess.run(
         ["bash", str(SCRIPT)],
-        env={"PATH": "/usr/bin:/bin", "EVENT_NAME": event, **env},
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=30,
+        env={**GIT_ENV, "EVENT_NAME": event, **env},
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
     return result.returncode, result.stdout.strip()
+
+
+class Repo:
+    """A throwaway repository: commits, release tags and where origin/main points."""
+
+    def __init__(self, path):
+        self.path = path
+        self.git("init", "-q", "-b", "work")
+
+    def git(self, *args):
+        result = subprocess.run(
+            ["git", *args],
+            cwd=self.path,
+            env=GIT_ENV,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def commit(self, tag=None):
+        self.git("commit", "-q", "--allow-empty", "-m", "c")
+        if tag:
+            self.git("tag", tag)
+        return self.git("rev-parse", "HEAD")
+
+    def origin_main(self, sha):
+        self.git("update-ref", "refs/remotes/origin/main", sha)
 
 
 class UpdateSafetyBaseTest(unittest.TestCase):
@@ -27,23 +73,11 @@ class UpdateSafetyBaseTest(unittest.TestCase):
     def test_an_event_ignores_the_other_events_values(self):
         # A merge group carries no pull request and no "before".
         self.assertNotEqual(resolve("merge_group", PR_BASE=SHA, PUSH_BEFORE=SHA)[0], 0)
-        self.assertEqual(resolve("schedule", PR_BASE=SHA, PUSH_BEFORE=SHA, MERGE_GROUP_BASE=SHA),
-                         (0, "origin/main"))
 
     def test_candidate_bases_must_be_immutable_commits(self):
         for event, key in (("pull_request", "PR_BASE"), ("merge_group", "MERGE_GROUP_BASE")):
             for invalid in ("", ZERO, "origin/dev", "-HEAD", SHA[:12]):
                 self.assertNotEqual(resolve(event, **{key: invalid})[0], 0)
-
-    def test_runs_without_a_change_compare_with_the_released_line(self):
-        # A scheduled run checks out main. origin/dev made it fail on a release
-        # fix that only main carried ("existing migration changed/deleted").
-        for event in ("schedule", "workflow_dispatch"):
-            self.assertEqual(resolve(event), (0, "origin/main"), event)
-
-    def test_a_new_branch_push_has_no_previous_commit(self):
-        self.assertEqual(resolve("push", PUSH_BEFORE=ZERO), (0, "origin/main"))
-        self.assertEqual(resolve("push"), (0, "origin/main"))
 
     def test_the_event_name_is_required(self):
         result = subprocess.run(["bash", str(SCRIPT)], env={"PATH": "/usr/bin:/bin"},
@@ -61,6 +95,66 @@ class UpdateSafetyBaseTest(unittest.TestCase):
                          "PUSH_BEFORE: ${{ github.event.before }}",
                          "MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}"):
                 self.assertIn(name, text, workflow)
+
+
+class ReleasedLineTest(unittest.TestCase):
+    """Runs with no change of their own: a schedule, a dispatch, a new branch.
+
+    In a throwaway repository: the answer depends on where the checkout is,
+    so the repository these tests run in must not decide it.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.repo = Repo(tmp.name)
+
+    def resolve(self, event, **env):
+        return resolve(event, cwd=self.repo.path, **env)
+
+    def test_a_scheduled_run_on_the_release_commit_compares_with_the_release_before(self):
+        # A scheduled run checks out main. Against origin/main the diff is
+        # empty, so the gate passed whatever the release had changed. (And it
+        # must not be origin/dev: a release fix that only main carried then
+        # reads as "existing migration changed/deleted".)
+        self.repo.commit(tag="v1.0.0")
+        self.repo.commit(tag="v1.9.0")
+        self.repo.origin_main(self.repo.commit(tag="v1.10.0"))
+        for event in ("schedule", "workflow_dispatch"):
+            self.assertEqual(self.resolve(event), (0, "v1.9.0"), event)
+
+    def test_commits_on_main_after_a_release_compare_with_that_release(self):
+        self.repo.commit(tag="v1.0.0")
+        self.repo.commit(tag="v1.1.0")
+        self.repo.origin_main(self.repo.commit())
+        self.assertEqual(self.resolve("schedule"), (0, "v1.1.0"))
+
+    def test_only_release_tags_count(self):
+        self.repo.commit(tag="v1.0.0")
+        self.repo.commit(tag="0.5.10")
+        self.repo.commit(tag="nightly")
+        self.repo.origin_main(self.repo.commit(tag="v1.1.0"))
+        self.assertEqual(self.resolve("schedule"), (0, "v1.0.0"))
+
+    def test_a_checkout_of_main_with_no_earlier_release_fails(self):
+        # No honest base exists; "origin/main" here would be the empty diff again.
+        self.repo.origin_main(self.repo.commit(tag="v1.0.0"))
+        code, base = self.resolve("schedule")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(base, "")
+
+    def test_a_branch_ahead_of_main_compares_with_main(self):
+        self.repo.origin_main(self.repo.commit(tag="v1.0.0"))
+        self.repo.commit()
+        self.assertEqual(self.resolve("workflow_dispatch"), (0, "origin/main"))
+        # A newly pushed branch has no previous commit.
+        self.assertEqual(self.resolve("push", PUSH_BEFORE=ZERO), (0, "origin/main"))
+        self.assertEqual(self.resolve("push"), (0, "origin/main"))
+        # A schedule ignores the values of the other events.
+        self.assertEqual(
+            self.resolve("schedule", PR_BASE=SHA, PUSH_BEFORE=SHA, MERGE_GROUP_BASE=SHA),
+            (0, "origin/main"),
+        )
 
 
 if __name__ == "__main__":

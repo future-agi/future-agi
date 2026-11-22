@@ -541,7 +541,10 @@ jobs:
         with:
           name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: e2e/blob-report
-          retention-days: 3
+          # A re-run of the report job alone reuses the blobs of the attempt
+          # that produced them (scripts/shard-report.mjs receipts), so they
+          # live as long as a failed run is still re-run.
+          retention-days: 14
           if-no-files-found: error
 
       - name: Upload report
@@ -677,7 +680,7 @@ jobs:
         with:
           name: once-per-stack-${{ matrix.stack }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/once-per-stack/record.json
-          retention-days: 3
+          retention-days: 14
           if-no-files-found: error
 
       - name: Capture backend lifecycle on failure

@@ -1,7 +1,9 @@
 """Exercise complete Git object diffs and the immutable policy loader offline."""
 
+import ast
 import json
 import os
+import re
 import runpy
 import subprocess
 import tempfile
@@ -11,8 +13,147 @@ from pathlib import Path
 from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parent
+ROOT = SCRIPTS.parent.parent
 scope = runpy.run_path(str(SCRIPTS / "ci_scope.py"))
 plan = scope["plan"]
+ACCEPTANCE = "deploy/tests/update_e2e/acceptance.py"
+
+
+def rehearsal(path):
+    """(tooling, built) for one changed path."""
+    return scope["rehearsal_inputs"]({path.encode()})
+
+
+def rehearsal_modules():
+    """Every repository file the acceptance driver imports, directly or not."""
+    seen = set()
+    queue = [ACCEPTANCE]
+    while queue:
+        path = queue.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        for node in ast.walk(ast.parse((ROOT / path).read_text())):
+            if isinstance(node, ast.Import):
+                found = [(alias.name, []) for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                found = [(node.module, [alias.name for alias in node.names])]
+            else:
+                continue
+            for module, names in found:
+                if module.split(".")[0] not in ("deploy", "scripts"):
+                    continue
+                base = module.replace(".", "/")
+                for candidate in [
+                    base + ".py",
+                    base + "/__init__.py",
+                    *(base + "/" + name + ".py" for name in names),
+                ]:
+                    if (ROOT / candidate).is_file():
+                        queue.append(candidate)
+    return sorted(seen)
+
+
+class RehearsalInputs(unittest.TestCase):
+    """Which changed paths start the two Real update rehearsals."""
+
+    def test_everything_the_rehearsals_import_starts_both(self):
+        # Derived, not listed by hand: the driver and every module it imports
+        # from scripts/ and deploy/, at any depth. The qualifier and its
+        # update_rehearsal_* modules were missing from the list.
+        modules = rehearsal_modules()
+        for required in (
+            ACCEPTANCE,
+            "scripts/rehearse_update_compatibility.py",
+            "scripts/build_update_compatibility_proof.py",
+            "scripts/update_rehearsal_qualification.py",
+            "scripts/generate_update_manifest.py",
+            "deploy/update/manifest.py",
+        ):
+            self.assertIn(required, modules)
+        for path in modules:
+            self.assertTrue(rehearsal(path)[0], path)
+        for path in ("bin/update", "docker-compose.yml", ".github/scripts/ci_scope.py"):
+            self.assertTrue(rehearsal(path)[0], path)
+
+    def test_the_local_actions_of_the_two_jobs_start_both(self):
+        workflow = (SCRIPTS.parent / "workflows/update-ci.yml").read_text()
+        for job in ("automatic-upgrade", "automatic-a-b-c"):
+            body = re.split(
+                r"\n  [a-z0-9-]+:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1
+            )[0]
+            actions = re.findall(r"uses: \./(\S+)", body)
+            self.assertTrue(actions, job)
+            for action in actions:
+                self.assertTrue(rehearsal(action + "/action.yml")[0], action)
+
+    def test_every_register_the_update_tool_reads_starts_both(self):
+        # Excluded: documents, and the registers only the static gate reads.
+        # A register that a rehearsal module names must not be excluded.
+        sources = "".join(
+            (ROOT / path).read_text() for path in [*rehearsal_modules(), "bin/update"]
+        )
+        registers = sorted(
+            str(path.relative_to(ROOT))
+            for path in (ROOT / "deploy/update").rglob("*.json")
+            if "__pycache__" not in path.parts
+        )
+        self.assertIn("deploy/update/release-policy.json", registers)
+        self.assertIn("deploy/update/high-volume-tables.json", registers)
+        static = {path.decode() for path in scope["STATIC_GATE_REGISTERS"]}
+        gate = (ROOT / "scripts/check_update_safety.py").read_text()
+        for path in registers:
+            name = path.rsplit("/", 1)[-1]
+            if path in static:
+                self.assertFalse(rehearsal(path)[0], path)
+                self.assertNotIn(name, sources, path)
+                self.assertIn(name, gate, path)
+            else:
+                self.assertTrue(rehearsal(path)[0], path)
+        self.assertEqual(len(static & set(registers)), 3)
+        self.assertFalse(rehearsal("deploy/update/README.md")[0])
+        self.assertTrue(rehearsal("deploy/update/apply.py")[0])
+
+    def test_what_the_boot_installs_starts_latest_stable_only(self):
+        for path in (
+            "futureagi/tracer/migrations/0001_initial.py",
+            "futureagi/tfc/settings/settings.py",
+            "futureagi/uv.lock",
+            "deploy/standalone/bin/bootstrap.py",
+            "deploy/standalone/nginx.conf",
+            "deploy/helm/futureagi/Chart.yaml",
+            "futureagi/tfc/management/commands/bootstrap_install.py",
+            "futureagi/tracer/services/clickhouse/oss_cdc_install.py",
+            "futureagi/tracer/services/clickhouse/v2/apply_schema.py",
+            "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
+            "futureagi/tracer/services/clickhouse/v2/schema_topology.py",
+            "futureagi/tracer/services/clickhouse/v2/observed_catalog/schema.sql",
+            "futureagi/scripts/property_catalog_oss/validate_clickhouse.sql",
+        ):
+            self.assertTrue((ROOT / path).is_file(), path)
+            self.assertEqual(rehearsal(path), (False, True), path)
+        schema = ROOT / "futureagi/tracer/services/clickhouse/v2/schema"
+        files = [path for path in schema.rglob("*") if path.is_file()]
+        self.assertGreater(len(files), 10)
+        for path in files:
+            self.assertTrue(rehearsal(str(path.relative_to(ROOT)))[1], path)
+        # Each image the job builds: its Dockerfile is an input.
+        acceptance = (ROOT / ACCEPTANCE).read_text()
+        dockerfiles = re.findall(r"'([\w./-]*Dockerfile[\w.]*)'", acceptance)
+        self.assertGreaterEqual(len(dockerfiles), 5)
+        for path in dockerfiles:
+            self.assertTrue(rehearsal(path)[1], path)
+
+    def test_ordinary_source_starts_neither(self):
+        # The product source inside the images is left to the nightly run.
+        for path in (
+            "futureagi/tracer/views/observation_span.py",
+            "futureagi/tracer/services/clickhouse/v2/span_reader.py",
+            "scripts/check-staged-safety.mjs",
+            "frontend/src/app.jsx",
+            "README.md",
+        ):
+            self.assertEqual(rehearsal(path), (False, False), path)
 
 
 def bootstrap(workflow):
