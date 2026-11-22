@@ -186,12 +186,20 @@ describe("BuildEnvironmentDrawer setup", () => {
     );
     expect(row("GitHub")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.queryByText("Paste a repo link")).not.toBeInTheDocument(),
+    );
     connect("GitHub");
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     const dialog = (
       await screen.findByText("Discard this environment?")
     ).closest("[role='dialog']");
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByText("Discard this environment?"),
+      ).not.toBeInTheDocument(),
+    );
     expect(onClose).not.toHaveBeenCalled();
     expect(screen.getByText("Paste a repo link")).toBeInTheDocument();
 

@@ -717,6 +717,7 @@ class TestRefusals:
 
         report = _side(job.agent_version_id).preflight_report
         assert report["source_scan"] == {
+            "api_keys": [],
             "detected_connectors": [],
             "required_files": [],
             "scanned_files": 0,
