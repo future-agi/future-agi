@@ -895,7 +895,7 @@ class GitComparisonTests(unittest.TestCase):
 
 
 class ShippedReleaseRestoreTests(unittest.TestCase):
-    """A changed migration may only restore the latest release's exact text."""
+    """Release-tag restoration: a changed migration may only carry the latest release's exact text."""
 
     path = "futureagi/example/migrations/0001_seed.py"
 

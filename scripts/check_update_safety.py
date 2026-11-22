@@ -502,11 +502,14 @@ def latest_release_tag(root, head="HEAD"):
 
 
 def shipped_release_restore(root, path):
-    """Name the latest release whose exact blob this migration file now carries.
+    """Release-tag restoration: name the latest release whose exact blob this
+    migration file now carries.
 
-    A restore of the released text is the deployed history, not an edit of it.
-    Only the latest release counts: an older release's text is refused, as is
-    any file when no release tag is reachable. Exact bytes, no normalisation.
+    The file equals the latest vX.Y.Z tag reachable from HEAD, so it is that
+    release's text, not a new edit. This does not prove what any environment
+    runs; the deploy baseline is verified separately in the release rehearsal
+    and promotion packet. An older release's text is refused, as is any file
+    when no release tag is reachable. Exact bytes, no normalisation.
     """
     tag = latest_release_tag(root)
     current = root / path
@@ -1125,8 +1128,9 @@ def main(argv=None):
                 continue
             restored = shipped_release_restore(root, path) if status == "M" else None
             if restored:
-                # Restoring the latest release's exact text: nothing new to declare.
-                print(f"update-safety: {path} restores release {restored[0]} (blob {restored[1]})", file=sys.stderr)
+                # Release-tag restoration: the latest release's exact text, nothing new to declare.
+                print(f"update-safety: {path} is a release-tag restoration of {restored[0]} (blob {restored[1]}); "
+                      "the deploy baseline is verified separately", file=sys.stderr)
                 continue
             require(status == "A" or status == "M" and declaration_only_addition(root, baseline, path),
                     "existing migration changed/deleted: deployed histories are immutable", "add a new migration instead of editing the existing migration")
