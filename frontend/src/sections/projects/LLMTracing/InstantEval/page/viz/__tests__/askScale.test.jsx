@@ -428,32 +428,39 @@ describe("AskPatterns for a category question", () => {
 });
 
 describe("answer colours", () => {
-  it("reserves boolean/status hues and keeps later category labels neutral", () => {
+  it("uses the brand set per mode and keeps later category labels neutral", () => {
     const dark = createTheme({ palette: palette("dark"), typography });
-    const slots = [1, 4, 6];
-    expect(CATEGORY_COLORS).toEqual(
-      slots.map((slot) => theme.palette.data[slot]),
-    );
-    expect(CATEGORY_COLORS_DARK).toEqual(CATEGORY_COLORS);
+    // The org design guide's purple, green, red and amber.
+    expect(CATEGORY_COLORS).toEqual(theme.palette.dataBrand);
+    expect(CATEGORY_COLORS).toEqual([
+      "#7857FC",
+      "#22C55E",
+      "#EF4444",
+      "#F59E0B",
+    ]);
+    expect(CATEGORY_COLORS_DARK).toEqual(dark.palette.dataBrand);
+    // A category never takes the error marker's red.
     for (const current of [theme, dark]) {
       const colors =
         current.palette.mode === "dark"
           ? CATEGORY_COLORS_DARK
           : CATEGORY_COLORS;
       colors.forEach((color) => {
-        expect([YES_COLOR, NO_COLOR, current.palette.error.main]).not.toContain(
-          color,
-        );
+        expect(color).not.toBe(current.palette.status.danger.solid);
       });
     }
-    expect(YES_COLOR).toBe(theme.palette.data[0]);
-    expect(NO_COLOR).toBe(theme.palette.data[5]);
+    // Yes is the brand purple and No the guide's amber, in each mode's step.
+    const yesNo = { answerType: "yes_no", labels: ["Yes", "No"] };
+    expect(YES_COLOR).toBe(theme.palette.dataBrand[0]);
+    expect(NO_COLOR).toBe(theme.palette.dataBrand[3]);
+    expect(answerColor(yesNo, "Yes", dark)).toBe(dark.palette.dataBrand[0]);
+    expect(answerColor(yesNo, "No", dark)).toBe(dark.palette.dataBrand[3]);
     const labels = Array.from({ length: 10 }, (_, i) => `L${i}`);
     const item = { answerType: "category", labels };
     expect(answerColor(item, "L0", theme)).toBe(CATEGORY_COLORS[0]);
-    expect(CATEGORY_COLORS).toHaveLength(3);
-    expect(answerColor(item, "L2", theme)).toBe(CATEGORY_COLORS[2]);
-    expect(answerColor(item, "L3", theme)).toBe(OTHER_CATEGORY_COLOR);
+    expect(CATEGORY_COLORS).toHaveLength(4);
+    expect(answerColor(item, "L3", theme)).toBe(CATEGORY_COLORS[3]);
+    expect(answerColor(item, "L4", theme)).toBe(OTHER_CATEGORY_COLOR);
     expect(answerColor(item, "L5", theme)).toBe(OTHER_CATEGORY_COLOR);
     expect(answerColor(item, "L6", theme)).toBe(OTHER_CATEGORY_COLOR);
     expect(answerColor(item, "L8", theme)).toBe(OTHER_CATEGORY_COLOR);
