@@ -273,6 +273,7 @@ import type {
   AttachmentProviderRegistrationRequestApi,
   AttachmentProviderRegistrationResponseApi,
   AttachmentRecordingManifestApi,
+  AttachmentRecordingPreviewApi,
   AttachmentResolveRequestApi,
   AttachmentResolveResponseApi,
   AttachmentSourceEnvelopeRequestApi,
@@ -1182,6 +1183,7 @@ import type {
   RateLimitDetailResponseApi,
   RateLimitListResponseApi,
   RateLimitMutationResponseApi,
+  ReadAttachmentRecordingPreviewParams,
   ReadRecordingManifestParams,
   RecordTraceNotificationsRequestApi,
   RecordTraceNotificationsResponseApi,
@@ -94069,6 +94071,117 @@ export const deleteAttachmentOccurrence = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type readAttachmentRecordingPreviewResponse200 = {
+  data: AttachmentRecordingPreviewApi;
+  status: 200;
+};
+
+export type readAttachmentRecordingPreviewResponse400 = {
+  data: AttachmentErrorApi;
+  status: 400;
+};
+
+export type readAttachmentRecordingPreviewResponse401 = {
+  data: AttachmentErrorApi;
+  status: 401;
+};
+
+export type readAttachmentRecordingPreviewResponse403 = {
+  data: AttachmentErrorApi;
+  status: 403;
+};
+
+export type readAttachmentRecordingPreviewResponse404 = {
+  data: AttachmentErrorApi;
+  status: 404;
+};
+
+export type readAttachmentRecordingPreviewResponse409 = {
+  data: AttachmentErrorApi;
+  status: 409;
+};
+
+export type readAttachmentRecordingPreviewResponse413 = {
+  data: AttachmentErrorApi;
+  status: 413;
+};
+
+export type readAttachmentRecordingPreviewResponse429 = {
+  data: AttachmentErrorApi;
+  status: 429;
+};
+
+export type readAttachmentRecordingPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<
+    HTTPStatusCodes,
+    200 | 400 | 401 | 403 | 404 | 409 | 413 | 429
+  >;
+};
+
+export type readAttachmentRecordingPreviewResponseSuccess =
+  readAttachmentRecordingPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type readAttachmentRecordingPreviewResponseError = (
+  | readAttachmentRecordingPreviewResponse400
+  | readAttachmentRecordingPreviewResponse401
+  | readAttachmentRecordingPreviewResponse403
+  | readAttachmentRecordingPreviewResponse404
+  | readAttachmentRecordingPreviewResponse409
+  | readAttachmentRecordingPreviewResponse413
+  | readAttachmentRecordingPreviewResponse429
+  | readAttachmentRecordingPreviewResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type readAttachmentRecordingPreviewResponse =
+  | readAttachmentRecordingPreviewResponseSuccess
+  | readAttachmentRecordingPreviewResponseError;
+
+export const getReadAttachmentRecordingPreviewUrl = (
+  projectId: string,
+  occurrenceId: string,
+  params: ReadAttachmentRecordingPreviewParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/v1/projects/${projectId}/attachments/occurrences/${occurrenceId}/recording-preview?${stringifiedParams}`
+    : `/tracer/v1/projects/${projectId}/attachments/occurrences/${occurrenceId}/recording-preview`;
+};
+
+/**
+ * Lazy app projection for one authorized recording; never returns byte grants.
+ */
+export const readAttachmentRecordingPreview = async (
+  projectId: string,
+  occurrenceId: string,
+  params: ReadAttachmentRecordingPreviewParams,
+  options?: RequestInit,
+): Promise<readAttachmentRecordingPreviewResponse> => {
+  return apiMutator<readAttachmentRecordingPreviewResponse>(
+    getReadAttachmentRecordingPreviewUrl(projectId, occurrenceId, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };

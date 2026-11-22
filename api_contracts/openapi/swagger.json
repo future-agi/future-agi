@@ -81343,6 +81343,12 @@
                         "description": "Media bytes",
                         "schema": {
                             "type": "file"
+                        },
+                        "headers": {
+                            "X-Attachment-Peaks": {
+                                "type": "string",
+                                "description": "Only on an authorized peaks GET: JSON v1 with verified sample_rate, channels, frame_count and frames_per_bucket/buckets for each level."
+                            }
                         }
                     },
                     "206": {
@@ -81935,6 +81941,102 @@
                             "type": "string",
                             "maxLength": 0,
                             "x-nullable": true
+                        }
+                    },
+                    "400": {
+                        "description": "F01 Error",
+                        "schema": {
+                            "$ref": "#/definitions/AttachmentError"
+                        }
+                    },
+                    "401": {
+                        "description": "F01 Error",
+                        "schema": {
+                            "$ref": "#/definitions/AttachmentError"
+                        }
+                    },
+                    "403": {
+                        "description": "F01 Error",
+                        "schema": {
+                            "$ref": "#/definitions/AttachmentError"
+                        }
+                    },
+                    "404": {
+                        "description": "F01 Error",
+                        "schema": {
+                            "$ref": "#/definitions/AttachmentError"
+                        }
+                    },
+                    "409": {
+                        "description": "F01 Error",
+                        "schema": {
+                            "$ref": "#/definitions/AttachmentError"
+                        }
+                    },
+                    "413": {
+                        "description": "F01 Error",
+                        "schema": {
+                            "$ref": "#/definitions/AttachmentError"
+                        }
+                    },
+                    "429": {
+                        "description": "F01 Error",
+                        "schema": {
+                            "$ref": "#/definitions/AttachmentError"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "Attachments"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "project_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "occurrence_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}/recording-preview": {
+            "get": {
+                "operationId": "readAttachmentRecordingPreview",
+                "description": "Lazy app projection for one authorized recording; never returns byte grants.",
+                "parameters": [
+                    {
+                        "name": "trace_id",
+                        "in": "query",
+                        "description": "Expected parent trace (F01 TraceInput).",
+                        "required": true,
+                        "type": "string"
+                    },
+                    {
+                        "name": "span_id",
+                        "in": "query",
+                        "description": "Expected parent span (F01 SpanID).",
+                        "required": true,
+                        "type": "string"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/AttachmentRecordingPreview"
                         }
                     },
                     "400": {
@@ -201364,6 +201466,270 @@
                 }
             }
         },
+        "AttachmentTrack": {
+            "required": [
+                "track_id",
+                "channels",
+                "direction",
+                "role"
+            ],
+            "type": "object",
+            "properties": {
+                "track_id": {
+                    "title": "Track id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "channels": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "direction": {
+                    "title": "Direction",
+                    "type": "string",
+                    "enum": [
+                        "input",
+                        "output",
+                        "mixed"
+                    ]
+                },
+                "role": {
+                    "title": "Role",
+                    "type": "string",
+                    "enum": [
+                        "user",
+                        "assistant",
+                        "mixed",
+                        "unknown"
+                    ]
+                }
+            }
+        },
+        "AttachmentSegment": {
+            "required": [
+                "occurrence_id",
+                "index",
+                "start_ms",
+                "duration_ms"
+            ],
+            "type": "object",
+            "properties": {
+                "occurrence_id": {
+                    "title": "Occurrence id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "index": {
+                    "title": "Index",
+                    "type": "integer"
+                },
+                "start_ms": {
+                    "title": "Start ms",
+                    "type": "integer"
+                },
+                "duration_ms": {
+                    "title": "Duration ms",
+                    "type": "integer"
+                },
+                "track_id": {
+                    "title": "Track id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "AttachmentGap": {
+            "required": [
+                "start_ms",
+                "duration_ms",
+                "reason"
+            ],
+            "type": "object",
+            "properties": {
+                "start_ms": {
+                    "title": "Start ms",
+                    "type": "integer"
+                },
+                "duration_ms": {
+                    "title": "Duration ms",
+                    "type": "integer"
+                },
+                "reason": {
+                    "title": "Reason",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "track_id": {
+                    "title": "Track id",
+                    "type": "string",
+                    "format": "uuid"
+                }
+            }
+        },
+        "AttachmentPlayout": {
+            "required": [
+                "start_ms",
+                "duration_ms",
+                "evidence"
+            ],
+            "type": "object",
+            "properties": {
+                "start_ms": {
+                    "title": "Start ms",
+                    "type": "integer"
+                },
+                "duration_ms": {
+                    "title": "Duration ms",
+                    "type": "integer"
+                },
+                "evidence": {
+                    "title": "Evidence",
+                    "type": "string",
+                    "enum": [
+                        "generated",
+                        "played",
+                        "unknown",
+                        "truncated"
+                    ]
+                }
+            }
+        },
+        "AttachmentRecordingManifest": {
+            "required": [
+                "schema_version",
+                "recording_id",
+                "timebase",
+                "sample_format",
+                "sample_rate_hz",
+                "channels",
+                "codec",
+                "container",
+                "layout",
+                "tracks",
+                "segments",
+                "gaps",
+                "playout",
+                "capture_complete",
+                "duration_ms"
+            ],
+            "type": "object",
+            "properties": {
+                "schema_version": {
+                    "title": "Schema version",
+                    "type": "integer"
+                },
+                "recording_id": {
+                    "title": "Recording id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "timebase": {
+                    "title": "Timebase",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sample_format": {
+                    "title": "Sample format",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "sample_rate_hz": {
+                    "title": "Sample rate hz",
+                    "type": "integer"
+                },
+                "channels": {
+                    "title": "Channels",
+                    "type": "integer"
+                },
+                "codec": {
+                    "title": "Codec",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "container": {
+                    "title": "Container",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "layout": {
+                    "title": "Layout",
+                    "type": "string",
+                    "enum": [
+                        "mixed",
+                        "stereo",
+                        "separate_tracks"
+                    ]
+                },
+                "tracks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AttachmentTrack"
+                    }
+                },
+                "segments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AttachmentSegment"
+                    }
+                },
+                "gaps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AttachmentGap"
+                    }
+                },
+                "playout": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AttachmentPlayout"
+                    }
+                },
+                "capture_complete": {
+                    "title": "Capture complete",
+                    "type": "boolean"
+                },
+                "duration_ms": {
+                    "title": "Duration ms",
+                    "type": "integer"
+                }
+            }
+        },
+        "AttachmentRecordingPreview": {
+            "required": [
+                "occurrence_id",
+                "parent",
+                "state"
+            ],
+            "type": "object",
+            "properties": {
+                "occurrence_id": {
+                    "title": "Occurrence id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "parent": {
+                    "$ref": "#/definitions/AttachmentParent"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "pending_upload",
+                        "validating",
+                        "importing",
+                        "waiting",
+                        "failed",
+                        "ready"
+                    ]
+                },
+                "manifest": {
+                    "$ref": "#/definitions/AttachmentRecordingManifest"
+                }
+            }
+        },
         "AttachmentProviderRegistrationRequest": {
             "required": [
                 "connection_id",
@@ -201760,236 +202126,6 @@
                     }
                 }
             ]
-        },
-        "AttachmentTrack": {
-            "required": [
-                "track_id",
-                "channels",
-                "direction",
-                "role"
-            ],
-            "type": "object",
-            "properties": {
-                "track_id": {
-                    "title": "Track id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "channels": {
-                    "type": "array",
-                    "items": {
-                        "type": "integer"
-                    }
-                },
-                "direction": {
-                    "title": "Direction",
-                    "type": "string",
-                    "enum": [
-                        "input",
-                        "output",
-                        "mixed"
-                    ]
-                },
-                "role": {
-                    "title": "Role",
-                    "type": "string",
-                    "enum": [
-                        "user",
-                        "assistant",
-                        "mixed",
-                        "unknown"
-                    ]
-                }
-            }
-        },
-        "AttachmentSegment": {
-            "required": [
-                "occurrence_id",
-                "index",
-                "start_ms",
-                "duration_ms"
-            ],
-            "type": "object",
-            "properties": {
-                "occurrence_id": {
-                    "title": "Occurrence id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "index": {
-                    "title": "Index",
-                    "type": "integer"
-                },
-                "start_ms": {
-                    "title": "Start ms",
-                    "type": "integer"
-                },
-                "duration_ms": {
-                    "title": "Duration ms",
-                    "type": "integer"
-                },
-                "track_id": {
-                    "title": "Track id",
-                    "type": "string",
-                    "format": "uuid"
-                }
-            }
-        },
-        "AttachmentGap": {
-            "required": [
-                "start_ms",
-                "duration_ms",
-                "reason"
-            ],
-            "type": "object",
-            "properties": {
-                "start_ms": {
-                    "title": "Start ms",
-                    "type": "integer"
-                },
-                "duration_ms": {
-                    "title": "Duration ms",
-                    "type": "integer"
-                },
-                "reason": {
-                    "title": "Reason",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "track_id": {
-                    "title": "Track id",
-                    "type": "string",
-                    "format": "uuid"
-                }
-            }
-        },
-        "AttachmentPlayout": {
-            "required": [
-                "start_ms",
-                "duration_ms",
-                "evidence"
-            ],
-            "type": "object",
-            "properties": {
-                "start_ms": {
-                    "title": "Start ms",
-                    "type": "integer"
-                },
-                "duration_ms": {
-                    "title": "Duration ms",
-                    "type": "integer"
-                },
-                "evidence": {
-                    "title": "Evidence",
-                    "type": "string",
-                    "enum": [
-                        "generated",
-                        "played",
-                        "unknown",
-                        "truncated"
-                    ]
-                }
-            }
-        },
-        "AttachmentRecordingManifest": {
-            "required": [
-                "schema_version",
-                "recording_id",
-                "timebase",
-                "sample_format",
-                "sample_rate_hz",
-                "channels",
-                "codec",
-                "container",
-                "layout",
-                "tracks",
-                "segments",
-                "gaps",
-                "playout",
-                "capture_complete",
-                "duration_ms"
-            ],
-            "type": "object",
-            "properties": {
-                "schema_version": {
-                    "title": "Schema version",
-                    "type": "integer"
-                },
-                "recording_id": {
-                    "title": "Recording id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "timebase": {
-                    "title": "Timebase",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "sample_format": {
-                    "title": "Sample format",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "sample_rate_hz": {
-                    "title": "Sample rate hz",
-                    "type": "integer"
-                },
-                "channels": {
-                    "title": "Channels",
-                    "type": "integer"
-                },
-                "codec": {
-                    "title": "Codec",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "container": {
-                    "title": "Container",
-                    "type": "string",
-                    "minLength": 1
-                },
-                "layout": {
-                    "title": "Layout",
-                    "type": "string",
-                    "enum": [
-                        "mixed",
-                        "stereo",
-                        "separate_tracks"
-                    ]
-                },
-                "tracks": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/AttachmentTrack"
-                    }
-                },
-                "segments": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/AttachmentSegment"
-                    }
-                },
-                "gaps": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/AttachmentGap"
-                    }
-                },
-                "playout": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/AttachmentPlayout"
-                    }
-                },
-                "capture_complete": {
-                    "title": "Capture complete",
-                    "type": "boolean"
-                },
-                "duration_ms": {
-                    "title": "Duration ms",
-                    "type": "integer"
-                }
-            }
         },
         "AttachmentResolveItem": {
             "required": [

@@ -104507,6 +104507,93 @@ export const DeleteAttachmentOccurrenceQueryParams = zod.object({
 });
 
 /**
+ * Lazy app projection for one authorized recording; never returns byte grants.
+ */
+export const ReadAttachmentRecordingPreviewParams = zod.object({
+  project_id: zod.string(),
+  occurrence_id: zod.string(),
+});
+
+export const ReadAttachmentRecordingPreviewQueryParams = zod.object({
+  trace_id: zod.string().describe("Expected parent trace (F01 TraceInput)."),
+  span_id: zod.string().describe("Expected parent span (F01 SpanID)."),
+});
+
+export const readAttachmentRecordingPreviewResponseParentTraceIdMax = 36;
+
+export const readAttachmentRecordingPreviewResponseParentSpanIdMax = 16;
+
+export const ReadAttachmentRecordingPreviewResponse = zod.object({
+  occurrence_id: zod.string().uuid(),
+  parent: zod.object({
+    trace_id: zod
+      .string()
+      .min(1)
+      .max(readAttachmentRecordingPreviewResponseParentTraceIdMax),
+    span_id: zod
+      .string()
+      .min(1)
+      .max(readAttachmentRecordingPreviewResponseParentSpanIdMax),
+  }),
+  state: zod.enum([
+    "pending",
+    "pending_upload",
+    "validating",
+    "importing",
+    "waiting",
+    "failed",
+    "ready",
+  ]),
+  manifest: zod
+    .object({
+      schema_version: zod.number(),
+      recording_id: zod.string().uuid(),
+      timebase: zod.string().min(1),
+      sample_format: zod.string().min(1),
+      sample_rate_hz: zod.number(),
+      channels: zod.number(),
+      codec: zod.string().min(1),
+      container: zod.string().min(1),
+      layout: zod.enum(["mixed", "stereo", "separate_tracks"]),
+      tracks: zod.array(
+        zod.object({
+          track_id: zod.string().uuid(),
+          channels: zod.array(zod.number()),
+          direction: zod.enum(["input", "output", "mixed"]),
+          role: zod.enum(["user", "assistant", "mixed", "unknown"]),
+        }),
+      ),
+      segments: zod.array(
+        zod.object({
+          occurrence_id: zod.string().uuid(),
+          index: zod.number(),
+          start_ms: zod.number(),
+          duration_ms: zod.number(),
+          track_id: zod.string().uuid().optional(),
+        }),
+      ),
+      gaps: zod.array(
+        zod.object({
+          start_ms: zod.number(),
+          duration_ms: zod.number(),
+          reason: zod.string().min(1),
+          track_id: zod.string().uuid().optional(),
+        }),
+      ),
+      playout: zod.array(
+        zod.object({
+          start_ms: zod.number(),
+          duration_ms: zod.number(),
+          evidence: zod.enum(["generated", "played", "unknown", "truncated"]),
+        }),
+      ),
+      capture_complete: zod.boolean(),
+      duration_ms: zod.number(),
+    })
+    .optional(),
+});
+
+/**
  * Product control route; not an addition to F01 import payloads.
  */
 export const TracerV1ProjectsAttachmentsProviderRecordingsCreateParams =

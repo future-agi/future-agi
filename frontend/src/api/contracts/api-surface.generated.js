@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1222,
+  endpointCount: 1223,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1439,6 +1439,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}":
         ["delete"],
+      "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}/recording-preview":
+        ["get"],
       "/tracer/v1/projects/{project_id}/attachments/provider-recordings": [
         "post",
       ],
@@ -2923,6 +2925,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}": [
     "delete",
   ],
+  "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}/recording-preview":
+    ["get"],
   "/tracer/v1/projects/{project_id}/attachments/provider-recordings": ["post"],
   "/tracer/v1/projects/{project_id}/attachments/provider-recordings/{registered_output_id}":
     ["get"],

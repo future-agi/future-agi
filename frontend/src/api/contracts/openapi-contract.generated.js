@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1222,
+  endpointCount: 1223,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -46364,6 +46364,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/tracer/v1/projects/{project_id}/attachments/occurrences/{occurrence_id}/recording-preview":
+      {
+        get: {
+          operationId: "readAttachmentRecordingPreview",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            trace_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+            span_id: {
+              required: true,
+              schema: {
+                type: "string",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AttachmentRecordingPreview",
+            },
+            400: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            401: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            403: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            404: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            409: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            413: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            429: {
+              $ref: "#/definitions/AttachmentError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/tracer/v1/projects/{project_id}/attachments/provider-recordings": {
       post: {
         operationId:
@@ -60645,6 +60697,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         duration_ms: {
           title: "Duration ms",
           type: "integer",
+        },
+      },
+    },
+    AttachmentRecordingPreview: {
+      required: ["occurrence_id", "parent", "state"],
+      type: "object",
+      properties: {
+        occurrence_id: {
+          title: "Occurrence id",
+          type: "string",
+          format: "uuid",
+        },
+        parent: {
+          $ref: "#/definitions/AttachmentParent",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "pending",
+            "pending_upload",
+            "validating",
+            "importing",
+            "waiting",
+            "failed",
+            "ready",
+          ],
+        },
+        manifest: {
+          $ref: "#/definitions/AttachmentRecordingManifest",
         },
       },
     },

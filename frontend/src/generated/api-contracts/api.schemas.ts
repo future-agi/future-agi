@@ -42568,6 +42568,115 @@ export interface AttachmentLinkRequestApi {
   deletion_generation: number;
 }
 
+export type AttachmentRecordingPreviewApiState =
+  (typeof AttachmentRecordingPreviewApiState)[keyof typeof AttachmentRecordingPreviewApiState];
+
+export const AttachmentRecordingPreviewApiState = {
+  pending: "pending",
+  pending_upload: "pending_upload",
+  validating: "validating",
+  importing: "importing",
+  waiting: "waiting",
+  failed: "failed",
+  ready: "ready",
+} as const;
+
+export type AttachmentRecordingManifestApiLayout =
+  (typeof AttachmentRecordingManifestApiLayout)[keyof typeof AttachmentRecordingManifestApiLayout];
+
+export const AttachmentRecordingManifestApiLayout = {
+  mixed: "mixed",
+  stereo: "stereo",
+  separate_tracks: "separate_tracks",
+} as const;
+
+export type AttachmentTrackApiDirection =
+  (typeof AttachmentTrackApiDirection)[keyof typeof AttachmentTrackApiDirection];
+
+export const AttachmentTrackApiDirection = {
+  input: "input",
+  output: "output",
+  mixed: "mixed",
+} as const;
+
+export type AttachmentTrackApiRole =
+  (typeof AttachmentTrackApiRole)[keyof typeof AttachmentTrackApiRole];
+
+export const AttachmentTrackApiRole = {
+  user: "user",
+  assistant: "assistant",
+  mixed: "mixed",
+  unknown: "unknown",
+} as const;
+
+export interface AttachmentTrackApi {
+  track_id: string;
+  channels: number[];
+  direction: AttachmentTrackApiDirection;
+  role: AttachmentTrackApiRole;
+}
+
+export interface AttachmentSegmentApi {
+  occurrence_id: string;
+  index: number;
+  start_ms: number;
+  duration_ms: number;
+  track_id?: string;
+}
+
+export interface AttachmentGapApi {
+  start_ms: number;
+  duration_ms: number;
+  /** @minLength 1 */
+  reason: string;
+  track_id?: string;
+}
+
+export type AttachmentPlayoutApiEvidence =
+  (typeof AttachmentPlayoutApiEvidence)[keyof typeof AttachmentPlayoutApiEvidence];
+
+export const AttachmentPlayoutApiEvidence = {
+  generated: "generated",
+  played: "played",
+  unknown: "unknown",
+  truncated: "truncated",
+} as const;
+
+export interface AttachmentPlayoutApi {
+  start_ms: number;
+  duration_ms: number;
+  evidence: AttachmentPlayoutApiEvidence;
+}
+
+export interface AttachmentRecordingManifestApi {
+  schema_version: number;
+  recording_id: string;
+  /** @minLength 1 */
+  timebase: string;
+  /** @minLength 1 */
+  sample_format: string;
+  sample_rate_hz: number;
+  channels: number;
+  /** @minLength 1 */
+  codec: string;
+  /** @minLength 1 */
+  container: string;
+  layout: AttachmentRecordingManifestApiLayout;
+  tracks: AttachmentTrackApi[];
+  segments: AttachmentSegmentApi[];
+  gaps: AttachmentGapApi[];
+  playout: AttachmentPlayoutApi[];
+  capture_complete: boolean;
+  duration_ms: number;
+}
+
+export interface AttachmentRecordingPreviewApi {
+  occurrence_id: string;
+  parent: AttachmentParentApi;
+  state: AttachmentRecordingPreviewApiState;
+  manifest?: AttachmentRecordingManifestApi;
+}
+
 export type AttachmentProviderRegistrationRequestApiDirection =
   (typeof AttachmentProviderRegistrationRequestApiDirection)[keyof typeof AttachmentProviderRegistrationRequestApiDirection];
 
@@ -42833,95 +42942,6 @@ export interface AttachmentProviderRegistrationResponseApi {
    */
   job_id?: string;
   source: AttachmentProviderFileApi;
-}
-
-export type AttachmentRecordingManifestApiLayout =
-  (typeof AttachmentRecordingManifestApiLayout)[keyof typeof AttachmentRecordingManifestApiLayout];
-
-export const AttachmentRecordingManifestApiLayout = {
-  mixed: "mixed",
-  stereo: "stereo",
-  separate_tracks: "separate_tracks",
-} as const;
-
-export type AttachmentTrackApiDirection =
-  (typeof AttachmentTrackApiDirection)[keyof typeof AttachmentTrackApiDirection];
-
-export const AttachmentTrackApiDirection = {
-  input: "input",
-  output: "output",
-  mixed: "mixed",
-} as const;
-
-export type AttachmentTrackApiRole =
-  (typeof AttachmentTrackApiRole)[keyof typeof AttachmentTrackApiRole];
-
-export const AttachmentTrackApiRole = {
-  user: "user",
-  assistant: "assistant",
-  mixed: "mixed",
-  unknown: "unknown",
-} as const;
-
-export interface AttachmentTrackApi {
-  track_id: string;
-  channels: number[];
-  direction: AttachmentTrackApiDirection;
-  role: AttachmentTrackApiRole;
-}
-
-export interface AttachmentSegmentApi {
-  occurrence_id: string;
-  index: number;
-  start_ms: number;
-  duration_ms: number;
-  track_id?: string;
-}
-
-export interface AttachmentGapApi {
-  start_ms: number;
-  duration_ms: number;
-  /** @minLength 1 */
-  reason: string;
-  track_id?: string;
-}
-
-export type AttachmentPlayoutApiEvidence =
-  (typeof AttachmentPlayoutApiEvidence)[keyof typeof AttachmentPlayoutApiEvidence];
-
-export const AttachmentPlayoutApiEvidence = {
-  generated: "generated",
-  played: "played",
-  unknown: "unknown",
-  truncated: "truncated",
-} as const;
-
-export interface AttachmentPlayoutApi {
-  start_ms: number;
-  duration_ms: number;
-  evidence: AttachmentPlayoutApiEvidence;
-}
-
-export interface AttachmentRecordingManifestApi {
-  schema_version: number;
-  recording_id: string;
-  /** @minLength 1 */
-  timebase: string;
-  /** @minLength 1 */
-  sample_format: string;
-  sample_rate_hz: number;
-  channels: number;
-  /** @minLength 1 */
-  codec: string;
-  /** @minLength 1 */
-  container: string;
-  layout: AttachmentRecordingManifestApiLayout;
-  tracks: AttachmentTrackApi[];
-  segments: AttachmentSegmentApi[];
-  gaps: AttachmentGapApi[];
-  playout: AttachmentPlayoutApi[];
-  capture_complete: boolean;
-  duration_ms: number;
 }
 
 export type AttachmentResolveItemApiRepresentation =
@@ -50240,6 +50260,17 @@ export type ListAttachmentOccurrencesParams = {
 };
 
 export type DeleteAttachmentOccurrenceParams = {
+  /**
+   * Expected parent trace (F01 TraceInput).
+   */
+  trace_id: string;
+  /**
+   * Expected parent span (F01 SpanID).
+   */
+  span_id: string;
+};
+
+export type ReadAttachmentRecordingPreviewParams = {
   /**
    * Expected parent trace (F01 TraceInput).
    */
