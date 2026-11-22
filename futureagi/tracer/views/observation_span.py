@@ -616,6 +616,15 @@ def _build_eval_metric_entry(
     return None, None
 
 
+def _matches_resolved_project(span, project_id):
+    if "project_id" not in span:
+        return True
+    try:
+        return uuid.UUID(str(span["project_id"])) == project_id
+    except ValueError:
+        return False
+
+
 def _get_request_organization(request):
     return getattr(request, "organization", None) or request.user.organization
 
@@ -1631,6 +1640,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     id=observation_span["project"],
                     organization=_get_request_organization(self.request),
                 )
+                if observation_span["project"].trace_type == "observe":
+                    if not _matches_resolved_project(
+                        observation_span, observation_span["project"].pk
+                    ):
+                        return self._gm.bad_request("project_id must match project")
+                    observation_span.pop("project_id", None)
                 if observation_span.get("project_version"):
                     observation_span["project_version"] = ProjectVersion.objects.get(
                         _project_workspace_scope_q(self.request),

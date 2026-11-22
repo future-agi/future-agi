@@ -1740,7 +1740,7 @@ def calculate_cost(
     model: Optional[str],
     organization_id: Optional[str] = None,
     *,
-    project_type: str = "observe",
+    project_type: str = "",
 ):
     """
     Calculates cost for a span. Checks user-provided cost attributes first
@@ -1814,7 +1814,7 @@ def calculate_cost_from_tokens(
     model: Optional[str],
     organization_id: Optional[str] = None,
     *,
-    project_type: str = "observe",
+    project_type: str = "",
 ):
     """
     Calculates the cost of a model call based on the number of prompt and completion tokens.

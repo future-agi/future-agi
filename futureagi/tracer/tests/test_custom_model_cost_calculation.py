@@ -19,7 +19,8 @@ from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.custom_models import CustomAIModel
 from tracer.models.observation_span import ObservationSpan
-from tracer.utils.otel import calculate_cost_from_tokens
+from tracer.utils.otel import calculate_cost, calculate_cost_from_tokens
+from tracer.views.observation_span import _matches_resolved_project
 
 
 @pytest.mark.django_db
@@ -56,6 +57,7 @@ class TestCustomModelCostCalculation:
             completion_tokens=0,
             model="my-custom-llm",
             organization_id=str(self.organization.id),
+            project_type="observe",
         )
         assert cost == pytest.approx(2.50)
 
@@ -65,6 +67,7 @@ class TestCustomModelCostCalculation:
             completion_tokens=1_000_000,
             model="my-custom-llm",
             organization_id=str(self.organization.id),
+            project_type="observe",
         )
         assert cost == pytest.approx(2.50 + 10.00)
 
@@ -75,8 +78,43 @@ class TestCustomModelCostCalculation:
             completion_tokens=0,
             model="my-custom-llm",
             organization_id=str(self.organization.id),
+            project_type="observe",
         )
         assert cost == pytest.approx(2.50 * 1_000 / 1_000_000)
+
+    @pytest.mark.parametrize("helper", [calculate_cost, calculate_cost_from_tokens])
+    @pytest.mark.parametrize("is_observe, expected", [(False, 2500.0), (True, 2.5)])
+    def test_project_type_controls_divisor(self, helper, is_observe, expected):
+        kwargs = {"attributes": {}} if helper is calculate_cost else {}
+        if is_observe:
+            kwargs["project_type"] = "observe"
+        assert helper(
+            prompt_tokens=1_000_000,
+            completion_tokens=0,
+            model=self.custom_model.user_model_id,
+            organization_id=str(self.organization.pk),
+            **kwargs,
+        ) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    "given, expected",
+    [
+        ({}, True),
+        ({"project_id": "44CF7AEAE64D43EC86C04F8A1961AFDC"}, True),
+        ({"project_id": "44cf7aea-e64d-43ec-86c0-4f8a1961afdc"}, True),
+        ({"project_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}, False),
+        ({"project_id": None}, False),
+        ({"project_id": "not a UUID"}, False),
+    ],
+)
+def test_resolved_project_comparison(given, expected):
+    from uuid import UUID
+
+    assert (
+        _matches_resolved_project(given, UUID("44cf7aeae64d43ec86c04f8a1961afdc"))
+        is expected
+    )
 
 
 @pytest.fixture
@@ -127,6 +165,109 @@ def test_observe_bulk_create_estimates_only_missing_cost(
     assert (
         ObservationSpan.objects.get(trace=trace, name="experiment control").cost == 2500
     )
+
+
+@pytest.mark.django_db(transaction=True)
+def test_observe_bulk_project_identity_over_http(
+    live_server, user, workspace, observe_project, project, session_trace, custom_rate
+):
+    from contextlib import closing
+    from unittest.mock import patch
+
+    import requests
+    from django.utils import timezone
+
+    from accounts.authentication import generate_encrypted_message
+    from accounts.models.auth_token import AuthToken, AuthTokenType
+    from conftest import _open_ch_test_http_client
+    from ee.usage.models.usage import UsageEventLog, UsageSummary
+    from ee.usage.services.emitter import STREAM_KEY, get_redis
+    from integrations.models.sync_log import SyncLog
+    from tfc.utils.api_errors import build_error_envelope
+    from tracer.models.trace_grouping import TraceGroupingOutbox
+
+    token = AuthToken.objects.create(
+        user=user, auth_type=AuthTokenType.ACCESS.value, last_used_at=timezone.now()
+    )
+    bearer = generate_encrypted_message({"user_id": str(user.pk), "id": str(token.pk)})
+    headers = {
+        "Authorization": f"Bearer {bearer}",
+        "X-Workspace-Id": str(workspace.pk),
+        "X-Organization-Id": str(workspace.organization_id),
+    }
+    url = f"{live_server.url}/tracer/observation-span/bulk_create/"
+    span = {
+        "name": "estimate",
+        "project": str(observe_project.pk),
+        "trace": str(session_trace.pk),
+        "observation_type": "llm",
+        "prompt_tokens": 1_000_000,
+        "model": custom_rate.user_model_id,
+    }
+
+    def post(rows):
+        return requests.post(url, json={"spans": rows}, headers=headers, timeout=15)
+
+    # Valid requests use the real insert path; check the three fields together.
+    rows = [
+        span,
+        {
+            **span,
+            "project_id": observe_project.pk.hex.upper(),
+            "name": "free",
+            "cost": 0,
+        },
+        {
+            **span,
+            "project_id": str(observe_project.pk),
+            "name": "reported",
+            "cost": 0.75,
+        },
+    ]
+    assert post(rows).status_code == 200
+    stored = ObservationSpan._base_manager.filter(trace=session_trace).values_list(
+        "name", "project_id", "trace_id", "cost"
+    )
+    assert set(stored) == {
+        (name, observe_project.pk, session_trace.pk, cost)
+        for name, cost in [("estimate", 2.5), ("free", 0), ("reported", 0.75)]
+    }
+
+    def snapshot(ch):
+        tables = (
+            ObservationSpan,
+            UsageEventLog,
+            UsageSummary,
+            SyncLog,
+            TraceGroupingOutbox,
+        )
+        redis = get_redis()
+        return (
+            [
+                list(table._base_manager.order_by("pk").values_list("pk", flat=True))
+                for table in tables
+            ],
+            redis.xrange(STREAM_KEY),
+            ch.query(
+                "SELECT project_id, trace_id, id FROM spans ORDER BY project_id, trace_id, id"
+            ).result_rows,
+        )
+
+    with closing(_open_ch_test_http_client(database="test_tfc")) as ch:
+        before = snapshot(ch)
+        # Reject during validation: even attempting persistence is a failure.
+        with patch.object(
+            ObservationSpan.objects, "bulk_create", side_effect=AssertionError
+        ) as insert:
+            conflict = {**span, "project_id": str(project.pk)}
+            for batch in ([conflict], [span, conflict]):
+                response = post(batch)
+                assert response.status_code == 400
+                assert response.json() == build_error_envelope(
+                    "project_id must match project"
+                )
+                insert.assert_not_called()
+                assert snapshot(ch) == before
 
 
 @pytest.mark.django_db
