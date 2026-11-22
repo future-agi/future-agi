@@ -1,9 +1,15 @@
 """Guard the shard command against unbounded verbose parametrization output."""
 
 import configparser
+import json
+import os
 import pathlib
 import re
 import shlex
+import shutil
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -53,8 +59,9 @@ class MetricsShardTest(unittest.TestCase):
         )[0]
         self.assertIn('-m "($PYTEST_MARKERS) and $SUITE_MARKERS"', shard)
         self.assertIn('--splits "$SUITE_SPLITS"', shard)
-        # Exit 5 (nothing collected) passes a main leg only.
-        self.assertIn('[ "$code" -eq 5 ] && [ "$SUITE" = main ]', shard)
+        # An unplanned empty leg is a failure, not an accepted exit code.
+        self.assertNotIn("set +e", shard)
+        self.assertNotIn("exit 0", shard)
 
     def test_the_matrix_has_complementary_suites_with_distinct_artifacts(self):
         changes = self.workflow.split("  changes:\n", 1)[1].split(
@@ -62,11 +69,11 @@ class MetricsShardTest(unittest.TestCase):
         )[0]
         self.assertIn('legs main pytest "not metrics" 60 "$SPLITS"', changes)
         self.assertIn('legs metrics metrics metrics 50 "$METRICS_SPLITS"', changes)
-        self.assertIn("            metrics:\n", changes)
+        self.assertIn("metrics: ${{ steps.filter.outputs.metrics }}", changes)
         job = self.workflow.split("  test:\n", 1)[1].split("\n  saml-multiworker:", 1)[
             0
         ]
-        self.assertIn("matrix: ${{ fromJSON(needs.changes.outputs.shards) }}", job)
+        self.assertIn("matrix: ${{ fromJSON(needs.changes.outputs.test_matrix) }}", job)
         self.assertIn("timeout-minutes: ${{ matrix.timeout }}", job)
         for prefix in ("junit-results-", "timing-data-"):
             self.assertIn(
@@ -74,6 +81,56 @@ class MetricsShardTest(unittest.TestCase):
             )
         gate = self.workflow.split("  backend-tests:\n", 1)[1]
         self.assertIn("        test,\n", gate.split("    if:", 1)[0])
+
+    @unittest.skipUnless(shutil.which("jq"), "needs jq")
+    def test_isolated_legs_run_but_do_not_claim_the_shared_inventory(self):
+        planner = self.workflow.split("      - id: shards\n", 1)[1]
+        script = textwrap.dedent(
+            planner.split("        run: |\n", 1)[1].split("\n  update-safety:", 1)[0]
+        )
+        for backend, focused, expected in [
+            ("false", "false", 0),
+            ("true", "false", 40),
+            ("true", "true", 2),
+        ]:
+            with (
+                self.subTest(backend=backend, focused=focused),
+                tempfile.TemporaryDirectory() as root,
+            ):
+                output = pathlib.Path(root) / "output"
+                subprocess.run(
+                    ["bash", "-ec", script],
+                    check=True,
+                    env={
+                        **os.environ,
+                        "GITHUB_OUTPUT": str(output),
+                        "BACKEND": backend,
+                        "METRICS": backend,
+                        "SPLITS": "24",
+                        "METRICS_SPLITS": "16",
+                        "FOCUSED_ATTACHMENTS": focused,
+                    },
+                )
+                matrices = dict(
+                    line.split("=", 1) for line in output.read_text().splitlines()
+                )
+                shards = json.loads(matrices["matrix"])["include"]
+                legs = json.loads(matrices["test_matrix"])["include"]
+                self.assertEqual(len(shards), expected)
+                self.assertEqual([leg for leg in legs if "module" not in leg], shards)
+                self.assertEqual(
+                    {leg["group"] for leg in legs if "module" in leg},
+                    {"imports-review", "combined-review"} if expected else set(),
+                )
+                if focused == "true":
+                    self.assertEqual(shards[0]["targets"], shards[1]["targets"])
+                    self.assertEqual(len(shards[0]["targets"].split()), 7)
+                    self.assertTrue(
+                        all(
+                            (ROOT / "futureagi" / test).is_file()
+                            for test in shards[0]["targets"].split()
+                        )
+                    )
 
 
 class EvaluatorJobTest(unittest.TestCase):

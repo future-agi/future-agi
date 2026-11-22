@@ -494,6 +494,26 @@ class FaultLogicTests(unittest.TestCase):
         self.assertEqual(faults.occurrence(calls, 2), 1)
         self.assertEqual(faults.occurrence(calls, 10), 2)
 
+    def test_a_pull_reported_done_with_the_image_then_missing_is_recognised(self):
+        compose = ("Pulling localhost:24628/futureagi/standalone:v1.52.0\n app Pulling \n app Pulled \n"
+                   "Error response from daemon: No such image: localhost:24628/futureagi/standalone:v1.52.0\n"
+                   "bin/update: apply stopped before restarting anything: `docker compose pull app` failed with exit code 1")
+        product = ("Pulling localhost:25520/futureagi/standalone:v1.52.0\n app Pulling \n app Pulled \n"
+                   "bin/update: apply stopped before restarting anything: localhost:25520/futureagi/standalone:v1.52.0 "
+                   "is not on this host after the pull. Nothing was changed")
+        self.assertTrue(faults.lost_after_pull(compose))
+        self.assertTrue(faults.lost_after_pull(product))
+        for other in (
+            "",
+            # The pull itself failed: the registry or the tag, not a lost image.
+            " app Pulling \n app Error manifest unknown\nError response from daemon: manifest unknown",
+            # The image was missing before any pull was reported done.
+            "Error response from daemon: No such image: localhost:1/futureagi/standalone:v1.52.0\n app Pulling \n app Pulled \n",
+            # A pull that ended well.
+            "Pulling localhost:1/futureagi/standalone:v1.52.0\n app Pulling \n app Pulled \nUpdated to v1.52.0. Receipt: x",
+        ):
+            self.assertFalse(faults.lost_after_pull(other), other)
+
     def test_full_matrix_splits_at_the_restart(self):
         calls = self.calls()
         before = faults.full_matrix(calls, ["fail"], before_restart=True)
@@ -752,6 +772,26 @@ class FaultE2EBase(unittest.TestCase):
         self.assertNotIn("[harness] killed after", result.stderr, f"bin/update timed out:\n{result.describe()}")
         return result
 
+    def prepared_run(self, spec: Spec, fd: faults.FaultDocker, env: Callable[[], Dict[str, str]]) -> e2e.Result:
+        """spec.prepare(), then the command; once more when Docker lost the image it had just pulled.
+
+        prepare() removes the tag the command pulls. A pull that follows the removal closely is, rarely,
+        reported done while the image is missing (faults.lost_after_pull); bin/update then stops before it
+        changed anything, so the same run can start again from the same state. Exactly one more attempt,
+        only when no fault was injected in the run, and said again at the end of the suite (NOTES).
+        """
+
+        env_before = spec.co.env_bytes()
+        for attempt in (1, 2):
+            spec.prepare()
+            result = self.spawn_run(spec.co, [*spec.flags, *spec.command], env())
+            _, faulted = faults.phase_of(fd.calls())
+            if attempt == 2 or faulted is not None or not faults.lost_after_pull(result.output):
+                return result
+            self.assertEqual(spec.co.env_bytes(), env_before, f"the stopped run changed the env file\n{result.describe()}")
+            NOTES.append(f"{spec.name}: Docker reported a pull done and the image was then missing; ran the command again")
+        raise AssertionError("unreachable")
+
     def assertExit(self, result: e2e.Result, code: int, *needles: str, stream: str = "stderr") -> None:
         message = f"\n{result.describe()}"
         self.assertEqual(result.code, code, message)
@@ -873,8 +913,7 @@ class FaultE2EBase(unittest.TestCase):
     def record(self, spec: Spec, fd: faults.FaultDocker) -> List[faults.Call]:
         """Run the command once, unfaulted, and keep its calls and the env file it leaves (E1); then reset."""
 
-        spec.prepare()
-        result = self.spawn_run(spec.co, [*spec.flags, *spec.command], fd.env())
+        result = self.prepared_run(spec, fd, fd.env)
         self.assertExit(result, 0)
         calls = fd.calls()
         (spec.co.harness.logs_dir / (spec.name + '-recorded.json')).write_text(
@@ -913,9 +952,8 @@ class FaultE2EBase(unittest.TestCase):
         before = self.snapshot(co)
         data_before = self.persistent_data(co)
         self.assertEqual(before["env"], spec.env_before, f"{spec.name}: the point did not start from the reset state")
-        spec.prepare()
         words = spec.recorded[point.index - 1].words
-        result = self.spawn_run(co, [*spec.flags, *spec.command], fd.point_env(point, words))
+        result = self.prepared_run(spec, fd, lambda: fd.point_env(point, words))
         calls = fd.calls()
         # Keep the selected event and exact prefix even when its assertion fails;
         # the next point resets the injector, not this diagnostic evidence.
