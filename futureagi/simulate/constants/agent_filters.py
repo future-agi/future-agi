@@ -8,6 +8,7 @@ AGENT_SOURCE_VALUES = {
     "retell": ("retell",),
     "bland": ("bland",),
     "eleven_labs": ("eleven_labs",),
+    "phone": ("phone",),
 }
 AGENT_SOURCE_FILTERS = tuple(AGENT_SOURCE_VALUES)
 AGENT_ENVIRONMENT_FILTERS = ("with", "without")

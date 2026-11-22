@@ -45987,6 +45987,7 @@ export const SimulateAgentDefinitionsListSourceItem = {
   retell: "retell",
   bland: "bland",
   eleven_labs: "eleven_labs",
+  phone: "phone",
 } as const;
 
 export type SimulateAgentDefinitionsListEnvironmentsItem =

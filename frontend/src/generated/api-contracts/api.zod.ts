@@ -33406,6 +33406,7 @@ export const SimulateAgentDefinitionsListQueryParams = zod.object({
         "retell",
         "bland",
         "eleven_labs",
+        "phone",
       ]),
     )
     .optional(),

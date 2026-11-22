@@ -27330,6 +27330,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   "retell",
                   "bland",
                   "eleven_labs",
+                  "phone",
                 ],
               },
             },

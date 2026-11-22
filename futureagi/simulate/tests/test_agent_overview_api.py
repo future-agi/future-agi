@@ -337,6 +337,15 @@ def test_list_filters_by_type_source_environments_and_observe_project(
 
 
 @pytest.mark.django_db
+def test_the_source_filter_finds_phone_agents(auth_client, organization, workspace):
+    _agent(organization, workspace, "Phone Line", provider="phone")
+    _agent(organization, workspace, "Vapi Line")
+
+    assert _names(auth_client, source="phone") == ["Phone Line"]
+    assert _names(auth_client, source=["phone", "vapi"]) == ["Phone Line", "Vapi Line"]
+
+
+@pytest.mark.django_db
 def test_the_observe_filter_reads_each_agent_the_way_its_column_does(
     auth_client, organization, workspace, user
 ):

@@ -15,6 +15,7 @@ const SOURCE_LABELS = {
   retell: "Retell",
   bland: "Bland.ai",
   eleven_labs: "ElevenLabs",
+  phone: "Phone",
 };
 
 const enumField = (id, label, labels) => ({
