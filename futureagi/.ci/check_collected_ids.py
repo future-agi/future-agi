@@ -12,7 +12,7 @@ with completed pytest protocols. The file-only mode checks collection order.
 
 import collections
 import concurrent.futures
-import fnmatch
+import datetime
 import hashlib
 import io
 import json
@@ -182,6 +182,10 @@ def check_terminals(expected, rows):
 
 
 RUNS = ("oss", "internal")
+# The same limit as the e2e list (e2e/scripts/shard-report.mjs MAX_RUNTIME_SKIP_DAYS).
+MAX_RUNTIME_SKIP_DAYS = 45
+DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+GLOB = re.compile(r"[*?\[\]]")
 
 
 def annotation(text):
@@ -189,55 +193,87 @@ def annotation(text):
     return str(text).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
 
-def read_runtime_skip_rules(path=RUNTIME_SKIP_RULES):
+def read_runtime_skip_rules(path=RUNTIME_SKIP_RULES, today=None):
     """The committed rules. Fails closed: a broken rule stops the check.
 
+    Every rule names the exact test files it covers, each with the number of
+    tests measured to skip there (its cap), an anchored reason, why, the
+    ticket that removes it, an owner and an expiry at most 45 days after
+    `today` (the run date). An expired rule is still read but allows nothing.
     A rule may name the kind of run it covers: "oss" (a fork, without the
     private package) or "internal". Without it a rule covers both.
     """
+    today = today or datetime.datetime.now(datetime.UTC).date()
     entries = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(entries, list):
         raise ValueError(f"{path}: expected a list")
     rules = []
     for entry in entries:
-        fields = ("files", "reason", "why")
+        fields = ("reason", "why", "issue", "owner", "expires")
         if not isinstance(entry, dict) or any(
             not isinstance(entry.get(field), str) or not entry[field].strip()
             for field in fields
         ):
             raise ValueError(
-                f"{path}: each rule needs files, reason and why: {entry!r}"
+                f"{path}: each rule needs reason, why, issue, owner and expires: {entry!r}"
             )
-        issue = entry.get("issue")
-        if issue is not None and (not isinstance(issue, str) or not issue.strip()):
-            raise ValueError(f"{path}: a ticket must be a nonblank string: {entry!r}")
-        if not issue and "by design" not in entry["why"]:
+        files = entry.get("files")
+        if (
+            not isinstance(files, dict)
+            or not files
+            or any(
+                not isinstance(name, str)
+                or not name.endswith(".py")
+                or name.startswith("/")
+                or GLOB.search(name)
+                or type(count) is not int
+                or count < 1
+                for name, count in files.items()
+            )
+        ):
             raise ValueError(
-                f"{path}: a rule that is not by design names the ticket that removes it: {entry!r}"
+                f"{path}: files maps each exact test file to its measured count: {entry!r}"
+            )
+        if not entry["reason"].startswith("^"):
+            raise ValueError(f"{path}: a reason is anchored at its start: {entry!r}")
+        if not DATE.fullmatch(entry["expires"]):
+            raise ValueError(f"{path}: expires is a YYYY-MM-DD date: {entry!r}")
+        expires = datetime.date.fromisoformat(entry["expires"])
+        if (expires - today).days > MAX_RUNTIME_SKIP_DAYS:
+            raise ValueError(
+                f"{path}: a rule expires at most {MAX_RUNTIME_SKIP_DAYS} days ahead: {entry!r}"
             )
         if entry.get("runs", "oss") not in RUNS:
             raise ValueError(f"{path}: runs is one of {RUNS}: {entry!r}")
-        rules.append({**entry, "pattern": re.compile(entry["reason"])})
+        rules.append(
+            {
+                **entry,
+                "pattern": re.compile(entry["reason"]),
+                "expired": expires < today,
+            }
+        )
     return rules
 
 
-def allowing_rule(row, rules):
-    """The index of the rule that covers every skip of a row, or None.
+def covers(row, rule):
+    """Whether a rule's files, run kind and reason cover every skip of a row.
 
     The test path is the one the independent inventory recorded for this id
     (bind_to_inventory), not the label of the terminal row: a row the
-    inventory does not know is never allowed.
+    inventory does not know is never covered.
     """
     test = row.get("inventory_test")
-    if not test:
-        return None
-    path = test.split("::", 1)[0]
+    return bool(test) and (
+        rule.get("runs", row.get("runs")) == row.get("runs")
+        and test.split("::", 1)[0] in rule["files"]
+        and all(rule["pattern"].search(skip["reason"]) for skip in row["skips"])
+    )
+
+
+def allowing_rule(row, rules):
+    """The index of the unexpired rule that covers every skip of a row, or None."""
     for index, rule in enumerate(rules):
-        if (
-            rule.get("runs", row.get("runs")) == row.get("runs")
-            and fnmatch.fnmatchcase(path, rule["files"])
-            and all(rule["pattern"].search(skip["reason"]) for skip in row["skips"])
-        ):
+        if not rule["expired"] and covers(row, rule):
             return index
     return None
 
@@ -254,53 +290,106 @@ def bind_to_inventory(skips, expected):
 
 
 def report_runtime_skips(
-    skips, *, partial, enforce, report_path, summary_path, rules=None, runs=RUNS
+    skips,
+    *,
+    partial,
+    enforce,
+    report_path,
+    summary_path,
+    rules=None,
+    runs=RUNS,
+    inventory_files=None,
+    today=None,
 ):
     """Publish the full list in either mode before optionally failing qualification.
 
-    Skips a rule of runtime-skips.json covers are listed under "allowed" with
-    the rule; only the others are unexpected and can fail the check.
+    Skips a rule of runtime-skips.json covers, up to the rule's measured count
+    in each file, are listed under "allowed" with the rule; the others are
+    unexpected. Rule problems (a file over its measured count, an expired rule
+    that still matches, a rule file this run scheduled that matched nothing)
+    are errors. Unexpected skips and rule problems fail an enforced, complete run.
     """
-    rules = read_runtime_skip_rules() if rules is None else rules
+    rules = read_runtime_skip_rules(today=today) if rules is None else rules
     skips.sort(key=lambda row: (row["suite"], row["group"], row["test"], row["id"]))
+    recorded = collections.Counter((row["suite"], row["group"]) for row in skips)
     allowed = []
     unexpected = []
     used = collections.Counter()
+    over = collections.Counter()
     for row in skips:
         index = allowing_rule(row, rules)
-        if index is None:
-            unexpected.append(row)
-        else:
-            used[index] += 1
-            allowed.append({**row, "rule": rules[index]["why"]})
-    skips = unexpected
+        if index is not None:
+            path = row["inventory_test"].split("::", 1)[0]
+            if used[index, path] < rules[index]["files"][path]:
+                used[index, path] += 1
+                allowed.append(
+                    {**row, "rule": rules[index]["why"], "issue": rules[index]["issue"]}
+                )
+                continue
+            over[index, path] += 1
+        unexpected.append(row)
+    problems = [
+        f"{path}: {used[key] + count} tests skip under the rule for {rules[key[0]]['issue']},"
+        f" above its measured {rules[key[0]]['files'][path]}"
+        for key, count in sorted(over.items())
+        for path in [key[1]]
+    ]
+    for index, rule in enumerate(rules):
+        if rule["expired"]:
+            matching = sum(covers(row, rule) for row in unexpected)
+            if matching:
+                problems.append(
+                    f"the rule for {rule['issue']} expired on {rule['expires']};"
+                    f" its {matching} tests count as unexpected ({rule['owner']})"
+                )
+        elif not partial and rule.get("runs", runs[0]) in runs:
+            # Only a file this run's inventory scheduled can be stale: per-change
+            # selection does not run every suite, and an internal run says
+            # nothing about a fork-only rule.
+            for path in rule["files"]:
+                if (inventory_files is None or path in inventory_files) and not used[
+                    index, path
+                ]:
+                    problems.append(
+                        f"{path}: the rule for {rule['issue']}"
+                        + (f" ({rule['runs']} runs)" if "runs" in rule else "")
+                        + " matched nothing;"
+                        " remove it from futureagi/.ci/runtime-skips.json"
+                    )
     Path(report_path).write_text(
         json.dumps(
             {
                 "partial": partial,
                 "enforced": enforce,
-                "tests": skips,
+                "tests": unexpected,
                 "allowed": allowed,
+                "rule_problems": problems,
             },
             indent=2,
         )
         + "\n",
         encoding="utf-8",
     )
-    counts = collections.Counter((row["suite"], row["group"]) for row in skips)
+    allowed_counts = collections.Counter(
+        (row["suite"], row["group"]) for row in allowed
+    )
     title = "Unexpected backend runtime skip" + (
         " (partial evidence)" if partial else ""
     )
-    for row in skips:
+    for row in unexpected:
         reasons = "; ".join(
             f"{skip['phase']}: {skip['reason']}" for skip in row["skips"]
         )
         text = f"{row['suite']}/{row['group']} {row['test']}: {reasons}"
         sys.stdout.write(f"::warning title={title}::{annotation(text)}\n")
+    for problem in problems:
+        sys.stdout.write(
+            f"::error title=Backend run-time skip rule::{annotation(problem)}\n"
+        )
     with open(summary_path, "a", encoding="utf-8") as summary:
         summary.write(
-            f"## Backend runtime skips: {len(skips) + len(allowed)} "
-            f"({len(allowed)} allowed, {len(skips)} unexpected)\n\n"
+            f"## Backend runtime skips: {len(skips)} "
+            f"({len(allowed)} allowed, {len(unexpected)} unexpected)\n\n"
         )
         if partial:
             summary.write(
@@ -312,34 +401,51 @@ def report_runtime_skips(
             + ". See `backend-runtime-skips` for tests and reasons.\n\n"
         )
         summary.write(
-            "| Suite | Shard | Recorded tests with runtime skips |\n|---|---:|---:|\n"
+            "| Suite | Shard | Recorded tests with runtime skips | Allowed | Unexpected |\n"
+            "|---|---:|---:|---:|---:|\n"
         )
-        for (suite, group), count in sorted(counts.items()):
-            summary.write(f"| {suite} | {group} | {count} |\n")
-        if not counts and not partial:
-            summary.write("| All | All | 0 |\n")
-        summary.write(f"\nAllowed by runtime-skips.json: {len(allowed)} tests.\n\n")
-        for index, count in sorted(used.items()):
+        for (suite, group), count in sorted(recorded.items()):
+            allowed_here = allowed_counts[suite, group]
             summary.write(
-                f"- {count}: {rules[index]['files']}: {rules[index]['why']}\n"
+                f"| {suite} | {group} | {count} | {allowed_here} | {count - allowed_here} |\n"
             )
-        if not partial:
-            # Counted per rule, so two rules with the same explanation are
-            # still told apart.
-            # Only rules for a kind of run this run had can be stale: an
-            # internal run says nothing about a fork-only rule.
-            for index, rule in enumerate(rules):
-                if index not in used and rule.get("runs", runs[0]) in runs:
-                    sys.stdout.write(
-                        "::warning title=Backend run-time skip rule matched nothing::"
-                        + annotation(
-                            f"{rule['files']} ({rule.get('runs', 'oss and internal')}): {rule['why']}"
-                            " (remove it from futureagi/.ci/runtime-skips.json)"
-                        )
-                        + "\n"
-                    )
-    if skips and enforce and not partial:
-        raise ValueError(f"{len(skips)} eligible tests reported runtime skips")
+        if not recorded and not partial:
+            summary.write("| All | All | 0 | 0 | 0 |\n")
+        summary.write(f"\nAllowed by runtime-skips.json: {len(allowed)} tests.\n\n")
+        per_rule = collections.Counter()
+        for (index, _), count in used.items():
+            per_rule[index] += count
+        for index, count in sorted(per_rule.items()):
+            rule = rules[index]
+            summary.write(
+                f"- {count} (of {sum(rule['files'].values())} measured), {rule['issue']},"
+                f" {rule['owner']}, expires {rule['expires']}: {rule['why']}\n"
+            )
+        if problems:
+            summary.write("\nRule problems:\n\n")
+            for problem in problems:
+                summary.write(f"- {problem}\n")
+    if enforce and not partial and (unexpected or problems):
+        raise ValueError(
+            f"{len(unexpected)} eligible tests reported unexpected runtime skips;"
+            f" {len(problems)} runtime-skip rule problems"
+        )
+
+
+def malformed_inventory(inventory):
+    """Whether an inventory is not a list of [id, test path, expectation] rows."""
+    return not isinstance(inventory, list) or any(
+        not isinstance(item, list)
+        or len(item) != 3
+        or not all(isinstance(field, str) for field in item[:2])
+        for item in inventory
+    )
+
+
+def run_date(root):
+    """The run's creation date (UTC), which every attempt of the run shares."""
+    created = json.loads(subprocess.check_output(["gh", "api", root]))["created_at"]
+    return datetime.date.fromisoformat(created[:10])
 
 
 def pages(endpoint, field):
@@ -390,6 +496,19 @@ def verify_run():
     for artifact in artifacts:
         by_name[artifact["name"]].append(artifact)
     problems = []
+    # Rule expiry is judged on the run's creation date, which every attempt of
+    # the run shares: re-running only this job cannot change the verdict.
+    try:
+        today = run_date(root)
+    except (
+        OSError,
+        subprocess.CalledProcessError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        problems.append(f"the run date is unavailable: {exc}")
+        today = None
     if set(by_name) != wanted.keys() or any(len(v) != 1 for v in by_name.values()):
         problems.append("the run does not have exactly one artifact per planned shard")
     plan_digest = hashlib.sha256(os.environ["SHARDS"].encode()).hexdigest()
@@ -442,6 +561,10 @@ def verify_run():
                     or not re.fullmatch("oss|[0-9a-f]{40}", receipt["ee"])
                 ):
                     raise ValueError("incomplete dependency identities")
+                if inventory is not None and malformed_inventory(inventory):
+                    # One validation at ingest: a malformed row marks this suite
+                    # partial and never reaches the skip evidence below.
+                    raise ValueError("malformed inventory row")
                 observed = runtime_skips(rows)
             except (
                 ValueError,
@@ -497,6 +620,12 @@ def verify_run():
         report_path=Path(os.environ["RUNNER_TEMP"]) / "backend-runtime-skips.json",
         summary_path=os.environ["GITHUB_STEP_SUMMARY"],
         runs=tuple(sorted(kinds)) or RUNS,
+        inventory_files={
+            label.split("::", 1)[0]
+            for inventory in expected.values()
+            for _, label, _ in inventory
+        },
+        today=today,
     )
     if problems:
         raise ValueError("; ".join(problems))
