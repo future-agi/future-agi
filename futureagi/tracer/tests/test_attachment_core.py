@@ -1057,6 +1057,23 @@ def test_a_full_global_shard_refuses_only_its_own_uploads(setup, monkeypatch):
     assert AttachmentBudget.objects.get(key="global:3").active_transfers == cap
 
 
+def test_real_uploads_fill_one_global_shard_before_the_project_cap(setup, monkeypatch):
+    """Uploads pinned to one shard are refused at that shard's own cap, while
+    the project row still has headroom: the shard row, not the project, binds."""
+    scope, _ = setup
+    shard_cap = 4
+    project_cap = 16
+    _upload_ids(monkeypatch, *([7] * (shard_cap + 1)))
+    current, _ = session(setup)
+    for _ in range(shard_cap):
+        initialized(setup, current=current)
+    with pytest.raises(AttachmentError, match="throttled"):
+        initialized(setup, current=current)
+    assert AttachmentBudget.objects.get(key="global:7").active_transfers == shard_cap
+    project = AttachmentBudget.objects.get(key=f"project:{scope.project_id}")
+    assert project.active_transfers == shard_cap < project_cap
+
+
 def test_project_cap_stays_exact_across_global_shards(setup, monkeypatch):
     """Per-scope budgets stay authoritative: a project admits exactly its own
     cap of transfers spread over every shard (each shard's cap is a quarter of the

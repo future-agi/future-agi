@@ -213,10 +213,14 @@ def test_drain_never_validates_without_configured_storage(
     ).exists()
 
 
-def test_without_the_drain_the_project_budget_throttles(setup):
+def test_without_the_drain_the_project_budget_throttles(setup, monkeypatch):
     """Negative control for the next test: undrained uploads hold their slots."""
     store = ErasableStore()
     current, _ = core.session(setup)
+    # Spread the uploads over the global shards (at most two per shard, cap
+    # four) so only the project cap of 16 can throttle, and only the 17th.
+    # Random upload ids put five on one shard in about 4% of runs.
+    core._upload_ids(monkeypatch, *(index % 16 for index in range(17)))
     for _ in range(16):
         streamed(setup, store, current=current)
     with pytest.raises(AttachmentError, match="throttled"):
