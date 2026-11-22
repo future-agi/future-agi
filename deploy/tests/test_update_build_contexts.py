@@ -143,6 +143,10 @@ class BuildContextPolicyTests(unittest.TestCase):
                     self.assert_guarded(ROOT / context / '.dockerignore')
 
     def test_ci_runs_on_ignore_and_dockerfile_changes(self):
+        # A push is filtered by the workflow's paths; a pull request by the
+        # same list in .github/scripts/ci_scope.py (UPDATE_CI_PATHS).
         workflow = (ROOT / '.github/workflows/update-ci.yml').read_text()
+        policy = (ROOT / '.github/scripts/ci_scope.py').read_text()
         for pattern in ('"**/.dockerignore"', '"**/*.dockerignore"', '"**/Dockerfile*"'):
-            self.assertEqual(workflow.count(pattern), 2, pattern)
+            self.assertEqual(workflow.count(pattern), 1, pattern)
+            self.assertEqual(policy.count(pattern), 1, pattern)

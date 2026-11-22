@@ -210,8 +210,11 @@ class StatusOverlayStaticTests(unittest.TestCase):
     def test_overlay_inventory_and_ci_filters(self):
         inventory = (ROOT / "deploy/update/deployment-files.txt").read_text().splitlines()
         ci = (ROOT / ".github/workflows/update-ci.yml").read_text()
+        # The push paths of the workflow, and the pull request list in ci_scope.py.
+        policy = (ROOT / ".github/scripts/ci_scope.py").read_text()
         for overlay in OVERLAYS.values():
-            self.assertEqual(ci.count('      - "' + overlay + '"'), 2)
+            self.assertEqual(ci.count('      - "' + overlay + '"'), 1)
+            self.assertEqual(policy.count('    "' + overlay + '",'), 1)
             self.assertIn(overlay, inventory)
         for base in ("docker-compose.yml", "docker-compose.distributed.yml", "deploy/docker-compose.production.yml"):
             self.assertNotIn("FI_HOST_UPDATE_STATUS", (ROOT / base).read_text())

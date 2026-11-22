@@ -649,6 +649,15 @@ compares that with the merged results (`scripts/shard-report.mjs parity`). It fa
 test has no result in any shard, ran in two shards, never started, or when a shard reported a test
 the listing does not have. Quarantined and `@live-llm` flows are out of both sides.
 
+**Run-time skips.** A test the listing expects to pass but that skips itself while it runs fails
+the gate when the repository variable `E2E_ENFORCE_RUNTIME_SKIPS` is `true`, unless
+`.runtime-skips.json` lists it for that stack: `{ "id": "<flow id or title text>", "stack":
+"distributed" | "standalone", "reason": "...", "issue": "<ticket>" }`. An entry that is not by
+design names the ticket that removes it. Each listed skip gets a warning on the run, and an entry
+whose test ran its body is reported as out of date. The backend has the same rule for its own
+skips in `futureagi/.ci/runtime-skips.json` (`BACKEND_ENFORCE_RUNTIME_SKIPS`), as rules of a
+test-file glob and a reason pattern; a skip is allowed only when both match.
+
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
 SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
 uploads a record of those steps' outcomes, and the `report` job fails without a record that says

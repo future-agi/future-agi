@@ -875,8 +875,12 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_update_static_gate_has_backend_and_bootstrap_triggers(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text()
         triggers = text.split("permissions:", 1)[0]
+        # A push is filtered at the trigger; a pull request starts the
+        # workflow and the same list in ci_scope.py selects the jobs.
+        policy = (ROOT / ".github/scripts/ci_scope.py").read_text()
         for path in ('"futureagi/**"', '"bin/lib/**"', '"scripts/check_update_safety.py"'):
-            self.assertEqual(triggers.count(path), 2)
+            self.assertEqual(triggers.count(path), 1)
+            self.assertEqual(policy.count("\n    " + path + ",\n"), 1)
         job = text.split("  safety:\n", 1)[1].split("\n  unit:", 1)[0]
         self.assertIn("--static --base", job)
         self.assertNotIn("up -d", job)

@@ -12,6 +12,7 @@ with completed pytest protocols. The file-only mode checks collection order.
 
 import collections
 import concurrent.futures
+import fnmatch
 import hashlib
 import io
 import json
@@ -23,6 +24,10 @@ import zipfile
 from pathlib import Path
 
 SHOWN = 40
+# The run-time skips that are expected, as rules: a test-file glob AND a reason
+# pattern. A skip is allowed only when both match, so a rule cannot swallow a
+# new skip with another reason in a covered file, nor the same reason elsewhere.
+RUNTIME_SKIP_RULES = Path(__file__).with_name("runtime-skips.json")
 
 
 def differing(records):
@@ -176,11 +181,70 @@ def check_terminals(expected, rows):
         raise ValueError(f"{len(missing)} tests never finished; first: {missing[0]!r}")
 
 
-def report_runtime_skips(skips, *, partial, enforce, report_path, summary_path):
-    """Publish the full list in either mode before optionally failing qualification."""
+def read_runtime_skip_rules(path=RUNTIME_SKIP_RULES):
+    """The committed rules. Fails closed: a broken rule stops the check."""
+    entries = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(entries, list):
+        raise ValueError(f"{path}: expected a list")
+    rules = []
+    for entry in entries:
+        fields = ("files", "reason", "why")
+        if not isinstance(entry, dict) or any(
+            not isinstance(entry.get(field), str) or not entry[field].strip()
+            for field in fields
+        ):
+            raise ValueError(
+                f"{path}: each rule needs files, reason and why: {entry!r}"
+            )
+        if not entry.get("issue") and "by design" not in entry["why"]:
+            raise ValueError(
+                f"{path}: a rule that is not by design names the ticket that removes it: {entry!r}"
+            )
+        rules.append({**entry, "pattern": re.compile(entry["reason"])})
+    return rules
+
+
+def allowing_rule(row, rules):
+    """The index of the rule that covers every skip of a row, or None."""
+    path = row["test"].split("::", 1)[0]
+    for index, rule in enumerate(rules):
+        if fnmatch.fnmatchcase(path, rule["files"]) and all(
+            rule["pattern"].search(skip["reason"]) for skip in row["skips"]
+        ):
+            return index
+    return None
+
+
+def report_runtime_skips(
+    skips, *, partial, enforce, report_path, summary_path, rules=None
+):
+    """Publish the full list in either mode before optionally failing qualification.
+
+    Skips a rule of runtime-skips.json covers are listed under "allowed" with
+    the rule; only the others are unexpected and can fail the check.
+    """
+    rules = read_runtime_skip_rules() if rules is None else rules
     skips.sort(key=lambda row: (row["suite"], row["group"], row["test"], row["id"]))
+    allowed = []
+    unexpected = []
+    for row in skips:
+        index = allowing_rule(row, rules)
+        if index is None:
+            unexpected.append(row)
+        else:
+            allowed.append({**row, "rule": rules[index]["why"]})
+    used = collections.Counter(row["rule"] for row in allowed)
+    skips = unexpected
     Path(report_path).write_text(
-        json.dumps({"partial": partial, "enforced": enforce, "tests": skips}, indent=2)
+        json.dumps(
+            {
+                "partial": partial,
+                "enforced": enforce,
+                "tests": skips,
+                "allowed": allowed,
+            },
+            indent=2,
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -213,6 +277,16 @@ def report_runtime_skips(skips, *, partial, enforce, report_path, summary_path):
             summary.write(f"| {suite} | {group} | {count} |\n")
         if not counts and not partial:
             summary.write("| All | All | 0 |\n")
+        summary.write(f"\nAllowed by runtime-skips.json: {len(allowed)} tests.\n\n")
+        for why, count in used.most_common():
+            summary.write(f"- {count}: {why}\n")
+        stale = [rule["why"] for rule in rules if rule["why"] not in used]
+        if not partial:
+            for why in stale:
+                sys.stdout.write(
+                    "::warning title=Backend run-time skip rule matched nothing::"
+                    f"{why} (remove it from futureagi/.ci/runtime-skips.json)\n"
+                )
     if skips and enforce and not partial:
         raise ValueError(f"{len(skips)} eligible tests reported runtime skips")
 

@@ -27,6 +27,34 @@ import path from "node:path";
 import { listSpecFiles } from "../lib/shard.ts";
 
 const E2E_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const RUNTIME_SKIPS = path.join(E2E_DIR, ".runtime-skips.json");
+const STACKS = ["distributed", "standalone"];
+
+/**
+ * The tests that may skip themselves while they run (.runtime-skips.json):
+ * each entry names a test (a substring of its title, usually the flow id), a
+ * stack, a reason and, unless the skip is by design, the ticket that removes
+ * it. Fails closed: a broken entry stops the parity check, because an entry
+ * is a test that proves nothing on that stack.
+ */
+export function readRuntimeSkips(file = RUNTIME_SKIPS) {
+  const entries = JSON.parse(readFileSync(file, "utf8"));
+  if (!Array.isArray(entries)) throw new Error(`${file}: expected a list`);
+  for (const entry of entries) {
+    const bad = ["id", "stack", "reason"].filter(
+      (field) => typeof entry?.[field] !== "string" || !entry[field].trim(),
+    );
+    if (bad.length || !STACKS.includes(entry.stack))
+      throw new Error(
+        `${file}: each entry needs id, reason and stack (${STACKS.join(" or ")}): ${JSON.stringify(entry)}`,
+      );
+    if (!entry.issue && !/by design/.test(entry.reason))
+      throw new Error(
+        `${file}: an entry that is not by design names the ticket that removes it: ${JSON.stringify(entry)}`,
+      );
+  }
+  return entries;
+}
 
 /**
  * Every spec of a JSON report (a listing or a run), flattened. A test is
@@ -87,6 +115,7 @@ export function checkParity(
   merged,
   specFiles,
   enforceRuntimeSkips = true,
+  allowedRuntimeSkips = [],
 ) {
   const expected = collectSpecs(listed);
   const actual = collectSpecs(merged);
@@ -96,11 +125,22 @@ export function checkParity(
     seen.set(spec.key, [...(seen.get(spec.key) ?? []), spec]);
   const planned = new Set(specFiles);
   const runtimeSkipped = [];
+  const allowedSkips = [];
+  const usedAllowances = new Set();
   const wrongOutcome = [];
   for (const { key, expectedStatus } of expected) {
     const statuses = (seen.get(key) ?? []).flatMap((entry) => entry.statuses);
-    if (expectedStatus === "passed" && statuses.includes("skipped"))
-      runtimeSkipped.push(key);
+    if (expectedStatus === "passed" && statuses.includes("skipped")) {
+      // The key's fourth position is the test's title.
+      const allowance = allowedRuntimeSkips.find((id) =>
+        JSON.parse(key)[3].includes(id),
+      );
+      if (allowance === undefined) runtimeSkipped.push(key);
+      else {
+        allowedSkips.push(key);
+        usedAllowances.add(allowance);
+      }
+    }
     if (
       !["passed", "skipped", "failed"].includes(expectedStatus) ||
       statuses.some(
@@ -153,6 +193,12 @@ export function checkParity(
   return {
     ok,
     enforceRuntimeSkips,
+    // Skipped at run time and listed in .runtime-skips.json for this stack.
+    allowedRuntimeSkips: allowedSkips.sort(),
+    // Listed for this stack but the test ran its body: the entry is stale.
+    staleAllowances: allowedRuntimeSkips
+      .filter((id) => !usedAllowances.has(id))
+      .sort(),
     listed: expected.length,
     reported: actual.length,
     files: new Set(expected.map((spec) => spec.file)).size,
@@ -301,13 +347,26 @@ function main([command, ...args]) {
     return 0;
   }
   if (command === "parity") {
+    const stack =
+      process.env.E2E_STACK === "standalone" ? "standalone" : "distributed";
     const result = checkParity(
       read("--listed"),
       read("--merged"),
       listSpecFiles(),
       !args.includes("--phase-runtime-skips") ||
         process.env.E2E_ENFORCE_RUNTIME_SKIPS === "true",
+      readRuntimeSkips()
+        .filter((entry) => entry.stack === stack)
+        .map((entry) => entry.id),
     );
+    for (const key of result.allowedRuntimeSkips)
+      console.log(
+        `::warning title=E2E test skipped itself (allowed in .runtime-skips.json)::${key}`,
+      );
+    for (const id of result.staleAllowances)
+      console.log(
+        `::warning title=E2E run-time skip list is out of date::${id} did not skip itself on ${stack}; remove its entry from e2e/.runtime-skips.json`,
+      );
     if (args.includes("--out"))
       writeFileSync(
         option(args, "--out"),

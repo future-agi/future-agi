@@ -1,0 +1,83 @@
+[
+  {
+    "files": "tracer/tests/*.py",
+    "reason": "could not import 'chdb'|explicit offline chDB runtime required|native dashboard parity requires local chdb",
+    "why": "Opt-in by design: native engine (chDB). CI does not install chDB; TH-10617 runs these. 1,462 tests in 40 files on 22 Nov.",
+    "issue": "TH-10617"
+  },
+  {
+    "files": "*/tests/*.py",
+    "reason": "live ClickHouse tests are opt-in|owned B20 native ClickHouse runtime|owned isolated session-annotation ClickHouse fixture|refusing to run outside the ch_rehearsal harness|isolated native (fixture )?engine required|owned ClickHouse (change-discovery )?sidecar not requested|optional isolated ClickHouse (execution )?engine",
+    "why": "Opt-in by design: live ClickHouse (owned, isolated or live, or the ch_rehearsal harness). No CI job provides one; TH-10617 runs these. 327 tests in 26 files on 22 Nov.",
+    "issue": "TH-10617"
+  },
+  {
+    "files": "tracer/tests/test_grouping_node_contract.py",
+    "reason": "^Skipped: set OMEGA_GROUPING_WORKER_ROOT to the worker checkout$",
+    "why": "Optional by design: compares with the grouping worker, a separate repository, when a checkout is given. 4 tests."
+  },
+  {
+    "files": "tfc/tests/test_licensing_migration_boot.py",
+    "reason": "^Skipped: Cloud control-plane not installed in this configuration$",
+    "why": "Not applicable by design: the cloud control plane is not installed in the test settings. 1 test."
+  },
+  {
+    "files": "simulate/tests/test_scenario_fault_rules.py",
+    "reason": "^Skipped: could not import 'fi\\.alk\\.harness\\.actors'",
+    "why": "Optional by design: compares with the harness package where it is installed; CI does not install it. 1 test."
+  },
+  {
+    "files": "tracer/tests/test_session_user_candidate_reads.py",
+    "reason": "^Skipped: CH25_HOST is not configured$",
+    "why": "The test reads a ClickHouse variable CI does not set. 4 tests.",
+    "issue": "TH-10618"
+  },
+  {
+    "files": "tracer/tests/test_hourly_aggregate_state_route_live_ch.py",
+    "reason": "^Skipped: test ClickHouse has no spans to plan against$",
+    "why": "The test needs spans it does not create. 1 test.",
+    "issue": "TH-10618"
+  },
+  {
+    "files": "tracer/tests/test_span_attribute_null_target_grain.py",
+    "reason": "^Skipped: local ClickHouse is unavailable",
+    "why": "The test connects to a hard-coded local ClickHouse port. 1 test.",
+    "issue": "TH-10618"
+  },
+  {
+    "files": "tracer/tests/test_exact_attribute_detail.py",
+    "reason": "^Skipped: local ClickHouse is unavailable",
+    "why": "The test connects to a hard-coded local ClickHouse port. 1 test.",
+    "issue": "TH-10618"
+  },
+  {
+    "files": "model_hub/tests/test_annotation_e2e_gaps.py",
+    "reason": "^Skipped: NLTK punkt_tab tokenizer not available in this env$",
+    "why": "The CI environment lacks the NLTK punkt_tab data. 1 test.",
+    "issue": "TH-10618"
+  },
+  {
+    "files": "model_hub/tests/test_dataset_huggingface_api.py",
+    "reason": "^Skipped: API returned 400: ",
+    "why": "The test's own request is rejected (400) and the test skips instead of failing. 1 test.",
+    "issue": "TH-10618"
+  },
+  {
+    "files": "tfc/tests/test_temporal_billing_imports.py",
+    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.dunning'",
+    "why": "The module is missing from the private package on an internal run. 1 test.",
+    "issue": "TH-10618"
+  },
+  {
+    "files": "tracer/tests/test_clickhouse_integration.py",
+    "reason": "^Skipped: (Simulation|Dataset) tables not in test schema: ",
+    "why": "The test ClickHouse schema lacks the simulation and dataset tables. 3 tests.",
+    "issue": "TH-10618"
+  },
+  {
+    "files": "tracer/tests/test_ch25_session_bulkselect_and_scorecol_sliceF.py",
+    "reason": "^Skipped: no Organization in pg-test for the Site-2 fixture$",
+    "why": "The fixture expects an Organization row the test database does not have. 3 tests.",
+    "issue": "TH-10619"
+  }
+]

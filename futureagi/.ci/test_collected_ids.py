@@ -7,6 +7,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -232,8 +233,142 @@ class TerminalTest(unittest.TestCase):
                                     ],
                                 }
                             ],
+                            "allowed": [],
                         },
                     )
+
+
+class RuntimeSkipRulesTest(unittest.TestCase):
+    """runtime-skips.json: the expected backend run-time skips, as rules."""
+
+    MEASURED = json.loads((CI / "fixtures/runtime-skips-measured.json").read_text())
+
+    def rows(self, pairs):
+        out = []
+        for number, (path, reason) in enumerate(pairs):
+            out.append(
+                {
+                    "suite": "main",
+                    "group": 1,
+                    "id": f"id-{number}",
+                    "test": f"{path}::test_{number}",
+                    "skips": [{"phase": "setup", "reason": reason}],
+                }
+            )
+        return out
+
+    def report(self, rows, rules=None):
+        with tempfile.TemporaryDirectory() as temp:
+            out = io.StringIO()
+            report = pathlib.Path(temp) / "skips.json"
+            summary = pathlib.Path(temp) / "summary.md"
+            with contextlib.redirect_stdout(out):
+                try:
+                    checker.report_runtime_skips(
+                        rows,
+                        enforce=True,
+                        partial=False,
+                        report_path=report,
+                        summary_path=summary,
+                        rules=rules,
+                    )
+                    error = None
+                except ValueError as exc:
+                    error = str(exc)
+            return error, json.loads(report.read_text()), out.getvalue()
+
+    def measured_rows(self):
+        return self.rows(
+            [(pair["file"], pair["reason"]) for pair in self.MEASURED["pairs"]]
+        )
+
+    def test_enforced_the_measured_skips_all_pass(self):
+        # Every (file, reason) pair of a real Backend CI run on 22 Nov.
+        self.assertEqual(self.MEASURED["total"], 1811)
+        error, report, _ = self.report(self.measured_rows())
+        self.assertIsNone(error)
+        self.assertEqual(report["tests"], [])
+        self.assertEqual(len(report["allowed"]), len(self.MEASURED["pairs"]))
+
+    def test_the_two_opt_in_rules_cover_what_was_measured(self):
+        rules = checker.read_runtime_skip_rules()
+        counts = [0] * len(rules)
+        for pair, row in zip(self.MEASURED["pairs"], self.measured_rows(), strict=True):
+            counts[checker.allowing_rule(row, rules)] += pair["tests"]
+        self.assertEqual(counts[:2], [1462, 327])
+        self.assertEqual(sum(counts[2:]), 22)
+        self.assertTrue(all(counts), "a rule matches nothing that was measured")
+
+    def test_a_new_skip_in_a_file_no_rule_covers_fails(self):
+        rows = self.measured_rows() + self.rows(
+            [
+                (
+                    "model_hub/tests/test_new_feature.py",
+                    "Skipped: could not import 'chdb': No module named 'chdb'",
+                )
+            ]
+        )
+        error, report, out = self.report(rows)
+        self.assertEqual(error, "1 eligible tests reported runtime skips")
+        self.assertEqual(len(report["tests"]), 1)
+        self.assertIn("model_hub/tests/test_new_feature.py", out)
+
+    def test_a_new_reason_in_a_covered_file_fails(self):
+        # The file is covered by a rule, but not this reason: a rule must not
+        # swallow an unrelated skip.
+        rows = self.measured_rows() + self.rows(
+            [
+                (
+                    "tracer/tests/test_relational_filter_native.py",
+                    "Skipped: database is not reachable",
+                )
+            ]
+        )
+        error, report, _ = self.report(rows)
+        self.assertEqual(error, "1 eligible tests reported runtime skips")
+        self.assertEqual(
+            report["tests"][0]["test"].split("::")[0],
+            "tracer/tests/test_relational_filter_native.py",
+        )
+
+    def test_every_skip_of_a_test_must_be_covered(self):
+        row = self.rows(
+            [
+                (
+                    "tracer/tests/test_relational_filter_native.py",
+                    "Skipped: could not import 'chdb': x",
+                )
+            ]
+        )[0]
+        row["skips"].append({"phase": "call", "reason": "Skipped: something else"})
+        self.assertIsNone(checker.allowing_rule(row, checker.read_runtime_skip_rules()))
+
+    def test_a_rule_that_matches_nothing_is_named(self):
+        error, _, out = self.report([], rules=checker.read_runtime_skip_rules())
+        self.assertIsNone(error)
+        self.assertIn(
+            "::warning title=Backend run-time skip rule matched nothing::", out
+        )
+
+    def test_the_rule_file_is_strict(self):
+        good = {"files": "a/tests/*.py", "reason": "x", "why": "Optional by design: y"}
+        with tempfile.TemporaryDirectory() as temp:
+            path = pathlib.Path(temp) / "rules.json"
+            for bad in (
+                "{",
+                "{}",
+                json.dumps([{**good, "why": " "}]),
+                json.dumps([{"reason": "x", "why": "by design"}]),
+                json.dumps([{**good, "why": "flaky"}]),
+                json.dumps([{**good, "reason": "("}]),
+            ):
+                path.write_text(bad)
+                with self.assertRaises((ValueError, re.error), msg=bad):
+                    checker.read_runtime_skip_rules(path)
+            path.write_text(
+                json.dumps([good, {**good, "why": "flaky", "issue": "TH-1"}])
+            )
+            self.assertEqual(len(checker.read_runtime_skip_rules(path)), 2)
 
 
 class ProducerIdentityTest(unittest.TestCase):

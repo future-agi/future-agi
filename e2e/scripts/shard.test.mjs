@@ -21,7 +21,12 @@ import {
   shardTestMatch,
 } from "../lib/shard.ts";
 import { grepInvertPattern } from "../lib/quarantine.ts";
-import { checkParity, cohortAttempt, fileDurations } from "./shard-report.mjs";
+import {
+  checkParity,
+  cohortAttempt,
+  fileDurations,
+  readRuntimeSkips,
+} from "./shard-report.mjs";
 
 const flat = (groups) => groups.flat().sort();
 
@@ -337,6 +342,83 @@ test("parity checks the listed project and declared outcome, not just result cou
     checkParity(report(plan), report(actual), FILES, false).ok,
     false,
   );
+});
+
+test("with enforcement on, only a run-time skip listed for the stack passes", () => {
+  // A test listed to pass whose one result is a skip: it skipped itself.
+  const selfSkip = (title) => {
+    const entry = spec("flows/a.spec.ts", 9, title, [0]);
+    entry.tests[0].results[0].status = "skipped";
+    return entry;
+  };
+  const listedTwo = report(
+    spec("flows/a.spec.ts", 3, "one", []),
+    spec("flows/a.spec.ts", 9, "OBS-E2E-031: churn", []),
+  );
+  const merged = report(
+    spec("flows/a.spec.ts", 3, "one", [1]),
+    selfSkip("OBS-E2E-031: churn"),
+  );
+  const unlisted = checkParity(listedTwo, merged, FILES, true, []);
+  assert.equal(unlisted.ok, false);
+  assert.equal(unlisted.problems.runtimeSkipped.length, 1);
+  const allowed = checkParity(listedTwo, merged, FILES, true, ["OBS-E2E-031"]);
+  assert.equal(allowed.ok, true);
+  assert.deepEqual(allowed.problems.runtimeSkipped, []);
+  assert.equal(allowed.allowedRuntimeSkips.length, 1);
+  assert.deepEqual(allowed.staleAllowances, []);
+  // An allowance for another test does not cover this one.
+  assert.equal(
+    checkParity(listedTwo, merged, FILES, true, ["OBS-E2E-032"]).ok,
+    false,
+  );
+  // An allowance for a test that ran its body is reported as out of date.
+  const ran = report(
+    spec("flows/a.spec.ts", 3, "one", [1]),
+    spec("flows/a.spec.ts", 9, "OBS-E2E-031: churn", [1]),
+  );
+  const stale = checkParity(listedTwo, ran, FILES, true, ["OBS-E2E-031"]);
+  assert.equal(stale.ok, true);
+  assert.deepEqual(stale.staleAllowances, ["OBS-E2E-031"]);
+});
+
+test("the run-time skip list is strict, and the committed one is what CI measured", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "e2e-skip-list-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "skips.json");
+  const good = {
+    id: "X-E2E-001",
+    stack: "standalone",
+    reason: "Distributed-only by design: no bind",
+  };
+  for (const bad of [
+    "{",
+    "{}",
+    JSON.stringify([{ ...good, reason: " " }]),
+    JSON.stringify([{ ...good, stack: "both" }]),
+    JSON.stringify([{ stack: "standalone", reason: "why" }]),
+    // Not by design, so it must name the ticket that removes it.
+    JSON.stringify([{ ...good, reason: "flaky guard" }]),
+  ]) {
+    writeFileSync(file, bad);
+    assert.throws(() => readRuntimeSkips(file), bad);
+  }
+  writeFileSync(
+    file,
+    JSON.stringify([good, { ...good, reason: "flaky guard", issue: "TH-1" }]),
+  );
+  assert.equal(readRuntimeSkips(file).length, 2);
+  const committed = readRuntimeSkips();
+  const by = (stack) =>
+    committed
+      .filter((entry) => entry.stack === stack)
+      .map((entry) => entry.id)
+      .sort();
+  // Measured on real merged reports on 22 Nov: 2 on Distributed, 4 on Standalone.
+  assert.deepEqual(by("distributed"), ["OBS-E2E-031", "OBS-E2E-032"]);
+  assert.equal(by("standalone").length, 4);
+  const names = committed.map((entry) => `${entry.stack} ${entry.id}`);
+  assert.equal(new Set(names).size, names.length);
 });
 
 test("the phased parity CLI reports the same runtime skips in warning and enforced modes", (t) => {

@@ -54,6 +54,115 @@ def rehearsal_modules():
     return sorted(seen)
 
 
+def workflow_job(workflow, job):
+    return re.split(r"\n  [a-z0-9-]+:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
+
+
+def decide(**env):
+    """scripts/update-rehearsal-decision.sh, as the changes job runs it."""
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/update-rehearsal-decision.sh")],
+        env={"PATH": "/usr/bin:/bin", **env},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return dict(line.split("=", 1) for line in result.stdout.splitlines())
+
+
+class UpdateCiAdmission(unittest.TestCase):
+    """Every pull request starts Update CI; the changes job decides what runs."""
+
+    WORKFLOW = (SCRIPTS.parent / "workflows/update-ci.yml").read_text()
+
+    def triggers(self):
+        return self.WORKFLOW.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+
+    def test_a_pull_request_starts_the_workflow_whatever_it_touches(self):
+        # A trigger-level path filter stops the workflow before any job: a pull
+        # request into main or a labelled one never got its rehearsals.
+        pull_request = self.triggers().split("  pull_request:\n", 1)[1].split("  push:\n", 1)[0]
+        self.assertNotIn("paths", pull_request)
+        self.assertIn("    branches: [dev, main]\n", pull_request)
+
+    def test_the_policy_list_is_the_push_list(self):
+        push = self.triggers().split("  push:\n", 1)[1].split("  merge_group:", 1)[0]
+        listed = re.findall(r'^      - "([^"]+)"$', push, re.M)
+        self.assertGreater(len(listed), 40)
+        self.assertEqual(list(scope["UPDATE_CI_PATHS"]), listed)
+
+    def test_which_paths_select_the_ordinary_jobs(self):
+        relevant = scope["update_ci_relevant"]
+        for path in ("futureagi/tracer/models.py", "bin/update", "deploy/update/apply.py",
+                     "fi-collector/main.go", "docker-compose.yml", ".github/workflows/update-ci.yml"):
+            self.assertTrue(relevant({path.encode()}), path)
+        for path in ("frontend/src/app.jsx", "README.md", "docs/page.mdx", "e2e/flows/a.spec.ts"):
+            self.assertFalse(relevant({path.encode()}), path)
+
+    def test_an_ordinary_pull_request_into_dev_with_no_matching_file_runs_nothing(self):
+        # The decision for the Real jobs ...
+        quiet = dict(EVENT_NAME="pull_request", BASE_REF="dev", LABELLED="false",
+                     TOOLING_CHANGED="false", BUILT_CHANGED="false")
+        self.assertEqual(decide(**quiet), {"upgrade": "false", "abc": "false"})
+        # ... and the plan for the ordinary jobs, on a real pull request merge.
+        with tempfile.TemporaryDirectory() as directory:
+            original = os.getcwd()
+            os.chdir(directory)
+            try:
+                git = lambda *a: subprocess.check_output(["git", *a], text=True).strip()
+                git("init", "-q", "-b", "dev")
+                git("config", "user.name", "fixture")
+                git("config", "user.email", "fixture@example.invalid")
+                Path("README.md").write_text("a")
+                git("add", "-A"); git("commit", "-qm", "base")
+                base = git("rev-parse", "HEAD")
+                git("checkout", "-qb", "work")
+                Path("frontend").mkdir()
+                Path("frontend/app.jsx").write_text("b")
+                git("add", "-A"); git("commit", "-qm", "frontend only")
+                head = git("rev-parse", "HEAD")
+                git("checkout", "-q", "dev")
+                git("merge", "-q", "--no-ff", "work", "-m", "event merge")
+                tested = git("rev-parse", "HEAD")
+                flags = plan("pull_request", tested, base, head, "")["flags"]
+                self.assertFalse(flags["ordinary_update"])
+                # A backend file in the same pull request selects them.
+                git("checkout", "-q", "work")
+                Path("futureagi").mkdir()
+                Path("futureagi/x.py").write_text("c")
+                git("add", "-A"); git("commit", "-qm", "backend")
+                head = git("rev-parse", "HEAD")
+                git("checkout", "-q", "dev")
+                git("reset", "-q", "--hard", base)
+                git("merge", "-q", "--no-ff", "work", "-m", "event merge")
+                tested = git("rev-parse", "HEAD")
+                self.assertTrue(plan("pull_request", tested, base, head, "")["flags"]["ordinary_update"])
+            finally:
+                os.chdir(original)
+
+    def test_a_labelled_pull_request_or_one_into_main_rehearses_whatever_it_touches(self):
+        # Unit-proven only: this repository's own pull requests are neither.
+        quiet = dict(EVENT_NAME="pull_request", LABELLED="false", TOOLING_CHANGED="false", BUILT_CHANGED="false")
+        both = {"upgrade": "true", "abc": "true"}
+        self.assertEqual(decide(**{**quiet, "BASE_REF": "dev", "LABELLED": "true"}), both)
+        self.assertEqual(decide(**{**quiet, "BASE_REF": "main"}), both)
+        changes = workflow_job(self.WORKFLOW, "changes")
+        self.assertIn("""--jq 'any(.labels[]; .name == "update-rehearsal")'""", changes)
+        self.assertIn("BASE_REF: ${{ github.base_ref || github.ref_name }}", changes)
+
+    def test_when_the_decision_fails_the_real_jobs_and_the_ordinary_jobs_run(self):
+        for job, output in (("automatic-upgrade", "upgrade"), ("automatic-a-b-c", "abc")):
+            condition = workflow_job(self.WORKFLOW, job).split("    if: ", 1)[1].split("\n", 1)[0]
+            self.assertIn(f"needs.changes.outputs.{output} == 'true' || (needs.changes.result != 'success'", condition)
+        names = re.findall(r"^  ([a-z0-9-]+):$", self.WORKFLOW.split("\njobs:\n", 1)[1], re.M)
+        ordinary = [n for n in names if n not in ("changes", "automatic-upgrade", "automatic-a-b-c")]
+        self.assertGreaterEqual(len(ordinary), 6)
+        for job in ordinary:
+            head = workflow_job(self.WORKFLOW, job).split("    steps:", 1)[0]
+            self.assertIn("    needs: changes\n", head, job)
+            self.assertIn("(needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false')", head, job)
+
+
 class RehearsalInputs(unittest.TestCase):
     """Which changed paths start the two Real update rehearsals."""
 

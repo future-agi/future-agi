@@ -19,6 +19,86 @@ PIN_INPUTS = {
     b"futureagi/code-executor/requirements.sandbox.txt",
 }
 SUITES = ("backend", "metrics", "any", "collector", "ordinary_update")
+# The paths for which a pull request runs Update CI's ordinary jobs. It is the
+# workflow's push path list (test_ci_scope.py keeps the two equal). Pull
+# requests have no path filter in the workflow, so the Real rehearsals can
+# still run for a release, a label or a tooling change whatever the files.
+UPDATE_CI_PATHS = (
+    "bin/update",
+    "deploy/update/**",
+    "deploy/tests/test_update_*.py",
+    "deploy/tests/update_e2e/**",
+    "scripts/generate_update_manifest.py",
+    "scripts/check_update_safety.py",
+    "**/*.py",
+    "**/*.go",
+    "**/*.sql",
+    "**/*.sh",
+    "bin/**",
+    "scripts/**",
+    "deploy/**",
+    "fi-collector/**",
+    "agentcc-gateway/**",
+    "docker-compose*.yml",
+    "futureagi/**",
+    "bin/lib/**",
+    ".github/workflows/backend-ci.yml",
+    "docker-compose.yml",
+    "docker-compose.distributed.yml",
+    "deploy/docker-compose.production.yml",
+    "deploy/docker-compose.host-status.standalone.yml",
+    "deploy/docker-compose.host-status.distributed.yml",
+    "bin/install",
+    "deploy/setup.sh",
+    ".env.example",
+    "deploy/.env.production.example",
+    "deploy/env-reference.toml",
+    ".gitignore",
+    "**/.dockerignore",
+    "**/*.dockerignore",
+    "**/Dockerfile*",
+    ".github/actions/setup-helm-tools/**",
+    ".github/workflows/release-update-manifest.yml",
+    ".github/workflows/release-images.yml",
+    ".github/workflows/update-ci.yml",
+    ".github/workflows/build-image-multiarch.yml",
+    ".github/workflows/helm-release.yml",
+    "agentcc-gateway/config.example.yaml",
+    "deploy/clickhouse/users.d/**",
+    "deploy/standalone/clickhouse/**",
+    "futureagi/.ci/clickhouse-storage-policy.xml",
+    "futureagi/config/peerdb/temporal-dynamicconfig.yaml",
+    "futureagi/scripts/property_catalog_oss/**",
+    "futureagi/tracer/services/clickhouse/v2/observed_catalog/**",
+    ".gitattributes",
+)
+
+
+def glob_match(pattern, path):
+    """A GitHub path filter pattern against a path: ** crosses directories, * does not."""
+    out = ""
+    at = 0
+    while at < len(pattern):
+        if pattern.startswith("**/", at):
+            out, at = out + "(?:.*/)?", at + 3
+        elif pattern.startswith("**", at):
+            out, at = out + ".*", at + 2
+        elif pattern[at] == "*":
+            out, at = out + "[^/]*", at + 1
+        else:
+            out, at = out + re.escape(pattern[at]), at + 1
+    return re.fullmatch(out, path, re.S) is not None
+
+
+def update_ci_relevant(paths):
+    """Whether a pull request touches anything Update CI's ordinary jobs cover."""
+    return any(
+        glob_match(pattern, path.decode("utf-8", "surrogateescape"))
+        for path in paths
+        for pattern in UPDATE_CI_PATHS
+    )
+
+
 # Registers under deploy/update that only scripts/check_update_safety.py reads.
 # Ordinary pull requests edit them to record a review, and no rehearsal step
 # opens them. Every other file there but a document is input of the update
@@ -180,6 +260,11 @@ def plan(event, tested, base, head, mode, standalone=False):
     # Group member labels are not available here. A group may carry a forced
     # Standalone proof even for metadata-only changes.
     flags["any"] |= event == "merge_group" or standalone
+    if event == "pull_request" and paths is not None:
+        # What the workflow's path filter decided before; unknown impact runs.
+        flags["ordinary_update"] = flags["ordinary_update"] and update_ci_relevant(
+            paths
+        )
     flags.update(
         update_safety=paths is None or bool(paths),
         executor_base=candidate and (paths is None or bool(paths & PIN_INPUTS)),
