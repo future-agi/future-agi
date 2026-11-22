@@ -932,7 +932,7 @@
 
 **Goal:** Save a custom-formula conversation metric, read its settled value on the Overview, freeze it as a snapshot, and see that snapshot render on a dashboard and record a threshold alert. The Add to dashboard and Create alert menu items are disabled in the product, so the widget and monitor are created through the API the product used.
 
-**Spec:** `flows/dashboards/derived-metric.spec.ts:73`
+**Spec:** `flows/dashboards/derived-metric.spec.ts:92`
 
 **Tags:** —
 
@@ -940,7 +940,7 @@
 
 1. ingest two minted conversations, each a root and a child span with numeric resolved/escalated outcomes, aged an hour so their 15-minute bucket is closed
 2. create the metric through New metric: name, project, Custom formula over conversations, two span-attribute inputs and the formula; Save metric validates, creates and queues the first calculation
-3. wait for the conversations to settle (30 minutes after their last arrival) and the next refresh to publish them
+3. give this project a 5-minute settle and a 60-second cadence (the defaults are 30 minutes and 900 seconds, and no API sets them), see a publication report the window as not final while the conversations are open, then wait for them to settle (5 minutes after their last arrival) and the next refresh to publish them
 4. reload the metric page and read the Overview value on the default 7-day window and on a Custom window around the seeded bucket
 5. create a static below-threshold monitor through POST /tracer/user-alerts/, then Save snapshot on the Custom window
 6. create a dashboard with a metric widget pinned to the snapshot through the dashboard and widget APIs, then open it in the browser
@@ -950,10 +950,35 @@
 
 - The exact four seeded spans, their typed outcomes and two distinct conversations belong to the minted project in the actor organization/default workspace.
 - Validate accepts the formula, and the saved metric is version 1 of a custom conversation recipe in PG and in the metric API, with the same definition hash.
-- The KPI API returns value 0.5 over exactly two evaluated conversations for the Custom window, not partial, and the Overview shows 0.5 on both windows.
+- While the conversations are open the KPI API reports the Custom window as partial; it reports a final value no earlier than the last arrival plus the settle time: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.
 - The snapshot run completes; it froze exactly the two seeded conversations, its committed overall result is numerator 1, denominator 2, value 0.5, and its commit row names that result.
 - The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.
 - The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.
+
+### DASH-E2E-018 — rapid date presets query only the final range, custom Done and Refresh apply at once
+
+**Goal:** A user flicking through date presets sees each chip highlight as they click, while the widgets load only the range they land on; a custom range applies as soon as they press Done, and Refresh still brings the widgets to a completed result.
+
+**Spec:** `flows/dashboards/preset-burst-requests.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed 3 traces into a minted project and a dashboard with trace_count and span_count widgets stored at 7D
+2. open the dashboard on the Default chip and wait for both widgets to load
+3. click Today, 7D and 30D back to back
+4. see the 30D chip highlighted, then both widgets load the 30-day range with the seeded totals
+5. open Custom, type today's date as Start Date and End Date and press Done
+6. click Refresh with the custom range applied and wait for it to finish
+
+**Backend state verified:**
+
+- the preset burst sends exactly one time range per widget on POST /tracer/dashboard/query/, the 30-day one; no Today or 7D range is ever sent, the 30D chip is primary before the first 30D query, and that query starts at least 450 ms after the 30D click
+- each completed, exact 30D response spans the expected start and end and contains 3 traces or 6 spans
+- custom Done sends exactly one range per widget, [local midnight today, local midnight tomorrow), dispatched under 450 ms after Done
+- the custom-range responses are complete and exact with the seeded totals
+- Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals; Refreshing returns to Refresh and Last updated shows that completion
 
 ## datasets
 

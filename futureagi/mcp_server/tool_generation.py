@@ -419,11 +419,20 @@ def generate_tool_manifest(contract_path: Path, catalog_path: Path) -> dict[str,
             tool["entitlement"] = entry["entitlement"]
         generated_tools.append(tool)
 
-    contract_bytes = contract_path.read_bytes()
+    # A fingerprint of the tool NAMES, not of the whole contract. The manifest
+    # used to carry a hash of all of swagger.json, so any two pull requests
+    # that touched the API conflicted on that one line. This line changes only
+    # when the set of tools changes. Two pull requests that both add or remove
+    # a tool still conflict here, on purpose: each also set the catalog's
+    # expected_tool_count to the same number, and that edit would otherwise
+    # merge cleanly to a wrong count. `scripts/generate-mcp-tools.py --check`
+    # regenerates the manifest and compares it, which is what keeps the
+    # committed file in step with the contract.
+    tool_names = "\n".join(sorted(tool["name"] for tool in generated_tools))
     return {
         "schema_version": 1,
         "source_contract": str(contract_path.name),
-        "source_contract_sha256": hashlib.sha256(contract_bytes).hexdigest(),
+        "tool_names_sha256": hashlib.sha256(tool_names.encode()).hexdigest(),
         "tool_count": len(generated_tools),
         "tools": generated_tools,
     }

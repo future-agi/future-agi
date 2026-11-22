@@ -125,6 +125,9 @@ export function collectFlowEntries(run = execFileSync) {
           FLOW_CATALOG_OUT: listFile,
           E2E_INCLUDE_QUARANTINED: "1",
           E2E_LIVE_LLM: "1",
+          // The ordinary legs run with SKILLS_COHORT=ordinary, which narrows the
+          // suite to what the Skills cohorts do not own (playwright.config.ts).
+          SKILLS_COHORT: undefined,
         },
       },
     );

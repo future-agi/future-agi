@@ -22,6 +22,12 @@ ARG NGINX_IMAGE=nginx:1.31.8-alpine-slim@sha256:4c734d33ee731135dc9f2349914a3455
 # ($BUILDPLATFORM) instead of running Vite under QEMU for linux/arm64.
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS build
 
+WORKDIR /app
+# Refresh the pinned base's dependency snapshot if the lockfile changed.
+# Bundle inputs (including Vite flags) must not invalidate the install.
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile --non-interactive
+
 # Build args forwarded from docker-compose. Vite reads env vars prefixed
 # VITE_ at build time and bakes them into the bundle.
 ARG VITE_HOST_API=http://localhost:8000
@@ -29,8 +35,6 @@ ARG VITE_ENVIRONMENT=production
 ARG VITE_SKILL_TRACES=off
 ENV VITE_HOST_API=${VITE_HOST_API} \
     VITE_ENVIRONMENT=${VITE_ENVIRONMENT}
-
-WORKDIR /app
 
 COPY . ./
 
@@ -49,8 +53,7 @@ ARG PRUNE_PUBLIC_ASSETS="assets/readme assets/login_signup assets/images/home as
 
 # vite.config.js already sets build.sourcemap=false; deleting *.map is a guard
 # so a config change cannot ship source maps.
-RUN yarn install --frozen-lockfile --non-interactive \
-    && yarn build \
+RUN yarn build \
     && find dist -name '*.map' -delete \
     && for dir in $PRUNE_PUBLIC_ASSETS; do rm -rf "dist/$dir"; done \
     && if [ -n "$PRUNE_PUBLIC_ASSETS" ]; then \

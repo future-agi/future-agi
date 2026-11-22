@@ -1,5 +1,4 @@
 import test from 'node:test';
-import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -30,32 +29,19 @@ test('discovery includes future nested suites and excludes only the explicit doc
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('required cloud catalog gate runs harness regressions; docs remain a separate fail-closed command', () => {
+test('the required catalog check runs the harness regressions once per stack; docs remain a separate fail-closed command', () => {
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   const workflow = parse(readFileSync(new URL('../../.github/workflows/e2e-ci.yml', import.meta.url), 'utf8'));
-  const catalog = workflow.jobs['flow-catalog'];
-  assert.equal(catalog.needs, 'changes');
-  assert.equal(catalog.if, "needs.changes.outputs.any == 'true'");
-  assert.equal(catalog['continue-on-error'], undefined);
-  const step = catalog.steps.find(s => s.run?.trimEnd().split('\n').at(-1).trim() === 'yarn catalog:check');
-  assert.ok(step, 'the catalog job must finish its shell step with catalog:check');
+  // catalog:check ends with the harness selftests. It runs on each stack's last
+  // shard, and the once-per-stack record carries its outcome to the report job.
+  const steps = workflow.jobs.e2e.steps;
+  const step = steps.find(s => s.id === 'catalog');
+  assert.equal(step.run, 'yarn catalog:check');
   assert.equal(step['working-directory'], 'e2e');
-  assert.equal(step.if, undefined);
+  assert.equal(step.if, "env.E2E_LAST_SHARD == 'true'");
   assert.equal(step['continue-on-error'], undefined);
-  const gate = workflow.jobs['e2e-tests'];
-  assert.ok(gate.needs.includes('flow-catalog'));
-  assert.equal(gate.if, 'always()');
-  const outcome = gate.steps.find(s => s.env?.NEEDS === '${{ toJSON(needs) }}');
-  assert.ok(outcome, 'aggregate must check dependency outcomes');
-  assert.equal(outcome.if, undefined);
-  assert.equal(outcome['continue-on-error'], undefined);
-  const needs = Object.fromEntries(gate.needs.map(id => [id, { result: 'success' }]));
-  needs.changes.outputs = { any: 'true' };
-  for (const result of ['success', 'failure', 'skipped', 'cancelled']) {
-    needs['flow-catalog'].result = result;
-    const check = spawnSync('/bin/bash', ['-e', '-c', outcome.run], { env: { PATH: process.env.PATH, NEEDS: JSON.stringify(needs) } });
-    assert.equal(check.status === 0, result === 'success', `aggregate with catalog result ${result}`);
-  }
+  const record = steps.find(s => s.name === 'Record the once-per-stack steps');
+  assert.equal(record.env.CATALOG, '${{ steps.catalog.outcome }}');
   assert.equal(manifest.scripts['catalog:check'], 'node scripts/flow-catalog.mjs --check && yarn selftest');
   assert.equal(manifest.scripts.selftest, 'node scripts/selftest.mjs');
   assert.equal(manifest.scripts['selftest:docs'], `node --test ${docsSuite}`);

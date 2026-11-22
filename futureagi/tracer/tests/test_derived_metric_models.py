@@ -216,6 +216,14 @@ def test_settle_minutes_range(observe_project, minutes, ok):
 
 
 @pytest.mark.django_db
+def test_a_new_refresh_row_takes_the_default_settle_and_cadence(observe_project):
+    # Literal values on purpose: an end-to-end flow shortens both on its own
+    # project, so nothing else waits out the default to notice a change to it.
+    refresh = MetricProjectRefresh.for_project(observe_project.id)
+    assert (refresh.settle_minutes, refresh.cadence_seconds) == (30, 900)
+
+
+@pytest.mark.django_db
 def test_one_refresh_row_per_project(observe_project):
     MetricProjectRefresh.for_project(observe_project.id)
     with pytest.raises(IntegrityError), transaction.atomic():

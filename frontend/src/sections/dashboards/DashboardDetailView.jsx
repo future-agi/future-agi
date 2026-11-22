@@ -656,7 +656,7 @@ function DraggableWidgetCard({
               />
             ) : (
               <WidgetChart
-                key={`${widget.id}:${datePreset || "default"}${
+                key={`${widget.id}${
                   globalDateRange
                     ? `:${globalDateRange.start}:${globalDateRange.end}`
                     : ""
@@ -774,9 +774,34 @@ export default function DashboardDetailView() {
   const [customDateRange, setCustomDateRange] = useState(null); // [start, end]
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const customDateAnchorRef = useRef(null);
+  const [appliedDatePreset, setAppliedDatePreset] = useState(datePreset);
+  const presetTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(presetTimerRef.current), []);
+
+  const selectDatePreset = (preset) => {
+    setDatePreset(preset);
+    clearTimeout(presetTimerRef.current);
+    presetTimerRef.current = setTimeout(
+      () => setAppliedDatePreset(preset),
+      500,
+    );
+  };
+
+  const restoreSavedWindow = () => {
+    clearTimeout(presetTimerRef.current);
+    setDatePreset(null);
+    setAppliedDatePreset(null);
+  };
+
+  const applyCustomDatePreset = () => {
+    clearTimeout(presetTimerRef.current);
+    setDatePreset("custom");
+    setAppliedDatePreset("custom");
+  };
+
   const globalDateRange = useMemo(
-    () => resolveGlobalDateRange(datePreset, customDateRange),
-    [datePreset, customDateRange],
+    () => resolveGlobalDateRange(appliedDatePreset, customDateRange),
+    [appliedDatePreset, customDateRange],
   );
 
   // Widget context menu
@@ -1393,7 +1418,7 @@ export default function DashboardDetailView() {
                 variant={datePreset === preset.value ? "filled" : "outlined"}
                 color={datePreset === preset.value ? "primary" : "default"}
                 onClick={() =>
-                  setDatePreset(
+                  selectDatePreset(
                     datePreset === preset.value ? null : preset.value,
                   )
                 }
@@ -1405,7 +1430,7 @@ export default function DashboardDetailView() {
               size="small"
               variant={!datePreset ? "filled" : "outlined"}
               color={!datePreset ? "primary" : "default"}
-              onClick={() => setDatePreset(null)}
+              onClick={() => selectDatePreset(null)}
               sx={DATE_CHIP_SX}
             />
           </Stack>
@@ -1420,7 +1445,7 @@ export default function DashboardDetailView() {
                 setCustomDateRange([new Date(filter[0]), new Date(filter[1])]);
               }
             }}
-            setDateOption={() => setDatePreset("custom")}
+            setDateOption={applyCustomDatePreset}
           />
         </>
       )}
@@ -1599,7 +1624,7 @@ export default function DashboardDetailView() {
                               isReadOnly={isReadOnly}
                               refreshRequestId={refreshRequestId}
                               onQuerySettled={handleWidgetQuerySettled}
-                              onRestoreSavedWindow={() => setDatePreset(null)}
+                              onRestoreSavedWindow={restoreSavedWindow}
                             />
 
                             {/* Resize handle between adjacent widgets */}

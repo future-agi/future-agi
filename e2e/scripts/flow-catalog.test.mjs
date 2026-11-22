@@ -50,6 +50,7 @@ test("successful collection includes gated flows and removes its private tempora
       assert.ok(args.includes("--list"));
       assert.equal(options.env.E2E_INCLUDE_QUARANTINED, "1");
       assert.equal(options.env.E2E_LIVE_LLM, "1");
+      assert.equal(options.env.SKILLS_COHORT, undefined);
       output = options.env.FLOW_CATALOG_OUT;
       writeFileSync(output, JSON.stringify(entries));
     }),

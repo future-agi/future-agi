@@ -251,7 +251,7 @@ test('workflow leaves suite and host proof adjacent; optional diagnostics cannot
   const workflow = YAML.parse(await readFile(new URL('../../.github/workflows/e2e-ci.yml', import.meta.url), 'utf8'));
   const steps = workflow.jobs.e2e.steps;
   const suite = steps.findIndex(step => step.name === 'Run E2E suite');
-  assert.equal(steps[suite].run, 'e2e/stack/run-skill-cohort.sh "$SKILLS_COHORT"');
+  assert.equal(steps[suite].run, 'bin/e2e test');
   assert.equal(steps[suite].id, 'suite');
   assert.equal(steps[suite]['continue-on-error'], undefined);
   assert.equal(steps[suite - 1].name, 'Start Redis diagnostics');
@@ -261,7 +261,7 @@ test('workflow leaves suite and host proof adjacent; optional diagnostics cannot
   assert.equal(steps[suite + 3].name, 'Stop Redis diagnostics');
   assert.equal(steps[suite + 4].name, 'Upload Redis diagnostics');
   for (const index of [suite - 1, suite + 3, suite + 4]) assert.equal(steps[index]['continue-on-error'], true);
-  for (const index of [suite + 3, suite + 4]) assert.equal(steps[index].if, "${{ !cancelled() && !matrix.cohort && steps.boot.outcome == 'success' }}");
+  for (const index of [suite + 3, suite + 4]) assert.equal(steps[index].if, "${{ !cancelled() && steps.boot.outcome == 'success' }}");
   assert.equal(steps[suite + 3].env.SUITE_OUTCOME, '${{ steps.suite.outcome }}');
   assert.match(steps[suite - 1].run, / start --output-dir /);
   assert.match(steps[suite + 3].run, / stop --output-dir .* --suite-outcome "\$SUITE_OUTCOME"$/);
