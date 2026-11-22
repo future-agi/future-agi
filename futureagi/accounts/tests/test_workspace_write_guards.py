@@ -249,6 +249,91 @@ def test_the_migration_keeps_an_admin_membership_someone_granted(
     assert row.role == "workspace_admin"
 
 
+def _default_workspace(organization, workspace):
+    return Workspace.objects.filter(
+        organization=organization, is_default=True
+    ).first() or Workspace.objects.create(
+        name="Default Workspace",
+        organization=organization,
+        is_default=True,
+        is_active=True,
+        created_by=workspace.created_by,
+    )
+
+
+def _self_granted_seat(workspace, user, **fields):
+    return WorkspaceMembership.no_workspace_objects.create(
+        workspace=workspace,
+        user=user,
+        role="workspace_admin",
+        level=8,
+        invited_by=user,
+        **fields,
+    )
+
+
+def test_the_migration_keeps_an_admin_seat_someone_else_granted_later(
+    organization, workspace
+):
+    granter = _org_only_user(organization, Level.ADMIN, OrganizationRoles.ADMIN)
+    user = _org_only_user(organization, Level.MEMBER, OrganizationRoles.MEMBER)
+    row = _self_granted_seat(
+        _default_workspace(organization, workspace), user, granted_by=granter
+    )
+
+    _lower_self_granted_admins()
+
+    row.refresh_from_db()
+    assert (row.role, row.level) == ("workspace_admin", 8)
+
+
+def test_the_migration_reads_only_a_current_organization_membership(
+    organization, workspace
+):
+    user = _org_only_user(organization, Level.ADMIN, OrganizationRoles.ADMIN)
+    OrganizationMembership.no_workspace_objects.filter(user=user).update(deleted=True)
+    row = _self_granted_seat(_default_workspace(organization, workspace), user)
+
+    _lower_self_granted_admins()
+
+    row.refresh_from_db()
+    assert (row.role, row.level) == ("workspace_viewer", Level.VIEWER)
+
+
+def test_the_migration_leaves_a_deleted_seat_alone(organization, workspace):
+    user = _org_only_user(organization, Level.MEMBER, OrganizationRoles.MEMBER)
+    row = _self_granted_seat(
+        _default_workspace(organization, workspace), user, deleted=True
+    )
+
+    _lower_self_granted_admins()
+
+    assert WorkspaceMembership._base_manager.get(id=row.id).role == "workspace_admin"
+
+
+def test_the_migration_lowers_every_seat_across_its_batches(
+    organization, workspace, monkeypatch
+):
+    module = importlib.import_module(
+        "accounts.migrations.0029_lower_self_granted_default_workspace_admins"
+    )
+    monkeypatch.setattr(module, "BATCH", 2)
+    default = _default_workspace(organization, workspace)
+    rows = [
+        _self_granted_seat(
+            default,
+            _org_only_user(organization, Level.MEMBER, OrganizationRoles.MEMBER),
+        )
+        for _ in range(5)
+    ]
+
+    _lower_self_granted_admins()
+
+    for row in rows:
+        row.refresh_from_db()
+        assert (row.role, row.level) == ("workspace_member", Level.MEMBER)
+
+
 def _client_without_an_organization(organization, workspace):
     user = _org_only_user(organization, Level.MEMBER, OrganizationRoles.MEMBER)
     client = _jwt_client(user, organization, workspace)
