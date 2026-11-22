@@ -1025,6 +1025,7 @@ class ClusterAnalysisAgent:
             terminated_reason=terminated_reason,
             error=last_error,
             cost_usd=self.total_cost_usd,
+            investigation_complete=terminated_reason == "synthesis_submitted",
         )
 
     def _force_synthesis(self, messages: list[dict], turn: int) -> None:

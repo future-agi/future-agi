@@ -96,6 +96,39 @@ def _persist_synthesis(
     post_rca_comment_to_linked_issue(cluster_uuid)
 
 
+def persist_result_if_diagnosis(
+    cluster_uuid: str,
+    result: Any,
+    error_count_at_run: int,
+    trace: list[dict] | None,
+) -> bool:
+    """Store a run's synthesis only when the run finished its own investigation.
+
+    ``investigation_complete`` is False when the synthesis came from the
+    forced-close backstop — the turn budget, the cost ceiling, or an LLM error
+    ended the loop early and ``_force_synthesis`` restated what had been
+    gathered. That text does not conclude the investigation, so it must not
+    replace an earlier completed diagnosis, and it must not be posted to a
+    linked issue as a finished result. A genuinely completed run that only
+    came out low-confidence stays complete and persists exactly as before:
+    confidence describes how sure the answer is, not whether it exists.
+
+    Returns True when the run was persisted.
+    """
+    synthesis = getattr(result, "synthesis", None)
+    if synthesis is None:
+        return False
+    if not getattr(result, "investigation_complete", False):
+        logger.info(
+            "cluster_rca_bridge_skipped_incomplete_persist",
+            cluster_id=cluster_uuid,
+            terminated_reason=getattr(result, "terminated_reason", None),
+        )
+        return False
+    _persist_synthesis(cluster_uuid, synthesis, error_count_at_run, trace)
+    return True
+
+
 def _bill_cost_from_thread(organization: Any, cost_usd: float) -> None:
     """Emit the AI-credit usage event for ``cost_usd`` from the worker thread.
 
@@ -298,11 +331,20 @@ async def run_cluster_rca(
             result = agent.run()
             # Persist from the thread so the run survives the consumer
             # coroutine being cancelled by a client disconnect mid-run.
+            #
+            # Only a run that finished its own investigation is a diagnosis.
+            # ``investigation_complete`` is False when the synthesis came from
+            # the forced-close backstop (turn budget, cost ceiling, LLM error):
+            # that text restates what was gathered, it does not conclude it.
+            # Writing it here would overwrite an earlier completed diagnosis
+            # and posting it would hand a linked ticket a finished-looking
+            # result the run never reached. A genuinely completed run with low
+            # confidence stays complete and persists as it always has.
             if getattr(result, "synthesis", None) is not None:
                 try:
                     close_old_connections()
-                    _persist_synthesis(
-                        cluster_uuid, result.synthesis, error_count, trace
+                    persist_result_if_diagnosis(
+                        cluster_uuid, result, error_count, trace
                     )
                 except Exception:
                     logger.exception(

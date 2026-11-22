@@ -68,6 +68,12 @@ class ClusterAnalysisResult:
     )
     error: Optional[str] = None
     cost_usd: float = 0.0
+    # True only when the investigation itself ended on the model's own
+    # submit_synthesis. A synthesis salvaged by the forced-close backstop
+    # (turn budget, cost ceiling, LLM error) leaves this False: it restates
+    # what was gathered, it is not a finished diagnosis, so it must not
+    # replace a stored one or be posted to a linked issue.
+    investigation_complete: bool = False
 
 
 # --- WebSocket event contract --------------------------------------------------
