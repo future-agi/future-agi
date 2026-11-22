@@ -932,7 +932,7 @@
 
 **Goal:** Save a custom-formula conversation metric, read its settled value on the Overview, freeze it as a snapshot, and see that snapshot render on a dashboard and record a threshold alert. The Add to dashboard and Create alert menu items are disabled in the product, so the widget and monitor are created through the API the product used.
 
-**Spec:** `flows/dashboards/derived-metric.spec.ts:92`
+**Spec:** `flows/dashboards/derived-metric.spec.ts:99`
 
 **Tags:** —
 
@@ -950,7 +950,7 @@
 
 - The exact four seeded spans, their typed outcomes and two distinct conversations belong to the minted project in the actor organization/default workspace.
 - Validate accepts the formula, and the saved metric is version 1 of a custom conversation recipe in PG and in the metric API, with the same definition hash.
-- While the conversations are open the KPI API reports the Custom window as partial; it reports a final value no earlier than the last arrival plus the settle time: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.
+- While the conversations are open the KPI API reports the Custom window as partial; the test first observes a final value no earlier than the last arrival plus the settle time, less 5 seconds of clock tolerance: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.
 - The snapshot run completes; it froze exactly the two seeded conversations, its committed overall result is numerator 1, denominator 2, value 0.5, and its commit row names that result.
 - The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.
 - The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.
@@ -3021,6 +3021,83 @@
 - the example API encodes the exact project name into one quoted Python literal
 - the visible Users setup code equals the exact example API result
 
+### OBS-E2E-063 — choose Sessions for a new Insights report while the session check is still loading
+
+**Goal:** Start a new Insights report on Sessions, even when I pick Sessions before the page has finished checking that the project has sessions (the report is started, its contents are not claimed: a run cannot finish in the E2E stack)
+
+**Spec:** `flows/observe/insights-new-report.spec.ts:47`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed three traces with session.id in two sessions in a minted project
+2. open the project's Traces view and choose Find patterns (a New report on Traces), then the rail's New report (a fresh form)
+3. hold the form's sessions check (the real request is delayed, then continued; nothing is stubbed)
+4. click the already-selected Sessions unit
+5. see the estimate go out for sessions and Run report become enabled while the check is still held
+6. release the check and click Run report
+
+**Backend state verified:**
+
+- ClickHouse spans FINAL holds every seeded span with its trace_session_id: one session per label, two in all
+- POST /tracer/insights/estimate/ was sent with unit sessions before the held sessions check was released, and counted the two sessions
+- POST /tracer/insights/runs/ returns a run_id and config_id, and PG holds exactly one insights config (unit sessions) and one run for the actor org and project
+
+### OBS-E2E-064 — Ask Jev stays in reach as example questions are added, and the cost confirm has one primary action
+
+**Goal:** Write a question for Jev, add example questions without losing the Ask button, confirm the read, and start the run
+
+**Spec:** `flows/observe/ask-jev-composer.spec.ts:82`
+
+**Tags:** —
+
+**User steps:**
+
+1. send 4 traces to a new Observe project
+2. save the org TypeSafe key through the endpoint AI Providers uses
+3. open the project's Traces view, its Evaluate menu, and choose Ask a question
+4. type a question and add two example questions from Try one
+5. click Ask Jev and read the confirm for 4 traces
+6. click Start
+
+**Backend state verified:**
+
+- POST /tracer/instant-eval/estimate/ answers rows_to_read 4 and needs_confirm true for the project's traces
+- POST /tracer/instant-eval/start/ is sent confirmed for 4 rows and returns a task_id, and PG holds its tracer_eval_task and tracer_instant_eval_run for the actor org with rows_requested 4
+
+**Browser observations:**
+
+- the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it
+- Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button and has focus
+
+### OBS-E2E-065 — Ask Jev reads every trace and shows each answer
+
+**Goal:** Ask Jev a yes/no question about my traces and see every trace answered, with the counts adding up
+
+**Spec:** `flows/observe/ask-jev-run.spec.ts:57`
+
+**Tags:** —
+
+**User steps:**
+
+1. send 3 traces to a new Observe project, one whose output the mock answers No
+2. save the org TypeSafe key through the endpoint AI Providers uses
+3. open the project's Traces view, its Evaluate menu, and choose Ask a question
+4. type a yes/no question and click Ask Jev, which starts at once under the confirm size
+5. watch the run finish: its status line says every trace was answered
+6. read the run's traces table
+
+**Backend state verified:**
+
+- GET /tracer/instant-eval/summary/ reaches status completed with answered 3, failed 0 and counts Yes 2, No 1
+- GET /tracer/instant-eval/rows/ returns exactly the three seeded trace ids, each with its expected answer
+
+**Browser observations:**
+
+- the status line says 3 traces answered and the counts read 2 Yes · 1 No
+- the traces table shows exactly the three seeded traces, each with the same answer as the rows API
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -3143,6 +3220,51 @@
 - Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.
 - The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
 - Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
+
+### SET-E2E-004 — a link to the TypeSafe key opens AI Providers on that provider and survives navigation
+
+**Goal:** Follow a link to add a TypeSafe key, save it, and land on the TypeSafe card again after moving around AI Providers and going Back
+
+**Spec:** `flows/settings/ai-providers-deep-link.spec.ts:46`
+
+**Tags:** —
+
+**User steps:**
+
+1. open AI Providers from a link that names the TypeSafe provider
+2. see the search filled with typesafe and only the TypeSafe card
+3. enter the TypeSafe API key and add it
+4. click AI Providers in the sidebar and see every provider
+5. choose the Custom model category
+6. go Back and see the All category with only the TypeSafe card again
+
+**Backend state verified:**
+
+- POST /model-hub/api-keys/ saves the key and GET /model-hub/develops/provider-status/ then lists typesafe with has_key true
+- PG model_hub_apikey holds exactly one live typesafe row for the actor org
+- the All count after the plain sidebar link equals the providers provider-status lists plus the org custom models
+
+### SET-E2E-005 — a provider search that matches nothing says so and clears back to every provider
+
+**Goal:** Search AI Providers for a name that does not exist, be told nothing matched in the category I am in, and get the full list back in one click
+
+**Spec:** `flows/settings/ai-providers-no-match.spec.ts:32`
+
+**Tags:** —
+
+**User steps:**
+
+1. open AI Providers
+2. search for a provider name that does not exist
+3. see that no AI providers match it
+4. choose the Custom model category and see that no custom models match it
+5. click Clear filters
+6. see the All category with an empty search and every provider
+
+**Backend state verified:**
+
+- GET /model-hub/develops/provider-status/ has no provider whose name contains the searched text
+- after Clear filters the All count equals the providers provider-status lists plus the org custom models
 
 ## simulate
 
