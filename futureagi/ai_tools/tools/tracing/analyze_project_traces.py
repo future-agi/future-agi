@@ -115,9 +115,23 @@ class AnalyzeProjectTracesTool(BaseTool):
                     },
                 )
 
-        # Mark traces as running so the feed reflects in-flight analysis.
-        for tid in trace_ids:
-            deep_analysis_state.set_running(str(tid), project_id=str(project.id))
+        # Only the caller that won the atomic claim may enqueue that trace.
+        trace_ids = [
+            tid
+            for tid in trace_ids
+            if deep_analysis_state.set_running(str(tid), project_id=str(project.id))
+        ]
+        if not trace_ids:
+            return ToolResult(
+                content="Analysis is already running for the requested traces.",
+                data={
+                    "status": "already_running",
+                    "project_id": str(project.id),
+                    "trace_count": 0,
+                    "trace_ids": [],
+                    "batches": 0,
+                },
+            )
 
         # Dispatch via Temporal in batches of 10 (same as old beat task)
         try:

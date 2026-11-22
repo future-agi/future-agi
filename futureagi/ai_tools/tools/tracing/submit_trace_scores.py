@@ -110,6 +110,8 @@ class SubmitTraceScoresTool(BaseTool):
             else None
         )
         if analysis is None:
+            if params.analysis_id and context.assigned_trace_id is not None:
+                return ToolResult.not_found("Analysis", str(params.analysis_id))
             analysis = analyses.order_by("-analysis_date").first()
 
         # If still no analysis, create one (scores-only, no findings)

@@ -27,6 +27,11 @@ def get_analysis_projects(context: ToolContext):
 def get_trace_project(trace_id, context: ToolContext) -> Project | None:
     from tracer.services.clickhouse.v2 import get_reader
 
+    if context.assigned_trace_id is not None and (
+        context.project is None or str(trace_id) != context.assigned_trace_id
+    ):
+        return None
+
     allowed = {str(project.pk): project for project in get_analysis_projects(context)}
     # The reader applies no project filter to an empty list, so return first.
     if not allowed:

@@ -8,32 +8,57 @@ import pytest
 
 from tracer.models.trace_error_analysis import TraceErrorAnalysis
 from tracer.tasks.error_analysis import _falcon_analyze_single_trace
+from tracer.tests._falcon_analysis import (
+    install_reader,
+    install_tool_stream,
+    read_call,
+    tool_chunk,
+)
 
 pytestmark = pytest.mark.requires_ee
 
 
+@pytest.fixture
+def global_analysis_skill(db):
+    from ee.falcon_ai.builtin_skills_loader import load_builtin_skills
+    from ee.falcon_ai.models import Skill
+
+    spec = next(s for s in load_builtin_skills() if s["slug"] == "analyze-trace-errors")
+    skill, _ = Skill.no_workspace_objects.update_or_create(
+        organization=None,
+        slug=spec["slug"],
+        defaults={**spec, "workspace": None, "is_builtin": True, "is_active": True},
+    )
+    return skill
+
+
 @pytest.mark.django_db(transaction=True)
-def test_falcon_analysis_runs_agent_and_records_clean_result(project, monkeypatch):
+def test_falcon_analysis_runs_agent_and_records_clean_result(
+    project, global_analysis_skill, monkeypatch
+):
     from ee.falcon_ai.agent import AgentLoop
     from ee.falcon_ai.llm_client import FalconLLMClient
     from ee.falcon_ai.models import Conversation, Skill
     from ee.usage.deployment import DeploymentMode
 
     trace_id = str(uuid.uuid4())
-    instructions = "Inspect the trace and report any errors."
+    install_reader(monkeypatch, project, trace_id)
     Skill.objects.create(
         organization=project.organization,
         workspace=project.workspace,
         name="Analyze trace errors",
         slug="analyze-trace-errors",
-        instructions=instructions,
+        instructions="Tenant-only instructions.",
     )
     streamed_messages = []
     advertised_tools = []
 
     async def stream_completion(self, messages, tools=None):
-        streamed_messages.append(messages)
+        streamed_messages.append(list(messages))
         advertised_tools.append({tool["function"]["name"] for tool in tools or []})
+        if len(streamed_messages) == 1:
+            yield tool_chunk(0, *read_call(trace_id))
+            return
         yield {
             "choices": [
                 {
@@ -60,9 +85,9 @@ def test_falcon_analysis_runs_agent_and_records_clean_result(project, monkeypatc
     result = _falcon_analyze_single_trace(trace_id, str(project.id))
 
     assert result == {"success": True, "trace_id": trace_id, "error_count": 0}
-    assert len(streamed_messages) == 1
+    assert len(streamed_messages) == 2
     discover.assert_not_called()
-    assert advertised_tools == [
+    assert advertised_tools == 2 * [
         {
             "explore_trace",
             "explore_trace_legacy",
@@ -71,7 +96,9 @@ def test_falcon_analysis_runs_agent_and_records_clean_result(project, monkeypatc
             "submit_trace_scores",
         }
     ]
-    assert instructions in streamed_messages[0][0]["content"]
+    assert global_analysis_skill.instructions in streamed_messages[0][0]["content"]
+    assert "Tenant-only instructions." not in streamed_messages[0][0]["content"]
+    assert "Own evidence" in streamed_messages[1][-1]["content"]
     assert (
         streamed_messages[0][-1]["content"] == f"Analyze trace {trace_id} for errors."
     )
@@ -92,31 +119,12 @@ def test_falcon_analysis_runs_agent_and_records_clean_result(project, monkeypatc
 
 
 @pytest.fixture
-def falcon_boundaries(project, monkeypatch):
+def falcon_boundaries(global_analysis_skill, monkeypatch):
     """Keep the real agent/ORM; stub only external services and marker writes."""
     from ee.falcon_ai.agent import AgentLoop
-    from ee.falcon_ai.llm_client import FalconLLMClient
-    from ee.falcon_ai.models import Skill
     from ee.usage.deployment import DeploymentMode
 
-    Skill.objects.create(
-        organization=project.organization,
-        workspace=project.workspace,
-        name="Analyze trace errors",
-        slug="analyze-trace-errors",
-        instructions="Inspect the trace and report any errors.",
-    )
-
-    async def clean_stream(self, messages, tools=None):
-        yield {
-            "choices": [
-                {"delta": {"content": "No errors found."}, "finish_reason": "stop"}
-            ],
-            "model": "test-model",
-        }
-
     monkeypatch.setattr(DeploymentMode, "is_oss", staticmethod(lambda: False))
-    monkeypatch.setattr(FalconLLMClient, "stream_completion", clean_stream)
     monkeypatch.setattr(AgentLoop, "_load_mcp_tools", AsyncMock(return_value=[]))
     clear = Mock()
     failed = Mock()
@@ -133,7 +141,7 @@ def falcon_boundaries(project, monkeypatch):
 @pytest.mark.parametrize("same_organization", [False, True])
 @pytest.mark.parametrize("existing_analysis", [False, True])
 def test_falcon_analysis_scopes_reused_trace_id_to_project(
-    project, falcon_boundaries, same_organization, existing_analysis
+    project, falcon_boundaries, same_organization, existing_analysis, monkeypatch
 ):
     from accounts.models.organization import Organization
     from accounts.models.user import User
@@ -177,22 +185,28 @@ def test_falcon_analysis_scopes_reused_trace_id_to_project(
         TraceErrorAnalysis.objects.filter(pk=other_analysis.pk).values().get()
     )
 
+    install_reader(monkeypatch, project, trace_id)
+    install_tool_stream(monkeypatch, read_call(trace_id))
     result = _falcon_analyze_single_trace(trace_id, str(project.id))
 
-    assert result == {"success": True, "trace_id": trace_id, "error_count": 0}
     assert (
         TraceErrorAnalysis.objects.filter(pk=other_analysis.pk).values().get()
         == other_before
     )
     analysis = TraceErrorAnalysis.objects.get(trace_id=trace_id, project=project)
+    clear, failed, clickhouse = falcon_boundaries
     if existing_analysis:
         assert analysis.pk == own_analysis.pk
-        assert analysis.overall_score == 5.0
-        assert analysis.insights == "Fallback scores computed from 0 detected error(s)."
-    else:
-        assert analysis.overall_score == 4.0
-        assert analysis.insights == "No errors found during analysis."
-    clear, failed, clickhouse = falcon_boundaries
+        assert analysis.overall_score is None
+        assert result["success"] is False
+        assert "did not submit an update" in result["error"]
+        failed.assert_called_once_with(trace_id, project_id=str(project.id))
+        clear.assert_not_called()
+        clickhouse.return_value.insert.assert_not_called()
+        return
+    assert result == {"success": True, "trace_id": trace_id, "error_count": 0}
+    assert analysis.overall_score == 4.0
+    assert analysis.insights == "No errors found during analysis."
     clear.assert_called_once_with(trace_id, project_id=str(project.id))
     failed.assert_not_called()
     logged_result = clickhouse.return_value.insert.call_args.args[1][0]

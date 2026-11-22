@@ -1,18 +1,18 @@
 """Project scoping through the real background agent and registered tools."""
 
-import json
 import uuid
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, PropertyMock
 
-import httpx
 import pytest
 
 from ai_tools.base import ToolContext
 from tracer.models.trace_error_analysis import TraceErrorAnalysis, TraceErrorDetail
 from tracer.tasks.error_analysis import _falcon_analyze_single_trace
+from tracer.tests._falcon_analysis import install_reader, install_tool_stream, read_call
 from tracer.tests.test_falcon_error_analysis import (
     falcon_boundaries as falcon_boundaries,
+    global_analysis_skill as global_analysis_skill,
 )
 
 pytestmark = pytest.mark.requires_ee
@@ -76,62 +76,6 @@ def finding_params(trace_id):
     }
 
 
-def install_reader(monkeypatch, project, trace_id, *, foreign=None):
-    reader = MagicMock()
-
-    def roots(trace_ids, project_ids=None):
-        selected = foreign if foreign is not None and project_ids is None else project
-        if project_ids is not None and str(selected.id) not in project_ids:
-            return {}
-        return {trace_id: ("shared-span", str(selected.id))}
-
-    reader.root_ids_by_trace_ids.side_effect = roots
-    cm = MagicMock()
-    cm.__enter__.return_value = reader
-    monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: cm)
-    return reader
-
-
-def install_tool_stream(monkeypatch, tool_name, params, *, fail_after_tool=False):
-    from ee.falcon_ai.llm_client import FalconLLMClient
-
-    calls = []
-
-    async def stream(self, messages, tools=None):
-        calls.append(messages)
-        if len(calls) == 1:
-            yield {
-                "choices": [
-                    {
-                        "delta": {
-                            "tool_calls": [
-                                {
-                                    "index": 0,
-                                    "id": "tenant-call",
-                                    "function": {
-                                        "name": tool_name,
-                                        "arguments": json.dumps(params),
-                                    },
-                                }
-                            ]
-                        },
-                        "finish_reason": "tool_calls",
-                    }
-                ]
-            }
-        elif fail_after_tool:
-            raise httpx.RemoteProtocolError("Interrupted after scoring")
-        else:
-            yield {
-                "choices": [
-                    {"delta": {"content": "Finished."}, "finish_reason": "stop"}
-                ]
-            }
-
-    monkeypatch.setattr(FalconLLMClient, "stream_completion", stream)
-    return calls
-
-
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("explicit_analysis_id", [False, True])
 @pytest.mark.parametrize("existing_analysis", [False, True])
@@ -163,13 +107,26 @@ def test_background_scoring_never_updates_foreign_analysis(
     params = score_params(trace_id)
     if explicit_analysis_id:
         params["analysis_id"] = str(foreign.id)
-    calls = install_tool_stream(monkeypatch, "submit_trace_scores", params)
+    calls = install_tool_stream(
+        monkeypatch, read_call(trace_id), ("submit_trace_scores", params)
+    )
 
     result = _falcon_analyze_single_trace(trace_id, str(project.id))
 
-    assert result["success"] is True
-    assert len(calls) == 2
+    assert result["success"] is (not explicit_analysis_id)
+    assert len(calls) == 3
     assert TraceErrorAnalysis.objects.filter(pk=foreign.pk).values().get() == before
+    if explicit_analysis_id:
+        assert "failed to save" in result["error"]
+        assert "Not Found" in calls[-1][-1]["content"]
+        if own:
+            own.refresh_from_db()
+            assert own.overall_score is None
+        else:
+            assert not TraceErrorAnalysis.objects.filter(
+                trace_id=trace_id, project=project
+            ).exists()
+        return
     analysis = TraceErrorAnalysis.objects.get(trace_id=trace_id, project=project)
     assert analysis.overall_score == 2.0
     assert analysis.insights == params["insights"]
@@ -193,7 +150,9 @@ def test_background_scoring_resolves_colliding_root_in_requesting_project(
     monkeypatch.setattr(
         "tracer.tasks.error_analysis.cluster_project_errors.delay", Mock()
     )
-    install_tool_stream(monkeypatch, "submit_trace_scores", score_params(trace_id))
+    install_tool_stream(
+        monkeypatch, read_call(trace_id), ("submit_trace_scores", score_params(trace_id))
+    )
 
     result = _falcon_analyze_single_trace(trace_id, str(project.id))
 
@@ -223,7 +182,10 @@ def test_failed_stream_after_scoring_does_not_publish_completion(
         "tracer.tasks.error_analysis.cluster_project_errors.delay", cluster
     )
     install_tool_stream(
-        monkeypatch, "submit_trace_scores", score_params(trace_id), fail_after_tool=True
+        monkeypatch,
+        read_call(trace_id),
+        ("submit_trace_scores", score_params(trace_id)),
+        fail_after_tool=True,
     )
 
     result = _falcon_analyze_single_trace(trace_id, str(project.id))
@@ -239,62 +201,41 @@ def test_failed_stream_after_scoring_does_not_publish_completion(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_queued_activity_keeps_scored_interruption_failed_in_feed(project, monkeypatch):
-    from ai_tools.registry import registry
-    from ee.usage.deployment import DeploymentMode
+def test_queued_activity_keeps_scored_interruption_failed_in_feed(
+    project, queued_trace_pair, monkeypatch
+):
+    from agentic_eval.core.embeddings.embedding_manager import model_manager
     from tracer.models.trace_error_analysis import ErrorClusterTraces
     from tracer.queries import deep_analysis_state, feed
-    from tracer.queries.error_analysis import TraceErrorAnalysisDB
-    from tracer.tasks.error_analysis import (
-        analyze_traces_on_demand,
-        cluster_project_errors,
-    )
+    from tracer.tasks.error_analysis import analyze_traces_on_demand
     from tracer.tests.test_error_analysis import make_feed_group
 
-    trace_id, project_id = str(uuid.uuid4()), str(project.id)
+    assigned, _, args, clustered, insert = queued_trace_pair
+    project_id = str(project.id)
     group = make_feed_group(project, "queued-score")
-    ErrorClusterTraces.objects.create(cluster=group, trace_id=trace_id)
-    reader = install_reader(monkeypatch, project, trace_id)
-    monkeypatch.setattr(DeploymentMode, "is_oss", staticmethod(lambda: False))
+    ErrorClusterTraces.objects.create(cluster=group, trace_id=assigned)
+    root = f"root-{assigned}"
     install_tool_stream(
-        monkeypatch, "submit_trace_scores", score_params(trace_id), fail_after_tool=True
+        monkeypatch,
+        read_call(assigned, root),
+        ("submit_trace_finding", finding_params(assigned) | {"location_spans": [root]}),
+        ("submit_trace_scores", score_params(assigned)),
+        fail_after_tool=True,
     )
-    queued, cluster, ingest, clickhouse = Mock(), Mock(), Mock(), Mock()
-    monkeypatch.setattr(analyze_traces_on_demand, "delay", queued)
-    monkeypatch.setattr(cluster_project_errors, "delay", cluster)
-    monkeypatch.setattr(TraceErrorAnalysisDB, "ingest_trace_error_embeddings", ingest)
-    monkeypatch.setattr("tracer.services.clickhouse.client.ClickHouseClient", clickhouse)
-
-    context = ToolContext(
-        user=project.workspace.created_by,
-        organization=project.organization,
-        workspace=project.workspace,
-    )
-    try:
-        result = registry.get("analyze_project_traces").run(
-            {"project_id": project_id, "trace_ids": [trace_id]}, context
-        )
-        assert not result.is_error, result.content
-        queued.assert_called_once_with(project_id, [trace_id])
-        assert deep_analysis_state.is_running(trace_id, project_id=project_id)
-
-        # Deliver exactly what the dispatch tool queued to the real threaded activity.
-        analyze_traces_on_demand(*queued.call_args.args)
-
-        saved = TraceErrorAnalysis.objects.get(trace_id=trace_id, project=project)
-        assert saved.overall_score == 2.0  # The tool actually ran before the interruption.
-        status = feed.get_deep_analysis(group.cluster_id, trace_id, [project_id])
-        assert status.status == "failed"
-        assert not deep_analysis_state.is_running(trace_id, project_id=project_id)
-        assert not status.recommendations
-        assert reader.root_ids_by_trace_ids.call_count == 2  # Dispatch and score lookup.
-        for lookup in reader.root_ids_by_trace_ids.call_args_list:
-            assert lookup.kwargs["project_ids"] == [project_id]
-        ingest.assert_not_called()
-        cluster.assert_not_called()
-        clickhouse.return_value.insert.assert_not_called()
-    finally:
-        deep_analysis_state.clear(trace_id, project_id=project_id)
+    # Fail at provider access, not by replacing the worker's ingestion logic.
+    provider = PropertyMock(side_effect=AssertionError("Unexpected embedding request"))
+    monkeypatch.setattr(type(model_manager), "text_model", provider)
+    analyze_traces_on_demand(*args)
+    saved = TraceErrorAnalysis.objects.get(trace_id=assigned, project=project)
+    assert saved.overall_score == 2.0
+    assert TraceErrorDetail.objects.get(analysis=saved).location_spans == [root]
+    status = feed.get_deep_analysis(group.cluster_id, assigned, [project_id])
+    assert status.status == "failed"
+    assert not deep_analysis_state.is_running(assigned, project_id=project_id)
+    assert not status.recommendations
+    provider.assert_not_called()
+    clustered.assert_not_called()
+    insert.assert_not_called()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -307,12 +248,13 @@ def test_background_cannot_invoke_unscoped_registry_tools(
     execute = Mock()
     monkeypatch.setattr(tool, "execute", execute)
     calls = install_tool_stream(
-        monkeypatch, "analyze_project_traces", {"project_id": str(project.id)}
+        monkeypatch, ("analyze_project_traces", {"project_id": str(project.id)})
     )
 
     result = _falcon_analyze_single_trace(str(uuid.uuid4()), str(project.id))
 
-    assert result["success"] is True
+    assert result["success"] is False
+    assert "did not inspect" in result["error"]
     assert len(calls) == 2
     assert any(
         message.get("role") == "tool"
@@ -346,22 +288,8 @@ def test_analysis_tools_use_project_scoped_ch_and_analysis_rows(
     )
     context.project = project
     reader = install_reader(monkeypatch, project, trace_id, foreign=other_project)
-    span = SimpleNamespace(
-        id="shared-span",
-        name="Own span",
-        observation_type="llm",
-        status="OK",
-        model="test",
-        latency_ms=1,
-        total_tokens=1,
-        parent_span_id=None,
-        start_time=None,
-        input="Own evidence",
-        output="Own output",
-        metadata={},
-        span_events=[],
-    )
-    reader.list_by_trace.return_value = [span] if tool_name == "read_trace_span" else []
+    if tool_name == "explore_trace_legacy":
+        reader.list_by_trace.return_value = []
     params = {"trace_id": trace_id}
     if tool_name == "read_trace_span":
         params["span_id"] = "shared-span"
@@ -518,3 +446,171 @@ def test_dispatch_preserves_default_workspace_legacy_project(project, monkeypatc
     assert not result.is_error, result.content
     dispatch.assert_called_once_with(str(project.id), [trace_id])
     running.assert_called_once_with(trace_id, project_id=str(project.id))
+
+
+@pytest.fixture
+def queued_trace_pair(project, global_analysis_skill, settings, monkeypatch):
+    """Two real CH roots in one project. Only the queue and log transports are stubbed."""
+    from django.utils import timezone
+
+    from ai_tools.registry import registry
+    from ee.usage.deployment import _detect_mode
+    from tracer.queries import deep_analysis_state
+    from tracer.tasks.error_analysis import (
+        analyze_traces_on_demand,
+        cluster_project_errors,
+    )
+    from tracer.tests._ch_seed import delete_ch_spans, seed_ch_spans
+
+    settings.CLOUD_DEPLOYMENT = ""
+    settings.EE_LICENSE_KEY = "test"
+    _detect_mode.cache_clear()
+    project_id = str(project.id)
+    assigned, other = str(uuid.uuid4()), str(uuid.uuid4())
+    roots = [
+        {
+            "id": f"root-{tid}",
+            "trace_id": tid,
+            "project_id": project_id,
+            "name": "root",
+            "observation_type": "llm",
+            "start_time": timezone.now(),
+            "input": {"prompt": tid},
+            "metadata": {"goal": "test goal"},
+        }
+        for tid in (assigned, other)
+    ]
+    queued, clustered, log = Mock(), Mock(), Mock()
+    monkeypatch.setattr(analyze_traces_on_demand, "delay", queued)
+    monkeypatch.setattr(cluster_project_errors, "delay", clustered)
+    monkeypatch.setattr("tracer.services.clickhouse.client.ClickHouseClient", log)
+    ctx = ToolContext(
+        user=project.workspace.created_by,
+        organization=project.organization,
+        workspace=project.workspace,
+    )
+    tool = registry.get("analyze_project_traces")
+    try:
+        seed_ch_spans(roots)
+        # Simulate a competing dispatcher that already owns the second trace.
+        assert deep_analysis_state.set_running(other, project_id=project_id)
+        args = {"project_id": project_id, "trace_ids": [assigned, other]}
+        first = tool.run(args, ctx)
+        assert not first.is_error, first.content
+        assert first.data["trace_ids"] == [assigned]
+        assert first.data["trace_count"] == 1
+        second = tool.run(args, ctx)
+        assert not second.is_error, second.content
+        assert second.data["status"] == "already_running"
+        assert second.data["trace_count"] == 0
+        queued.assert_called_once_with(project_id, [assigned])
+        yield assigned, other, queued.call_args.args, clustered, log.return_value.insert
+    finally:
+        _detect_mode.cache_clear()
+        for tid in (assigned, other):
+            deep_analysis_state.clear(tid, project_id=project_id)
+        delete_ch_spans([row["id"] for row in roots])
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize(
+    "case", ["text_only", "missing_span", "incomplete_stream", "summary_unavailable", "explored"]
+)
+def test_queued_analysis_requires_completed_inspection(
+    project, queued_trace_pair, case, monkeypatch
+):
+    from tracer.models.trace_error_analysis import ErrorClusterTraces
+    from tracer.queries import feed
+    from tracer.tasks.error_analysis import analyze_traces_on_demand
+    from tracer.tests.test_error_analysis import make_feed_group
+
+    assigned, _, args, clustered, insert = queued_trace_pair
+    group = make_feed_group(project, "inspection")
+    ErrorClusterTraces.objects.create(cluster=group, trace_id=assigned)
+    summary = MagicMock()
+    summary.return_value.choices[0].message.content = (
+        '{"sub_flows":[{"name":"answer","summary":"Inspected the root"}]}'
+    )
+    if case == "summary_unavailable":
+        summary.side_effect = RuntimeError("Provider unavailable")
+    monkeypatch.setattr("litellm.completion", summary)
+    steps = {
+        "text_only": [],
+        "missing_span": [read_call(assigned, "no-such-span")],
+        "incomplete_stream": [read_call(assigned, f"root-{assigned}")],
+        "summary_unavailable": [("explore_trace", {"trace_id": assigned})],
+        "explored": [("explore_trace_legacy", {"trace_id": assigned})],
+    }[case]
+    finish = None if case == "incomplete_stream" else "stop"
+    calls = install_tool_stream(monkeypatch, *steps, finish=finish)
+    analyze_traces_on_demand(*args)
+
+    assert len(calls) == len(steps) + 1
+    status = feed.get_deep_analysis(group.cluster_id, assigned, [str(project.id)]).status
+    rows = TraceErrorAnalysis.objects.filter(project=project, trace_id=assigned)
+    if case in ("summary_unavailable", "explored"):
+        summary.assert_called_once()
+        assert "test goal" in summary.call_args.kwargs["messages"][-1]["content"]
+    if case == "explored":
+        assert "Inspected the root" in calls[-1][-1]["content"]
+        assert status == "done"
+        assert rows.get().overall_score == 4.0
+        insert.assert_called_once()
+        clustered.assert_called_once_with(str(project.id))
+    else:
+        if case == "missing_span":
+            assert "not found in trace" in calls[-1][-1]["content"]
+        elif case == "incomplete_stream":
+            assert f"root-{assigned}" in calls[-1][-1]["content"]
+        elif case == "summary_unavailable":
+            assert "Trace summary unavailable" in calls[-1][-1]["content"]
+        assert status == "failed"
+        assert not rows.exists()
+        insert.assert_not_called()
+        clustered.assert_not_called()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_queued_analysis_rejects_other_trace_in_same_project(
+    project, queued_trace_pair, monkeypatch
+):
+    from tracer.queries import deep_analysis_state
+    from tracer.tasks.error_analysis import analyze_traces_on_demand
+
+    assigned, other, args, clustered, insert = queued_trace_pair
+    existing = TraceErrorAnalysis.objects.create(
+        project=project, trace_id=other, insights="Keep me"
+    )
+    before = TraceErrorAnalysis.objects.filter(pk=existing.pk).values().get()
+    summary = Mock()
+    monkeypatch.setattr("litellm.completion", summary)
+    finding = finding_params(assigned) | {"location_spans": [f"root-{assigned}"]}
+    other_handle = {"analysis_id": str(existing.pk)}
+    calls = install_tool_stream(
+        monkeypatch,
+        ("explore_trace", {"trace_id": other}),
+        ("explore_trace_legacy", {"trace_id": other}),
+        read_call(other, f"root-{other}"),
+        ("submit_trace_scores", score_params(other)),
+        ("submit_trace_finding", finding_params(other)),
+        # An analysis handle alone must not redirect an otherwise scoped write.
+        ("submit_trace_scores", score_params(assigned) | other_handle),
+        ("submit_trace_finding", finding | other_handle),
+        ("submit_trace_finding", finding | {"location_spans": [f"root-{other}"]}),
+    )
+    analyze_traces_on_demand(*args)
+
+    results = [msg["content"] for msg in calls[-1] if msg["role"] == "tool"]
+    assert len(results) == 8
+    assert all("Not Found" in text for text in results[:7])
+    assert "outside the assigned trace" in results[7]
+    analyses = TraceErrorAnalysis.objects.filter(project=project)
+    assert not analyses.filter(trace_id=assigned).exists()
+    assert list(analyses.filter(trace_id=other).values()) == [before]
+    assert not TraceErrorDetail.objects.filter(analysis=existing).exists()
+    assert deep_analysis_state.is_running(other, project_id=str(project.id))
+    state = deep_analysis_state.status(assigned, project_id=str(project.id), has_analysis=False)
+    assert state == "failed"
+    summary.assert_not_called()
+    insert.assert_not_called()
+    clustered.assert_not_called()

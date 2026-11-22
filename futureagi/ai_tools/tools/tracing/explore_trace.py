@@ -63,6 +63,8 @@ class ExploreTraceTool(BaseTool):
             )
 
         if not spans:
+            if context.assigned_trace_id is not None:
+                return ToolResult.error("No spans were available to inspect.")
             return ToolResult(
                 content=section(
                     "Trace Exploration",
@@ -115,6 +117,12 @@ class ExploreTraceTool(BaseTool):
 
         # Run Chauffeur (Haiku) for sub-flow identification
         chauffeur_report = self._run_chauffeur(execution_summary)
+
+        if context.assigned_trace_id is not None and not chauffeur_report.get("sub_flows"):
+            # An outline alone does not tell the worker what happened in the spans.
+            return ToolResult.error(
+                f"Trace summary unavailable. Use read_trace_span with a span ID from:\n{outline}"
+            )
 
         # Build the output
         content = section("Trace Exploration", outline)
@@ -278,7 +286,10 @@ class ExploreTraceTool(BaseTool):
                         + f"\n... [{len(soutput_str) - 1500} chars truncated]"
                     )
                 detail_lines.append(f"Output: {soutput_str}")
-            if smetadata:
+            # CHSpan carries the typed JSON column as text, not a PG dict.
+            if isinstance(smetadata, str):
+                smetadata = json.loads(smetadata)
+            if isinstance(smetadata, dict):
                 relevant = {
                     k: v
                     for k, v in smetadata.items()

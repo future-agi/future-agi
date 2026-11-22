@@ -510,15 +510,23 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         if workspace.organization_id != org.id:
             raise ValueError("Project workspace does not belong to its organization")
         set_workspace_context(workspace=workspace, organization=org, user=user)
-        ctx = ToolContext(user=user, organization=org, workspace=workspace, project=project)
+        ctx = ToolContext(
+            user=user,
+            organization=org,
+            workspace=workspace,
+            project=project,
+            assigned_trace_id=str(trace_id),
+        )
 
-        # Load the skill
-        from django.db.models import Q
-
-        skill = Skill.objects.filter(
-            Q(workspace=workspace) | Q(workspace__isnull=True),
-            organization=org, slug="analyze-trace-errors", is_active=True,
-        ).first()
+        # The seeded builtin is visible to every workspace, but the ordinary
+        # workspace manager hides global rows. Never substitute a tenant skill.
+        skill = Skill.no_workspace_objects.get(
+            slug="analyze-trace-errors",
+            is_active=True,
+            is_builtin=True,
+            organization__isnull=True,
+            workspace__isnull=True,
+        )
 
         # Create a hidden conversation (filtered out from user's chat list)
         conversation = Conversation.objects.create(
@@ -609,6 +617,24 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         # rather than raising. Do not turn those failures into clean analyses.
         if agent_error is not None:
             raise RuntimeError(agent_error)
+        if result.get("finish_reason") not in ("stop", "end_turn"):
+            raise RuntimeError("Falcon analysis did not finish normally")
+
+        # These are executor outcomes, not claims in the model's final text.
+        # Both explorer aliases and the span reader enforce the job's scope.
+        inspected_with = {"explore_trace", "explore_trace_legacy", "read_trace_span"}
+        completed = {
+            c["tool_name"] for c in collected_tool_calls if c["status"] == "completed"
+        }
+        if not completed.intersection(inspected_with):
+            raise RuntimeError("Falcon did not inspect the assigned trace")
+
+        write_tools = {"submit_trace_finding", "submit_trace_scores"}
+        submitted = bool(completed.intersection(write_tools))
+        if not submitted and any(
+            c["tool_name"] in write_tools for c in collected_tool_calls
+        ):
+            raise RuntimeError("Falcon failed to save its analysis")
 
         elapsed = _time.time() - start_time
 
@@ -633,7 +659,14 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
             .first()
         )
 
-        if not analysis:
+        if analysis is not None and not submitted:
+            # A prior attempt may have left a partial row. A read-only turn
+            # cannot attest to those scores or finalize them on a retry.
+            raise RuntimeError("Falcon did not submit an update to the existing analysis")
+
+        if analysis is None:
+            if submitted:
+                raise RuntimeError("Submitted Falcon analysis could not be found")
             # Falcon found no errors — create a clean analysis record
             analysis = TraceErrorAnalysis.objects.create(
                 trace_id=trace_id,

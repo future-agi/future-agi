@@ -110,6 +110,21 @@ class SubmitTraceFindingTool(BaseTool):
         if project is None:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
+        if context.assigned_trace_id is not None and params.location_spans:
+            from tracer.services.clickhouse.v2 import get_reader
+
+            with get_reader() as reader:
+                trace_ids = reader.trace_ids_for_span_ids(
+                    params.location_spans, project_id=str(project.pk)
+                )
+            if any(
+                trace_ids.get(sid) != context.assigned_trace_id
+                for sid in params.location_spans
+            ):
+                return ToolResult.validation_error(
+                    "Finding references a span outside the assigned trace."
+                )
+
         with transaction.atomic():
             analysis = None
 
@@ -123,6 +138,8 @@ class SubmitTraceFindingTool(BaseTool):
                         project__organization=context.organization,
                     )
                 except TraceErrorAnalysis.DoesNotExist:
+                    if context.assigned_trace_id is not None:
+                        return ToolResult.not_found("Analysis", str(params.analysis_id))
                     # Invalid analysis_id — create a new one
                     analysis = None
 
