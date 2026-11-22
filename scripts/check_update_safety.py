@@ -493,9 +493,6 @@ def declaration_only_addition(root, baseline, path):
     return ast.dump(new, include_attributes=False) == ast.dump(old, include_attributes=False)
 
 
-RELEASE_TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
-
-
 def latest_release_tag(root, head="HEAD"):
     """The highest plain vX.Y.Z tag reachable from head, by version; None if none.
 
@@ -506,7 +503,9 @@ def latest_release_tag(root, head="HEAD"):
     except (subprocess.CalledProcessError, OSError):
         return None
     tags = [t for t in listed.split() if RELEASE_TAG.fullmatch(t)]
-    return max(tags, key=lambda t: tuple(int(n) for n in RELEASE_TAG.fullmatch(t).groups()), default=None)
+    # RELEASE_TAG (module-level, shared with release_span_history) has no groups;
+    # order by numeric version, never lexically (v1.10.0 > v1.9.0).
+    return max(tags, key=lambda t: tuple(int(n) for n in t[1:].split(".")), default=None)
 
 
 def shipped_release_restore(root, path):

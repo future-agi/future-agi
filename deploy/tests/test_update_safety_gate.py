@@ -1127,6 +1127,27 @@ class ShippedReleaseRestoreTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(self.restore(text))
 
+    def test_versions_order_numerically_not_lexically(self):
+        for tag in ("v1.2.0", "v1.10.0", "v1.9.0"):
+            self.commit(f"{tag} text\n", tag=tag)
+        self.assertEqual(gate.latest_release_tag(self.root), "v1.10.0")
+        self.assertEqual(self.restore("v1.10.0 text\n")[0], "v1.10.0")
+        self.assertIsNone(self.restore("v1.9.0 text\n"))
+
+    def test_the_gate_module_binds_each_top_level_name_once(self):
+        import ast
+        import collections
+        tree = ast.parse((ROOT / "scripts/check_update_safety.py").read_text())
+        names = collections.Counter()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                names[node.name] += 1
+            elif isinstance(node, ast.Assign):
+                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                names[node.target.id] += 1
+        self.assertEqual([name for name, count in names.items() if count > 1], [])
+
     def test_a_tree_git_cannot_read_has_no_release(self):
         with tempfile.TemporaryDirectory(prefix="gate-not-a-repo-") as other:
             self.assertIsNone(gate.latest_release_tag(Path(other)))
