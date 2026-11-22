@@ -946,6 +946,15 @@ def check_integration_error_alerts():
     )
 
     for conn in connections_in_error:
+        if not _reachable_admin_emails(conn):
+            # Nobody to tell: no owner or admin, or every one of them has
+            # unsubscribed from integration error emails. Leave the
+            # connection out of this run instead of claiming a send that
+            # goes nowhere; a later run alerts whoever opts back in.
+            logger.info(
+                "integration_error_alert_no_recipients", connection_id=str(conn.id)
+            )
+            continue
         previous = conn.last_error_notified_at
         claimed_at = datetime.now(UTC)
         # Claim the notification before sending, atomically. If this run dies
@@ -971,21 +980,36 @@ def check_integration_error_alerts():
             )
 
 
-def _send_error_notification(connection):
-    """Send email notification for a connection in error state."""
+def _admin_emails(connection) -> list[str]:
+    """The org's active owners and admins, who get integration error alerts."""
     from accounts.models.user import User
     from tfc.constants.roles import OrganizationRoles
+
+    return list(
+        User.objects.filter(
+            organization=connection.organization,
+            organization_role__in=[OrganizationRoles.OWNER, OrganizationRoles.ADMIN],
+            is_active=True,
+        ).values_list("email", flat=True)
+    )
+
+
+def _reachable_admin_emails(connection) -> list[str]:
+    """Admin addresses still subscribed to integration error emails."""
+    from tfc.utils.email_unsubscribe import INTEGRATION_ERRORS, recipient_links
+
+    return [
+        link.email
+        for link in recipient_links(_admin_emails(connection), INTEGRATION_ERRORS)
+    ]
+
+
+def _send_error_notification(connection):
+    """Send email notification for a connection in error state."""
     from tfc.utils.email import email_helper
     from tfc.utils.email_unsubscribe import INTEGRATION_ERRORS
 
-    # Get org admins and owners
-    admins = User.objects.filter(
-        organization=connection.organization,
-        organization_role__in=[OrganizationRoles.OWNER, OrganizationRoles.ADMIN],
-        is_active=True,
-    )
-
-    recipient_emails = list(admins.values_list("email", flat=True))
+    recipient_emails = _admin_emails(connection)
     if not recipient_emails:
         return
 

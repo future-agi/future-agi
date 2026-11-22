@@ -615,6 +615,56 @@ class TestCheckIntegrationErrorAlerts:
         mock_send.assert_called_once()
 
     @patch("integrations.temporal.activities._send_error_notification")
+    def test_failed_send_leaves_a_newer_claim_alone(self, mock_send, error_connection):
+        """Review round 2: a slow run that fails after another run re-claimed
+        the connection must not undo that newer claim."""
+        IntegrationConnection.no_workspace_objects.filter(
+            id=error_connection.id
+        ).update(
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
+            last_error_notified_at=None,
+        )
+        newer = datetime.now(UTC) + timedelta(minutes=5)
+
+        def another_run_claims_then_this_send_fails(conn):
+            IntegrationConnection.no_workspace_objects.filter(id=conn.id).update(
+                last_error_notified_at=newer
+            )
+            raise RuntimeError("nobody reached")
+
+        mock_send.side_effect = another_run_claims_then_this_send_fails
+
+        check_integration_error_alerts()
+
+        error_connection.refresh_from_db()
+        assert error_connection.last_error_notified_at == newer
+
+    @patch("integrations.temporal.activities._send_error_notification")
+    def test_no_reachable_admin_means_no_alert_and_no_claim(
+        self, mock_send, error_connection, user
+    ):
+        """Owner decision: when every admin unsubscribed, the alert is left
+        out of the run (not claimed), so it isn't marked as sent."""
+        from tfc.utils import email_unsubscribe as eu
+
+        IntegrationConnection.no_workspace_objects.filter(
+            id=error_connection.id
+        ).update(
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
+            last_error_notified_at=None,
+        )
+        eu.set_subscribed(
+            eu.Link(user.email.lower(), eu.INTEGRATION_ERRORS, None, str(user.pk)),
+            False,
+        )
+
+        check_integration_error_alerts()
+
+        mock_send.assert_not_called()
+        error_connection.refresh_from_db()
+        assert error_connection.last_error_notified_at is None
+
+    @patch("integrations.temporal.activities._send_error_notification")
     def test_failed_send_releases_claim_for_retry(self, mock_send, error_connection):
         IntegrationConnection.no_workspace_objects.filter(
             id=error_connection.id

@@ -153,6 +153,8 @@ def email_helper(
     links = email_unsubscribe.recipient_links(
         to_email_list, notification_category, unsubscribe_scope
     )
+    if not links:
+        return 0  # everyone opted out: nothing to send, no connection to open
 
     # The footer says why this address gets the email, beside the link.
     reason = (

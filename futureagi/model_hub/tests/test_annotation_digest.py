@@ -540,6 +540,99 @@ class TestOverlappingRuns:
             assert _send_daily_for_user(digest_user, now) is True
         mock_send.assert_called_once()
 
+    def test_candidates_come_from_one_query_one_row_per_user(
+        self, digest_user, digest_queue, digest_org, digest_project
+    ):
+        """Review round 2: candidates are de-duplicated in PostgreSQL."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from model_hub.utils.annotation_digest import _digest_candidates
+
+        for _ in range(3):
+            _create_queue_item(
+                digest_queue,
+                assigned_to=digest_user,
+                status=QueueItemStatus.PENDING.value,
+                organization=digest_org,
+                project=digest_project,
+            )
+
+        with CaptureQueriesContext(connection) as queries:
+            users = list(_digest_candidates())
+
+        assert len(queries) == 1
+        assert [u.pk for u in users].count(digest_user.pk) == 1
+
+    def test_failed_daily_send_retries_next_morning_not_next_hour(
+        self, digest_user, digest_queue, digest_org, digest_project
+    ):
+        """Review round 2: the hour filter runs before the claim, so a daily
+        digest that failed at 09:00 goes out at 09:00 the next day."""
+        from model_hub.utils.annotation_digest import _send_daily_for_user
+
+        _create_queue_item(
+            digest_queue,
+            assigned_to=digest_user,
+            status=QueueItemStatus.PENDING.value,
+            organization=digest_org,
+            project=digest_project,
+        )
+        digest_user.last_timezone = "UTC"
+        digest_user.save()
+        nine = datetime(2026, 5, 15, 9, 0, tzinfo=UTC)
+
+        with patch(
+            "model_hub.utils.annotation_digest.email_helper",
+            side_effect=RuntimeError("mailgun down"),
+        ):
+            assert _send_daily_for_user(digest_user, nine) is False
+
+        with patch("model_hub.utils.annotation_digest.email_helper") as mock_send:
+            assert _send_daily_for_user(digest_user, nine + timedelta(hours=1)) is False
+            assert _send_daily_for_user(digest_user, nine + timedelta(days=1)) is True
+        mock_send.assert_called_once()
+
+    @pytest.mark.parametrize("track", ["daily", "realtime"])
+    def test_digest_email_is_an_annotation_digest_email(
+        self, digest_user, digest_queue, digest_org, digest_project, track
+    ):
+        """Review round 2: the category is checked at the real sender, with
+        the real helper and template."""
+        from urllib.parse import parse_qs, urlparse
+
+        from django.core import mail
+
+        from model_hub.utils.annotation_digest import (
+            _send_daily_for_user,
+            _send_realtime_for_user,
+        )
+        from tfc.utils import email_unsubscribe as eu
+
+        _create_queue_item(
+            digest_queue,
+            assigned_to=digest_user,
+            status=QueueItemStatus.PENDING.value,
+            organization=digest_org,
+            project=digest_project,
+        )
+        digest_user.last_timezone = "UTC"
+        digest_user.save()
+        mail.outbox = []
+        if track == "daily":
+            assert _send_daily_for_user(
+                digest_user, datetime(2026, 5, 15, 9, 0, tzinfo=UTC)
+            )
+        else:
+            assert _send_realtime_for_user(digest_user, timezone.now())
+
+        (message,) = mail.outbox
+        header = message.extra_headers["List-Unsubscribe"]
+        token = parse_qs(urlparse(header.strip("<>")).query)["token"][0]
+        link = eu.read_token(token)
+        assert link.category == eu.ANNOTATION_DIGEST
+        assert link.user_id == str(digest_user.pk)
+
     def test_suppressed_digest_does_not_throttle_the_next_one(
         self, digest_user, digest_queue, digest_org, digest_project
     ):

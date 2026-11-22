@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import structlog
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db.models import Count, Min, Q
+from django.db.models import Count, Exists, Min, OuterRef, Q
 from django.utils import timezone
 
 from model_hub.models.annotation_queues import (
@@ -218,6 +218,21 @@ def _backend_url() -> str:
 # ---------------------------------------------------------------------------
 
 
+def _digest_candidates():
+    """Active users on any live queue, as annotator or manager, or with an
+    item assigned on one. PostgreSQL finds them, one row per user, instead of
+    loading every membership and queue item into Python."""
+    on_a_queue = AnnotationQueueAnnotator.objects.filter(
+        user=OuterRef("pk"), deleted=False, queue__deleted=False
+    )
+    assigned = QueueItem.objects.filter(
+        assigned_to=OuterRef("pk"), deleted=False, queue__deleted=False
+    )
+    return User.objects.filter(is_active=True).filter(
+        Exists(on_a_queue) | Exists(assigned)
+    )
+
+
 def _send_realtime_for_user(user, now: datetime) -> bool:
     """Send a realtime digest email if the user has new items + throttle allows.
 
@@ -310,19 +325,7 @@ def send_annotation_realtime_digest_tick() -> dict[str, int]:
     sent = 0
     skipped = 0
     errors = 0
-    # Candidates: users who are annotators OR managers on any non-deleted queue.
-    candidate_ids = set(
-        AnnotationQueueAnnotator.objects.filter(
-            deleted=False, queue__deleted=False
-        ).values_list("user_id", flat=True)
-    )
-    candidate_ids |= set(
-        QueueItem.objects.filter(
-            deleted=False, queue__deleted=False, assigned_to__isnull=False
-        ).values_list("assigned_to_id", flat=True)
-    )
-
-    for user in User.objects.filter(id__in=candidate_ids, is_active=True):
+    for user in _digest_candidates():
         try:
             if _send_realtime_for_user(user, now):
                 sent += 1
@@ -442,18 +445,7 @@ def send_annotation_daily_digest_tick() -> dict[str, int]:
     sent = 0
     skipped = 0
     errors = 0
-    candidate_ids = set(
-        AnnotationQueueAnnotator.objects.filter(
-            deleted=False, queue__deleted=False
-        ).values_list("user_id", flat=True)
-    )
-    candidate_ids |= set(
-        QueueItem.objects.filter(
-            deleted=False, queue__deleted=False, assigned_to__isnull=False
-        ).values_list("assigned_to_id", flat=True)
-    )
-
-    for user in User.objects.filter(id__in=candidate_ids, is_active=True):
+    for user in _digest_candidates():
         try:
             if _send_daily_for_user(user, now):
                 sent += 1

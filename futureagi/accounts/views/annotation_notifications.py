@@ -147,11 +147,17 @@ def _monitor_way_back(who: str) -> str:
     )
 
 
-def _nothing_to_change() -> HttpResponse:
+def _destination_gone(link: email_unsubscribe.Link) -> HttpResponse:
+    """The monitor or account the link was for has been deleted."""
+    if link.category == email_unsubscribe.MONITOR_ALERTS:
+        return _unsub_template(
+            "Monitor deleted",
+            "This monitor has been deleted, so it won't send any more alerts.",
+        )
     return _unsub_template(
-        "Nothing to change",
-        "The account or alert this link was for no longer exists, "
-        "so there are no more of these emails to stop.",
+        "Account deleted",
+        "The account this link was for no longer exists, so no more of "
+        "these emails will be sent.",
     )
 
 
@@ -159,7 +165,7 @@ def _confirm_page(token: str, link: email_unsubscribe.Link) -> HttpResponse:
     """GET view of an unsubscribe link: shows the current state with the
     button that changes it, and changes nothing itself."""
     if not email_unsubscribe.destination_exists(link):
-        return _nothing_to_change()
+        return _destination_gone(link)
     label = escape(email_unsubscribe.describe(link))
     who = escape(link.email)
     action_url = email_unsubscribe.page_url(token)
@@ -253,7 +259,7 @@ class EmailUnsubscribeView(_EmailedLinkView):
 
         result = email_unsubscribe.set_subscribed(link, subscribed)
         if result == email_unsubscribe.MISSING:
-            return _nothing_to_change()
+            return _destination_gone(link)
         if result == email_unsubscribe.REFUSED:
             return _unsub_template("Can't resubscribe", _monitor_way_back(who))
         if result == email_unsubscribe.CHANGED:

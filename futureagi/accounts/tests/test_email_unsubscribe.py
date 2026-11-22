@@ -309,7 +309,7 @@ class TestMonitorAlerts:
             f"{URL}?token={token}", ONE_CLICK, format="multipart"
         )
 
-        assert b"Nothing to change" in response.content
+        assert b"Monitor deleted" in response.content
 
 
 @pytest.mark.django_db
@@ -387,7 +387,7 @@ class TestReviewRound2Storage:
 
         page = api_client.get(URL, {"token": token})
 
-        assert b"Nothing to change" in page.content
+        assert b"Monitor deleted" in page.content
         assert b"<form" not in page.content
 
 
@@ -655,3 +655,15 @@ def test_a_dropped_mail_connection_is_reopened_for_the_next_recipient(user):
         )
 
     assert [m.to for m in messages] == [[user.email], ["third@example.com"]]
+
+
+@pytest.mark.django_db
+def test_link_for_a_deleted_account_says_so(api_client, user):
+    token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
+    user.delete()
+
+    page = api_client.get(URL, {"token": token}).content
+    response = api_client.post(f"{URL}?token={token}", ONE_CLICK, format="multipart")
+
+    assert b"Account deleted" in page
+    assert b"Account deleted" in response.content
