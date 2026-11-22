@@ -82,7 +82,10 @@ class SubmitTraceScoresTool(BaseTool):
     def execute(
         self, params: SubmitTraceScoresInput, context: ToolContext
     ) -> ToolResult:
-        from ai_tools.tools.tracing.access import get_trace_project
+        from ai_tools.tools.tracing.access import (
+            get_trace_project,
+            select_analysis_for_write,
+        )
         from tracer.models.trace_error_analysis import TraceErrorAnalysis
         from tracer.queries import deep_analysis_state
 
@@ -98,21 +101,11 @@ class SubmitTraceScoresTool(BaseTool):
         if project is None:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
-        # Both the explicit ID and fallback must use the checked project.
-        analyses = TraceErrorAnalysis.objects.filter(
-            trace_id=params.trace_id,
-            project=project,
-            project__organization=context.organization,
+        analysis = select_analysis_for_write(
+            context, project, params.trace_id, params.analysis_id, reuse_latest=True
         )
-        analysis = (
-            analyses.filter(id=params.analysis_id).first()
-            if params.analysis_id
-            else None
-        )
-        if analysis is None:
-            if params.analysis_id and context.assigned_trace_id is not None:
-                return ToolResult.not_found("Analysis", str(params.analysis_id))
-            analysis = analyses.order_by("-analysis_date").first()
+        if isinstance(analysis, ToolResult):
+            return analysis
 
         # If still no analysis, create one (scores-only, no findings)
         if analysis is None:

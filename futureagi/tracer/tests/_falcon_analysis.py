@@ -74,3 +74,34 @@ def install_tool_stream(monkeypatch, *tool_calls, fail_after_tool=False, finish=
 
     monkeypatch.setattr(FalconLLMClient, "stream_completion", stream)
     return calls
+
+
+def score_params(trace_id):
+    return {
+        "trace_id": trace_id,
+        "overall_score": 2.0,
+        "factual_grounding_score": 2.0,
+        "factual_grounding_reason": "Own score",
+        "privacy_and_safety_score": 2.0,
+        "privacy_and_safety_reason": "Own score",
+        "instruction_adherence_score": 2.0,
+        "instruction_adherence_reason": "Own score",
+        "optimal_plan_execution_score": 2.0,
+        "optimal_plan_execution_reason": "Own score",
+        "insights": "Requesting project only",
+        "recommended_priority": "MEDIUM",
+    }
+
+
+def finding_params(trace_id):
+    return {
+        "trace_id": trace_id,
+        "category": "Thinking > Hallucination",
+        "location_spans": ["shared-span"],
+        "evidence_snippets": ["Own evidence"],
+        "description": "Own finding",
+        "impact": "MEDIUM",
+        "root_causes": ["Own cause"],
+        "recommendation": "Own fix",
+        "confidence": 0.9,
+    }

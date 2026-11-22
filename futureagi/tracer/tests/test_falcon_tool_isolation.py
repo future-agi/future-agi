@@ -9,7 +9,13 @@ import pytest
 from ai_tools.base import ToolContext
 from tracer.models.trace_error_analysis import TraceErrorAnalysis, TraceErrorDetail
 from tracer.tasks.error_analysis import _falcon_analyze_single_trace
-from tracer.tests._falcon_analysis import install_reader, install_tool_stream, read_call
+from tracer.tests._falcon_analysis import (
+    finding_params,
+    install_reader,
+    install_tool_stream,
+    read_call,
+    score_params,
+)
 from tracer.tests.test_falcon_error_analysis import (
     falcon_boundaries as falcon_boundaries,
     global_analysis_skill as global_analysis_skill,
@@ -43,37 +49,6 @@ def other_project(request, project):
         model_type=project.model_type,
         trace_type=project.trace_type,
     )
-
-
-def score_params(trace_id):
-    return {
-        "trace_id": trace_id,
-        "overall_score": 2.0,
-        "factual_grounding_score": 2.0,
-        "factual_grounding_reason": "Own score",
-        "privacy_and_safety_score": 2.0,
-        "privacy_and_safety_reason": "Own score",
-        "instruction_adherence_score": 2.0,
-        "instruction_adherence_reason": "Own score",
-        "optimal_plan_execution_score": 2.0,
-        "optimal_plan_execution_reason": "Own score",
-        "insights": "Requesting project only",
-        "recommended_priority": "MEDIUM",
-    }
-
-
-def finding_params(trace_id):
-    return {
-        "trace_id": trace_id,
-        "category": "Thinking > Hallucination",
-        "location_spans": ["shared-span"],
-        "evidence_snippets": ["Own evidence"],
-        "description": "Own finding",
-        "impact": "MEDIUM",
-        "root_causes": ["Own cause"],
-        "recommendation": "Own fix",
-        "confidence": 0.9,
-    }
 
 
 @pytest.mark.django_db(transaction=True)

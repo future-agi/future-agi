@@ -19,7 +19,7 @@ from accounts.saml_credential import (
     validate_saml_credential,
 )
 from ai_tools.base import BackgroundExecutionScope, ToolContext
-from ai_tools.tools.tracing.access import get_trace_project
+from ai_tools.tools.tracing.access import allows_trace_assignment, get_trace_project
 from tfc.ee_gating import EEFeature, check_ee_feature
 from tracer.models.trace_error_analysis import TraceErrorAnalysis
 
@@ -45,7 +45,7 @@ def capture_background_execution_scope(
             foreground.project is not None
             and foreground.project.pk != attempt.project_id
         )
-        or foreground.assigned_trace_id not in (None, str(attempt.trace_id))
+        or not allows_trace_assignment(attempt.trace_id, foreground)
     ):
         raise BackgroundScopeDenied("Assignment is outside the initiating context.")
 

@@ -80,7 +80,10 @@ class SubmitTraceFindingTool(BaseTool):
     ) -> ToolResult:
         from django.db import transaction
 
-        from ai_tools.tools.tracing.access import get_trace_project
+        from ai_tools.tools.tracing.access import (
+            get_trace_project,
+            select_analysis_for_write,
+        )
         from tracer.models.trace_error_analysis import (
             TraceErrorAnalysis,
             TraceErrorDetail,
@@ -126,22 +129,11 @@ class SubmitTraceFindingTool(BaseTool):
                 )
 
         with transaction.atomic():
-            analysis = None
-
-            # If analysis_id provided, reuse that specific analysis
-            if params.analysis_id:
-                try:
-                    analysis = TraceErrorAnalysis.objects.get(
-                        id=params.analysis_id,
-                        trace_id=params.trace_id,
-                        project=project,
-                        project__organization=context.organization,
-                    )
-                except TraceErrorAnalysis.DoesNotExist:
-                    if context.assigned_trace_id is not None:
-                        return ToolResult.not_found("Analysis", str(params.analysis_id))
-                    # Invalid analysis_id — create a new one
-                    analysis = None
+            analysis = select_analysis_for_write(
+                context, project, params.trace_id, params.analysis_id, reuse_latest=False
+            )
+            if isinstance(analysis, ToolResult):
+                return analysis
 
             # Create a new analysis record (same as the old agent did)
             if analysis is None:
