@@ -146,6 +146,7 @@ NO_ORGANIZATION_WRITE_PATHS = (
     "/accounts/organizations/create/",
     "/accounts/organizations/new/",
 )
+NO_ORGANIZATION_READ_PREFIX = "/accounts/"
 
 
 def _is_workspace_write(request) -> bool:
@@ -415,8 +416,9 @@ class APIKeyAuthentication(BaseAuthentication):
         organization = self._resolve_organization(request, user)
 
         if not organization:
-            if _is_workspace_write(request) and not request.path.startswith(
-                NO_ORGANIZATION_WRITE_PATHS
+            if not request.path.startswith(NO_ORGANIZATION_READ_PREFIX) or (
+                _is_workspace_write(request)
+                and not request.path.startswith(NO_ORGANIZATION_WRITE_PATHS)
             ):
                 logger.info(
                     "access_denied",

@@ -286,3 +286,22 @@ def test_a_user_with_no_organization_still_manages_their_second_factor(
     )
 
     assert response.status_code != 403, response.content
+
+
+def test_a_user_with_no_organization_cannot_read_outside_accounts(
+    organization, workspace
+):
+    response = _client_without_an_organization(organization, workspace).get(
+        "/simulate/run-tests/"
+    )
+
+    assert response.status_code == 403, response.content
+    assert response.data["detail"] == NO_ORGANIZATION_WRITE_DENIED
+
+
+def test_a_user_with_no_organization_still_reads_their_account(organization, workspace):
+    response = _client_without_an_organization(organization, workspace).get(
+        "/accounts/user-info/"
+    )
+
+    assert response.status_code != 403, response.content
