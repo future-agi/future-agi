@@ -795,6 +795,36 @@ class StaticEntryPointTests(unittest.TestCase):
             code = gate.main(['--root', str(self.root), *flags, '--base', 'fixture', '--compose-model', str(self.model), '--json'])
         return code, out.getvalue(), err.getvalue()
 
+    def test_only_a_release_tag_base_reads_the_review_chain(self):
+        # A pull request, push or merge group passes a commit: its ClickHouse
+        # change must match one review row exactly. Only the release-span
+        # comparison (an exact release tag) may use the reviewed chain.
+        import contextlib
+        import io
+        from unittest.mock import patch
+        for base, chained in (('0' * 39 + '1', False), ('fixture', False), ('v1.59.0-pr1.abc', False),
+                              ('v1.59.0', True)):
+            seen = []
+            def capture(*args, history=None, **kwargs):
+                seen.append(history)
+                return []
+            with patch.object(gate, 'changed_paths', return_value=[]), \
+                    patch.object(gate, 'base_commit', return_value='merge-base'), \
+                    patch.object(gate, 'repository_paths', return_value=[]), \
+                    patch.object(gate, 'check_clickhouse_changes', side_effect=capture), \
+                    patch.object(gate, 'review_history', return_value={}) as history, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = gate.main(['--root', str(self.root), '--static', '--base', base,
+                                  '--compose-model', str(self.model), '--json'])
+                self.assertEqual(code, 0, base)
+                self.assertEqual(len(seen), 1, base)
+                self.assertEqual(seen[0] is not None, chained, base)
+                if chained:
+                    self.assertEqual(seen[0](), {})
+                    history.assert_called_once_with(self.root, 'merge-base', unittest.mock.ANY)
+                else:
+                    history.assert_not_called()
+
     migration = 'futureagi/tracer/migrations/existing.py'
     migration_source = ('from django.db import migrations\n\n'
                         'def forwards(apps, schema_editor):\n    pass\n\n'

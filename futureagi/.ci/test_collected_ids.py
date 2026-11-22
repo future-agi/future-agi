@@ -473,6 +473,40 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertIn("b/tests/*.py", stale[0])
         self.assertIn("100%25%0Asecond line", stale[1])
 
+    def test_a_rule_for_another_kind_of_run_is_not_called_stale(self):
+        rules = checker.read_runtime_skip_rules(
+            self.rule_file(
+                [
+                    {"files": "a/tests/*.py", "reason": "x", "why": "by design"},
+                    {
+                        "files": "b/tests/*.py",
+                        "reason": "x",
+                        "why": "by design",
+                        "runs": "oss",
+                    },
+                ]
+            )
+        )
+        rows = self.rows([("a/tests/test_a.py", "x")])
+        for runs, warned in (
+            (("internal",), False),
+            (("oss",), True),
+            (("internal", "oss"), True),
+        ):
+            with tempfile.TemporaryDirectory() as temp:
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    checker.report_runtime_skips(
+                        [dict(row, runs=runs[0]) for row in rows],
+                        enforce=True,
+                        partial=False,
+                        report_path=pathlib.Path(temp) / "r.json",
+                        summary_path=pathlib.Path(temp) / "s.md",
+                        rules=rules,
+                        runs=runs,
+                    )
+            self.assertEqual("b/tests/*.py" in out.getvalue(), warned, runs)
+
     def test_the_summary_shows_allowed_and_unexpected_counts(self):
         rows = self.measured_rows() + self.rows(
             [("model_hub/tests/test_new.py", "Skipped: new")]

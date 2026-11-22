@@ -254,7 +254,7 @@ def bind_to_inventory(skips, expected):
 
 
 def report_runtime_skips(
-    skips, *, partial, enforce, report_path, summary_path, rules=None
+    skips, *, partial, enforce, report_path, summary_path, rules=None, runs=RUNS
 ):
     """Publish the full list in either mode before optionally failing qualification.
 
@@ -326,8 +326,10 @@ def report_runtime_skips(
         if not partial:
             # Counted per rule, so two rules with the same explanation are
             # still told apart.
+            # Only rules for a kind of run this run had can be stale: an
+            # internal run says nothing about a fork-only rule.
             for index, rule in enumerate(rules):
-                if index not in used:
+                if index not in used and rule.get("runs", runs[0]) in runs:
                     sys.stdout.write(
                         "::warning title=Backend run-time skip rule matched nothing::"
                         + annotation(
@@ -395,6 +397,7 @@ def verify_run():
     expected = {}
     outcomes = collections.defaultdict(list)
     skips = []
+    kinds = set()
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
         # Only count observations from authentic receipts of the latest
         # producers. A failed leg may have evidence, but can never qualify.
@@ -451,6 +454,7 @@ def verify_run():
                 problems.append(f"{suite}/{group}: {exc}")
                 continue
             runs = "oss" if receipt["ee"] == "oss" else "internal"
+            kinds.add(runs)
             skips.extend(
                 {"suite": suite, "group": group, "runs": runs, **row}
                 for row in observed
@@ -492,6 +496,7 @@ def verify_run():
         enforce=os.environ.get("BACKEND_ENFORCE_RUNTIME_SKIPS") == "true",
         report_path=Path(os.environ["RUNNER_TEMP"]) / "backend-runtime-skips.json",
         summary_path=os.environ["GITHUB_STEP_SUMMARY"],
+        runs=tuple(sorted(kinds)) or RUNS,
     )
     if problems:
         raise ValueError("; ".join(problems))

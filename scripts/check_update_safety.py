@@ -945,6 +945,23 @@ def review_history(root, baseline, registry):
     return edges
 
 
+RELEASE_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+")
+
+
+def release_span_history(root, base, baseline, registry):
+    """The register history for a comparison of two releases, else None.
+
+    Only scripts/update-safety-base.sh's release-span path (a scheduled or
+    dispatched run on main) passes an exact release tag as --base; a pull
+    request, a push or a merge group passes a commit. A pull request's own
+    commits are not reviewed one by one, so there its change must match one
+    row exactly. The history is read only if a row does not match.
+    """
+    if not RELEASE_TAG.fullmatch(base or ""):
+        return None
+    return functools.cache(lambda: review_history(root, baseline, registry))
+
+
 def reviewed_chain(edges, start, end):
     """Whether reviewed transitions lead from blob `start` to blob `end`."""
     seen, frontier = {start}, [start]
@@ -1176,7 +1193,7 @@ def main(argv=None):
             check_source_coverage(root, sources)
             rehearsals += check_clickhouse_changes(root, changes, baseline, sources,
                                                   document(root / DATA / "clickhouse-change-reviews.json"), registry,
-                                                  history=functools.cache(lambda: review_history(root, baseline, registry)))
+                                                  history=release_span_history(root, args.base, baseline, registry))
         if args.django:
             # AppConfig.ready() diagnostics must not corrupt the JSON API.
             with contextlib.redirect_stdout(sys.stderr):
