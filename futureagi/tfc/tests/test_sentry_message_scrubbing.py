@@ -334,17 +334,23 @@ def test_zero_root_id_rejects_transaction(key):
         trace = {"trace_id": "a" * 32, "span_id": "b" * 16}
         trace[key] = "0" * len(trace[key])
         result = sentry_sdk.capture_event(
-            {"type": "transaction", "transaction": "process job", "contexts": {"trace": trace}}
+            {
+                "type": "transaction",
+                "transaction": "process job",
+                "contexts": {"trace": trace},
+            }
         )
         assert result is None
         assert not transport.envelopes
 
 
 def test_zero_optional_span_and_sampling_ids_are_not_forwarded():
-    span = sentry._span_structure({
-        "parent_span_id": "0" * 16,
-        "dynamic_sampling_context": {"trace_id": "0" * 32, "sampled": "true"},
-    })
+    span = sentry._span_structure(
+        {
+            "parent_span_id": "0" * 16,
+            "dynamic_sampling_context": {"trace_id": "0" * 32, "sampled": "true"},
+        }
+    )
     assert span == {}
 
 

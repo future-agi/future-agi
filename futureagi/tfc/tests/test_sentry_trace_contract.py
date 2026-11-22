@@ -32,7 +32,9 @@ def test_trace_wire_contract(monkeypatch, case):
     monkeypatch.setattr(sentry_sdk, "init", use_memory)
     monkeypatch.setattr(sentry, "SENTRY_ENABLED", True)
     monkeypatch.setattr(
-        sentry, "SENTRY_DSN", "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@localhost.invalid/1"
+        sentry,
+        "SENTRY_DSN",
+        "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@localhost.invalid/1",
     )
     monkeypatch.setattr(sentry, "TRACES_SAMPLE_RATE", 1.0)
     monkeypatch.setattr(sentry, "PROFILES_SAMPLE_RATE", 1.0)

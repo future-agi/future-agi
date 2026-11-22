@@ -22,6 +22,7 @@ import os
 import re
 from collections.abc import Callable
 from datetime import datetime
+from enum import Enum
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -174,8 +175,12 @@ _INGESTION_FRAMES = (
 )
 _HEADER_MEDIA_TYPES = frozenset(
     {
-        "application/json", "application/x-protobuf", "application/grpc",
-        "text/html", "text/plain", "*/*",
+        "application/json",
+        "application/x-protobuf",
+        "application/grpc",
+        "text/html",
+        "text/plain",
+        "*/*",
     }
 )
 _SPAN_STATUSES = frozenset(
@@ -306,15 +311,16 @@ def _is_grpc_framework_logger(name: Any) -> bool:
     )
 
 
-def _grpc_status_name(value: Any) -> str | None:
+def _grpc_status_name(value: object) -> str | None:
     # Scope breadcrumbs see the live enum; serialized error extras and restored
     # breadcrumbs may contain its repr. Never render a supplied request/object.
     from grpc import StatusCode
 
-    if type(value) is StatusCode:
+    status_codes: type[Enum] = StatusCode
+    if type(value) is status_codes:
         return value.name
     if type(value) is str and len(value) <= 96:
-        for code in StatusCode:
+        for code in status_codes:
             if value == code.name or value == repr(code):
                 return code.name
     return None
@@ -420,7 +426,7 @@ def _bounded_frame(frame: dict) -> dict:
     width = min(_FRAME_CONTEXT_LINES, _MAX_ITEMS)
     for key in ("pre_context", "post_context"):
         lines = frame.get(key)
-        if type(lines) not in (list, tuple) or not width:
+        if lines is None or type(lines) not in (list, tuple) or not width:
             continue
         excerpt = lines[-width:] if key == "pre_context" else lines[:width]
         if all(type(line) is str and len(line) <= text_limit for line in excerpt):
@@ -452,7 +458,11 @@ def _scrub_frames(event: dict) -> str | None:
         # Charge malformed lists too; never collect an SDK frame iterator here.
         frames = stack.get("frames")
         owner["stacktrace"] = {}
-        if type(frames) not in (list, tuple) or len(frames) > min(_MAX_ITEMS, remaining):
+        if (
+            frames is None
+            or type(frames) not in (list, tuple)
+            or len(frames) > min(_MAX_ITEMS, remaining)
+        ):
             complete = False
             return
         remaining -= len(frames)
@@ -727,7 +737,9 @@ def _scrub_request_log(event: dict, record: object) -> None:
     if type(fields) is dict:
         name = fields.get("event")
         if type(name) is str and name in (
-            "request_started", "request_finished", "request_failed"
+            "request_started",
+            "request_finished",
+            "request_failed",
         ):
             label = name
         status = fields.get("code")
@@ -888,7 +900,11 @@ def _event_scrubber() -> Any:
             # attach_stacktrace may have just built a message stack. Its capture
             # and in-app marking have already happened; bound the remaining SDK
             # walk and serialization, including the task logger's fallback stack.
-            if "threads" in event and "exception" not in event and "stacktrace" not in event:
+            if (
+                "threads" in event
+                and "exception" not in event
+                and "stacktrace" not in event
+            ):
                 try:
                     replacement = _scrub_frames(cast(dict, event))
                 except ValueError:

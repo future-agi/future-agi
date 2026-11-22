@@ -34,8 +34,14 @@ def capture(monkeypatch, component):
     real_init = sentry_sdk.init
     global_scope = sentry_sdk.get_global_scope()
     previous = global_scope.client
-    monkeypatch.setattr(sentry_sdk, "init", lambda **opts: real_init(**opts, transport=wire))
-    monkeypatch.setattr(sentry, "SENTRY_DSN", "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@fixture.invalid/1")
+    monkeypatch.setattr(
+        sentry_sdk, "init", lambda **opts: real_init(**opts, transport=wire)
+    )
+    monkeypatch.setattr(
+        sentry,
+        "SENTRY_DSN",
+        "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@fixture.invalid/1",
+    )
     monkeypatch.setattr(sentry, "SENTRY_ENABLED", True)
     monkeypatch.setattr(sentry, "TRACES_SAMPLE_RATE", 1.0)
     monkeypatch.setattr(sentry, "PROFILES_SAMPLE_RATE", 0.0)
@@ -73,25 +79,38 @@ def test_registered_activity(monkeypatch):
         {"key": k, "value": {"string_value": v}}
         for k, v in (("project_name", project), ("project_type", "observe"))
     ]
-    resource = {"resource": {"attributes": attrs}, "scope_spans": [{"spans": [{"name": "fixture span"}]}]}
+    resource = {
+        "resource": {"attributes": attrs},
+        "scope_spans": [{"spans": [{"name": "fixture span"}]}],
+    }
     storage = {"fixture-input": json.dumps({"resource_spans": [resource]}).encode()}
     # Only replace backing stores, not parsing, conversion, logging, or heartbeats.
-    monkeypatch.setattr(trace_ingestion, "payload_storage", SimpleNamespace(retrieve=storage.__getitem__))
+    monkeypatch.setattr(
+        trace_ingestion,
+        "payload_storage",
+        SimpleNamespace(retrieve=storage.__getitem__),
+    )
     monkeypatch.setattr(trace_ingestion.transaction, "atomic", nullcontext)
-    monkeypatch.setattr(trace_ingestion, "get_pii_settings_for_projects", lambda *args: {})
+    monkeypatch.setattr(
+        trace_ingestion, "get_pii_settings_for_projects", lambda *args: {}
+    )
     monkeypatch.setattr(otel, "_bulk_get_or_create_projects", lambda keys: {})
     task = trace_ingestion.bulk_create_observation_span_task
     registered = _create_real_activity(task._activity_name, task._sync_wrapper)
     env = ActivityEnvironment()
     env.info = replace(
-        env.info, activity_type=task._activity_name, task_queue="trace_ingestion",
+        env.info,
+        activity_type=task._activity_name,
+        task_queue="trace_ingestion",
         heartbeat_timeout=timedelta(seconds=120),
     )
     beats = []
     env.on_heartbeat = lambda *details: beats.append(details)
     call = ExecuteActivityInput(
-        fn=registered, args=({"args": ["fixture-input", "org", "user", "ws", "json"]},),
-        executor=None, headers={},
+        fn=registered,
+        args=({"args": ["fixture-input", "org", "user", "ws", "json"]},),
+        executor=None,
+        headers={},
     )
     with capture(monkeypatch, "temporal") as wire:
         ordinary_diagnostic()
@@ -104,19 +123,28 @@ def test_registered_activity(monkeypatch):
     [wrapper] = [e for e in events if e.get("logger") == "temporalio.activity"]
     assert task._activity_name in wrapper["logentry"]["message"]
     assert "FAILED (ValueError)" in wrapper["logentry"]["message"]
-    [task_log] = [e for e in events if e.get("logger") == "tracer.utils.trace_ingestion"]
+    [task_log] = [
+        e for e in events if e.get("logger") == "tracer.utils.trace_ingestion"
+    ]
     assert any(
-        error["type"] == "ValueError" and any(
+        error["type"] == "ValueError"
+        and any(
             f.get("module") == "tracer.utils.trace_ingestion"
-            and f.get("function") == "bulk_create_observation_span_task" and f.get("lineno", 0) > 0
+            and f.get("function") == "bulk_create_observation_span_task"
+            and f.get("lineno", 0) > 0
             for f in error["stacktrace"]["frames"]
-        ) for error in task_log["exception"]["values"]
+        )
+        for error in task_log["exception"]["values"]
     )
     assert any(
-        error["type"] == "RuntimeError" and error["value"] == "Fixture worker unavailable"
-        and any(f.get("function") == "ordinary_diagnostic" and f.get("lineno", 0) > 0
-                for f in error["stacktrace"]["frames"])
-        for e in events for error in e.get("exception", {}).get("values", [])
+        error["type"] == "RuntimeError"
+        and error["value"] == "Fixture worker unavailable"
+        and any(
+            f.get("function") == "ordinary_diagnostic" and f.get("lineno", 0) > 0
+            for f in error["stacktrace"]["frames"]
+        )
+        for e in events
+        for error in e.get("exception", {}).get("values", [])
     )
     assert all(project.encode() not in packet for packet in wire.raw)
 
@@ -129,12 +157,22 @@ urlpatterns = [path("qa/status/<str:reference>/", temporarily_unavailable)]
 
 
 async def get_status(url):
-    app = ApplicationCommunicator(ASGIHandler(), {
-        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
-        "method": "GET", "scheme": "http", "path": url, "raw_path": url.encode(),
-        "query_string": b"", "headers": [(b"host", b"testserver")],
-        "client": ("127.0.0.1", 50000), "server": ("testserver", 80),
-    })
+    app = ApplicationCommunicator(
+        ASGIHandler(),
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "http",
+            "path": url,
+            "raw_path": url.encode(),
+            "query_string": b"",
+            "headers": [(b"host", b"testserver")],
+            "client": ("127.0.0.1", 50000),
+            "server": ("testserver", 80),
+        },
+    )
     await app.send_input({"type": "http.request", "body": b"", "more_body": False})
     start = await app.receive_output(timeout=30)
     assert start["type"] == "http.response.start"
@@ -160,30 +198,58 @@ def test_middleware_503(monkeypatch):
     finally:
         bind_extra_request_finished_metadata.disconnect(observe)
     assert finished == [(CallbackRequestMiddleware, 503, 503)]
-    [logged] = [b for _, kind, b in wire.items if kind == "event"
-                and b.get("logger") == "django_structlog.middlewares.request"]
+    [logged] = [
+        b
+        for _, kind, b in wire.items
+        if kind == "event" and b.get("logger") == "django_structlog.middlewares.request"
+    ]
     [txn] = [b for _, kind, b in wire.items if kind == "transaction"]
-    assert logged["extra"]["status_code"] == txn["contexts"]["response"]["status_code"] == 503
+    assert (
+        logged["extra"]["status_code"]
+        == txn["contexts"]["response"]["status_code"]
+        == 503
+    )
     assert "request_finished" in logged["logentry"]["message"]
     for item in (logged, txn):
         assert item["request"]["method"] == "GET"
-        assert item["request"]["url"] == item["transaction"] == "/qa/status/{reference}/"
+        assert (
+            item["request"]["url"] == item["transaction"] == "/qa/status/{reference}/"
+        )
     assert all(marker.encode() not in packet for packet in wire.raw)
 
 
 @pytest.mark.parametrize("extended", [False, True], ids=["three-lines", "other-fields"])
 def test_supplied_frame(monkeypatch, extended):
     event_id = uuid4().hex
-    location = {"filename": "qa_frame.py", "function": "qa_step", "module": "tfc.qa_frame", "lineno": 17}
+    location = {
+        "filename": "qa_frame.py",
+        "function": "qa_step",
+        "module": "tfc.qa_frame",
+        "lineno": 17,
+    }
     lines = ["first line", "second line", "third line"]
     frame = {**location, "pre_context": lines}
     if extended:
         long_line = "x" * (sentry._FRAME_TEXT_LIMIT + 1)
-        frame.update(post_context=lines, context_line=long_line, abs_path=long_line,
-                     colno={"unexpected": 2}, extension={"extra": lines})
-    event = {"event_id": event_id, "exception": {"values": [{
-        "type": "LookupError", "value": "ordinary fixture", "stacktrace": {"frames": [frame]},
-    }]}}
+        frame.update(
+            post_context=lines,
+            context_line=long_line,
+            abs_path=long_line,
+            colno={"unexpected": 2},
+            extension={"extra": lines},
+        )
+    event = {
+        "event_id": event_id,
+        "exception": {
+            "values": [
+                {
+                    "type": "LookupError",
+                    "value": "ordinary fixture",
+                    "stacktrace": {"frames": [frame]},
+                }
+            ]
+        },
+    }
     seen = []
 
     def snapshot(source):
@@ -208,13 +274,17 @@ def test_supplied_frame(monkeypatch, extended):
         observe(sdk_client, "handle_in_app")
         observe(client.options["event_scrubber"], "scrub_event")
         observe(sdk_client, "serialize")
-        with sentry_sdk.start_transaction(name="ordinary fixture", op="qa.step") as root:
+        with sentry_sdk.start_transaction(
+            name="ordinary fixture", op="qa.step"
+        ) as root:
             root.set_context("response", {"status_code": 503})
             with monkeypatch.context() as budget:
                 budget.setattr(sentry, "_MAX_ITEMS", 2)
                 assert sentry_sdk.capture_event(event) == event_id
 
-    [(error_header, error)] = [(h, b) for h, k, b in wire.items if k == "event" and b["event_id"] == event_id]
+    [(error_header, error)] = [
+        (h, b) for h, k, b in wire.items if k == "event" and b["event_id"] == event_id
+    ]
     [(txn_header, txn)] = [(h, b) for h, k, b in wire.items if k == "transaction"]
     assert int(root.trace_id, 16) and len(root.trace_id) == 32
     assert int(root.span_id, 16) and len(root.span_id) == 16

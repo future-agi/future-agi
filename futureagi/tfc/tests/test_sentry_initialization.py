@@ -286,12 +286,16 @@ def test_missing_ingestion_project_is_not_in_task_or_interceptor_envelopes(
 
     task = next(e for e in events if e.get("logger") == "tracer.utils.trace_ingestion")
     [direct] = [e for e in events if not e.get("logger")]
-    assert direct["tags"]["temporal.activity_type"] == "bulk_create_observation_span_task"
+    assert (
+        direct["tags"]["temporal.activity_type"] == "bulk_create_observation_span_task"
+    )
     assert direct["exception"]["values"][-1]["type"] == "ValueError"
     assert all(v["value"] == sentry._REDACTED for v in direct["exception"]["values"])
     for event in (task, direct):
         assert "tracer.utils.trace_ingestion" in _frame_modules(event)
-    assert all(project.encode() not in e.serialize() for e in client.transport.envelopes)
+    assert all(
+        project.encode() not in e.serialize() for e in client.transport.envelopes
+    )
 
 
 def test_an_error_logged_inside_the_task_reaches_sentry_without_frame_vars(
