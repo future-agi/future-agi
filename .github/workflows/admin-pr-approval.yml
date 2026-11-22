@@ -8,8 +8,9 @@ name: Admin PR approval
 #
 # pull_request_target runs this file from the base branch with no checkout,
 # so no pull request code executes here. Fork pull requests and drafts are
-# ignored. Dev dismisses stale approvals on push, so each new head is approved
-# again.
+# ignored. Both the author and the event's sender must be admins, so a push by
+# a non-admin to an admin's branch keeps the normal review. Dev dismisses stale
+# approvals on push, so each new head is approved again.
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -35,14 +36,20 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
+          SENDER: ${{ github.event.sender.login }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          permission=$(gh api "repos/$REPO/collaborators/$AUTHOR/permission" --jq .permission)
-          if [[ $permission != admin ]]; then
-            echo "Author $AUTHOR has $permission permission; normal review applies."
-            exit 0
-          fi
+          # Both the author and whoever triggered this event (on synchronize, the
+          # pusher) must be admins: a non-admin push to an admin's branch is
+          # reviewed normally.
+          for who in "$AUTHOR" "$SENDER"; do
+            permission=$(gh api "repos/$REPO/collaborators/$who/permission" --jq .permission)
+            if [[ $permission != admin ]]; then
+              echo "$who has $permission permission; normal review applies."
+              exit 0
+            fi
+          done
           # Approve only the commit this event is about; a later push gets its own run.
           current=$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)
           if [[ $current != "$HEAD_SHA" ]]; then
