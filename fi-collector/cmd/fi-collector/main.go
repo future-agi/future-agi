@@ -44,16 +44,18 @@ import (
 	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
 	"github.com/future-agi/future-agi/fi-collector/pkg/traceavailable"
+	"github.com/future-agi/future-agi/fi-collector/pkg/trajectory"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
 )
 
 type rootConfig struct {
-	Writer   chwriter.Config               `yaml:"writer"`
-	Server   server.Config                 `yaml:"server"`
-	Auth     auth.Config                   `yaml:"auth"`
-	Observed observedcatalog.RuntimeConfig `yaml:"observed_catalog"`
-	Catalog  struct {
+	Writer     chwriter.Config               `yaml:"writer"`
+	Server     server.Config                 `yaml:"server"`
+	Auth       auth.Config                   `yaml:"auth"`
+	Observed   observedcatalog.RuntimeConfig `yaml:"observed_catalog"`
+	Trajectory trajectory.Config             `yaml:"trajectory"`
+	Catalog    struct {
 		Mode string `yaml:"mode"`
 	} `yaml:"catalog"`
 	PropertyCatalog struct {
@@ -149,6 +151,13 @@ func main() {
 	opts := []server.Option{server.WithLogger(log)}
 	if pricer != nil {
 		opts = append(opts, server.WithPricer(pricer))
+	}
+	if cfg.Trajectory.Active() || cfg.Trajectory.CompactSpanAttrs || cfg.Trajectory.BillDedupedBytes {
+		var trajSeen *trajectory.SeenStore
+		if cfg.Trajectory.Active() {
+			trajSeen = trajectory.NewSeenStore(rdb, cfg.Trajectory.LRUSize, cfg.Trajectory.SessionTTL, cfg.Trajectory.ProjectTTL)
+		}
+		opts = append(opts, server.WithTrajectory(cfg.Trajectory, trajSeen))
 	}
 	var replayDone chan struct{}
 	var finalReplay func(context.Context) (int, error)
@@ -317,6 +326,9 @@ func logStarting(log *slog.Logger, cfg rootConfig) {
 		"http_addr", cfg.Server.HTTPAddr,
 		"admin_addr", resolveAdminAddr(cfg),
 		"ch_url", chURL,
+		"trajectory_mode", cfg.Trajectory.Mode,
+		"compact_span_attrs", cfg.Trajectory.CompactSpanAttrs,
+		"bill_deduped_bytes", cfg.Trajectory.BillDedupedBytes,
 	)
 }
 
@@ -453,6 +465,10 @@ func applyEnvOverrides(log *slog.Logger, c *rootConfig) error {
 	}
 	if c.Observed.Mode != "disabled" && c.Writer.AsyncInsert {
 		return fmt.Errorf("observed catalog requires confirmed canonical inserts; async_insert without wait is unsupported")
+	}
+	c.Trajectory, err = trajectory.ConfigFromEnv(c.Trajectory, os.Getenv)
+	if err != nil {
+		return err
 	}
 	return nil
 }

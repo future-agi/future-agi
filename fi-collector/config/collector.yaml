@@ -98,6 +98,27 @@ observed_catalog:
     directory: /var/lib/fi-collector/observed-catalog
   replay_interval: 1s
 
+# Content-addressed Trajectory Store (Phase 0 intra-span compaction + Phase 1
+# cross-span message/tool deduplication + dedup-aware storage billing).
+# Safe defaults keep all features OFF until schema 028_trajectory_items.sql and
+# hydrating Django readers are deployed.
+trajectory:
+  # Phase 0: strip duplicate promoted input/output copies from attributes_extra
+  # (FI_COMPACT_SPAN_ATTRS).
+  compact_span_attrs: false
+  # Phase 1: "off" (default), "canary" (projects listed in canary_projects /
+  # FI_TRAJECTORY_DEDUP_PROJECTS), or "on" (all projects).
+  dedup_mode: off
+  canary_projects: []
+  # Per-pod LRU seen-item cache size (FI_TRAJECTORY_LRU_SIZE).
+  lru_size: 500000
+  # Inline preview bytes kept in spans.input/output for list endpoints.
+  preview_max_bytes: 512
+  # Dedup-aware storage billing (FI_BILL_DEDUPED_BYTES). False emits raw_bytes
+  # as observe_add.amount with stored_bytes / dedup_saved_bytes in properties
+  # ("raw_shadow"); true bills stored_bytes ("deduped_storage").
+  bill_deduped_bytes: false
+
 admin:
   # The Docker image checks http://127.0.0.1:9464/healthz. If you move the
   # listener, also set HEALTHCHECK_URL to a URL reachable inside the container

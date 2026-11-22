@@ -44,6 +44,7 @@ _TABLES = {
     "trace_sessions": ("018_trace_sessions.sql", 2, 0),
     "end_user_id_remap": ("019_id_remap.sql", 2, 0),
     "trace_session_id_remap": ("019_id_remap.sql", 2, 1),
+    "trajectory_items": ("028_trajectory_items.sql", 2, 0),
 }
 _CURRENT_LISTS = {
     "list_current_root_facts": ("036_list_current_root_facts.sql", 2, 0),
@@ -157,6 +158,15 @@ def _spans(database):
     head, entries, tail = _table_parts(sql)
     overrides = dict(core._SPAN_COLUMNS)
     overrides["attributes_extra"] += " CODEC(ZSTD(3))"
+    for col in (
+        "input_item_hashes",
+        "output_item_hashes",
+        "tool_def_hashes",
+        "item_scope_id",
+        "payload_encoding",
+        "payload_envelope",
+    ):
+        overrides[col] += " CODEC(ZSTD(1))"
     if overrides["trace_name"].count("'trace_dict'") != 1:
         raise NativeBootstrapError("packaged trace-name dictionary changed")
     overrides["trace_name"] = overrides["trace_name"].replace(

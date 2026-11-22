@@ -100,6 +100,65 @@ func (u *UsageEmitter) EmitIngestion(orgID string, numTraces, numSpans int, payl
 	}
 }
 
+// EmitIngestionDedup emits dedup-aware storage billing events alongside full
+// raw/stored/saved/item telemetry in `properties`. When billDeduped is true,
+// `amount` is storedBytes (lean spans + genuinely new unique trajectory items);
+// when false, `amount` remains rawBytes ("raw_shadow") so operators can audit
+// savings before enabling live dedup-adjusted billing. Events-mode orgs are
+// unaffected.
+func (u *UsageEmitter) EmitIngestionDedup(
+	orgID string,
+	numTraces, numSpans int,
+	rawBytes, storedBytes, newItemBytes, savedBytes int64,
+	newItems, reusedItems int,
+	billDeduped bool,
+	dedupKey string,
+) {
+	if u == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	if u.tracingBillingMode(ctx, orgID) == "storage" {
+		amount := rawBytes
+		basis := "raw_shadow"
+		if billDeduped {
+			amount = storedBytes
+			basis = "deduped_storage"
+		}
+		if amount > 0 {
+			u.xadd(ctx, map[string]any{
+				"event_id":   billingEventID(dedupKey),
+				"org_id":     orgID,
+				"event_type": "observe_add",
+				"timestamp":  now,
+				"amount":     strconv.FormatInt(amount, 10),
+				"properties": fmt.Sprintf(
+					`{"spans":%d,"source":"fi-collector","billing_basis":%q,"raw_bytes":%d,"stored_bytes":%d,"new_item_bytes":%d,"dedup_saved_bytes":%d,"new_items":%d,"reused_items":%d}`,
+					numSpans, basis, rawBytes, storedBytes, newItemBytes, savedBytes, newItems, reusedItems,
+				),
+			})
+		}
+		return
+	}
+
+	tracingUnits := numTraces + numSpans
+	if tracingUnits > 0 {
+		u.xadd(ctx, map[string]any{
+			"event_id":   billingEventID(dedupKey),
+			"org_id":     orgID,
+			"event_type": "tracing_event",
+			"timestamp":  now,
+			"amount":     strconv.Itoa(tracingUnits),
+			"properties": fmt.Sprintf(`{"traces":%d,"source":"fi-collector"}`, tracingUnits),
+		})
+	}
+}
+
 func (u *UsageEmitter) xadd(ctx context.Context, fields map[string]any) {
 	err := u.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: usageStreamKey,

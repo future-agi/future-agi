@@ -671,6 +671,12 @@ def detail_engine(request):
         "trace_session_id Nullable(UUID)",
         "metadata Map(String, String)",
         "resource_attrs JSON(max_dynamic_paths=512)",
+        "input_item_hashes Array(String) DEFAULT []",
+        "output_item_hashes Array(String) DEFAULT []",
+        "tool_def_hashes Array(String) DEFAULT []",
+        "item_scope_id String DEFAULT ''",
+        "payload_encoding LowCardinality(String) DEFAULT 'inline'",
+        "payload_envelope String DEFAULT ''",
     ):
         run(f"ALTER TABLE spans ADD COLUMN {definition}")
 

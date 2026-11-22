@@ -17,6 +17,7 @@ from tracer.services.clickhouse import oss_native_bootstrap as native
 DATABASE = "offline_native"
 DEFAULT_NAMES = (
     "traces end_users trace_sessions end_user_id_remap trace_session_id_remap "
+    "trajectory_items "
     "trace_dict end_users_dict trace_sessions_dict spans spans_per_session "
     "spans_hourly_rollup trace_count_rollup spans_per_session_mv "
     "spans_hourly_rollup_mv trace_count_rollup_mv"
@@ -287,7 +288,7 @@ def test_fresh_then_retained_complete_is_zero_writes():
     assert native.inspect_native(client, database=DATABASE) == tuple(DEFAULT_NAMES)
     assert not client.writes
     assert native.bootstrap_native(client, database=DATABASE) == tuple(DEFAULT_NAMES)
-    assert len(client.writes) == 15
+    assert len(client.writes) == len(DEFAULT_NAMES)
     before = (
         copy.deepcopy(client.tables),
         copy.deepcopy(client.columns),
@@ -330,10 +331,10 @@ def test_incomplete_layout_with_curated_history_also_refuses():
 
 def test_empty_partial_prefix_can_be_explicitly_resumed():
     client = MemoryClient()
-    for name in DEFAULT_NAMES[:8]:
+    for name in DEFAULT_NAMES[:9]:
         client.install(name, client.definitions[name])
     assert native.bootstrap_native(client, database=DATABASE) == tuple(
-        DEFAULT_NAMES[8:]
+        DEFAULT_NAMES[9:]
     )
     assert len(client.writes) == 7
 
@@ -539,8 +540,8 @@ def test_uncertain_create_stops_without_retry_or_cleanup():
         native.NativeBootstrapError, match="partial state retained, no retry"
     ) as exc:
         native.bootstrap_native(client, database=DATABASE)
-    assert len(client.writes) == 6
-    assert set(client.tables) == set(DEFAULT_NAMES[:5])
+    assert len(client.writes) == 7
+    assert set(client.tables) == set(DEFAULT_NAMES[:6])
     assert "secret-password" not in "".join(traceback.format_exception(exc.value))
 
 
@@ -549,7 +550,7 @@ def test_silent_create_failure_is_not_success_or_replayed():
     client.ignore_create = "trace_count_rollup_mv"
     with pytest.raises(native.NativeBootstrapError, match="postflight incomplete"):
         native.bootstrap_native(client, database=DATABASE)
-    assert len(client.writes) == 15
+    assert len(client.writes) == len(DEFAULT_NAMES)
 
 
 @pytest.mark.parametrize(
@@ -664,7 +665,7 @@ def test_silent_late_corruption_fails_postflight_without_retry():
     client.command = corrupt
     with pytest.raises(native.NativeBootstrapError, match="traces: incompatible"):
         native.bootstrap_native(client, database=DATABASE)
-    assert len(client.writes) == 15
+    assert len(client.writes) == len(DEFAULT_NAMES)
 
 
 def test_late_incompatible_object_precedes_any_retained_row_scan():
@@ -711,7 +712,7 @@ def test_nullable_session_key_without_fixed_nonnull_predicate_is_rejected(monkey
     client = MemoryClient()
     with pytest.raises(native.NativeBootstrapError, match="inferred aggregate header"):
         native.bootstrap_native(client, database=DATABASE)
-    assert list(client.tables) == DEFAULT_NAMES[:9]
+    assert list(client.tables) == DEFAULT_NAMES[:10]
 
 
 @pytest.mark.parametrize("column", ["project_id", "span_count", "total_tokens_sum"])
@@ -723,7 +724,7 @@ def test_other_nullable_inputs_are_not_permitted_by_session_identity_exception(c
     ]
     with pytest.raises(native.NativeBootstrapError, match="inferred aggregate header"):
         native.bootstrap_native(client, database=DATABASE)
-    assert list(client.tables) == DEFAULT_NAMES[:9]
+    assert list(client.tables) == DEFAULT_NAMES[:10]
 
 
 def test_fresh_header_mismatch_after_spans_stops_before_rollup_or_mv_create():
@@ -734,8 +735,8 @@ def test_fresh_header_mismatch_after_spans_stops_before_rollup_or_mv_create():
     )
     with pytest.raises(native.NativeBootstrapError, match="inferred aggregate header"):
         native.bootstrap_native(client, database=DATABASE)
-    assert list(client.tables) == DEFAULT_NAMES[:9]
-    assert len(client.writes) == 9
+    assert list(client.tables) == DEFAULT_NAMES[:10]
+    assert len(client.writes) == 10
     assert not any("CREATE MATERIALIZED VIEW" in sql for sql in client.writes)
     assert not any(
         name in client.tables
@@ -748,7 +749,7 @@ def test_invisible_spans_create_does_not_allow_dependents_or_retry():
     client.ignore_create = "spans"
     with pytest.raises(native.NativeBootstrapError, match="spans CREATE not visible"):
         native.bootstrap_native(client, database=DATABASE)
-    assert len(client.writes) == 9
+    assert len(client.writes) == 10
     assert not any("CREATE MATERIALIZED VIEW" in sql for sql in client.writes)
 
 
@@ -766,7 +767,7 @@ def test_all_optional_fresh_tables_have_final_no_ttl_but_retained_ttl_is_untouch
                 include_dashboard_rollup=True,
             )
         )
-        == 19
+        == len(DEFAULT_NAMES) + 4
     )
     row = client.tables["spans_v2_dead_letter"]
     client.tables["spans_v2_dead_letter"] = (

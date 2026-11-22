@@ -47,6 +47,13 @@ from tracer.services.clickhouse.v2.query_settings import (
     application_read_settings,
     current_settings,
 )
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    ENCODING_INLINE,
+    TRAJECTORY_SPAN_COLUMNS,
+    hydrate_chspans,
+    hydrate_span_dicts,
+    restore_promoted_attributes,
+)
 
 
 # Field list that the eval runner actually reads off of an ObservationSpan.
@@ -120,6 +127,15 @@ class CHSpan:
     trace_name: str = ""
     # Ingestion/arrival time used by retention, not the displayed event time.
     created_at: datetime | None = None
+
+    # Phase 1 Trajectory Store (028_trajectory_items.sql) pointer fields.
+    # Defaults preserve compatibility with pre-028 fixtures and inline rows.
+    input_item_hashes: tuple[str, ...] = ()
+    output_item_hashes: tuple[str, ...] = ()
+    tool_def_hashes: tuple[str, ...] = ()
+    item_scope_id: str = ""
+    payload_encoding: str = ENCODING_INLINE
+    payload_envelope: str = ""
 
     @property
     def pk(self):
@@ -196,6 +212,12 @@ _READ_COLUMNS: tuple[str, ...] = (
     "is_deleted",
     "trace_name",
     "created_at",
+    "input_item_hashes",
+    "output_item_hashes",
+    "tool_def_hashes",
+    "item_scope_id",
+    "payload_encoding",
+    "payload_envelope",
 )
 
 _SELECT_SQL = ", ".join(_READ_COLUMNS)
@@ -391,6 +413,12 @@ _DATA_KEYS: tuple[str, ...] = (
     "is_deleted",
     "trace_name",
     "created_at",
+    "input_item_hashes",
+    "output_item_hashes",
+    "tool_def_hashes",
+    "item_scope_id",
+    "payload_encoding",
+    "payload_envelope",
 )
 
 # Allowlist for the ``columns`` projection arg: logical name (the CHSpan field)
@@ -445,6 +473,12 @@ _EXPORT_COLUMN_SQL: dict[str, str] = {
     "attributes_extra": "attributes_extra",
     "eval_status": "eval_status",
     "semconv_source": "semconv_source",
+    "input_item_hashes": "input_item_hashes",
+    "output_item_hashes": "output_item_hashes",
+    "tool_def_hashes": "tool_def_hashes",
+    "item_scope_id": "item_scope_id",
+    "payload_encoding": "payload_encoding",
+    "payload_envelope": "payload_envelope",
 }
 
 _EXPORT_FIELD_COLUMNS: dict[str, set[str]] = {
@@ -525,6 +559,12 @@ def _row_to_chspan(row: tuple) -> CHSpan:
     data = _row_to_dict(_DATA_KEYS, row)
     if (data.get("attrs_string") or {}).get("fi.cost.kind") == "unknown":
         data["cost"] = None
+    for hash_key in ("input_item_hashes", "output_item_hashes", "tool_def_hashes"):
+        if hash_key in data:
+            raw_val = data[hash_key]
+            data[hash_key] = tuple(str(x) for x in raw_val) if raw_val else ()
+    if "payload_encoding" in data and not data["payload_encoding"]:
+        data["payload_encoding"] = ENCODING_INLINE
     return CHSpan(**data)
 
 
@@ -785,7 +825,7 @@ class CHSpanReader:
                         for caller in askers[aliases[raw]]
                     )
         out.sort(key=lambda s: (getattr(s, column), s.start_time, s.id))
-        return out
+        return self._hydrate_chspans(out)
 
     def _resolve_other(
         self, spans: list[CHSpan], column: str, remap_table: str
@@ -845,6 +885,43 @@ class CHSpanReader:
         return join, predicate
 
     # ─── Single-row by id ────────────────────────────────────────────────────
+    def _hydrate_chspans(self, spans: list[CHSpan]) -> list[CHSpan]:
+        """Batch-hydrate Phase 1 ``items_v1`` spans from ``trajectory_items``.
+
+        Issues ZERO queries when all spans use ``payload_encoding == 'inline'``.
+        """
+        if not spans:
+            return spans
+        return hydrate_chspans(
+            spans,
+            lambda sql, params: self._client.query(sql, parameters=params).result_rows,
+        )
+
+    def _hydrate_dict_rows(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        project_id_fallback: str | None = None,
+        attr_key: str = "attributes_extra",
+    ) -> list[dict[str, Any]]:
+        if not rows:
+            return rows
+
+        def _query(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+            res = self._client.query(sql, parameters=params).result_rows
+            return [
+                {"scope_id": r[0], "item_hash": r[1], "content": r[2]}
+                for r in res
+                if len(r) >= 3
+            ]
+
+        return hydrate_span_dicts(
+            rows,
+            _query,
+            project_id_fallback=project_id_fallback,
+            attr_key=attr_key,
+        )
+
     def get(
         self,
         span_id: str,
@@ -892,7 +969,7 @@ class CHSpanReader:
         ).result_rows
         if not rows:
             return None
-        return _row_to_chspan(rows[0])
+        return self._hydrate_chspans([_row_to_chspan(rows[0])])[0]
 
     def newest_trace_project(
         self, trace_id: str, project_ids: Iterable[str]
@@ -1045,7 +1122,7 @@ class CHSpanReader:
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     def first_span_by_type(
         self, trace_id: str, observation_type: str, *, project_id: str | None = None
@@ -1077,7 +1154,9 @@ class CHSpanReader:
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return _row_to_chspan(rows[0]) if rows else None
+        if not rows:
+            return None
+        return self._hydrate_chspans([_row_to_chspan(rows[0])])[0]
 
     # ─── All spans in a session ──────────────────────────────────────────────
     def list_by_session(
@@ -1115,7 +1194,7 @@ class CHSpanReader:
             "ORDER BY start_time, id",
             parameters=params,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     # ─── Bulk fetch by trace ids ──────────────────────────────────────────────
     def list_by_trace_ids(
@@ -1166,7 +1245,7 @@ class CHSpanReader:
             parameters=params,
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     # ─── Root spans only (parentless) across many traces ─────────────────────
     def roots_by_trace_ids(
@@ -1226,7 +1305,7 @@ class CHSpanReader:
                 _FINAL_SKIP_INDEX_SETTINGS if cutoff is None else _CUTOFF_SETTINGS
             )
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     def roots_by_session_ids(
         self, session_ids: list[str], *, project_id: str
@@ -1462,7 +1541,7 @@ class CHSpanReader:
             parameters={"parent": parent_span_id},
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     # ─── Spans by id batch ────────────────────────────────────────────────────
     def list_by_ids(
@@ -1528,7 +1607,7 @@ class CHSpanReader:
         rows = self._client.query(sql, parameters=params, settings=settings).result_rows
         if columns is not None:
             return [_row_to_dict(columns, r) for r in rows]
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     def export_fields_by_ids(
         self,
@@ -1551,9 +1630,16 @@ class CHSpanReader:
             return {}
 
         columns = _export_columns_for_fields(field_names)
+        needs_hydration = bool(
+            columns & {"input", "output", "attributes_extra"}
+        )
+        query_columns = set(columns)
+        if needs_hydration:
+            query_columns.add("project_id")
+            query_columns.update(TRAJECTORY_SPAN_COLUMNS)
         select_exprs = ["id"]
         aliases = ["id"]
-        for alias in sorted(columns):
+        for alias in sorted(query_columns):
             select_exprs.append(
                 f"argMax({_EXPORT_COLUMN_SQL[alias]}, _version) AS {alias}"
             )
@@ -1582,7 +1668,18 @@ class CHSpanReader:
             },
         ).result_rows
 
-        return {str(row[0]): dict(zip(aliases, row, strict=False)) for row in rows}
+        dicts = [dict(zip(aliases, row, strict=False)) for row in rows]
+        if needs_hydration and dicts:
+            self._hydrate_dict_rows(
+                dicts,
+                project_id_fallback=str(project_id) if project_id else None,
+                attr_key="attributes_extra",
+            )
+        allowed = {"id"} | columns
+        return {
+            str(d["id"]): {k: v for k, v in d.items() if k in allowed}
+            for d in dicts
+        }
 
     # ─── Batch helpers for dataset child-tree export ─────────────────────────
 
@@ -2109,7 +2206,7 @@ class CHSpanReader:
             f"ORDER BY start_time, id{lim_clause}",
             parameters=params,
         ).result_rows
-        return [_row_to_chspan(r) for r in rows]
+        return self._hydrate_chspans([_row_to_chspan(r) for r in rows])
 
     def count_by_project(
         self,
@@ -3162,7 +3259,8 @@ class CHSpanReader:
         if columns is not None:
             projected = (_row_to_dict(columns, r) for r in rows)
             return {row["trace_id"]: row for row in projected}
-        return {span.trace_id: span for span in map(_row_to_chspan, rows)}
+        hydrated = self._hydrate_chspans([_row_to_chspan(r) for r in rows])
+        return {span.trace_id: span for span in hydrated}
 
     def aggregate_by_session_ids(
         self,
@@ -3626,11 +3724,16 @@ def merge_span_attributes(
     attrs_number: dict[str, Any] | None,
     attrs_bool: dict[str, Any] | None,
     attributes_extra: Any,
+    *,
+    span_input: str | None = None,
+    span_output: str | None = None,
 ) -> dict[str, Any]:
     """Merge typed maps + ``attributes_extra`` into one ``span_attributes`` dict.
 
     Single source of truth. Maps first, ``attributes_extra`` (str or dict)
     overrides; bad JSON skipped; ``attrs_bool`` coerced to real booleans.
+    Phase 0 promoted-input/output sentinels are popped and restored from
+    ``span_input`` / ``span_output`` when supplied.
     """
     out: dict[str, Any] = {}
     out.update(attrs_string or {})
@@ -3644,13 +3747,19 @@ def merge_span_attributes(
             extra = {}
     if isinstance(extra, dict):
         out.update(extra)
+    restore_promoted_attributes(out, span_input=span_input, span_output=span_output)
     return out
 
 
 def _ch_span_attributes(span: CHSpan) -> dict[str, Any]:
     """CHSpan adapter for :func:`merge_span_attributes`."""
     return merge_span_attributes(
-        span.attrs_string, span.attrs_number, span.attrs_bool, span.attributes_extra
+        span.attrs_string,
+        span.attrs_number,
+        span.attrs_bool,
+        span.attributes_extra,
+        span_input=span.input,
+        span_output=span.output,
     )
 
 

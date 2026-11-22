@@ -84,6 +84,11 @@ type Stats struct {
 	// Best-effort curated-dimension path (end_users / trace_sessions).
 	CuratedBatchesInserted uint64
 	CuratedBatchesFailed   uint64
+
+	// Durable trajectory_items path (Phase 1 content-addressed dedup).
+	TrajectoryBatchesInserted uint64
+	TrajectoryItemsInserted   uint64
+	TrajectoryBatchesFailed   uint64
 }
 
 // Writer is safe to use from multiple goroutines. The HTTP client is
@@ -260,6 +265,81 @@ func (w *Writer) InsertBestEffort(ctx context.Context, table string, rows []map[
 		err = fmt.Errorf("chwriter: curated insert into %s: HTTP %d", table, status)
 	}
 	return err
+}
+
+// InsertTable inserts `rows` durably (chunked by maxInsertBytes, with full
+// retry/backoff) into an arbitrary non-pinned table such as `trajectory_items`.
+//
+// Unlike Insert(), failed chunks do NOT write into the spans dead-letter file
+// (whose replay command is `INSERT INTO spans`). Instead, InsertTable returns
+// an error immediately so the caller (`drainNow`) can atomically fall back to
+// writing the dependent spans inline (`payload_encoding = 'inline'`) with zero
+// data loss.
+func (w *Writer) InsertTable(ctx context.Context, table string, rows []map[string]any) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	insertURL := w.insertURL(table)
+	limit := w.maxInsertBytes
+	size := len(rows) * 512
+	if limit > 0 {
+		size = min(size, limit+limit/8)
+	}
+	var buf bytes.Buffer
+	buf.Grow(size)
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	start := 0
+	for i, r := range rows {
+		if err := enc.Encode(r); err != nil {
+			atomic.AddUint64(&w.stats.TrajectoryBatchesFailed, 1)
+			return fmt.Errorf("chwriter: %s encode row %d: %w", table, i, err)
+		}
+		if i == len(rows)-1 || (limit > 0 && buf.Len() >= limit) {
+			chunkLen := i - start + 1
+			if err := w.insertTableChunk(ctx, table, insertURL, buf.Bytes(), chunkLen); err != nil {
+				return err
+			}
+			buf = bytes.Buffer{}
+			if i < len(rows)-1 {
+				buf.Grow(size)
+			}
+			start = i + 1
+		}
+	}
+	return nil
+}
+
+func (w *Writer) insertTableChunk(ctx context.Context, table, insertURL string, body []byte, rowCount int) error {
+	var lastErr error
+	for attempt := 0; attempt <= w.cfg.MaxRetries; attempt++ {
+		if attempt > 0 {
+			if err := w.sleepBackoff(ctx, attempt); err != nil {
+				lastErr = err
+				break
+			}
+		}
+		status, err := w.doRequest(ctx, insertURL, body)
+		if err == nil && status == http.StatusOK {
+			atomic.AddUint64(&w.stats.TrajectoryBatchesInserted, 1)
+			atomic.AddUint64(&w.stats.TrajectoryItemsInserted, uint64(rowCount))
+			return nil
+		}
+		lastErr = err
+		if status == http.StatusOK {
+			lastErr = fmt.Errorf("chwriter: %s insert not confirmed: %w", table, err)
+			break
+		}
+		if status >= 400 && status < 500 && status != http.StatusTooManyRequests {
+			lastErr = fmt.Errorf("chwriter: %s non-retryable status %d: %w", table, status, err)
+			break
+		}
+	}
+	atomic.AddUint64(&w.stats.TrajectoryBatchesFailed, 1)
+	if lastErr == nil {
+		lastErr = fmt.Errorf("chwriter: %s insert failed", table)
+	}
+	return lastErr
 }
 
 // insert is the body behind Insert (the pinned span hot path): encode →
@@ -616,13 +696,16 @@ func (w *Writer) Policy() Policy {
 // Snapshot returns a copy of the lifetime stats. Cheap; safe to call often.
 func (w *Writer) Snapshot() Stats {
 	return Stats{
-		BatchesInserted:        atomic.LoadUint64(&w.stats.BatchesInserted),
-		RowsInserted:           atomic.LoadUint64(&w.stats.RowsInserted),
-		BatchesRetried:         atomic.LoadUint64(&w.stats.BatchesRetried),
-		RowsDeadLettered:       atomic.LoadUint64(&w.stats.RowsDeadLettered),
-		BatchesFailed:          atomic.LoadUint64(&w.stats.BatchesFailed),
-		CuratedBatchesInserted: atomic.LoadUint64(&w.stats.CuratedBatchesInserted),
-		CuratedBatchesFailed:   atomic.LoadUint64(&w.stats.CuratedBatchesFailed),
+		BatchesInserted:           atomic.LoadUint64(&w.stats.BatchesInserted),
+		RowsInserted:              atomic.LoadUint64(&w.stats.RowsInserted),
+		BatchesRetried:            atomic.LoadUint64(&w.stats.BatchesRetried),
+		RowsDeadLettered:          atomic.LoadUint64(&w.stats.RowsDeadLettered),
+		BatchesFailed:             atomic.LoadUint64(&w.stats.BatchesFailed),
+		CuratedBatchesInserted:    atomic.LoadUint64(&w.stats.CuratedBatchesInserted),
+		CuratedBatchesFailed:      atomic.LoadUint64(&w.stats.CuratedBatchesFailed),
+		TrajectoryBatchesInserted: atomic.LoadUint64(&w.stats.TrajectoryBatchesInserted),
+		TrajectoryItemsInserted:   atomic.LoadUint64(&w.stats.TrajectoryItemsInserted),
+		TrajectoryBatchesFailed:   atomic.LoadUint64(&w.stats.TrajectoryBatchesFailed),
 	}
 }
 

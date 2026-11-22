@@ -41,16 +41,49 @@ from typing import Any, Optional
 
 
 # Sentinel for keys we never want to elevate into typed maps even if their
-# scalar type fits — they're nested objects or arrays of LLM content, better
-# kept whole in the JSON overflow.
+# scalar type fits — they're nested objects, LLM message/tool payloads, or raw
+# dumps better kept in attributes_extra (ZSTD(3), out of attrs_string bloom /
+# 4-gram indexes). Must match overflowKeyPrefixes in fi-collector/pkg/adapter/adapter.go.
 _OVERFLOW_KEY_PREFIXES = (
     "llm.prompt",
     "llm.completion",
     "llm.messages",
+    "llm.input_messages",
+    "llm.output_messages",
+    "llm.tools",
+    "gen_ai.prompt.",
+    "gen_ai.completion.",
+    "gen_ai.input.messages",
+    "gen_ai.output.messages",
+    "gen_ai.system_instructions",
+    "gen_ai.tool.definitions",
     "input.value",
     "output.value",
+    "raw.",
     "retrieval.documents",
     "embedding.embeddings",
+)
+
+# Strings larger than 4 KiB route to attributes_extra so oversized customer
+# values do not bloat attrs_string or saturate idx_attrs_str_ngram.
+# Must match MaxAttrsStringBytes in fi-collector/pkg/adapter/adapter.go.
+_MAX_ATTRS_STRING_BYTES = 4096
+
+# Promoted hot string keys must stay in attrs_string regardless of length
+# (mirrors hotStringKeys in fi-collector/pkg/adapter/adapter.go).
+_HOT_STRING_KEYS = frozenset(
+    {
+        "llm.model_name",
+        "gen_ai.request.model",
+        "gen_ai.response.model",
+        "llm.request.model",
+        "gen_ai.provider.name",
+        "llm.system",
+        "gen_ai.system",
+        "llm.vendor",
+        "llm.provider",
+        "gen_ai.operation.name",
+    }
 )
 
 
@@ -168,7 +201,10 @@ def split_attributes(
             else:
                 extra[k] = v  # NaN/Inf go to overflow rather than corrupt Float64 maps
         elif isinstance(v, str):
-            s[k] = v
+            if len(v.encode("utf-8")) > _MAX_ATTRS_STRING_BYTES and k not in _HOT_STRING_KEYS:
+                extra[k] = v
+            else:
+                s[k] = v
         else:  # list, dict, other
             extra[k] = v
     return s, n, b, extra

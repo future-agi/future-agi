@@ -1,0 +1,579 @@
+"""Unit tests for Phase 0 sentinel compaction, Phase 1 Trajectory Store hydration,
+and 028_trajectory_items.sql replicated cluster rewriting.
+
+Runs completely offline (no live ClickHouse or Postgres required).
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+from tracer.services.clickhouse.v2 import (
+    adapter,
+    apply_schema,
+    apply_schema_rewriter,
+    physical_span_detail_reads,
+    span_reader,
+    trace_detail_reads,
+)
+from tracer.services.clickhouse.v2.trajectory_hydration import (
+    ENCODING_INLINE,
+    ENCODING_ITEMS_V1,
+    PROJECT_HASH_PREFIX,
+    PROJECT_SCOPE_ID,
+    SENTINEL_PROMOTED_INPUT_JSON,
+    SENTINEL_PROMOTED_INPUT_KEY,
+    SENTINEL_PROMOTED_OUTPUT_JSON,
+    SENTINEL_PROMOTED_OUTPUT_KEY,
+    hydrate_chspans,
+    hydrate_span_dicts,
+    reconstruct_payload,
+    restore_promoted_in_attributes_extra,
+)
+
+PROJECT_ID = "11111111-1111-4111-8111-111111111111"
+SESSION_ID = "22222222-2222-4222-8222-222222222222"
+TRACE_ID = "33333333-3333-4333-8333-333333333333"
+
+
+def _h(tag: str) -> str:
+    """Deterministic 32-char lowercase hex hash for test fixtures."""
+    return (tag.encode().hex() + "0" * 32)[:32]
+
+
+# --------------------------------------------------------------------------- #
+# 1. Payload reconstruction across provider formats (Go -> Python contract)
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+def test_reconstruct_openai_chat_with_tools_and_choices():
+    h_sys, h_u1, h_t1, h_out = _h("sys"), _h("u1"), _h("tool1"), _h("out1")
+    store = {
+        (PROJECT_SCOPE_ID, h_sys): '{"role":"system","content":"You are a coding agent."}',
+        (SESSION_ID, h_u1): '{"role":"user","content":"Fix the bug"}',
+        (PROJECT_SCOPE_ID, h_t1): '{"type":"function","function":{"name":"read_file"}}',
+        (SESSION_ID, h_out): '{"index":0,"message":{"role":"assistant","content":"Checking file."}}',
+    }
+
+    def resolve(prefixed: str) -> str | None:
+        if prefixed.startswith(PROJECT_HASH_PREFIX):
+            return store.get((PROJECT_SCOPE_ID, prefixed[len(PROJECT_HASH_PREFIX) :]))
+        return store.get((SESSION_ID, prefixed))
+
+    in_shape = {
+        "f": "obj_messages",
+        "mk": "messages",
+        "tk": "tools",
+        "w": {"model": "gpt-4o", "temperature": 0.2},
+    }
+    in_json = reconstruct_payload(
+        in_shape,
+        [f"{PROJECT_HASH_PREFIX}{h_sys}", h_u1],
+        [f"{PROJECT_HASH_PREFIX}{h_t1}"],
+        resolve,
+    )
+    assert in_json is not None
+    parsed_in = json.loads(in_json)
+    assert parsed_in == {
+        "model": "gpt-4o",
+        "temperature": 0.2,
+        "tools": [{"type": "function", "function": {"name": "read_file"}}],
+        "messages": [
+            {"role": "system", "content": "You are a coding agent."},
+            {"role": "user", "content": "Fix the bug"},
+        ],
+    }
+
+    out_shape = {"f": "obj_messages", "mk": "choices", "w": {"id": "chatcmpl-1"}}
+    out_json = reconstruct_payload(out_shape, [h_out], None, resolve)
+    assert out_json is not None
+    assert json.loads(out_json) == {
+        "id": "chatcmpl-1",
+        "choices": [
+            {"index": 0, "message": {"role": "assistant", "content": "Checking file."}}
+        ],
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "sys_key,msg_key,model",
+    [
+        ("system", "messages", "claude-3-7-sonnet"),
+        ("instructions", "input", "gpt-5"),
+    ],
+)
+def test_reconstruct_anthropic_and_openai_responses_formats(sys_key, msg_key, model):
+    h_sys, h_u1 = _h("s"), _h("u")
+    store = {
+        f"{PROJECT_HASH_PREFIX}{h_sys}": '"Follow all safety rules."',
+        h_u1: '{"role":"user","content":"Hello"}',
+    }
+    shape = {
+        "f": "obj_messages",
+        "mk": msg_key,
+        "sk": sys_key,
+        "sh": f"{PROJECT_HASH_PREFIX}{h_sys}",
+        "w": {"model": model},
+    }
+    rebuilt = reconstruct_payload(shape, [h_u1], None, store.get)
+    assert rebuilt is not None
+    assert json.loads(rebuilt) == {
+        "model": model,
+        sys_key: "Follow all safety rules.",
+        msg_key: [{"role": "user", "content": "Hello"}],
+    }
+
+
+@pytest.mark.unit
+def test_reconstruct_msg_array_and_missing_item_safety():
+    h1, h2 = _h("m1"), _h("m2")
+    store = {
+        f"{PROJECT_HASH_PREFIX}{h1}": '{"role":"developer","content":"Strict"}',
+        h2: '{"role":"user","content":"Ping"}',
+    }
+    rebuilt = reconstruct_payload(
+        {"f": "msg_array"}, [f"{PROJECT_HASH_PREFIX}{h1}", h2], None, store.get
+    )
+    assert rebuilt is not None
+    assert json.loads(rebuilt) == [
+        {"role": "developer", "content": "Strict"},
+        {"role": "user", "content": "Ping"},
+    ]
+
+    # Missing item -> returns None so caller keeps inline preview safely.
+    assert reconstruct_payload({"f": "msg_array"}, [h2, _h("missing")], None, store.get) is None
+
+
+# --------------------------------------------------------------------------- #
+# 2. Zero-query guarantee on inline spans + single batched query on mixed trace
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+def test_hydrate_span_dicts_zero_queries_for_inline_and_single_batch_for_mixed():
+    query_fn = MagicMock()
+    inline_rows = [
+        {
+            "project_id": PROJECT_ID,
+            "id": "root",
+            "input": "hello",
+            "output": "world",
+            "payload_encoding": ENCODING_INLINE,
+            "span_attributes": '{"custom":"ok"}',
+        },
+        {
+            "project_id": PROJECT_ID,
+            "id": "legacy",
+            "input": "legacy-in",
+            "output": "legacy-out",
+            # No payload_encoding column at all (pre-028 fixture)
+        },
+    ]
+    hydrate_span_dicts(inline_rows, query_fn)
+    query_fn.assert_not_called()
+
+    # Now test a mixed batch (1 inline + 1 items_v1 with Phase 0 sentinels + bytes hash).
+    h_sys, h_u1, h_out = _h("sys"), _h("u1"), _h("out")
+    calls = []
+
+    def fake_query(sql, params):
+        calls.append((sql, params))
+        return [
+            {
+                "scope_id": PROJECT_SCOPE_ID,
+                # ClickHouse FixedString(32) may return bytes
+                "item_hash": h_sys.encode("ascii"),
+                "content": '{"role":"system","content":"Be brief."}',
+            },
+            {
+                "scope_id": SESSION_ID,
+                "item_hash": h_u1,
+                "content": '{"role":"user","content":"Question?"}',
+            },
+            {
+                "scope_id": SESSION_ID,
+                "item_hash": h_out,
+                "content": '{"role":"assistant","content":"Answer!"}',
+            },
+        ]
+
+    env = json.dumps(
+        {
+            "v": 1,
+            "in": {"f": "obj_messages", "mk": "messages", "w": {"model": "gpt-4o"}},
+            "out": {"f": "msg_array"},
+        }
+    )
+    mixed_rows = [
+        dict(inline_rows[0]),
+        {
+            "project_id": PROJECT_ID,
+            "id": "llm-1",
+            "input": "preview-in...",
+            "output": "preview-out...",
+            "input_item_hashes": [f"{PROJECT_HASH_PREFIX}{h_sys}", h_u1],
+            "output_item_hashes": [h_out],
+            "tool_def_hashes": [],
+            "item_scope_id": SESSION_ID,
+            "payload_encoding": ENCODING_ITEMS_V1,
+            "payload_envelope": env,
+            "span_attributes": json.dumps(
+                {
+                    "custom": "v",
+                    SENTINEL_PROMOTED_INPUT_KEY: "input.value",
+                    SENTINEL_PROMOTED_OUTPUT_KEY: "output.value",
+                }
+            ),
+        },
+    ]
+    hydrate_span_dicts(mixed_rows, fake_query)
+    assert len(calls) == 1
+    assert "FROM trajectory_items" in calls[0][0]
+    assert set(calls[0][1]["traj_scope_ids"]) == {PROJECT_SCOPE_ID, SESSION_ID}
+
+    hydrated = mixed_rows[1]
+    assert json.loads(hydrated["input"]) == {
+        "model": "gpt-4o",
+        "messages": [
+            {"role": "system", "content": "Be brief."},
+            {"role": "user", "content": "Question?"},
+        ],
+    }
+    assert json.loads(hydrated["output"]) == [{"role": "assistant", "content": "Answer!"}]
+    # Phase 0 sentinels popped and replaced with the hydrated full payload!
+    attrs = json.loads(hydrated["span_attributes"])
+    assert SENTINEL_PROMOTED_INPUT_KEY not in attrs
+    assert SENTINEL_PROMOTED_OUTPUT_KEY not in attrs
+    assert attrs["input.value"] == hydrated["input"]
+    assert attrs["output.value"] == hydrated["output"]
+    assert attrs["custom"] == "v"
+
+
+# --------------------------------------------------------------------------- #
+# 3. Phase 0 sentinel restoration (string vs JSON-decoded map/list)
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+def test_merge_span_attributes_and_chspan_restore_phase0_sentinels():
+    extra = json.dumps(
+        {
+            "keep": 1,
+            SENTINEL_PROMOTED_INPUT_KEY: "input.value",
+            SENTINEL_PROMOTED_INPUT_JSON: True,
+            SENTINEL_PROMOTED_OUTPUT_KEY: "output.value",
+        }
+    )
+    merged = span_reader.merge_span_attributes(
+        {"a": "b"},
+        {"n": 2.0},
+        {"flag": 1},
+        extra,
+        span_input='{"messages":[{"role":"user","content":"hi"}]}',
+        span_output="plain answer",
+    )
+    assert SENTINEL_PROMOTED_INPUT_KEY not in merged
+    assert SENTINEL_PROMOTED_INPUT_JSON not in merged
+    assert SENTINEL_PROMOTED_OUTPUT_KEY not in merged
+    assert merged["input.value"] == {"messages": [{"role": "user", "content": "hi"}]}
+    assert merged["output.value"] == "plain answer"
+    assert merged["keep"] == 1 and merged["a"] == "b" and merged["flag"] is True
+
+    # Fast-path untouched string when no sentinel exists
+    raw = '{"plain":"no_sentinel"}'
+    assert restore_promoted_in_attributes_extra(raw, span_input="x") is raw
+
+
+# --------------------------------------------------------------------------- #
+# 4. Integration with trace_detail_reads, physical_span_detail_reads, CHSpanReader
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+def test_read_trace_detail_and_physical_span_detail_hydrate_items_v1():
+    now = datetime(2026, 11, 20, 12, 15, tzinfo=UTC)
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    h_u1 = _h("u1")
+    env = json.dumps({"v": 1, "in": {"f": "msg_array"}})
+
+    span_row = {
+        "project_id": PROJECT_ID,
+        "trace_id": TRACE_ID,
+        "id": "span-1",
+        "observation_type": "llm",
+        "service_name": "agent",
+        "start_time": now,
+        "start_hour": hour,
+        "_version": "7",
+        "is_deleted": 0,
+        "parent_span_id": "",
+        "name": "llm.call",
+        "end_time": now + timedelta(seconds=1),
+        "input": "preview...",
+        "output": "done",
+        "model": "gpt-4o",
+        "latency_ms": 1000,
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "cost": 0.001,
+        "status": "OK",
+        "status_message": "",
+        "tags": "[]",
+        "span_events": "[]",
+        "provider": "openai",
+        "span_attributes": json.dumps({SENTINEL_PROMOTED_INPUT_KEY: "input.value"}),
+        "project_version_id": None,
+        "custom_eval_config_id": None,
+        "trace_session_id": SESSION_ID,
+        "metadata_json": "{}",
+        "resource_attrs": "{}",
+        "attrs_string": {},
+        "attrs_number": {},
+        "attrs_bool": {},
+        "input_item_hashes": [h_u1],
+        "output_item_hashes": [],
+        "tool_def_hashes": [],
+        "item_scope_id": SESSION_ID,
+        "payload_encoding": ENCODING_ITEMS_V1,
+        "payload_envelope": env,
+    }
+
+    class _FakeAnalytics:
+        def __init__(self):
+            self.queries = []
+
+        def execute_ch_query(self, query, params=None, **kwargs):
+            self.queries.append((query, params))
+            if "FROM trajectory_items" in query:
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "scope_id": SESSION_ID,
+                            "item_hash": h_u1,
+                            "content": '{"role":"user","content":"Hydrated question"}',
+                        }
+                    ],
+                    complete=True,
+                )
+            if "latest_physical_spans" in query:
+                return SimpleNamespace(data=[dict(span_row)], complete=True)
+            if "AS span_id" in query:
+                return SimpleNamespace(
+                    data=[
+                        {
+                            "project_id": PROJECT_ID,
+                            "trace_id": TRACE_ID,
+                            "span_id": "span-1",
+                            "start_time": now,
+                            "latest_is_deleted": 0,
+                            "latest_version": 7,
+                        }
+                    ],
+                    complete=True,
+                )
+            if "FROM spans FINAL" in query:
+                return SimpleNamespace(data=[dict(span_row)], complete=True)
+            return SimpleNamespace(data=[], complete=True)
+
+    # trace_detail_reads
+    analytics = _FakeAnalytics()
+    detail = trace_detail_reads.read_trace_detail(
+        analytics=analytics,
+        project_ids=[PROJECT_ID],
+        trace_id=TRACE_ID,
+        include_annotations=False,
+    )
+    assert len(detail.spans) == 1
+    assert json.loads(detail.spans[0]["input"]) == [
+        {"role": "user", "content": "Hydrated question"}
+    ]
+    assert json.loads(detail.spans[0]["span_attributes"]) == {
+        "input.value": detail.spans[0]["input"]
+    }
+    assert any("FROM trajectory_items" in q for q, _ in analytics.queries)
+
+    # physical_span_detail_reads
+    phys_analytics = _FakeAnalytics()
+    phys = physical_span_detail_reads.read_physical_span_detail(
+        analytics=phys_analytics,
+        span_id="span-1",
+        reference={
+            "project_id": PROJECT_ID,
+            "trace_id": TRACE_ID,
+            "start_hour": hour,
+            "observation_type": "llm",
+            "service_name": "agent",
+            "expected_start_time": now,
+            "expected_version": "7",
+        },
+        authorized_project_id=PROJECT_ID,
+    )
+    assert json.loads(phys["input"]) == [{"role": "user", "content": "Hydrated question"}]
+    assert json.loads(phys["span_attributes"]) == {"input.value": phys["input"]}
+
+
+@pytest.mark.unit
+def test_ch_span_reader_hydrates_get_list_and_export():
+    h_u1 = _h("u1")
+    env = json.dumps({"v": 1, "in": {"f": "msg_array"}})
+    now = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
+
+    row_map = dict.fromkeys(span_reader._DATA_KEYS, "")
+    row_map.update(
+        {
+            "id": "sp-1",
+            "project_id": PROJECT_ID,
+            "trace_id": TRACE_ID,
+            "start_time": now,
+            "end_time": now,
+            "latency_ms": 50,
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "total_tokens": 2,
+            "cost": 0.0,
+            "input": "preview...",
+            "output": "ok",
+            "attributes_extra": json.dumps({SENTINEL_PROMOTED_INPUT_KEY: "input.value"}),
+            "attrs_string": {},
+            "attrs_number": {},
+            "attrs_bool": {},
+            "is_deleted": 0,
+            "created_at": now,
+            "input_item_hashes": [h_u1],
+            "output_item_hashes": [],
+            "tool_def_hashes": [],
+            "item_scope_id": SESSION_ID,
+            "payload_encoding": ENCODING_ITEMS_V1,
+            "payload_envelope": env,
+        }
+    )
+    full_tuple = tuple(row_map[k] for k in span_reader._DATA_KEYS)
+
+    class _FakeClient:
+        def __init__(self):
+            self.queries = []
+
+        def query(self, sql, parameters=None, settings=None):
+            self.queries.append((sql, parameters))
+            if "FROM trajectory_items" in sql:
+                return SimpleNamespace(
+                    result_rows=[
+                        (
+                            SESSION_ID,
+                            h_u1,
+                            '{"role":"user","content":"Full eval prompt"}',
+                        )
+                    ]
+                )
+            if "GROUP BY id" in sql:
+                # export_fields_by_ids query: SELECT id, argMax(..., _version) AS alias, ...
+                import re
+
+                cols_sql = sql.split("SELECT ", 1)[1].split(" FROM spans", 1)[0]
+                aliases = ["id", *re.findall(r"\bAS\s+(\w+)", cols_sql)]
+                return SimpleNamespace(
+                    result_rows=[tuple(row_map.get(a, "") for a in aliases)]
+                )
+            return SimpleNamespace(result_rows=[full_tuple])
+
+    reader = span_reader.CHSpanReader.__new__(span_reader.CHSpanReader)
+    reader._client = _FakeClient()
+
+    sp = reader.get("sp-1", project_id=PROJECT_ID)
+    assert sp is not None
+    assert json.loads(sp.input) == [{"role": "user", "content": "Full eval prompt"}]
+    # eval_loader consumes _ch_span_attributes(sp) -> Phase 0 sentinel restored with hydrated input!
+    attrs = span_reader._ch_span_attributes(sp)
+    assert attrs["input.value"] == sp.input
+    assert SENTINEL_PROMOTED_INPUT_KEY not in attrs
+
+    trace_spans = reader.list_by_trace(TRACE_ID, project_id=PROJECT_ID)
+    assert len(trace_spans) == 1 and json.loads(trace_spans[0].input)[0]["content"] == "Full eval prompt"
+
+    id_spans = reader.list_by_ids(["sp-1"], project_id=PROJECT_ID)
+    assert len(id_spans) == 1 and json.loads(id_spans[0].input)[0]["content"] == "Full eval prompt"
+
+    exported = reader.export_fields_by_ids(["sp-1"], {"input", "span_attributes"}, project_id=PROJECT_ID)
+    assert json.loads(exported["sp-1"]["input"]) == [
+        {"role": "user", "content": "Full eval prompt"}
+    ]
+    assert json.loads(exported["sp-1"]["attributes_extra"]) == {
+        "input.value": exported["sp-1"]["input"]
+    }
+    # Export dict must not leak internal pointer columns that weren't requested.
+    assert "payload_encoding" not in exported["sp-1"]
+
+
+# --------------------------------------------------------------------------- #
+# 5. Phase 0 adapter.py lockstep checks + 028 replicated cluster rewriter
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+def test_adapter_split_attributes_phase0_overflow_and_cutoff():
+    exact_4k = "a" * adapter._MAX_ATTRS_STRING_BYTES
+    over_4k = "b" * (adapter._MAX_ATTRS_STRING_BYTES + 1)
+    s, n, b, extra = adapter.split_attributes(
+        {
+            "llm.input_messages.0.message.content": "hello",
+            "llm.tools.0.tool.json_schema": "{}",
+            "gen_ai.prompt.0.content": "prompt",
+            "gen_ai.input.messages": "[]",
+            "raw.body": "dump",
+            "custom.exact": exact_4k,
+            "custom.large": over_4k,
+            "gen_ai.request.model": over_4k,  # hot key stays in attrs_string
+        }
+    )
+    for k in (
+        "llm.input_messages.0.message.content",
+        "llm.tools.0.tool.json_schema",
+        "gen_ai.prompt.0.content",
+        "gen_ai.input.messages",
+        "raw.body",
+        "custom.large",
+    ):
+        assert k not in s and k in extra
+    assert s["custom.exact"] == exact_4k
+    assert s["gen_ai.request.model"] == over_4k
+    assert n == {} and b == {}
+
+
+@pytest.mark.unit
+def test_migration_028_replicated_rewriter_and_no_ttl():
+    from tracer.services.clickhouse import oss_cdc_bootstrap as cdc
+
+    schema_path = (
+        Path(apply_schema.__file__).parent / "schema" / "028_trajectory_items.sql"
+    )
+    raw = schema_path.read_text()
+    stmts = apply_schema.split_statements(raw)
+    assert len(stmts) == 2
+    for stmt in stmts:
+        tokens = [t.upper() for t in cdc._tokens(stmt)]
+        assert "TTL" not in tokens, "cold storage / TTL must not be in 028"
+
+    rewritten_create = apply_schema_rewriter.rewrite_for_replicated(
+        stmts[0],
+        table_name=apply_schema_rewriter.extract_table_name(stmts[0]),
+        cluster="fi_cluster",
+        zk_prefix="/clickhouse/tables/{cluster}",
+    )
+    assert "CREATE TABLE IF NOT EXISTS trajectory_items ON CLUSTER 'fi_cluster'" in rewritten_create
+    assert "ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/trajectory_items', '{replica}', first_seen_at)" in rewritten_create
+
+    rewritten_alter = apply_schema_rewriter.rewrite_for_replicated(
+        stmts[1],
+        table_name=apply_schema_rewriter.extract_table_name(stmts[1]),
+        cluster="fi_cluster",
+        zk_prefix="/clickhouse/tables/{cluster}",
+    )
+    assert "ALTER TABLE spans ON CLUSTER 'fi_cluster'" in rewritten_alter
+    for col in (
+        "input_item_hashes",
+        "output_item_hashes",
+        "tool_def_hashes",
+        "item_scope_id",
+        "payload_encoding",
+        "payload_envelope",
+    ):
+        assert col in rewritten_alter

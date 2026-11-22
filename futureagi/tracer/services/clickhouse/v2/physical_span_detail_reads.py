@@ -43,7 +43,9 @@ def build_physical_span_detail_query(*, span_id, reference):
             custom_eval_config_id, toString(trace_session_id) AS trace_session_id,
             toJSONString(metadata) AS metadata_json,
             toJSONString(resource_attrs) AS resource_attrs,
-            attrs_string, attrs_number, attrs_bool
+            attrs_string, attrs_number, attrs_bool,
+            input_item_hashes, output_item_hashes, tool_def_hashes,
+            item_scope_id, payload_encoding, payload_envelope
         FROM spans FINAL
         PREWHERE project_id = %(physical_project_id)s
           AND observation_type = %(physical_observation_type)s
@@ -131,4 +133,20 @@ def read_physical_span_detail(*, analytics, span_id, reference, authorized_proje
     ):
         raise PhysicalSpanDetailError("span_reference_changed")
     row.update(start_time=_utc(row["start_time"]), start_hour=actual[3])
+
+    from tracer.services.clickhouse.v2.trajectory_hydration import hydrate_span_dicts
+
+    hydrate_span_dicts(
+        [row],
+        lambda traj_sql, traj_params: list(
+            analytics.execute_ch_query(
+                traj_sql,
+                traj_params,
+                settings=application_read_settings({"max_threads": 1}),
+            ).data
+            or []
+        ),
+        project_id_fallback=str(row["project_id"]),
+        attr_key="span_attributes",
+    )
     return row

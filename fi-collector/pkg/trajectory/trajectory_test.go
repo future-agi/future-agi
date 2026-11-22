@@ -1,0 +1,406 @@
+package trajectory
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+	"unicode/utf8"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+)
+
+func TestCanonicalJSONAndHashInvariance(t *testing.T) {
+	a := []byte(`{ "content": "Hello, world!", "role": "user", "meta": {"b": 2, "a": [1, {"z": true, "y": null}]} }`)
+	b := []byte(`{"meta":{"a":[1,{"y":null,"z":true}],"b":2},"role":"user","content":"Hello, world!"}`)
+	c := []byte(`{"role":"user","content":"Different!"}`)
+
+	ca, err := CanonicalJSON(a)
+	if err != nil {
+		t.Fatalf("CanonicalJSON(a): %v", err)
+	}
+	cb, err := CanonicalJSON(b)
+	if err != nil {
+		t.Fatalf("CanonicalJSON(b): %v", err)
+	}
+	if string(ca) != string(cb) {
+		t.Fatalf("canonical mismatch:\n a=%s\n b=%s", ca, cb)
+	}
+	ha := HashCanonical(ca)
+	hb := HashCanonical(cb)
+	if ha != hb {
+		t.Fatalf("hash mismatch: %s != %s", ha, hb)
+	}
+	if len(ha) != 32 {
+		t.Fatalf("hash length = %d, want 32 (FixedString(32) ASCII hex)", len(ha))
+	}
+
+	cc, err := CanonicalJSON(c)
+	if err != nil {
+		t.Fatalf("CanonicalJSON(c): %v", err)
+	}
+	if HashCanonical(cc) == ha {
+		t.Fatalf("distinct payloads produced identical hash %s", ha)
+	}
+}
+
+func TestTruncateUTF8(t *testing.T) {
+	// 4-byte emoji repeated 20 times = 80 bytes.
+	s := strings.Repeat("🚀", 20)
+	for _, limit := range []int{1, 3, 4, 5, 7, 15, 80, 100} {
+		got := TruncateUTF8(s, limit)
+		if !utf8.ValidString(got) {
+			t.Errorf("limit=%d produced invalid UTF-8: %x", limit, []byte(got))
+		}
+		if len(got) > limit {
+			t.Errorf("limit=%d len(got)=%d > limit", limit, len(got))
+		}
+	}
+	if got := TruncateUTF8("hello", 0); got != "" {
+		t.Errorf("limit=0 got %q, want empty", got)
+	}
+}
+
+func TestExtractSpanFormats(t *testing.T) {
+	projectID := "11111111-1111-4111-8111-111111111111"
+	sessionID := "22222222-2222-4222-8222-222222222222"
+	traceID := "33333333-3333-4333-8333-333333333333"
+
+	t.Run("OpenAIChatObjectWithToolsAndChoices", func(t *testing.T) {
+		input := `{
+			"model": "gpt-4o",
+			"temperature": 0.2,
+			"tools": [
+				{"type": "function", "function": {"name": "read_file", "description": "Read a file"}}
+			],
+			"messages": [
+				{"role": "system", "content": "You are a helpful coding assistant."},
+				{"role": "user", "content": "Fix the bug in main.go"}
+			]
+		}`
+		output := `{
+			"id": "chatcmpl-123",
+			"choices": [
+				{"index": 0, "message": {"role": "assistant", "content": "Let me inspect main.go first."}}
+			]
+		}`
+		ext := ExtractSpan(projectID, sessionID, traceID, input, output, 64)
+		if !ext.Applied {
+			t.Fatalf("expected Applied=true")
+		}
+		if ext.ItemScopeID != sessionID {
+			t.Fatalf("ItemScopeID = %q, want session %q", ext.ItemScopeID, sessionID)
+		}
+		if len(ext.InputHashes) != 2 {
+			t.Fatalf("InputHashes len = %d, want 2", len(ext.InputHashes))
+		}
+		if !strings.HasPrefix(ext.InputHashes[0], ProjectHashPrefix) {
+			t.Errorf("system message hash %q should have project prefix %q", ext.InputHashes[0], ProjectHashPrefix)
+		}
+		if strings.HasPrefix(ext.InputHashes[1], ProjectHashPrefix) {
+			t.Errorf("user message hash %q should NOT have project prefix", ext.InputHashes[1])
+		}
+		if len(ext.ToolDefHashes) != 1 || !strings.HasPrefix(ext.ToolDefHashes[0], ProjectHashPrefix) {
+			t.Fatalf("ToolDefHashes = %v, want 1 project-prefixed hash", ext.ToolDefHashes)
+		}
+		if len(ext.OutputHashes) != 1 {
+			t.Fatalf("OutputHashes = %v, want 1", ext.OutputHashes)
+		}
+		if len(ext.InputPreview) > 64 || len(ext.OutputPreview) > 64 {
+			t.Fatalf("previews exceed 64B: in=%d out=%d", len(ext.InputPreview), len(ext.OutputPreview))
+		}
+		var env Envelope
+		if err := json.Unmarshal([]byte(ext.EnvelopeJSON), &env); err != nil {
+			t.Fatalf("unmarshal envelope: %v", err)
+		}
+		if env.Input == nil || env.Input.Format != "obj_messages" || env.Input.MessagesKey != "messages" || env.Input.ToolsKey != "tools" {
+			t.Fatalf("unexpected input envelope: %+v", env.Input)
+		}
+		if string(env.Input.Wrapper["model"]) != `"gpt-4o"` {
+			t.Errorf("wrapper missing model: %+v", env.Input.Wrapper)
+		}
+		if env.Output == nil || env.Output.Format != "obj_messages" || env.Output.MessagesKey != "choices" {
+			t.Fatalf("unexpected output envelope: %+v", env.Output)
+		}
+	})
+
+	t.Run("AnthropicSystemAndMessages", func(t *testing.T) {
+		input := `{"model":"claude-3-7-sonnet","system":"Follow coding standards.","messages":[{"role":"user","content":"Hello"}]}`
+		ext := ExtractSpan(projectID, "", traceID, input, `{"content":"Hi!"}`, 128)
+		if !ext.Applied {
+			t.Fatalf("expected Applied=true")
+		}
+		if ext.ItemScopeID != traceID {
+			t.Fatalf("when session empty, ItemScopeID = %q, want traceID %q", ext.ItemScopeID, traceID)
+		}
+		if len(ext.InputHashes) != 1 {
+			t.Fatalf("expected [user] = 1 message hash, got %v", ext.InputHashes)
+		}
+		var env Envelope
+		if err := json.Unmarshal([]byte(ext.EnvelopeJSON), &env); err != nil {
+			t.Fatalf("unmarshal envelope: %v", err)
+		}
+		if env.Input.SystemKey != "system" || env.Input.MessagesKey != "messages" {
+			t.Fatalf("unexpected Anthropic envelope: %+v", env.Input)
+		}
+		if !strings.HasPrefix(env.Input.SystemHash, ProjectHashPrefix) {
+			t.Errorf("top-level system hash %q should be project-scoped", env.Input.SystemHash)
+		}
+	})
+
+	t.Run("OpenAIResponsesAPI", func(t *testing.T) {
+		input := `{"model":"gpt-5","instructions":"Be concise.","input":[{"role":"user","content":"Ping"}]}`
+		ext := ExtractSpan(projectID, sessionID, traceID, input, "", 128)
+		if !ext.Applied {
+			t.Fatalf("expected Applied=true")
+		}
+		var env Envelope
+		_ = json.Unmarshal([]byte(ext.EnvelopeJSON), &env)
+		if env.Input.SystemKey != "instructions" || env.Input.MessagesKey != "input" {
+			t.Fatalf("unexpected Responses API envelope: %+v", env.Input)
+		}
+	})
+
+	t.Run("TopLevelMessageArray", func(t *testing.T) {
+		input := `[{"role":"developer","content":"Strict mode"},{"role":"user","content":"Hi"}]`
+		ext := ExtractSpan(projectID, sessionID, traceID, input, "", 128)
+		if !ext.Applied {
+			t.Fatalf("expected Applied=true")
+		}
+		if !strings.HasPrefix(ext.InputHashes[0], ProjectHashPrefix) {
+			t.Errorf("developer role should be project-scoped, got %q", ext.InputHashes[0])
+		}
+		var env Envelope
+		_ = json.Unmarshal([]byte(ext.EnvelopeJSON), &env)
+		if env.Input.Format != "msg_array" {
+			t.Fatalf("expected msg_array, got %+v", env.Input)
+		}
+	})
+
+	t.Run("NonConversationSpanUntouched", func(t *testing.T) {
+		ext := ExtractSpan(projectID, sessionID, traceID, `{"sql":"SELECT 1"}`, `"ok"`, 128)
+		if ext.Applied {
+			t.Fatalf("non-conversation span should not be extracted")
+		}
+	})
+}
+
+func TestExtractSpan50TurnAgentLoopCompression(t *testing.T) {
+	projectID := "11111111-1111-4111-8111-111111111111"
+	systemPrompt := "You are an autonomous software engineering agent. " + strings.Repeat("Rule: always write tests and verify builds cleanly. ", 40)
+
+	tools := make([]map[string]any, 15)
+	for i := range tools {
+		tools[i] = map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name":        fmt.Sprintf("tool_%02d", i),
+				"description": strings.Repeat(fmt.Sprintf("Tool %d documentation details. ", i), 15),
+				"parameters":  map[string]any{"type": "object", "properties": map[string]any{"arg": map[string]any{"type": "string"}}},
+			},
+		}
+	}
+
+	seen := NewSeenStore(nil, 100_000, time.Hour, time.Hour)
+	ctx := context.Background()
+
+	var totalRawBytes int64
+	var totalNewItemBytes int64
+	var totalReusedItems int
+	var totalNewItems int
+
+	msgs := []map[string]any{
+		{"role": "system", "content": systemPrompt},
+	}
+
+	for turn := 1; turn <= 50; turn++ {
+		msgs = append(msgs, map[string]any{
+			"role":    "user",
+			"content": fmt.Sprintf("Turn %02d user prompt: %s", turn, strings.Repeat("context ", 30)),
+		})
+		inObj := map[string]any{"model": "claude-sonnet-4-6", "tools": tools, "messages": msgs}
+		inBytes, _ := json.Marshal(inObj)
+		outMsg := map[string]any{
+			"role":    "assistant",
+			"content": fmt.Sprintf("Turn %02d assistant reply: %s", turn, strings.Repeat("reasoning ", 30)),
+		}
+		outObj := map[string]any{"choices": []any{map[string]any{"index": 0, "message": outMsg}}}
+		outBytes, _ := json.Marshal(outObj)
+
+		totalRawBytes += int64(len(inBytes) + len(outBytes))
+
+		ext := ExtractSpan(projectID, "sess-1", "trace-1", string(inBytes), string(outBytes), DefaultPreviewMaxBytes)
+		if !ext.Applied {
+			t.Fatalf("turn %d: expected Applied=true", turn)
+		}
+		newItems, reused, _ := seen.FilterNew(ctx, ext.Items)
+		totalNewItems += len(newItems)
+		totalReusedItems += reused
+		for _, it := range newItems {
+			totalNewItemBytes += int64(len(it.Content))
+		}
+		msgs = append(msgs, outMsg)
+	}
+
+	ratio := float64(totalRawBytes) / float64(totalNewItemBytes)
+	t.Logf("50-turn agent loop: raw=%d B, unique_items=%d B, ratio=%.1fx, new_items=%d, reused_items=%d",
+		totalRawBytes, totalNewItemBytes, ratio, totalNewItems, totalReusedItems)
+	if ratio < 15.0 {
+		t.Fatalf("expected >= 15x item compression on 50-turn agent loop, got %.2fx", ratio)
+	}
+
+	// Second trace in the SAME project should reuse system prompt + all 15 tools via __project__!
+	inObj2 := map[string]any{
+		"model": "claude-sonnet-4-6",
+		"tools": tools,
+		"messages": []map[string]any{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": "Brand new session task"},
+		},
+	}
+	inBytes2, _ := json.Marshal(inObj2)
+	ext2 := ExtractSpan(projectID, "sess-2", "trace-2", string(inBytes2), "", DefaultPreviewMaxBytes)
+	new2, reused2, _ := seen.FilterNew(ctx, ext2.Items)
+	if len(new2) != 1 {
+		t.Fatalf("second trace: want exactly 1 new item (new user msg), got %d (reused=%d)", len(new2), reused2)
+	}
+	if reused2 != 16 {
+		t.Fatalf("second trace: want 16 reused project items (1 system + 15 tools), got %d", reused2)
+	}
+}
+
+func TestSeenStoreTwoPodsSharedRedis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	podA := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
+	podB := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
+	ctx := context.Background()
+
+	pid := "11111111-1111-4111-8111-111111111111"
+	turn1In := `{"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Step 1"}]}`
+	turn2In := `{"messages":[{"role":"system","content":"You are helpful."},{"role":"user","content":"Step 1"},{"role":"assistant","content":"Done 1"},{"role":"user","content":"Step 2"}]}`
+
+	ext1 := ExtractSpan(pid, "sess-shared", "trace-shared", turn1In, "", 128)
+	newA, reusedA, _ := podA.FilterNew(ctx, ext1.Items)
+	if len(newA) != 2 || reusedA != 0 {
+		t.Fatalf("podA turn1: got new=%d reused=%d, want 2/0", len(newA), reusedA)
+	}
+
+	// Turn 2 lands on Pod B (completely cold local LRU!). Redis must prevent double-writing & double-billing.
+	ext2 := ExtractSpan(pid, "sess-shared", "trace-shared", turn2In, "", 128)
+	newB, reusedB, reusedBytesB := podB.FilterNew(ctx, ext2.Items)
+	if len(newB) != 2 || reusedB != 2 || reusedBytesB == 0 {
+		t.Fatalf("podB turn2: got new=%d reused=%d reusedBytes=%d, want 2/2/>0", len(newB), reusedB, reusedBytesB)
+	}
+
+	// Verify Forget evicts from BOTH local LRU and shared Redis (for ClickHouse fallback).
+	podA.Forget(ctx, newA)
+	// Re-checking on Pod B should treat forgotten items as new again (after Pod B's own LRU cleared or fresh Pod C).
+	podC := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
+	newC, reusedC, _ := podC.FilterNew(ctx, ext1.Items)
+	if len(newC) != 2 || reusedC != 0 {
+		t.Fatalf("after Forget, podC got new=%d reused=%d, want 2/0", len(newC), reusedC)
+	}
+
+	// Verify fail-open when Redis is unavailable.
+	mr.Close()
+	podD := NewSeenStore(rdb, 1000, time.Hour, 24*time.Hour)
+	newD1, reusedD1, _ := podD.FilterNew(ctx, ext1.Items)
+	if len(newD1) != 2 || reusedD1 != 0 {
+		t.Fatalf("redis down first call: got new=%d reused=%d, want 2/0", len(newD1), reusedD1)
+	}
+	newD2, reusedD2, _ := podD.FilterNew(ctx, ext1.Items)
+	if len(newD2) != 0 || reusedD2 != 2 {
+		t.Fatalf("redis down second call (local LRU): got new=%d reused=%d, want 0/2", len(newD2), reusedD2)
+	}
+}
+
+func TestBatchRestoreInlineAndUsageReport(t *testing.T) {
+	row := map[string]any{
+		"input":              "preview-in",
+		"output":             "preview-out",
+		"input_item_hashes":  []string{"abc"},
+		"output_item_hashes": []string{"def"},
+		"tool_def_hashes":    []string{},
+		"item_scope_id":      "sess-1",
+		"payload_encoding":   EncodingItemsV1,
+		"payload_envelope":   "{}",
+		"attributes_extra":   map[string]any{"custom": "keep"},
+	}
+
+	b := NewBatch()
+	b.AddFallback(SpanFallback{
+		Row:           row,
+		OrigInput:     `{"messages":[{"role":"user","content":"full input"}]}`,
+		OrigOutput:    `{"choices":[{"message":{"role":"assistant","content":"full output"}}]}`,
+		StrippedAttrs: map[string]any{"llm.input_messages.0.message.content": "full input"},
+	})
+	b.RestoreInline()
+
+	if row["input"] != `{"messages":[{"role":"user","content":"full input"}]}` {
+		t.Fatalf("OrigInput not restored: %v", row["input"])
+	}
+	if row["output"] != `{"choices":[{"message":{"role":"assistant","content":"full output"}}]}` {
+		t.Fatalf("OrigOutput not restored: %v", row["output"])
+	}
+	of := row["attributes_extra"].(map[string]any)
+	if of["llm.input_messages.0.message.content"] != "full input" || of["custom"] != "keep" {
+		t.Fatalf("StrippedAttrs not restored: %v", of)
+	}
+	for _, col := range []string{"input_item_hashes", "output_item_hashes", "tool_def_hashes", "item_scope_id", "payload_encoding", "payload_envelope"} {
+		if _, exists := row[col]; exists {
+			t.Errorf("column %q still present after RestoreInline", col)
+		}
+	}
+
+	// Verify UsageReport monotonic invariants:
+	// 1. Non-deduped batch bills exact RawBytes.
+	r0 := UsageReport{RawBytes: 500, DedupApplied: false}
+	if r0.StoredTotalBytes() != 500 || r0.DedupSavedBytes() != 0 {
+		t.Fatalf("non-deduped report mismatch: stored=%d saved=%d", r0.StoredTotalBytes(), r0.DedupSavedBytes())
+	}
+	// 2. Turn 1 (100% new items + overhead > orig) never bills MORE than RawBytes.
+	r1 := UsageReport{RawBytes: 21000, OrigExtractedBytes: 20000, KeptSpanOverheadBytes: 1200, NewItemBytes: 19500, DedupApplied: true}
+	if r1.StoredTotalBytes() != 21000 || r1.DedupSavedBytes() != 0 {
+		t.Fatalf("turn 1 report mismatch: stored=%d saved=%d", r1.StoredTotalBytes(), r1.DedupSavedBytes())
+	}
+	// 3. Turn 10 (mostly reused) bills exact RawBytes - Saved.
+	r10 := UsageReport{RawBytes: 101000, OrigExtractedBytes: 98000, KeptSpanOverheadBytes: 2800, NewItemBytes: 2000, DedupApplied: true}
+	if r10.DedupSavedBytes() != 93200 || r10.StoredTotalBytes() != 7800 {
+		t.Fatalf("turn 10 report mismatch: stored=%d saved=%d", r10.StoredTotalBytes(), r10.DedupSavedBytes())
+	}
+}
+
+func TestConfigFromEnv(t *testing.T) {
+	env := map[string]string{
+		"FI_COMPACT_SPAN_ATTRS":        "true",
+		"FI_TRAJECTORY_DEDUP_MODE":     "canary",
+		"FI_TRAJECTORY_DEDUP_PROJECTS": " AAAA-1111 , bbbb-2222 ",
+		"FI_TRAJECTORY_LRU_SIZE":       "25000",
+		"FI_BILL_DEDUPED_BYTES":        "true",
+	}
+	cfg, err := ConfigFromEnv(Config{}, func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	if !cfg.CompactSpanAttrs || cfg.Mode != ModeCanary || cfg.LRUSize != 25000 || !cfg.BillDedupedBytes {
+		t.Fatalf("unexpected cfg: %+v", cfg)
+	}
+	if !cfg.Active() || !cfg.EnabledForProject("aaaa-1111") || !cfg.EnabledForProject("BBBB-2222") || cfg.EnabledForProject("cccc-3333") {
+		t.Fatalf("canary allowlist mismatch: %+v", cfg.CanaryProjects)
+	}
+
+	if _, err := ConfigFromEnv(Config{}, func(k string) string {
+		if k == "FI_TRAJECTORY_DEDUP_MODE" {
+			return "bogus"
+		}
+		return ""
+	}); err == nil {
+		t.Fatalf("expected error for invalid FI_TRAJECTORY_DEDUP_MODE")
+	}
+}

@@ -236,7 +236,13 @@ class TraceDetailReadBuilder:
                 toJSONString(latest_metadata) AS metadata_json,
                 latest_attrs_string AS attrs_string,
                 latest_attrs_number AS attrs_number,
-                latest_attrs_bool AS attrs_bool
+                latest_attrs_bool AS attrs_bool,
+                latest_input_item_hashes AS input_item_hashes,
+                latest_output_item_hashes AS output_item_hashes,
+                latest_tool_def_hashes AS tool_def_hashes,
+                latest_item_scope_id AS item_scope_id,
+                latest_payload_encoding AS payload_encoding,
+                latest_payload_envelope AS payload_envelope
             FROM (
                 SELECT
                     project_id AS grouped_project_id,
@@ -274,6 +280,17 @@ class TraceDetailReadBuilder:
                     argMax(attrs_string, _version) AS latest_attrs_string,
                     argMax(attrs_number, _version) AS latest_attrs_number,
                     argMax(attrs_bool, _version) AS latest_attrs_bool,
+                    argMax(input_item_hashes, _version)
+                        AS latest_input_item_hashes,
+                    argMax(output_item_hashes, _version)
+                        AS latest_output_item_hashes,
+                    argMax(tool_def_hashes, _version)
+                        AS latest_tool_def_hashes,
+                    argMax(item_scope_id, _version) AS latest_item_scope_id,
+                    argMax(payload_encoding, _version)
+                        AS latest_payload_encoding,
+                    argMax(payload_envelope, _version)
+                        AS latest_payload_envelope,
                     argMax(is_deleted, _version) AS latest_is_deleted
                 FROM {self.TABLE}
                 PREWHERE project_id IN %(detail_project_ids)s
@@ -532,6 +549,15 @@ def read_trace_detail(
         if len(rows) != len(batch):
             raise TraceDetailReadUnavailable("incomplete_content_replay")
         content_rows.extend(rows)
+
+    from tracer.services.clickhouse.v2.trajectory_hydration import hydrate_span_dicts
+
+    hydrate_span_dicts(
+        content_rows,
+        lambda sql, params: execute(sql, params, max_result_rows=10_000),
+        project_id_fallback=project_id,
+        attr_key="span_attributes",
+    )
 
     span_ids = [identity.span_id for identity in identities]
 
