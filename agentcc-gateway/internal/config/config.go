@@ -739,7 +739,8 @@ type CircuitBreakerConfig struct {
 	SuccessThreshold  int           `yaml:"success_threshold" json:"success_threshold"`
 	Cooldown          time.Duration `yaml:"cooldown" json:"cooldown"`
 	OnStatusCodes     []int         `yaml:"on_status_codes" json:"on_status_codes"`
-	HalfOpenMaxProbes int           `yaml:"half_open_max_probes" json:"half_open_max_probes"`
+	HalfOpenMaxProbes int           `yaml:"half_open_max_probes" json:"half_open_max_probes"` // 0 = unlimited
+	GateDirectCalls   bool          `yaml:"gate_direct_calls" json:"gate_direct_calls"`
 }
 
 // RoutingTargetConfig defines a single routing target for a model.
@@ -1018,8 +1019,17 @@ type IPACLConfig struct {
 	Deny           []string `yaml:"deny" json:"deny"`                       // denied IPs/CIDRs (takes precedence over allow)
 }
 
-// DefaultConfig returns sensible defaults.
+// DefaultConfig starts a new configuration. Persist these settings when authoring
+// one; a file without them must keep its original admission policy on reload.
 func DefaultConfig() *Config {
+	cfg := loadDefaults()
+	cfg.Routing.CircuitBreaker.HalfOpenMaxProbes = 1
+	cfg.Routing.CircuitBreaker.GateDirectCalls = true
+	return cfg
+}
+
+// loadDefaults contains only defaults compatible with an existing deployment.
+func loadDefaults() *Config {
 	return &Config{
 		Video: defaultVideoConfig(),
 		Server: ServerConfig{
@@ -1090,7 +1100,7 @@ func DefaultConfig() *Config {
 
 // Load reads config from a YAML/JSON file and overrides with env vars.
 func Load(path string) (*Config, error) {
-	cfg := DefaultConfig()
+	cfg := loadDefaults()
 
 	if path != "" {
 		if err := loadFromFile(cfg, path); err != nil {
@@ -1154,7 +1164,7 @@ func warnUnreadKeys(data []byte) {
 	dec := yaml.NewDecoder(strings.NewReader(text))
 	dec.KnownFields(true)
 	var typeErr *yaml.TypeError
-	if !errors.As(dec.Decode(DefaultConfig()), &typeErr) {
+	if !errors.As(dec.Decode(loadDefaults()), &typeErr) {
 		return
 	}
 	var unread []string

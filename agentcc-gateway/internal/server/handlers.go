@@ -233,7 +233,7 @@ func (h *Handlers) resolveProviderOrgFirst(ctx context.Context, rc *models.Reque
 			return nil, "", orgProviderError(model, providerID, err)
 		}
 	}
-	return h.resolveProvider(ctx, rc, model)
+	return h.resolveProviderForOrg(ctx, rc, model, orgCfg)
 }
 
 // SetCaptureStreamContent enables reassembly of streamed completions. Off by
@@ -565,14 +565,12 @@ func (h *Handlers) resolveFallbackProviderExcluding(ctx context.Context, orgID s
 	if (h.orgProvidersOnly(ctx, rc) && rc.Metadata["provider_locked"] != "true") || ctx.Err() != nil {
 		return nil, "", model, false
 	}
-	result, err := h.registry.ResolveExcluding(model, excluded)
+	overrides := h.targetOverrides(ctx, rc, orgID, orgCfg)
+	result, err := h.registry.ResolveForScope(model, excluded, overrides.healthException())
 	if err != nil || !providerAllowedByLock(rc, result.Provider.ID()) {
 		return nil, "", model, false
 	}
-	p := result.Provider
-	if rc.Metadata["key_type"] != "internal" {
-		p = h.applyOrgProviderOverride(orgID, orgCfg, p.ID(), p)
-	}
+	p := overrides.apply(result.Provider.ID(), result.Provider)
 	if result.ModelOverride != "" {
 		model = result.ModelOverride
 	}
@@ -1376,6 +1374,10 @@ func (h *Handlers) globalModelsVisible(r *http.Request) bool {
 // model fallback overrides the requested model; the caller puts the returned
 // name on its own request, since only chat requests live on rc.Request.
 func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContext, model string) (providers.Provider, string, error) {
+	return h.resolveProviderForOrg(ctx, rc, model, nil)
+}
+
+func (h *Handlers) resolveProviderForOrg(ctx context.Context, rc *models.RequestContext, model string, orgCfg *tenant.OrgConfig) (providers.Provider, string, error) {
 	// Non-internal keys must not resolve to global (FutureAGI-credentialed) providers.
 	// This guard runs first so no code path (model map, conditional routes, registry)
 	// can bypass it for user keys.
@@ -1416,16 +1418,24 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 	}
 
 	// Try primary model first.
-	result, err := h.registry.ResolveWithRouting(model)
+	var overrides orgTargetOverride
+	if shouldApplyOrgProviderOverride(rc) {
+		overrides = h.targetOverrides(ctx, rc, rc.Metadata["org_id"], orgCfg)
+	}
+	result, err := h.registry.ResolveForScope(model, nil, overrides.healthException())
 	if err == nil {
 		rc.Provider = result.Provider.ID()
+		p := overrides.apply(rc.Provider, result.Provider)
+		if p != result.Provider {
+			rc.Metadata["org_provider"] = "true"
+		}
 		if result.StrategyName != "" {
 			rc.Metadata["routing_strategy"] = result.StrategyName
 		}
 		if result.ModelOverride != "" {
-			return result.Provider, result.ModelOverride, nil
+			return p, result.ModelOverride, nil
 		}
-		return result.Provider, model, nil
+		return p, model, nil
 	}
 
 	// Try model fallbacks: org-level first, then global.
@@ -1646,7 +1656,7 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	// Direct/model fallback calls own their admission; routed startup retries
 	// are already admitted by executeProviderFailover.
 	openAdmittedStream := func(callCtx context.Context, p providers.Provider) error {
-		admitted, err := h.admitProvider(callCtx, registry, rc, rc.Provider, p)
+		admitted, err := h.admitDirectProvider(callCtx, registry, rc, rc.Provider, p)
 		if err != nil {
 			return err
 		}

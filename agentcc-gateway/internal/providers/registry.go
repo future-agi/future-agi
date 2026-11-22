@@ -215,25 +215,23 @@ func (r *Registry) ResolveWithRouting(model string) (*ResolveResult, error) {
 
 // ResolveExcluding retains the model's routing semantics while skipping refused providers.
 func (r *Registry) ResolveExcluding(model string, excluded map[string]bool) (*ResolveResult, error) {
+	return r.ResolveForScope(model, excluded, nil)
+}
+
+// ResolveForScope preserves normal model matching. An independently credentialed
+// adapter can serve a routing target whose operator instance is unhealthy.
+func (r *Registry) ResolveForScope(model string, excluded map[string]bool, independent func(string) bool) (*ResolveResult, error) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	router := r.router
+	_, explicitModelRequested := r.modelMap[model]
+	r.mu.RUnlock()
 
 	// Try routing first if the model has routing targets. A single target
 	// routes too: it can name the provider and the model_override to send.
-	if r.router != nil && r.router.TargetCount(model) > 0 {
-		var (
-			routingResult *routing.RoutingResult
-			err           error
-		)
-
-		_, explicitModelRequested := r.modelMap[model]
-		if explicitModelRequested {
-			routingResult, err = r.router.SelectExactModelExcluding(model, excluded)
-		} else {
-			routingResult, err = r.router.SelectExcluding(model, excluded)
-		}
+	if router != nil && router.TargetCount(model) > 0 {
+		routingResult, err := router.SelectForScope(model, excluded, explicitModelRequested, independent)
 		if err == nil {
-			if p, ok := r.providers[routingResult.Target.ProviderID]; ok {
+			if p, ok := r.GetProvider(routingResult.Target.ProviderID); ok {
 				return &ResolveResult{
 					Provider:      p,
 					StrategyName:  routingResult.StrategyName,
@@ -248,6 +246,8 @@ func (r *Registry) ResolveExcluding(model string, excluded map[string]bool) (*Re
 		}
 	}
 
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	// Direct lookup.
 	if providerID, ok := r.modelMap[model]; ok {
 		if p, ok := r.providers[providerID]; ok && !excluded[providerID] {

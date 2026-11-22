@@ -396,3 +396,60 @@ func TestOrgOnlyLockedOperatorModelFallback(t *testing.T) {
 		}
 	}
 }
+
+// An operator outage changes shared router eligibility, not the org's own A.
+// Keep B healthy and operator-only: a 200 by sending the request to B is wrong.
+func TestOrgOnlyFailoverDuringOperatorOutage(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			primary, a := newKeyedUpstream(t, http.StatusServiceUnavailable, "synthetic-operator-a")
+			backup, b := newKeyedUpstream(t, http.StatusServiceUnavailable)
+			cfg := lockedFallbackConfig(a.URL, b.URL, true)
+			cfg.Routing.Targets["primary-model"] = []config.RoutingTargetConfig{{Provider: "b"}, {Provider: "a"}}
+			cfg.Routing.ModelFallbacks = nil
+			cfg.Routing.CircuitBreaker.FailureThreshold = 1
+			cfg.Auth.Keys = append(cfg.Auth.Keys, config.AuthKeyConfig{Name: "operator", Key: "synthetic-operator-probe", KeyType: "internal"})
+			org := &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+				"a": {Enabled: true, APIKey: "synthetic-org-a", Models: []string{"primary-model"}},
+			}}
+			srv, gw := lockedFallbackServer(t, cfg, org, cfg.Providers)
+			status, _, _ := lockedFallbackRequest(t, gw, stream, "a", "", "synthetic-operator-probe")
+			if status != http.StatusBadGateway || primary.count("synthetic-operator-a") != 1 {
+				t.Fatalf("operator outage not established: status=%d calls=%d", status, primary.count("synthetic-operator-a"))
+			}
+			shared := srv.handlers.healthMonitor.GetHealth("a")
+			if shared.Healthy || shared.CircuitState != "open" || shared.ErrorCount != 1 {
+				t.Fatalf("operator A was not removed from shared routing: %+v", shared)
+			}
+			status, body, header := lockedFallbackRequest(t, gw, stream, "", "")
+			if status != http.StatusOK || header.Get("x-agentcc-provider") != "a" || !strings.Contains(body, "synthetic response") || (stream && !strings.Contains(body, "[DONE]")) || primary.count("synthetic-org-a") != 1 {
+				t.Fatalf("independent org A failed: status=%d provider=%s org_calls=%d body=%s", status, header.Get("x-agentcc-provider"), primary.count("synthetic-org-a"), body)
+			}
+			primary.mu.Lock()
+			primary.failing["synthetic-org-a"] = true
+			primary.mu.Unlock()
+			status, _, _ = lockedFallbackRequest(t, gw, stream, "", "")
+			if status != http.StatusBadGateway || primary.count("synthetic-org-a") != 2 {
+				t.Fatalf("org outage not established: status=%d org_calls=%d", status, primary.count("synthetic-org-a"))
+			}
+			status, body, _ = lockedFallbackRequest(t, gw, stream, "", "")
+			if status != http.StatusServiceUnavailable || !strings.Contains(body, "all_providers_unavailable") || primary.count("synthetic-org-a") != 2 {
+				t.Fatalf("expected scoped refusal: status=%d org_calls=%d body=%s", status, primary.count("synthetic-org-a"), body)
+			}
+			// B's breaker is closed. The shared prefilter alone must prevent an
+			// operator call to B when its router target is marked unhealthy.
+			srv.registry.Router().SetHealthy("b", false)
+			status, _, _ = lockedFallbackRequest(t, gw, stream, "", "", "synthetic-operator-probe")
+			if status != http.StatusServiceUnavailable {
+				t.Fatalf("operator bypassed shared health: %d", status)
+			}
+			if primary.count("synthetic-operator-a") != 1 || backup.count("synthetic-operator-b") != 0 {
+				t.Fatalf("unexpected operator dispatch: A=%d B=%d", primary.count("synthetic-operator-a"), backup.count("synthetic-operator-b"))
+			}
+			after := srv.handlers.healthMonitor.GetHealth("a")
+			if after.Healthy || after.CircuitState != "open" || after.ErrorCount != shared.ErrorCount || after.RequestCount != shared.RequestCount {
+				t.Fatalf("org results changed shared health: before=%+v after=%+v", shared, after)
+			}
+		})
+	}
+}

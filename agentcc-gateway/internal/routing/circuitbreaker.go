@@ -62,7 +62,7 @@ func NewCircuitBreaker(providerID string, cfg config.CircuitBreakerConfig, onSta
 	if cfg.Cooldown <= 0 {
 		cfg.Cooldown = 30 * time.Second
 	}
-	if cfg.HalfOpenMaxProbes <= 0 {
+	if cfg.HalfOpenMaxProbes < 0 {
 		cfg.HalfOpenMaxProbes = 1
 	}
 	if len(cfg.OnStatusCodes) == 0 {
@@ -118,10 +118,10 @@ func (cb *CircuitBreaker) Allow() (generation uint64, allowed bool) {
 	}
 }
 
-// grantHalfOpenProbeLocked takes a half-open probe slot if fewer than HalfOpenMaxProbes probes
-// are in flight. cb.mu must be held.
+// grantHalfOpenProbeLocked admits a probe unless a positive cap is full.
+// cb.mu must be held.
 func (cb *CircuitBreaker) grantHalfOpenProbeLocked() bool {
-	if cb.halfOpenProbes >= cb.cfg.HalfOpenMaxProbes {
+	if cb.cfg.HalfOpenMaxProbes > 0 && cb.halfOpenProbes >= cb.cfg.HalfOpenMaxProbes {
 		return false
 	}
 	cb.halfOpenProbes++
@@ -301,6 +301,11 @@ func (r *CircuitBreakerRegistry) Get(providerID string) *CircuitBreaker {
 // GetScoped uses the bounded org/provider store, independent of adapter replacement.
 func (r *CircuitBreakerRegistry) GetScoped(orgID, providerID string) *CircuitBreaker {
 	return r.orgBreakers.Get(orgID, providerID)
+}
+
+// GatesDirectCalls reports whether non-failover dispatch participates in admission.
+func (r *CircuitBreakerRegistry) GatesDirectCalls() bool {
+	return r.IsEnabled() && r.cfg.GateDirectCalls
 }
 
 // IsEnabled returns true if circuit breaking is enabled.

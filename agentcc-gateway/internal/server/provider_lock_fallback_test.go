@@ -88,7 +88,7 @@ func lockedFallbackConfig(a, b string, breaker bool) *config.Config {
 		ModelFallbacks:  map[string][]string{"primary-model": {"backup-model"}},
 		ProviderLock:    config.ProviderLockConfig{Enabled: true, AllowedProviders: []string{"a"}},
 		Failover:        config.FailoverConfig{Enabled: true, MaxAttempts: 1},
-		CircuitBreaker:  config.CircuitBreakerConfig{Enabled: breaker, FailureThreshold: 3, SuccessThreshold: 1, HalfOpenMaxProbes: 1, Cooldown: time.Hour},
+		CircuitBreaker:  config.CircuitBreakerConfig{Enabled: breaker, FailureThreshold: 3, SuccessThreshold: 1, HalfOpenMaxProbes: 1, GateDirectCalls: true, Cooldown: time.Hour},
 	}
 	return cfg
 }
@@ -496,5 +496,51 @@ func TestAcceptedProviderLockAdmission(t *testing.T) {
 	}
 	if !routing.IsAdmissionRefusal(err) {
 		t.Fatalf("lock mismatch must be a local admission refusal: %v", err)
+	}
+}
+
+func TestLockedOrgBackupAliasDuringOperatorOutage(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			var witness lockedFallbackWitness
+			a := lockedFallbackUpstream(t, "operator-a", &witness)
+			b := lockedFallbackUpstream(t, "operator-b", &witness)
+			orgA := lockedFallbackUpstream(t, "org-a", &witness)
+			cfg := lockedFallbackConfig(a.URL, b.URL, true)
+			cfg.Routing.ModelFallbacks["primary-model"] = []string{"route-only-alias"}
+			cfg.Routing.Targets["route-only-alias"] = []config.RoutingTargetConfig{{Provider: "b", ModelOverride: "backup-model"}, {Provider: "a", ModelOverride: "backup-model"}}
+			org := &tenant.OrgConfig{Providers: map[string]*tenant.ProviderConfig{
+				"a": {Enabled: true, APIKey: "synthetic-org-a", Models: []string{"primary-model"}},
+			}}
+			srv, gateway := lockedFallbackServer(t, cfg, org, map[string]config.ProviderConfig{
+				"a": {APIFormat: "openai", BaseURL: orgA.URL, Models: []string{"primary-model"}},
+			})
+			cb := srv.handlers.healthMonitor.CircuitBreakerRegistry().Get("a")
+			for i := 0; i < cfg.Routing.CircuitBreaker.FailureThreshold; i++ {
+				openReconciliationBreaker(t, cb)
+			}
+			status, body, headers := lockedFallbackRequest(t, gateway, stream, "a", "body")
+			calls := witness.snapshot()
+			if status != http.StatusOK || !strings.Contains(body, "synthetic locked backup") || (stream && !strings.Contains(body, "[DONE]")) || headers.Get("x-agentcc-provider-locked") != "a" || headers.Get("x-agentcc-provider") != "a" || headers.Get("x-agentcc-fallback-used") != "true" {
+				t.Fatalf("locked alias: status=%d headers=%v body=%s", status, headers, body)
+			}
+			if fmt.Sprint(calls) != "[org-a:primary-model:Bearer synthetic-org-a org-a:backup-model:Bearer synthetic-org-a]" || cb.State() != routing.StateOpen {
+				t.Fatalf("locked fallback escaped org A or changed operator health: calls=%q state=%s", calls, cb.State())
+			}
+		})
+	}
+}
+
+func TestUngatedDirectCallStillHonorsAcceptedLock(t *testing.T) {
+	h, p := reconciliationHandler(t)
+	rc := reconciliationRC(t)
+	rc.Metadata["provider_locked"], rc.Metadata["provider_lock_target"] = "true", "other"
+	reg := routing.NewCircuitBreakerRegistry(config.CircuitBreakerConfig{Enabled: true}, nil)
+	err := h.callProvider(context.Background(), reg, rc, p, func() error {
+		t.Fatal("legacy direct dispatch ignored the accepted provider")
+		return nil
+	})
+	if !routing.IsAdmissionRefusal(err) {
+		t.Fatalf("expected accepted-lock refusal, got %v", err)
 	}
 }

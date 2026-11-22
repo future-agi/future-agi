@@ -93,7 +93,7 @@ func testHalfOpenProbeBurst(t *testing.T, stream bool, fallback string) {
 	cfg.Routing.Retry.Enabled = false
 	cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 1}
 	cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{
-		Enabled: true, FailureThreshold: 1, SuccessThreshold: 2, Cooldown: 20 * time.Millisecond,
+		Enabled: true, GateDirectCalls: true, HalfOpenMaxProbes: 1, FailureThreshold: 1, SuccessThreshold: 2, Cooldown: 20 * time.Millisecond,
 	}
 	registry, err := providers.NewRegistry(cfg)
 	if err != nil {

@@ -307,20 +307,23 @@ providers:
 #       # no models = unrestricted access to all models
 
 # Load balancing across multiple providers for the same model.
-# routing:
+routing:
 #   default_strategy: "round-robin"   # round-robin, weighted, least-latency, cost-optimized
 #   failover:
 #     enabled: true                    # Auto-failover to next provider on error (default: true)
 #     max_attempts: 3                  # Max providers to try (default: 3)
 #     on_status_codes: [429, 500, 502, 503, 504]  # HTTP codes that trigger failover
 #     on_timeout: true                 # Failover on timeout errors (default: true)
-#   circuit_breaker:
-#     enabled: true                    # Per-provider circuit breaking (default: false)
+  circuit_breaker:
+    enabled: false                    # Turn on explicitly to use breakers
 #     failure_threshold: 5             # Consecutive failures to open circuit (default: 5)
 #     success_threshold: 2             # Successes in half-open to close (default: 2)
 #     cooldown: 30s                    # Time before half-open test (default: 30s)
-#     half_open_max_probes: 1          # Current-generation recovery admissions (default: 1)
-#     # Unset, zero and negative probe limits use 1. Closed traffic is not capped.
+    half_open_max_probes: 1            # New-config setting for operator and org recovery
+    gate_direct_calls: true            # Include direct chat and legacy completions
+#     # When editing an existing file, set these explicitly to opt in. Missing
+#     # cap or 0 = unlimited; missing gate = routed failover only, even on reload.
+#     # A negative cap retains its former limit of 1. Closed traffic is not capped.
 #     # Applies to chat JSON/streams and native, translated and streamed legacy
 #     # completions, including direct/no-router calls and configured fallbacks.
 #     # Other modalities and background workers are not covered by this gate.
@@ -341,8 +344,8 @@ providers:
 #     # Older in-flight work can outlive its generation, reload or eviction, so
 #     # this is not an absolute cap on all live upstream work. Late completions
 #     # and old cooldown callbacks cannot change a newer recovery cycle.
-#     # Shared health views remain operator-only. Existing router health filters
-#     # remain in routed traversal; independent org/direct admission is separate.
+#     # Shared health filters operator credentials only. An org's own provider
+#     # uses its (org, provider) breaker, even while the operator circuit is open.
 #   retry:
 #     enabled: true                    # Auto-retry on same provider (default: true when routing)
 #     max_retries: 2                   # Max retries per provider (default: 2)

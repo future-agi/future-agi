@@ -102,7 +102,7 @@ func TestCircuitBreaker_StaleProbeCannotReopenRecoveredCircuit(t *testing.T) {
 }
 
 func TestCircuitBreaker_DefaultProbeLimit(t *testing.T) {
-	for _, configured := range []int{0, -1} {
+	for _, configured := range []int{config.DefaultConfig().Routing.CircuitBreaker.HalfOpenMaxProbes, -1} {
 		t.Run(fmt.Sprint(configured), func(t *testing.T) {
 			cfg := newTestCBConfig()
 			cfg.HalfOpenMaxProbes = configured

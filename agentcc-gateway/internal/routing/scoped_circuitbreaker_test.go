@@ -202,3 +202,21 @@ func TestOrgBreakerCountsRejectedKeysByDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestScopedTraversalIgnoresOnlyOperatorHealth(t *testing.T) {
+	f := newOrgBreakerFixture(t, time.Hour)
+	f.failover.router.SetHealthy("byok", false)
+	if !f.orgAttempt("org-a", true) || !f.orgAttempt("org-a", true) || f.orgAttempt("org-a", false) {
+		t.Fatal("expected two org A calls before its own breaker opened")
+	}
+	if !f.orgAttempt("org-b", false) {
+		t.Fatal("operator health or org A's breaker refused org B")
+	}
+	_, err := f.failover.Execute(context.Background(), "model", func(context.Context, string, string) error {
+		t.Error("scope exception escaped into operator routing")
+		return nil
+	})
+	if !IsAdmissionRefusal(err) || f.shared.Get("byok").State() != StateClosed {
+		t.Fatalf("operator prefilter: err=%v circuit=%v", err, f.shared.Get("byok").State())
+	}
+}

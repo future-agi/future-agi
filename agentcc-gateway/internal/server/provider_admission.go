@@ -35,8 +35,17 @@ func (h *Handlers) admitProvider(ctx context.Context, registry *routing.CircuitB
 	return lease, nil
 }
 
+// Direct calls still check context and accepted identity without a breaker. Only
+// configurations opting in acquire a lease or contribute direct breaker results.
+func (h *Handlers) admitDirectProvider(ctx context.Context, registry *routing.CircuitBreakerRegistry, rc *models.RequestContext, id string, p providers.Provider) (*routing.ProbeLease, error) {
+	if !registry.GatesDirectCalls() {
+		registry = nil
+	}
+	return h.admitProvider(ctx, registry, rc, id, p)
+}
+
 func (h *Handlers) callProvider(ctx context.Context, registry *routing.CircuitBreakerRegistry, rc *models.RequestContext, p providers.Provider, call func() error) error {
-	lease, err := h.admitProvider(ctx, registry, rc, rc.Provider, p)
+	lease, err := h.admitDirectProvider(ctx, registry, rc, rc.Provider, p)
 	if err != nil {
 		return err
 	}

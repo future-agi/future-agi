@@ -1804,11 +1804,12 @@ func TestFailover_Execute_WithRetry(t *testing.T) {
 
 func newTestCBConfig() config.CircuitBreakerConfig {
 	return config.CircuitBreakerConfig{
-		Enabled:          true,
-		FailureThreshold: 3,
-		SuccessThreshold: 2,
-		Cooldown:         10 * time.Millisecond,
-		OnStatusCodes:    []int{429, 500, 502, 503, 504},
+		Enabled:           true,
+		FailureThreshold:  3,
+		SuccessThreshold:  2,
+		HalfOpenMaxProbes: 1,
+		Cooldown:          10 * time.Millisecond,
+		OnStatusCodes:     []int{429, 500, 502, 503, 504},
 	}
 }
 
@@ -2115,7 +2116,7 @@ func TestFailover_CircuitBreakerReadmitsProviderAfterCooldown(t *testing.T) {
 // only target is that provider answers "all providers ... unavailable" until a restart.
 func TestFailover_HalfOpenClientErrorDoesNotStrandProvider(t *testing.T) {
 	router := makeFailoverRouter(t, "gpt-4", "openai")
-	cbCfg := newTestCBConfig() // HalfOpenMaxProbes unset, so 1
+	cbCfg := newTestCBConfig() // one concurrent recovery probe
 	cbReg := NewCircuitBreakerRegistry(cbCfg, router.SetHealthy)
 	f := NewFailover(config.FailoverConfig{Enabled: true, MaxAttempts: 3}, router, nil, cbReg)
 

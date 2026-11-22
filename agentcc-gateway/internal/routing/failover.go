@@ -22,6 +22,7 @@ type Failover struct {
 	cbReg             *CircuitBreakerRegistry
 	codes             map[int]bool
 	useCircuitBreaker func(string) bool
+	independentHealth func(string) bool
 	admit             func(context.Context, string) (*ProbeLease, error)
 	// orgBreakers holds BYOK breakers keyed by (org, provider). breakerScope is
 	// the org a request-scoped copy records into; empty means no org breaker.
@@ -113,6 +114,13 @@ func (f *Failover) circuitBreakerFor(providerID string) *CircuitBreaker {
 	return f.orgBreakers.Get(f.breakerScope, providerID)
 }
 
+// WithIndependentHealth scopes the shared router prefilter for this traversal.
+func (f *Failover) WithIndependentHealth(independent func(string) bool) *Failover {
+	scoped := *f
+	scoped.independentHealth = independent
+	return &scoped
+}
+
 // WithAdmission resolves the selected candidate and acquires its lease once,
 // before the retry group. Only an explicit local refusal skips the attempt.
 func (f *Failover) WithAdmission(admit func(context.Context, string) (*ProbeLease, error)) *Failover {
@@ -169,6 +177,12 @@ func (f *Failover) execute(ctx context.Context, model string, call FailoverCallF
 	var exclusionErr error
 	var circuitRefused bool
 	var originalProvider string
+	independent := f.independentHealth
+	if f.admit == nil && f.breakerScope != "" && f.useCircuitBreaker != nil {
+		// A routing-owned traversal uses its own credential filter. A server
+		// traversal instead supplies the resolved adapter at both boundaries.
+		independent = func(id string) bool { return !f.useCircuitBreaker(id) }
+	}
 
 	// Refused targets are excluded, but only admitted provider calls spend the
 	// attempt budget. Selection ends once all distinct providers are excluded.
@@ -181,13 +195,7 @@ func (f *Failover) execute(ctx context.Context, model string, call FailoverCallF
 			return nil, nil, err
 		}
 		// Select a target, excluding already-tried providers.
-		var result *RoutingResult
-		var err error
-		if len(excluded) == 0 {
-			result, err = f.router.Select(model)
-		} else {
-			result, err = f.router.SelectExcluding(model, excluded)
-		}
+		result, err := f.router.SelectForScope(model, excluded, false, independent)
 		if err != nil {
 			if lastErr != nil {
 				return nil, nil, lastErr // Return the actual provider error, not "no targets"

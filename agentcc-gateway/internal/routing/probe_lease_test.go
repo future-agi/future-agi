@@ -41,8 +41,10 @@ func TestProbeLeaseLimitsAcrossRegistries(t *testing.T) {
 					cb = reg.GetScoped("org", "p")
 				}
 				want := limit
-				if want <= 0 {
+				if limit < 0 {
 					want = 1
+				} else if limit == 0 {
+					want = 12 // No cap: every outstanding probe must be admitted.
 				}
 				for cycle := 0; cycle < 2; cycle++ {
 					if cycle == 0 {

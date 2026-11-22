@@ -124,7 +124,7 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 	h.applyOrgModelMapOverrides(orgCfg, rc)
 
 	// Resolve provider.
-	provider, upstreamModel, err := h.resolveProvider(ctx, rc, req.Model)
+	provider, upstreamModel, err := h.resolveProviderForOrg(ctx, rc, req.Model, orgCfg)
 	if err != nil {
 		// If global registry doesn't know this model, try org provider model lists.
 		if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
@@ -217,7 +217,7 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 	var nativeResp *models.CompletionResponse
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		lease, err := h.admitProvider(ctx, h.healthMonitor.CircuitBreakerRegistry(), rc, rc.Provider, provider)
+		lease, err := h.admitDirectProvider(ctx, h.healthMonitor.CircuitBreakerRegistry(), rc, rc.Provider, provider)
 		if err != nil {
 			return err
 		}
@@ -274,7 +274,7 @@ func (h *Handlers) handleCompletionNative(ctx context.Context, w http.ResponseWr
 
 func (h *Handlers) handleCompletionNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider) {
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		lease, err := h.admitProvider(ctx, h.healthMonitor.CircuitBreakerRegistry(), rc, rc.Provider, provider)
+		lease, err := h.admitDirectProvider(ctx, h.healthMonitor.CircuitBreakerRegistry(), rc, rc.Provider, provider)
 		if err != nil {
 			return err
 		}
@@ -329,7 +329,7 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 
 	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
 		var err error
-		lease, err = h.admitProvider(ctx, h.healthMonitor.CircuitBreakerRegistry(), rc, rc.Provider, provider)
+		lease, err = h.admitDirectProvider(ctx, h.healthMonitor.CircuitBreakerRegistry(), rc, rc.Provider, provider)
 		if err != nil {
 			return err
 		}

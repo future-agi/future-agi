@@ -44,7 +44,7 @@ func probeConfig(upstream string) *config.Config {
 	cfg.Routing.Failover = config.FailoverConfig{Enabled: true, MaxAttempts: 1}
 	cfg.Routing.CircuitBreaker = config.CircuitBreakerConfig{
 		Enabled: true, FailureThreshold: 1, SuccessThreshold: 2,
-		HalfOpenMaxProbes: 1, Cooldown: 10 * time.Millisecond,
+		HalfOpenMaxProbes: 1, GateDirectCalls: true, Cooldown: 10 * time.Millisecond,
 	}
 	return cfg
 }

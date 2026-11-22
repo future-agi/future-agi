@@ -51,7 +51,7 @@ func (p *reconciliationProvider) StreamChatCompletion(ctx context.Context, _ *mo
 }
 
 func reconciliationConfig() config.CircuitBreakerConfig {
-	return config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, SuccessThreshold: 2, HalfOpenMaxProbes: 1, Cooldown: time.Nanosecond, OnStatusCodes: []int{500}}
+	return config.CircuitBreakerConfig{Enabled: true, FailureThreshold: 1, SuccessThreshold: 2, HalfOpenMaxProbes: 1, GateDirectCalls: true, Cooldown: time.Nanosecond, OnStatusCodes: []int{500}}
 }
 func reconciliationHandler(t *testing.T) (*Handlers, *reconciliationProvider) {
 	t.Helper()
@@ -394,4 +394,69 @@ func TestProbeRetrySnapshotAndPhysicalHealth(t *testing.T) {
 		t.Fatalf("physical calls not sampled independently: %+v", health)
 	}
 	assertReconciliationCapacity(t, cb)
+}
+
+// These direct paths historically did not consult the routed circuit. A cap
+// alone must not change them, and opting in must not depend on which adapter
+// implements legacy completions or who owns the credentials.
+func TestDirectBreakerAdmissionCompatibility(t *testing.T) {
+	for _, policy := range []string{"legacy", "cap-only", "new"} {
+		for _, endpoint := range []string{"chat", "chat-stream", "native", "translated", "legacy-stream"} {
+			for _, org := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/%s/org=%t", policy, endpoint, org), func(t *testing.T) {
+					h, p := reconciliationHandler(t)
+					rc := reconciliationRC(t)
+					cfg := config.CircuitBreakerConfig{}
+					switch policy {
+					case "new":
+						cfg = config.DefaultConfig().Routing.CircuitBreaker
+					case "cap-only":
+						cfg.HalfOpenMaxProbes = 1
+					}
+					cfg.Enabled, cfg.FailureThreshold, cfg.Cooldown = true, 1, time.Hour
+					reg := routing.NewCircuitBreakerRegistry(cfg, nil)
+					h.healthMonitor.SetCircuitBreakerRegistry(reg)
+					cb := reg.Get("p")
+					if org {
+						rc.Metadata["org_id"] = "org-a"
+						p = &reconciliationProvider{id: "org-adapter"}
+						cb = reg.GetScoped("org-a", "p")
+					}
+					openReconciliationBreaker(t, cb)
+					p.stream = func(context.Context) (<-chan models.StreamChunk, <-chan error) {
+						chunks := make(chan models.StreamChunk, 1)
+						chunks <- models.StreamChunk{Model: "m", Choices: []models.StreamChoice{{}}}
+						close(chunks)
+						return chunks, nil
+					}
+					w := httptest.NewRecorder()
+					ctx := context.Background()
+					switch endpoint {
+					case "chat":
+						h.handleNonStream(ctx, w, rc, p, nil)
+					case "native":
+						h.handleCompletionNative(ctx, w, rc, p, &models.CompletionRequest{Model: "m"})
+					case "translated":
+						h.handleCompletionNonStream(ctx, w, rc, p)
+					case "chat-stream":
+						rc.Request.Stream = true
+						h.handleStream(ctx, w, rc, p, nil)
+					case "legacy-stream":
+						rc.Request.Stream = true
+						h.handleCompletionStream(ctx, w, rc, p)
+					}
+					if policy == "new" {
+						if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "circuit_open") || p.calls != 0 {
+							t.Fatalf("opted-in refusal: status=%d calls=%d body=%s", w.Code, p.calls, w.Body.String())
+						}
+					} else if w.Code != http.StatusOK || p.calls != 1 || (rc.Request.Stream && !strings.Contains(w.Body.String(), "[DONE]")) {
+						t.Fatalf("legacy dispatch: status=%d calls=%d body=%s", w.Code, p.calls, w.Body.String())
+					}
+					if cb.State() != routing.StateOpen {
+						t.Fatal("direct request changed open routed circuit")
+					}
+				})
+			}
+		}
+	}
 }
