@@ -1,5 +1,6 @@
 """One claimed prompt chat, with in-memory substitutes for its external I/O."""
 
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -39,13 +40,34 @@ def claimed_prompt_chat(monkeypatch):
         call_metadata={"system_prompt": "Ask one question.", "initial_message": "Hi!"},
     )
 
-    # Only persistence is fake. The activity must initialize the session and
-    # set FAILED and the failure reason itself; refresh never sets a status.
     by_id = {str(call.id): call}
     query = SimpleNamespace(get=lambda *, id: by_id[id])
     monkeypatch.setattr(CallExecution.objects, "select_related", lambda *args: query)
-    monkeypatch.setattr(call, "save", Mock())
-    monkeypatch.setattr(call, "refresh_from_db", Mock())
+
+    # Keep the stored row separate from the live call, including its mutable metadata.
+    stored = {
+        field: deepcopy(getattr(call, field))
+        for field in (
+            "assistant_id",
+            "call_metadata",
+            "simulation_call_type",
+            "started_at",
+            "status",
+            "ended_reason",
+            "ended_at",
+        )
+    }
+
+    def save(*, update_fields=None):
+        fields = stored.keys() if update_fields is None else update_fields
+        stored.update({field: deepcopy(getattr(call, field)) for field in fields})
+
+    def refresh_from_db():
+        for field, value in stored.items():
+            setattr(call, field, deepcopy(value))
+
+    monkeypatch.setattr(call, "save", Mock(wraps=save))
+    monkeypatch.setattr(call, "refresh_from_db", refresh_from_db)
     messages = []
 
     def create_message(**fields):

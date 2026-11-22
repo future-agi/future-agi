@@ -476,19 +476,16 @@ def test_structured_provider_log(monkeypatch, pipeline):
 
         call = claimed_prompt_chat(monkeypatch)
         from ee.voice.services.vapi_service import VapiService
-        from simulate.tasks.chat_sim import run_single_prompt_chat
-        from tfc.temporal.common.registry import TEMPORAL_ACTIVITY_MODULES
-        from tfc.temporal.drop_in import get_temporal_activities
+        from tfc.temporal.common.registry import get_activities_for_queue
 
-        # Use the worker's real drop-in registry without loading unrelated queues.
-        assert run_single_prompt_chat.__module__ in TEMPORAL_ACTIVITY_MODULES
-        name = run_single_prompt_chat.name
-        assert name == "run_single_prompt_chat"
-        [registered] = [
+        name = "run_single_prompt_chat"
+        matches = [
             fn
-            for fn in get_temporal_activities(queue="tasks_l")
+            for fn in get_activities_for_queue("tasks_l")
             if activity._Definition.must_from_callable(fn).name == name
         ]
+        assert len(matches) == 1, f"tasks_l must register exactly one {name} activity"
+        [registered] = matches
         result = run_intercepted(
             registered,
             ({"args": [str(call.id)]},),
@@ -497,6 +494,8 @@ def test_structured_provider_log(monkeypatch, pipeline):
             task_queue="tasks_l",
         )
         assert result == {"status": "completed", "result": False}
+        # Reload so an unsaved outer failure reason cannot mask the inner saved one.
+        call.refresh_from_db()
         assert call.call_metadata["chat_provider"] == "vapi"
         assert call.call_metadata["chat_session_id"] == "example"
         assert call.status == call.CallStatus.FAILED
