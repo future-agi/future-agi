@@ -10,6 +10,13 @@ function Show-Summary {
   # The URL SDKs send traces to, as the compose files give it to the app.
   $localCollectorUrl = "http://localhost:$collectorHttpPort"
   $collectorUrl = Get-ComposeEnvValue 'FI_COLLECTOR_PUBLIC_URL' $localCollectorUrl
+  # The API URL SDKs call (FI_BASE_URL), in the app's order: BASE_URL, which
+  # reaches it from .env only (the compose files do not interpolate it), then
+  # the UI's VITE_HOST_API, then the published API port.
+  $apiUrl = Get-EnvValue 'BASE_URL'
+  if (-not $apiUrl) { $apiUrl = Get-ComposeEnvValue 'VITE_HOST_API' }
+  if (-not $apiUrl) { $apiUrl = "http://localhost:$BackendPort" }
+  $apiUrl = "$apiUrl".Trim().TrimEnd('/')
   $gatewayPort = Get-EnvValue 'AGENTCC_GATEWAY_PORT'
   if (-not $gatewayPort) { $gatewayPort = 8090 }
   $uiUrl = "http://localhost:$FrontendPort"
@@ -44,8 +51,8 @@ function Show-Summary {
   Say "  3. Send your first trace (on this machine; paste with your keys from step 2)"
   Say ""
   # Flush left, so the here-string and the Python indentation survive a copy-paste.
-  Say "pip install fi-instrumentation-otel"
-  Say "`$env:FI_API_KEY = `"<your API key>`"; `$env:FI_SECRET_KEY = `"<your secret key>`"; `$env:FI_BASE_URL = `"$collectorUrl`""
+  Say "pip install -U `"fi-instrumentation-otel>=1.5.0`""
+  Say "`$env:FI_API_KEY = `"<your API key>`"; `$env:FI_SECRET_KEY = `"<your secret key>`"; `$env:FI_BASE_URL = `"$apiUrl`"; `$env:FI_TRACES_URL = `"$collectorUrl`""
   Say "@'"
   Say "from fi_instrumentation import register"
   Say "from fi_instrumentation.fi_types import ProjectType"

@@ -153,7 +153,7 @@ describe("ConnectedAgentsView", () => {
     expect(
       await screen.findByText("Couldn't load connected agents"),
     ).toBeInTheDocument();
-    expect(screen.queryByText("No connected agents yet")).toBeNull();
+    expect(screen.queryByText("No agents yet")).toBeNull();
   });
 
   it("explains how to connect an agent when there are none", async () => {
@@ -162,7 +162,7 @@ describe("ConnectedAgentsView", () => {
     renderView();
     expect(
       await screen.findByText(
-        "Connect your agent from a hosted platform, an endpoint, a repository or an upload. Simulations run against a copy of it.",
+        "Bring one from code or a hosted platform. Simulations run against a copy of it.",
       ),
     ).toBeInTheDocument();
   });
@@ -230,7 +230,7 @@ describe("ConnectedAgentsView", () => {
         ).toBeInTheDocument(),
       { timeout: 2000 },
     );
-    expect(screen.queryByText("No connected agents yet")).toBeNull();
+    expect(screen.queryByText("No agents yet")).toBeNull();
   });
 
   it("deletes the ticked agent, not its row number, after a refetch adds a row above", async () => {

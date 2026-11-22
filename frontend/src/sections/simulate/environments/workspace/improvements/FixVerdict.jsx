@@ -11,6 +11,7 @@ import {
   describeChecks,
   headline,
   pct,
+  provenOnTargetsOnly,
   verdictCards,
   winnerOf,
 } from "./fixRunView";
@@ -273,8 +274,7 @@ export default function FixVerdict({ fix }) {
   const cards = verdictCards(fix);
   // Too few held back to call it verified, whatever the verdict says.
   const limited = !!fix.limited_validation;
-  const provenOnTargets = !limited && !winner.verdict.held_back_pass_rate;
-  const heldBack = (fix.request?.held_back_scenario_keys || []).length > 0;
+  const provenOnTargets = provenOnTargetsOnly(fix);
   return (
     <Box
       sx={{
@@ -315,7 +315,7 @@ export default function FixVerdict({ fix }) {
           {text}
         </Typography>
       </Stack>
-      {limited && heldBack && <HeldBackTally fix={fix} winner={winner} />}
+      {limited && <HeldBackTally fix={fix} winner={winner} />}
       {provenOnTargets && (
         <Typography
           sx={{

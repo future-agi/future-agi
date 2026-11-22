@@ -404,6 +404,8 @@ func main() {
 			os.Exit(1)
 		}
 		cachePlugin := cacheplugin.New(cacheBackend, cfg.Cache.DefaultTTL)
+		// Requests on keys with guardrail key policies get their own entries.
+		cachePlugin.SetTenantStore(tenantStore)
 
 		if cfg.Cache.Semantic.Enabled {
 			semBackend, err := cache.NewSemanticBackend(cfg.Cache.Semantic)
@@ -576,7 +578,12 @@ func main() {
 	engine := pipeline.NewEngine(plugins...)
 
 	// Create and start server (shares the same ModelDB pointer for hot-reload).
-	srv := server.New(cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
+	// Install the signal handler before the first MCP child can start. A
+	// signal during discovery cancels the handshake; a signal after it is
+	// remembered until the normal shutdown path owns the connected clients.
+	lifetime, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopSignals()
+	srv := server.NewWithStartupContext(lifetime, cfg, *configPath, registry, engine, keyStore, grEngine, policyStore, metricsRegistry, &sharedModelDB, tenantStore, onOrgConfigChange, redisClient)
 	costPlugin.SetPriceTables(srv.ServedPriceTableName)
 	costPlugin.SetReportedCostVendors(srv.ReportedCostVendor)
 	srv.SetCatalogue(catalogue)
@@ -624,15 +631,12 @@ func main() {
 	}
 
 	// Handle shutdown signals.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
-
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
-		sig := <-sigCh
-		signal.Stop(sigCh) // a second signal stops the process at once
-		slog.Info("received signal", "signal", sig)
+		<-lifetime.Done()
+		stopSignals() // restore default handling for the next signal
+		slog.Info("received shutdown signal")
 
 		// Stop control plane sync.
 		syncCancelBg()
@@ -663,9 +667,11 @@ func main() {
 		}
 	}()
 
-	if err := srv.Start(); err != nil {
-		slog.Error("server error", "error", err)
-		os.Exit(1)
+	if lifetime.Err() == nil {
+		if err := srv.Start(); err != nil {
+			slog.Error("server error", "error", err)
+			os.Exit(1)
+		}
 	}
 	// Start returns as soon as the shutdown begins. Wait for the rest of it
 	// (in-flight requests, the last request-log flush) before exiting.

@@ -384,7 +384,11 @@ class WorkspaceDefaultPreferencesTests(unittest.TestCase):
         self.user.can_write_to_workspace.return_value = False
         with self.assertRaises(PermissionDenied) as raised:
             self.auth.authenticate(self.request(method="POST"))
-        self.assertEqual(str(raised.exception), "Write access denied to this workspace")
+        self.assertEqual(
+            str(raised.exception),
+            "Viewers can't make changes in this workspace. "
+            "Ask a workspace admin for the Member role.",
+        )
         self.user.can_write_to_workspace.assert_called_once_with(self.a1)
         self.context.assert_not_called()
 

@@ -4,6 +4,7 @@ import { enqueueSnackbar } from "notistack";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  Alert,
   Box,
   Stack,
   Typography,
@@ -36,6 +37,9 @@ import {
 } from "src/api/simulate-environments/rerunScenarios";
 
 import SectionCard from "../../../components/SectionCard";
+import ViewerLock from "../../../components/ViewerLock";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../../workspace.constants";
 import StatusChip from "../StatusChip";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
@@ -128,6 +132,7 @@ export default function RunDetail({
   // either holds both.
   const evalRun = useRunEvalActions({ envId: env?.id, executionId });
   const rerunInRun = useRerunCallsInRun(executionId);
+  const access = useSimulationAccess();
 
   // The past self-improvement (optimization) runs for this execution — REAL,
   // scoped by test_execution_id. The Trials tab only appears once at least one
@@ -191,6 +196,7 @@ export default function RunDetail({
     identity?.environmentVersion?.label &&
       `env ${identity.environmentVersion.label}`,
     identity?.suiteVersion?.label && `scenarios ${identity.suiteVersion.label}`,
+    identity?.seed != null && `seed ${identity.seed}`,
   ]
     .filter(Boolean)
     .map((label) => ` · ${label}`)
@@ -199,13 +205,13 @@ export default function RunDetail({
   const resumeState = identity?.resume;
   const resume = useResumeRun(executionId);
   const lastResume = resumeState?.history?.at(-1);
-  // A re-run starts from the versions this run used.
   const rerunOptions = {
     initialPicks: {
       agent: identity?.pinnedAgentVersion?.id,
       environment: identity?.environmentVersion?.id,
       suite: identity?.suiteVersion?.id,
     },
+    seed: identity?.seed ?? undefined,
   };
 
   // A check run opened from a fix carries the fix page as its way back; it is
@@ -326,6 +332,15 @@ export default function RunDetail({
             {startedLabel ? ` · started ${startedLabel}` : ""}
             {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
+          {identity?.buildNotice && (
+            <Alert
+              severity="warning"
+              sx={{ mt: 1 }}
+              data-testid="run-build-notice"
+            >
+              {identity.buildNotice}
+            </Alert>
+          )}
         </Box>
 
         <ReliabilityHeadline
@@ -335,26 +350,36 @@ export default function RunDetail({
 
         {/* A backed run opens its evals, to grade again or add to; a
             client-only env keeps its store picker. */}
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={() =>
-            backed ? setAllEvalsOpen(true) : setAddingEvals(true)
-          }
-          // A re-grade reads as running, but its evals stay reachable so the
-          // drawer can say why they are locked until grading finishes.
-          disabled={live && executionStatus !== "evaluating"}
-          startIcon={
-            <Iconify
-              icon={
-                backed ? "solar:play-circle-linear" : "solar:add-circle-linear"
-              }
-              width={15}
-            />
-          }
+        <ViewerLock
+          locked={!backed && !access.canEdit}
+          title={WORKSPACE_COPY.viewer.evals}
         >
-          {backed ? "Run evals" : "Add evals"}
-        </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() =>
+              backed ? setAllEvalsOpen(true) : setAddingEvals(true)
+            }
+            // A re-grade reads as running, but its evals stay reachable so the
+            // drawer can say why they are locked until grading finishes.
+            disabled={
+              (!backed && !access.canEdit) ||
+              (live && executionStatus !== "evaluating")
+            }
+            startIcon={
+              <Iconify
+                icon={
+                  backed
+                    ? "solar:play-circle-linear"
+                    : "solar:add-circle-linear"
+                }
+                width={15}
+              />
+            }
+          >
+            {backed ? "Run evals" : "Add evals"}
+          </Button>
+        </ViewerLock>
         <Button
           variant="outlined"
           size="small"
@@ -367,32 +392,36 @@ export default function RunDetail({
           {exporting ? "Exporting…" : "Export"}
         </Button>
         {resumeState?.resumable && (
-          <Button
-            variant="outlined"
-            size="small"
-            disabled={live || resume.isPending}
-            startIcon={<Iconify icon="solar:play-linear" width={15} />}
-            onClick={() => resume.mutate()}
-          >
-            {resume.isPending ? "Resuming…" : "Resume"}
-          </Button>
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!access.canRun || live || resume.isPending}
+              startIcon={<Iconify icon="solar:play-linear" width={15} />}
+              onClick={() => resume.mutate()}
+            >
+              {resume.isPending ? "Resuming…" : "Resume"}
+            </Button>
+          </ViewerLock>
         )}
         {hasTickableCalls === false && !fixRun && (
-          <Button
-            variant="outlined"
-            size="small"
-            disabled={live || runStarting}
-            startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
-            onClick={() =>
-              onStartRun?.(
-                identity?.scenarioIds || undefined,
-                identity?.trials || 1,
-                rerunOptions,
-              )
-            }
-          >
-            Run again
-          </Button>
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="outlined"
+              size="small"
+              disabled={!access.canRun || live || runStarting}
+              startIcon={<Iconify icon="solar:refresh-linear" width={15} />}
+              onClick={() =>
+                onStartRun?.(
+                  identity?.scenarioIds || undefined,
+                  identity?.trials || 1,
+                  rerunOptions,
+                )
+              }
+            >
+              Run again
+            </Button>
+          </ViewerLock>
         )}
         {improvable.length > 0 && (
           <Tooltip
@@ -494,13 +523,15 @@ export default function RunDetail({
               onTickableChange={setHasTickableCalls}
               runTrials={identity?.trials || 1}
               rerunDisabledReason={
-                live
-                  ? "Wait for this run to finish before re-running calls"
-                  : runStarting
-                    ? "Starting the run…"
-                    : rerunInRun.isPending
-                      ? "Starting the re-run…"
-                      : null
+                !access.canRun
+                  ? WORKSPACE_COPY.viewer.run
+                  : live
+                    ? "Wait for this run to finish before re-running calls"
+                    : runStarting
+                      ? "Starting the run…"
+                      : rerunInRun.isPending
+                        ? "Starting the re-run…"
+                        : null
               }
             />
           )}

@@ -299,8 +299,8 @@ export default function ConnectedAgentsView({ onConnect }) {
     return (
       <EmptyState
         icon="solar:link-circle-linear"
-        title="No connected agents yet"
-        description="Connect your agent from a hosted platform, an endpoint, a repository or an upload. Simulations run against a copy of it."
+        title="No agents yet"
+        description="Bring one from code or a hosted platform. Simulations run against a copy of it."
         action={
           <Button
             variant="contained"
@@ -308,7 +308,7 @@ export default function ConnectedAgentsView({ onConnect }) {
             size="small"
             onClick={onConnect}
           >
-            Connect an agent
+            Connect agent
           </Button>
         }
       />
@@ -332,7 +332,7 @@ export default function ConnectedAgentsView({ onConnect }) {
           onChange={(e) => changeSearch(e.target.value)}
           size="small"
           placeholder="Search"
-          sx={{ width: 250 }}
+          sx={{ width: 280 }}
         />
         <FilterButton
           fields={CONNECTED_AGENT_FILTER_FIELDS}
@@ -356,8 +356,8 @@ export default function ConnectedAgentsView({ onConnect }) {
             ]}
           />
         ) : (
-          <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-            Connected = we can reach it: its repo, platform, endpoint or traces.
+          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+            Connected means we can reach it: its repository, platform or upload.
           </Typography>
         )}
       </ListToolbar>
@@ -392,17 +392,19 @@ export default function ConnectedAgentsView({ onConnect }) {
           emptyMessage="No agents match your search or filters"
         />
       )}
-      <DataTablePagination
-        page={page}
-        pageSize={pageSize}
-        total={total}
-        onPageChange={goToPage}
-        onPageSizeChange={(size) => {
-          setPicked([]);
-          setPageSize(size);
-          setPage(0);
-        }}
-      />
+      {total > 0 && (
+        <DataTablePagination
+          page={page}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={goToPage}
+          onPageSizeChange={(size) => {
+            setPicked([]);
+            setPageSize(size);
+            setPage(0);
+          }}
+        />
+      )}
       <ConfirmDialog
         open={confirmDelete}
         onClose={closeConfirm}
