@@ -39,9 +39,11 @@ def activity_read_available(
         or builder._order_by() != ORDER
     ):
         return False
-    projects: Sequence[str | None] = (
-        builder.project_ids if builder.project_ids is not None else [builder.project_id]
-    )
+    projects: Sequence[str | None]
+    if builder.project_ids is not None:
+        projects = builder.project_ids
+    else:
+        projects = [builder.project_id]
     if len(projects) != 1 or not projects[0]:
         return False
     if not read.permits(projects[0]) or not read.permits_user_activity(projects[0]):

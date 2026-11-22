@@ -1736,7 +1736,7 @@ def finish_pending_expiry(writer, *, expiry_id=None):
         head = MetricProjectRefresh.for_project(project_id).head_manifest
         if head is None or head.revoked_at:
             raise MetricStateConflict("retention cleanup requires a safe checkpoint")
-        keep: set[UUID] | tuple[UUID, ...] = {a for _, a in head.allowed_attempts()}
+        kept: set[UUID] = {a for _, a in head.allowed_attempts()}
         # Publication-time revocation removed every affected old pin. Preserve
         # safe POST-expiry states that a later compaction superseded while a new
         # request/snapshot still holds them; scrubbing only against the head
@@ -1761,8 +1761,8 @@ def finish_pending_expiry(writer, *, expiry_id=None):
             .values_list("parent_manifest_id", flat=True)
         )
         for retained in MetricReadManifest.objects.filter(id__in=roots):
-            keep.update(a for _, a in retained.allowed_attempts())
-        keep = tuple(keep) or (UUID(int=0),)
+            kept.update(a for _, a in retained.allowed_attempts())
+        keep: tuple[UUID, ...] = tuple(kept) or (UUID(int=0),)
         obligations = list(pending.order_by("requested_at"))
     # Safe roots were frozen under serialization. New attempts have generations
     # above every obligation; new captures can only pin these roots or their
