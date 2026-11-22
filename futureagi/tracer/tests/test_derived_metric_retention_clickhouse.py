@@ -575,8 +575,8 @@ def test_physical_expiry_waits_its_interval_while_reads_and_erasure_stay_exact(
     writer = live_writer
     start = datetime(2026, 10, 28, 12, tzinfo=UTC)
     clock = [start]
+    pin_lease_clock(writer.lease, start)
     writer.lease.clock = lambda: clock[0]
-    writer.lease.renew()
     writer.retention_days = lambda: 1
     definition = definition_for(writer, workspace, observe_project)
     scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
@@ -1007,6 +1007,32 @@ def test_retained_recovery_handoff_survives_interruption_compaction_and_gc(
     ).exists()
 
 
+# Postgres rejects a lock_timeout above 2^31 - 1 milliseconds (about 24.8
+# days). The lease's remaining time becomes the lock budget of each write
+# (deletion_protocol._budgeted_row_lock), so it must stay a lease's length.
+POSTGRES_MAX_LOCK_TIMEOUT_MS = 2**31 - 1
+
+
+def pin_lease_clock(lease, at):
+    """Run the lease on the fixture's clock, as if it had been granted at `at`.
+
+    The live lease was granted on the real clock. Pinning only its clock to a
+    fixed past date left its expiry on the real clock, so its remaining time
+    grew with every day since that date and overflowed the lock budget on
+    22 Nov 2026. Its expiry moves with the clock, in place, as run() does for
+    a new grant: the lifecycle lock budget holds this lease object.
+    """
+    from tracer.services.derived_metrics.lease import DEFAULT_LEASE_TTL
+
+    lease.clock = lambda: at
+    lease.expires_at = at + DEFAULT_LEASE_TTL
+    lease.renew()
+    remaining_ms = lease.remaining_seconds() * 1000
+    assert 0 < remaining_ms <= DEFAULT_LEASE_TTL.total_seconds() * 1000
+    # Well under the Postgres maximum: a thousandth of it is about 36 minutes.
+    assert remaining_ms < POSTGRES_MAX_LOCK_TIMEOUT_MS / 1000
+
+
 def history_fixture(writer, workspace, project, *, finite=True):
     """Event, arrival, evaluation and lease clocks are explicit and independent."""
     from datetime import UTC, datetime
@@ -1014,8 +1040,7 @@ def history_fixture(writer, workspace, project, *, finite=True):
     from tracer.tests.test_derived_metric_refresh_clickhouse import seed_span_revision
 
     now = datetime(2026, 10, 28, 12, tzinfo=UTC)
-    writer.lease.clock = lambda: now
-    writer.lease.renew()
+    pin_lease_clock(writer.lease, now)
     writer.retention_days = lambda: 1 if finite else 0
     definition = definition_for(writer, workspace, project)
     scope = Scope(writer.org_id, writer.workspace_id, writer.lease.project_id)
