@@ -380,17 +380,22 @@ export default function RunDetail({
             {backed ? "Run evals" : "Add evals"}
           </Button>
         </ViewerLock>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={exportResults}
-          disabled={live || exporting}
-          startIcon={
-            <Iconify icon="solar:download-minimalistic-linear" width={15} />
-          }
+        <ViewerLock
+          locked={!access.canEdit}
+          title={WORKSPACE_COPY.viewer.export}
         >
-          {exporting ? "Exporting…" : "Export"}
-        </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={exportResults}
+            disabled={!access.canEdit || live || exporting}
+            startIcon={
+              <Iconify icon="solar:download-minimalistic-linear" width={15} />
+            }
+          >
+            {exporting ? "Exporting…" : "Export"}
+          </Button>
+        </ViewerLock>
         {resumeState?.resumable && (
           <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
             <Button
@@ -424,36 +429,45 @@ export default function RunDetail({
           </ViewerLock>
         )}
         {improvable.length > 0 && (
-          <Tooltip
-            describeChild
-            title={`Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`}
-          >
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => {
-                setFixTargets(epoch);
-                setFixLaunching(true);
-              }}
-              startIcon={
-                <Iconify icon="solar:magic-stick-3-linear" width={15} />
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Tooltip
+              describeChild
+              title={
+                access.canRun
+                  ? `Starts an epoch from the ${improvable.length} failing scenario${improvable.length === 1 ? "" : "s"} that came from imported evidence.`
+                  : ""
               }
             >
-              Run Epoch
-            </Button>
-          </Tooltip>
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={!access.canRun}
+                onClick={() => {
+                  setFixTargets(epoch);
+                  setFixLaunching(true);
+                }}
+                startIcon={
+                  <Iconify icon="solar:magic-stick-3-linear" width={15} />
+                }
+              >
+                Run Epoch
+              </Button>
+            </Tooltip>
+          </ViewerLock>
         )}
         {!fixRun && (
-          <Button
-            variant="contained"
-            color="primary"
-            size="small"
-            onClick={() => setDebugging(true)}
-            disabled={live}
-            startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
-          >
-            Debug failures
-          </Button>
+          <ViewerLock locked={!access.canRun} title={WORKSPACE_COPY.viewer.run}>
+            <Button
+              variant="contained"
+              color="primary"
+              size="small"
+              onClick={() => setDebugging(true)}
+              disabled={!access.canRun || live}
+              startIcon={<Iconify icon="solar:magnifer-linear" width={15} />}
+            >
+              Debug failures
+            </Button>
+          </ViewerLock>
         )}
       </Stack>
       {creditBanner}

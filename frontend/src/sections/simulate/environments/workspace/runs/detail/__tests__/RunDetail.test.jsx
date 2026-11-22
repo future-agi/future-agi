@@ -9,6 +9,7 @@ import {
   waitForElementToBeRemoved,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
 import {
   MemoryRouter,
   useLocation,
@@ -862,6 +863,39 @@ describe("RunDetail", () => {
           "fix-note:1 from imported evidence, 2 more failing scenarios from this run to reach the minimum",
         ),
       ).toBeInTheDocument();
+    });
+
+    it("locks Export, Run Epoch and Debug failures for a Viewer, saying why", async () => {
+      const user = userEvent.setup();
+      vi.mocked(useSimulationAccess).mockReturnValue({
+        canEdit: false,
+        canRun: false,
+      });
+      finished();
+      fixLaunchOptions.mockReturnValue({
+        options: { scenarios: [scenario("evidence-a", "import-1", true)] },
+      });
+      try {
+        renderDetail();
+
+        for (const [name, reason] of [
+          ["Export", "You don't have permission to export run results."],
+          ["Run Epoch", "You don't have permission to start runs."],
+          ["Debug failures", "You don't have permission to start runs."],
+        ]) {
+          const button = screen.getByRole("button", { name });
+          expect(button).toBeDisabled();
+          await user.hover(button.parentElement);
+          expect(await screen.findByRole("tooltip")).toHaveTextContent(reason);
+          await user.unhover(button.parentElement);
+          await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+        }
+      } finally {
+        vi.mocked(useSimulationAccess).mockReturnValue({
+          canEdit: true,
+          canRun: true,
+        });
+      }
     });
 
     it("is not offered when no failing case came from evidence", () => {
