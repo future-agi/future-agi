@@ -58,7 +58,8 @@ def pushes():
 
 
 def snapshot(row):
-    return AgentccProviderCredential.all_objects.filter(pk=row.pk).values().get()
+    # Inspect the seeded row independently of the request's workspace context.
+    return AgentccProviderCredential._base_manager.filter(pk=row.pk).values().get()
 
 
 def read(client, method, row):
@@ -201,7 +202,7 @@ def test_negative_create_has_no_comparison_row(
             else organization
         )
         make_row(org, deleted=hidden == "deleted", **{column(key): -1})
-    rows = AgentccProviderCredential.all_objects.filter(provider_name=NAME).order_by(
+    rows = AgentccProviderCredential._base_manager.filter(provider_name=NAME).order_by(
         "pk"
     )
     before = list(rows.values())
