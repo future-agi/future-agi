@@ -151,6 +151,22 @@ export function cohortAttempt(stack, total, jobs) {
   return [...attempts][0];
 }
 
+// A failed-jobs rerun lists the carried-over shard jobs under the new attempt,
+// while their blob receipts keep the attempt that produced them. Name such a
+// mixed stack plainly instead of failing on the first missing receipt.
+export function carriedOverShards(stack, total, attempt, artifactNames) {
+  const carried = [];
+  for (let i = 1; i <= total; i++) {
+    const prefix = `blob-report-${stack}-${i}-attempt-`;
+    const attempts = artifactNames.filter(name => name.startsWith(prefix))
+      .map(name => Number(name.slice(prefix.length))).filter(Number.isSafeInteger);
+    if (!attempts.includes(attempt) && attempts.some(n => n < attempt)) {
+      carried.push(`${i}/${total} (attempt ${Math.max(...attempts.filter(n => n < attempt))})`);
+    }
+  }
+  return carried;
+}
+
 function downloadReceipts(stack, total) {
   const repo = `repos/${process.env.GITHUB_REPOSITORY}/actions`;
   const run = `${repo}/runs/${process.env.GITHUB_RUN_ID}`;
@@ -158,6 +174,11 @@ function downloadReceipts(stack, total) {
     {encoding: "utf8", maxBuffer: 64 * 1024 * 1024})).flatMap(page => page[key]);
   const attempt = cohortAttempt(stack, total, pages(`${run}/jobs?filter=all&per_page=100`, "jobs"));
   const artifacts = pages(`${run}/artifacts?per_page=100`, "artifacts");
+  const carried = carriedOverShards(stack, total, attempt,
+    artifacts.filter(row => !row.expired).map(row => row.name));
+  if (carried.length) {
+    throw new Error(`mixed ${stack} producers: shard ${carried.join(", ")} carried over into attempt ${attempt}; rerun all jobs to qualify one stack`);
+  }
   const temp = mkdtempSync(path.join(tmpdir(), "e2e-receipts-"));
   const stream = (command, args, file) => {
     const fd = openSync(file, "wx");

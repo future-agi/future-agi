@@ -21,7 +21,7 @@ import {
   shardTestMatch,
 } from "../lib/shard.ts";
 import { grepInvertPattern } from "../lib/quarantine.ts";
-import { checkParity, cohortAttempt, fileDurations } from "./shard-report.mjs";
+import { carriedOverShards, checkParity, cohortAttempt, fileDurations } from "./shard-report.mjs";
 
 const flat = (groups) => groups.flat().sort();
 
@@ -287,6 +287,21 @@ test("a report can reuse an unsuperseded cohort but not a missing or changed sib
   assert.throws(() => cohortAttempt("distributed", 2, [jobs[0]]), /missing/);
   assert.throws(() => cohortAttempt("distributed", 2, [...jobs, job(2, 2)]), /mixed/);
   assert.equal(cohortAttempt("distributed", 2, [...jobs, job(2, 2), job(1, 2)]), 2);
+});
+
+test("a failed-jobs rerun is named as a mixed stack, not a missing receipt", () => {
+  const blobs = (stack, attempt, shards) => shards.map(i => `blob-report-${stack}-${i}-attempt-${attempt}`);
+  // Shard 4 of 6 reran; GitHub carries the other five over into attempt 2.
+  const names = [...blobs("distributed", 1, [1, 2, 3, 4, 5, 6]), ...blobs("distributed", 2, [4]), "once-per-stack-distributed-attempt-1"];
+  assert.deepEqual(carriedOverShards("distributed", 6, 2, names),
+    ["1/6 (attempt 1)", "2/6 (attempt 1)", "3/6 (attempt 1)", "5/6 (attempt 1)", "6/6 (attempt 1)"]);
+  // A full rerun, or the first attempt, is one stack.
+  assert.deepEqual(carriedOverShards("distributed", 6, 2, [...names, ...blobs("distributed", 2, [1, 2, 3, 5, 6])]), []);
+  assert.deepEqual(carriedOverShards("distributed", 6, 1, blobs("distributed", 1, [1, 2, 3, 4, 5, 6])), []);
+  // A shard with no receipt at all is still the existing "missing receipt" failure, not a carry-over.
+  assert.deepEqual(carriedOverShards("distributed", 2, 1, blobs("distributed", 1, [1])), []);
+  // The other stack's receipts never count.
+  assert.deepEqual(carriedOverShards("standalone", 2, 2, [...names, ...blobs("standalone", 2, [1, 2])]), []);
 });
 
 test("parity checks the listed project and declared outcome, not just result count", () => {
