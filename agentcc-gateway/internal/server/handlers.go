@@ -1536,7 +1536,7 @@ func (h *Handlers) resolveProviderForOrg(ctx context.Context, rc *models.Request
 		}
 	}
 	if router := h.registry.Router(); router != nil && router.TargetCount(model) > 0 {
-		return nil, "", models.ErrServiceUnavailable(fmt.Sprintf("all providers for model %q are unavailable", model))
+		return nil, "", models.ErrProvidersUnavailable(fmt.Sprintf("all providers for model %q are unavailable", model))
 	}
 
 	return nil, "", err
@@ -1944,10 +1944,10 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
-				raw := closedStreamOutcome(ctx, errCh)
-				finish(raw)
-				if raw != nil {
-					apiErr := streamEndError(ctx, raw)
+				outcome := closedStreamOutcome(ctx, errCh)
+				finish(outcome.err)
+				if outcome.err != nil {
+					apiErr := outcome.apiError(ctx)
 					if apiErr != nil {
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
@@ -2042,12 +2042,13 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 			}
 
 		case <-ctx.Done():
-			finish(ctx.Err())
+			outcome := closedStreamOutcome(ctx, errCh)
+			finish(outcome.err)
 			// The client left, or the request reached its deadline; only the
 			// second has anyone to tell. streamCancel() in defer stops the
 			// guardrail goroutines. Drain remaining chunks to unblock the
 			// provider goroutine.
-			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
+			if apiErr := outcome.apiError(ctx); apiErr != nil {
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}
@@ -2093,11 +2094,8 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 			if !ok {
 				// A provider sends its error before it closes chunks, and
 				// sends none once ctx is done; see closedStreamError.
-				if raw := closedStreamOutcome(ctx, errCh); raw != nil {
-					return nil, raw
-				}
-				if err := ctx.Err(); err != nil {
-					return nil, err
+				if outcome := closedStreamOutcome(ctx, errCh); outcome.err != nil {
+					return nil, outcome.err
 				}
 				return nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before sending any chunks")
 			}
@@ -2111,7 +2109,7 @@ func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChu
 				return nil, err
 			}
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, closedStreamOutcome(ctx, errCh).err
 		}
 	}
 }

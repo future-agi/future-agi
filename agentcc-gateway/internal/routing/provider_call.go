@@ -42,15 +42,12 @@ func DispatchRejection(err error) *models.APIError {
 }
 
 func CircuitOpenError() error {
-	return &admissionRefusal{api: &models.APIError{
-		Status: 503, Type: models.ErrTypeServer, Code: "circuit_open",
-		Message: "Provider circuit is open or at its probe limit",
-	}}
+	return &admissionRefusal{api: models.ErrProviderCircuitOpen()}
 }
 
 // ProvidersUnavailableError marks selection exhaustion without an upstream call.
 func ProvidersUnavailableError(message string) error {
-	return &admissionRefusal{api: models.ErrServiceUnavailable(message)}
+	return &admissionRefusal{api: models.ErrProvidersUnavailable(message)}
 }
 
 func IsAdmissionRefusal(err error) bool {

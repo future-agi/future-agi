@@ -472,11 +472,11 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
-				raw := closedStreamOutcome(ctx, errCh)
-				lease.Complete(ctx, raw)
-				h.recordProviderOutcome(ctx, provider, firstChunkLatency, raw)
-				if raw != nil {
-					apiErr := streamEndError(ctx, raw)
+				outcome := closedStreamOutcome(ctx, errCh)
+				lease.Complete(ctx, outcome.err)
+				h.recordProviderOutcome(ctx, provider, firstChunkLatency, outcome.err)
+				if outcome.err != nil {
+					apiErr := outcome.apiError(ctx)
 					if apiErr != nil {
 						rc.AddError(apiErr)
 						sseWriter.WriteError(apiErr)
@@ -521,11 +521,12 @@ func (h *Handlers) handleCompletionStream(ctx context.Context, w http.ResponseWr
 			}
 
 		case <-ctx.Done():
-			lease.Complete(ctx, ctx.Err())
+			outcome := closedStreamOutcome(ctx, errCh)
+			lease.Complete(ctx, outcome.err)
 			// The client left, or the request reached its deadline; only the
 			// second has anyone to tell. Drain the channel and run post-plugins.
-			if apiErr := streamEndError(ctx, ctx.Err()); apiErr != nil {
-				h.recordProviderOutcome(ctx, provider, firstChunkLatency, ctx.Err())
+			if apiErr := outcome.apiError(ctx); apiErr != nil {
+				h.recordProviderOutcome(ctx, provider, firstChunkLatency, outcome.err)
 				rc.AddError(apiErr)
 				sseWriter.WriteError(apiErr)
 			}

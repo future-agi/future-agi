@@ -242,7 +242,7 @@ func (r *Registry) ResolveForScope(model string, excluded map[string]bool, indep
 		}
 
 		if !explicitModelRequested {
-			return nil, models.ErrServiceUnavailable(err.Error())
+			return nil, models.ErrProvidersUnavailable(err.Error())
 		}
 	}
 
