@@ -24,10 +24,15 @@ from tracer.tests._falcon_analysis import (
     score_params,
     scripted_tool_stream,
 )
-from tracer.tests._falcon_hold import HOLD_CODE, HOLD_MESSAGE, assert_hold, no_background_work
+from tracer.tests._falcon_hold import (
+    HOLD_CODE,
+    HOLD_MESSAGE,
+    assert_hold,
+    no_background_work,
+)
 from tracer.tests.test_falcon_execution_scope import (
-    make_credentialed_attempt,
     bound_context,
+    make_credentialed_attempt,
 )
 
 pytestmark = [pytest.mark.requires_ee, pytest.mark.django_db]
@@ -81,7 +86,9 @@ def bound_pair(observe_project, user, monkeypatch):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize("include_reader", [True, False], ids=["reader-only", "empty"])
-def test_background_loop_refuses_before_tool_list(bound_pair, monkeypatch, include_reader):
+def test_background_loop_refuses_before_tool_list(
+    bound_pair, monkeypatch, include_reader
+):
     from ee.falcon_ai.agent import AgentLoop
 
     bound, _, _ = bound_pair
@@ -200,8 +207,12 @@ def test_held_empty_list_refuses_before_project_trace_discovery(observe_project)
     assert not list(queries)
 
 
-@pytest.mark.parametrize("marker", ["revoked-capture", "assigned-only", "malformed-scope"])
-def test_background_markers_refuse_every_executor_entry(bound_pair, marker, monkeypatch):
+@pytest.mark.parametrize(
+    "marker", ["revoked-capture", "assigned-only", "malformed-scope"]
+)
+def test_background_markers_refuse_every_executor_entry(
+    bound_pair, marker, monkeypatch
+):
     from accounts.models.auth_token import AuthToken
     from ai_tools.generated import GeneratedAPITool
     from ee.falcon_ai.agent import AgentLoop
@@ -210,7 +221,12 @@ def test_background_markers_refuse_every_executor_entry(bound_pair, marker, monk
     bound, _, _ = bound_pair
     tid = bound.assigned_trace_id
     if marker == "revoked-capture":
-        assert AuthToken.objects.filter(pk=bound.auth_scope.token_id).update(is_active=False) == 1
+        assert (
+            AuthToken.objects.filter(pk=bound.auth_scope.token_id).update(
+                is_active=False
+            )
+            == 1
+        )
     elif marker == "assigned-only":
         bound = replace(bound, background_execution_scope=None)
     else:
@@ -221,7 +237,9 @@ def test_background_markers_refuse_every_executor_entry(bound_pair, marker, monk
     monkeypatch.setattr(native, "execute", dispatch)
     executor = Mock()
     generated = GeneratedAPITool(
-        SimpleNamespace(name="local_read", description="Read", group="tracing", input_schema={}),
+        SimpleNamespace(
+            name="local_read", description="Read", group="tracing", input_schema={}
+        ),
         executor,
     )
     monkeypatch.setattr(generated, "_coerce_params", dispatch)
@@ -248,7 +266,9 @@ def test_background_markers_refuse_every_executor_entry(bound_pair, marker, monk
 
 
 @pytest.mark.django_db(transaction=True)
-def test_interactive_tool_event_reports_refusal_without_promising_results(observe_project, user, monkeypatch):
+def test_interactive_tool_event_reports_refusal_without_promising_results(
+    observe_project, user, monkeypatch
+):
     from ee.falcon_ai.agent import AgentLoop
 
     project = observe_project
@@ -257,14 +277,29 @@ def test_interactive_tool_event_reports_refusal_without_promising_results(observ
     agent = AgentLoop(ctx, SimpleNamespace(title="Trace request", context_summary=""))
     callback = AsyncMock()
     enqueue = Mock(side_effect=AssertionError("Held producer enqueued a job"))
-    monkeypatch.setattr("tracer.tasks.error_analysis.analyze_traces_on_demand.delay", enqueue)
-    monkeypatch.setattr(agent.llm_client, "stream_completion", scripted_tool_stream(
-        (tool.name, {"project_id": str(project.pk)})
-    ))
-    async_to_sync(agent.run)("Analyze the project", [], callback, tools_override=[tool],
-                             system_prompt_override="Use the analysis tool.", raise_on_stream_error=True)
-    [event] = [call.args[0]["data"] for call in callback.await_args_list
-               if call.args[0]["type"] == "tool_call_result"]
+    monkeypatch.setattr(
+        "tracer.tasks.error_analysis.analyze_traces_on_demand.delay", enqueue
+    )
+    monkeypatch.setattr(
+        agent.llm_client,
+        "stream_completion",
+        scripted_tool_stream((tool.name, {"project_id": str(project.pk)})),
+    )
+    async_to_sync(agent.run)(
+        "Analyze the project",
+        [],
+        callback,
+        tools_override=[tool],
+        system_prompt_override="Use the analysis tool.",
+        raise_on_stream_error=True,
+    )
+    [event] = [
+        call.args[0]["data"]
+        for call in callback.await_args_list
+        if call.args[0]["type"] == "tool_call_result"
+    ]
     assert event["tool_name"] == tool.name and event["status"] == "error"
-    assert HOLD_MESSAGE in event["result_summary"] and HOLD_MESSAGE in event["result_full"]
+    assert (
+        HOLD_MESSAGE in event["result_summary"] and HOLD_MESSAGE in event["result_full"]
+    )
     enqueue.assert_not_called()

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Type
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -155,6 +156,21 @@ class ToolResult:
         )
 
 
+def _guard_native_execute(
+    implementation: Callable[[BaseTool, PydanticBaseModel, ToolContext], ToolResult],
+) -> Callable[[BaseTool, PydanticBaseModel, ToolContext], ToolResult]:
+    @wraps(implementation)
+    def execute(
+        self: BaseTool, params: PydanticBaseModel, context: ToolContext
+    ) -> ToolResult:
+        refusal = ToolResult.background_refusal(context)
+        if refusal is not None:
+            return refusal
+        return implementation(self, params, context)
+
+    return execute
+
+
 class BaseTool(ABC):
     """Abstract base class for all AI tools.
 
@@ -169,24 +185,16 @@ class BaseTool(ABC):
     name: str
     description: str
     category: str
-    input_model: ClassVar[Type[PydanticBaseModel]] = EmptyInput
+    input_model: ClassVar[type[PydanticBaseModel]] = EmptyInput
 
-    def __init_subclass__(cls, **kwargs):
+    def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # Native callers can invoke a concrete execute() without run(). Guard
         # that boundary too, without changing the foreground tool implementations.
-        implementation = cls.__dict__.get("execute")
-        if implementation is None:
-            return
-
-        @wraps(implementation)
-        def execute(self, params, context):
-            refusal = ToolResult.background_refusal(context)
-            if refusal is not None:
-                return refusal
-            return implementation(self, params, context)
-
-        cls.execute = execute
+        method_name = "execute"
+        implementation = cls.__dict__.get(method_name)
+        if implementation is not None:
+            setattr(cls, method_name, _guard_native_execute(implementation))
 
     @abstractmethod
     def execute(self, params: PydanticBaseModel, context: ToolContext) -> ToolResult:

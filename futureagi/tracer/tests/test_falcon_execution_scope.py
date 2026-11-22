@@ -68,8 +68,12 @@ def assignment(observe_project, user):
 
 
 def bound_context(ctx, attempt, scope):
-    return replace(ctx, project=attempt.project, assigned_trace_id=str(attempt.trace_id),
-                   background_execution_scope=scope)
+    return replace(
+        ctx,
+        project=attempt.project,
+        assigned_trace_id=str(attempt.trace_id),
+        background_execution_scope=scope,
+    )
 
 
 @pytest.mark.django_db
@@ -77,9 +81,19 @@ def test_legacy_context_construction_does_not_grant_execution(assignment):
     ctx, attempt, scope = assignment
     bound = bound_context(ctx, attempt, scope)
     copied = ToolContext(**{f.name: getattr(bound, f.name) for f in fields(bound)})
-    assert copied.auth_scope is scope.auth_scope and copied.background_execution_scope is scope
+    assert (
+        copied.auth_scope is scope.auth_scope
+        and copied.background_execution_scope is scope
+    )
     with pytest.raises(TypeError):
-        ToolContext(ctx.user, ctx.organization, ctx.workspace, attempt.project, str(attempt.trace_id), scope)
+        ToolContext(
+            ctx.user,
+            ctx.organization,
+            ctx.workspace,
+            attempt.project,
+            str(attempt.trace_id),
+            scope,
+        )
     from tracer.services.falcon_background_analysis import BackgroundAnalysisUnavailable
 
     with pytest.raises(BackgroundAnalysisUnavailable) as denied:
@@ -93,8 +107,10 @@ def test_accounting_hold_denies_legacy_scope(assignment):
 
     _, attempt, scope = assignment
     result = _falcon_analyze_single_trace(
-        str(attempt.trace_id), str(attempt.project_id),
-        background_execution_scope=scope, analysis_attempt_id=attempt.pk,
+        str(attempt.trace_id),
+        str(attempt.project_id),
+        background_execution_scope=scope,
+        analysis_attempt_id=attempt.pk,
     )
     assert_worker_refused(result, str(attempt.trace_id))
 
@@ -163,7 +179,9 @@ def test_producer_refuses_regardless_of_legacy_initiating_context(assignment, ch
         ctx = replace(ctx, background_execution_scope=scope)
     from ai_tools.registry import registry
 
-    result = registry.get("analyze_project_traces").run({"project_id": str(attempt.project_id)}, ctx)
+    result = registry.get("analyze_project_traces").run(
+        {"project_id": str(attempt.project_id)}, ctx
+    )
     assert result.is_error and result.data is None
     assert_hold(result.error_code, result.content)
 
@@ -225,7 +243,9 @@ def test_legacy_context_refuses_after_live_state_changes(assignment, change):
         from ee.usage.models.usage import PlanEntitlement
 
         PlanEntitlement.objects.update_or_create(
-            organization=ctx.organization, feature="has_falcon_ai", plan="free",
+            organization=ctx.organization,
+            feature="has_falcon_ai",
+            plan="free",
             defaults={"value_bool": False},
         )
     elif change == "project":
@@ -249,16 +269,33 @@ def test_legacy_mismatches_do_not_enable_execution(assignment):
     ctx, attempt, scope = assignment
     tid = str(attempt.trace_id)
     bound = bound_context(ctx, attempt, scope)
-    for updates in ({"project": None}, {"assigned_trace_id": None}, {"auth_scope": None},
-                    {"user": None}, {"workspace": None}):
-        denied = registry.get("submit_trace_scores").run(score_params(tid), replace(bound, **updates))
+    for updates in (
+        {"project": None},
+        {"assigned_trace_id": None},
+        {"auth_scope": None},
+        {"user": None},
+        {"workspace": None},
+    ):
+        denied = registry.get("submit_trace_scores").run(
+            score_params(tid), replace(bound, **updates)
+        )
         assert denied.is_error
         assert_hold(denied.error_code, denied.content)
-    for pid, trace_id, aid in ((uuid4(), tid, attempt.pk), (attempt.project_id, str(uuid4()), attempt.pk),
-                               (attempt.project_id, tid, uuid4()), (attempt.project_id, tid, None)):
-        assert_worker_refused(_falcon_analyze_single_trace(
-            trace_id, str(pid), background_execution_scope=scope, analysis_attempt_id=aid,
-        ), trace_id)
+    for pid, trace_id, aid in (
+        (uuid4(), tid, attempt.pk),
+        (attempt.project_id, str(uuid4()), attempt.pk),
+        (attempt.project_id, tid, uuid4()),
+        (attempt.project_id, tid, None),
+    ):
+        assert_worker_refused(
+            _falcon_analyze_single_trace(
+                trace_id,
+                str(pid),
+                background_execution_scope=scope,
+                analysis_attempt_id=aid,
+            ),
+            trace_id,
+        )
 
 
 @pytest.fixture
@@ -310,7 +347,10 @@ def test_background_tools_refuse_without_writing_even_to_captured_attempt(
         (SubmitTraceScoresTool(), score_params(trace_id)),
     ):
         raw = params | args
-        for result in (tool.run(raw, bound), tool.execute(tool.input_model(**raw), bound)):
+        for result in (
+            tool.run(raw, bound),
+            tool.execute(tool.input_model(**raw), bound),
+        ):
             assert result.is_error
             assert_hold(result.error_code, result.content)
             assert result.data is None
@@ -328,20 +368,27 @@ def test_background_tools_refuse_without_writing_even_to_captured_attempt(
 
 
 @pytest.mark.django_db
-def test_interactive_tools_keep_creation_and_latest_selection(trace, user, monkeypatch, scoring_followups):
+def test_interactive_tools_keep_creation_and_latest_selection(
+    trace, user, monkeypatch, scoring_followups
+):
     from ai_tools.registry import registry
 
     project, tid = trace.project, str(trace.pk)
     ctx = ToolContext(user, project.organization, project.workspace)
     first = TraceErrorAnalysis.objects.create(project=project, trace=trace)
     reader = install_reader(monkeypatch, project, tid)
-    read = registry.get("read_trace_span").run({"trace_id": tid, "span_id": "shared-span"}, ctx)
+    read = registry.get("read_trace_span").run(
+        {"trace_id": tid, "span_id": "shared-span"}, ctx
+    )
     assert not read.is_error and "Own evidence" in read.content
     reader.list_by_trace.assert_called_once_with(tid)
     finding = registry.get("submit_trace_finding").run(finding_params(tid), ctx)
     assert not finding.is_error and finding.data["analysis_id"] != str(first.pk)
     scores = registry.get("submit_trace_scores").run(score_params(tid), ctx)
-    assert not scores.is_error and scores.data["analysis_id"] == finding.data["analysis_id"]
+    assert (
+        not scores.is_error
+        and scores.data["analysis_id"] == finding.data["analysis_id"]
+    )
     assert scores.data["clustering_triggered"] is True
     reader.root_ids_by_trace_ids.assert_called_once_with([tid])
     for call in scoring_followups[:2]:
@@ -351,8 +398,44 @@ def test_interactive_tools_keep_creation_and_latest_selection(trace, user, monke
     assert first.total_errors == 0 and first.overall_score is None
 
 
+@pytest.fixture
+def falcon_plan_grant(assignment, monkeypatch):
+    """Grant Falcon only to this test organization through the real plan resolver."""
+    from ee.usage.models.usage import PlanEntitlement
+    from ee.usage.services import entitlements, metering
+    from tfc.capabilities import service
+    from tfc.licensing.types import DeploymentFlavor, DeploymentLocation
+
+    ctx, _, _ = assignment
+    monkeypatch.setattr(service, "_configured", True)
+    monkeypatch.setattr(service, "_deployment_location", DeploymentLocation.CLOUD)
+    monkeypatch.setattr(service, "_deployment_flavor", DeploymentFlavor.CLOUD)
+    monkeypatch.setattr(
+        service, "_cloud_plan_resolver", entitlements.get_cloud_plan_resolver()
+    )
+    # Exercise normal cached plan reads and explicit override invalidation
+    # without an external Redis or a deployment-specific upsell catalog.
+    cached = {}
+    cache = Mock(spec=["get", "setex", "delete"])
+    cache.get.side_effect = cached.get
+    cache.setex.side_effect = lambda key, ttl, value: cached.update({key: value})
+    cache.delete.side_effect = lambda key: cached.pop(key, None)
+    monkeypatch.setattr(
+        entitlements.BillingConfig, "_instance", entitlements.BillingConfig._empty()
+    )
+    monkeypatch.setattr(entitlements, "get_redis", lambda: cache)
+    monkeypatch.setattr(metering, "get_redis", lambda: cache)
+    return PlanEntitlement.objects.create(
+        feature="has_falcon_ai",
+        organization=ctx.organization,
+        plan="free",
+        value_bool=True,
+    )
+
+
 @pytest.mark.requires_ee
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.usefixtures("falcon_plan_grant")
 @pytest.mark.parametrize("saml", [True, False], ids=["saml", "ordinary-bearer"])
 def test_socket_constructs_unassigned_foreground_context(
     assignment, monkeypatch, settings, saml
@@ -435,58 +518,40 @@ def test_socket_constructs_unassigned_foreground_context(
         assert socket_scopes[0].token_id == token_id
     else:
         assert socket_scopes[0] is None
-    assert delivered.user_id == ctx.user_id and delivered.workspace_id == ctx.workspace_id
+    assert (
+        delivered.user_id == ctx.user_id and delivered.workspace_id == ctx.workspace_id
+    )
     assert delivered.auth_scope is None and delivered.background_execution_scope is None
     assert delivered.assigned_trace_id is None
 
 
 @pytest.mark.requires_ee
 @pytest.mark.django_db
-def test_paid_override_revocation_does_not_admit_background_context(assignment, monkeypatch):
-    from ee.usage.models.usage import PlanEntitlement
-    from ee.usage.services import entitlements, metering
-
+def test_paid_override_revocation_does_not_admit_background_context(
+    assignment, falcon_plan_grant
+):
     from ai_tools.registry import registry
+    from ee.usage.services import entitlements
     from tfc.capabilities import service
-    from tfc.licensing.types import DeploymentFlavor, DeploymentLocation
 
     ctx, attempt, scope = assignment
-    monkeypatch.setattr(service, "_configured", True)
-    monkeypatch.setattr(service, "_deployment_location", DeploymentLocation.CLOUD)
-    monkeypatch.setattr(service, "_deployment_flavor", DeploymentFlavor.CLOUD)
-    monkeypatch.setattr(
-        service, "_cloud_plan_resolver", entitlements.get_cloud_plan_resolver()
-    )
-    # Exercise normal cached plan reads and explicit override invalidation
-    # without an external Redis or a deployment-specific upsell catalog.
-    cached = {}
-    cache = Mock(spec=["get", "setex", "delete"])
-    cache.get.side_effect = cached.get
-    cache.setex.side_effect = lambda key, ttl, value: cached.update({key: value})
-    cache.delete.side_effect = lambda key: cached.pop(key, None)
-    monkeypatch.setattr(
-        entitlements.BillingConfig, "_instance", entitlements.BillingConfig._empty()
-    )
-    monkeypatch.setattr(entitlements, "get_redis", lambda: cache)
-    monkeypatch.setattr(metering, "get_redis", lambda: cache)
-    grant = PlanEntitlement.objects.create(
-        feature="has_falcon_ai",
-        organization=ctx.organization,
-        plan="free",
-        value_bool=True,
-    )
+    grant = falcon_plan_grant
     assert service.check("falcon_ai", org_id=str(ctx.organization_id)).allowed
     grant.value_bool = False
     grant.save(update_fields=["value_bool"])
     entitlements.Entitlements.invalidate_cache(str(ctx.organization_id), grant.feature)
     assert not service.check("falcon_ai", org_id=str(ctx.organization_id)).allowed
-    denied = registry.get("submit_trace_scores").run(score_params(str(attempt.trace_id)), bound_context(ctx, attempt, scope))
+    denied = registry.get("submit_trace_scores").run(
+        score_params(str(attempt.trace_id)), bound_context(ctx, attempt, scope)
+    )
     assert denied.is_error
     assert_hold(denied.error_code, denied.content)
 
 
 @pytest.mark.django_db
-def test_child_only_trace_does_not_enable_foreground_score(observe_project, user, scoring_followups):
+def test_child_only_trace_does_not_enable_foreground_score(
+    observe_project, user, scoring_followups
+):
     from ai_tools.tools.tracing.submit_trace_scores import SubmitTraceScoresTool
     from tracer.tests._ch_seed import delete_ch_spans, seed_ch_spans
 
@@ -495,10 +560,25 @@ def test_child_only_trace_does_not_enable_foreground_score(observe_project, user
     ctx = ToolContext(user, project.organization, project.workspace)
     row = TraceErrorAnalysis.objects.create(project=project, trace_id=tid)
     try:
-        assert seed_ch_spans([{"id": sid, "trace_id": tid, "parent_span_id": str(uuid4()),
-                               "project_id": str(project.pk), "name": "child",
-                               "observation_type": "llm", "start_time": timezone.now()}]) == 1
-        result = SubmitTraceScoresTool().run(score_params(tid) | {"analysis_id": str(row.pk)}, ctx)
+        assert (
+            seed_ch_spans(
+                [
+                    {
+                        "id": sid,
+                        "trace_id": tid,
+                        "parent_span_id": str(uuid4()),
+                        "project_id": str(project.pk),
+                        "name": "child",
+                        "observation_type": "llm",
+                        "start_time": timezone.now(),
+                    }
+                ]
+            )
+            == 1
+        )
+        result = SubmitTraceScoresTool().run(
+            score_params(tid) | {"analysis_id": str(row.pk)}, ctx
+        )
         assert result.is_error and result.error_code == "NOT_FOUND"
         row.refresh_from_db()
         assert row.overall_score is None
@@ -513,16 +593,20 @@ def test_viewer_missing_pg_trace_returns_dev_not_found(assignment, scoring_follo
     from ai_tools.registry import registry
 
     ctx, attempt, _ = assignment
-    OrganizationMembership.no_workspace_objects.filter(user=ctx.user, organization=ctx.organization).update(
-        role="Viewer", level=Level.VIEWER
-    )
-    WorkspaceMembership.no_workspace_objects.filter(user=ctx.user, workspace=ctx.workspace).update(
-        role="workspace_viewer", level=Level.WORKSPACE_VIEWER
-    )
-    assert ctx.user.can_access_workspace(ctx.workspace) and not ctx.user.can_write_to_workspace(ctx.workspace)
+    OrganizationMembership.no_workspace_objects.filter(
+        user=ctx.user, organization=ctx.organization
+    ).update(role="Viewer", level=Level.VIEWER)
+    WorkspaceMembership.no_workspace_objects.filter(
+        user=ctx.user, workspace=ctx.workspace
+    ).update(role="workspace_viewer", level=Level.WORKSPACE_VIEWER)
+    assert ctx.user.can_access_workspace(
+        ctx.workspace
+    ) and not ctx.user.can_write_to_workspace(ctx.workspace)
     tid = str(attempt.trace_id)
-    for name, params in (("submit_trace_finding", finding_params(tid)),
-                         ("read_trace_span", {"trace_id": tid, "span_id": "absent"})):
+    for name, params in (
+        ("submit_trace_finding", finding_params(tid)),
+        ("read_trace_span", {"trace_id": tid, "span_id": "absent"}),
+    ):
         result = registry.get(name).run(params, ctx)
         assert result.is_error and result.error_code == "NOT_FOUND"
     assert not TraceErrorDetail.objects.filter(analysis=attempt).exists()

@@ -458,9 +458,7 @@ def analyze_traces_on_demand(project_id: str, trace_ids: list):
     except BackgroundAnalysisUnavailable as exc:
         from temporalio.exceptions import ApplicationError
 
-        raise ApplicationError(
-            str(exc), type=exc.code, non_retryable=True
-        ) from exc
+        raise ApplicationError(str(exc), type=exc.code, non_retryable=True) from exc
 
 
 @temporal_activity(

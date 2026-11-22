@@ -28,9 +28,7 @@ class AnalyzeProjectTracesInput(PydanticBaseModel):
 @register_tool
 class AnalyzeProjectTracesTool(BaseTool):
     name = "analyze_project_traces"
-    description = (
-        "Background multi-trace analysis is currently unavailable."
-    )
+    description = "Background multi-trace analysis is currently unavailable."
     category = "error_feed"
     input_model = AnalyzeProjectTracesInput
 

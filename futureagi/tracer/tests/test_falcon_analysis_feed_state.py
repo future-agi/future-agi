@@ -54,7 +54,11 @@ def test_stored_feed_result_wins_without_cache_reads(project, state, monkeypatch
     else:
         deep_analysis_state.set_failed(trace_id)
     cache_read = Mock(side_effect=ConnectionError("cache offline"))
-    monkeypatch.setattr(deep_analysis_state, "cache", Mock(wraps=deep_analysis_state.cache, get=cache_read))
+    monkeypatch.setattr(
+        deep_analysis_state,
+        "cache",
+        Mock(wraps=deep_analysis_state.cache, get=cache_read),
+    )
     try:
         result = feed.get_deep_analysis(cluster.cluster_id, trace_id, [str(project.id)])
         assert result.status == "done"
@@ -65,8 +69,10 @@ def test_stored_feed_result_wins_without_cache_reads(project, state, monkeypatch
 
 
 @pytest.mark.requires_ee
-@pytest.mark.django_db
-def test_refused_preupgrade_batch_preserves_running_marker_and_click_deduplication(project, monkeypatch):
+@pytest.mark.django_db(transaction=True)
+def test_refused_preupgrade_batch_preserves_running_marker_and_click_deduplication(
+    project, monkeypatch
+):
     from django.core.cache import cache
 
     from tracer.tests._falcon_hold import assert_activity_refused, no_background_work

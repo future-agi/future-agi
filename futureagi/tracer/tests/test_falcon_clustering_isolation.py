@@ -13,7 +13,7 @@ from tracer.tests.test_falcon_tool_isolation import other_project as other_proje
 pytestmark = pytest.mark.requires_ee
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_refused_batch_does_not_touch_existing_cluster(project, trace):
     analysis = TraceErrorAnalysis.objects.create(project=project, trace=trace)
     TraceErrorDetail.objects.create(analysis=analysis, error_id="E001", category="Test")
@@ -27,11 +27,18 @@ def test_refused_batch_does_not_touch_existing_cluster(project, trace):
     assert rows.values().get() == before
 
 
-@pytest.mark.django_db
-def test_refused_batch_creates_no_cluster_from_foreign_detail(project, other_project, trace):
-    foreign = TraceErrorAnalysis.objects.create(project=other_project, trace_id=trace.id)
+@pytest.mark.django_db(transaction=True)
+def test_refused_batch_creates_no_cluster_from_foreign_detail(
+    project, other_project, trace
+):
+    foreign = TraceErrorAnalysis.objects.create(
+        project=other_project, trace_id=trace.id
+    )
     TraceErrorDetail.objects.create(
-        analysis=foreign, error_id="E001", category="Private", description="Other project"
+        analysis=foreign,
+        error_id="E001",
+        category="Private",
+        description="Other project",
     )
     with no_background_work(str(trace.pk)):
         assert_activity_refused(str(project.pk), [str(trace.pk)])

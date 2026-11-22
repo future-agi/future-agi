@@ -85,7 +85,9 @@ def test_held_worker_does_not_score_a_sibling_analysis(
     other_project,
 ):
     trace_id = str(uuid.uuid4())
-    foreign = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=other_project)
+    foreign = TraceErrorAnalysis.objects.create(
+        trace_id=trace_id, project=other_project
+    )
     stream = scripted_tool_stream(
         read_call(trace_id), ("submit_trace_scores", score_params(trace_id))
     )
@@ -94,7 +96,9 @@ def test_held_worker_does_not_score_a_sibling_analysis(
         assert_worker_refused(result, trace_id)
     foreign.refresh_from_db()
     assert foreign.overall_score is None
-    assert not TraceErrorAnalysis.objects.filter(trace_id=trace_id, project=project).exists()
+    assert not TraceErrorAnalysis.objects.filter(
+        trace_id=trace_id, project=project
+    ).exists()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -167,13 +171,19 @@ def test_held_worker_never_invokes_unscoped_registry_tools(project, monkeypatch)
 @pytest.mark.parametrize(
     "tool_name", ["read_trace_span", "explore_trace_legacy", "submit_trace_finding"]
 )
-def test_foreground_trace_tools_require_dev_pg_trace(project, other_project, monkeypatch, tool_name):
+def test_foreground_trace_tools_require_dev_pg_trace(
+    project, other_project, monkeypatch, tool_name
+):
     from ai_tools.registry import registry
 
     trace_id = str(uuid.uuid4())  # Analysis rows do not create a PG Trace.
-    foreign = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=other_project)
+    foreign = TraceErrorAnalysis.objects.create(
+        trace_id=trace_id, project=other_project
+    )
     before = TraceErrorAnalysis.objects.filter(pk=foreign.pk).values().get()
-    ctx = ToolContext(project.workspace.created_by, project.organization, project.workspace)
+    ctx = ToolContext(
+        project.workspace.created_by, project.organization, project.workspace
+    )
     reader = Mock(side_effect=AssertionError("Read spans without the PG trace"))
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", reader)
     params = {"trace_id": trace_id}
@@ -188,13 +198,16 @@ def test_foreground_trace_tools_require_dev_pg_trace(project, other_project, mon
     reader.assert_not_called()
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 def test_refused_batch_does_not_embed_either_project(project, other_project):
     trace_id = str(uuid.uuid4())
     for owner in (project, other_project):
         analysis = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=owner)
         TraceErrorDetail.objects.create(
-            analysis=analysis, error_id="E001", category="Evidence", description=owner.name
+            analysis=analysis,
+            error_id="E001",
+            category="Evidence",
+            description=owner.name,
         )
     with no_background_work(trace_id):
         assert_activity_refused(str(project.pk), [trace_id])
@@ -222,13 +235,19 @@ def test_dev_claim_and_completed_row_precedence():
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("missing_scope", ["organization", "workspace", "foreign_project"])
-def test_foreground_span_uses_dev_trace_lookup(project, other_project, monkeypatch, missing_scope):
+@pytest.mark.parametrize(
+    "missing_scope", ["organization", "workspace", "foreign_project"]
+)
+def test_foreground_span_uses_dev_trace_lookup(
+    project, other_project, monkeypatch, missing_scope
+):
     from ai_tools.registry import registry
     from tracer.models.trace import Trace
 
     tid = uuid.uuid4()
-    ctx = ToolContext(project.workspace.created_by, project.organization, project.workspace)
+    ctx = ToolContext(
+        project.workspace.created_by, project.organization, project.workspace
+    )
     if missing_scope == "foreign_project":
         ctx.project = other_project
     else:
@@ -237,7 +256,9 @@ def test_foreground_span_uses_dev_trace_lookup(project, other_project, monkeypat
     monkeypatch.setattr(Trace.objects, "get", lookup)
     reader = Mock(side_effect=AssertionError("Reader used for a missing trace"))
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", reader)
-    result = registry.get("read_trace_span").run({"trace_id": str(tid), "span_id": "absent"}, ctx)
+    result = registry.get("read_trace_span").run(
+        {"trace_id": str(tid), "span_id": "absent"}, ctx
+    )
     assert result.is_error and result.error_code == "NOT_FOUND"
     lookup.assert_called_once_with(id=tid, project__organization=ctx.organization)
     reader.assert_not_called()

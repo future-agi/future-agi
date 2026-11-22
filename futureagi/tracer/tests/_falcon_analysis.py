@@ -9,7 +9,9 @@ import httpx
 
 def install_reader(monkeypatch, project, trace_id):
     reader = MagicMock()
-    reader.root_ids_by_trace_ids.return_value = {trace_id: ("shared-span", str(project.pk))}
+    reader.root_ids_by_trace_ids.return_value = {
+        trace_id: ("shared-span", str(project.pk))
+    }
     reader.list_by_trace.return_value = [
         SimpleNamespace(
             id="shared-span",

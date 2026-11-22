@@ -8,11 +8,11 @@ from temporalio.exceptions import ApplicationError
 
 from ai_tools.base import ToolContext
 from tracer.models.trace_error_analysis import TraceErrorAnalysis
-from tracer.tests._falcon_hold import assert_hold
 from tracer.tasks.error_analysis import (
     _falcon_analyze_single_trace,
     analyze_traces_on_demand,
 )
+from tracer.tests._falcon_hold import assert_hold
 
 
 @pytest.mark.requires_ee
