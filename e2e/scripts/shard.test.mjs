@@ -25,6 +25,7 @@ import {
   annotation,
   checkParity,
   fileDurations,
+  checkStackImages,
   readRuntimeSkips,
   receiptArtifact,
   runDate,
@@ -880,3 +881,37 @@ test("one run uses one date for the quarantine filter", () => {
     process.env = saved;
   }
 });
+
+test("shards from different attempts join one report only with the same pulled images", () => {
+  const pg = (digest) => ({ ref: "postgres:16", digests: [`postgres@sha256:${digest}`] });
+  const built = (id) => ({ ref: `futureagi/future-agi:${id}`, digests: [] });
+  // Identical pulls pass; images built in each job (no digest) are not compared.
+  checkStackImages([[pg("a"), built("x")], [built("y"), pg("a")]]);
+  assert.throws(
+    () => checkStackImages([[pg("a")], [pg("b")], [pg("a")]]),
+    /shards ran different pulled images \(postgres:16\); rerun all jobs/,
+  );
+  // A pulled image only one shard ran is drift too.
+  assert.throws(
+    () => checkStackImages([[pg("a")], [pg("a"), { ref: "redis:7", digests: ["redis@sha256:c"] }]]),
+    /\(redis:7\)/,
+  );
+  for (const bad of [[], [[]], [[{ ref: 1, digests: [] }]], [[{ ref: "x" }]], [[{ ref: "x", digests: [1] }]]])
+    if (bad.length) assert.throws(() => checkStackImages(bad), /invalid stack image record/);
+});
+
+test("both workflows record and upload each shard's pulled images under one name", () => {
+  const steps = (file) => {
+    const text = readFileSync(new URL(`../../.github/workflows/${file}`, import.meta.url), "utf8");
+    const start = text.indexOf("      - name: Record the stack's pulled images\n");
+    const end = text.indexOf("      - name: Upload blob report\n");
+    assert.ok(start > 0 && end > start, file);
+    return text.slice(start, end);
+  };
+  const ci = steps("e2e-ci.yml");
+  assert.equal(steps("e2e-stack-profile.yml"), ci);
+  assert.ok(ci.includes("name: stack-images-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}"));
+  const report = readFileSync(new URL("./shard-report.mjs", import.meta.url), "utf8");
+  assert.ok(report.includes("`stack-images-${stack}-${i}-attempt-${attempts[i - 1]}`"));
+});
+

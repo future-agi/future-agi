@@ -347,6 +347,44 @@ export function shardAttempts(stack, total, jobs) {
   return produced;
 }
 
+/**
+ * Fails unless every shard ran the same pulled images.
+ *
+ * Each record lists the images its stack's containers ran, with registry
+ * digests. A pulled image (one with a digest) can change behind a mutable tag
+ * between attempts, so a shard carried over from an earlier attempt joins the
+ * report only when every shard pulled identical digests. Images built in the
+ * job from this commit have no digest and are bound by the commit instead.
+ */
+export function checkStackImages(records) {
+  const pulled = records.map((rows, index) => {
+    if (
+      !Array.isArray(rows) ||
+      !rows.length ||
+      rows.some(
+        (row) =>
+          typeof row?.ref !== "string" ||
+          !Array.isArray(row.digests) ||
+          row.digests.some((digest) => typeof digest !== "string"),
+      )
+    )
+      throw new Error(`invalid stack image record for shard ${index + 1}`);
+    return new Map(
+      rows
+        .filter((row) => row.digests.length)
+        .map((row) => [row.ref, JSON.stringify([...row.digests].sort())]),
+    );
+  });
+  const refs = new Set(pulled.flatMap((map) => [...map.keys()]));
+  const drift = [...refs]
+    .filter((ref) => new Set(pulled.map((map) => map.get(ref) ?? "absent")).size > 1)
+    .sort();
+  if (drift.length)
+    throw new Error(
+      `shards ran different pulled images (${drift.join(", ")}); rerun all jobs to qualify one stack`,
+    );
+}
+
 /** The one unexpired artifact with this name, or an error. */
 export function receiptArtifact(artifacts, name) {
   const matches = artifacts.filter((row) => row.name === name && !row.expired);
@@ -412,6 +450,21 @@ function downloadReceipts(stack, total) {
         attempts[i - 1],
       );
     }
+    // A re-run of failed jobs combines shards of different attempts: only
+    // when every shard pulled the same images does the report describe one
+    // stack.
+    const images = [];
+    for (let i = 1; i <= total; i++) {
+      const target = path.join(temp, `stack-images-${i}.json`);
+      unpack(
+        `stack-images-${stack}-${i}-attempt-${attempts[i - 1]}`,
+        "images.json",
+        target,
+        attempts[i - 1],
+      );
+      images.push(JSON.parse(readFileSync(target, "utf8")));
+    }
+    checkStackImages(images);
     unpack(
       `once-per-stack-${stack}-attempt-${recordAttempt}`,
       "record.json",
