@@ -78,6 +78,10 @@ class TestExecutionUtils:
             return queryset
 
         def apply_number_filter(queryset, field, op, value, transform=lambda v: v):
+            if op == "is_null":
+                return queryset.filter(**{f"{field}__isnull": True})
+            if op == "is_not_null":
+                return queryset.filter(**{f"{field}__isnull": False})
             values = as_list(value)
             if op == "equals":
                 return queryset.filter(**{field: transform(values[0])})
