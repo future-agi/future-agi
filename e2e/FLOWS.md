@@ -3144,7 +3144,7 @@
 **Browser observations:**
 
 - /dashboard/simulate lands on Environments
-- harness lands on Environments, harness/new on My Environments with the Build environment drawer open, harness/<id> on environments/<id>
+- harness lands on Environments, harness/new on My Environments with the Build environment drawer open (build= in the address), harness/<id> on environments/<id>
 - simulator-agent lands on Environments
 - personas lands on the Environments Personas tab
 - the Personas tab is selected and shows the persona search
