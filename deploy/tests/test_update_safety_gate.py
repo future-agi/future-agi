@@ -345,6 +345,57 @@ class ClickHouseReviewChainTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.GateError, "human-reviewed declarations"):
             self.check(base)
 
+    def declared(self, before, after, table):
+        return {**self.row(before, after),
+                "declaration": reviewed([{"table": table, "risk_class": "clickhouse_change"}])}
+
+    def test_every_reviewed_link_keeps_its_tables(self):
+        # A -> B declares spans, B -> C declares events: the release keeps both.
+        base = self.commit("A", self.sources_by_name["A"], [])
+        self.commit("B", self.sources_by_name["B"], [self.declared("A", "B", "clickhouse:spans")])
+        self.commit("C", self.sources_by_name["C"], [self.declared("B", "C", "clickhouse:events")])
+        [required] = self.check(base)
+        self.assertEqual(required["tables"], ["clickhouse:spans", "clickhouse:events"])
+
+    def test_a_carried_forward_row_for_contents_the_file_never_had_links_nothing(self):
+        # The file goes A -> C in this span. A registry-only commit carries an
+        # old A -> B row forward, and the current row reviews B -> C: B never
+        # existed here, so no reviewed chain leads from A to C.
+        base = self.commit("A", self.sources_by_name["A"], [])
+        register = self.root / self.REGISTER
+        register.write_text(json.dumps({"schema_version": 1, "changes": [self.row("A", "B")]}))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "registry only")
+        self.commit("C", self.sources_by_name["C"], [self.row("B", "C")])
+        with self.assertRaisesRegex(gate.GateError, "no chain of reviewed changes"):
+            self.check(base)
+
+    def test_an_exact_review_passes_without_reading_history(self):
+        # A corrected draft left an invalid row in the history; the current row
+        # reviews exactly the whole span, so the history is never read.
+        base = self.commit("A", self.sources_by_name["A"], [])
+        broken = self.row("A", "B")
+        broken["after_sha256"] = "not-a-hash"
+        (self.root / self.REGISTER).write_text(json.dumps({"schema_version": 1, "changes": [broken]}))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "draft")
+        self.commit("C", self.sources_by_name["C"], [self.row("A", "C")])
+        self.assertEqual(len(self.check(base)), 1)
+
+    def test_non_ddl_edits_between_reviewed_changes_need_no_row(self):
+        # A and B hold only a SELECT, so a pull request making A -> B needs no
+        # review; B -> C adds the first CREATE and has its exact review.
+        base = self.commit("A", "QUERY = 'SELECT 1'\n", [])
+        self.commit("B", "QUERY = 'SELECT 2'\n", [])
+        self.sources_by_name["B"] = "QUERY = 'SELECT 2'\n"
+        self.blobs["B"] = gate.content_sha(self.sources_by_name["B"].encode())
+        self.commit("C", self.sources_by_name["C"], [self.row("B", "C")])
+        [required] = self.check(base)
+        self.assertEqual(required["tables"], ["clickhouse:spans"])
+        # Without the history (a pull request), the exact rule still applies.
+        with self.assertRaisesRegex(gate.GateError, "exact base-to-head change"):
+            self.check(base, history=False)
+
     def test_an_invalid_past_registry_version_fails(self):
         base = self.commit("A", "ALTER TABLE spans ADD COLUMN a String\n", [])
         broken = self.row("A", "A")
@@ -795,57 +846,6 @@ class StaticEntryPointTests(unittest.TestCase):
             code = gate.main(['--root', str(self.root), *flags, '--base', 'fixture', '--compose-model', str(self.model), '--json'])
         return code, out.getvalue(), err.getvalue()
 
-    def declared(self, before, after, table):
-        return {**self.row(before, after),
-                "declaration": reviewed([{"table": table, "risk_class": "clickhouse_change"}])}
-
-    def test_every_reviewed_link_keeps_its_tables(self):
-        # A -> B declares spans, B -> C declares events: the release keeps both.
-        base = self.commit("A", self.sources_by_name["A"], [])
-        self.commit("B", self.sources_by_name["B"], [self.declared("A", "B", "clickhouse:spans")])
-        self.commit("C", self.sources_by_name["C"], [self.declared("B", "C", "clickhouse:events")])
-        [required] = self.check(base)
-        self.assertEqual(required["tables"], ["clickhouse:spans", "clickhouse:events"])
-
-    def test_a_carried_forward_row_for_contents_the_file_never_had_links_nothing(self):
-        # The file goes A -> C in this span. A registry-only commit carries an
-        # old A -> B row forward, and the current row reviews B -> C: B never
-        # existed here, so no reviewed chain leads from A to C.
-        base = self.commit("A", self.sources_by_name["A"], [])
-        register = self.root / self.REGISTER
-        register.write_text(json.dumps({"schema_version": 1, "changes": [self.row("A", "B")]}))
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", "registry only")
-        self.commit("C", self.sources_by_name["C"], [self.row("B", "C")])
-        with self.assertRaisesRegex(gate.GateError, "no chain of reviewed changes"):
-            self.check(base)
-
-    def test_an_exact_review_passes_without_reading_history(self):
-        # A corrected draft left an invalid row in the history; the current row
-        # reviews exactly the whole span, so the history is never read.
-        base = self.commit("A", self.sources_by_name["A"], [])
-        broken = self.row("A", "B")
-        broken["after_sha256"] = "not-a-hash"
-        (self.root / self.REGISTER).write_text(json.dumps({"schema_version": 1, "changes": [broken]}))
-        self.git("add", "-A")
-        self.git("commit", "-q", "-m", "draft")
-        self.commit("C", self.sources_by_name["C"], [self.row("A", "C")])
-        self.assertEqual(len(self.check(base)), 1)
-
-    def test_non_ddl_edits_between_reviewed_changes_need_no_row(self):
-        # A and B hold only a SELECT, so a pull request making A -> B needs no
-        # review; B -> C adds the first CREATE and has its exact review.
-        base = self.commit("A", "QUERY = 'SELECT 1'\n", [])
-        self.commit("B", "QUERY = 'SELECT 2'\n", [])
-        self.sources_by_name["B"] = "QUERY = 'SELECT 2'\n"
-        self.blobs["B"] = gate.content_sha(self.sources_by_name["B"].encode())
-        self.commit("C", self.sources_by_name["C"], [self.row("B", "C")])
-        [required] = self.check(base)
-        self.assertEqual(required["tables"], ["clickhouse:spans"])
-        # Without the history (a pull request), the exact rule still applies.
-        with self.assertRaisesRegex(gate.GateError, "exact base-to-head change"):
-            self.check(base, history=False)
-
     def test_only_a_release_tag_base_reads_the_review_chain(self):
         # A pull request, push or merge group passes a commit: its ClickHouse
         # change must match one review row exactly. Only the release-span
@@ -1055,11 +1055,11 @@ class WorkflowWiringTests(unittest.TestCase):
     def test_update_static_gate_has_backend_and_bootstrap_triggers(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text()
         triggers = text.split("permissions:", 1)[0]
-        # A push is filtered at the trigger; a pull request starts the
-        # workflow and the same list in ci_scope.py selects the jobs.
+        # Both triggers list each path (pull requests on dev's list, pushes on
+        # the push list), and the same list in ci_scope.py selects the jobs.
         policy = (ROOT / ".github/scripts/ci_scope.py").read_text()
         for path in ('"futureagi/**"', '"bin/lib/**"', '"scripts/check_update_safety.py"'):
-            self.assertEqual(triggers.count(path), 1)
+            self.assertEqual(triggers.count(path), 2)
             self.assertEqual(policy.count("\n    " + path + ",\n"), 1)
         job = text.split("  safety:\n", 1)[1].split("\n  unit:", 1)[0]
         self.assertIn("--static --base", job)
