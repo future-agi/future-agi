@@ -71,7 +71,8 @@ class ClusterAnalysisResult:
         # most common being a plain "stop"), "error". The pre-rewrite loop
         # exits "stop", "max_turns", "cost_ceiling" and "converged" all
         # become "synthesis_forced" when a synthesis was salvaged, and stay as
-        # they are when it was not.
+        # they are when it was not; "error" stays "error" either way, so the
+        # failed run remains visible.
     )
     error: Optional[str] = None
     cost_usd: float = 0.0
