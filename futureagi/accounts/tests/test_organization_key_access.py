@@ -1,3 +1,6 @@
+import uuid
+from types import SimpleNamespace
+
 import pytest
 from rest_framework import status
 from rest_framework.test import APIClient
@@ -145,3 +148,16 @@ def test_the_key_list_says_which_keys_the_caller_can_switch(organization, worksp
     switchable = {str(row["id"]): row["can_switch"] for row in rows}
     assert switchable.pop(str(mine.id)) is True
     assert switchable and not any(switchable.values())
+
+
+@pytest.mark.parametrize("key_type", ["user", "mcp"])
+def test_the_creator_of_a_user_backed_key_can_switch_it(key_type):
+    from accounts.services.organization_access import can_switch_key
+
+    creator = SimpleNamespace(id=uuid.uuid4())
+    key = SimpleNamespace(type=key_type, user_id=creator.id, minted_by_id=None)
+
+    assert can_switch_key(creator, key, is_admin=False) is True
+    assert (
+        can_switch_key(SimpleNamespace(id=uuid.uuid4()), key, is_admin=False) is False
+    )

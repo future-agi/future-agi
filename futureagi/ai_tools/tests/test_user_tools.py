@@ -352,3 +352,82 @@ def test_an_admin_cannot_change_an_owner_of_the_organization(
     assert result.error_code == "PERMISSION_DENIED", result.content
     owner.refresh_from_db()
     assert owner.is_active is True
+
+
+def test_a_demotion_through_the_assistant_takes_away_admin_access(tool_context):
+    from accounts.models.organization_membership import OrganizationMembership
+    from ai_tools.base import ToolContext
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    actor = _acting_context(
+        tool_context, legacy_role=OrganizationRoles.ADMIN, level=Level.ADMIN
+    )
+    target = _member_in_the_organization(
+        tool_context, legacy_role=OrganizationRoles.ADMIN, level=Level.ADMIN
+    )
+
+    result = run_tool(
+        "update_user_role",
+        {"user_id": str(target.id), "new_role": "Member", "level": "org"},
+        actor,
+    )
+
+    assert not result.is_error, result.content
+    membership = OrganizationMembership.no_workspace_objects.get(
+        user=target, organization=tool_context.organization
+    )
+    assert (membership.level, membership.role) == (Level.MEMBER, "Member")
+    as_target = ToolContext(
+        user=target,
+        organization=tool_context.organization,
+        workspace=tool_context.workspace,
+    )
+    refused = run_tool("create_api_key", {"name": "after demotion"}, as_target)
+    assert refused.error_code == "PERMISSION_DENIED", refused.content
+
+
+def test_a_workspace_role_change_through_the_assistant_moves_its_level(tool_context):
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    actor = _acting_context(
+        tool_context, legacy_role=OrganizationRoles.ADMIN, level=Level.ADMIN
+    )
+    target = _member_in_the_organization(tool_context)
+
+    result = run_tool(
+        "update_user_role",
+        {
+            "user_id": str(target.id),
+            "new_role": "workspace_viewer",
+            "level": "workspace",
+            "workspace_id": str(tool_context.workspace.id),
+        },
+        actor,
+    )
+
+    assert not result.is_error, result.content
+    seat = WorkspaceMembership.no_workspace_objects.get(
+        user=target, workspace=tool_context.workspace
+    )
+    assert (seat.role, seat.level) == ("workspace_viewer", Level.WORKSPACE_VIEWER)
+
+
+def test_an_unknown_role_is_refused_before_anything_changes(tool_context):
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    actor = _acting_context(
+        tool_context, legacy_role=OrganizationRoles.ADMIN, level=Level.ADMIN
+    )
+    target = _member_in_the_organization(tool_context)
+
+    result = run_tool(
+        "update_user_role",
+        {"user_id": str(target.id), "new_role": "workspace_admin", "level": "org"},
+        actor,
+    )
+
+    assert result.error_code == "VALIDATION_ERROR", result.content

@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -20,10 +19,34 @@ class UpdateUserRoleInput(PydanticBaseModel):
     level: str = Field(
         description="Level at which to change the role: 'org' or 'workspace'"
     )
-    workspace_id: Optional[UUID] = Field(
+    workspace_id: UUID | None = Field(
         default=None,
         description="Workspace UUID (required when level='workspace')",
     )
+
+
+_ORG_ROLES = ("Owner", "Admin", "Member", "Viewer")
+_WORKSPACE_ROLES = ("workspace_admin", "workspace_member", "workspace_viewer")
+
+
+def _apply(org, actor, target_user, **levels) -> ToolResult | None:
+    """Change the role through the service the Members page uses, so role and level
+    move together; a refusal comes back as the tool's error."""
+    from accounts.services import member_role_service
+    from tfc.utils.error_codes import get_error_message
+
+    try:
+        member_role_service.update_member_role(
+            organization=org, actor=actor, target_user_id=target_user.id, **levels
+        )
+    except member_role_service.MemberRoleUpdateError as error:
+        return ToolResult.error(
+            get_error_message(error.code),
+            error_code=(
+                "PERMISSION_DENIED" if error.status_code == 403 else "VALIDATION_ERROR"
+            ),
+        )
+    return None
 
 
 @register_tool
@@ -78,9 +101,18 @@ class UpdateUserRoleTool(BaseTool):
             )
 
         if params.level == "org":
-            old_role = target_user.organization_role
-            target_user.organization_role = params.new_role
-            target_user.save()
+            if params.new_role not in _ORG_ROLES:
+                return ToolResult.error(
+                    f"Invalid role '{params.new_role}'. Must be one of: "
+                    f"{', '.join(_ORG_ROLES)}.",
+                    error_code="VALIDATION_ERROR",
+                )
+            old_role = Level.to_org_string(membership_level(target_user, org))
+            refused = _apply(
+                org, actor, target_user, org_level=Level.from_string(params.new_role)
+            )
+            if refused is not None:
+                return refused
 
             info = key_value_block(
                 [
@@ -116,18 +148,31 @@ class UpdateUserRoleTool(BaseTool):
             except Workspace.DoesNotExist:
                 return ToolResult.not_found("Workspace", str(params.workspace_id))
 
-            try:
-                membership = WorkspaceMembership.no_workspace_objects.get(
-                    workspace=workspace, user=target_user, is_active=True
+            ws_role = Level.normalize_ws_role(params.new_role)
+            if ws_role not in _WORKSPACE_ROLES:
+                return ToolResult.error(
+                    f"Invalid role '{params.new_role}'. Must be one of: "
+                    f"{', '.join(_WORKSPACE_ROLES)}.",
+                    error_code="VALIDATION_ERROR",
                 )
-                old_role = membership.role
-                membership.role = params.new_role
-                membership.save()
-            except WorkspaceMembership.DoesNotExist:
+            membership = WorkspaceMembership.no_workspace_objects.filter(
+                workspace=workspace, user=target_user, is_active=True
+            ).first()
+            if membership is None:
                 return ToolResult.error(
                     f"User {target_user.email} is not a member of workspace '{workspace.name}'.",
                     error_code="NOT_FOUND",
                 )
+            old_role = membership.role
+            refused = _apply(
+                org,
+                actor,
+                target_user,
+                ws_level=Level.from_string(ws_role),
+                workspace_id=workspace.id,
+            )
+            if refused is not None:
+                return refused
 
             info = key_value_block(
                 [
