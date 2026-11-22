@@ -150,8 +150,10 @@ class AgentccProviderCredentialUpdateSerializer(serializers.Serializer):
     class LimitField(serializers.IntegerField):
         def to_internal_value(self, data):
             value = super().to_internal_value(data)
-            stored = getattr(self.parent.instance, self.field_name, None)
-            if value < 0 and value != stored:
+            if value < 0 and (
+                not self.field_name
+                or value != getattr(self.parent.instance, self.field_name, None)
+            ):
                 self.fail("min_value", min_value=0)
             return value
 
