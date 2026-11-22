@@ -270,7 +270,7 @@ def test_clickhouse_native_schema_failure_is_fatal(
     assert seen == [["--phase", "native", "--apply", "--timeout", "42"]]
 
 
-def test_metrics_schema_applies_and_a_failure_is_fatal_with_a_way_out(
+def test_metrics_schema_applies_and_a_failure_never_stops_the_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tracer.services.derived_metrics import schema_install
@@ -285,10 +285,11 @@ def test_metrics_schema_applies_and_a_failure_is_fatal_with_a_way_out(
     command.metrics_schema(logged.append)
     assert logged[0] == "Metrics schema ..."
     assert logged[1].startswith("Metrics schema done in ")
-    with pytest.raises(command.BootstrapError, match="METRICS_ENABLED=0"):
-        command.metrics_schema(logged.append)
+    # A failing run (drift here) never stops the bootstrap.
+    command.metrics_schema(logged.append)
+    assert logged[3].startswith("Metrics schema done in ")
 
-    assert seen == [["--apply"], ["--apply"]]
+    assert seen == [["--apply", "--advisory"], ["--apply", "--advisory"]]
 
 
 def test_wait_tcp_gives_up_with_an_actionable_message(

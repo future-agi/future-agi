@@ -557,7 +557,7 @@ class ProductionCatalogContractTests(unittest.TestCase):
             "peerdb-temporal-init": [],
             "peerdb-init": ["--wait-for-mirrors", "--timeout", "900"],
             "clickhouse-cdc-bootstrap": ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"],
-            "metrics-schema-bootstrap": ["--check"],
+            "metrics-schema-bootstrap": ["--check", "--advisory"],
         }
         for name, command in expected.items():
             self.assertEqual(services[name]["command"], command)

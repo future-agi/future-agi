@@ -10,7 +10,8 @@ before the backend and workers start). The packaged runner
 skips files whose receipt matches, so every rerun is a no-op.
 
 ``--check`` only reads: with Metrics on, it exits 1 while the schema is
-missing. The API and the refresh worker run the same read-only probe
+missing. Install paths pass ``--advisory``: a failure is reported and the exit
+code is 0, so the rest of the product still starts. The API and the refresh worker run the same read-only probe
 (:func:`ensure_installed`) and answer ``metric_schema_not_installed`` instead
 of reporting "recalculating" indefinitely.
 
@@ -45,9 +46,12 @@ FILES = (
     "038_metric_snapshot_sketches.sql",
 )
 
-# Every Metrics table carries project_id. The last three columns exist only
-# once the later files ran: 029/030 re-project the derived_metrics view, 038
-# adds value_text, and 028 adds config_hash to 011's table.
+# Every Metrics table carries project_id. The last two columns exist only once
+# the later files ran: 029/030 re-project the derived_metrics view and 038 adds
+# value_text. 009 and 011 are applied only because 028 alters 011's table.
+# Metrics reads config_hash from whichever eval table CH25_EVAL_LOGGER_TABLE
+# selects: the legacy table has it from its own DDL, and 028 adds it to
+# tracer_eval_logger_v2 before creating its tables, so 028's markers imply it.
 TABLES = (
     "derived_metric_inputs",
     "derived_metric_results",
@@ -69,7 +73,6 @@ MARKERS = (
     *((table, "project_id") for table in TABLES),
     ("derived_metrics", "ci_interval"),
     ("derived_metric_inputs", "value_text"),
-    ("tracer_eval_logger_v2", "config_hash"),
 )
 
 MESSAGE = "Metrics schema not installed"
@@ -244,8 +247,30 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--apply", action="store_true", help="apply missing files")
     mode.add_argument("--check", action="store_true", help="only verify (read-only)")
+    parser.add_argument(
+        "--advisory",
+        action="store_true",
+        help="report a failure but exit 0, so startup continues without Metrics",
+    )
     args = parser.parse_args(argv)
+    try:
+        code = _run(args)
+    except Exception as exc:
+        if not args.advisory:
+            raise
+        # Driver messages can carry connection details; the type is enough.
+        _say(f"the Metrics schema step failed ({type(exc).__name__})")
+        code = 3
+    if code and args.advisory:
+        _say(
+            "continuing without Metrics: its pages and refreshes answer "
+            f"metric_schema_not_installed until this is fixed (exit {code})"
+        )
+        return 0
+    return code
 
+
+def _run(args: argparse.Namespace) -> int:
     from tracer.services.clickhouse.v2.schema_topology import is_hosted_production
     from tracer.services.derived_metrics.feature_flag import metrics_enabled
 

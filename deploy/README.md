@@ -74,8 +74,8 @@ migrations, native ClickHouse objects, the two isolated observed indexes and the
 reader/writer grants, and compatible PeerDB namespace/peers/mirrors. All source and
 native database routing must match. See [the native bootstrap contract](../fi-collector/PROPERTY_CATALOG_OSS.md).
 
-The overlay runs `migrate --check --noinput`, observed-index `--check`, the Metrics
-schema `--check`, and native/CDC/PeerDB checks without `--apply`. Missing or incompatible state must block boot;
+The overlay runs `migrate --check --noinput`, observed-index `--check`, and native/
+CDC/PeerDB checks without `--apply`. Missing or incompatible state must block boot;
 a compatible in-progress snapshot has a bounded readiness wait. Neither setup nor
 this guide runs initialization, replaces mirrors, rewrites sources, or grants
 migration authority. Do not remove these guards or run the mutating root-only
@@ -139,9 +139,10 @@ $COMPOSE run --rm \
 
 # 6. The Metrics ClickHouse schema (packaged files 009, 011 and 028-038).
 #    Only while METRICS_ENABLED=1; with it off this exits without a change.
-#    Run it again whenever you turn Metrics on: the overlay's --check then
-#    blocks the backend and workers until the schema exists. Each file has a
-#    receipt, so a rerun applies only what is missing.
+#    Run it again whenever you turn Metrics on. The overlay's advisory --check
+#    only logs a missing schema: the product starts, and Metrics answers
+#    metric_schema_not_installed until this ran. Each file has a receipt, so a
+#    rerun applies only what is missing.
 $COMPOSE run --rm metrics-schema-bootstrap --apply
 ```
 

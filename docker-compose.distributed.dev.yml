@@ -48,7 +48,7 @@ services:
 
   metrics-schema-bootstrap:
     <<: *dev-worker
-    command: ["--check"]
+    command: ["--check", "--advisory"]
 
   frontend:
     build:

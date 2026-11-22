@@ -224,6 +224,33 @@ def test_check_only_reads_and_fails_while_missing(runner, probe, capsys):
     assert runner["argv"] == []
 
 
+@pytest.mark.parametrize("code", [1, 2, 3])
+def test_advisory_reports_a_failure_but_lets_startup_continue(
+    runner, probe, capsys, code
+):
+    runner["exit"] = code
+    assert schema_install.main(["--apply", "--advisory"]) == 0
+    assert "continuing without Metrics" in capsys.readouterr().out
+    runner["exit"] = 0
+    probe["rows"] = []
+    assert schema_install.main(["--check", "--advisory"]) == 0
+    assert "Metrics schema not installed: missing " in capsys.readouterr().out
+
+
+def test_advisory_turns_an_unexpected_error_into_a_log_line(
+    runner, monkeypatch, capsys
+):
+    def broken():
+        raise RuntimeError("ch.internal:8124 secret detail")
+
+    monkeypatch.setattr(clickhouse_v2, "get_v2_config", broken)
+    assert schema_install.main(["--apply", "--advisory"]) == 0
+    out = capsys.readouterr().out
+    assert "(RuntimeError)" in out and "secret detail" not in out
+    with pytest.raises(RuntimeError):
+        schema_install.main(["--apply"])
+
+
 def test_hosted_production_never_applies(runner, monkeypatch, probe):
     monkeypatch.setenv("ENV_TYPE", "prod")
     monkeypatch.setenv("CLOUD_DEPLOYMENT", "US")

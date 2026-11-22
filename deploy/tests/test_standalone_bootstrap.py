@@ -625,19 +625,18 @@ class MainTest(StackTest):
         self.assertFalse(bootstrap.FINGERPRINT.exists())
         self.assertNotIn("placeholder shutdown", self.stack.log)
 
-    def test_the_metrics_schema_step_applies_and_a_failure_stops_the_boot(self):
+    def test_the_metrics_schema_step_applies_and_a_failure_does_not_stop_the_boot(self):
         bootstrap.main()
-        self.assertEqual(self.stack.metrics_argv, [["--apply"]])
+        self.assertEqual(self.stack.metrics_argv, [["--apply", "--advisory"]])
         bootstrap.READY.unlink()
         self.stack.log.clear()
         self.stack.metrics_exit = 2  # drift: the runner refuses a changed file
 
-        with self.assertRaisesRegex(CommandError, "METRICS_ENABLED=0"):
-            bootstrap.main()
+        bootstrap.main()
 
-        self.assertEqual(self.stack.log[-1], "metrics schema")
-        self.assertFalse(bootstrap.READY.exists())
-        self.assertNotIn("property catalog", self.stack.log)
+        self.assertIn("metrics schema", self.stack.log)
+        self.assertIn("property catalog", self.stack.log)
+        self.assertTrue(bootstrap.READY.exists())
 
     def test_createcachetable_failing_does_not_stop_the_boot(self):
         self.stack.command_errors["createcachetable"] = RuntimeError("exists")

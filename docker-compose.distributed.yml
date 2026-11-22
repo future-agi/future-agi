@@ -319,7 +319,9 @@ services:
   metrics-schema-bootstrap:
     <<: *backend-bootstrap
     entrypoint: ["python", "-m", "tracer.services.derived_metrics.schema_install"]
-    command: ["--apply"]
+    # --advisory: a failure is logged and exits 0, so only Metrics stays
+    # unavailable (metric_schema_not_installed); the rest of the stack starts.
+    command: ["--apply", "--advisory"]
     env_file:
       - path: .env
         required: false

@@ -266,17 +266,15 @@ def metrics_schema(log: Callable[[str], None]) -> None:
     """The ClickHouse schema Metrics reads and writes, while METRICS_ENABLED is
     on. Each file has a receipt, so a rerun applies only what is missing; with
     Metrics off this does nothing, and turning it on later applies the files
-    on the next bootstrap."""
+    on the next bootstrap. A failure never stops the bootstrap."""
     # A plain import: see change_data_capture.
     import tracer.services.derived_metrics.schema_install as schema_install
 
     log("Metrics schema ...")
     started = time.monotonic()
-    if run_cli(schema_install.main, ["--apply"]):
-        raise BootstrapError(
-            "Metrics schema install failed (see above). Fix the cause, or set "
-            "METRICS_ENABLED=0 to start without Metrics."
-        )
+    # Advisory: a failure leaves only Metrics unavailable (its API answers
+    # metric_schema_not_installed); the rest of the install still starts.
+    run_cli(schema_install.main, ["--apply", "--advisory"])
     log(f"Metrics schema done in {time.monotonic() - started:.1f}s")
 
 

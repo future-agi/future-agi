@@ -232,7 +232,7 @@ class StartupComposeContractTests(unittest.TestCase):
                 self.assertEqual(job["image"], services["backend"]["image"])
                 self.assertEqual(
                     argv(job)[3:],
-                    ["--apply"] if variant in ("root", "e2e") else ["--check"],
+                    ["--apply" if variant in ("root", "e2e") else "--check", "--advisory"],
                 )
                 self.assert_gate(
                     services,

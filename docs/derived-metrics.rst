@@ -488,7 +488,9 @@ Every install path runs this step through
 targets the database the Metrics refresh uses (``CH25_*``, falling back to
 ``CH_*``) and passes the password through the environment, never the command
 line. With ``METRICS_ENABLED`` off it does nothing. Each file has a receipt, so
-a rerun applies only what is missing.
+a rerun applies only what is missing. Install paths run it with ``--advisory``:
+a failure is logged and the rest of the product still starts, with only Metrics
+unavailable until the cause is fixed.
 
 * Standalone (``docker-compose.yml``) and the Helm chart: the bootstrap runs it
   on every start, after the native ClickHouse schema. To turn Metrics on later,
@@ -502,9 +504,10 @@ a rerun applies only what is missing.
 
 * Distributed (``docker-compose.distributed.yml``): the
   ``metrics-schema-bootstrap`` job runs it after ``clickhouse-cdc-bootstrap``,
-  and the backend and workers wait for it. ``docker compose up -d`` after
-  turning Metrics on runs it again. The production and dev overlays only check
-  (``--check``); apply it as step 6 of ``deploy/README.md``:
+  and the backend and workers start after it finishes. ``docker compose up -d``
+  after turning Metrics on runs it again. The production and dev overlays only
+  check (``--check``) and log what is missing; apply it as step 6 of
+  ``deploy/README.md``:
 
   .. code-block:: bash
 
@@ -527,8 +530,8 @@ a rerun applies only what is missing.
   (``backend`` instead of ``app`` on a Distributed install.)
 
 If the runner reports drift (exit 2), a file changed after it was applied on
-this install. The step then stops the bootstrap; review the change with the
-ClickHouse owner, or set ``METRICS_ENABLED=0`` to start without Metrics.
+this install. The step logs it and the install starts without Metrics; review
+the change with the ClickHouse owner.
 
 While Metrics is on and the schema is missing, the Metrics API answers every
 request with HTTP 503 and code ``metric_schema_not_installed`` ("Metrics schema
