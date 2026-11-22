@@ -2,7 +2,8 @@
 # Prints the commit that scripts/check_update_safety.py compares the checkout
 # with (its --base). The gate reads what changed since that commit and refuses
 # an edited or deleted migration, so a wrong base fails a clean tree, and a
-# base equal to the checkout passes any tree.
+# base equal to the checkout hides every changed migration and changed SQL
+# source (the checks of the whole tree still run).
 #
 #   pull_request  the pull request's base commit
 #   push          the commit the branch pointed at before the push
@@ -16,9 +17,11 @@
 #
 # The released line is origin/main, unless the checkout is itself a commit of
 # origin/main. Then origin/main holds nothing the checkout lacks, the diff is
-# empty and the gate checks nothing. That is every scheduled run. Such a run
-# compares with the newest release tag before the checkout, which is what the
-# release changed. With no such tag the script fails: there is no honest base.
+# empty, and the change checks (migrations, ClickHouse SQL) see nothing. That
+# is every scheduled run. Such a run compares with the newest exact release
+# tag (vX.Y.Z, not a preview) in the checkout's history that is not the
+# checkout itself: what the release changed. With no such tag the script
+# fails: there is no honest base.
 set -euo pipefail
 
 case "${EVENT_NAME:?EVENT_NAME is required}" in

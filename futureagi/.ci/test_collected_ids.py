@@ -254,19 +254,28 @@ class RuntimeSkipRulesTest(unittest.TestCase):
 
     MEASURED = json.loads((CI / "fixtures/runtime-skips-measured.json").read_text())
 
-    def rows(self, pairs):
+    def rows(self, pairs, runs="internal"):
+        # The measured run was an internal one (the private package checked out).
         out = []
         for number, (path, reason) in enumerate(pairs):
+            test = f"{path}::test_{number}"
             out.append(
                 {
                     "suite": "main",
                     "group": 1,
+                    "runs": runs,
                     "id": f"id-{number}",
-                    "test": f"{path}::test_{number}",
+                    "test": test,
+                    "inventory_test": test,
                     "skips": [{"phase": "setup", "reason": reason}],
                 }
             )
         return out
+
+    def measured(self, needle):
+        return next(
+            p for p in self.MEASURED["pairs"] if needle in p["file"] + p["reason"]
+        )
 
     def report(self, rows, rules=None):
         with tempfile.TemporaryDirectory() as temp:
@@ -308,7 +317,13 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             counts[checker.allowing_rule(row, rules)] += pair["tests"]
         self.assertEqual(counts[:2], [1462, 327])
         self.assertEqual(sum(counts[2:]), 22)
-        self.assertTrue(all(counts), "a rule matches nothing that was measured")
+        # The measured run was internal, so the fork-only rule is not used there.
+        internal = [
+            count
+            for count, rule in zip(counts, rules, strict=True)
+            if rule.get("runs") != "oss"
+        ]
+        self.assertTrue(all(internal), "a rule matches nothing that was measured")
 
     def test_a_new_skip_in_a_file_no_rule_covers_fails(self):
         rows = self.measured_rows() + self.rows(
@@ -354,6 +369,138 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         row["skips"].append({"phase": "call", "reason": "Skipped: something else"})
         self.assertIsNone(checker.allowing_rule(row, checker.read_runtime_skip_rules()))
 
+    def test_only_the_measured_model_type_400_is_allowed(self):
+        rules = checker.read_runtime_skip_rules()
+        pair = self.measured("huggingface")
+        row = self.rows([(pair["file"], pair["reason"])])[0]
+        self.assertIsNotNone(checker.allowing_rule(row, rules))
+        for other in (
+            pair["reason"].replace("model_type", "huggingface_dataset_split"),
+            "Skipped: API returned 400: {'status': False, 'type': 'validation_error'}",
+        ):
+            row = self.rows([(pair["file"], other)])[0]
+            self.assertIsNone(checker.allowing_rule(row, rules), other)
+
+    def test_a_missing_module_rule_names_the_exact_module(self):
+        rules = checker.read_runtime_skip_rules()
+        pair = self.measured("dunning")
+        for reason in (
+            pair["reason"].replace(
+                "No module named 'ee.cloud.billing.dunning'", "No module named 'stripe'"
+            ),
+            "Skipped: could not import 'ee.cloud.billing.invoice': No module named 'ee.cloud.billing.invoice'",
+        ):
+            self.assertIsNone(
+                checker.allowing_rule(self.rows([(pair["file"], reason)])[0], rules),
+                reason,
+            )
+        harness = self.measured("fi.alk")
+        other = harness["reason"].replace(
+            "No module named 'fi'", "No module named 'yaml'"
+        )
+        self.assertIsNone(
+            checker.allowing_rule(self.rows([(harness["file"], other)])[0], rules)
+        )
+
+    def test_a_fork_skip_is_by_design_and_an_internal_one_needs_its_ticket(self):
+        rules = checker.read_runtime_skip_rules()
+        pair = self.measured("dunning")
+        fork = checker.allowing_rule(
+            self.rows([(pair["file"], pair["reason"])], runs="oss")[0], rules
+        )
+        internal = checker.allowing_rule(
+            self.rows([(pair["file"], pair["reason"])], runs="internal")[0], rules
+        )
+        self.assertEqual(rules[fork].get("runs"), "oss")
+        self.assertNotIn("issue", rules[fork])
+        self.assertEqual(rules[internal].get("runs"), "internal")
+        self.assertEqual(rules[internal]["issue"], "TH-10618")
+        # Without the ticketed internal rule, an internal run is not waived.
+        fork_only = [rule for rule in rules if rule.get("runs") != "internal"]
+        self.assertIsNone(
+            checker.allowing_rule(
+                self.rows([(pair["file"], pair["reason"])], runs="internal")[0],
+                fork_only,
+            )
+        )
+
+    def test_a_skip_is_allowed_only_for_the_path_the_inventory_recorded(self):
+        rules = checker.read_runtime_skip_rules()
+        pair = self.measured("test_relational_filter_native")
+        row = self.rows([(pair["file"], pair["reason"])])[0]
+        row.pop("inventory_test")
+        self.assertIsNone(checker.allowing_rule(row, rules))
+        # The terminal row's own label does not decide: the inventory's path does.
+        row["test"] = pair["file"] + "::test_x"
+        checker.bind_to_inventory(
+            [row],
+            {"main": [[row["id"], "model_hub/tests/test_other.py::test_x", "pass"]]},
+        )
+        self.assertIsNone(checker.allowing_rule(row, rules))
+        checker.bind_to_inventory(
+            [row], {"main": [[row["id"], pair["file"] + "::test_x", "pass"]]}
+        )
+        self.assertIsNotNone(checker.allowing_rule(row, rules))
+
+    def test_usage_is_counted_per_rule_and_annotations_are_escaped(self):
+        rules = checker.read_runtime_skip_rules(
+            self.rule_file(
+                [
+                    {
+                        "files": "a/tests/*.py",
+                        "reason": "x",
+                        "why": "Optional by design: same text",
+                    },
+                    {
+                        "files": "b/tests/*.py",
+                        "reason": "x",
+                        "why": "Optional by design: same text",
+                    },
+                    {
+                        "files": "c/tests/*.py",
+                        "reason": "x",
+                        "why": "Optional by design: 100%\nsecond line",
+                    },
+                ]
+            )
+        )
+        error, report, out = self.report(
+            self.rows([("a/tests/test_a.py", "x")]), rules=rules
+        )
+        self.assertIsNone(error)
+        stale = [line for line in out.splitlines() if "rule matched nothing" in line]
+        self.assertEqual(len(stale), 2)
+        self.assertIn("b/tests/*.py", stale[0])
+        self.assertIn("100%25%0Asecond line", stale[1])
+
+    def test_the_summary_shows_allowed_and_unexpected_counts(self):
+        rows = self.measured_rows() + self.rows(
+            [("model_hub/tests/test_new.py", "Skipped: new")]
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            summary = pathlib.Path(temp) / "summary.md"
+            with contextlib.redirect_stdout(io.StringIO()):
+                checker.report_runtime_skips(
+                    rows,
+                    enforce=False,
+                    partial=False,
+                    report_path=pathlib.Path(temp) / "r.json",
+                    summary_path=summary,
+                )
+            text = summary.read_text()
+        allowed = len(self.MEASURED["pairs"])
+        self.assertIn(
+            f"Backend runtime skips: {allowed + 1} ({allowed} allowed, 1 unexpected)",
+            text,
+        )
+
+    def rule_file(self, rules):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = pathlib.Path(directory.name) / "rules.json"
+        path.write_text(json.dumps(rules))
+        return path
+
     def test_a_rule_that_matches_nothing_is_named(self):
         error, _, out = self.report([], rules=checker.read_runtime_skip_rules())
         self.assertIsNone(error)
@@ -375,6 +522,14 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             ):
                 path.write_text(bad)
                 with self.assertRaises((ValueError, re.error), msg=bad):
+                    checker.read_runtime_skip_rules(path)
+            for bad in (
+                json.dumps([{**good, "why": "flaky", "issue": "  "}]),
+                json.dumps([{**good, "issue": 7}]),
+                json.dumps([{**good, "runs": "both"}]),
+            ):
+                path.write_text(bad)
+                with self.assertRaises(ValueError, msg=bad):
                     checker.read_runtime_skip_rules(path)
             path.write_text(
                 json.dumps([good, {**good, "why": "flaky", "issue": "TH-1"}])

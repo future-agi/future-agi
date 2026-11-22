@@ -23,7 +23,7 @@
   },
   {
     "files": "simulate/tests/test_scenario_fault_rules.py",
-    "reason": "^Skipped: could not import 'fi\\.alk\\.harness\\.actors'",
+    "reason": "^Skipped: could not import 'fi\\.alk\\.harness\\.actors': No module named 'fi'$",
     "why": "Optional by design: compares with the harness package where it is installed; CI does not install it. 1 test."
   },
   {
@@ -58,14 +58,21 @@
   },
   {
     "files": "model_hub/tests/test_dataset_huggingface_api.py",
-    "reason": "^Skipped: API returned 400: ",
-    "why": "The test's own request is rejected (400) and the test skips instead of failing. 1 test.",
+    "reason": "^Skipped:\\ API\\ returned\\ 400:\\ \\{'status':\\ False,\\ 'type':\\ 'validation_error',\\ 'code':\\ 'invalid',\\ 'detail':\\ '\\(\\\\'model_type\\\\',\\ \\[ErrorDetail\\(string=\\\\'\"\"\\ is\\ not\\ a\\ valid\\ choice\\.",
+    "why": "The test's own request is rejected with the measured model_type validation error (400), and the test skips instead of failing. Any other 400 is unexpected. 1 test.",
     "issue": "TH-10618"
   },
   {
     "files": "tfc/tests/test_temporal_billing_imports.py",
-    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.dunning'",
-    "why": "The module is missing from the private package on an internal run. 1 test.",
+    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.dunning': No module named 'ee\\.cloud\\.billing\\.dunning'$",
+    "runs": "oss",
+    "why": "Not applicable by design on a fork: the private package is not checked out. 1 test."
+  },
+  {
+    "files": "tfc/tests/test_temporal_billing_imports.py",
+    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.dunning': No module named 'ee\\.cloud\\.billing\\.dunning'$",
+    "runs": "internal",
+    "why": "On an internal run the private package is checked out but lacks this module: a broken checkout, waived only until the ticket is done. 1 test.",
     "issue": "TH-10618"
   },
   {

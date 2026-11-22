@@ -181,8 +181,20 @@ def check_terminals(expected, rows):
         raise ValueError(f"{len(missing)} tests never finished; first: {missing[0]!r}")
 
 
+RUNS = ("oss", "internal")
+
+
+def annotation(text):
+    """Workflow-command data: % and line breaks escaped, as Actions requires."""
+    return str(text).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
 def read_runtime_skip_rules(path=RUNTIME_SKIP_RULES):
-    """The committed rules. Fails closed: a broken rule stops the check."""
+    """The committed rules. Fails closed: a broken rule stops the check.
+
+    A rule may name the kind of run it covers: "oss" (a fork, without the
+    private package) or "internal". Without it a rule covers both.
+    """
     entries = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(entries, list):
         raise ValueError(f"{path}: expected a list")
@@ -196,23 +208,49 @@ def read_runtime_skip_rules(path=RUNTIME_SKIP_RULES):
             raise ValueError(
                 f"{path}: each rule needs files, reason and why: {entry!r}"
             )
-        if not entry.get("issue") and "by design" not in entry["why"]:
+        issue = entry.get("issue")
+        if issue is not None and (not isinstance(issue, str) or not issue.strip()):
+            raise ValueError(f"{path}: a ticket must be a nonblank string: {entry!r}")
+        if not issue and "by design" not in entry["why"]:
             raise ValueError(
                 f"{path}: a rule that is not by design names the ticket that removes it: {entry!r}"
             )
+        if entry.get("runs", "oss") not in RUNS:
+            raise ValueError(f"{path}: runs is one of {RUNS}: {entry!r}")
         rules.append({**entry, "pattern": re.compile(entry["reason"])})
     return rules
 
 
 def allowing_rule(row, rules):
-    """The index of the rule that covers every skip of a row, or None."""
-    path = row["test"].split("::", 1)[0]
+    """The index of the rule that covers every skip of a row, or None.
+
+    The test path is the one the independent inventory recorded for this id
+    (bind_to_inventory), not the label of the terminal row: a row the
+    inventory does not know is never allowed.
+    """
+    test = row.get("inventory_test")
+    if not test:
+        return None
+    path = test.split("::", 1)[0]
     for index, rule in enumerate(rules):
-        if fnmatch.fnmatchcase(path, rule["files"]) and all(
-            rule["pattern"].search(skip["reason"]) for skip in row["skips"]
+        if (
+            rule.get("runs", row.get("runs")) == row.get("runs")
+            and fnmatch.fnmatchcase(path, rule["files"])
+            and all(rule["pattern"].search(skip["reason"]) for skip in row["skips"])
         ):
             return index
     return None
+
+
+def bind_to_inventory(skips, expected):
+    """Give each skip row the test path the independent inventory has for its id."""
+    labels = {
+        key: label for inventory in expected.values() for key, label, _ in inventory
+    }
+    for row in skips:
+        if row["id"] in labels:
+            row["inventory_test"] = labels[row["id"]]
+    return skips
 
 
 def report_runtime_skips(
@@ -227,13 +265,14 @@ def report_runtime_skips(
     skips.sort(key=lambda row: (row["suite"], row["group"], row["test"], row["id"]))
     allowed = []
     unexpected = []
+    used = collections.Counter()
     for row in skips:
         index = allowing_rule(row, rules)
         if index is None:
             unexpected.append(row)
         else:
+            used[index] += 1
             allowed.append({**row, "rule": rules[index]["why"]})
-    used = collections.Counter(row["rule"] for row in allowed)
     skips = unexpected
     Path(report_path).write_text(
         json.dumps(
@@ -257,10 +296,12 @@ def report_runtime_skips(
             f"{skip['phase']}: {skip['reason']}" for skip in row["skips"]
         )
         text = f"{row['suite']}/{row['group']} {row['test']}: {reasons}"
-        escaped = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        sys.stdout.write(f"::warning title={title}::{escaped}\n")
+        sys.stdout.write(f"::warning title={title}::{annotation(text)}\n")
     with open(summary_path, "a", encoding="utf-8") as summary:
-        summary.write(f"## Unexpected backend runtime skips: {len(skips)}\n\n")
+        summary.write(
+            f"## Backend runtime skips: {len(skips) + len(allowed)} "
+            f"({len(allowed)} allowed, {len(skips)} unexpected)\n\n"
+        )
         if partial:
             summary.write(
                 "Partial evidence only: backend qualification failed. Counts are not run totals.\n\n"
@@ -278,15 +319,23 @@ def report_runtime_skips(
         if not counts and not partial:
             summary.write("| All | All | 0 |\n")
         summary.write(f"\nAllowed by runtime-skips.json: {len(allowed)} tests.\n\n")
-        for why, count in used.most_common():
-            summary.write(f"- {count}: {why}\n")
-        stale = [rule["why"] for rule in rules if rule["why"] not in used]
+        for index, count in sorted(used.items()):
+            summary.write(
+                f"- {count}: {rules[index]['files']}: {rules[index]['why']}\n"
+            )
         if not partial:
-            for why in stale:
-                sys.stdout.write(
-                    "::warning title=Backend run-time skip rule matched nothing::"
-                    f"{why} (remove it from futureagi/.ci/runtime-skips.json)\n"
-                )
+            # Counted per rule, so two rules with the same explanation are
+            # still told apart.
+            for index, rule in enumerate(rules):
+                if index not in used:
+                    sys.stdout.write(
+                        "::warning title=Backend run-time skip rule matched nothing::"
+                        + annotation(
+                            f"{rule['files']} ({rule.get('runs', 'oss and internal')}): {rule['why']}"
+                            " (remove it from futureagi/.ci/runtime-skips.json)"
+                        )
+                        + "\n"
+                    )
     if skips and enforce and not partial:
         raise ValueError(f"{len(skips)} eligible tests reported runtime skips")
 
@@ -401,7 +450,11 @@ def verify_run():
             ) as exc:
                 problems.append(f"{suite}/{group}: {exc}")
                 continue
-            skips.extend({"suite": suite, "group": group, **row} for row in observed)
+            runs = "oss" if receipt["ee"] == "oss" else "internal"
+            skips.extend(
+                {"suite": suite, "group": group, "runs": runs, **row}
+                for row in observed
+            )
             identities.add(
                 (
                     collection,
@@ -432,6 +485,7 @@ def verify_run():
                 check_terminals(expected[suite], rows)
         except (KeyError, ValueError, TypeError) as exc:
             problems.append(str(exc))
+    bind_to_inventory(skips, expected)
     report_runtime_skips(
         skips,
         partial=bool(problems),

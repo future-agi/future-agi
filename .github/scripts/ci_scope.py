@@ -100,20 +100,32 @@ def update_ci_relevant(paths):
     )
 
 
-# Registers under deploy/update that are excluded from the rehearsal trigger by
-# policy. Ordinary pull requests edit them to record a review. The static gate
-# (scripts/check_update_safety.py) reads them, and the proof inventory still
-# hashes their bytes; no rehearsal outcome depends on their content. Every
-# other file there but a document is input of the update tool or of the
-# qualifier (release-policy.json, high-volume-tables.json, the schemas), so a
-# change to one runs both rehearsals.
+# The JSON under deploy/update that the update tool or the qualifier reads at
+# run time: a change to one runs both rehearsals. Listed, not inferred: a new
+# JSON file there (a review record, say) starts no rehearsal until it is added
+# here. test_ci_scope.py derives the set from the names the rehearsal modules
+# open and keeps the two equal.
+RUNTIME_JSON = {
+    b"deploy/update/automatic-layout.json",
+    b"deploy/update/backup-proof.schema.json",
+    b"deploy/update/compatibility-proof.schema.json",
+    b"deploy/update/high-volume-tables.json",
+    b"deploy/update/migration-apps.json",
+    b"deploy/update/release-manifest.schema.json",
+    b"deploy/update/release-policy.json",
+}
+# Excluded by policy: the static gate (scripts/check_update_safety.py) reads
+# these, and the proof inventory still hashes their bytes, but no rehearsal
+# outcome depends on their content. Ordinary pull requests edit them to
+# record a review.
 STATIC_GATE_REGISTERS = {
     b"deploy/update/clickhouse-sources.json",
     b"deploy/update/clickhouse-change-reviews.json",
     b"deploy/update/env-generators.json",
 }
-# The ClickHouse schema that a boot installs (manage.py bootstrap_install,
-# and oss_native_bootstrap.py, which selects the native DDL), and the other
+# The ClickHouse schema that a boot installs (manage.py bootstrap_install;
+# oss_native_bootstrap.py, which selects the native DDL; oss_cdc_bootstrap.py,
+# the spans DDL source), and the other
 # things only latest-stable -> PR takes from the pull request beside its
 # migrations, image builds and settings: the Standalone image's own directory
 # and the chart the job packages (CHART, below).
@@ -125,11 +137,12 @@ BOOT_INPUTS = (
 )
 BOOT_FILES = re.compile(
     rb"futureagi/(tfc/management/commands/bootstrap_install"
-    rb"|tracer/services/clickhouse/(oss_cdc_install|oss_native_bootstrap"
+    rb"|tracer/services/clickhouse/(oss_cdc_install|oss_cdc_bootstrap|oss_native_bootstrap"
     rb"|v2/apply_schema[^/]*|v2/schema_topology))\.py"
 )
 # The chart, as deploy/tests/update_e2e/acceptance.py packages it: without its
-# hack/ and ci/ directories and without dot-files.
+# hack/ and ci/ directories and without dot-files. Its prose (Markdown and the
+# licence) is packaged too but changes nothing the job runs.
 CHART = b"deploy/helm/futureagi/"
 # The updater's two frozen runtime schemas, outside deploy/update.
 UPDATER_SCHEMAS = {
@@ -142,8 +155,11 @@ def packaged_chart_file(path):
     if not path.startswith(CHART):
         return False
     parts = path[len(CHART) :].split(b"/")
-    return parts[0] not in (b"hack", b"ci") and not any(
-        part.startswith(b".") for part in parts
+    prose = parts[-1].endswith(b".md") or parts[-1] == b"LICENSE"
+    return (
+        parts[0] not in (b"hack", b"ci")
+        and not any(part.startswith(b".") for part in parts)
+        and not prose
     )
 
 
@@ -211,8 +227,8 @@ def rehearsal_inputs(paths):
                 (b"deploy/tests/update_e2e/", b".github/actions/setup-helm-tools/")
             )
             or path.startswith(b"deploy/update/")
-            and not path.endswith(b".md")
-            and path not in STATIC_GATE_REGISTERS
+            and not path.endswith((b".md", b".json"))
+            or path in RUNTIME_JSON
             or re.fullmatch(rb"(deploy/)?docker-compose[^/]*\.yml", path, re.DOTALL)
             is not None
         )

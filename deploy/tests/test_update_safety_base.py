@@ -187,8 +187,10 @@ class ReleasedLineTest(unittest.TestCase):
                     check=True,
                     capture_output=True,
                 )
+                # Detach HEAD at the release without writing a work tree:
+                # the script reads only refs and history.
                 subprocess.run(
-                    ["git", "checkout", "-q", "--detach", sha],
+                    ["git", "update-ref", "--no-deref", "HEAD", sha],
                     cwd=tmp,
                     env=GIT_ENV,
                     check=True,

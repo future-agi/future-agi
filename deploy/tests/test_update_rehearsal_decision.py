@@ -154,6 +154,7 @@ class RehearsalWorkflowTest(unittest.TestCase):
         # The registers that only scripts/check_update_safety.py reads: an
         # ordinary pull request edits them to record a review.
         for path in (
+            b"deploy/update/review.json",
             b"deploy/update/clickhouse-change-reviews.json",
             b"deploy/update/clickhouse-sources.json",
             b"deploy/update/env-generators.json",
@@ -161,13 +162,13 @@ class RehearsalWorkflowTest(unittest.TestCase):
             b"futureagi/example.py",
         ):
             self.assertEqual(classify([path]), (False, False))
-        # Every other JSON file there is input of the update tool or the
-        # qualifier, so a change to one must rehearse.
+        # The JSON files the update tool or the qualifier reads (RUNTIME_JSON)
+        # must rehearse; a JSON file not on that list, like a review record,
+        # does not.
         for path in (
             b"deploy/update/release-policy.json",
             b"deploy/update/high-volume-tables.json",
-            b"deploy/update/manifest.schema.json",
-            b"deploy/update/review.json",
+            b"deploy/update/release-manifest.schema.json",
         ):
             self.assertEqual(classify([path]), (True, False), path)
         for path in (

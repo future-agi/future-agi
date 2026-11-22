@@ -295,15 +295,26 @@ class RehearsalInputs(unittest.TestCase):
         self.assertGreater(len(excluded), 5)
         for path in excluded:
             self.assertEqual(rehearsal(path), (False, False), path)
-        for path in ("deploy/helm/futureagi/Chart.yaml", "deploy/helm/futureagi/values.yaml"):
+        for path in (
+            "deploy/helm/futureagi/Chart.yaml",
+            "deploy/helm/futureagi/values.yaml",
+        ):
             self.assertEqual(rehearsal(path), (False, True), path)
+        # Prose in the chart: packaged, but nothing the job runs changes.
+        for path in (
+            "deploy/helm/futureagi/README.md",
+            "deploy/helm/futureagi/UPGRADING.md",
+            "deploy/helm/futureagi/LICENSE",
+            "deploy/helm/futureagi/examples/README.md",
+        ):
+            self.assertEqual(rehearsal(path), (False, False), path)
         acceptance = (ROOT / ACCEPTANCE).read_text()
         self.assertIn("relative.parts[0] in ('hack','ci')", acceptance)
         self.assertIn("any(p.startswith('.') for p in relative.parts)", acceptance)
 
-    def test_every_register_the_update_tool_reads_starts_both(self):
-        # Excluded: documents, and the registers only the static gate reads.
-        # A register that a rehearsal module names must not be excluded.
+    def test_the_runtime_json_list_is_what_the_rehearsal_modules_read(self):
+        # Derived: a JSON file under deploy/update that a rehearsal module or
+        # bin/update names is runtime input and must be listed; nothing else is.
         sources = "".join(
             (ROOT / path).read_text() for path in [*rehearsal_modules(), "bin/update"]
         )
@@ -312,19 +323,21 @@ class RehearsalInputs(unittest.TestCase):
             for path in (ROOT / "deploy/update").rglob("*.json")
             if "__pycache__" not in path.parts
         )
-        self.assertIn("deploy/update/release-policy.json", registers)
-        self.assertIn("deploy/update/high-volume-tables.json", registers)
+        read = {path for path in registers if path.rsplit("/", 1)[-1] in sources}
+        listed = {path.decode() for path in scope["RUNTIME_JSON"]}
+        self.assertIn("deploy/update/release-policy.json", read)
+        self.assertIn("deploy/update/high-volume-tables.json", read)
+        self.assertEqual(listed, read)
         static = {path.decode() for path in scope["STATIC_GATE_REGISTERS"]}
         gate = (ROOT / "scripts/check_update_safety.py").read_text()
+        self.assertEqual(static | listed, set(registers))
         for path in registers:
-            name = path.rsplit("/", 1)[-1]
-            if path in static:
-                self.assertFalse(rehearsal(path)[0], path)
-                self.assertNotIn(name, sources, path)
-                self.assertIn(name, gate, path)
-            else:
-                self.assertTrue(rehearsal(path)[0], path)
-        self.assertEqual(len(static & set(registers)), 3)
+            self.assertEqual(rehearsal(path)[0], path in listed, path)
+        for path in static:
+            self.assertIn(path.rsplit("/", 1)[-1], gate, path)
+        # A new JSON file there, such as a review record, starts nothing.
+        for path in ("deploy/update/review.json", "deploy/update/reviews/2026-11.json"):
+            self.assertEqual(rehearsal(path), (False, False), path)
         self.assertFalse(rehearsal("deploy/update/README.md")[0])
         self.assertTrue(rehearsal("deploy/update/apply.py")[0])
 
@@ -339,6 +352,7 @@ class RehearsalInputs(unittest.TestCase):
             "futureagi/tfc/management/commands/bootstrap_install.py",
             "futureagi/tracer/services/clickhouse/oss_cdc_install.py",
             "futureagi/tracer/services/clickhouse/oss_native_bootstrap.py",
+            "futureagi/tracer/services/clickhouse/oss_cdc_bootstrap.py",
             "futureagi/tracer/services/clickhouse/v2/apply_schema.py",
             "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
             "futureagi/tracer/services/clickhouse/v2/schema_topology.py",

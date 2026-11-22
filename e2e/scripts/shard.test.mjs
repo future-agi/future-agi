@@ -22,6 +22,7 @@ import {
 } from "../lib/shard.ts";
 import { grepInvertPattern } from "../lib/quarantine.ts";
 import {
+  annotation,
   checkParity,
   cohortAttempt,
   fileDurations,
@@ -345,6 +346,13 @@ test("parity checks the listed project and declared outcome, not just result cou
 });
 
 test("with enforcement on, only a run-time skip listed for the stack passes", () => {
+  // The catalogue id comes from the listing's flow annotation.
+  const flow = (entry, id) => {
+    entry.tests[0].annotations = [
+      { type: "flow", description: JSON.stringify({ id }) },
+    ];
+    return entry;
+  };
   // A test listed to pass whose one result is a skip: it skipped itself.
   const selfSkip = (title) => {
     const entry = spec("flows/a.spec.ts", 9, title, [0]);
@@ -353,7 +361,7 @@ test("with enforcement on, only a run-time skip listed for the stack passes", ()
   };
   const listedTwo = report(
     spec("flows/a.spec.ts", 3, "one", []),
-    spec("flows/a.spec.ts", 9, "OBS-E2E-031: churn", []),
+    flow(spec("flows/a.spec.ts", 9, "OBS-E2E-031: churn", []), "OBS-E2E-031"),
   );
   const merged = report(
     spec("flows/a.spec.ts", 3, "one", [1]),
@@ -367,9 +375,20 @@ test("with enforcement on, only a run-time skip listed for the stack passes", ()
   assert.deepEqual(allowed.problems.runtimeSkipped, []);
   assert.equal(allowed.allowedRuntimeSkips.length, 1);
   assert.deepEqual(allowed.staleAllowances, []);
-  // An allowance for another test does not cover this one.
+  // An allowance for another test does not cover this one, nor does a
+  // prefix of the id or an id that only appears in the title.
+  for (const other of ["OBS-E2E-032", "OBS-E2E-03", "E2E-031"])
+    assert.equal(
+      checkParity(listedTwo, merged, FILES, true, [other]).ok,
+      false,
+      other,
+    );
+  const titleOnly = report(
+    spec("flows/a.spec.ts", 3, "one", []),
+    spec("flows/a.spec.ts", 9, "OBS-E2E-031: churn", []),
+  );
   assert.equal(
-    checkParity(listedTwo, merged, FILES, true, ["OBS-E2E-032"]).ok,
+    checkParity(titleOnly, merged, FILES, true, ["OBS-E2E-031"]).ok,
     false,
   );
   // An allowance for a test that ran its body is reported as out of date.
@@ -380,6 +399,30 @@ test("with enforcement on, only a run-time skip listed for the stack passes", ()
   const stale = checkParity(listedTwo, ran, FILES, true, ["OBS-E2E-031"]);
   assert.equal(stale.ok, true);
   assert.deepEqual(stale.staleAllowances, ["OBS-E2E-031"]);
+  // A test that failed, or never ran, does not make its entry stale.
+  const failed = spec("flows/a.spec.ts", 9, "OBS-E2E-031: churn", [1]);
+  failed.tests[0].results[0].status = "failed";
+  const broken = checkParity(
+    listedTwo,
+    report(spec("flows/a.spec.ts", 3, "one", [1]), failed),
+    FILES,
+    true,
+    ["OBS-E2E-031"],
+  );
+  assert.equal(broken.ok, false);
+  assert.deepEqual(broken.staleAllowances, []);
+  const absent = checkParity(
+    listedTwo,
+    report(spec("flows/a.spec.ts", 3, "one", [1])),
+    FILES,
+    true,
+    ["OBS-E2E-031"],
+  );
+  assert.deepEqual(absent.staleAllowances, []);
+});
+
+test("annotation text escapes percent signs and line breaks", () => {
+  assert.equal(annotation("100% a\r\nb"), "100%25 a%0D%0Ab");
 });
 
 test("the run-time skip list is strict, and the committed one is what CI measured", (t) => {
@@ -391,6 +434,14 @@ test("the run-time skip list is strict, and the committed one is what CI measure
     stack: "standalone",
     reason: "Distributed-only by design: no bind",
   };
+  const today = new Date("2026-11-22T12:00:00Z");
+  const temporary = {
+    ...good,
+    reason: "flaky guard",
+    issue: "TH-1",
+    owner: "observe flows",
+    expires: "2027-01-06",
+  };
   for (const bad of [
     "{",
     "{}",
@@ -399,24 +450,37 @@ test("the run-time skip list is strict, and the committed one is what CI measure
     JSON.stringify([{ stack: "standalone", reason: "why" }]),
     // Not by design, so it must name the ticket that removes it.
     JSON.stringify([{ ...good, reason: "flaky guard" }]),
+    // A title, not a flow id.
+    JSON.stringify([{ ...good, id: "managed background routing" }]),
+    JSON.stringify([{ ...temporary, issue: " " }]),
+    // A temporary entry names an owner and an expiry at most 45 days ahead.
+    JSON.stringify([{ ...temporary, owner: undefined }]),
+    JSON.stringify([{ ...temporary, expires: undefined }]),
+    JSON.stringify([{ ...temporary, expires: "2027-01-07" }]),
+    JSON.stringify([{ ...temporary, expires: "6 Jan" }]),
   ]) {
     writeFileSync(file, bad);
-    assert.throws(() => readRuntimeSkips(file), bad);
+    assert.throws(() => readRuntimeSkips(file, today), bad);
   }
-  writeFileSync(
-    file,
-    JSON.stringify([good, { ...good, reason: "flaky guard", issue: "TH-1" }]),
+  writeFileSync(file, JSON.stringify([good, temporary]));
+  const read = readRuntimeSkips(file, today);
+  assert.equal(read.length, 2);
+  assert.equal(read[1].expired, false);
+  // After its expiry the entry is read but no longer allows a skip.
+  assert.equal(
+    readRuntimeSkips(file, new Date("2027-01-07T00:00:00Z"))[1].expired,
+    true,
   );
-  assert.equal(readRuntimeSkips(file).length, 2);
   const committed = readRuntimeSkips();
   const by = (stack) =>
     committed
       .filter((entry) => entry.stack === stack)
       .map((entry) => entry.id)
       .sort();
-  // Measured on real merged reports on 22 Nov: 2 on Distributed, 4 on Standalone.
+  // Measured on real merged reports on 22 Nov. The two Distributed-only
+  // tests are discovery-time skips on Standalone, so they need no entry.
   assert.deepEqual(by("distributed"), ["OBS-E2E-031", "OBS-E2E-032"]);
-  assert.equal(by("standalone").length, 4);
+  assert.deepEqual(by("standalone"), ["OBS-E2E-031", "OBS-E2E-032"]);
   const names = committed.map((entry) => `${entry.stack} ${entry.id}`);
   assert.equal(new Set(names).size, names.length);
 });
@@ -471,10 +535,11 @@ test("the phased parity CLI reports the same runtime skips in warning and enforc
     assert.deepEqual(receipt.problems.runtimeSkipped, [
       JSON.stringify([file, 1, 1, "runtime skip", ""]),
     ]);
-    assert.ok(
-      readFileSync(summary, "utf8").includes(
-        receipt.problems.runtimeSkipped[0],
-      ),
+    const text = readFileSync(summary, "utf8");
+    assert.ok(text.includes(receipt.problems.runtimeSkipped[0]));
+    assert.match(
+      text,
+      /skipped at runtime: \*\*1\*\* \(0 allowed by e2e\/\.runtime-skips\.json, 1 unexpected;/,
     );
   }
 });

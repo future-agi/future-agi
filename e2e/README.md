@@ -651,12 +651,16 @@ the listing does not have. Quarantined and `@live-llm` flows are out of both sid
 
 **Run-time skips.** A test the listing expects to pass but that skips itself while it runs fails
 the gate when the repository variable `E2E_ENFORCE_RUNTIME_SKIPS` is `true`, unless
-`.runtime-skips.json` lists it for that stack: `{ "id": "<flow id or title text>", "stack":
-"distributed" | "standalone", "reason": "...", "issue": "<ticket>" }`. An entry that is not by
-design names the ticket that removes it. Each listed skip gets a warning on the run, and an entry
-whose test ran its body is reported as out of date. The backend has the same rule for its own
-skips in `futureagi/.ci/runtime-skips.json` (`BACKEND_ENFORCE_RUNTIME_SKIPS`), as rules of a
-test-file glob and a reason pattern; a skip is allowed only when both match.
+`.runtime-skips.json` lists its flow id for that stack: `{ "id": "OBS-E2E-031", "stack":
+"distributed" | "standalone", "reason": "...", "issue": "<ticket>", "owner": "...", "expires":
+"YYYY-MM-DD" }`. The id must equal the id in the test's flow annotation; a title match is not
+enough. An entry that is not by design names the ticket that removes it, an owner, and an expiry
+at most 45 days ahead; after that date it no longer allows the skip. Each listed skip gets a
+warning on the run, and an entry whose test ran and passed is reported as out of date. The
+backend has the same rule for its own skips in `futureagi/.ci/runtime-skips.json`
+(`BACKEND_ENFORCE_RUNTIME_SKIPS`), as rules of a test-file glob and a full reason pattern; a skip
+is allowed only when both match, for the test path the independent inventory recorded. A rule
+can be limited to fork runs (`"runs": "oss"`) or internal runs (`"runs": "internal"`).
 
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
 SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard

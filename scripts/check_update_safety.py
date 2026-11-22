@@ -10,6 +10,7 @@ import argparse
 import ast
 import contextlib
 import fnmatch
+import functools
 import hashlib
 import inspect
 import json
@@ -900,10 +901,8 @@ def clickhouse_review_candidates(root, changes, baseline, sources, head=None):
     return result
 
 
-def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry):
-    """Require human declarations only for keyword-discovered statement sources."""
-    path = DATA / "clickhouse-change-reviews.json"
-    source_registry(sources)
+def review_rows(reviews, registry, path):
+    """The validated rows of one version of the ClickHouse change-review registry, by path."""
     closed(reviews, {"schema_version", "changes"}, path)
     require(type(reviews["schema_version"]) is int and reviews["schema_version"] == 1 and isinstance(reviews["changes"], list),
             "invalid ClickHouse change-review registry", path)
@@ -920,6 +919,57 @@ def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry
         require(any(t.startswith("clickhouse:") for t in row["declaration"]["tables"]),
                 "ClickHouse review must name ClickHouse tables", path)
         entries[row["path"]] = row
+    return entries
+
+
+def review_history(root, baseline, registry):
+    """Every reviewed transition the registry recorded after `baseline`, by path.
+
+    The registry keeps one row per path: the review of the latest change. A
+    pull request compares with its own base, so that row is the whole change.
+    A scheduled run compares two releases, and between them a path can change
+    several times, each under its own review that the next one replaced. Each
+    version of the registry committed since `baseline` is read and validated
+    as the current one is; an invalid past version fails the gate.
+    """
+    relative = "deploy/update/clickhouse-change-reviews.json"
+    commits = git(root, "log", "--format=%H", f"{baseline}..HEAD", "--", relative).split()
+    edges = {}
+    for commit in commits:
+        blob = base_bytes(root, commit, relative)
+        if blob is None:
+            continue
+        rows = review_rows(json.loads(blob), registry, f"{relative}@{commit[:12]}")
+        for path, row in rows.items():
+            edges.setdefault(path, set()).add((row["before_sha256"], row["after_sha256"]))
+    return edges
+
+
+def reviewed_chain(edges, start, end):
+    """Whether reviewed transitions lead from blob `start` to blob `end`."""
+    seen, frontier = {start}, [start]
+    while frontier:
+        current = frontier.pop()
+        for before, after in edges:
+            if before == current and after not in seen:
+                if after == end:
+                    return True
+                seen.add(after)
+                frontier.append(after)
+    return False
+
+
+def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry, history=None):
+    """Require human declarations only for keyword-discovered statement sources.
+
+    `history`, a callable returning review_history(), lets a change that
+    spans several reviewed commits pass as a chain of those reviews. It is
+    called only when a review does not match the change exactly. Every link must be a validated
+    row; a gap, a changed hash or an unreviewed step fails as before.
+    """
+    path = DATA / "clickhouse-change-reviews.json"
+    source_registry(sources)
+    entries = review_rows(reviews, registry, path)
     candidates = clickhouse_review_candidates(root, changes, baseline, sources)
     missing = [row for row in candidates if row["path"] not in entries]
     require(not missing,
@@ -932,8 +982,21 @@ def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry
     for candidate in candidates:
         relative = candidate["path"]
         row = entries[relative]
-        require(all(row[key] == candidate[key] for key in ("before_sha256", "after_sha256")),
-                f"{relative}: review hashes do not match this exact base-to-head change", path)
+        exact = all(row[key] == candidate[key] for key in ("before_sha256", "after_sha256"))
+        # The current review must end at the head blob; earlier links come from
+        # the registry's own history since the base.
+        chained = (
+            history is not None
+            and row["after_sha256"] == candidate["after_sha256"]
+            and reviewed_chain(
+                history().get(relative, set()) | {(row["before_sha256"], row["after_sha256"])},
+                candidate["before_sha256"],
+                candidate["after_sha256"],
+            )
+        )
+        require(exact or chained,
+                f"{relative}: review hashes do not match this exact base-to-head change, and no chain of reviewed "
+                "changes since the base leads from the base blob to the head blob", path)
         value = row["declaration"]
         required.append({"path": relative, "tables": value["tables"], "risk_classes": value["risk_classes"], "large_volume_rehearsal": True})
     return required
@@ -1112,7 +1175,8 @@ def main(argv=None):
             sources = document(root / DATA / "clickhouse-sources.json")
             check_source_coverage(root, sources)
             rehearsals += check_clickhouse_changes(root, changes, baseline, sources,
-                                                  document(root / DATA / "clickhouse-change-reviews.json"), registry)
+                                                  document(root / DATA / "clickhouse-change-reviews.json"), registry,
+                                                  history=functools.cache(lambda: review_history(root, baseline, registry)))
         if args.django:
             # AppConfig.ready() diagnostics must not corrupt the JSON API.
             with contextlib.redirect_stdout(sys.stderr):

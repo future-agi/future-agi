@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -258,6 +259,104 @@ class GeneratorRegistryTests(unittest.TestCase):
         self.path.symlink_to(target)
         with self.assertRaises(gate.GateError):
             gate.check_generators(self.root, self.registry)
+
+
+class ClickHouseReviewChainTests(unittest.TestCase):
+    """A scheduled run compares two releases; a path may change several times between them.
+
+    The registry keeps one row per path (the latest review), so A -> B -> C
+    across two reviewed pull requests leaves only the B -> C row. The gate
+    accepts A -> C only through reviewed rows from the registry's own history.
+    """
+
+    PATH = "product/schema.py"
+    REGISTER = "deploy/update/clickhouse-change-reviews.json"
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(prefix="schema-chain-fixture-")
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+                    "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+        self.git("init", "-q", "-b", "main")
+        self.sources = {"schema_version": 1, "sources": [{"pattern": "product/**",
+                        "reason": "Product schema sources require review on every change."}], "exclusions": []}
+        self.sources_by_name = {name: f"ALTER TABLE spans ADD COLUMN {name.lower()} String\n" for name in "ABC"}
+        self.blobs = {name: gate.content_sha(source.encode()) for name, source in self.sources_by_name.items()}
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.root, env=self.env, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def commit(self, name, source, reviews):
+        target = self.root / self.PATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source)
+        register = self.root / self.REGISTER
+        register.parent.mkdir(parents=True, exist_ok=True)
+        register.write_text(json.dumps({"schema_version": 1, "changes": reviews}))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", name)
+        return self.git("rev-parse", "HEAD")
+
+    def row(self, before, after):
+        return {"path": self.PATH, "before_sha256": self.blobs.get(before, before), "after_sha256": self.blobs[after],
+                "declaration": reviewed([{"table": "clickhouse:spans", "risk_class": "clickhouse_change"}])}
+
+    def check(self, base, history=True):
+        current = json.loads((self.root / self.REGISTER).read_text())
+        return gate.check_clickhouse_changes(
+            self.root, [("M", self.PATH)], base, self.sources, current, registry(),
+            history=(lambda: gate.review_history(self.root, base, registry())) if history else None)
+
+    def chain(self, middle_row=True, tamper=False):
+        base = self.commit("A", "ALTER TABLE spans ADD COLUMN a String\n", [])
+        self.commit("B", "ALTER TABLE spans ADD COLUMN b String\n",
+                    [self.row("A", "B")] if middle_row else [])
+        last = self.row("B", "C") if not tamper else None
+        if tamper:
+            last = self.row("0" * 64, "C")
+        self.commit("C", "ALTER TABLE spans ADD COLUMN c String\n", [last])
+        return base
+
+    def test_two_reviewed_changes_since_the_release_pass_as_a_chain(self):
+        base = self.chain()
+        self.assertEqual(len(self.check(base)), 1)
+        # The exact comparison alone, as before this change, refuses it.
+        with self.assertRaisesRegex(gate.GateError, "exact base-to-head change"):
+            self.check(base, history=False)
+
+    def test_a_step_without_its_review_breaks_the_chain(self):
+        base = self.chain(middle_row=False)
+        with self.assertRaisesRegex(gate.GateError, "no chain of reviewed changes"):
+            self.check(base)
+
+    def test_a_link_that_does_not_start_at_the_previous_blob_breaks_the_chain(self):
+        base = self.chain(tamper=True)
+        with self.assertRaisesRegex(gate.GateError, "no chain of reviewed changes"):
+            self.check(base)
+
+    def test_a_change_merged_without_any_review_row_still_fails_the_nightly(self):
+        # An admin merge that skipped the review: the path has no row at all.
+        base = self.commit("A", "ALTER TABLE spans ADD COLUMN a String\n", [])
+        self.commit("B", "ALTER TABLE spans ADD COLUMN b String\n", [self.row("A", "B")])
+        self.commit("C", "ALTER TABLE spans ADD COLUMN c String\n", [])
+        with self.assertRaisesRegex(gate.GateError, "human-reviewed declarations"):
+            self.check(base)
+
+    def test_an_invalid_past_registry_version_fails(self):
+        base = self.commit("A", "ALTER TABLE spans ADD COLUMN a String\n", [])
+        broken = self.row("A", "A")
+        broken["after_sha256"] = "not-a-hash"
+        target = self.root / self.PATH
+        target.write_text("ALTER TABLE spans ADD COLUMN b String\n")
+        (self.root / self.REGISTER).write_text(json.dumps({"schema_version": 1, "changes": [broken]}))
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "B")
+        self.commit("C", "ALTER TABLE spans ADD COLUMN c String\n", [self.row("B", "C")])
+        with self.assertRaisesRegex(gate.GateError, "invalid after_sha256"):
+            self.check(base)
 
 
 class ClickHouseRegistryTests(unittest.TestCase):

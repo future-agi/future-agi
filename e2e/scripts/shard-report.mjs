@@ -37,9 +37,26 @@ const STACKS = ["distributed", "standalone"];
  * it. Fails closed: a broken entry stops the parity check, because an entry
  * is a test that proves nothing on that stack.
  */
-export function readRuntimeSkips(file = RUNTIME_SKIPS) {
+const DAY_MS = 24 * 60 * 60 * 1000;
+// A temporary entry (one with a ticket) expires at most this many days ahead.
+export const MAX_RUNTIME_SKIP_DAYS = 45;
+
+/** Workflow-command data: % and line breaks escaped, as Actions requires. */
+export function annotation(text) {
+  return String(text)
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
+}
+
+export function readRuntimeSkips(file = RUNTIME_SKIPS, today = new Date()) {
   const entries = JSON.parse(readFileSync(file, "utf8"));
   if (!Array.isArray(entries)) throw new Error(`${file}: expected a list`);
+  const day = Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate(),
+  );
   for (const entry of entries) {
     const bad = ["id", "stack", "reason"].filter(
       (field) => typeof entry?.[field] !== "string" || !entry[field].trim(),
@@ -48,10 +65,37 @@ export function readRuntimeSkips(file = RUNTIME_SKIPS) {
       throw new Error(
         `${file}: each entry needs id, reason and stack (${STACKS.join(" or ")}): ${JSON.stringify(entry)}`,
       );
+    if (!/^[A-Z]+-E2E-[0-9]{3}$/.test(entry.id))
+      throw new Error(
+        `${file}: an entry names a flow id such as OBS-E2E-031: ${JSON.stringify(entry)}`,
+      );
+    if (
+      entry.issue !== undefined &&
+      (typeof entry.issue !== "string" || !entry.issue.trim())
+    )
+      throw new Error(
+        `${file}: a ticket must be a nonblank string: ${JSON.stringify(entry)}`,
+      );
     if (!entry.issue && !/by design/.test(entry.reason))
       throw new Error(
         `${file}: an entry that is not by design names the ticket that removes it: ${JSON.stringify(entry)}`,
       );
+    if (entry.issue) {
+      // A temporary entry names who removes it and when it stops allowing.
+      const expires = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(entry.expires ?? "")
+        ? Date.parse(`${entry.expires}T00:00:00Z`)
+        : NaN;
+      if (
+        typeof entry.owner !== "string" ||
+        !entry.owner.trim() ||
+        Number.isNaN(expires) ||
+        expires - day > MAX_RUNTIME_SKIP_DAYS * DAY_MS
+      )
+        throw new Error(
+          `${file}: an entry with a ticket needs an owner and an expires date at most ${MAX_RUNTIME_SKIP_DAYS} days ahead: ${JSON.stringify(entry)}`,
+        );
+      entry.expired = expires < day;
+    }
   }
   return entries;
 }
@@ -63,6 +107,19 @@ export function readRuntimeSkips(file = RUNTIME_SKIPS) {
  * The key keeps its five positions (file, identity, column, title, project):
  * qualify-topology.mjs reads the title from it.
  */
+function flowId(annotations = []) {
+  for (const entry of annotations) {
+    if (entry?.type !== "flow") continue;
+    try {
+      const id = JSON.parse(entry.description ?? "").id;
+      if (typeof id === "string") return id;
+    } catch {
+      // Not a flow annotation this harness wrote.
+    }
+  }
+  return undefined;
+}
+
 export function collectSpecs(report) {
   const specs = [];
   const walk = (suite) => {
@@ -73,6 +130,8 @@ export function collectSpecs(report) {
         const results = test.results ?? [];
         const annotations = (test.annotations ?? []).map((entry) => entry.type);
         specs.push({
+          // The catalogue id (OBS-E2E-031) from the flow annotation, if any.
+          flowId: flowId(test.annotations),
           key: JSON.stringify([
             spec.file,
             spec.id ?? spec.line,
@@ -128,19 +187,25 @@ export function checkParity(
   const allowedSkips = [];
   const usedAllowances = new Set();
   const wrongOutcome = [];
-  for (const { key, expectedStatus } of expected) {
+  // Allowances whose test ran its body and passed: the entry is out of date.
+  // A test that failed or never ran says nothing about the skip.
+  const passedAllowances = new Set();
+  for (const { key, expectedStatus, flowId } of expected) {
     const statuses = (seen.get(key) ?? []).flatMap((entry) => entry.statuses);
+    // Exact catalogue id from the independent listing, never a title substring.
+    const allowance = allowedRuntimeSkips.find((id) => id === flowId);
     if (expectedStatus === "passed" && statuses.includes("skipped")) {
-      // The key's fourth position is the test's title.
-      const allowance = allowedRuntimeSkips.find((id) =>
-        JSON.parse(key)[3].includes(id),
-      );
       if (allowance === undefined) runtimeSkipped.push(key);
       else {
         allowedSkips.push(key);
         usedAllowances.add(allowance);
       }
-    }
+    } else if (
+      allowance !== undefined &&
+      statuses.length &&
+      statuses.every((status) => status === "passed")
+    )
+      passedAllowances.add(allowance);
     if (
       !["passed", "skipped", "failed"].includes(expectedStatus) ||
       statuses.some(
@@ -195,9 +260,9 @@ export function checkParity(
     enforceRuntimeSkips,
     // Skipped at run time and listed in .runtime-skips.json for this stack.
     allowedRuntimeSkips: allowedSkips.sort(),
-    // Listed for this stack but the test ran its body: the entry is stale.
+    // Listed for this stack, and the test ran its body and passed.
     staleAllowances: allowedRuntimeSkips
-      .filter((id) => !usedAllowances.has(id))
+      .filter((id) => !usedAllowances.has(id) && passedAllowances.has(id))
       .sort(),
     listed: expected.length,
     reported: actual.length,
@@ -349,23 +414,29 @@ function main([command, ...args]) {
   if (command === "parity") {
     const stack =
       process.env.E2E_STACK === "standalone" ? "standalone" : "distributed";
+    const entries = readRuntimeSkips();
     const result = checkParity(
       read("--listed"),
       read("--merged"),
       listSpecFiles(),
       !args.includes("--phase-runtime-skips") ||
         process.env.E2E_ENFORCE_RUNTIME_SKIPS === "true",
-      readRuntimeSkips()
-        .filter((entry) => entry.stack === stack)
+      entries
+        .filter((entry) => entry.stack === stack && !entry.expired)
         .map((entry) => entry.id),
     );
+    for (const entry of entries)
+      if (entry.stack === stack && entry.expired)
+        console.log(
+          `::warning title=E2E run-time skip entry expired::${annotation(`${entry.id} expired on ${entry.expires} and no longer allows a skip (${entry.issue})`)}`,
+        );
     for (const key of result.allowedRuntimeSkips)
       console.log(
-        `::warning title=E2E test skipped itself (allowed in .runtime-skips.json)::${key}`,
+        `::warning title=E2E test skipped itself (allowed in .runtime-skips.json)::${annotation(key)}`,
       );
     for (const id of result.staleAllowances)
       console.log(
-        `::warning title=E2E run-time skip list is out of date::${id} did not skip itself on ${stack}; remove its entry from e2e/.runtime-skips.json`,
+        `::warning title=E2E run-time skip list is out of date::${annotation(`${id} ran and passed on ${stack}; remove its entry from e2e/.runtime-skips.json`)}`,
       );
     if (args.includes("--out"))
       writeFileSync(
@@ -379,7 +450,7 @@ function main([command, ...args]) {
         process.env.GITHUB_STEP_SUMMARY,
         [
           `### E2E shard parity (${process.env.E2E_STACK ?? "all"})`,
-          `Listed to pass but skipped at runtime: **${skipped.length}** (${mode}).`,
+          `Listed to pass but skipped at runtime: **${skipped.length + result.allowedRuntimeSkips.length}** (${result.allowedRuntimeSkips.length} allowed by e2e/.runtime-skips.json, ${skipped.length} unexpected; ${mode}).`,
           "",
           ...skipped.map((key) => `    ${key}`),
           "",
@@ -395,12 +466,7 @@ function main([command, ...args]) {
           kind === "runtimeSkipped" && !result.enforceRuntimeSkips
             ? "warning"
             : "error";
-        const sample = keys
-          .slice(0, 20)
-          .join(" | ")
-          .replaceAll("%", "%25")
-          .replaceAll("\r", "%0D")
-          .replaceAll("\n", "%0A");
+        const sample = annotation(keys.slice(0, 20).join(" | "));
         console.log(
           `::${level} title=E2E shard parity: ${kind}::${keys.length}: ${sample}`,
         );
