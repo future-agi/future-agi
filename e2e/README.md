@@ -656,11 +656,20 @@ the gate when the repository variable `E2E_ENFORCE_RUNTIME_SKIPS` is `true`, unl
 "YYYY-MM-DD" }`. The id must equal the id in the test's flow annotation; a title match is not
 enough. An entry that is not by design names the ticket that removes it, an owner, and an expiry
 at most 45 days ahead; after that date it no longer allows the skip. Each listed skip gets a
-warning on the run, and an entry whose test ran and passed is reported as out of date. The
-backend has the same rule for its own skips in `futureagi/.ci/runtime-skips.json`
-(`BACKEND_ENFORCE_RUNTIME_SKIPS`), as rules of a test-file glob and a full reason pattern; a skip
-is allowed only when both match, for the test path the independent inventory recorded. A rule
-can be limited to fork runs (`"runs": "oss"`) or internal runs (`"runs": "internal"`).
+warning on the run, and an entry whose test ran and passed is reported as out of date. Expiry is
+judged on the run's date, so re-running only the report job cannot change its verdict. The list is
+empty today: OBS-E2E-031 and OBS-E2E-032 skip themselves in CI (TH-10597) and count as unexpected
+skips until their bodies run.
+
+The backend has a stricter rule for its own skips in `futureagi/.ci/runtime-skips.json`
+(`BACKEND_ENFORCE_RUNTIME_SKIPS`). Each rule names the exact test files it covers, each with the
+number of tests measured to skip there, an anchored reason, the ticket that removes it, an owner
+and an expiry at most 45 days after the run date; there is no by-design exemption. A skip is
+allowed only for a listed file and a matching reason, for the test path the independent inventory
+recorded, and only up to that file's measured count. An enforced run fails on an unexpected skip
+and on a rule problem: a file over its count, an expired rule that still matches, or a rule file
+the run scheduled that matched nothing. A rule can be limited to fork runs (`"runs": "oss"`) or
+internal runs (`"runs": "internal"`).
 
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
 SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard

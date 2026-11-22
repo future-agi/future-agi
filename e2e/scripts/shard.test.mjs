@@ -27,6 +27,7 @@ import {
   fileDurations,
   readRuntimeSkips,
   receiptArtifact,
+  runDate,
   shardAttempts,
 } from "./shard-report.mjs";
 
@@ -525,12 +526,33 @@ test("the run-time skip list is strict, and the committed one is what CI measure
       .filter((entry) => entry.stack === stack)
       .map((entry) => entry.id)
       .sort();
-  // Measured on real merged reports on 22 Nov. The two Distributed-only
-  // tests are discovery-time skips on Standalone, so they need no entry.
-  assert.deepEqual(by("distributed"), ["OBS-E2E-031", "OBS-E2E-032"]);
-  assert.deepEqual(by("standalone"), ["OBS-E2E-031", "OBS-E2E-032"]);
+  // Empty on purpose: the pager tests that skip themselves in CI
+  // (OBS-E2E-031/032, TH-10597) count as unexpected skips until they run.
+  assert.deepEqual(by("distributed"), []);
+  assert.deepEqual(by("standalone"), []);
   const names = committed.map((entry) => `${entry.stack} ${entry.id}`);
   assert.equal(new Set(names).size, names.length);
+});
+
+test("skip expiry is judged on the run date, not wall time", () => {
+  assert.equal(
+    runDate({ E2E_QUARANTINE_TODAY: "2027-01-06" }).toISOString(),
+    "2027-01-06T00:00:00.000Z",
+  );
+  for (const bad of [undefined, "", "tomorrow", "2027-1-6"])
+    assert.throws(() => runDate({ E2E_QUARANTINE_TODAY: bad }), /run date/);
+  // The same entry, read on its last day and the day after.
+  const dir = mkdtempSync(path.join(tmpdir(), "e2e-run-date-"));
+  try {
+    const file = path.join(dir, "skips.json");
+    writeFileSync(file, JSON.stringify([{ id: "OBS-E2E-031", stack: "distributed", issue: "TH-1",
+      reason: "r", owner: "o", expires: "2027-01-06" }]));
+    const on = (day) => readRuntimeSkips(file, runDate({ E2E_QUARANTINE_TODAY: day }))[0].expired;
+    assert.equal(on("2027-01-06"), false);
+    assert.equal(on("2027-01-07"), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the phased parity CLI reports the same runtime skips in warning and enforced modes", (t) => {
@@ -566,6 +588,7 @@ test("the phased parity CLI reports the same runtime skips in warning and enforc
         env: {
           ...process.env,
           GITHUB_STEP_SUMMARY: summary,
+          E2E_QUARANTINE_TODAY: "2026-11-22",
           E2E_ENFORCE_RUNTIME_SKIPS: enforce ? "true" : "",
         },
       },

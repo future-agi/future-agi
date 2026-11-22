@@ -49,6 +49,18 @@ export function annotation(text) {
     .replaceAll("\n", "%0A");
 }
 
+/**
+ * The run's own date (E2E_QUARANTINE_TODAY, pinned when the run was created),
+ * never wall time: re-running only the report job cannot change which
+ * run-time skip entries have expired.
+ */
+export function runDate(env = process.env) {
+  const day = env.E2E_QUARANTINE_TODAY ?? "";
+  if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(day))
+    throw new Error("E2E_QUARANTINE_TODAY must be the run date (YYYY-MM-DD)");
+  return new Date(`${day}T00:00:00Z`);
+}
+
 export function readRuntimeSkips(file = RUNTIME_SKIPS, today = new Date()) {
   const entries = JSON.parse(readFileSync(file, "utf8"));
   if (!Array.isArray(entries)) throw new Error(`${file}: expected a list`);
@@ -441,7 +453,7 @@ function main([command, ...args]) {
   if (command === "parity") {
     const stack =
       process.env.E2E_STACK === "standalone" ? "standalone" : "distributed";
-    const entries = readRuntimeSkips();
+    const entries = readRuntimeSkips(RUNTIME_SKIPS, runDate());
     const result = checkParity(
       read("--listed"),
       read("--merged"),
