@@ -113,6 +113,16 @@ class TestExecutionUtils:
         def apply_number_any_field_filter(
             queryset, fields, op, value, transform=lambda v: v
         ):
+            if op == "is_null":
+                condition = models.Q()
+                for field in fields:
+                    condition &= models.Q(**{f"{field}__isnull": True})
+                return queryset.filter(condition)
+            if op == "is_not_null":
+                condition = models.Q()
+                for field in fields:
+                    condition |= models.Q(**{f"{field}__isnull": False})
+                return queryset.filter(condition)
             values = as_list(value)
 
             def q_for(field, lookup, val):
