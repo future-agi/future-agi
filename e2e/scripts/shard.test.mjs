@@ -281,12 +281,21 @@ test("parity passes only when every listed test has exactly one result", () => {
 });
 
 test("a report can reuse an unsuperseded cohort but not a missing or changed sibling", () => {
-  const job = (i, attempt) => ({name: `e2e (distributed, ${i}/2)`, run_attempt: attempt});
+  const job = (i, attempt) => ({
+    name: `e2e (distributed, ${i}/2)`,
+    run_attempt: attempt,
+  });
   const jobs = [job(1, 1), job(2, 1)];
   assert.equal(cohortAttempt("distributed", 2, jobs), 1);
   assert.throws(() => cohortAttempt("distributed", 2, [jobs[0]]), /missing/);
-  assert.throws(() => cohortAttempt("distributed", 2, [...jobs, job(2, 2)]), /mixed/);
-  assert.equal(cohortAttempt("distributed", 2, [...jobs, job(2, 2), job(1, 2)]), 2);
+  assert.throws(
+    () => cohortAttempt("distributed", 2, [...jobs, job(2, 2)]),
+    /mixed/,
+  );
+  assert.equal(
+    cohortAttempt("distributed", 2, [...jobs, job(2, 2), job(1, 2)]),
+    2,
+  );
 });
 
 test("parity checks the listed project and declared outcome, not just result count", () => {
@@ -298,23 +307,36 @@ test("parity checks the listed project and declared outcome, not just result cou
   for (const enforce of [false, true]) {
     const result = checkParity(report(plan), report(actual), FILES, enforce);
     assert.equal(result.ok, !enforce);
-    assert.deepEqual(result.problems.runtimeSkipped, [JSON.stringify([FILES[0], 1, 1, "one", "chromium"])]);
+    assert.deepEqual(result.problems.runtimeSkipped, [
+      JSON.stringify([FILES[0], 1, 1, "one", "chromium"]),
+    ]);
     assert.deepEqual(result.problems.wrongOutcome, []);
   }
   // Other outcomes remain blocking, even with the runtime-skip gate off.
   for (const status of ["failed", "timedOut", "interrupted"]) {
     actual.tests[0].results[0].status = status;
-    assert.equal(checkParity(report(plan), report(actual), FILES, false).ok, false);
+    assert.equal(
+      checkParity(report(plan), report(actual), FILES, false).ok,
+      false,
+    );
   }
   actual.tests[0].results[0].status = "skipped";
-  plan.tests[0].annotations = [{type: "fail"}];
-  assert.equal(checkParity(report(plan), report(actual), FILES, false).ok, false);
-  plan.tests[0].annotations = [{type: "skip", description: "not in this topology"}];
+  plan.tests[0].annotations = [{ type: "fail" }];
+  assert.equal(
+    checkParity(report(plan), report(actual), FILES, false).ok,
+    false,
+  );
+  plan.tests[0].annotations = [
+    { type: "skip", description: "not in this topology" },
+  ];
   const declared = checkParity(report(plan), report(actual), FILES);
   assert.equal(declared.ok, true);
   assert.deepEqual(declared.problems.runtimeSkipped, []);
   actual.tests[0].projectId = "different";
-  assert.equal(checkParity(report(plan), report(actual), FILES, false).ok, false);
+  assert.equal(
+    checkParity(report(plan), report(actual), FILES, false).ok,
+    false,
+  );
 });
 
 test("the phased parity CLI reports the same runtime skips in warning and enforced modes", (t) => {
@@ -322,24 +344,56 @@ test("the phased parity CLI reports the same runtime skips in warning and enforc
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const file = listSpecFiles()[0];
   const actual = spec(file, 1, "runtime skip", [0]);
-  actual.tests[0].results[0].status = actual.tests[0].expectedStatus = "skipped";
-  writeFileSync(path.join(dir, "listed.json"), JSON.stringify(report(spec(file, 1, "runtime skip", []))));
+  actual.tests[0].results[0].status = actual.tests[0].expectedStatus =
+    "skipped";
+  writeFileSync(
+    path.join(dir, "listed.json"),
+    JSON.stringify(report(spec(file, 1, "runtime skip", []))),
+  );
   writeFileSync(path.join(dir, "merged.json"), JSON.stringify(report(actual)));
   for (const enforce of [false, true]) {
     const summary = path.join(dir, `summary-${enforce}`);
-    const run = spawnSync(process.execPath, [
-      fileURLToPath(new URL("./shard-report.mjs", import.meta.url)), "parity", "--phase-runtime-skips",
-      "--listed", "listed.json", "--merged", "merged.json", "--out", "parity.json",
-    ], { cwd: dir, encoding: "utf8", env: { ...process.env,
-      GITHUB_STEP_SUMMARY: summary, E2E_ENFORCE_RUNTIME_SKIPS: enforce ? "true" : "",
-    } });
+    const run = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./shard-report.mjs", import.meta.url)),
+        "parity",
+        "--phase-runtime-skips",
+        "--listed",
+        "listed.json",
+        "--merged",
+        "merged.json",
+        "--out",
+        "parity.json",
+      ],
+      {
+        cwd: dir,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          GITHUB_STEP_SUMMARY: summary,
+          E2E_ENFORCE_RUNTIME_SKIPS: enforce ? "true" : "",
+        },
+      },
+    );
     assert.equal(run.status, enforce ? 1 : 0, run.stderr);
-    assert.match(run.stdout, enforce ? /::error .*runtimeSkipped/ : /::warning .*runtimeSkipped/);
-    const receipt = JSON.parse(readFileSync(path.join(dir, "parity.json"), "utf8"));
+    assert.match(
+      run.stdout,
+      enforce ? /::error .*runtimeSkipped/ : /::warning .*runtimeSkipped/,
+    );
+    const receipt = JSON.parse(
+      readFileSync(path.join(dir, "parity.json"), "utf8"),
+    );
     assert.equal(receipt.enforceRuntimeSkips, enforce);
     assert.equal(receipt.ok, !enforce);
-    assert.deepEqual(receipt.problems.runtimeSkipped, [JSON.stringify([file, 1, 1, "runtime skip", ""])]);
-    assert.ok(readFileSync(summary, "utf8").includes(receipt.problems.runtimeSkipped[0]));
+    assert.deepEqual(receipt.problems.runtimeSkipped, [
+      JSON.stringify([file, 1, 1, "runtime skip", ""]),
+    ]);
+    assert.ok(
+      readFileSync(summary, "utf8").includes(
+        receipt.problems.runtimeSkipped[0],
+      ),
+    );
   }
 });
 
@@ -416,17 +470,29 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
   assert.equal(parity.if, undefined);
   assert.match(parity.run, /shard-report\.mjs parity/);
   assert.match(parity.run, /--phase-runtime-skips --out shard-parity\.json/);
-  assert.equal(parity.env.E2E_ENFORCE_RUNTIME_SKIPS, "${{ vars.E2E_ENFORCE_RUNTIME_SKIPS }}");
-  assert.ok(jobs.report.steps.some((entry) => entry.uses?.startsWith("actions/upload-artifact@") &&
-    entry.with.path.split("\n").includes("e2e/shard-parity.json")));
+  assert.equal(
+    parity.env.E2E_ENFORCE_RUNTIME_SKIPS,
+    "${{ vars.E2E_ENFORCE_RUNTIME_SKIPS }}",
+  );
+  assert.ok(
+    jobs.report.steps.some(
+      (entry) =>
+        entry.uses?.startsWith("actions/upload-artifact@") &&
+        entry.with.path.split("\n").includes("e2e/shard-parity.json"),
+    ),
+  );
   assert.ok(jobs.report.steps.every((entry) => !entry["continue-on-error"]));
   assert.equal(
     jobs.report.if,
     "${{ !cancelled() && needs.changes.outputs.any == 'true' }}",
   );
   assert.deepEqual(jobs["e2e-tests"].needs, ["changes", "e2e", "report"]);
-  const metadata = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)";
-  assert.equal(jobs["e2e-tests"].name, `\${{ ${metadata} && 'E2E metadata edit' || 'E2E Tests Pass' }}`);
+  const metadata =
+    "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)";
+  assert.equal(
+    jobs["e2e-tests"].name,
+    `\${{ ${metadata} && 'E2E metadata edit' || 'E2E Tests Pass' }}`,
+  );
   assert.equal(jobs["e2e-tests"].if, `\${{ always() && !(${metadata}) }}`);
 });
 
@@ -496,10 +562,16 @@ test("the report job requires proof that the once-per-stack steps ran and passed
     "sdk-typescript",
   );
   const upload = step(jobs.e2e, "Upload the once-per-stack record");
-  assert.equal(upload.with.name, "once-per-stack-${{ matrix.stack }}-attempt-${{ github.run_attempt }}");
+  assert.equal(
+    upload.with.name,
+    "once-per-stack-${{ matrix.stack }}-attempt-${{ github.run_attempt }}",
+  );
   assert.equal(upload.with["if-no-files-found"], "error");
   // A missing record fails the download; a record with a skip fails the check.
-  const download = step(jobs.report, "Download verified shard and once-per-stack receipts");
+  const download = step(
+    jobs.report,
+    "Download verified shard and once-per-stack receipts",
+  );
   assert.equal(download.run, "node scripts/shard-report.mjs receipts");
   assert.equal(download.if, undefined);
   const check = step(
@@ -526,7 +598,7 @@ test("the report job requires proof that the once-per-stack steps ran and passed
     ]) {
       writeFileSync(
         path.join(dir, "once-per-stack", "record.json"),
-        JSON.stringify({outcomes: content}),
+        JSON.stringify({ outcomes: content }),
       );
       const run = spawnSync(
         "bash",

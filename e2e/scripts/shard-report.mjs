@@ -10,7 +10,16 @@
 //
 //   node scripts/shard-report.mjs parity --listed list.json --merged merged.json
 //   node scripts/shard-report.mjs durations --merged merged.json
-import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -24,21 +33,35 @@ export function collectSpecs(report) {
   const specs = [];
   const walk = (suite) => {
     for (const spec of suite.specs ?? []) {
-      if (!spec.tests?.length) throw new Error(`no project test at ${spec.file}:${spec.line}`);
+      if (!spec.tests?.length)
+        throw new Error(`no project test at ${spec.file}:${spec.line}`);
       for (const test of spec.tests) {
         const results = test.results ?? [];
         const annotations = (test.annotations ?? []).map((entry) => entry.type);
         specs.push({
-          key: JSON.stringify([spec.file, spec.line, spec.column, spec.title, test.projectId ?? test.projectName ?? ""]),
+          key: JSON.stringify([
+            spec.file,
+            spec.line,
+            spec.column,
+            spec.title,
+            test.projectId ?? test.projectName ?? "",
+          ]),
           file: spec.file,
           results: results.length,
           // Only the independent listing declares an intentional skip/xfail.
           // A worker changing its own expectedStatus after a runtime skip is
           // not evidence that the test was ineligible.
-          expectedStatus: annotations.some((type) => type === "skip" || type === "fixme")
-            ? "skipped" : annotations.includes("fail") ? "failed" : test.expectedStatus ?? "passed",
+          expectedStatus: annotations.some(
+            (type) => type === "skip" || type === "fixme",
+          )
+            ? "skipped"
+            : annotations.includes("fail")
+              ? "failed"
+              : test.expectedStatus ?? "passed",
           statuses: results.map((result) => result.status),
-          seconds: results.reduce((sum, result) => sum + (result.duration ?? 0), 0) / 1000,
+          seconds:
+            results.reduce((sum, result) => sum + (result.duration ?? 0), 0) /
+            1000,
         });
       }
     }
@@ -53,7 +76,12 @@ export function collectSpecs(report) {
  * shard plan divides (lib/shard.ts walks the spec roots); a listed file outside
  * it belongs to no shard.
  */
-export function checkParity(listed, merged, specFiles, enforceRuntimeSkips = true) {
+export function checkParity(
+  listed,
+  merged,
+  specFiles,
+  enforceRuntimeSkips = true,
+) {
   const expected = collectSpecs(listed);
   const actual = collectSpecs(merged);
   const expectedKeys = new Set(expected.map((spec) => spec.key));
@@ -65,9 +93,16 @@ export function checkParity(listed, merged, specFiles, enforceRuntimeSkips = tru
   const wrongOutcome = [];
   for (const { key, expectedStatus } of expected) {
     const statuses = (seen.get(key) ?? []).flatMap((entry) => entry.statuses);
-    if (expectedStatus === "passed" && statuses.includes("skipped")) runtimeSkipped.push(key);
-    if (!["passed", "skipped", "failed"].includes(expectedStatus) || statuses.some((status) =>
-      status !== expectedStatus && !(expectedStatus === "passed" && status === "skipped"))) {
+    if (expectedStatus === "passed" && statuses.includes("skipped"))
+      runtimeSkipped.push(key);
+    if (
+      !["passed", "skipped", "failed"].includes(expectedStatus) ||
+      statuses.some(
+        (status) =>
+          status !== expectedStatus &&
+          !(expectedStatus === "passed" && status === "skipped"),
+      )
+    ) {
       wrongOutcome.push(key);
     }
   }
@@ -137,44 +172,78 @@ export function fileDurations(merged) {
 // attempts yet. Reuse a complete, unsuperseded stack (e.g. a report-only
 // retry); require rerunning the cohort rather than combining unlike stacks.
 export function cohortAttempt(stack, total, jobs) {
-  if (!["distributed", "standalone"].includes(stack) || !Number.isSafeInteger(total) || total < 1)
+  if (
+    !["distributed", "standalone"].includes(stack) ||
+    !Number.isSafeInteger(total) ||
+    total < 1
+  )
     throw new Error("invalid stack plan");
   const attempts = new Set();
   for (let i = 1; i <= total; i++) {
-    const matches = jobs.filter(job => job.name === `e2e (${stack}, ${i}/${total})`)
+    const matches = jobs
+      .filter((job) => job.name === `e2e (${stack}, ${i}/${total})`)
       .sort((a, b) => b.run_attempt - a.run_attempt);
-    if (!matches.length || !Number.isSafeInteger(matches[0].run_attempt) || matches[0].run_attempt < 1)
+    if (
+      !matches.length ||
+      !Number.isSafeInteger(matches[0].run_attempt) ||
+      matches[0].run_attempt < 1
+    )
       throw new Error(`missing producer ${stack}/${i}`);
     attempts.add(matches[0].run_attempt);
   }
-  if (attempts.size !== 1) throw new Error(`mixed ${stack} producers; rerun all jobs to qualify one stack`);
+  if (attempts.size !== 1)
+    throw new Error(
+      `mixed ${stack} producers; rerun all jobs to qualify one stack`,
+    );
   return [...attempts][0];
 }
 
 function downloadReceipts(stack, total) {
   const repo = `repos/${process.env.GITHUB_REPOSITORY}/actions`;
   const run = `${repo}/runs/${process.env.GITHUB_RUN_ID}`;
-  const pages = (url, key) => JSON.parse(execFileSync("gh", ["api", "--paginate", "--slurp", url],
-    {encoding: "utf8", maxBuffer: 64 * 1024 * 1024})).flatMap(page => page[key]);
-  const attempt = cohortAttempt(stack, total, pages(`${run}/jobs?filter=all&per_page=100`, "jobs"));
+  const pages = (url, key) =>
+    JSON.parse(
+      execFileSync("gh", ["api", "--paginate", "--slurp", url], {
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+      }),
+    ).flatMap((page) => page[key]);
+  const attempt = cohortAttempt(
+    stack,
+    total,
+    pages(`${run}/jobs?filter=all&per_page=100`, "jobs"),
+  );
   const artifacts = pages(`${run}/artifacts?per_page=100`, "artifacts");
   const temp = mkdtempSync(path.join(tmpdir(), "e2e-receipts-"));
   const stream = (command, args, file) => {
     const fd = openSync(file, "wx");
-    try { execFileSync(command, args, {stdio: ["ignore", fd, "inherit"]}); }
-    finally { closeSync(fd); }
+    try {
+      execFileSync(command, args, { stdio: ["ignore", fd, "inherit"] });
+    } finally {
+      closeSync(fd);
+    }
   };
   const unpack = (name, member, target) => {
-    const matches = artifacts.filter(row => row.name === name && !row.expired);
-    if (matches.length !== 1) throw new Error(`missing or repeated receipt: ${name}`);
-    const {id, digest} = matches[0];
+    const matches = artifacts.filter(
+      (row) => row.name === name && !row.expired,
+    );
+    if (matches.length !== 1)
+      throw new Error(`missing or repeated receipt: ${name}`);
+    const { id, digest } = matches[0];
     const archive = path.join(temp, String(id));
     stream("gh", ["api", `${repo}/artifacts/${id}/zip`], archive);
-    const hash = execFileSync("sha256sum", [archive], {encoding: "utf8"}).split(" ")[0];
-    if (digest !== `sha256:${hash}`) throw new Error(`artifact ${id} digest mismatch`);
-    if (execFileSync("unzip", ["-Z1", archive], {encoding:"utf8"}).trimEnd() !== member)
+    const hash = execFileSync("sha256sum", [archive], {
+      encoding: "utf8",
+    }).split(" ")[0];
+    if (digest !== `sha256:${hash}`)
+      throw new Error(`artifact ${id} digest mismatch`);
+    if (
+      execFileSync("unzip", ["-Z1", archive], {
+        encoding: "utf8",
+      }).trimEnd() !== member
+    )
       throw new Error(`unexpected archive members in ${name}`);
-    mkdirSync(path.dirname(target), {recursive: true});
+    mkdirSync(path.dirname(target), { recursive: true });
     stream("unzip", ["-p", archive, member], target);
     console.log(`${name}: attempt ${attempt}, artifact ${id} ${digest}`);
     rmSync(archive);
@@ -182,15 +251,35 @@ function downloadReceipts(stack, total) {
   try {
     for (let i = 1; i <= total; i++) {
       const blob = `report-${i}-of-${total}.zip`;
-      unpack(`blob-report-${stack}-${i}-attempt-${attempt}`, blob, `all-blob-reports/${blob}`);
+      unpack(
+        `blob-report-${stack}-${i}-attempt-${attempt}`,
+        blob,
+        `all-blob-reports/${blob}`,
+      );
     }
-    unpack(`once-per-stack-${stack}-attempt-${attempt}`, "record.json", "once-per-stack/record.json");
-    const record = JSON.parse(readFileSync("once-per-stack/record.json", "utf8"));
-    if (record.run !== process.env.GITHUB_RUN_ID || record.sha !== process.env.GITHUB_SHA ||
-        record.stack !== stack || record.total !== total || record.attempt !== attempt ||
-        record.date !== process.env.E2E_QUARANTINE_TODAY || !/^[0-9a-f]{40}$/.test(record.sdk))
-      throw new Error("once-per-stack receipt does not match this candidate and producer");
-  } finally { rmSync(temp, {recursive: true, force: true}); }
+    unpack(
+      `once-per-stack-${stack}-attempt-${attempt}`,
+      "record.json",
+      "once-per-stack/record.json",
+    );
+    const record = JSON.parse(
+      readFileSync("once-per-stack/record.json", "utf8"),
+    );
+    if (
+      record.run !== process.env.GITHUB_RUN_ID ||
+      record.sha !== process.env.GITHUB_SHA ||
+      record.stack !== stack ||
+      record.total !== total ||
+      record.attempt !== attempt ||
+      record.date !== process.env.E2E_QUARANTINE_TODAY ||
+      !/^[0-9a-f]{40}$/.test(record.sdk)
+    )
+      throw new Error(
+        "once-per-stack receipt does not match this candidate and producer",
+      );
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
 }
 
 function option(args, name) {
@@ -210,26 +299,46 @@ function main([command, ...args]) {
       read("--listed"),
       read("--merged"),
       listSpecFiles(),
-      !args.includes("--phase-runtime-skips") || process.env.E2E_ENFORCE_RUNTIME_SKIPS === "true",
+      !args.includes("--phase-runtime-skips") ||
+        process.env.E2E_ENFORCE_RUNTIME_SKIPS === "true",
     );
-    if (args.includes("--out")) writeFileSync(option(args, "--out"), `${JSON.stringify(result, null, 2)}\n`);
+    if (args.includes("--out"))
+      writeFileSync(
+        option(args, "--out"),
+        `${JSON.stringify(result, null, 2)}\n`,
+      );
     const skipped = result.problems.runtimeSkipped;
     if (process.env.GITHUB_STEP_SUMMARY) {
       const mode = result.enforceRuntimeSkips ? "enforced" : "report-only";
-      appendFileSync(process.env.GITHUB_STEP_SUMMARY, [
-        `### E2E shard parity (${process.env.E2E_STACK ?? "all"})`,
-        `Listed to pass but skipped at runtime: **${skipped.length}** (${mode}).`,
-        "", ...skipped.map((key) => `    ${key}`), "",
-      ].join("\n"));
+      appendFileSync(
+        process.env.GITHUB_STEP_SUMMARY,
+        [
+          `### E2E shard parity (${process.env.E2E_STACK ?? "all"})`,
+          `Listed to pass but skipped at runtime: **${skipped.length}** (${mode}).`,
+          "",
+          ...skipped.map((key) => `    ${key}`),
+          "",
+        ].join("\n"),
+      );
     }
     console.log(
       `listed ${result.listed} tests in ${result.files} spec files; the shards reported ${result.reported}`,
     );
     for (const [kind, keys] of Object.entries(result.problems)) {
       if (Array.isArray(keys) && keys.length) {
-        const level = kind === "runtimeSkipped" && !result.enforceRuntimeSkips ? "warning" : "error";
-        const sample = keys.slice(0, 20).join(" | ").replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
-        console.log(`::${level} title=E2E shard parity: ${kind}::${keys.length}: ${sample}`);
+        const level =
+          kind === "runtimeSkipped" && !result.enforceRuntimeSkips
+            ? "warning"
+            : "error";
+        const sample = keys
+          .slice(0, 20)
+          .join(" | ")
+          .replaceAll("%", "%25")
+          .replaceAll("\r", "%0D")
+          .replaceAll("\n", "%0A");
+        console.log(
+          `::${level} title=E2E shard parity: ${kind}::${keys.length}: ${sample}`,
+        );
       }
     }
     if (result.problems.listedTwice)
