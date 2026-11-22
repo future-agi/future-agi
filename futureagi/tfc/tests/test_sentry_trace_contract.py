@@ -1,30 +1,13 @@
 """Check the linkage the initialized SDK sends, not just its pre-send dictionaries."""
 
-import io
-import json
 import time
 
 import pytest
 import sentry_sdk
 from sentry_sdk.tracing_utils import Baggage
-from sentry_sdk.transport import Transport
 
 from tfc.logging import sentry
-
-
-class MemoryWire(Transport):
-    def __init__(self):
-        super().__init__()
-        self.items = []
-
-    def capture_envelope(self, envelope):
-        wire = io.BytesIO(envelope.serialize())
-        headers = json.loads(wire.readline())
-        while line := wire.readline():
-            item = json.loads(line)
-            body = wire.read(item["length"])
-            assert len(body) == item["length"] and wire.read(1) == b"\n"
-            self.items.append((headers, item["type"], json.loads(body)))
+from tfc.tests.sentry_capture import MemoryWire
 
 
 def wait_samples():

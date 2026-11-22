@@ -395,6 +395,39 @@ def _entries(container: dict, key: str) -> list | tuple | None:
     return cast("list | tuple", items)
 
 
+_FRAME_TEXT_LIMIT = 256
+_FRAME_CONTEXT_LINES = 3
+
+
+def _bounded_frame(frame: dict) -> dict:
+    # Read only location and short source excerpts. A supplied frame can
+    # otherwise carry arbitrary trees, even with local-variable capture off.
+    clean: dict[str, Any] = {}
+    text_limit = min(_FRAME_TEXT_LIMIT, _MAX_TEXT)
+    for key in ("filename", "abs_path", "module", "function"):
+        value = frame.get(key)
+        if type(value) is str and len(value) <= text_limit:
+            clean[key] = value
+    for key in ("lineno", "colno"):
+        value = frame.get(key)
+        if type(value) is int and 0 <= value < 2**31:
+            clean[key] = value
+    if type(frame.get("in_app")) is bool:
+        clean["in_app"] = frame["in_app"]
+    line = frame.get("context_line")
+    if type(line) is str and len(line) <= text_limit:
+        clean["context_line"] = _scrub_text(line)
+    width = min(_FRAME_CONTEXT_LINES, _MAX_ITEMS)
+    for key in ("pre_context", "post_context"):
+        lines = frame.get(key)
+        if type(lines) not in (list, tuple) or not width:
+            continue
+        excerpt = lines[-width:] if key == "pre_context" else lines[:width]
+        if all(type(line) is str and len(line) <= text_limit for line in excerpt):
+            clean[key] = [_scrub_text(line) for line in excerpt]
+    return clean
+
+
 def _scrub_frames(event: dict) -> str | None:
     """Return a safe replacement for text from sensitive or incomplete stacks."""
     remaining = _MAX_FRAMES
@@ -418,21 +451,17 @@ def _scrub_frames(event: dict) -> str | None:
         # Check width and the event-wide budget *before* touching any frame.
         # Charge malformed lists too; never collect an SDK frame iterator here.
         frames = stack.get("frames")
-        if (
-            frames is None
-            or type(frames) not in (list, tuple)
-            or len(frames) > min(_MAX_ITEMS, remaining)
-        ):
-            stack.pop("frames", None)
+        owner["stacktrace"] = {}
+        if type(frames) not in (list, tuple) or len(frames) > min(_MAX_ITEMS, remaining):
             complete = False
             return
         remaining -= len(frames)
+        bounded = []
         for frame in frames:
             if type(frame) is not dict:
-                stack.pop("frames")
                 complete = False
                 return
-            frame.pop("vars", None)
+            bounded.append(_bounded_frame(frame))
             module, function = frame.get("module"), frame.get("function")
             if _vertex_auth_frame(module, function):
                 replacement = _VERTEX_SAFE_MESSAGE
@@ -441,6 +470,7 @@ def _scrub_frames(event: dict) -> str | None:
                 # traceback. The latter has no logger; neither needs its text.
                 if (module, function) in _INGESTION_FRAMES:
                     replacement = _REDACTED
+        owner["stacktrace"]["frames"] = bounded
 
     inspect_stack(event)
     for section in ("exception", "threads"):
@@ -688,6 +718,29 @@ def _scrub_request(event: dict) -> None:
     event["request"] = clean
 
 
+def _scrub_request_log(event: dict, record: object) -> None:
+    # The formatted middleware record has its own copy of the literal target.
+    # Keep the lifecycle event, numeric status and already-scrubbed route. Do
+    # not parse the rendered log or change the record used by other handlers.
+    fields = getattr(record, "msg", None)
+    label = "HTTP request"
+    if type(fields) is dict:
+        name = fields.get("event")
+        if type(name) is str and name in (
+            "request_started", "request_finished", "request_failed"
+        ):
+            label = name
+        status = fields.get("code")
+        if type(status) is int and 100 <= status <= 599:
+            event.setdefault("extra", {})["status_code"] = status
+    route = event.get("request", {}).get("url", "unresolved request")
+    summary = f"{label}: {route}"
+    if "message" in event:
+        event["message"] = summary
+    if "logentry" in event:
+        event["logentry"] = {"message": summary}
+
+
 def _scrub_extra(event: dict, grpc_logger: bool) -> None:
     # Framework extras include the raw protobuf request. Keep only validated
     # counts and protocol status, even when the failure precedes the receiver.
@@ -722,6 +775,8 @@ def _scrub_event(
             event[key] = _scrub_text(event[key])
     _scrub_request(event)
     _scrub_extra(event, grpc_logger)
+    if event.get("logger") == "django_structlog.middlewares.request":
+        _scrub_request_log(event, log_record)
 
     replacement = _scrub_frames(event)
     if vertex_log:

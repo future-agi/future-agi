@@ -256,7 +256,11 @@ def _create_real_activity(activity_name: str, sync_wrapper: Callable) -> Callabl
             return {"result": result, "status": "completed"}
 
         except Exception as e:
-            activity.logger.error(f"Activity '{activity_name}' FAILED: {str(e)}")
+            # The interceptor captures the traceback. This separate log event
+            # needs the registered name and outcome, not task-supplied text.
+            activity.logger.error(
+                f"Activity '{activity_name}' FAILED ({type(e).__name__})"
+            )
             raise
 
     return activity_wrapper
