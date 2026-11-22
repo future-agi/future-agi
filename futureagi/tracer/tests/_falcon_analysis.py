@@ -55,16 +55,15 @@ def tool_chunk(index, name, params):
     return {"choices": [{"delta": {"tool_calls": [call]}, "finish_reason": "tool_calls"}]}
 
 
-def install_tool_stream(monkeypatch, *tool_calls, fail_after_tool=False, finish="stop"):
-    from ee.falcon_ai.llm_client import FalconLLMClient
+def scripted_tool_stream(*tool_calls, fail_after_tool=False, finish="stop"):
+    """Synthetic provider scenario; a held entrypoint must never request a turn."""
+    turns = iter(enumerate(tool_calls))
 
-    calls = []
-
-    async def stream(self, messages, tools=None):
-        index = len(calls)
-        calls.append(list(messages))  # The real loop mutates the list for its next turn.
-        if index < len(tool_calls):
-            yield tool_chunk(index, *tool_calls[index])
+    async def stream(messages, tools=None):
+        turn = next(turns, None)
+        if turn is not None:
+            index, call = turn
+            yield tool_chunk(index, *call)
         elif fail_after_tool:
             raise httpx.RemoteProtocolError("Interrupted after scoring")
         else:
@@ -72,8 +71,7 @@ def install_tool_stream(monkeypatch, *tool_calls, fail_after_tool=False, finish=
                 "choices": [{"delta": {"content": "Finished."}, "finish_reason": finish}]
             }
 
-    monkeypatch.setattr(FalconLLMClient, "stream_completion", stream)
-    return calls
+    return stream
 
 
 def score_params(trace_id):
