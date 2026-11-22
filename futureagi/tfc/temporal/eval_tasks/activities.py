@@ -11,12 +11,16 @@ import asyncio
 import time
 
 import structlog
-from django.db import close_old_connections
+from django.db import close_old_connections, connection
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tfc.telemetry import otel_sync_to_async
 from tfc.temporal.common.heartbeat import Heartbeater
+from tfc.temporal.eval_tasks.db_errors import (
+    database_control_activity,
+    database_control_errors,
+)
 from tfc.temporal.eval_tasks.types import (
     ClaimBatchInput,
     ClaimBatchOutput,
@@ -147,7 +151,27 @@ def _claim_batch_sync(task_id: str, n: int) -> dict:
 
         task = EvalTask.objects.get(id=task_id)
         _require_instant_eval_license(task)
-        entries = claim_pending_batch(task, n)
+        # claim_pending_batch uses transaction.atomic() on the default writer.
+        # A failure opening that connection cannot have claimed any entries.
+        # Once SQL is submitted, conservatively treat a lost reply as uncertain,
+        # including a disconnect while committing after the UPDATE succeeds.
+        submitted = False
+
+        def track_submission(execute, sql, params, many, context):
+            nonlocal submitted
+            submitted = True
+            return execute(sql, params, many, context)
+
+        with (
+            database_control_errors(
+                task_id=str(task_id),
+                control_activity="claim_eval_batch_activity",
+                claim=True,
+                claim_submitted=lambda: submitted,
+            ),
+            connection.execute_wrapper(track_submission),
+        ):
+            entries = claim_pending_batch(task, n)
         return {"entry_ids": [str(e.id) for e in entries]}
     finally:
         close_old_connections()
@@ -175,7 +199,8 @@ def _run_entry_sync(entry_id: str) -> dict:
         from tracer.services.eval_tasks.run_entry import run_entry
 
         with eval_ch_guardrails():
-            entry = EvalLogger.objects.filter(id=entry_id).first()
+            # Primary: the workflow claimed this entry moments ago.
+            entry = EvalLogger.objects.using("default").filter(id=entry_id).first()
             if entry is None:
                 return {"entry_id": str(entry_id), "task_id": "", "status": "deleted"}
             if _task_paused(entry.eval_task_id):
@@ -229,12 +254,19 @@ def _fail_entry_sync(entry_id: str) -> dict:
         from tracer.services.eval_tasks.config_hash import resolved_config_hash
         from tracer.services.eval_tasks.entries import mark_terminal
 
-        entry = EvalLogger.objects.filter(
-            id=entry_id, status=EvalEntryStatus.RUNNING
-        ).first()
+        # Primary: the claim this fences on was written moments ago.
+        entry = (
+            EvalLogger.objects.using("default")
+            .filter(id=entry_id, status=EvalEntryStatus.RUNNING)
+            .first()
+        )
         if entry is None:
             return {"entry_id": str(entry_id), "status": "noop"}
-        config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
+        # Primary, as run_entry reads it: stamp the hash of the config the
+        # failed run used, not an older one a lagging replica still holds.
+        config = CustomEvalConfig.objects.using("default").get(
+            id=entry.custom_eval_config_id
+        )
         landed = mark_terminal(
             entry,
             EvalEntryStatus.ERRORED,
@@ -286,7 +318,10 @@ def _requeue_lost_entry_sync(entry_id: str) -> dict:
                     "entry_id": str(entry_id),
                     "status": str(EvalEntryStatus.PENDING),
                 }
-            config = CustomEvalConfig.objects.get(id=entry.custom_eval_config_id)
+            # Primary, as run_entry reads it, for the hash stamped below.
+            config = CustomEvalConfig.objects.using("default").get(
+                id=entry.custom_eval_config_id
+            )
             mark_terminal(
                 entry,
                 EvalEntryStatus.ERRORED,
@@ -399,7 +434,9 @@ def _get_workflow_labels_sync(task_id: str) -> dict:
         )
         project = task.project
         org = getattr(project, "organization", None)
-        eval_count = task.evals.count()
+        # Primary: the workflow reads its labels as it starts, right after the
+        # request that set the task's evals.
+        eval_count = task.evals.using("default").count()
         config_summary = (
             f"row_type={task.row_type}, sampling={task.sampling_rate}, "
             f"limit={task.spans_limit}, evals={eval_count}"
@@ -452,15 +489,41 @@ def _set_task_status_sync(
     """
     close_old_connections()
     try:
+        from django.db.models import Case, Value, When
+        from django.db.models.functions import Coalesce, Greatest, Least
         from django.utils import timezone
 
         from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
 
+        now = timezone.now()
         fields: dict = {"status": status}
         if status == EvalTaskStatus.RUNNING:
-            fields["start_time"] = timezone.now()
+            # Continuous start_time is its acceptance/activation floor, not
+            # worker startup time. Creation falls back to created_at; a
+            # conversion, or an explicit rerun that resets the cursor, persists
+            # a new start_time in its edit transaction. Preserve it (and any
+            # partial cursor) through outages, restarts and resumes. Without a
+            # cursor, a row saved before that floor was persisted starts no
+            # earlier than its last acceptance: ``continuous_coverage_floor``,
+            # in SQL so the guarded transition stays a single UPDATE.
+            fields["start_time"] = Case(
+                When(
+                    run_type=RunType.CONTINUOUS,
+                    continuous_cursor__isnull=True,
+                    last_run__isnull=False,
+                    then=Greatest(
+                        Coalesce("start_time", "created_at"),
+                        Least("last_run", Value(now)),
+                    ),
+                ),
+                When(
+                    run_type=RunType.CONTINUOUS,
+                    then=Coalesce("start_time", "created_at"),
+                ),
+                default=Value(now),
+            )
         elif status in (EvalTaskStatus.COMPLETED, EvalTaskStatus.FAILED):
-            fields["end_time"] = timezone.now()
+            fields["end_time"] = now
 
         qs = EvalTask.objects.filter(id=task_id)
         if expected_status is not None:
@@ -550,6 +613,7 @@ async def _busy_wait(seconds: float) -> None:
 
 
 @activity.defn
+@database_control_activity()
 async def reconcile_eval_task_activity(
     input: ReconcileActivityInput,
 ) -> ReconcileActivityOutput:
@@ -617,6 +681,7 @@ async def reconcile_eval_task_activity(
 
 
 @activity.defn
+@database_control_activity()
 async def claim_eval_batch_activity(input: ClaimBatchInput) -> ClaimBatchOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_claim_batch_sync, thread_sensitive=False)(
@@ -664,6 +729,7 @@ async def requeue_lost_eval_entry_activity(input: RunEntryInput) -> RunEntryOutp
 
 
 @activity.defn
+@database_control_activity()
 async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_reap_sync, thread_sensitive=False)(
@@ -683,6 +749,7 @@ async def reap_stale_running_activity(input: ReapInput) -> ReapOutput:
 
 
 @activity.defn
+@database_control_activity()
 async def get_eval_task_state_activity(input: TaskStateInput) -> TaskStateOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(_get_task_state_sync, thread_sensitive=False)(
@@ -697,6 +764,7 @@ async def get_eval_task_state_activity(input: TaskStateInput) -> TaskStateOutput
 
 
 @activity.defn
+@database_control_activity()
 async def get_workflow_labels_activity(
     input: WorkflowLabelsInput,
 ) -> WorkflowLabelsOutput:
@@ -708,6 +776,7 @@ async def get_workflow_labels_activity(
 
 
 @activity.defn
+@database_control_activity()
 async def requeue_eval_entries_activity(
     input: RequeueEntriesInput,
 ) -> RequeueEntriesOutput:
@@ -719,6 +788,7 @@ async def requeue_eval_entries_activity(
 
 
 @activity.defn
+@database_control_activity()
 async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutput:
     async with Heartbeater():
         result = await otel_sync_to_async(
@@ -726,9 +796,11 @@ async def set_eval_task_status_activity(input: SetStatusInput) -> SetStatusOutpu
         )(input.task_id, input.status, input.expected_status)
     if result["failed_continuous"]:
         info = activity.info()
-        await notify_eval_task_failed(
-            result["task_id"], info.workflow_id, info.workflow_run_id
-        )
+        # Always set here: this activity only runs inside the eval-task workflow.
+        if info.workflow_id is not None and info.workflow_run_id is not None:
+            await notify_eval_task_failed(
+                result["task_id"], info.workflow_id, info.workflow_run_id
+            )
     return SetStatusOutput(
         task_id=result["task_id"],
         changed=result["changed"],

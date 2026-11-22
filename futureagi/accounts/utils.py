@@ -386,8 +386,8 @@ def first_signup(data, mode=None, telemetry_source="web", *, seed_demo_data=True
                 organization=organization, type="system"
             )
             transaction.on_commit(
-                lambda key_id=system_key.id, org_id=organization.id: _record_signup_api_key_event(
-                    key_id, org_id
+                lambda key_id=system_key.id, org_id=organization.id: (
+                    _record_signup_api_key_event(key_id, org_id)
                 )
             )
         # The intent and account commit together. Only the E2E image's explicit
@@ -404,8 +404,8 @@ def first_signup(data, mode=None, telemetry_source="web", *, seed_demo_data=True
             )
 
         transaction.on_commit(
-            lambda user_id=user.id, source=telemetry_source: _fire_deployment_telemetry_registration(
-                user_id, source
+            lambda user_id=user.id, source=telemetry_source: (
+                _fire_deployment_telemetry_registration(user_id, source)
             )
         )
         return user
@@ -707,21 +707,23 @@ def send_hubspot_notification(user):
         logger.info("Contact Created Successfully in HubSpot")
         updated = True
     except requests.exceptions.RequestException as e:
-        logger.error(
-            f"Failed to Create Contact in HubSpot: {str(e)}, Response: {response_text}"
-        )
-
         # Only attempt to update if contact already exists (409 Conflict)
         # Other errors (auth, validation, etc.) should not trigger an update attempt
         should_try_update = response is not None and response.status_code == 409
 
         if not should_try_update:
+            logger.error(
+                f"Failed to Create Contact in HubSpot: {str(e)}, Response: {response_text}"
+            )
             err = f"Create failed: {str(e)}, Response: {response_text}"
             return updated, err
 
         if not hubspot_is_configured("HUBSPOT_UPDATE_URL"):
+            logger.error("hubspot_contact_update_not_configured", status_code=409)
             err = f"Create failed: {str(e)}, and HUBSPOT_UPDATE_URL is not set"
             return updated, err
+
+        logger.info("hubspot_contact_exists", status_code=409, action="update")
 
         update_contact = {
             "properties": {

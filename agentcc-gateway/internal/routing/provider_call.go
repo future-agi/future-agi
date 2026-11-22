@@ -20,6 +20,27 @@ type admissionRefusal struct{ api *models.APIError }
 func (e *admissionRefusal) Error() string { return e.api.Error() }
 func (e *admissionRefusal) Unwrap() error { return e.api }
 
+// A dispatch rejection is a local policy decision for the selected request,
+// not a provider response and not a circuit refusal to try another target.
+// Keep its API error for presentation, even if its status is normally retryable.
+type dispatchRejection struct{ api *models.APIError }
+
+func (e *dispatchRejection) Error() string { return e.api.Error() }
+func (e *dispatchRejection) Unwrap() error { return e.api }
+
+func RejectDispatch(api *models.APIError) error { return &dispatchRejection{api: api} }
+
+func DispatchRejection(err error) *models.APIError {
+	if err == nil {
+		return nil
+	}
+	var rejected *dispatchRejection
+	if errors.As(err, &rejected) {
+		return rejected.api
+	}
+	return nil
+}
+
 func CircuitOpenError() error {
 	return &admissionRefusal{api: &models.APIError{
 		Status: 503, Type: models.ErrTypeServer, Code: "circuit_open",

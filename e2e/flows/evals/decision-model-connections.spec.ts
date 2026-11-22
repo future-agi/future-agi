@@ -159,6 +159,9 @@ test('EVAL-E2E-012: a decision evaluator runs through the chosen direct or OpenR
       expect((await publish).status()).toBe(200);
       await ui(page).toHaveURL(new RegExp(`/dashboard/evaluations/${id}$`));
       await ui(page.getByText(`${LABEL} · OpenAI`, { exact: true })).toBeVisible();
+      // EvalDetailPage's action distinguishes the saved editor from the creation
+      // screen: the URL and shared model label can update before Monaco remounts.
+      await ui(page.getByRole('button', { name: 'Save Version', exact: true })).toBeVisible();
     }, { timeout: UI_READY });
     await test.step('backend check3: native template and version store the exact criteria and scope', async () => {
       const rows = await scopeProbe.pg<Stored>('SELECT model,config,organization_id,workspace_id FROM model_hub_evaltemplate WHERE id=$1', [id]);

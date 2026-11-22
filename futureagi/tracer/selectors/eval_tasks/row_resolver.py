@@ -23,7 +23,9 @@ from functools import partial
 from math import ceil
 from typing import TYPE_CHECKING, Any
 
+from tfc.routers import primary_required
 from tracer.models.eval_task import RowType, RunType
+from tracer.services.clickhouse.query_builders.session_list import ResolvedSpanSource
 from tracer.services.clickhouse.read_budget import (
     is_clickhouse_query_error,
     is_read_budget_error,
@@ -204,17 +206,22 @@ def _eval_config_ids_for_filters(
     from tracer.models.custom_eval_config import CustomEvalConfig
 
     try:
+        # Primary: a config created or deleted moments ago changes the fence,
+        # and the reconcile pass that consumes it advances the task cursor.
         return tuple(
             str(config_id)
             for config_id in CustomEvalConfig.objects.filter(
                 project_id=project_id,
                 deleted=False,
-            ).values_list("id", flat=True)
+            )
+            .using("default")
+            .values_list("id", flat=True)
         )
     except DatabaseError:
         raise EvalTaskReadBudgetExceeded(_SAFE_EVAL_METADATA_MESSAGE) from None
 
 
+@primary_required
 def _eval_filter_metadata_for_filters(
     project_id: str,
     ui_filters: list[dict[str, Any]],
@@ -225,6 +232,12 @@ def _eval_filter_metadata_for_filters(
     builders' compatibility fallback. An explicit mapping is authoritative;
     each malformed or project-external identifier is represented by a known
     empty config set and therefore remains a deterministic no-match.
+
+    Runs on the primary: the frozen metadata decides which rows the pass
+    materializes before the cursor moves past them, so a config the user just
+    created must not read as a no-match from a lagging replica. Ordinary
+    filter browsing calls ``resolve_eval_filter_metadata`` directly and stays
+    replica-eligible.
     """
 
     eval_ids_in_order: list[str] = []
@@ -1671,6 +1684,7 @@ def _build_sample_query(
     created_at_floor: datetime | None = None,
     created_at_ceiling: datetime | None = None,
     source_table: str | None = None,
+    resolved_source: ResolvedSpanSource | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Sampled-row-ids SQL for the row_type: take the UI list builder's filtered
     id set and wrap it with deterministic hash sampling, a stable order, and the
@@ -1742,7 +1756,19 @@ def _build_sample_query(
     # Continuous bounds are passed directly to ``build_id_query`` so they bind
     # on arrival time (``created_at``). Injecting the floor into ``ui_filters``
     # would make ``parse_time_range`` apply it to historical ``start_time``.
-    builder = get_v2_class(query_type)(project_id=str(project_id), filters=ui_filters)
+    source_kwargs = {}
+    if resolved_source is not None:
+        if (
+            resolved_source is not ResolvedSpanSource.SAMPLING
+            or source_table is not None
+        ):
+            raise ValueError("Unsupported resolved sampling source")
+        source_table = resolved_source.value
+        if row_type == RowType.SESSIONS:
+            source_kwargs["resolved_source"] = resolved_source
+    builder = get_v2_class(query_type)(
+        project_id=str(project_id), filters=ui_filters, **source_kwargs
+    )
     if source_table is not None:
         if source_table != "sampling_source":
             raise ValueError("Unsupported internal sampling source")

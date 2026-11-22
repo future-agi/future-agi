@@ -29,12 +29,20 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 │      └── CDC mirrors PG→CH: tracer_eval_logger, model_hub_score, datasets,       │
 │          prompts, simulate, usage_apicalllog …                                   │
 │                                                                                 │
-│  deliberately NOT started: serving · code-executor · sized workers · peerdb-ui   │
+│  deliberately NOT started: serving · sized workers · peerdb-ui   │
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Because code-executor is not started, `e2e/stack/e2e.env` sets `CODE_EXECUTOR_LOCAL_FALLBACK=true` so
-code evals run in the worker instead of failing with "Code executor unavailable".
+The distributed harness starts the dedicated `code-executor` and sets
+`CODE_EXECUTOR_LOCAL_FALLBACK=false`; it never executes evaluator code in a worker.
+`EVAL-E2E-016` uses the shipped templates and an owned HTTP listener. The executor
+only joins internal Docker networks, with no default route. `allowed.example`
+resolves to the listener at public-numbered `11.23.0.10` **inside that network**,
+not on the internet. `private.example` resolves to its private interface and is
+operator-listed to prove that admission cannot override the public-IP rule.
+The listener never makes outbound requests. Its loopback-only journal is at
+`http://127.0.0.1:28082/requests?prefix=...` (`E2E_LINK_CANARY_URL` in attach mode).
+Redirects point only to that owned private interface. No real third party is contacted.
 
 Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
 `http://localhost:28081/messages`. They seed issue transitions through the authenticated
@@ -189,7 +197,8 @@ production images CI and users run:
 bin/e2e build backend     # futureagi/future-agi:e2e-local   (futureagi/Dockerfile.oss, context futureagi/)
 bin/e2e build frontend    # futureagi/frontend:e2e-local     (context frontend/)
 bin/e2e build collector   # futureagi/fi-collector:e2e-local (context fi-collector/)
-bin/e2e build all         # all three
+bin/e2e build executor    # futureagi/code-executor:e2e-local (futureagi/code-executor/)
+bin/e2e build all         # all four
 ```
 
 Each build prints the line to run next; the stack picks the images up through these variables:
@@ -199,10 +208,11 @@ Each build prints the line to run next; the stack picks the images up through th
 | `backend`    | `FUTURE_AGI_VERSION=e2e-local`       | the `worker` container |
 | `frontend`   | `FRONTEND_VERSION=e2e-local`         | —                      |
 | `collector`  | `E2E_FI_COLLECTOR_VERSION=e2e-local` | observation consumer   |
+| `executor`   | `CODE_EXECUTOR_VERSION=e2e-local`    | —                      |
 
 ```bash
 bin/e2e build all
-FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local bin/e2e up
+FUTURE_AGI_VERSION=e2e-local FRONTEND_VERSION=e2e-local E2E_FI_COLLECTOR_VERSION=e2e-local CODE_EXECUTOR_VERSION=e2e-local bin/e2e up
 bin/e2e test
 ```
 
@@ -546,6 +556,11 @@ Quarantine lives in `e2e/.quarantine.json`, a flat array whose entry shape match
   not a parking space.
 - The loader **fails open**: if the file is missing or unparseable it warns and quarantines nothing,
   because a broken JSON file must not be able to silently disable the suite.
+- **Check the spec's recent history before adding an entry.** A flow that failed last week may
+  have been fixed since; an entry for a flow that passes only removes coverage. Count failures on
+  unrelated changes only: a flow that fails on the branch that is changing it is not flaky.
+- Quarantine works the same in every shard, and the shard parity check leaves quarantined flows
+  out of both the listing and the results.
 
 Two escape hatches, both environment variables read by `lib/quarantine.ts`:
 
@@ -564,13 +579,15 @@ passing the live-LLM filter on the command line would silently un-quarantine eve
 ## CI
 
 `.github/workflows/e2e-ci.yml` runs on PRs to and pushes on `dev`/`main`, plus merge queue entries.
-A `changes` job decides, per image, whether to build from the PR's code (tagged `:e2e-ci`) or use the
-released `:latest` — so a frontend-only PR does not rebuild the backend. The job then checks the flow
-catalog, boots the stack with `bin/e2e up`, runs `bin/e2e test`, and always uploads the Playwright
-HTML report (7-day retention); on failure it dumps `bin/e2e ps` and the last 200 log lines. The
-`E2E Tests Pass` gate fails closed unless every dependency succeeded or was legitimately skipped.
+The suite runs as six shards per stack (see [Shards](#shards) below). Each shard builds the images
+from the PR's code (tagged `:e2e-ci`) with the registry layer cache, boots its own stack with
+`bin/e2e up` and runs its share of the spec files with `bin/e2e test`; on failure it dumps
+`bin/e2e ps` and the last 200 log lines and uploads its own Playwright report. A `report` job then
+merges every shard's results into the one Playwright HTML report (7-day retention) and proves that
+the shards together ran the whole suite. The `E2E Tests Pass` gate fails closed unless every
+dependency, the report job included, succeeded or was legitimately skipped.
 
-After the Playwright suite, the same job runs the SDK live suites from
+After the Playwright suite, the last shard runs the SDK live suites from
 [futureagi-sdk](https://github.com/future-agi/futureagi-sdk) against the stack it booted, on every
 PR and push: `python/tests/platform` calls every operation of the generated Python client and
 `src/platform/__tests__/live.test.ts` covers the TypeScript transport, so a backend change that
@@ -594,9 +611,66 @@ and checks four things: the install stays on the Distributed setup
 run the head commit's `:local` images, the first account still signs in, and the trace is still
 there.
 
-**Wall time in CI has not been measured yet** — the job has never run on a real PR. Record it on the
-first run and put the number here; the hard timeout is 90 minutes and the boot budgets above are the
-laptop-measured ones.
+### Shards
+
+`E2E_SHARD=k/N` makes `bin/e2e test` run one of `N` shares of the spec files. CI sets it per matrix
+leg (`E2E_SHARDS` in the workflow, currently 6); it works locally too:
+
+```bash
+E2E_SHARD=2/6 bin/e2e test     # the second of six shares
+```
+
+The split balances **measured time**, not test count (`lib/shard.ts`). Playwright's own `--shard`
+splits by count in file order. Most tests here are harness tests that take almost no time, so
+`--shard=1/4` would keep nearly every flow, and nearly all of the run time, in the first shard.
+The plan gives each spec file its recorded time from `e2e/.test-durations.json`, places the longest
+files first, each into the least loaded shard, and is a pure function of the checkout: every shard
+of a run computes the same split, and a re-run repeats it. A spec without a recorded time (a new
+flow) counts as the median file, so it runs at once. One very long flow fills a shard by itself;
+no number of shards makes a run shorter than its longest flow.
+
+What sets the shard count: every shard pays a fixed cost before its first test (image build, pulls,
+and the stack boot, most of which is the database migrate). Measured on the standard GitHub
+runners in November 2026:
+
+- Unsharded, the suite took about 90 minutes.
+- With four shards a shard took 36 to 48 minutes, because one flow waited out a 30-minute product
+  default.
+- That flow now gives its own project a five-minute settle (`lib/metric-settle.ts`). It asserts
+  that the value is reported as not final while the conversations are open, and that it becomes
+  final no earlier than five minutes after their last arrival. A backend unit test pins the
+  30-minute default.
+- With six shards a shard takes about 20 to 30 minutes, 11 to 15 of them fixed cost (the boot
+  alone varied from 7 to 11), and `E2E Tests Pass` reports a little over 30 minutes after the push.
+
+**Parity is a gate, not an assumption.** The `report` job lists the suite without `E2E_SHARD` and
+compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
+test has no result in any shard, ran in two shards, never started, or when a shard reported a test
+the listing does not have. Quarantined and `@live-llm` flows are out of both sides.
+
+Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
+SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
+uploads a record of those steps' outcomes, and the `report` job fails without a record that says
+all of them passed, so they cannot be skipped on every shard unseen. A manual run with
+`host_update_fallibility` stays unsharded.
+
+`E2E Tests Pass` passes in two cases only: every shard and the `report` job succeeded, or the
+`changes` job found nothing that needs the suite. A skipped `report` job does not pass.
+
+To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
+artifact of a green run and regenerate the recorded times:
+
+```bash
+node scripts/shard-report.mjs durations --merged merged-report.json   # rewrites .test-durations.json
+```
+
+### Why the E2E stack still migrates from zero
+
+Backend CI restores a cached dump of a migrated database in its pytest shards
+(`futureagi/.ci/db_dump.py`). The E2E stacks do not, on purpose. The stack's Postgres also holds
+Temporal's own tables, and a migration registers Temporal search attributes while it runs. A
+restored database would skip that registration, or carry another job's Temporal state. Every
+shard therefore boots the way an install does: `manage.py migrate` on an empty database.
 
 ---
 
@@ -630,14 +704,14 @@ at the original spec path so relative fixtures/contracts still resolve. All anch
 for uniqueness before edits. The spec's annotation, `@flow`, seeding, authentication, 240s timeout
 and ordinary `UI_READY=60s` remain unchanged.
 
-| Check | One-sided perturbation | Required failure evidence |
-| --- | --- | --- |
-| 1 | First API candidate expectation A → B; seed stays A | Expected minted B / received minted A at that assertion |
-| 2 | Only first available-version UI expected array A → B | Exact locator and expected B / displayed A array diff; only this mutant expect uses 1s, below its unchanged 60s step |
-| 3 | Second API candidate expectation B → A; atomic replacement stays B | Expected minted A / received minted B after replacement |
-| 4 | Omit owned report deletion; keep `ownsStatus=true` | Unchanged unavailable API expectation rejects available snapshot B; original `finally` still cleans its own file |
-| 5a | Only POST's expected status 405 → 200 | POST expected 200 / received 405 |
-| 5b | Anonymous GET's expected status 401 → 200 | Expected 200 / received 401, after unchanged method checks |
+| Check | One-sided perturbation                                             | Required failure evidence                                                                                            |
+| ----- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| 1     | First API candidate expectation A → B; seed stays A                | Expected minted B / received minted A at that assertion                                                              |
+| 2     | Only first available-version UI expected array A → B               | Exact locator and expected B / displayed A array diff; only this mutant expect uses 1s, below its unchanged 60s step |
+| 3     | Second API candidate expectation B → A; atomic replacement stays B | Expected minted A / received minted B after replacement                                                              |
+| 4     | Omit owned report deletion; keep `ownsStatus=true`                 | Unchanged unavailable API expectation rejects available snapshot B; original `finally` still cleans its own file     |
+| 5a    | Only POST's expected status 405 → 200                              | POST expected 200 / received 405                                                                                     |
+| 5b    | Anonymous GET's expected status 401 → 200                          | Expected 200 / received 401, after unchanged method checks                                                           |
 
 Each child invokes the installed Playwright CLI on only the original file, with one worker,
 zero retries, one repetition, `--forbid-only`, the existing config and JSON-only reporting. It

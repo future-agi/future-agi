@@ -316,7 +316,7 @@ func TestProbeModelFallbackCancellationAndProvenance(t *testing.T) {
 				cancel()
 			}
 			calls := 0
-			err := h.callModelFallbacks(ctx, rc, nil, first, true, func(providers.Provider) error {
+			err := h.callModelFallbacks(ctx, rc, nil, rc.Request.Model, first, true, func(providers.Provider) error {
 				calls++
 				if mode == "between" {
 					cancel()
@@ -351,7 +351,7 @@ func TestProbeFallbackCandidateCredentialEligibility(t *testing.T) {
 	h.modelFallbacks.Store(routing.NewModelFallbacks(map[string][]string{"m": {"fallback"}}))
 	first := routing.CircuitOpenError()
 	calls := 0
-	err := h.callModelFallbacks(context.Background(), rc, &tenant.OrgConfig{}, first, false, func(providers.Provider) error { calls++; return nil })
+	err := h.callModelFallbacks(context.Background(), rc, &tenant.OrgConfig{}, rc.Request.Model, first, false, func(providers.Provider) error { calls++; return nil })
 	if err != first || calls != 0 || p.calls != 0 {
 		t.Fatal("fallback refusal introduced operator credentials for an org-only caller")
 	}
@@ -458,5 +458,25 @@ func TestDirectBreakerAdmissionCompatibility(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestProbeModelFallbackStopsAtInspectionRejection(t *testing.T) {
+	h, _ := reconciliationHandler(t)
+	rc := reconciliationRC(t)
+	h.modelFallbacks.Store(routing.NewModelFallbacks(map[string][]string{"m": {"fallback", "m"}}))
+	rejected := models.ErrServiceUnavailable("synthetic inspection refusal")
+	calls := 0
+	call := func(providers.Provider) error {
+		calls++
+		return routing.RejectDispatch(rejected)
+	}
+	initial := routing.CircuitOpenError()
+	if err := h.callModelFallbacks(context.Background(), rc, nil, rc.Request.Model, initial, false, call); err != rejected || calls != 1 {
+		t.Fatalf("inspection on fallback: err=%v calls=%d, want original inspection rejection after one candidate", err, calls)
+	}
+	calls = 0
+	if err := h.callModelFallbacks(context.Background(), rc, nil, rc.Request.Model, routing.RejectDispatch(rejected), true, call); err != rejected || calls != 0 {
+		t.Fatalf("inspection on primary: err=%v calls=%d, want original inspection rejection without fallback", err, calls)
 	}
 }

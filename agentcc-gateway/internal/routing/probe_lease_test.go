@@ -325,3 +325,60 @@ func TestProbeUpstreamCodeIsNotAdmission(t *testing.T) {
 		})
 	}
 }
+
+// The router can publish eligibility before any request takes the first probe.
+// A late sibling can withdraw that publication only for the trip it belongs to.
+func TestProbeLateFailureAfterReadmission(t *testing.T) {
+	var healthy atomic.Bool
+	cb := NewCircuitBreaker("p", probeLeaseConfig(1), func(_ string, h bool) { healthy.Store(h) })
+	late, stale := mustAcquireProbe(t, cb), mustAcquireProbe(t, cb)
+	recordAdmittedFailure(t, cb, serverErr())
+	openGeneration := cb.generation
+	expireProbeCooldown(cb)
+	cb.readmit(openGeneration)
+	if !healthy.Load() || cb.State() != StateOpen {
+		t.Fatal("expected routed eligibility before the first recovery probe")
+	}
+	late.Complete(context.Background(), serverErr())
+	if _, allowed := cb.Allow(); healthy.Load() || allowed {
+		t.Fatal("late sibling did not withdraw eligibility during the extended cooldown")
+	}
+	expireProbeCooldown(cb)
+	mustAcquireProbe(t, cb).Complete(context.Background(), serverErr())
+	expireProbeCooldown(cb)
+	stale.Complete(context.Background(), serverErr())
+	cb.readmit(openGeneration)
+	if healthy.Load() {
+		t.Fatal("obsolete callback readmitted the newer open epoch")
+	}
+	cb.readmit(cb.generation)
+	if !healthy.Load() {
+		t.Fatal("obsolete failure delayed the newer epoch's cooldown")
+	}
+}
+
+func TestProbeDispatchRejectionIsNotAnUpstream503(t *testing.T) {
+	api := models.ErrServiceUnavailable("synthetic local inspection refusal")
+	rejected := RejectDispatch(api)
+	retry := NewRetryer(config.RetryConfig{Enabled: true})
+	fo := NewFailover(config.FailoverConfig{Enabled: true}, nil, retry, nil)
+	if !retry.ShouldRetry(api) || !fo.ShouldFailover(api) || DispatchRejection(api) != nil {
+		t.Fatal("ordinary upstream 503 lost its retry/failover policy")
+	}
+	if retry.ShouldRetry(rejected) || fo.ShouldFailover(rejected) || DispatchRejection(rejected) != api {
+		t.Fatal("local rejection did not retain terminal provenance")
+	}
+	cb := NewCircuitBreaker("p", probeLeaseConfig(1), nil)
+	tripProbeCircuit(t, cb)
+	lease := mustAcquireProbe(t, cb)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	lease.Complete(ctx, rejected)
+	if cb.State() != StateHalfOpen {
+		t.Fatal("inspection that rejected before dispatch changed provider health")
+	}
+	mustAcquireProbe(t, cb).Complete(context.Background(), api)
+	if cb.State() != StateOpen {
+		t.Fatal("released slot did not admit the next probe and count its upstream 503")
+	}
+}

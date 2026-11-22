@@ -22,6 +22,7 @@ from urllib.parse import quote, urlparse
 import pytest
 from django.test import override_settings
 from django.utils import timezone
+from minio.error import S3Error
 
 from simulate.models import (
     HostedHarnessAttempt,
@@ -29,12 +30,22 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
+    TestExecution,
 )
 from simulate.models.test_execution import CallExecution
 from simulate.selectors.agent_fix import ran_at
+from simulate.services import harness_usage
+from simulate.services.agent_setup import store_agent
+from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_capacity import SandboxCapacity
 from simulate.services.harness_provider import serialize_job
+from simulate.services.harness_usage import (
+    harness_consumption,
+    record_harness_usage,
+    replay_harness_usage,
+)
 from simulate.services.hosted_harness import (
+    PLATFORM_FAILURE_DOMAINS,
     HostedHarnessError,
     begin_scenarios,
     create_hosted_job,
@@ -61,8 +72,11 @@ from simulate.services.hosted_harness_gateway import (
     _platform_simulator_material,
     _provider_egress_domains,
     _provider_import_authoring_material,
+    _read_harness_spend,
     _resolved_egress_domains,
     _scenarios_cli_command,
+    _seed_contract_for,
+    _source_object_key,
     _validate_resolved_egress_domains,
     _webrtc_egress_cidrs,
     attach_platform_simulator_secret_refs,
@@ -74,12 +88,18 @@ from simulate.services.hosted_harness_gateway import (
     prepare_dispatch_payload,
     resolve_authored_connector,
     resolve_platform_simulator_secrets,
+    store_source_archive,
+    stored_upload_name,
 )
+from simulate.services.hosted_harness_ingestion import ingest_result_receipt
 from simulate.services.hosted_sandbox import (
     SandboxConflictError,
+    SandboxFileNotFoundError,
     SandboxNotFoundError,
     SandboxProviderError,
 )
+from simulate.tests.test_agent_setup_service import source_agent
+from tfc.ee_loader import has_ee
 
 
 @pytest.fixture(autouse=True)
@@ -899,6 +919,38 @@ def test_authoring_stage_outputs_exposes_generic_certification_evidence():
     assert certification["data"]["certificate"]["fingerprint"] == "sha256:test"
 
 
+def test_call_actor_stage_output_keeps_actors_without_a_channel():
+    from simulate.services.hosted_harness_gateway import (
+        authoring_stage_outputs_from_archive,
+    )
+
+    actors = {
+        "actors": [
+            {"id": "spouse", "name": "Sam", "channel": "audio_mix"},
+            {
+                "id": "claims_supervisor",
+                "name": "Dana Brooks",
+                "permitted_actions": ["approvals.put"],
+            },
+        ]
+    }
+    body = io.BytesIO()
+    with tarfile.open(fileobj=body, mode="w:gz") as archive:
+        payload = json.dumps(actors).encode()
+        member = tarfile.TarInfo("actors.json")
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    outputs = authoring_stage_outputs_from_archive(body.getvalue())
+
+    listing = next(item for item in outputs if item["kind"] == "call_actors")
+    assert [one["id"] for one in listing["data"]["call_actors"]] == [
+        "spouse",
+        "claims_supervisor",
+    ]
+    assert listing["summary"] == "2 actors"
+
+
 def test_fresh_authoring_archive_rejects_missing_scenarios(tmp_path):
     (tmp_path / "contract.json").write_text("{}", encoding="utf-8")
 
@@ -1042,6 +1094,54 @@ def test_source_scan_does_not_require_adc_for_google_sdk_or_api_key_mode():
     assert detect_source_credentials(b"not a tarball") == ([], [], 0)
 
 
+_MONOREPO = {
+    "README.md": "examples\n",
+    "requirements.txt": "httpx==0.27.0\n",
+    "examples/requirements.txt": "httpx==0.27.0\n",
+    "examples/chat/server/bot.py": "import daily\n",
+    "examples/chat/server/tools/search.py": "import httpx\n",
+    "examples/chat/client/app.py": "import livekit\n",
+    "examples/voice/agent.py": (
+        "from livekit import agents\n"
+        "credentials = os.environ['GOOGLE_APPLICATION_CREDENTIALS']\n"
+    ),
+    "examples/voice/requirements.txt": "google-cloud-aiplatform==1.71.1\n",
+}
+
+
+def test_a_subfolder_agent_is_not_asked_for_its_siblings_keys():
+    connectors, required_files, scanned = detect_source_credentials(
+        _source_tarball(_MONOREPO), subfolder="examples/chat/server"
+    )
+
+    assert connectors == []
+    assert required_files == []
+    assert scanned == 4
+
+
+def test_a_subfolder_agent_reads_the_files_directly_above_it():
+    files = {
+        **_MONOREPO,
+        "examples/chat/pyproject.toml": 'dependencies = ["livekit-agents"]\n',
+    }
+
+    connectors, _required, _scanned = detect_source_credentials(
+        _source_tarball(files), subfolder="examples/chat/server/"
+    )
+
+    assert connectors == ["livekit"]
+
+
+def test_without_a_subfolder_the_whole_source_is_read():
+    connectors, required_files, scanned = detect_source_credentials(
+        _source_tarball(_MONOREPO)
+    )
+
+    assert connectors == ["livekit"]
+    assert required_files == ["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+    assert scanned == len(_MONOREPO) - 1
+
+
 def test_dispatch_payload_mirrors_only_livekit_url():
     payload = {"agent": {"connector": "livekit", "config": {}}}
 
@@ -1159,6 +1259,9 @@ def _chat_state_payload():
                 "conv-1": {"digest": "d", "draft_basis": {"token": "abc123"}}
             },
             "draft_saves": {"key-1": {"pieces": {}, "at": "2026-10-18"}},
+            "evidence_adds": {
+                "key-2": {"import": "i", "cases": ["c"], "saved": True, "at": "t"}
+            },
         },
     }
 
@@ -1172,6 +1275,7 @@ def test_guest_job_document_drops_server_only_chat_state():
     assert list(_alk_secret_paths(document)) == []
     assert "conversation_checkpoints" in payload["metadata"]
     assert "draft_saves" in payload["metadata"]
+    assert "evidence_adds" in payload["metadata"]
 
 
 def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
@@ -1191,7 +1295,7 @@ def test_dispatch_and_certify_jobs_pass_alk_secret_check_with_chat_state():
 
 @pytest.mark.django_db
 def test_gateway_clones_exact_commit_without_archiving_git_credentials(
-    organization, monkeypatch
+    organization, monkeypatch, memory_storage
 ):
     job, _ = create_hosted_job(
         organization, _payload(), idempotency_key="source-gateway"
@@ -1204,6 +1308,9 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
         lambda: SimpleNamespace(
             credential=lambda _: nullcontext("installation-secret-token")
         ),
+    )
+    monkeypatch.setattr(
+        "integrations.services.github_app.installation_connected", lambda **_: True
     )
 
     def run(command, **kwargs):
@@ -1241,6 +1348,7 @@ def test_gateway_clones_exact_commit_without_archiving_git_credentials(
         names = set(tar.getnames())
     assert "source/agent.py" in names
     assert all(".git" not in name for name in names)
+    assert list(memory_storage.objects.values()) == [archive]
 
 
 class _Filesystem:
@@ -1830,9 +1938,28 @@ def test_daytona_permanent_provider_rejection_fails_without_retry(organization):
     assert job.attempts.count() == 1
 
 
+_ENTRYPOINTS = (
+    "python -m fi.alk.harness.hosted_authoring_entrypoint ",
+    "python -m fi.alk.harness.hosted_entrypoint ",
+)
+
+
+def assert_only_the_entrypoints_are_harness_steps(steps):
+    """In every chain the steps that start an agent-learning-kit entrypoint, and no others, are
+    harness steps, and the run's entrypoint is the last one: without the grant it would run every
+    customer process as one fixed user, without a word."""
+    assert steps[-1].harness
+    assert steps[-1].command.startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    for step in steps:
+        assert step.harness == any(entry in step.command for entry in _ENTRYPOINTS), (
+            step.command
+        )
+
+
 @pytest.mark.django_db
+@pytest.mark.parametrize("unrestricted", [False, True])
 def test_daytona_launch_uploads_contract_files_and_starts_one_session(
-    organization, settings, monkeypatch
+    organization, settings, monkeypatch, unrestricted
 ):
     payload = _payload()
     payload["source"] = {
@@ -1849,6 +1976,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
     settings.ALK_HOSTED_BASE_EGRESS_DOMAINS = ["ingest.example.com"]
     settings.ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS = 3600
     settings.ALK_HOSTED_SANDBOX_TTL_SECONDS = 7200
+    settings.ALK_HOSTED_EGRESS_UNRESTRICTED = unrestricted
     simulator_values = {
         "ALK_HARNESS": "vertex-gemini",
         "ALK_HARNESS_MODEL": "gemini-3.7-flash",
@@ -1903,6 +2031,22 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         client.sandbox.process.session_request.command.encode()
     )
     assert "--await-harness" in client.sandbox.process.session_request.command
+    # Only the two agent-learning-kit entrypoints may run each customer process as its own user:
+    # the bundle author between them holds no such means.
+    request = client.sandbox.process.session_request
+    assert_only_the_entrypoints_are_harness_steps(request.steps)
+    harness = [step.command for step in request.steps if step.harness]
+    assert len(harness) == 2
+    assert harness[0].startswith("if [ ! -f /work/authoring/contract.json ]; then ")
+    assert "python -m fi.alk.harness.hosted_authoring_entrypoint " in harness[0]
+    assert harness[1].startswith("python -m fi.alk.harness.hosted_entrypoint ")
+    assert [step for step in request.steps if "bundle_author_v2" in step.command] == [
+        step for step in request.steps if not step.harness
+    ]
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
     assert job.conversation.messages.get().content.startswith(
         "Build the test environment"
     )
@@ -1916,7 +2060,7 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "if [ -f /work/authoring.tar.gz ]; then mkdir -p /work/authoring"
         in prepare_command
     )
-    assert client.params.unrestricted_egress is False
+    assert client.params.unrestricted_egress is unrestricted
     assert set(client.params.allowed_domains) == {
         "agent.example.com",
         "*.vapi.ai",
@@ -1924,6 +2068,9 @@ def test_daytona_launch_uploads_contract_files_and_starts_one_session(
         "ingest.example.com",
         "platform.example.com",
     }
+    # Controlled egress: the harness points the agent at a proxy that refuses every host outside this list.
+    allowed = dispatched["metadata"].get("egress_allowed_hosts")
+    assert allowed == (None if unrestricted else sorted(client.params.allowed_domains))
 
 
 @pytest.mark.django_db
@@ -2638,9 +2785,10 @@ def test_reconcile_relaunches_infra_failure_until_budget_then_fails(
         attempt1 = gateway.launch(job, endpoint_base_url="https://platform.example.com")
     assert attempt1.attempt_number == 1
     monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 2, "logs": "boom"})
-    assert gateway.reconcile_completed(attempt1).state == (
-        HostedHarnessJob.State.RETRY_WAIT
-    )
+    retried = gateway.reconcile_completed(attempt1)
+    assert retried.state == HostedHarnessJob.State.RETRY_WAIT
+    # A build's product is its bundle, not call results: it retries whole.
+    assert "rerun_execution_keys" not in retried.payload["metadata"]
 
     # Relaunch a fresh attempt; register_attempt supersedes attempt 1.
     with acquire:
@@ -2771,10 +2919,25 @@ def test_reconcile_waits_when_daytona_deletion_is_already_in_progress(
     assert attempt.terminal_failure["code"] == "sandbox_unreachable"
 
 
+_NO_FILE = object()  # an older guest image writes no cause file
+
+
 @pytest.mark.django_db
-@pytest.mark.parametrize("exit_code", [3, 78])
+@pytest.mark.parametrize(
+    "exit_code,guest_cause,stored",
+    [
+        (3, _NO_FILE, None),
+        (78, _NO_FILE, "unknown"),
+        (78, None, "unknown"),
+        (78, "agent_exited_before_ready", "agent_exited_before_ready"),
+        (78, "chat_target_timeout", "chat_target_timeout"),
+        (78, "dependency_not_ready_in_time", "dependency_not_ready_in_time"),
+        (78, "RuntimeError: a held-back case", "unknown"),
+        (78, ["agent_exited_before_ready"], "unknown"),
+    ],
+)
 def test_reconcile_terminal_and_authoring_exits_never_retry(
-    organization, monkeypatch, exit_code
+    organization, monkeypatch, exit_code, guest_cause, stored
 ):
     from simulate.services.hosted_harness import record_cleanup
 
@@ -2809,18 +2972,472 @@ def test_reconcile_terminal_and_authoring_exits_never_retry(
 
     with acquire:
         attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
-    monkeypatch.setattr(
-        gateway, "inspect", lambda _: {"exit_code": exit_code, "logs": ""}
-    )
+    observation = {"exit_code": exit_code, "logs": ""}
+    if guest_cause is not _NO_FILE:
+        observation["failure_cause"] = guest_cause
+    monkeypatch.setattr(gateway, "inspect", lambda _: observation)
     assert gateway.reconcile_completed(attempt).state != (
         HostedHarnessJob.State.RETRY_WAIT
     )
     assert captured["retry_pending"] is False
 
+    attempt.refresh_from_db()
+    assert (attempt.terminal_failure or {}).get("cause") == stored
     if exit_code == 78:
-        attempt.refresh_from_db()
         assert attempt.terminal_failure["domain"] == "environment"
         assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
+
+
+@pytest.mark.parametrize(
+    "exit_code,result,cause",
+    [
+        (0, '{"cause": "agent_not_ready_in_time"}', "agent_not_ready_in_time"),
+        (0, '{"cause": null}', None),
+        (1, "", None),  # an older guest image wrote no file
+        (0, "not json", None),
+        (0, '["agent_exited_before_ready"]', None),
+    ],
+)
+def test_guest_failure_cause_is_a_bounded_read_that_never_raises(
+    exit_code, result, cause
+):
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return SimpleNamespace(exit_code=exit_code, result=result)
+
+    sandbox = SimpleNamespace(process=SimpleNamespace(exec=run))
+    attempt = SimpleNamespace(id="attempt-1")
+
+    assert HostedHarnessGateway._guest_failure_cause(attempt, sandbox) == cause
+    assert commands == ["head -c 512 /run/futureagi/failure-cause.json 2>/dev/null"]
+
+
+def test_guest_failure_cause_reads_none_when_the_provider_fails():
+    def run(command, **kwargs):
+        raise TimeoutError("toolbox unavailable")
+
+    sandbox = SimpleNamespace(process=SimpleNamespace(exec=run))
+
+    assert (
+        HostedHarnessGateway._guest_failure_cause(
+            SimpleNamespace(id="attempt-1"), sandbox
+        )
+        is None
+    )
+
+
+def _refusal(**overrides):
+    return {
+        "domain": "agent",
+        "stage": "understanding_agent",
+        "code": "agent_type_unsupported",
+        "message": "browser agents are not supported yet",
+        "retryable": False,
+        "details": {"agent_type": "browser"},
+        **overrides,
+    }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("refusal_file", "expected_code", "expected_retry"),
+    [
+        (_refusal(), "agent_type_unsupported", False),
+        (
+            _refusal(code="subfolder_not_found", stage="acquiring_source"),
+            "subfolder_not_found",
+            False,
+        ),
+        (
+            _refusal(code="source_unreachable", retryable=True),
+            "source_unreachable",
+            False,
+        ),
+        (
+            _refusal(
+                domain="infrastructure",
+                stage="acquiring_source",
+                code="source_unreachable",
+                retryable=True,
+            ),
+            "source_unreachable",
+            True,
+        ),
+        (
+            _refusal(domain="artifact", code="artifact_unreadable"),
+            "artifact_unreadable",
+            False,
+        ),
+        (_refusal(retryable="no"), "guest_crashed", True),
+        (_refusal(domain="nowhere"), "guest_crashed", True),
+        ("invalid", "guest_crashed", True),
+        (None, "guest_crashed", True),
+    ],
+)
+def test_reconcile_reads_the_refusal_file_before_the_exit_code(
+    organization, monkeypatch, refusal_file, expected_code, expected_retry
+):
+    from simulate.services.hosted_harness import record_cleanup
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="refusal-gateway")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 1, "logs": "", "refusal_file": refusal_file},
+    )
+
+    gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.FAILED
+    assert attempt.terminal_failure["code"] == expected_code
+    assert captured["retry_pending"] is expected_retry
+    if expected_code != "guest_crashed":
+        assert attempt.terminal_failure["domain"] == refusal_file["domain"]
+        assert attempt.terminal_failure["stage"] == refusal_file["stage"]
+        assert attempt.terminal_failure["message"] == refusal_file["message"]
+        assert attempt.terminal_failure["retryable"] is refusal_file["retryable"]
+        assert attempt.terminal_failure["details"] == refusal_file["details"]
+    else:
+        assert attempt.terminal_failure["domain"] == "infrastructure"
+
+
+@pytest.mark.django_db
+def test_a_failure_the_platform_set_is_not_retried_for_a_retryable_refusal(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import record_cleanup
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-refusal")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    kept = {
+        "domain": "agent",
+        "stage": "running",
+        "code": "credentials_rejected",
+        "message": "The agent's credentials were rejected",
+        "details": {"set_by": "platform"},
+    }
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_failure=kept
+    )
+    attempt.refresh_from_db()
+    refusal = _refusal(
+        domain="infrastructure",
+        stage="acquiring_source",
+        code="source_unreachable",
+        retryable=True,
+    )
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 1, "logs": "", "refusal_file": refusal},
+    )
+
+    gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "credentials_rejected"
+    assert captured["retry_pending"] is False
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("refusal_file", "marks_cache_failed"),
+    [
+        (_refusal(), False),
+        (_refusal(code="subfolder_not_found", stage="acquiring_source"), False),
+        ("unreadable", False),
+        (None, True),
+    ],
+)
+def test_only_a_runtime_validation_failure_marks_the_bundle_cache_failed(
+    organization, monkeypatch, refusal_file, marks_cache_failed
+):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="exit78-cache")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    monkeypatch.setattr(gateway, "_delete_and_record", lambda *_, **__: None)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {"exit_code": 78, "logs": "", "refusal_file": refusal_file},
+    )
+
+    with patch(
+        "simulate.services.harness_versioning.assembly.mark_failed"
+    ) as mark_failed:
+        gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.state == HostedHarnessAttempt.State.FAILED
+    assert mark_failed.called is marks_cache_failed
+    if isinstance(refusal_file, dict):
+        assert attempt.terminal_failure["code"] == refusal_file["code"]
+    else:
+        assert attempt.terminal_failure["code"] == "authoring_runtime_validation_failed"
+
+
+@pytest.mark.django_db
+def test_reconcile_keeps_a_failure_the_platform_set_over_a_crash_exit(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import (
+        _fail_attempt_from_platform,
+        record_cleanup,
+    )
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-gateway")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    captured = {}
+
+    def _fake_delete(attempt, *, retry_pending=False):
+        captured["retry_pending"] = retry_pending
+        return record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(gateway, "_delete_and_record", _fake_delete)
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    _fail_attempt_from_platform(
+        attempt,
+        stage="understanding_agent",
+        code="subfolder_ignored",
+        message="the harness read the repository root",
+    )
+    monkeypatch.setattr(gateway, "inspect", lambda _: {"exit_code": 1, "logs": ""})
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "subfolder_ignored"
+    assert job.failure["code"] == "subfolder_ignored"
+    assert job.state == HostedHarnessJob.State.FAILED
+
+
+@pytest.mark.django_db
+def test_a_failure_the_platform_set_takes_no_guest_cause_at_exit_78(
+    organization, monkeypatch
+):
+    from simulate.services.hosted_harness import (
+        _fail_attempt_from_platform,
+        record_cleanup,
+    )
+
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key="kept-cause")
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    monkeypatch.setattr(
+        gateway,
+        "_delete_and_record",
+        lambda attempt, *, retry_pending=False: record_cleanup(
+            attempt.id,
+            provider_ref=str(attempt.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        ),
+    )
+    acquire = patch(
+        "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+        return_value=(b"archive", ""),
+    )
+    with acquire:
+        attempt = gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    _fail_attempt_from_platform(
+        attempt,
+        stage="understanding_agent",
+        code="subfolder_ignored",
+        message="the harness read the repository root",
+    )
+    monkeypatch.setattr(
+        gateway,
+        "inspect",
+        lambda _: {
+            "exit_code": 78,
+            "logs": "",
+            "failure_cause": "agent_exited_before_ready",
+        },
+    )
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # The platform's failure keeps its own words: a guest cause would replace them on every reader.
+    assert attempt.terminal_failure["code"] == "subfolder_ignored"
+    assert "cause" not in attempt.terminal_failure
+    assert "cause" not in job.failure
+
+
+def test_read_failure_file_tells_absent_from_malformed():
+    from simulate.services.hosted_harness_gateway import read_failure_file
+    from simulate.services.hosted_sandbox import (
+        SandboxFileNotFoundError,
+        SandboxProviderError,
+    )
+
+    def _sandbox(body):
+        def download(path, timeout=None):
+            assert path == "/work/authoring/failure.json"
+            if body is None:
+                raise FileNotFoundError(path)
+            if isinstance(body, Exception):
+                raise body
+            return body
+
+        return SimpleNamespace(fs=SimpleNamespace(download_file=download))
+
+    assert read_failure_file(_sandbox(None)) is None
+    assert read_failure_file(_sandbox(SandboxFileNotFoundError("gone"))) is None
+    assert (
+        read_failure_file(_sandbox(SandboxProviderError("timed out"))) == "unreadable"
+    )
+    assert read_failure_file(_sandbox(b"")) is None
+    assert read_failure_file(_sandbox(b"not json")) == "invalid"
+    assert read_failure_file(_sandbox(b"\xff\xfe")) == "invalid"
+    assert read_failure_file(_sandbox(json.dumps(_refusal()).encode())) == _refusal()
+
+
+@pytest.mark.django_db
+def test_inspect_reads_the_refusal_file_only_on_a_failed_exit(
+    organization, monkeypatch
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="inspect-refusal"
+    )
+    attempt = register_attempt(
+        job.id,
+        endpoint_base_url="https://platform.example.com",
+        provider_ref="sandbox-1",
+        snapshot_name="alk-hosted-v1",
+    ).attempt
+    client = _Daytona()
+    process = client.sandbox.process
+    reads = []
+
+    def download(path, timeout=None):
+        reads.append(path)
+        if path == "/work/authoring/failure.json":
+            return json.dumps(_refusal()).encode()
+        return b"command-1"
+
+    client.sandbox.fs.download_file = download
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway.HostedHarnessGateway._capture_diagnostics",
+        lambda *args, **kwargs: None,
+    )
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = client
+
+    assert "refusal_file" not in gateway.inspect(attempt)
+    process.command_exit_code = 0
+    process.command_status = "finished"
+    assert "refusal_file" not in gateway.inspect(attempt)
+    assert "/work/authoring/failure.json" not in reads
+
+    process.command_exit_code = 1
+    observation = gateway.inspect(attempt)
+
+    assert observation["exit_code"] == 1
+    assert observation["refusal_file"] == _refusal()
 
 
 @pytest.mark.django_db
@@ -3246,6 +3863,549 @@ def test_reconcile_exit0_scores_the_run_from_its_calls_when_the_relaunch_runs_ou
     assert job.test_execution.status == "evaluating"
 
 
+# The losses the platform retries, by the failure code each records on the attempt.
+_LOSSES = {
+    "guest_crashed": {"exit_code": 2, "logs": "boom", "process_logs": ""},
+    "evidence_undeliverable": {"exit_code": 4, "logs": "", "process_logs": ""},
+    "sandbox_disappeared": SandboxNotFoundError("sandbox not found", status_code=404),
+    "sandbox_unreachable": SandboxProviderError("toolbox unavailable", status_code=502),
+}
+
+
+def _lost_by(monkeypatch, code: str) -> HostedHarnessGateway:
+    """A gateway whose guest's attempt ends in the loss that records ``code``."""
+    gateway, _ = _exited_cleanly(monkeypatch)
+    loss = _LOSSES[code]
+
+    def inspect(_attempt):
+        if isinstance(loss, Exception):
+            raise loss
+        return loss
+
+    monkeypatch.setattr(gateway, "inspect", inspect)
+    return gateway
+
+
+def _dispatched(job: HostedHarnessJob) -> list[str]:
+    """The executions launch sends the job's next guest."""
+    job.refresh_from_db()
+    manifest = scope_dispatch_to_rerun(job.payload)["metadata"]["execution_manifest"]
+    return [entry["execution_key"] for entry in manifest]
+
+
+def _run_calls(
+    attempt: HostedHarnessAttempt,
+    tokens: dict[str, int],
+    interrupted: dict[str, str] | None = None,
+) -> None:
+    """What a guest does with the calls it is sent: report each call's usage and deliver
+    each call's result through the platform's own receipt ingestion. A call in
+    ``interrupted`` ends errored in that failure domain."""
+    interrupted = interrupted or {}
+    now = timezone.now().isoformat()
+    record_harness_usage(
+        attempt,
+        {
+            "schema_version": "futureagi.harness-usage.v1",
+            "operation": "report",
+            "records": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "action": "text_call",
+                    "scenario_key": key,
+                    "amount": amount,
+                    "funding": "platform",
+                    "occurred_at": now,
+                    "outcome": "completed",
+                }
+                for key, amount in tokens.items()
+            ],
+        },
+        emit=False,
+    )
+    for key in tokens:
+        execution = HostedHarnessExecution.no_workspace_objects.select_related(
+            "source_scenario"
+        ).get(job_id=attempt.job_id, execution_key=key)
+        body = {
+            "schema_version": "futureagi.harness-result.v1",
+            "job_id": str(attempt.job_id),
+            "attempt_id": str(attempt.id),
+            "attempt_number": attempt.attempt_number,
+            "scenario_key": key,
+            "scenario_id": str(execution.source_scenario.scenario_id),
+            "scenario_attempt": attempt.attempt_number,
+            "world_index": None,
+            "status": "errored" if key in interrupted else "passed",
+            "sub_goals": [],
+            "evaluations": [],
+            "call": {"started_at": now, "ended_at": now, "duration_ms": 1000},
+            "failure": {
+                "domain": interrupted[key],
+                "stage": "call",
+                "code": "call_interrupted",
+                "message": "the call was cut off",
+            }
+            if key in interrupted
+            else None,
+        }
+        body["digest"] = canonical_digest(body)
+        ingest_result_receipt(attempt, body, replay_usage=False)
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_retry_after_a_loss_runs_only_the_calls_without_a_result(
+    organization, monkeypatch, code
+):
+    attempt = _delivered_run(organization, f"run-loss-{code}", receipts=1)
+
+    job = _lost_by(monkeypatch, code).reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == code
+    assert job.state == HostedHarnessJob.State.RETRY_WAIT
+    # The call that already has its result is not run again.
+    assert _dispatched(job) == ["scenario-2:0"]
+
+
+@pytest.mark.django_db
+def test_a_retry_after_a_loss_with_no_result_in_runs_every_call(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "run-loss-nothing-in", receipts=0)
+
+    job = _lost_by(monkeypatch, "guest_crashed").reconcile_completed(attempt)
+
+    assert job.state == HostedHarnessJob.State.RETRY_WAIT
+    assert _dispatched(job) == ["scenario-1:0", "scenario-2:0"]
+    # Nothing narrowed, so the Run is not marked as a re-run of some of its calls.
+    assert "rerun_execution_keys" not in job.payload["metadata"]
+
+
+@pytest.mark.django_db
+def test_a_result_that_lands_before_cleanup_is_not_run_again(organization):
+    attempt = _delivered_run(organization, "run-loss-late-result", receipts=2)
+    # The gateway decided to retry while one result was still in flight.
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_stage="failed",
+        terminal_failure={"domain": "infrastructure", "code": "sandbox_unreachable"},
+    )
+
+    job = record_cleanup(
+        attempt.id,
+        provider_ref=str(attempt.provider_ref),
+        verified_absent=True,
+        retry_pending=True,
+        details={"provider": "test"},
+    )
+
+    # Nothing is left to run, and the failure was the platform's, not the guest's: the Run is
+    # kept, not relaunched and not failed.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    attempt.refresh_from_db()
+    assert attempt.terminal_reason == "terminal_event_lost"
+
+
+def _retried_after_a_loss(organization, monkeypatch, name: str, code: str):
+    """A two-call Run whose first attempt ran one call (100 tokens) before ``code``
+    ended it, and whose retry ran what it was sent (10 tokens per call)."""
+    first = _delivered_run(organization, name, receipts=0)
+    _run_calls(first, {"scenario-1:0": 100})
+    gateway = _lost_by(monkeypatch, code)
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    # The retry's guest runs what it is sent, and every call it runs is charged.
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+    _deliver_terminal(second, "completed")
+    monkeypatch.setattr(
+        gateway, "inspect", lambda _: {"exit_code": 0, "logs": "", "process_logs": ""}
+    )
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    return first, second, job
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_call_with_a_result_is_charged_once_across_a_retry(
+    organization, monkeypatch, code
+):
+    *_, job = _retried_after_a_loss(
+        organization, monkeypatch, f"run-loss-charged-once-{code}", code
+    )
+
+    # The billed events are built from the same records: the first call's 100 tokens
+    # once, the second call's 10.
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+
+
+@pytest.mark.django_db
+@pytest.mark.skipif(not has_ee("ee.usage"), reason="emits ee usage events")
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_retried_run_bills_each_call_under_one_event_id_on_every_replay(
+    organization, monkeypatch, code
+):
+    from ee.usage.services import emitter
+
+    first, second, _ = _retried_after_a_loss(
+        organization, monkeypatch, f"run-loss-billing-identity-{code}", code
+    )
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+
+    replays = []
+    for _ in range(2):
+        events.clear()
+        replay_harness_usage(first)
+        replay_harness_usage(second)
+        replays.append(
+            sorted(
+                (event.properties["scenario_key"], event.amount, event.event_id)
+                for event in events
+                if event.event_type == "text_call"
+            )
+        )
+
+    # Billing deduplicates on the event id. Each call is billed once, under the id of
+    # the attempt that ran it, and a replay sends the same ids again.
+    assert [(key, amount) for key, amount, _ in replays[0]] == [
+        ("scenario-1:0", 100),
+        ("scenario-2:0", 10),
+    ]
+    assert replays[1] == replays[0]
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("domain", sorted(PLATFORM_FAILURE_DOMAINS))
+def test_a_call_the_platform_interrupted_runs_again_and_is_charged_once(
+    organization, monkeypatch, domain
+):
+    first = _delivered_run(organization, f"run-interrupted-{domain}", receipts=0)
+    # Both calls have a receipt, but the platform's own failure ended the second.
+    _run_calls(
+        first,
+        {"scenario-1:0": 100, "scenario-2:0": 50},
+        interrupted={"scenario-2:0": domain},
+    )
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    # The interrupted call has no result, so it runs again; the other does not.
+    assert _dispatched(second.job) == ["scenario-2:0"]
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+    _deliver_terminal(second, "completed")
+    monkeypatch.setattr(
+        gateway, "inspect", lambda _: {"exit_code": 0, "logs": "", "process_logs": ""}
+    )
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    # The interrupted receipt's 50 tokens are never charged: each call is charged once,
+    # 100 for the first and 10 for the second's re-run.
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+
+
+@pytest.mark.django_db
+@pytest.mark.skipif(not has_ee("ee.usage"), reason="emits ee usage events")
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+def test_a_call_the_simulator_failed_keeps_its_result_across_a_retry(
+    organization, monkeypatch
+):
+    from ee.usage.services import emitter
+
+    first = _delivered_run(organization, "run-simulator-failed", receipts=0)
+    # The simulator's own failure is a result, unlike the platform's: it is kept and
+    # charged, and only the call with no receipt runs again.
+    _run_calls(first, {"scenario-1:0": 100}, interrupted={"scenario-1:0": "simulator"})
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    assert gateway.reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+    assert _dispatched(second.job) == ["scenario-2:0"]
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+    _deliver_terminal(second, "completed")
+    monkeypatch.setattr(
+        gateway, "inspect", lambda _: {"exit_code": 0, "logs": "", "process_logs": ""}
+    )
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+    events = []
+    monkeypatch.setattr(harness_usage, "is_oss", lambda: False)
+    monkeypatch.setattr(emitter, "emit", events.append)
+    replays = []
+    for _ in range(2):
+        events.clear()
+        replay_harness_usage(first)
+        replay_harness_usage(second)
+        replays.append(
+            sorted(
+                (event.properties["scenario_key"], event.amount, event.event_id)
+                for event in events
+                if event.event_type == "text_call"
+            )
+        )
+    # One event per call, each under its own id, and the same ids on the second replay.
+    assert [(key, amount) for key, amount, _ in replays[0]] == [
+        ("scenario-1:0", 100),
+        ("scenario-2:0", 10),
+    ]
+    assert len({event_id for _key, _amount, event_id in replays[0]}) == 2
+    assert replays[1] == replays[0]
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+def test_a_late_result_after_a_failed_poll_keeps_the_run_without_that_failure(
+    organization, monkeypatch
+):
+    attempt = _delivered_run(organization, "run-late-after-failed-poll", receipts=1)
+    gateway = _lost_by(monkeypatch, "sandbox_unreachable")
+
+    def delete_in_progress(_attempt, **_kwargs):
+        raise SandboxConflictError("sandbox state change in progress", status_code=409)
+
+    monkeypatch.setattr(gateway, "_delete_and_record", delete_in_progress)
+    # Poll 1: unreachable with one result missing, and its delete still in progress.
+    assert gateway.reconcile_completed(attempt) is None
+    attempt.refresh_from_db()
+    assert attempt.terminal_failure["code"] == "sandbox_unreachable"
+    # The missing result lands late; by poll 2 the sandbox is gone.
+    _receive(
+        attempt,
+        HostedHarnessExecution.no_workspace_objects.get(
+            job_id=attempt.job_id, execution_key="scenario-2:0"
+        ),
+    )
+
+    def gone(_attempt):
+        raise SandboxNotFoundError("sandbox not found", status_code=404)
+
+    monkeypatch.setattr(gateway, "inspect", gone)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    # Every result is in: poll 1's failure does not describe the Run that is kept.
+    assert attempt.terminal_failure is None
+    assert job.failure is None
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("lands", [True, False], ids=["last-lands", "still-missing"])
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_result_landing_while_the_sandbox_is_deleted_keeps_the_run(
+    organization, monkeypatch, code, lands
+):
+    attempt = _delivered_run(
+        organization, f"run-lands-during-delete-{code}-{lands}", receipts=1
+    )
+    gateway = _lost_by(monkeypatch, code)
+
+    def cleanup_after_the_last_result(attempt_id, **kwargs):
+        # The platform recorded its failure with one result missing; the last result lands
+        # while the sandbox is deleted (or found gone), before cleanup is recorded.
+        if lands:
+            _receive(
+                attempt,
+                HostedHarnessExecution.no_workspace_objects.get(
+                    job_id=attempt.job_id, execution_key="scenario-2:0"
+                ),
+            )
+        return record_cleanup(attempt_id, **kwargs)
+
+    def delete(lost, *, retry_pending=False, **_kwargs):
+        return cleanup_after_the_last_result(
+            lost.id,
+            provider_ref=str(lost.provider_ref),
+            verified_absent=True,
+            retry_pending=retry_pending,
+            details={"provider": "test"},
+        )
+
+    monkeypatch.setattr(f"{_GATEWAY}.record_cleanup", cleanup_after_the_last_result)
+    monkeypatch.setattr(gateway, "_delete_and_record", delete)
+
+    job = gateway.reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    if lands:
+        assert job.state == HostedHarnessJob.State.COMPLETED
+        assert job.failure is None
+        assert attempt.terminal_failure is None
+        assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    else:
+        # A result is still missing: the platform's failure stands and only that call runs.
+        assert job.state == HostedHarnessJob.State.RETRY_WAIT
+        assert _dispatched(job) == ["scenario-2:0"]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "ending",
+    [
+        ({"terminal_event_received": True, "terminal_stage": "failed"}, "FAILED"),
+        ({"terminal_stage": "canceled"}, "CANCELED"),
+    ],
+    ids=["guest-reported-failure", "cancellation"],
+)
+def test_cleanup_with_every_result_in_keeps_a_guest_failure_or_a_cancellation(
+    organization, ending
+):
+    fields, state = ending
+    attempt = _delivered_run(organization, f"run-own-ending-{state}", receipts=2)
+    HostedHarnessAttempt.no_workspace_objects.filter(id=attempt.id).update(
+        terminal_failure={"domain": "agent", "code": "guest_failed"}, **fields
+    )
+
+    job = record_cleanup(
+        attempt.id,
+        provider_ref=str(attempt.provider_ref),
+        verified_absent=True,
+        retry_pending=True,
+        details={"provider": "test"},
+    )
+
+    assert job.state == getattr(HostedHarnessJob.State, state)
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+def test_a_narrowed_retry_counts_the_calls_it_kept(organization, monkeypatch):
+    first = _delivered_run(organization, "run-narrowed-call-counts", receipts=1)
+    assert _lost_by(monkeypatch, "guest_crashed").reconcile_completed(first).state == (
+        HostedHarnessJob.State.RETRY_WAIT
+    )
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+
+    _run_calls(second, dict.fromkeys(_dispatched(second.job), 10))
+
+    job = HostedHarnessJob.no_workspace_objects.get(id=first.job_id)
+    execution = TestExecution.objects.get(id=job.test_execution_id)
+    # Both calls are done: the one the retry kept and the one it ran again.
+    assert execution.completed_calls == 2
+    assert job.completed_count == 2
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("attempts", [2, 1], ids=["retry-left", "retry-spent"])
+@pytest.mark.parametrize("code", sorted(_LOSSES))
+def test_a_loss_after_every_result_is_in_keeps_the_scored_run(
+    organization, monkeypatch, code, attempts
+):
+    attempt = _delivered_run(organization, f"run-all-in-{code}-{attempts}", receipts=0)
+    _run_calls(attempt, {"scenario-1:0": 100, "scenario-2:0": 10})
+    payload = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id).payload
+    HostedHarnessJob.no_workspace_objects.filter(id=attempt.job_id).update(
+        payload={
+            **payload,
+            "retry": {**payload["retry"], "max_infrastructure_attempts": attempts},
+        }
+    )
+
+    job = _lost_by(monkeypatch, code).reconcile_completed(attempt)
+
+    attempt.refresh_from_db()
+    # Nothing is relaunched, so no call runs or is charged a second time, and the
+    # attempt ends as the platform's conclusion, as when only its terminal event is lost.
+    assert job.state == HostedHarnessJob.State.COMPLETED
+    assert job.failure is None
+    assert attempt.state == HostedHarnessAttempt.State.COMPLETED
+    assert attempt.terminal_failure is None
+    assert (attempt.terminal_stage, attempt.terminal_reason) == (
+        "completed",
+        "terminal_event_lost",
+    )
+    assert harness_consumption(job)["text_sim_tokens"] == 110
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
+@pytest.mark.django_db
+@override_settings(ALK_HOSTED_PROVIDER_UNREACHABLE_GRACE_SECONDS=0)
+@pytest.mark.parametrize("code", ["evidence_undeliverable", "sandbox_unreachable"])
+def test_a_loss_after_the_guest_reported_its_own_failure_relaunches_nothing(
+    organization, monkeypatch, code
+):
+    attempt = _delivered_run(organization, f"run-own-failure-{code}", receipts=2)
+    _deliver_terminal(attempt, "failed")
+
+    job = _lost_by(monkeypatch, code).reconcile_completed(attempt)
+
+    # The guest's failed ending is its own, and every call has its result: a relaunch
+    # would only run and charge them again.
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == code
+
+
+@pytest.mark.django_db
+def test_a_crash_retry_that_runs_out_scores_the_run_from_its_calls(
+    organization, monkeypatch
+):
+    first = _delivered_run(organization, "run-loss-spent", receipts=1)
+    gateway = _lost_by(monkeypatch, "guest_crashed")
+    gateway.reconcile_completed(first)
+    # The retry, the last the budget allows, crashes before the one call it was sent.
+    second = register_attempt(
+        first.job_id,
+        endpoint_base_url="https://platform.example",
+        provider_ref="sandbox-2",
+    ).attempt
+
+    job = gateway.reconcile_completed(second)
+
+    assert job.state == HostedHarnessJob.State.FAILED
+    assert job.failure["code"] == "guest_crashed"
+    statuses = dict(
+        HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
+            "execution_key", "call_execution__status"
+        )
+    )
+    assert statuses == {
+        "scenario-1:0": CallExecution.CallStatus.COMPLETED,
+        "scenario-2:0": CallExecution.CallStatus.FAILED,
+    }
+    # As after an in-run re-run, the Run is scored from the call that has its result.
+    job.test_execution.refresh_from_db()
+    assert job.test_execution.status == "evaluating"
+
+
 @pytest.mark.django_db(transaction=True)
 def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     organization, monkeypatch
@@ -3272,7 +4432,7 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     gateway.client = client
     monkeypatch.setattr(
         "simulate.services.hosted_harness_gateway._platform_simulator_material",
-        lambda: {},
+        lambda: {"ALK_HARNESS_MODEL": "gemini-3.7-flash"},
     )
     barrier = Barrier(2)
 
@@ -3296,7 +4456,24 @@ def test_fresh_lease_starts_chat_once_for_concurrent_messages(
     assert states == ["starting", "starting"]
     assert client.sandbox.process.sessions == [_CHAT_SESSION]
     assert "hosted_chat_entrypoint" in client.sandbox.process.session_request.command
+    assert (
+        client.sandbox.process.session_request.env["ALK_HARNESS_MODEL"]
+        == "gemini-3.7-flash"
+    )
+    # A build runs as a chat turn: its spend is in the chat's ledger, which the attempt's
+    # cleanup reads.
+    assert (
+        client.sandbox.process.session_request.env["ALK_SPEND_JOURNAL"]
+        == "/work/builder-cost.json"
+    )
     assert client.deleted is False
+    # What the builder writes after the lock-down stays the harness's own: the workspace is
+    # closed before chat starts, and chat writes with a private umask.
+    prepare = next(
+        call for call in client.sandbox.process.exec_calls if "/work/authoring" in call
+    )
+    assert "chmod -R go-rwx /work/authoring" in prepare
+    assert client.sandbox.process.session_request.command.startswith("umask 077 && ")
 
 
 @pytest.mark.django_db
@@ -3581,7 +4758,8 @@ class _ExportWorld:
     job. The three producers owned by other tickets (the agent summary, the hidden
     simulation project and the key resolver) are stand-ins that record how they were
     called; the hidden project's row is made in the database when the stand-in is called.
-    With ``hidden="real"`` the hidden project is made by the real function instead.
+    With ``hidden="real"`` the hidden project is made by the real function instead. With
+    ``summary="real"`` the agent's setup is read from the versions the test stores.
     """
 
     def __init__(
@@ -3600,8 +4778,10 @@ class _ExportWorld:
         provider="enabled",
         project="live",
         snapshot_setting=_EXPORT_SNAPSHOT,
+        measure_setting=_EXPORT_SNAPSHOT,
         collector=_COLLECTOR,
         credentials="ok",
+        summary="stub",
         summary_raises=False,
         hidden="ok",
         cap_at_baseline=False,
@@ -3625,6 +4805,7 @@ class _ExportWorld:
         self.hidden = None
         self.hidden_calls = []
         self.summary_calls = []
+        self.summary_versions = []
         self.credential_calls = []
         self.logs = _Logs()
         self.collector = collector
@@ -3749,14 +4930,12 @@ class _ExportWorld:
             monkeypatch.delenv(name, raising=False)
         if collector is not None:
             monkeypatch.setenv("ALK_HOSTED_FI_BASE_URL", collector)
-        if snapshot_setting:
-            monkeypatch.setenv(
-                "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", snapshot_setting
-            )
-        else:
-            monkeypatch.delenv(
-                "ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", raising=False
-            )
+        settings.ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS = (
+            [snapshot_setting] if snapshot_setting else []
+        )
+        settings.ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS = (
+            [measure_setting] if measure_setting else []
+        )
         monkeypatch.setattr(f"{_GATEWAY}.structlog_logger", self.logs)
         monkeypatch.setattr(
             f"{_GATEWAY}.PlatformSecretResolver.resolve",
@@ -3765,16 +4944,18 @@ class _ExportWorld:
 
         summary_module = ModuleType("simulate.services.agent_setup")
 
-        def agent_summary(agent_definition_id, *, agent_version_id=None):
+        def launched_agent_summary(agent_definition_id, *, agent_version_id):
             self.summary_calls.append(agent_definition_id)
+            self.summary_versions.append(agent_version_id)
             if summary_raises:
                 raise RuntimeError(_LEAK_SENTINEL)
             return SimpleNamespace(kind=kind, instrumentation=instrumentation)
 
-        summary_module.agent_summary = agent_summary
-        monkeypatch.setitem(
-            sys.modules, "simulate.services.agent_setup", summary_module
-        )
+        summary_module.launched_agent_summary = launched_agent_summary
+        if summary == "stub":
+            monkeypatch.setitem(
+                sys.modules, "simulate.services.agent_setup", summary_module
+            )
 
         ingest_module = ModuleType("tracer.services.collector_ingest")
         ingest_module.ExportCredentials = _ExportCredentials
@@ -4155,6 +5336,253 @@ def test_export_environment_and_keys_for_a_bound_source_agent_with_observability
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, declared, model_hosts",
+    [
+        ("untraced", None, "gateway.example.test"),
+        # The agent's own exporter keeps its own endpoint: ours is under a name it never reads.
+        (
+            "untraced-own",
+            {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"},
+            "gateway.example.test",
+        ),
+        # A model base URL the agent declares is a model host too; a tool's URL is not.
+        (
+            "untraced-llm",
+            {
+                "LLM_BASE_URL": "https://LLM.example/v1",
+                "CRM_BASE_URL": "https://crm.example",
+            },
+            "gateway.example.test,llm.example",
+        ),
+    ],
+)
+def test_an_untraced_agent_is_measured_through_names_its_own_exporters_never_read(
+    tag, declared, model_hosts, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        instrumentation="none",
+        declared=declared,
+    ).launch()
+    mark = world.mark
+
+    assert world.export_log() == []
+    assert set(mark) == {
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "FI_SIMULATION_EXPORT",
+        "FI_SIMULATION_INSTRUMENT",
+        "FI_SIMULATION_TRACES_ENDPOINT",
+        "FI_SIMULATION_MODEL_HOSTS",
+    }
+    assert mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert mark["FI_SIMULATION_INSTRUMENT"] == "traceai"
+    assert mark["FI_SIMULATION_TRACES_ENDPOINT"] == f"{_COLLECTOR}/v1/traces"
+    # Every hosted model call goes to the platform's gateway: a request there outside a
+    # measured SDK call reads partial in the sandbox, never as a lower cost.
+    assert mark["FI_SIMULATION_MODEL_HOSTS"] == model_hosts
+    # Into the hidden project, under the agent's ingest key, as a traced agent's spans are.
+    assert f"project_name={quote(world.hidden.name, safe='')}" in _mark_text(mark)
+    assert {alias: world.secrets.get(alias) for alias in _INGEST_PAIR} == _INGEST_PAIR
+    # The agent's own endpoint, when it set one, reaches it as it gave it.
+    assert world.secrets == {**_INGEST_PAIR, **(declared or {})}
+    assert world.domains >= {"collector.example.com"}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "tag, options",
+    [
+        ("off-disabled", {"provider": "disabled"}),
+        ("off-missing", {"provider": "missing"}),
+        ("off-deleted", {"provider": "deleted"}),
+        ("off-project", {"project": "deleted"}),
+        ("off-org", {"project": "other_org"}),
+    ],
+)
+def test_an_untraced_agent_is_measured_whatever_its_observability_switch_says(
+    tag, options, organization, workspace, user, settings, monkeypatch
+):
+    # Measuring records the models, tokens and timing only, never prompts or replies, so the
+    # switch does not stop it. A traced agent's switch still does (see _REFUSALS).
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=tag,
+        instrumentation="none",
+        **options,
+    ).launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert world.mark["FI_SIMULATION_INSTRUMENT"] == "traceai"
+    assert world.secrets == _INGEST_PAIR
+    # The spans go to the hidden project, never to the agent's own.
+    assert quote(world.project.name, safe="") not in _mark_text(world.mark)
+
+
+def _store_versions(agent, *instrumentations):
+    """One version per word, oldest first, each with a stored source setup that traces so."""
+    versions = []
+    for number, instrumentation in enumerate(instrumentations, start=1):
+        version = agent.create_version(
+            description="", commit_message=f"v{number}", status="active"
+        )
+        if instrumentation is not None:
+            store_agent(
+                agent_version_id=version.id,
+                agent=source_agent(instrumentation=instrumentation),
+                sdk_version="0.2.3",
+            )
+        versions.append(version)
+    return versions
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "pinned, newest, measured",
+    [
+        # A newer version that traces nothing does not measure an older traced one past
+        # its switch: the older one's own setup records prompts and replies.
+        ("traceai", "none", False),
+        # A newer traced version does not stop an older untraced one being measured.
+        ("none", "traceai", True),
+    ],
+)
+def test_the_version_a_run_launches_decides_its_export(
+    pinned, newest, measured, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"pin-{pinned}",
+        summary="real",
+        provider="disabled",
+    )
+    launched, _newer = _store_versions(world.agent, pinned, newest)
+    world.job.agent_version = launched
+    world.job.save(update_fields=["agent_version"])
+
+    world.launch()
+
+    if measured:
+        assert world.export_log() == []
+        assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    else:
+        assert world.export_log() == [
+            ("info", {"job_id": str(world.job.id), "reason": "observability_off"})
+        ]
+        assert "FI_SIMULATION_EXPORT" not in world.mark
+
+
+@pytest.mark.django_db
+def test_a_run_pinned_to_a_version_with_no_stored_setup_reads_the_agent_s_own(
+    organization, workspace, user, settings, monkeypatch
+):
+    # A version made by a push stores no setup; the agent's newest stored one decides.
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag="pin-pushed",
+        summary="real",
+        provider="disabled",
+    )
+    _stored, pushed = _store_versions(world.agent, "none", None)
+    world.job.agent_version = pushed
+    world.job.save(update_fields=["agent_version"])
+
+    world.launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("listed_in", ["settings", "environment"])
+@pytest.mark.parametrize(
+    "allowlist, instrumentation, refusal",
+    [
+        ("EXPORT", "traceai", "snapshot_unsupported"),
+        ("MEASURE", "none", "not_instrumented"),
+    ],
+)
+def test_the_snapshot_allowlists_are_read_from_django_settings(
+    allowlist,
+    instrumentation,
+    refusal,
+    listed_in,
+    organization,
+    workspace,
+    user,
+    settings,
+    monkeypatch,
+):
+    in_settings = _EXPORT_SNAPSHOT if listed_in == "settings" else ""
+    option = "snapshot_setting" if allowlist == "EXPORT" else "measure_setting"
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"{allowlist}-{listed_in}",
+        instrumentation=instrumentation,
+        **{option: in_settings},
+    )
+    # The process environment says the opposite of the setting; the setting decides.
+    monkeypatch.setenv(
+        f"ALK_HOSTED_OBSERVABILITY_{allowlist}_SNAPSHOTS",
+        "" if in_settings else _EXPORT_SNAPSHOT,
+    )
+
+    world.launch()
+
+    if in_settings:
+        assert world.export_log() == []
+        assert "FI_SIMULATION_EXPORT" in world.mark
+    else:
+        assert world.export_log() == [
+            ("info", {"job_id": str(world.job.id), "reason": refusal})
+        ]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("instrumentation", ["traceai", "opentelemetry"])
+def test_a_snapshot_that_cannot_measure_still_exports_a_traced_agent(
+    instrumentation, organization, workspace, user, settings, monkeypatch
+):
+    world = _ExportWorld(
+        organization,
+        workspace,
+        user,
+        settings,
+        monkeypatch,
+        tag=f"nomeasure-{instrumentation[:4]}",
+        instrumentation=instrumentation,
+        measure_setting="",
+    ).launch()
+
+    assert world.export_log() == []
+    assert world.mark["FI_SIMULATION_EXPORT"] == "our_keys"
+    assert "FI_SIMULATION_INSTRUMENT" not in world.mark
+    assert world.secrets == _INGEST_PAIR
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("flag", [None, "off", "on"])
 def test_the_harness_flag_never_changes_the_agents_own_export(
     flag, organization, workspace, user, settings, monkeypatch
@@ -4401,13 +5829,54 @@ _REFUSALS = {
         "snapshot_unsupported",
         "info",
     ),
+    # An untraced agent is measured only on a snapshot whose hook knows how: an older one
+    # would put our key on the exporter the agent aims at its own endpoint.
+    "untraced_on_a_snapshot_that_cannot_measure": (
+        {"instrumentation": "none", "measure_setting": "some-other-snapshot"},
+        "not_instrumented",
+        "info",
+    ),
+    "untraced_with_the_measure_setting_empty": (
+        {"instrumentation": "none", "measure_setting": ""},
+        "not_instrumented",
+        "info",
+    ),
+    "untraced_own_endpoint_on_a_snapshot_that_cannot_measure": (
+        {
+            "instrumentation": "none",
+            "measure_setting": "",
+            "declared": {
+                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"
+            },
+        },
+        "not_instrumented",
+        "info",
+    ),
     "unbound": ({"bind": "none"}, "not_bound", "info"),
     "metadata_id_not_a_uuid": ({"bind": "bad_id"}, "not_bound", "info"),
     "agent_of_another_organisation": ({"bind": "other_org"}, "not_bound", "info"),
     "agent_deleted": ({"bind": "deleted"}, "not_bound", "info"),
+    # A traced agent exports what its own setup records, prompts and replies included: its
+    # observability switch decides, whatever the instrumentation.
     "row_disabled": ({"provider": "disabled"}, "observability_off", "info"),
     "no_observability_row": ({"provider": "missing"}, "observability_off", "info"),
     "project_deleted": ({"project": "deleted"}, "observability_off", "info"),
+    "provider_row_deleted": ({"provider": "deleted"}, "observability_off", "info"),
+    "project_of_another_organisation": (
+        {"project": "other_org"},
+        "observability_off",
+        "info",
+    ),
+    "traceai_row_disabled": (
+        {"instrumentation": "traceai", "provider": "disabled"},
+        "observability_off",
+        "info",
+    ),
+    "traceai_no_observability_row": (
+        {"instrumentation": "traceai", "provider": "missing"},
+        "observability_off",
+        "info",
+    ),
     "hidden_project_without_workspace": (
         {"hidden": "no_workspace"},
         "no_workspace",
@@ -4434,12 +5903,6 @@ _REFUSALS = {
         {"declared": {"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://theirs.example"}},
         "customer_configuration",
         "warning",
-    ),
-    "provider_row_deleted": ({"provider": "deleted"}, "observability_off", "info"),
-    "project_of_another_organisation": (
-        {"project": "other_org"},
-        "observability_off",
-        "info",
     ),
     "otel_declares_traces_endpoint_in_lower_case": (
         {"declared": {"otel_exporter_otlp_traces_endpoint": "https://theirs.example"}},
@@ -4508,7 +5971,6 @@ _REFUSALS = {
         "customer_configuration",
         "warning",
     ),
-    "not_instrumented": ({"instrumentation": "none"}, "not_instrumented", "info"),
     "export_key_disabled": ({"credentials": "disabled"}, "key_disabled", "warning"),
     "key_resolver_raises": ({"credentials": "raises"}, "no_key", "warning"),
     "key_resolver_answers_nothing": ({"credentials": "none"}, "no_key", "warning"),
@@ -4560,6 +6022,9 @@ def test_a_refused_export_leaves_the_mark_and_launches(
     if reason in _BEFORE_THE_HIDDEN_PROJECT or case in {
         "summary_raises",
         "summary_module_missing",
+        "untraced_on_a_snapshot_that_cannot_measure",
+        "untraced_with_the_measure_setting_empty",
+        "untraced_own_endpoint_on_a_snapshot_that_cannot_measure",
     }:
         # A run refused before that step must not have made the project.
         assert world.hidden_calls == []
@@ -4992,7 +6457,9 @@ class _MemoryStorage:
     def set_bucket_policy(self, _bucket, _policy):
         pass
 
-    def put_object(self, bucket_name, object_name, data, length, content_type=None):
+    def put_object(
+        self, bucket_name, object_name, data, length, content_type=None, metadata=None
+    ):
         self.objects[object_name] = data.read(length)
 
     def get_object(self, _bucket, object_name):
@@ -5064,7 +6531,7 @@ def test_a_stale_progress_save_keeps_the_observability_refusal(
         observability_refusal=newer,
         harness_spend={"total_usd": 0.5, "unpriced_turns": 0, "attempts": {"2": other}},
     )
-    _record_harness_spend(stale, {"total_usd": 0.1, "stages": []}, 1)
+    _record_harness_spend(stale, 1, cli={"total_usd": 0.1, "stages": []})
 
     metadata = _stored_metadata(job.id)
     assert metadata["observability_refusal"] == newer
@@ -5103,6 +6570,286 @@ def test_a_stale_adjustment_save_keeps_the_observability_refusal(organization):
     ] == [
         ("adj-1", "applied"),
         ("adj-2", "pending"),
+    ]
+
+
+class _Stopped(Exception):
+    pass
+
+
+def _launch_until_dispatch(organization, monkeypatch, key, **metadata):
+    payload = _payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key=key)
+    if metadata:
+        job.payload = {
+            **job.payload,
+            "metadata": {**(job.payload.get("metadata") or {}), **metadata},
+        }
+        job.save(update_fields=["payload", "updated_at"])
+    asked = []
+
+    def seed(seeded_job):
+        asked.append(seeded_job.id)
+        return b'{"agent":{"name":"support"}}'
+
+    def stop(*_args, **_kwargs):
+        raise _Stopped
+
+    monkeypatch.setattr(
+        "simulate.services.hosted_harness_gateway._seed_contract_for", seed
+    )
+    monkeypatch.setattr(
+        "simulate.services.harness_agent_versions.stamp_built_commit", stop
+    )
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    with (
+        patch(
+            "simulate.services.hosted_harness_gateway.HostedSourceAcquirer.acquire",
+            return_value=(b"archive", ""),
+        ),
+        pytest.raises(_Stopped),
+    ):
+        gateway.launch(job, endpoint_base_url="https://platform.example.com")
+    job.refresh_from_db()
+    return job, asked
+
+
+@pytest.mark.django_db
+def test_a_build_is_handed_its_versions_reading(organization, settings, monkeypatch):
+    settings.ALK_HOSTED_BUILDER_SESSION = True
+
+    job, asked = _launch_until_dispatch(organization, monkeypatch, "seed-build")
+
+    assert asked == [job.id]
+    assert job.payload["metadata"]["seeded_contract"] is True
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "builder_session, metadata",
+    [(True, {"simulation_only": True}), (False, {})],
+)
+def test_only_a_build_with_a_harness_is_handed_a_reading(
+    organization, settings, monkeypatch, builder_session, metadata
+):
+    settings.ALK_HOSTED_BUILDER_SESSION = builder_session
+
+    job, asked = _launch_until_dispatch(
+        organization, monkeypatch, f"seed-skip-{builder_session}", **metadata
+    )
+
+    assert asked == []
+    assert "seeded_contract" not in (job.payload.get("metadata") or {})
+
+
+def _seed_job():
+    return SimpleNamespace(id=uuid.uuid4(), payload={}, agent_version_id=uuid.uuid4())
+
+
+@pytest.mark.parametrize(
+    "contract, seeded",
+    [
+        ({"agent": {"name": "support"}}, True),
+        ({"blob": "x" * (5 * 1_048_576)}, False),
+        ({"greeting": "\u00e9" * (2 * 1_048_576)}, True),
+    ],
+)
+def test_a_seed_over_the_contract_limit_is_not_handed_over(
+    settings, monkeypatch, contract, seeded
+):
+    from simulate.services.agent_contracts import contract_bytes
+
+    settings.HARNESS_SEED_CONTRACT_ENABLED = True
+    monkeypatch.setattr(
+        "simulate.services.agent_contracts.stored_version_contract",
+        lambda _version_id: contract,
+    )
+
+    body = _seed_contract_for(_seed_job())
+
+    assert body == (contract_bytes(contract) if seeded else None)
+
+
+def test_no_seed_is_read_while_seeding_is_off(settings, monkeypatch):
+    settings.HARNESS_SEED_CONTRACT_ENABLED = False
+    monkeypatch.setattr(
+        "simulate.services.agent_contracts.stored_version_contract",
+        lambda _version_id: pytest.fail("the contract must not be read"),
+    )
+
+    assert _seed_contract_for(_seed_job()) is None
+
+
+class _NamedUploads:
+    def __init__(self):
+        self.objects = {}
+        self.metadata = {}
+
+    def bucket_exists(self, _bucket):
+        return False
+
+    def make_bucket(self, _bucket):
+        pass
+
+    def set_bucket_policy(self, _bucket, _policy):
+        pass
+
+    def put_object(
+        self, bucket_name, object_name, data, length, content_type=None, metadata=None
+    ):
+        self.objects[object_name] = data.read(length)
+        self.metadata[object_name] = dict(metadata or {})
+
+    def stat_object(self, _bucket, object_name):
+        if object_name not in self.objects:
+            raise S3Error(None, "NoSuchKey", "missing", object_name, "req", "host")
+        return SimpleNamespace(
+            metadata={
+                f"X-Amz-Meta-{name.title()}": value
+                for name, value in self.metadata[object_name].items()
+            }
+        )
+
+
+@pytest.fixture
+def named_uploads(monkeypatch):
+    from tfc.utils import storage_client
+
+    fake = _NamedUploads()
+    monkeypatch.setattr(storage_client, "_client", fake)
+    return fake
+
+
+@pytest.mark.parametrize("name", ["harbor-agent", "Harbor Hotels/agent é"])
+def test_an_upload_keeps_the_name_of_its_folder(named_uploads, name):
+    organization = SimpleNamespace(id=uuid.uuid4())
+
+    stored = store_source_archive(
+        organization, [io.BytesIO(b"print('agent')")], ["agent.py"], name
+    )
+
+    key = _source_object_key(organization.id, stored["source_id"])
+    assert named_uploads.metadata[key] == {"folder-name": quote(name)}
+    assert named_uploads.metadata[key]["folder-name"].isascii()
+    assert stored_upload_name(organization.id, stored["source_id"]) == name
+
+
+def test_an_unnamed_upload_is_stored_as_the_uploaded_agent(named_uploads):
+    organization = SimpleNamespace(id=uuid.uuid4())
+
+    stored = store_source_archive(
+        organization, [io.BytesIO(b"print('agent')")], ["agent.py"], ""
+    )
+
+    assert stored_upload_name(organization.id, stored["source_id"]) == (
+        "uploaded-agent"
+    )
+
+
+def test_an_upload_without_a_name_or_out_of_reach_has_none(named_uploads):
+    organization_id = uuid.uuid4()
+    older = str(uuid.uuid4())
+    named_uploads.objects[_source_object_key(organization_id, older)] = b"archive"
+    named_uploads.metadata[_source_object_key(organization_id, older)] = {}
+
+    assert stored_upload_name(organization_id, older) is None
+    assert stored_upload_name(organization_id, uuid.uuid4()) is None
+
+
+def _ledger(stage: str, usd: float) -> bytes:
+    """A spend ledger as ALK writes it, with one stage."""
+    return json.dumps(
+        {
+            "schema": "futureagi.harness-spend.v1",
+            "total_usd": usd,
+            "unpriced_turns": 0,
+            "stages": [
+                {
+                    "stage": stage,
+                    "usd": usd,
+                    "turns": 1,
+                    "models": ["gemini-3.7-flash"],
+                    "tokens_in": 1000,
+                    "tokens_out": 100,
+                    "tokens_cached": 0,
+                }
+            ],
+        }
+    ).encode()
+
+
+def _sandbox_holding(files: dict[str, bytes]) -> SimpleNamespace:
+    def download_file(path, timeout=None):
+        if path not in files:
+            raise SandboxFileNotFoundError(path)
+        return files[path]
+
+    return SimpleNamespace(fs=SimpleNamespace(download_file=download_file))
+
+
+@pytest.mark.django_db
+def test_two_builds_of_one_environment_each_record_only_their_own_spend(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="builder-spend-two-builds"
+    )
+    # Each build runs as a chat turn in its own attempt's sandbox, whose chat process
+    # starts a ledger of its own: never the session's running total.
+    for number, usd in ((1, 1.0), (2, 2.0)):
+        attempt = register_attempt(
+            job.id,
+            endpoint_base_url="https://platform.example",
+            provider_ref=f"sandbox-{number}",
+        ).attempt
+        _read_harness_spend(
+            attempt,
+            _sandbox_holding({"/work/builder-cost.json": _ledger("builder", usd)}),
+        )
+
+    spend = _stored_metadata(job.id)["harness_spend"]
+    assert {key: one["total_usd"] for key, one in spend["attempts"].items()} == {
+        "1": 1.0,
+        "2": 2.0,
+    }
+    assert spend["total_usd"] == 3.0
+
+
+@pytest.mark.django_db
+def test_a_build_beside_a_chat_records_both_ledgers_under_distinct_stage_names(
+    organization,
+):
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="builder-spend-both-ledgers"
+    )
+    attempt = register_attempt(
+        job.id, endpoint_base_url="https://platform.example", provider_ref="sandbox-1"
+    ).attempt
+
+    _read_harness_spend(
+        attempt,
+        _sandbox_holding(
+            {
+                "/work/authoring/cost.json": _ledger("build-environment", 0.5),
+                "/work/builder-cost.json": _ledger("build-environment", 0.25),
+            }
+        ),
+    )
+
+    recorded = _stored_metadata(job.id)["harness_spend"]["attempts"]["1"]
+    assert recorded["total_usd"] == 0.75
+    # Billing prices each stage once by name, so the chat's keeps a prefix.
+    assert [stage["stage"] for stage in recorded["stages"]] == [
+        "build-environment",
+        "chat:build-environment",
     ]
 
 

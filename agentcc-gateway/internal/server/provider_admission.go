@@ -67,11 +67,14 @@ func (h *Handlers) modelFallbackChain(rc *models.RequestContext) []string {
 
 // callModelFallbacks skips only locally refused candidates. The caller explicitly
 // supplies the entry point's ordinary-error policy, independently of admission.
-func (h *Handlers) callModelFallbacks(ctx context.Context, rc *models.RequestContext, orgCfg *tenant.OrgConfig, firstErr error, ordinaryEligible bool, call func(providers.Provider) error) error {
+func (h *Handlers) callModelFallbacks(ctx context.Context, rc *models.RequestContext, orgCfg *tenant.OrgConfig, originalModel string, firstErr error, ordinaryEligible bool, call func(providers.Provider) error) error {
+	if rejected := routing.DispatchRejection(firstErr); rejected != nil {
+		return rejected
+	}
 	if ctx.Err() != nil || (!routing.IsAdmissionRefusal(firstErr) && !ordinaryEligible) {
 		return firstErr
 	}
-	originalModel, originalProvider := rc.Request.Model, rc.Provider
+	originalProvider := rc.Provider
 	originalMatch := rc.Metadata["org_provider_model_match"]
 	for _, model := range h.modelFallbackChain(rc) {
 		excluded := make(map[string]bool)
@@ -87,6 +90,9 @@ func (h *Handlers) callModelFallbacks(ctx context.Context, rc *models.RequestCon
 				rc.Metadata["original_model"] = originalModel
 				rc.Metadata["fallback_model"] = resolvedModel
 				return nil
+			}
+			if rejected := routing.DispatchRejection(err); rejected != nil {
+				return rejected
 			}
 			if !routing.IsCircuitOpen(err) {
 				break

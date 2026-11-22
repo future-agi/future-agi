@@ -76,6 +76,81 @@ for (const [name, mutate] of unsafeRoutes) {
   });
 }
 
+test('managed mock accepts the committed local exact-cache fixture in both capability modes', () => {
+  expect(parse(source).cache).toEqual({ enabled: true, backend: 'memory', default_ttl: '30m', max_entries: 10000,
+    semantic: { enabled: false }, edge: { enabled: false } });
+  for (const background of [false, true]) {
+    validateMockRouting(source, background);
+    // YAML mapping order is not part of the safety contract.
+    const cfg = parse(source);
+    cfg.cache = Object.fromEntries(Object.entries(cfg.cache).reverse());
+    validateMockRouting(stringify(cfg), background);
+  }
+});
+
+// CacheConfig/SemanticCacheConfig/CacheEdgeConfig in internal/config/config.go:
+// even disabled external-backend options are outside this exact local fixture.
+const unsafeCaches: [string, (cfg: any) => void][] = [
+  ['null section', c => { c.cache = null; }],
+  ['empty section', c => { c.cache = {}; }],
+  ['array section', c => { c.cache = []; }],
+  ['scalar section', c => { c.cache = 'memory'; }],
+  ['Redis backend', c => { c.cache.backend = 'redis'; }],
+  ['disk backend', c => { c.cache.backend = 'disk'; }],
+  ['external Redis address', c => { c.cache.redis = { address: 'redis.invalid:6379' }; }],
+  ['external Redis cluster', c => { c.cache.redis = { addresses: ['redis.invalid:6379'] }; }],
+  ['address field', c => { c.cache.address = 'cache.invalid:6379'; }],
+  ['unknown field', c => { c.cache.unknown = false; }],
+  ['disabled exact cache', c => { c.cache.enabled = false; }],
+  ['string enabled', c => { c.cache.enabled = 'true'; }],
+  ['non-string backend', c => { c.cache.backend = ['memory']; }],
+  ['changed TTL', c => { c.cache.default_ttl = '60m'; }],
+  ['equivalent but unpinned TTL', c => { c.cache.default_ttl = '1800s'; }],
+  ['numeric TTL', c => { c.cache.default_ttl = 1800; }],
+  ['changed capacity', c => { c.cache.max_entries = 10001; }],
+  ['string capacity', c => { c.cache.max_entries = '10000'; }],
+  ['semantic backend', c => { c.cache.semantic.backend = 'qdrant'; }],
+  ['semantic address', c => { c.cache.semantic.qdrant = { url: 'https://vector.invalid' }; }],
+  ['edge model routes', c => { c.cache.edge.cacheable_models = ['gpt-4o']; }],
+  ['edge opt-in override', c => { c.cache.edge.require_opt_in = false; }],
+];
+for (const key of ['enabled', 'backend', 'default_ttl', 'max_entries', 'semantic', 'edge']) {
+  unsafeCaches.push([`missing ${key}`, c => { delete c.cache[key]; }],
+    [`env-expanded ${key}`, c => { c.cache[key] = '${UNTRUSTED_CACHE}'; }]);
+}
+for (const key of ['semantic', 'edge']) {
+  for (const [name, value] of Object.entries({ enabled: { enabled: true }, string: { enabled: 'false' },
+    numeric: { enabled: 0 }, empty: {}, null: null, array: [], scalar: false,
+    unknown: { enabled: false, unknown: false }, env: { enabled: '${UNTRUSTED_CACHE}' } })) {
+    unsafeCaches.push([`${key} ${name}`, c => { c.cache[key] = value; }]);
+  }
+}
+for (const [name, mutate] of unsafeCaches) {
+  test(`managed mock rejects cache ${name} before registration`, async () => {
+    const cfg = parse(source); mutate(cfg);
+    for (const background of [false, true]) {
+      const fake = registrationDouble();
+      await expect(registerMockModel(fake.actor, fake.probe, () => validateMockRouting(stringify(cfg), background)))
+        .rejects.toThrow('STOP: managed mock unexpected cache configuration');
+      expect(fake.calls).toEqual([]);
+      expect(fake.readCount()).toBe(0);
+    }
+  });
+}
+
+for (const [name, mutate] of [
+  // Both stack recipes mount this same cache-bearing fixture; no no-cache variant.
+  ['missing cache', (c: any) => { delete c.cache; }],
+  ['unknown root', (c: any) => { c.unknown = {}; }],
+  ['root Redis', (c: any) => { c.redis = { enabled: true, address: 'redis.invalid:6379' }; }],
+  ['root edge', (c: any) => { c.edge = { enabled: true }; }],
+] as const) {
+  test(`managed mock rejects ${name} sections`, () => {
+    const cfg = parse(source); mutate(cfg);
+    expect(() => validateMockRouting(stringify(cfg))).toThrow('STOP: managed mock unexpected gateway sections');
+  });
+}
+
 test('managed mock expects exactly the guardrail engine switch org checks need', () => {
   expect(parse(source).guardrails).toEqual({ enabled: true, fail_open: true, default_timeout: '5s' });
   validateMockRouting(source);
@@ -475,6 +550,7 @@ const fakeDockerScript = `#!/bin/sh
 if [ -n "$FAKE_DOCKER_FAIL" ]; then echo "$FAKE_DOCKER_FAIL $*" >&2; exit 1; fi
 case " $* " in
   *" context inspect "*) cat "$FAKE_DOCKER/context.json" ;;
+  *" network inspect e2e-link-network "*) cat "$FAKE_DOCKER/link-network.json" ;;
   *" network inspect "*) cat "$FAKE_DOCKER/network.json" ;;
   *" compose "*" config "*) cat "$FAKE_DOCKER/config.json" ;;
   *" compose "*" ps "*) cat "$FAKE_DOCKER/ps.txt" ;;
@@ -533,12 +609,19 @@ function fakeStack(stack: 'standalone' | 'distributed') {
       ...(c.mounts ?? []).map(([Source, Destination]) => ({ Type: 'bind', Source, Destination, RW: false })),
       ...(c.volumes ?? []).map(([Source, Destination, RW]) => ({ Type: 'volume', Source, Destination, RW })),
     ],
-    NetworkSettings: { Networks: { [network]: { NetworkID: 'e2e-network', Aliases: [c.service], IPAddress: '172.18.0.2' } },
+    NetworkSettings: { Networks: { [network]: { NetworkID: 'e2e-network', Aliases: [c.service], IPAddress: '172.18.0.2' },
+      ...(['app', 'backend', 'worker'].includes(c.service) ? {
+        [`${project}_link-public`]: { NetworkID: 'e2e-link-network', Aliases: [c.service], IPAddress: '11.23.0.2' },
+      } : {}) },
       Ports: Object.fromEntries(Object.entries(c.ports ?? {}).map(([p, host]) => [p, [{ HostIp: '127.0.0.1', HostPort: host }]])) },
   }));
   return {
     'context.json': [{ Endpoints: { docker: { Host: 'unix:///var/run/docker.sock' } } }],
-    'config.json': { name: project, networks: { default: { name: network } }, services: {} },
+    'config.json': { name: project, networks: { default: { name: network },
+      'link-public': { name: `${project}_link-public` } }, services: {} },
+    'link-network.json': [{ Driver: 'bridge', Internal: true, Labels: {
+      'com.docker.compose.project': project, 'com.docker.compose.network': 'link-public',
+    } }],
     'ps.txt': containers.map(c => c.Id).join('\n'),
     'containers.json': containers,
     'network.json': [{ Driver: 'bridge', Labels: { 'com.docker.compose.project': project, 'com.docker.compose.network': 'default' } }],
@@ -624,12 +707,12 @@ test('managed stack routing has runtime labels, network and read-only source pro
   await testInfo.attach('verified-managed-mock', { contentType: 'application/json', body: JSON.stringify(receipt) });
 });
 
-// Standalone post-recreation attestation. Deliberately outside the offline
+// Distributed post-recreation attestation. Deliberately outside the offline
 // `--grep 'managed mock'` selection; no actor/model fixture or dispatch.
-test('managed background routing has source, serving health and owned poller proof', async ({}, testInfo) => {
+const backgroundTest = process.env.E2E_STACK === 'standalone' ? test.skip : test;
+backgroundTest('managed background routing has source, serving health and owned poller proof', async ({}, testInfo) => {
   // The Standalone inspection does not re-express the background constructor
   // attestation (managed-mock-background.py pins Distributed host names).
-  test.skip(process.env.E2E_STACK === 'standalone', 'Distributed-only attestation');
   const receipt = inspectManagedMock({ evalBackground: true });
   await testInfo.attach('verified-managed-background-routing', {
     contentType: 'application/json', body: JSON.stringify(receipt),

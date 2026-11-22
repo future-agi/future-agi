@@ -173,6 +173,16 @@ func (cb *CircuitBreaker) RecordFailure(generation uint64, err error) {
 	defer cb.mu.Unlock()
 
 	if generation != cb.generation {
+		// Only failures admitted in the epoch that just tripped this still-open
+		// circuit extend its cooldown. They never consume recovery capacity,
+		// and become irrelevant as soon as a half-open probe is admitted.
+		if cb.state == StateOpen && generation+1 == cb.generation && cb.isFailure(err) {
+			cb.lastFailure = time.Now()
+			if cb.readmitted && cb.onStateChange != nil {
+				cb.onStateChange(cb.providerID, false)
+				cb.readmitAfterCooldown()
+			}
+		}
 		return
 	}
 
@@ -239,10 +249,15 @@ func (cb *CircuitBreaker) readmitAfterCooldown() {
 func (cb *CircuitBreaker) readmit(generation uint64) {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
-	if cb.generation == generation && cb.state == StateOpen && cb.onStateChange != nil && !cb.readmitted {
-		cb.readmitted = true
-		cb.onStateChange(cb.providerID, true)
+	if cb.generation != generation || cb.state != StateOpen || cb.onStateChange == nil || cb.readmitted {
+		return
 	}
+	if wait := cb.cfg.Cooldown - time.Since(cb.lastFailure); wait > 0 {
+		time.AfterFunc(wait, func() { cb.readmit(generation) })
+		return
+	}
+	cb.readmitted = true
+	cb.onStateChange(cb.providerID, true)
 }
 
 // isFailure checks if an error counts as a circuit breaker failure.

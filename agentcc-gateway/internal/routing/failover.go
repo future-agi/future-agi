@@ -136,7 +136,7 @@ func (f *Failover) IsEnabled() bool {
 
 // ShouldFailover returns true if the error should trigger a failover attempt.
 func (f *Failover) ShouldFailover(err error) bool {
-	if err == nil {
+	if err == nil || DispatchRejection(err) != nil {
 		return false
 	}
 

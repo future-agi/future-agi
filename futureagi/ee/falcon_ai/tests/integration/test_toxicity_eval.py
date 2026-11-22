@@ -287,4 +287,4 @@ print()
 for i, step in enumerate(TRACE_STEPS):
     name = step["step"]
     keys = [k for k in step if k not in ("step", "timestamp")]
-    print(f"  [{i+1:02d}] {name}  ({', '.join(keys)})")
+    print(f"  [{i + 1:02d}] {name}  ({', '.join(keys)})")

@@ -39,7 +39,7 @@ func (l *ProbeLease) Complete(ctx context.Context, err error) {
 	if l == nil {
 		return
 	}
-	if errors.Is(ctx.Err(), context.Canceled) || (ctx.Err() == nil && errors.Is(err, context.Canceled)) {
+	if DispatchRejection(err) != nil || errors.Is(ctx.Err(), context.Canceled) || (ctx.Err() == nil && errors.Is(err, context.Canceled)) {
 		l.Abandon()
 		return
 	}

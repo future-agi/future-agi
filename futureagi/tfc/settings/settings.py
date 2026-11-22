@@ -116,6 +116,12 @@ del _runtime_numeric_setting_specs
 _validate_runtime_numeric_settings(_runtime_numeric_settings)
 globals().update(_runtime_numeric_settings)
 
+# B10 resolves the current source policy through the maintained optional-EE
+# boundary on every call. Missing policy support fails closed, never unlimited.
+METRICS_RETENTION_DAYS_PROVIDER = (
+    "tfc.capabilities.retention.current_trace_retention_days"
+)
+
 # Optional ClickHouse cluster whose entries intentionally expose each physical
 # replica as one read shard. Dashboard heavy reads use it only after validating
 # the identifier in the query builder; an empty value keeps the local-table
@@ -1013,6 +1019,12 @@ ALK_HARNESS_SANDBOX_TOKEN = os.getenv("ALK_HARNESS_SANDBOX_TOKEN", "")
 GITHUB_APP_ID = os.getenv("GITHUB_APP_ID", "")
 GITHUB_APP_PRIVATE_KEY = os.getenv("GITHUB_APP_PRIVATE_KEY", "")
 GITHUB_APP_WEBHOOK_SECRET = os.getenv("GITHUB_APP_WEBHOOK_SECRET", "")
+GITHUB_APP_SLUG = os.getenv("GITHUB_APP_SLUG", "")
+GITHUB_APP_CLIENT_ID = os.getenv("GITHUB_APP_CLIENT_ID", "")
+GITHUB_APP_CLIENT_SECRET = os.getenv("GITHUB_APP_CLIENT_SECRET", "")
+GITHUB_APP_FALLBACK_INSTALLATION_ID = os.getenv(
+    "GITHUB_APP_FALLBACK_INSTALLATION_ID", ""
+)
 ALK_HOSTED_SOURCE_MAX_BYTES = int(
     os.getenv("ALK_HOSTED_SOURCE_MAX_BYTES", str(256 * 1024 * 1024))
 )
@@ -1020,6 +1032,19 @@ ALK_HOSTED_BASE_EGRESS_DOMAINS = [
     domain.strip()
     for domain in os.getenv("ALK_HOSTED_BASE_EGRESS_DOMAINS", "").split(",")
     if domain.strip()
+]
+# Sandbox snapshots whose hook may export a hosted run's spans. Empty means no run exports.
+ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS = [
+    name.strip()
+    for name in os.getenv("ALK_HOSTED_OBSERVABILITY_EXPORT_SNAPSHOTS", "").split(",")
+    if name.strip()
+]
+# Of those, the snapshots whose hook measures an agent that traces nothing itself
+# (deploy/env-reference.toml says when a snapshot may be listed).
+ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS = [
+    name.strip()
+    for name in os.getenv("ALK_HOSTED_OBSERVABILITY_MEASURE_SNAPSHOTS", "").split(",")
+    if name.strip()
 ]
 # Hosted simulator credentials are platform configuration, not customer job input. Values are
 # resolved only while launching the sandbox and are never persisted on HostedHarnessJob. Model
@@ -1127,13 +1152,20 @@ AGENT_FIX_CHECK_RUN_PARALLELISM = int(os.getenv("AGENT_FIX_CHECK_RUN_PARALLELISM
 AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS = int(
     os.getenv("AGENT_FIX_HEARTBEAT_TIMEOUT_SECONDS", "600")
 )
-# A check run reserves this much of a fix's budget for each scenario execution.
+# A check run reserves this much of a fix's budget for each scenario execution, for its
+# simulation, and the second for each platform eval a winner's grading may run on it.
 AGENT_FIX_WORST_CASE_USD_PER_EXECUTION = os.getenv(
     "AGENT_FIX_WORST_CASE_USD_PER_EXECUTION", "0.05"
+)
+AGENT_FIX_WORST_CASE_USD_PER_EVAL = os.getenv(
+    "AGENT_FIX_WORST_CASE_USD_PER_EVAL", "0.02"
 )
 # Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
 # cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.
 AGENT_FIX_MIN_FAILING_CASES = int(os.getenv("AGENT_FIX_MIN_FAILING_CASES", "12"))
+# Scenarios an environment's suite may hold from Error Feed issues: each one guards every
+# later epoch there, so Run Epoch from an issue asks for older ones to go first.
+AGENT_FIX_ISSUE_SCENARIOS_MAX = int(os.getenv("AGENT_FIX_ISSUE_SCENARIOS_MAX", "36"))
 # Models the engine may call through its fix's API; Future AGI pays for them. The list holds
 # the engine's planner, coder and reviewer, and the backups its profile moves to when one
 # loses a call.
@@ -1184,10 +1216,70 @@ HARNESS_VERSIONING_ENABLED = os.getenv("HARNESS_VERSIONING_ENABLED", "").lower()
 HARNESS_BUNDLE_CERTIFY_ENABLED = os.getenv(
     "HARNESS_BUNDLE_CERTIFY_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Actors and test conditions (faults): the cast editor, actor endpoints and fault edits. Off until the sandbox
+# template carries an agent-learning-kit release that plays actors and applies faults.
+HARNESS_ACTORS_ENABLED = os.getenv("HARNESS_ACTORS_ENABLED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+def _actors_share(text: str) -> tuple[float, float]:
+    """`HARNESS_ACTORS_SHARE` as `(min, max)`: "<min>-<max>", each a share from 0 to 1, min not above max."""
+    from django.core.exceptions import ImproperlyConfigured
+
+    low, _, high = text.strip().partition("-")
+    try:
+        share = (float(low), float(high))
+    except ValueError as exc:
+        raise ImproperlyConfigured(
+            f"HARNESS_ACTORS_SHARE must read <min>-<max>, such as 0.15-0.25; got {text!r}"
+        ) from exc
+    if not 0 <= share[0] <= share[1] <= 1:
+        raise ImproperlyConfigured(
+            f"HARNESS_ACTORS_SHARE needs 0 <= min <= max <= 1; got {text!r}"
+        )
+    return share
+
+
+# The default share of scenarios that include an actor, sent to the harness while actors are on; read and checked only
+# then, so a bad value never stops a deployment that has actors off.
+HARNESS_ACTORS_SHARE = (
+    _actors_share(os.getenv("HARNESS_ACTORS_SHARE", "0.15-0.25"))
+    if HARNESS_ACTORS_ENABLED
+    else (0.15, 0.25)
+)
 # Raising agent-change nudges; only takes effect while versioning is enabled.
 HARNESS_VERSIONING_NUDGES_ENABLED = os.getenv(
     "HARNESS_VERSIONING_NUDGES_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+# Accepting source.subfolder on a build; only once the sandbox's agent-learning-kit
+# reads it, else the harness would silently build from the repository root.
+HARNESS_SOURCE_SUBFOLDER_ENABLED = os.getenv(
+    "HARNESS_SOURCE_SUBFOLDER_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Reading every new code version of an Agents-page agent in the sandbox before its
+# check; only once the sandbox's agent-learning-kit has the read-only mode. Off, a
+# version keeps today's check and its document arrives with its first build.
+HARNESS_AGENT_READING_ENABLED = os.getenv(
+    "HARNESS_AGENT_READING_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Charging a customer for each reading of an agent and each scan for agents. Off, nothing
+# is charged for any reading, background ones included, and one log line per reading says
+# what it would have cost. Not to be turned on until the rule for which outcomes are
+# charged is built: today a reading is charged before its outcome is known, so a failed
+# or "not supported" reading would be charged too.
+HARNESS_AGENT_READING_CHARGE_ENABLED = os.getenv(
+    "HARNESS_AGENT_READING_CHARGE_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Starting a build from a version's stored reading instead of reading the agent
+# again; only once the sandbox's agent-learning-kit takes --seed-contract.
+HARNESS_SEED_CONTRACT_ENABLED = os.getenv(
+    "HARNESS_SEED_CONTRACT_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# How long one reading of an agent, or one scan for the agents in a source, may run.
+ALK_HOSTED_READING_TIMEOUT = int(os.getenv("ALK_HOSTED_READING_TIMEOUT", "2400"))
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.
@@ -1280,10 +1372,32 @@ BASE_URL = os.getenv(
     ),
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
+
+
+def _sdk_api_url(environ, base_url):
+    """The API URL an SDK outside the stack calls (its FI_BASE_URL): BASE_URL
+    when the operator set it (the API's public URL), else the URL the UI calls
+    (VITE_HOST_API), else the published BACKEND_PORT on localhost, else
+    ``base_url``. BASE_URL's own default stays http://localhost:8000 because
+    in-container callers use it, while ./bin/install moves the published port
+    when 8000 is taken."""
+    port = (environ.get("BACKEND_PORT") or "").strip()
+    url = (
+        (environ.get("BASE_URL") or "").strip()
+        or (environ.get("VITE_HOST_API") or "").strip()
+        or (f"http://localhost:{port}" if port else "")
+        or base_url
+    )
+    return url.rstrip("/")
+
+
+# The in-app SDK snippet hands this out as FI_BASE_URL on a self-hosted install.
+FI_API_PUBLIC_URL = _sdk_api_url(os.environ, BASE_URL)
 # fi-collector's OTLP/HTTP endpoint as an SDK outside the stack reaches it. The
-# SDKs default FI_BASE_URL to Future AGI Cloud, so the in-app SDK snippet and
-# the setup screen hand this out on a self-hosted install. Compose and the Helm
-# chart set it; the default is the port both compose files publish.
+# SDKs default to Future AGI Cloud, so on a self-hosted install the in-app SDK
+# snippet and the setup screen hand this out as FI_TRACES_URL, next to
+# FI_API_PUBLIC_URL as FI_BASE_URL. Compose and the Helm chart set it; the
+# default is the port both compose files publish.
 FI_COLLECTOR_PUBLIC_URL = (
     os.getenv("FI_COLLECTOR_PUBLIC_URL", "").strip() or "http://localhost:4318"
 ).rstrip("/")
