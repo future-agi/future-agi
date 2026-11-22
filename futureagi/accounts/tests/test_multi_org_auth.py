@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
-from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 
 from accounts.authentication import APIKeyAuthentication, LangfuseBasicAuthentication
 from accounts.models.organization import Organization
@@ -186,9 +186,9 @@ class TestAPIKeyAuthentication:
             user=auth_user,
             deleted=True,
         )
-        encoded = base64.b64encode(
-            f"{key.api_key}:{key.secret_key}".encode("utf-8")
-        ).decode("ascii")
+        encoded = base64.b64encode(f"{key.api_key}:{key.secret_key}".encode()).decode(
+            "ascii"
+        )
         request = _make_request()
         request.META = {"HTTP_AUTHORIZATION": f"Basic {encoded}"}
 
@@ -737,19 +737,30 @@ class TestSetWorkspaceContextIntegration:
         # Workspace should NOT be ws_invited (wrong org)
         assert request.workspace is None or request.workspace.id != ws_invited.id
 
-    def test_orgless_user_gets_none(self, db, auth_instance):
-        """User with no org at all gets None for both."""
+    def test_orgless_user_gets_none_under_accounts(self, db, auth_instance):
+        """User with no org at all gets None for both on an /accounts/ read."""
         user = User.objects.create_user(
             email="noorg@test.com",
             password="testpass123",
             name="No Org",
             config={},
         )
-        request = _make_request()
+        request = _make_request(path="/accounts/organizations/")
         auth_instance._set_workspace_context(request, user)
 
         assert request.organization is None
         assert request.workspace is None
+
+    def test_orgless_user_is_refused_a_read_outside_accounts(self, db, auth_instance):
+        user = User.objects.create_user(
+            email="noorg-read@test.com",
+            password="testpass123",
+            name="No Org",
+            config={},
+        )
+
+        with pytest.raises(PermissionDenied):
+            auth_instance._set_workspace_context(_make_request(), user)
 
     def test_config_org_switches_workspace_context(
         self, auth_instance, auth_user, org_invited, ws_invited
