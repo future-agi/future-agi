@@ -385,7 +385,7 @@
     {
       "pattern": "futureagi/conftest.py",
       "reason": "Inspected pytest collection and disposable database fixtures, not product startup.",
-      "sha256": "8913dc51a719dc94677182ba400cf89d0fec32cadedd3c724c90ee8d03588267"
+      "sha256": "49bbfb105b3491a93eefa75d406a7de94aa7eb4bbecb9957945dbbd50c460967"
     },
     {
       "pattern": "futureagi/tracer/services/clickhouse/v2/test_property_catalog_schema_contract.py",
