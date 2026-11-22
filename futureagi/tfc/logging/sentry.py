@@ -509,7 +509,8 @@ def _span_structure(span: dict) -> dict:
             if type(value) is str and len(value) <= 32 and re.fullmatch(pattern, value):
                 if key != "trace_id" or int(value, 16):
                     dsc[key] = value
-        result["dynamic_sampling_context"] = dsc
+        if "trace_id" in dsc:
+            result["dynamic_sampling_context"] = dsc
     data = span.get("data")
     if type(data) is dict:
         error_type = data.get("exception.type")
@@ -522,10 +523,17 @@ def _span_structure(span: dict) -> dict:
     return result
 
 
+def _has_span_ids(clean: dict) -> bool:
+    # _span_structure only keeps well-formed, nonzero IDs.
+    return "trace_id" in clean and "span_id" in clean
+
+
 def _scrub_transaction_spans(event: dict) -> None:
     spans = _entries(event, "spans")
     if spans is not None:
-        event["spans"] = [_span_structure(span) for span in spans]
+        event["spans"] = [
+            clean for clean in map(_span_structure, spans) if _has_span_ids(clean)
+        ]
     # The SDK promotes root-span tags to transaction-level tags. Do not
     # forward arbitrary values from that second representation either.
     if event.get("type") == "transaction" and "tags" in event:
@@ -934,7 +942,7 @@ def _before_send_transaction(event: "Event", hint: "Hint") -> "Event | None":
         clean = _scrub_event(cast(dict, event))
         if clean.get("type") == "transaction":
             trace = clean.get("contexts", {}).get("trace", {})
-            if "trace_id" not in trace or "span_id" not in trace:
+            if not _has_span_ids(trace):
                 return None  # Never hand a malformed trace to profile serialization.
     except Exception:  # noqa: BLE001 - drop SDK transactions on any scrubbing failure
         return None

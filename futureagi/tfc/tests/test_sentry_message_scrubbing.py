@@ -345,7 +345,7 @@ def test_zero_optional_span_and_sampling_ids_are_not_forwarded():
         "parent_span_id": "0" * 16,
         "dynamic_sampling_context": {"trace_id": "0" * 32, "sampled": "true"},
     })
-    assert span == {"dynamic_sampling_context": {"sampled": "true"}}
+    assert span == {}
 
 
 def test_profile_and_transaction_share_trace_despite_over_budget_context():
