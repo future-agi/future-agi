@@ -100,6 +100,93 @@ describe("ChatInput", () => {
     },
   );
 
+  const oversizedFile = () => {
+    const file = new File(["too big"], "big.txt", { type: "text/plain" });
+    Object.defineProperty(file, "size", { value: 10 * 1024 * 1024 + 1 });
+    return file;
+  };
+
+  it("tells the user when a picked file is over 10 MB and keeps the chat usable", async () => {
+    const { container } = render(
+      <SnackbarProvider>
+        <ChatInput onSend={vi.fn()} />
+      </SnackbarProvider>,
+    );
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [oversizedFile()] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Files must be 10 MB or smaller.",
+    );
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(useFalconStore.getState().attachedFiles).toEqual([]);
+    expect(screen.getByTitle("Attach file")).not.toBeDisabled();
+    expect(screen.getByPlaceholderText("Ask anything...")).not.toBeDisabled();
+  });
+
+  it("accepts a picked file of exactly 10 MB", async () => {
+    const file = new File(["ok"], "limit.txt", { type: "text/plain" });
+    Object.defineProperty(file, "size", { value: 10 * 1024 * 1024 });
+    vi.mocked(uploadFile).mockResolvedValueOnce({
+      status: true,
+      result: { id: "limit-file", name: file.name, size: file.size },
+    });
+    const { container } = render(
+      <SnackbarProvider>
+        <ChatInput onSend={vi.fn()} />
+      </SnackbarProvider>,
+    );
+    fireEvent.change(container.querySelector('input[type="file"]'), {
+      target: { files: [file] },
+    });
+    await waitFor(() =>
+      expect(useFalconStore.getState().attachedFiles).toHaveLength(1),
+    );
+    expect(uploadFile).toHaveBeenCalledWith(file);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("tells the user when a dropped file is over 10 MB and still uploads the rest", async () => {
+    const small = new File(["notes"], "notes.txt", { type: "text/plain" });
+    vi.mocked(uploadFile).mockResolvedValueOnce({
+      status: true,
+      result: { id: "small-file", name: small.name, size: small.size },
+    });
+    render(
+      <SnackbarProvider>
+        <ChatInput onSend={vi.fn()} />
+      </SnackbarProvider>,
+    );
+    fireEvent.drop(screen.getByPlaceholderText("Ask anything..."), {
+      dataTransfer: { files: [oversizedFile(), small] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Files must be 10 MB or smaller.",
+    );
+    await waitFor(() =>
+      expect(useFalconStore.getState().attachedFiles).toHaveLength(1),
+    );
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    expect(uploadFile).toHaveBeenCalledWith(small);
+  });
+
+  it("tells the user when every dropped file is over 10 MB", async () => {
+    render(
+      <SnackbarProvider>
+        <ChatInput onSend={vi.fn()} />
+      </SnackbarProvider>,
+    );
+    fireEvent.drop(screen.getByPlaceholderText("Ask anything..."), {
+      dataTransfer: { files: [oversizedFile()] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Files must be 10 MB or smaller.",
+    );
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(useFalconStore.getState().attachedFiles).toEqual([]);
+    expect(screen.getByTitle("Attach file")).not.toBeDisabled();
+  });
+
   it("shows a fallback message when the upload has no server response", async () => {
     vi.mocked(uploadFile).mockRejectedValueOnce(new Error("Network Error"));
     const { container } = render(

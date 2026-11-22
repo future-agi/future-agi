@@ -5,7 +5,7 @@ import hashlib
 import io
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -371,6 +371,13 @@ def test_receipt_replay_normalizes_timestamps_before_chat_arithmetic(
             capability.attempt, projected, digest_body=body, replay_usage=False
         )
         assert created
+        first_delivery_times = list(
+            ChatMessageModel.objects.filter(
+                call_execution=job.scenario_registrations.get().call_execution
+            )
+            .order_by("created_at")
+            .values_list("created_at", flat=True)
+        )
         replay, created = ingest_result_receipt(
             capability.attempt, projected, digest_body=body, replay_usage=False
         )
@@ -387,11 +394,95 @@ def test_receipt_replay_normalizes_timestamps_before_chat_arithmetic(
         ChatMessageModel.objects.filter(call_execution=call).order_by("created_at")
     )
     assert len(rows) == 4
-    assert scheduled_times[0] == scheduled_times[1]
-    first, reply, second, second_reply = scheduled_times[0]
-    assert first == reply == call.started_at
-    assert second == second_reply
-    assert (second - first).total_seconds() == 1
+    # Check the stored times, not the values handed to bulk_create: created_at
+    # is auto_now_add, which used to discard the intended times on insert, so
+    # ingestion now writes each row's own time back after the insert. Each
+    # message gets its own time in conversation order from the receipt start.
+    assert [len(times) for times in scheduled_times] == [4, 4]
+    stored_times = [row.created_at for row in rows]
+    assert [row.role for row in rows] == ["user", "assistant", "user", "assistant"]
+    assert stored_times == first_delivery_times
+    assert stored_times == [
+        call.started_at + timedelta(seconds=offset) for offset in range(4)
+    ]
+
+
+def _ingest_text_receipt(job, capability, body):
+    content = json.dumps(
+        {
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi"},
+                {"role": "user", "content": "Thanks"},
+                {"role": "assistant", "content": "Welcome"},
+            ]
+        }
+    ).encode()
+    sha = hashlib.sha256(content).hexdigest()
+    storage = MagicMock()
+    storage.get_object.return_value.read.return_value = content
+    with patch(
+        "simulate.services.hosted_harness_ingestion.get_storage_client",
+        return_value=storage,
+    ):
+        ingest_artifact(
+            capability.attempt,
+            digest=sha,
+            kind="transcript",
+            size=len(content),
+            stream=io.BytesIO(content),
+            content_type="application/json",
+            scenario_key="one",
+        )
+        body["call"]["transcript_artifact"] = f"sha256:{sha}"
+        body["digest"] = canonical_digest(body)
+        serializer = HarnessResultReceiptSerializer(data=body)
+        serializer.is_valid(raise_exception=True)
+        ingest_result_receipt(
+            capability.attempt,
+            serializer.validated_data,
+            digest_body=body,
+            replay_usage=False,
+        )
+    return CallExecution.objects.get(
+        id=job.scenario_registrations.get().call_execution_id
+    )
+
+
+def test_text_receipt_turns_become_the_call_turn_count(receipt_channel):
+    from django.db import connection
+
+    from simulate.serializers.test_execution import CallExecutionDetailSerializer
+    from simulate.utils.sql_query import get_kpi_metrics_query
+
+    job, capability, body = receipt_channel
+    call = _ingest_text_receipt(job, capability, body)
+
+    assert call.simulation_call_type == CallExecution.SimulationCallType.TEXT
+    assert ChatMessageModel.objects.filter(call_execution=call).count() == 4
+    assert call.conversation_metrics_data["turn_count"] == 2
+    assert CallExecutionDetailSerializer().get_turn_count(call) == 2
+    query, params = get_kpi_metrics_query(call.test_execution_id)
+    with connection.cursor() as cursor:
+        cursor.execute(query, params)
+        columns = [column[0] for column in cursor.description]
+        metrics = dict(zip(columns, cursor.fetchone(), strict=True))
+    assert metrics["avg_turn_count"] == 2
+
+
+@pytest.mark.parametrize(
+    ("call_data", "expected"),
+    [({"turns": 2}, 2), ({"turns": 0}, 0), (None, None), ({}, None)],
+)
+def test_receipt_turn_count_replaces_the_previous_attempts(call_data, expected):
+    from simulate.services.hosted_harness_ingestion import _apply_receipt_turn_count
+
+    call = SimpleNamespace(
+        conversation_metrics_data={"turn_count": 7, "total_tokens": 9}
+    )
+    _apply_receipt_turn_count(call, call_data)
+    assert call.conversation_metrics_data.get("turn_count") == expected
+    assert call.conversation_metrics_data["total_tokens"] == 9
 
 
 @pytest.mark.parametrize("field", ["started_at", "ended_at"])

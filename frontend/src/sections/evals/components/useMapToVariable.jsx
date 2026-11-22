@@ -29,7 +29,13 @@ export const mapRowHoverSx = {
   },
 };
 
-export function useMapToVariable({ variables, mapping, setMapping }) {
+export function useMapToVariable({
+  variables,
+  mapping,
+  setMapping,
+  onAssign,
+  isAssigned,
+}) {
   const vars = useMemo(
     () => (Array.isArray(variables) ? variables : []),
     [variables],
@@ -39,10 +45,11 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
 
   const assignPathToVariable = useCallback(
     (variable, path) => {
-      setMapping((prev) => ({ ...prev, [variable]: path }));
+      if (onAssign) onAssign(variable, path);
+      else setMapping((prev) => ({ ...prev, [variable]: path }));
       enqueueSnackbar(`Mapped to ${variable}`, { variant: "success" });
     },
-    [setMapping],
+    [onAssign, setMapping],
   );
 
   const handleRowMapClick = useCallback(
@@ -150,7 +157,11 @@ export function useMapToVariable({ variables, mapping, setMapping }) {
       </Typography>
       {vars.map((variable) => {
         const current = map[variable];
-        const isThis = current === mapMenu?.path;
+        const isThis =
+          mapMenu &&
+          (isAssigned
+            ? isAssigned(variable, mapMenu.path)
+            : current === mapMenu.path);
         return (
           <MenuItem
             key={variable}

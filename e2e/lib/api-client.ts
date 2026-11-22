@@ -8,7 +8,7 @@ function errorSummary(error: unknown): string {
   return error instanceof Error ? error.message.split('\n')[0] : String(error);
 }
 
-function isResponseLessReset(error: unknown): boolean {
+export function isResponseLessReset(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (('status' in error && error.status != null) || ('statusCode' in error && error.statusCode != null)) return false;
   // Playwright buffers the body before resolving the request, so rejection
@@ -19,7 +19,7 @@ function isResponseLessReset(error: unknown): boolean {
   return !/timeout|timed out/i.test(summary) && /socket hang up|\bECONNRESET\b|\bEPIPE\b/i.test(summary);
 }
 
-function annotateRetry(method: Method, path: string, error: unknown): void {
+export function annotateRetry(method: Method, path: string, error: unknown): void {
   const description = `${method.toUpperCase()} ${path}: ${errorSummary(error)}`;
   let info;
   try { info = test.info(); } catch {

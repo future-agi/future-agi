@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Box, Typography, Button } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Typography,
+  Button,
+  ClickAwayListener,
+} from "@mui/material";
 import { useSnackbar } from "notistack";
 import { useSearchParams } from "react-router-dom";
 
@@ -12,6 +18,7 @@ import {
 } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import EmptyState from "../../components/EmptyState";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
 import CoverageMatrix from "./CoverageMatrix";
@@ -28,7 +35,7 @@ import {
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { SCENARIOS_COPY } from "./scenarios.constants";
-import { DRAFTS_COPY } from "../workspace.constants";
+import { DRAFTS_COPY, WORKSPACE_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
@@ -114,6 +121,7 @@ export default function ScenariosStep({
   patch,
   locked = false,
   onStartRun,
+  runDialogOpen = false,
   canRun = false,
   runBlockedReason,
 }) {
@@ -133,6 +141,11 @@ export default function ScenariosStep({
   };
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
+  const { canEdit } = useSimulationAccess();
+  const rowsLocked = locked || !canEdit;
+  const rowsLockTooltip = locked
+    ? LOCK_TOOLTIP
+    : WORKSPACE_COPY.viewer.scenarios;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -385,7 +398,13 @@ export default function ScenariosStep({
 
   // Escape clears the selection, unless it is closing something on top
   // (drawer, editor, confirm) or the user is typing in a field.
-  const overlayOpen = !!openRow || !!editing || !!pendingDelete || adding;
+  const overlayOpen =
+    runDialogOpen ||
+    !!openRow ||
+    !!editing ||
+    !!pendingDelete ||
+    adding ||
+    !!importId;
   const clearSelection = sel.clear;
   const hasSelection = sel.count > 0;
   useEffect(() => {
@@ -405,6 +424,18 @@ export default function ScenariosStep({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [hasSelection, overlayOpen, clearSelection]);
+
+  const handleClickAway = (event) => {
+    if (!hasSelection || overlayOpen) return;
+    // The chat uses the checked rows. Cancel can unmount the run dialog before
+    // this document listener fires, but the click's original path still includes it.
+    const keepSelection = event
+      .composedPath()
+      .some((node) =>
+        node.matches?.("[data-builder-chat], [data-scenario-run-dialog]"),
+      );
+    if (!keepSelection) clearSelection();
+  };
 
   // The scenario names a bulk delete targets. Names — not ids — because the
   // amend route resolves drops by name.
@@ -489,21 +520,9 @@ export default function ScenariosStep({
       ) : !hasScenarios ? (
         <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
       ) : (
-        <>
-          {loadFailed && (
-            <Alert
-              severity="error"
-              sx={{ mb: 2, flexShrink: 0 }}
-              action={
-                <Button color="inherit" size="small" onClick={retryLoad}>
-                  Retry
-                </Button>
-              }
-            >
-              Couldn&apos;t refresh the scenarios. Showing the last loaded list.
-            </Alert>
-          )}
+        <ClickAwayListener onClickAway={handleClickAway}>
           <Box
+            role="presentation"
             sx={{
               flex: 1,
               minHeight: 320,
@@ -512,6 +531,20 @@ export default function ScenariosStep({
               flexDirection: "column",
             }}
           >
+            {loadFailed && (
+              <Alert
+                severity="error"
+                sx={{ mb: 2, flexShrink: 0 }}
+                action={
+                  <Button color="inherit" size="small" onClick={retryLoad}>
+                    Retry
+                  </Button>
+                }
+              >
+                Couldn&apos;t refresh the scenarios. Showing the last loaded
+                list.
+              </Alert>
+            )}
             {/* The bulk-action bar covers the toolbar's row while a selection is
                 active. Both sit in one grid cell, the toolbar staying mounted
                 underneath, so the row keeps the toolbar's height (no shift when
@@ -524,7 +557,9 @@ export default function ScenariosStep({
                 "& > *": { gridArea: "1 / 1", minWidth: 0 },
               }}
             >
-              <Box aria-hidden={!locked && sel.count > 0 ? true : undefined}>
+              <Box
+                aria-hidden={!rowsLocked && sel.count > 0 ? true : undefined}
+              >
                 <ScenarioToolbar
                   query={query}
                   onQueryChange={handleQueryChange}
@@ -562,7 +597,7 @@ export default function ScenariosStep({
                   }
                 />
               </Box>
-              {!locked && sel.count > 0 && (
+              {!rowsLocked && sel.count > 0 && (
                 <Box
                   sx={{
                     // No padding here: SelectionBar carries the toolbar's own
@@ -629,7 +664,8 @@ export default function ScenariosStep({
                 query={query}
                 filters={filters}
                 groupBy={activeGroupBy}
-                locked={locked}
+                locked={rowsLocked}
+                lockTooltip={rowsLockTooltip}
                 rowHeight={rowHeight}
                 readout={
                   hasSearchOrFilters || hiddenCount > 0
@@ -645,7 +681,7 @@ export default function ScenariosStep({
               />
             </Box>
           </Box>
-        </>
+        </ClickAwayListener>
       )}
 
       {importId && env?.id ? (
@@ -670,7 +706,10 @@ export default function ScenariosStep({
           setOpenRow(null);
           setEditing(row);
         }}
-        locked={locked}
+        locked={rowsLocked}
+        testConditions={
+          !!pageData.scenarioEditing?.editable_fields?.includes("faults")
+        }
       />
       <ScenarioEditor
         open={!!editing}
@@ -715,6 +754,7 @@ ScenariosStep.propTypes = {
   locked: PropTypes.bool,
   // Starts a run scoped to the selected scenarios × trials — (ids, trials).
   onStartRun: PropTypes.func,
+  runDialogOpen: PropTypes.bool,
   // Whether the env is runnable; gates the selection bar's Run button.
   canRun: PropTypes.bool,
   // Why it can't run yet; Run shows disabled with this instead of hiding.
