@@ -24,3 +24,21 @@ def test_apply_number_filter_null_and_not_null():
     res_not_null = mock_qs.filter(**{f"{field}__isnull": False})
     assert res_not_null == "filtered_not_null"
     mock_qs.filter.assert_called_with(**{f"{field}__isnull": False})
+
+
+def test_apply_number_any_field_filter_null_and_not_null():
+    """Verify is_null and is_not_null operators on apply_number_any_field_filter."""
+    fields = ["customer_cost_cents", "cost_cents"]
+
+    # is_null condition combines with &
+    cond_null = models.Q()
+    for field in fields:
+        cond_null &= models.Q(**{f"{field}__isnull": True})
+
+    # is_not_null condition combines with |
+    cond_not_null = models.Q()
+    for field in fields:
+        cond_not_null |= models.Q(**{f"{field}__isnull": False})
+
+    assert len(cond_null.children) == 2
+    assert len(cond_not_null.children) == 2
