@@ -414,6 +414,45 @@ func TestStream_TrailingUsageChunkCarriesInputTokens(t *testing.T) {
 	}
 }
 
+// A provider that sends usage on its first chunk as well puts the input count
+// in both message_start and message_delta. Both must carry the same whole
+// count, as Anthropic's own API does, so a client that takes the closing
+// figure as the total gets it right, and a part-and-rest split would show here.
+func TestStream_UsageOnFirstAndLastChunkCarriesTheWholeInputInBoth(t *testing.T) {
+	chunks := []models.StreamChunk{
+		{
+			ID:      "c",
+			Choices: []models.StreamChoice{{Delta: models.Delta{Content: strPtr("Hi")}}},
+			Usage:   &models.Usage{PromptTokens: 300},
+		},
+		{
+			ID:      "c",
+			Choices: []models.StreamChoice{{FinishReason: strPtr("stop")}},
+			Usage:   &models.Usage{PromptTokens: 300, CompletionTokens: 40},
+		},
+	}
+
+	events, errs := tr.StreamEventsFromCanonical(context.Background(), feedChunks(chunks))
+	inputs := map[string][]interface{}{}
+	for _, e := range collectEvents(t, events, errs) {
+		switch e["_event"] {
+		case "message_start":
+			message, _ := e["message"].(map[string]interface{})
+			usage, _ := message["usage"].(map[string]interface{})
+			inputs["message_start"] = append(inputs["message_start"], usage["input_tokens"])
+		case "message_delta":
+			usage, _ := e["usage"].(map[string]interface{})
+			inputs["message_delta"] = append(inputs["message_delta"], usage["input_tokens"])
+		}
+	}
+	for _, event := range []string{"message_start", "message_delta"} {
+		got := inputs[event]
+		if len(got) != 1 || got[0] != float64(300) {
+			t.Errorf("%s input_tokens = %v, want exactly one event with 300", event, got)
+		}
+	}
+}
+
 // ─── Mid-stream error ─────────────────────────────────────────────────────────
 
 func TestStream_MidStreamError(t *testing.T) {
