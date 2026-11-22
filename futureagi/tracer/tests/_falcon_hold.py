@@ -11,7 +11,11 @@ from ai_tools.base import ToolContext
 from tracer.models.trace_error_analysis import TraceErrorAnalysis, TraceErrorDetail
 
 HOLD_CODE = "FALCON_BACKGROUND_ACCOUNTING_UNAVAILABLE"
-HOLD_MESSAGE = "Background multi-trace analysis is unavailable. No background analysis was started."
+HOLD_MESSAGE = (
+    "Background multi-trace analysis is unavailable right now. "
+    "No analysis was started and no results will appear on the Feed. "
+    "Tell the user this explicitly; do not promise background results."
+)
 
 
 def assert_hold(code, message):
