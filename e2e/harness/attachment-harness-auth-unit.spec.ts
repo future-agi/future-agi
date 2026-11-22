@@ -4,7 +4,7 @@ import { setImmediate } from 'node:timers/promises';
 import { test, expect } from '@playwright/test';
 import type { BrowserContext, Page, Route } from '@playwright/test';
 import { ownedScopeOrigin, ScopeActors, scopeId, type ScopeActor } from '../lib/scope-actors';
-import { AttachmentMediaDelivery, assertReverseDelivery, exerciseAppRefresh, mediaResolve,
+import { AttachmentMediaDelivery, assertReverseDelivery, exerciseAppRefresh, isRefreshTriggerRead, mediaResolve,
   DELIVERY_READY, type DeliveryEvent } from '../lib/attachment-media-delivery';
 
 // Offline guard/oracle/lifecycle tests only. No browser, network, cookies or grants.
@@ -81,6 +81,15 @@ test('H13 unit: media transport rejects HTTP and external origins before routing
   expect(() => new AttachmentMediaDelivery(noBrowser, 'https://localhost:23443', true)).not.toThrow();
 });
 
+
+test('H13 unit: inject the refresh fault on the persistent Observe count, never the cancellable grid', () => {
+  const count = new URL('http://localhost:8100/tracer/project/list_projects/?project_type=observe&page_number=0&page_size=100');
+  const grid = new URL(count);
+  grid.searchParams.set('page_size', '25');
+  grid.searchParams.set('sort_by', 'created_at');
+  expect(isRefreshTriggerRead(count)).toBe(true);
+  expect(isRefreshTriggerRead(grid)).toBe(false);
+});
 
 for (const scenario of [
   { name: 'missing workspace', header: 'x-workspace-id', value: undefined },

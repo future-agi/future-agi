@@ -172,5 +172,5 @@ test('H0: CH reads bind exact project/trace/parent and always use FINAL', async 
     expect(call.sql).not.toContain(seed.trace_id);
   });
   expect(calls[2].sql).toContain('id={s:String}');
-  expect(calls[2].sql).toContain("input, attrs_string['input.value'] AS input_attribute");
+  expect(calls[2].sql).toContain("input, JSONExtractString(attributes_extra, 'input.value') AS input_attribute");
 });

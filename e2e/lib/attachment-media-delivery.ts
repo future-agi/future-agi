@@ -195,18 +195,22 @@ export class HeldMediaResponse {
       const body = await response.body(); // Body completion, not request-start order.
       const originalHeaders = response.headersArray();
       const map = headerMap(originalHeaders);
+      const cookieHeaders = originalHeaders.filter(header => header.name.toLowerCase() === 'set-cookie');
+      let maxAge: number | undefined;
       this.status = response.status();
       requireThat(this.status === (this.operation.kind === 'exchange' ? 204 : 200), 'actual media response was not successful');
       if (this.operation.kind === 'exchange') {
         this._sessionId = scopeId(map[MEDIA_SESSION_HEADER] ?? '');
         requireThat(Number.isFinite(Date.parse(map[EXPIRY_HEADER])), 'exchange expiry header missing');
         this.expiresAt = map[EXPIRY_HEADER];
-        const cookieHeaders = originalHeaders.filter(header => header.name.toLowerCase() === 'set-cookie');
         const media = cookieHeaders.filter(header => header.value.startsWith(`${MEDIA_COOKIE}=`));
         requireThat(media.length === 1, 'exchange must return one real media Set-Cookie');
         const parts = media[0].value.split(';').map(part => part.trim());
         this.cookieValue = parts[0].slice(MEDIA_COOKIE.length + 1);
         const attributes = parts.slice(1).map(part => part.toLowerCase());
+        const age = attributes.find(part => /^max-age=\d+$/.test(part));
+        maxAge = Number(age?.slice('max-age='.length));
+        requireThat(Number.isSafeInteger(maxAge) && maxAge > 0, 'exchange cookie missing a bounded lifetime');
         requireThat(this.cookieValue && attributes.includes('secure') && attributes.includes('httponly')
           && attributes.includes('samesite=strict') && attributes.includes(`path=${cookiePath(this._sessionId)}`)
           && !attributes.some(part => part.startsWith('domain=')), 'media cookie security/path contract mismatch');
@@ -225,6 +229,7 @@ export class HeldMediaResponse {
       void browserReply.catch(() => {});
       // APIResponse forwarding retains real body/status/headers including Set-Cookie.
       // Assert what Chromium received below; do not infer delivery from fulfill alone.
+      const releaseStarted = Date.now() / 1000;
       await route.fulfill({ response });
       const received = await browserReply;
       requireThat(await bounded(received.finished(), 'browser body') === null, 'browser response did not finish');
@@ -234,16 +239,26 @@ export class HeldMediaResponse {
       // native fetch Response.text() and requires empty, rather than inventing it.
       const sameBody = response.status() === 204 ? body.length === 0 : (await received.body()).equals(body);
       requireThat(received.status() === response.status() && sameBody, 'browser status/body changed during delivery');
-      requireThat(Object.entries(map).every(([name, value]) => receivedHeaders[name] === value),
-        'browser response headers changed during delivery');
-      this.unchangedResponse = true;
+      // Chromium may install Set-Cookie but omit it from headersArray() on a
+      // fulfilled exchange. Only that one validated cookie can use the jar as
+      // its delivery witness; compare every other original header verbatim.
+      const cookieHidden = this.operation.kind === 'exchange' && cookieHeaders.length === 1
+        && receivedHeaders['set-cookie'] === undefined;
+      requireThat(Object.entries(map).every(([name, value]) =>
+        receivedHeaders[name] === value || (name === 'set-cookie' && cookieHidden)),
+      'browser response headers changed during delivery');
       if (this.operation.kind === 'exchange') {
         const cookies = await this.cookies();
-        requireThat(cookies.length === 1 && cookies[0].value === this.cookieValue
+        // Max-Age starts at delivery (not at issuance of the held response).
+        // Compare in whole seconds to allow Chromium's timestamp rounding.
+        requireThat(maxAge !== undefined && cookies.length === 1 && cookies[0].value === this.cookieValue
+          && cookies[0].expires >= Math.floor(releaseStarted) + maxAge - 1
+          && cookies[0].expires <= Math.ceil(Date.now() / 1000) + maxAge + 1
           && cookies[0].secure && cookies[0].httpOnly && cookies[0].sameSite === 'Strict',
         'real cookie not installed at browser delivery');
         this.cookieInstalledOnDelivery = true;
       }
+      this.unchangedResponse = true;
       this.delivered = true;
       this.barrier.record(this.label, 'browser-delivery');
       this.deliveredSignal.resolve();
@@ -289,6 +304,15 @@ export class HeldMediaResponse {
 export const REFRESH_TRIGGER_READ = '/tracer/project/list_projects/';
 const TOKEN_REFRESH = '/accounts/token/refresh/';
 
+// ProjectWrapperView's count and ObserveListView's sorted grid load together.
+// For an empty org the count unmounts the grid and cancels its GET, even if the
+// interceptor has already refreshed. Inject on the count, which stays mounted.
+export function isRefreshTriggerRead(url: URL): boolean {
+  return url.hostname === 'localhost' && url.pathname === REFRESH_TRIGGER_READ
+    && url.searchParams.get('project_type') === 'observe' && url.searchParams.get('page_number') === '0'
+    && !url.searchParams.has('sort_by');
+}
+
 /** ONE explicit 401 fault injection, not natural expiry. Trigger must drive the
  * actual app's ordinary Observe read (navigation/reload/UI), not a parallel auth
  * client. Refresh is never intercepted, fetched, fulfilled or installed here.
@@ -329,7 +353,6 @@ export async function exerciseAppRefresh(page: Page, trigger: () => Promise<unkn
       }).catch(() => replayResponse.reject(new Error('H3 could not observe app replay headers')));
     }
   };
-  const matchesRead = (url: URL) => url.hostname === 'localhost' && url.pathname === REFRESH_TRIGGER_READ;
   const handler = async (route: Route) => {
     try {
       if (route.request().method() !== 'GET' || injections !== 0) return await route.fallback();
@@ -353,7 +376,7 @@ export async function exerciseAppRefresh(page: Page, trigger: () => Promise<unkn
     }
   };
   page.on('request', onRequest); page.on('response', onResponse);
-  await page.route(matchesRead, handler);
+  await page.route(isRefreshTriggerRead, handler);
   try {
     const observations = Promise.all([bounded(refreshResponse.promise, 'real refresh response'),
       bounded(replayResponse.promise, 'application replay')]);
@@ -385,6 +408,6 @@ export async function exerciseAppRefresh(page: Page, trigger: () => Promise<unkn
       actualRefreshContractMatched: true, appInstalledRealToken: true, replayUsedRealToken: true };
   } finally {
     page.off('request', onRequest); page.off('response', onResponse);
-    await page.unroute(matchesRead, handler);
+    await page.unroute(isRefreshTriggerRead, handler);
   }
 }
