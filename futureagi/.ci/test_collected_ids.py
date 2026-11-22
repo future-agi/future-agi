@@ -261,6 +261,8 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     MEASURED_OSS = json.loads(
         (CI / "fixtures/runtime-skips-measured-oss.json").read_text()
     )
+    # The files whose rule entries #4296 retired: their suites now run.
+    RETIRED = json.loads((CI / "fixtures/runtime-skips-retired.json").read_text())
     # The measurement date; rules are read as of it so these tests do not age.
     DAY = datetime.date(2026, 11, 22)
 
@@ -360,7 +362,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def test_enforced_the_measured_skips_all_pass(self):
         # Every skipped test of a real Backend CI run on 22 Nov, each under an
         # exact, ticketed, owned and expiring rule.
-        self.assertEqual(self.MEASURED["total"], 1811)
+        self.assertEqual(self.MEASURED["total"], 268)
         error, report, _ = self.report(
             self.measured_rows(), files=self.measured_files()
         )
@@ -372,16 +374,37 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def test_enforced_a_measured_oss_run_passes(self):
         # Every skipped test of a real merge group on 22 Nov. An oss run also
         # skips the tests that import the private package, under its own names.
+        # It was measured before #4296 made the retired suites run; their skips
+        # there had the same reasons and counts as on the internal run, and
+        # none of those files imports the private package. They are left out
+        # until a merge group after #4296 is measured.
         self.assertEqual(self.MEASURED_OSS["total"], 1818)
+        retired = set(self.RETIRED["files"])
+        self.assertEqual(len(retired), 46)
+        kept = {
+            **self.MEASURED_OSS,
+            "pairs": [
+                p for p in self.MEASURED_OSS["pairs"] if p["file"] not in retired
+            ],
+        }
+        dropped = self.MEASURED_OSS["total"] - sum(p["tests"] for p in kept["pairs"])
+        self.assertEqual(dropped, 1550)
         error, report, _ = self.report(
-            self.measured_rows(self.MEASURED_OSS, runs="oss"),
-            files={pair["file"] for pair in self.MEASURED_OSS["pairs"]},
+            self.measured_rows(kept, runs="oss"),
+            files={pair["file"] for pair in kept["pairs"]},
             runs=("oss",),
         )
         self.assertIsNone(error)
         self.assertEqual(report["tests"], [])
         self.assertEqual(report["rule_problems"], [])
-        self.assertEqual(len(report["allowed"]), self.MEASURED_OSS["total"])
+        self.assertEqual(len(report["allowed"]), self.MEASURED_OSS["total"] - dropped)
+
+    def test_retired_suites_have_no_rule(self):
+        # A skip in a file whose suite now runs is unexpected again.
+        rules = self.rules()
+        for path in self.RETIRED["files"]:
+            with self.subTest(path=path):
+                self.assertFalse(any(path in rule["files"] for rule in rules))
 
     def test_rules_are_exactly_the_measured_files_and_counts(self):
         rules = self.rules()
@@ -408,9 +431,10 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                         if i == index
                     },
                 )
-        self.assertEqual(
-            [sum(rule["files"].values()) for rule in rules[:2]], [1462, 327]
-        )
+        # Only the live ClickHouse opt-in rule is left of TH-10617; chDB is
+        # installed and its suites run.
+        self.assertEqual(sum(rules[0]["files"].values()), 251)
+        self.assertFalse(any("chdb" in rule["reason"] for rule in rules))
 
     def test_no_rule_covers_a_file_or_reason_that_was_not_measured(self):
         rules = self.rules()
@@ -418,7 +442,8 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             self.assertTrue(rule["reason"].startswith("^"), rule["reason"])
             for path in rule["files"]:
                 self.assertNotRegex(path, r"[*?\[\]]")
-        self.assertTrue(all(rule["reason"].endswith("$") for rule in rules[:2]))
+        self.assertTrue(rules[0]["reason"].endswith("$"))
+        covered = self.measured("test_derived_metric_user_rules_clickhouse")
         for path, reason in (
             (
                 "simulate/tests/test_new.py",
@@ -432,10 +457,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                 "model_hub/tests/test_y.py",
                 "Skipped: optional isolated ClickHouse engine",
             ),
-            (
-                "tracer/tests/test_relational_filter_native.py",
-                "Skipped: could not import 'chdb': No module named 'chdb' (also prefixed)",
-            ),
+            (covered["file"], covered["reason"] + " (also suffixed)"),
         ):
             with self.subTest(path=path):
                 self.assertIsNone(
@@ -443,7 +465,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                 )
 
     def test_more_skips_in_a_file_than_were_measured_fail(self):
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         rows = self.rows([(pair["file"], pair["reason"])] * (pair["tests"] + 2))
         error, report, out = self.report(rows, files={pair["file"]})
         self.assertEqual(
@@ -478,7 +500,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         rows = self.rows(
             [
                 (
-                    "tracer/tests/test_relational_filter_native.py",
+                    "tracer/tests/test_derived_metric_user_rules_clickhouse.py",
                     "Skipped: database is not reachable",
                 )
             ]
@@ -487,11 +509,11 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertTrue(error.startswith("1 eligible"), error)
         self.assertEqual(
             report["tests"][0]["test"].split("::")[0],
-            "tracer/tests/test_relational_filter_native.py",
+            "tracer/tests/test_derived_metric_user_rules_clickhouse.py",
         )
 
     def test_every_skip_of_a_test_must_be_covered(self):
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         row = self.rows([(pair["file"], pair["reason"])])[0]
         row["skips"].append({"phase": "call", "reason": "Skipped: something else"})
         self.assertIsNone(checker.allowing_rule(row, self.rules()))
@@ -600,7 +622,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             self.assertTrue(rule["owner"].strip(), rule)
 
     def test_an_expired_rule_allows_nothing_and_fails_the_check(self):
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         rules = self.rules(today=datetime.date(2027, 1, 7))
         self.assertTrue(all(rule["expired"] for rule in rules))
         error, report, out = self.report(
@@ -677,7 +699,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertEqual(report["rule_problems"], [])
 
     def test_counts_are_judged_only_on_a_complete_run(self):
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         rows = self.rows([(pair["file"], pair["reason"])] * (pair["tests"] + 2))
         error, report, _ = self.report(rows, files={pair["file"]}, partial=True)
         # Partial evidence lists the skips and never fails on counts.
@@ -688,7 +710,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
 
     def test_a_skip_is_allowed_only_for_the_path_the_inventory_recorded(self):
         rules = self.rules()
-        pair = self.measured("test_relational_filter_native")
+        pair = self.measured("test_derived_metric_user_rules_clickhouse")
         row = self.rows([(pair["file"], pair["reason"])])[0]
         row.pop("inventory_test")
         self.assertIsNone(checker.allowing_rule(row, rules))
