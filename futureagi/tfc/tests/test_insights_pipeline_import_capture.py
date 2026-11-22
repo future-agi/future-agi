@@ -5,7 +5,6 @@ real Sentry client that records the envelopes it would send.
 """
 
 import builtins
-import json
 import logging
 import sys
 from types import SimpleNamespace
@@ -19,6 +18,7 @@ from temporalio.exceptions import ApplicationError
 from tfc import ee_loader
 from tfc.capabilities import _bootstrap, service
 from tfc.licensing.types import DeploymentFlavor
+from tfc.logging.sentry import _REDACTED
 from tfc.temporal.common import sentry_interceptor
 from tfc.temporal.insights import activities
 from tfc.tests.sentry_capture import sentry_capture
@@ -114,8 +114,8 @@ async def test_a_broken_pipeline_import_is_reported_once(transport, monkeypatch,
         type(cause).__name__,
         "ApplicationError",
     ]
-    assert exceptions[0]["value"] == str(cause)
-    assert activities.PIPELINE_IMPORT_FAILED in json.dumps(exceptions[-1])
+    assert exceptions[0]["value"] == _REDACTED
+    assert activities.PIPELINE_IMPORT_FAILED in exceptions[-1]["value"]
 
 
 @pytest.mark.asyncio
@@ -206,6 +206,6 @@ async def test_self_hosted_startup_without_insights(
     [event] = transport.events
     original, reported = event["exception"]["values"]
     assert original["type"] == "ModuleNotFoundError"
-    assert original["value"] == str(error.__cause__)
+    assert original["value"] == _REDACTED
     assert reported["type"] == "ApplicationError"
     assert activities.PIPELINE_IMPORT_FAILED in reported["value"]

@@ -2,21 +2,26 @@
 
 import asyncio
 import json
+import logging
+import sys
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import timedelta
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
 import pytest
 import sentry_sdk
 import sentry_sdk.client as sdk_client
+import structlog
 from asgiref.testing import ApplicationCommunicator
+from django.contrib.auth import get_user_model
 from django.core.handlers.asgi import ASGIHandler
 from django.http import HttpResponse
 from django.test import override_settings
 from django.urls import path
 from django_structlog.signals import bind_extra_request_finished_metadata
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 from temporalio.worker import ExecuteActivityInput
 
@@ -138,7 +143,7 @@ def test_registered_activity(monkeypatch):
     )
     assert any(
         error["type"] == "RuntimeError"
-        and error["value"] == "Fixture worker unavailable"
+        and error["value"] == sentry._REDACTED
         and any(
             f.get("function") == "ordinary_diagnostic" and f.get("lineno", 0) > 0
             for f in error["stacktrace"]["frames"]
@@ -153,7 +158,28 @@ def temporarily_unavailable(request, reference):
     return HttpResponse(status=503)
 
 
-urlpatterns = [path("qa/status/<str:reference>/", temporarily_unavailable)]
+def account_error(request, account, scoped):
+    request.user = get_user_model()(pk=account, email=f"{account.hex}@fixture.invalid")
+    assert request.user.is_authenticated
+    assert request.user.get_username() == request.user.email
+    if scoped:
+        sentry_sdk.set_user({"id": str(account), "email": request.user.email})
+    raise RuntimeError("fixture view failed")
+
+
+def many_spans(request):
+    for index in range(20):
+        with sentry_sdk.start_span(op="qa.lookup"):
+            if index == 0:
+                sentry_sdk.capture_message("lookup diagnostic")
+    return HttpResponse(status=200)
+
+
+urlpatterns = [
+    path("qa/status/<str:reference>/", temporarily_unavailable),
+    path("qa/account/<uuid:account>/<int:scoped>/", account_error),
+    path("qa/spans/", many_spans),
+]
 
 
 async def get_status(url):
@@ -303,3 +329,190 @@ def test_supplied_frame(monkeypatch, extended):
     for typ, current in [s for _, s in seen] + [final]:
         assert typ == "LookupError"
         assert {k: v for k, v in current.items() if k != "in_app"} == expected
+
+
+@pytest.mark.parametrize("scoped", [False, True], ids=["django-user", "explicit-user"])
+@override_settings(
+    ROOT_URLCONF=__name__, ALLOWED_HOSTS=["testserver"], MIDDLEWARE=[], DEBUG=False
+)
+def test_authenticated_request(monkeypatch, scoped):
+    account = uuid4()
+    with capture(monkeypatch, "django") as wire:
+        assert sentry_sdk.get_client().options["send_default_pii"] is False
+        assert asyncio.run(get_status(f"/qa/account/{account}/{int(scoped)}/")) == 500
+    [issue] = [b for _, kind, b in wire.items if kind == "event" and "exception" in b]
+    assert issue["exception"]["values"][-1]["type"] == "RuntimeError"
+    assert issue["request"]["url"] == "/qa/account/{account}/{scoped}/"
+    assert any(k == "transaction" for _, k, _ in wire.items)
+    for _, kind, body in wire.items:
+        if kind in ("event", "transaction"):
+            assert "user" not in body
+    for marker in (str(account), account.hex):
+        assert all(marker.encode() not in packet for packet in wire.raw)
+
+
+@override_settings(ROOT_URLCONF=__name__, ALLOWED_HOSTS=["testserver"], MIDDLEWARE=[])
+def test_request_span_overflow(monkeypatch):
+    with capture(monkeypatch, "django") as wire:
+        monkeypatch.setattr(sentry, "_MAX_ITEMS", 12)
+        assert asyncio.run(get_status("/qa/spans/")) == 200
+    [txn] = [b for _, k, b in wire.items if k == "transaction"]
+    [issue] = [b for _, k, b in wire.items if k == "event"]
+    assert txn["transaction"] == "/qa/spans/"
+    assert len(txn["spans"]) == 12
+    trace = issue["contexts"]["trace"]
+    assert trace["trace_id"] == txn["contexts"]["trace"]["trace_id"]
+    kept = {s["span_id"]: s for s in txn["spans"]}
+    assert kept[trace["span_id"]]["op"] == "qa.lookup"
+
+
+def test_structured_provider_log(monkeypatch):
+    marker = uuid4().hex
+    # Same application renderer and record shape as VapiService.get_chat_session,
+    # without requiring the optional provider package in OSS.
+    log = structlog.get_logger("ee.voice.services.vapi_service")
+    with capture(monkeypatch, "django") as wire:
+        log.error(
+            "vapi_api_error",
+            action="get chat session",
+            status_code=429,
+            response_body=marker,
+        )
+        log.error(marker, status_code=marker, count=2)
+        sentry_sdk.capture_message("next diagnostic")
+    known, unknown, following = [b for _, k, b in wire.items if k == "event"]
+    assert known["logentry"] == {"message": "vapi_api_error"}
+    assert known["extra"] == {"status_code": 429}
+    assert unknown["logentry"] == {"message": "Structured log"}
+    assert unknown["extra"] == {"count": 2}
+    assert following["message"] == "next diagnostic"
+    assert all(marker.encode() not in packet for packet in wire.raw)
+
+
+def test_embedding_rejection(monkeypatch):
+    from agentic_eval.core.embeddings.serving_client import ModelServingClient
+
+    marker = uuid4().hex
+    serving = ModelServingClient(base_url="http://fixture.invalid")
+    monkeypatch.setattr(serving, "_require_serving", lambda: None)
+    response = SimpleNamespace(status_code=400, text=marker)
+    monkeypatch.setattr(serving.session, "post", lambda *args, **kwargs: response)
+    with capture(monkeypatch, "temporal") as wire:
+        with pytest.raises(ValueError, match=marker) as raised:
+            serving.embed_text("fixture input")
+        sentry_sdk.capture_exception(raised.value)
+    events = [b for _, k, b in wire.items if k == "event"]
+    assert any(b.get("logger") == ModelServingClient.__module__ for b in events)
+    [error] = [
+        e
+        for b in events
+        for e in b.get("exception", {}).get("values", [])
+        if e["type"] == "ValueError"
+    ]
+    assert error["value"] == sentry._REDACTED
+    assert error["stacktrace"]["frames"][-1]["function"] == "_make_request"
+    assert all(marker.encode() not in packet for packet in wire.raw)
+
+
+def run_intercepted(fn, args, workflow_id):
+    env = ActivityEnvironment()
+    env.info = replace(env.info, activity_type=fn.__name__, workflow_id=workflow_id)
+    interceptor = SentryActivityInboundInterceptor(InlineAsyncDispatch())
+    call = ExecuteActivityInput(fn=fn, args=args, headers={}, executor=None)
+    return asyncio.run(env.run(interceptor.execute_activity, call))
+
+
+def test_activity_scope_tags(monkeypatch):
+    marker = uuid4().hex
+    workflow_id = "task-eval-cluster-" + marker
+
+    async def cluster():
+        raise RuntimeError("fixture read failed")
+
+    with capture(monkeypatch, "temporal") as wire:
+        with sentry_sdk.start_transaction(name="cluster", op="task") as txn:
+            txn.set_tag("temporal.workflow_id", workflow_id)
+            with pytest.raises(RuntimeError):
+                run_intercepted(cluster, (), workflow_id)
+    [issue] = [b for _, k, b in wire.items if k == "event"]
+    [transaction] = [b for _, k, b in wire.items if k == "transaction"]
+    assert issue["fingerprint"] == ["temporal", "activity", "cluster", "RuntimeError"]
+    for item in (issue, transaction):
+        assert item["tags"]["component"] == "temporal"
+        assert set(item["tags"]) <= {"component", "region", "cloud_deployment"}
+    assert all(marker.encode() not in packet for packet in wire.raw)
+
+
+def test_missing_stage_retryable(monkeypatch):
+    from tfc.temporal.insights import activities
+    from tfc.temporal.insights.types import InsightRunInput
+
+    # Model an installed, older package (successful import, no retry_failed).
+    parent = None
+    for path_name in (
+        "ee",
+        "ee.agenthub",
+        "ee.agenthub.insights",
+        "ee.agenthub.insights.pipeline",
+    ):
+        module = ModuleType(path_name)
+        monkeypatch.setitem(sys.modules, path_name, module)
+        if parent is not None:
+            setattr(parent, path_name.rsplit(".", 1)[1], module)
+        parent = module
+
+    with capture(monkeypatch, "temporal") as wire:
+        with pytest.raises(ApplicationError) as raised:
+            run_intercepted(
+                activities.insight_retry_failed,
+                (InsightRunInput("fixture-run"),),
+                "fixture-workflow",
+            )
+    assert not raised.value.non_retryable
+    assert isinstance(raised.value.__cause__, AttributeError)
+    [issue] = [b for _, k, b in wire.items if k == "event"]
+    cause, outer = issue["exception"]["values"]
+    assert cause["type"] == "AttributeError" and cause["value"] == sentry._REDACTED
+    assert cause["stacktrace"]["frames"][-1]["function"] == "_pipeline"
+    assert outer["type"] == "ApplicationError"
+    assert activities.PIPELINE_IMPORT_FAILED in outer["value"]
+
+
+@pytest.mark.parametrize("enabled", [False, True], ids=["sentry-off", "sentry-on"])
+def test_worker_local_error(monkeypatch, caplog, enabled):
+    reasons = [f"{reason} {uuid4().hex}" for reason in ("queue down", "shutting down")]
+
+    def fail(reason):
+        raise RuntimeError(reason)
+
+    registered = _create_real_activity("qa_worker", fail)
+    logger = logging.getLogger("temporalio.activity")
+    # The production Temporal logger does not propagate to the root handler.
+    logger.addHandler(caplog.handler)
+    try:
+        if not enabled:
+            assert not sentry.SENTRY_ENABLED and not sentry_sdk.is_initialized()
+        recording = capture(monkeypatch, "temporal") if enabled else nullcontext()
+        with recording as wire:
+            for reason in reasons:
+                with pytest.raises(RuntimeError, match=reason):
+                    env = ActivityEnvironment()
+                    asyncio.run(env.run(registered, {"args": [reason]}))
+        ordinary = [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == logger.name and r.levelno == logging.ERROR
+        ]
+        for message, reason in zip(ordinary, reasons, strict=True):
+            assert f"Activity 'qa_worker' FAILED: {reason}" in message
+        if enabled:
+            sent = [
+                b["logentry"]
+                for _, k, b in wire.items
+                if k == "event" and b.get("logger") == logger.name
+            ]
+            summary = {"message": "Activity 'qa_worker' FAILED (RuntimeError)"}
+            assert sent == [summary, summary]
+            assert all(reason.encode() not in p for reason in reasons for p in wire.raw)
+    finally:
+        logger.removeHandler(caplog.handler)

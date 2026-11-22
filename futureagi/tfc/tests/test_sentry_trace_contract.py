@@ -19,7 +19,7 @@ def wait_samples():
     assert profile.unique_samples >= 2
 
 
-@pytest.mark.parametrize("case", ["ordinary", "child", "sampling"])
+@pytest.mark.parametrize("case", ["ordinary", "child", "sampling", "upstream"])
 def test_trace_wire_contract(monkeypatch, case):
     wire = MemoryWire()
     global_scope = sentry_sdk.get_global_scope()
@@ -36,6 +36,8 @@ def test_trace_wire_contract(monkeypatch, case):
         "SENTRY_DSN",
         "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@localhost.invalid/1",
     )
+    monkeypatch.setenv("APP_VERSION", "wire-test-42")
+    monkeypatch.setattr(sentry, "ENV_TYPE", "production")
     monkeypatch.setattr(sentry, "TRACES_SAMPLE_RATE", 1.0)
     monkeypatch.setattr(sentry, "PROFILES_SAMPLE_RATE", 1.0)
     monkeypatch.setattr(sentry, "_initialized_components", set())
@@ -48,6 +50,16 @@ def test_trace_wire_contract(monkeypatch, case):
             if case == "sampling":
                 kw["baggage"] = Baggage(
                     {"trace_id": "0" * 32, "sampled": "true"}, mutable=False
+                )
+            if case == "upstream":
+                kw["trace_id"] = "a" * 32
+                kw["baggage"] = Baggage(
+                    {
+                        "trace_id": kw["trace_id"],
+                        "release": "upstream-build-42",
+                        "environment": "upstream-site-42",
+                    },
+                    mutable=False,
                 )
             with sentry_sdk.start_transaction(
                 name="QA trace check", op="qa.root", **kw
@@ -93,6 +105,12 @@ def test_trace_wire_contract(monkeypatch, case):
         assert "trace" not in headers
     else:
         assert headers["trace"]["trace_id"] == root.trace_id
+        if case == "upstream":
+            assert "release" not in headers["trace"]
+            assert "environment" not in headers["trace"]
+        else:
+            assert headers["trace"]["release"] == txn["release"] == "wire-test-42"
+            assert headers["trace"]["environment"] == txn["environment"] == "production"
 
     if case == "ordinary":
         errors = [
@@ -103,7 +121,7 @@ def test_trace_wire_contract(monkeypatch, case):
         ]
         assert any(
             error.get("type") == "RuntimeError"
-            and error.get("value") == "QA ordinary condition"
+            and error.get("value") == sentry._REDACTED
             and any(
                 frame.get("function") == "test_trace_wire_contract"
                 and frame.get("lineno", 0) > 0

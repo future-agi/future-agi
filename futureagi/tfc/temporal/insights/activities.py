@@ -115,8 +115,6 @@ def _pipeline(name: str):
 
     try:
         import ee.agenthub.insights.pipeline as pipeline
-
-        return getattr(pipeline, name)
     except Exception as exc:  # noqa: BLE001 - any other import failure is a fault
         if (
             isinstance(exc, ModuleNotFoundError)
@@ -139,6 +137,14 @@ def _pipeline(name: str):
             PIPELINE_IMPORT_FAILED,
             type="InsightsPipelineImportError",
             non_retryable=True,
+        ) from exc
+
+    try:
+        return getattr(pipeline, name)
+    except AttributeError as exc:
+        # The next attempt may land on a newer worker during a rollout.
+        raise ApplicationError(
+            PIPELINE_IMPORT_FAILED, type="InsightsPipelineImportError"
         ) from exc
 
 

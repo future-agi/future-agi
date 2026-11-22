@@ -388,17 +388,14 @@ def _before_breadcrumb(crumb: dict, hint: dict) -> dict | None:
     return result
 
 
-def _entries(container: dict, key: str) -> list | tuple | None:
-    items = container.get(key)
-    if (
-        items is None
-        or type(items) not in (list, tuple)
-        or len(items) > _MAX_ITEMS
-        or not all(type(item) is dict for item in items)
-    ):
-        container.pop(key, None)
-        return None
-    return cast("list | tuple", items)
+def _window(items: object, limit: int, *, tail: bool) -> tuple[list | tuple, bool]:
+    """Slice before inspection. Never iterate an opaque or unbounded collection."""
+    if type(items) not in (list, tuple):
+        return (), False
+    seq = cast("list | tuple", items)
+    if len(seq) <= limit:
+        return seq, True
+    return (seq[-limit:] if tail and limit else seq[:limit]), False
 
 
 _FRAME_TEXT_LIMIT = 256
@@ -420,6 +417,13 @@ def _bounded_frame(frame: dict) -> dict:
             clean[key] = value
     if type(frame.get("in_app")) is bool:
         clean["in_app"] = frame["in_app"]
+    # Jinja rewrites a traceback with the template's source and block name.
+    # The line number is useful; neither the function nor the source is code
+    # owned by this application.
+    location = (clean.get("module"), clean.get("filename"), clean.get("abs_path"))
+    if "<template>" in location:
+        clean.pop("function", None)
+        return clean
     line = frame.get("context_line")
     if type(line) is str and len(line) <= text_limit:
         clean["context_line"] = _scrub_text(line)
@@ -454,23 +458,21 @@ def _scrub_frames(event: dict) -> str | None:
             owner.pop("stacktrace")
             complete = False
             return
-        # Check width and the event-wide budget *before* touching any frame.
-        # Charge malformed lists too; never collect an SDK frame iterator here.
-        frames = stack.get("frames")
+        # SDK frames are ordered caller -> callee. Keep the failing site, even
+        # on overflow, and charge every inspected slot to the shared budget.
+        frames, whole = _window(
+            stack.get("frames"), min(_MAX_ITEMS, remaining), tail=True
+        )
+        complete &= whole
         owner["stacktrace"] = {}
-        if (
-            frames is None
-            or type(frames) not in (list, tuple)
-            or len(frames) > min(_MAX_ITEMS, remaining)
-        ):
-            complete = False
+        if not frames:
             return
         remaining -= len(frames)
         bounded = []
         for frame in frames:
             if type(frame) is not dict:
                 complete = False
-                return
+                continue
             bounded.append(_bounded_frame(frame))
             module, function = frame.get("module"), frame.get("function")
             if _vertex_auth_frame(module, function):
@@ -482,19 +484,26 @@ def _scrub_frames(event: dict) -> str | None:
                     replacement = _REDACTED
         owner["stacktrace"]["frames"] = bounded
 
-    inspect_stack(event)
-    for section in ("exception", "threads"):
+    def inspect_values(section: str) -> None:
+        nonlocal complete
         if section not in event:
-            continue
+            return
         container = event[section]
         if type(container) is not dict:
             raise ValueError("Malformed Sentry stack container")
-        items = _entries(container, "values")
-        if items is None:
-            complete = False
-            continue
-        for item in items:
+        # In both chains and groups the SDK emits the root last. Allocate its
+        # frame budget first, without changing the wire order or mechanism IDs.
+        is_exception = section == "exception"
+        items, whole = _window(container.get("values"), _MAX_ITEMS, tail=is_exception)
+        kept = [item for item in items if type(item) is dict]
+        container["values"] = kept
+        complete &= whole and len(kept) == len(items)
+        for item in reversed(kept) if is_exception else kept:
             inspect_stack(item)
+
+    inspect_values("exception")
+    inspect_stack(event)
+    inspect_values("threads")
     return replacement or (None if complete else _REDACTED)
 
 
@@ -550,6 +559,21 @@ def _span_structure(span: dict) -> dict:
                 if key != "trace_id" or int(value, 16):
                     dsc[key] = value
         if "trace_id" in dsc:
+            # Incoming baggage may describe an entirely different service. Do
+            # not let it choose deployment labels or relabel an upstream trace.
+            from sentry_sdk import get_client
+
+            options = get_client().options
+            for key in ("release", "environment"):
+                local = options.get(key)
+                incoming = sampling.get(key)
+                if (
+                    type(local) is str
+                    and 0 < len(local) <= 200
+                    and type(incoming) is str
+                    and incoming == local
+                ):
+                    dsc[key] = local
             result["dynamic_sampling_context"] = dsc
     data = span.get("data")
     if type(data) is dict:
@@ -568,15 +592,14 @@ def _has_span_ids(clean: dict) -> bool:
     return "trace_id" in clean and "span_id" in clean
 
 
-def _scrub_transaction_spans(event: dict) -> None:
-    spans = _entries(event, "spans")
-    if spans is not None:
-        event["spans"] = [
-            clean for clean in map(_span_structure, spans) if _has_span_ids(clean)
-        ]
-    # The SDK promotes root-span tags to transaction-level tags. Do not
-    # forward arbitrary values from that second representation either.
-    if event.get("type") == "transaction" and "tags" in event:
+def _scrub_trace_and_tags(event: dict) -> None:
+    if "spans" in event:
+        spans, _ = _window(event["spans"], _MAX_ITEMS, tail=False)
+        children = (_span_structure(span) for span in spans if type(span) is dict)
+        event["spans"] = [child for child in children if _has_span_ids(child)]
+    # Scope tags reach errors as well as transactions. Never forward arbitrary
+    # correlation identifiers (including Temporal workflow IDs) on either.
+    if "tags" in event:
         tags = event["tags"]
         event["tags"] = {
             key: _scrub_text(tags[key])
@@ -728,52 +751,107 @@ def _scrub_request(event: dict) -> None:
     event["request"] = clean
 
 
-def _scrub_request_log(event: dict, record: object) -> None:
-    # The formatted middleware record has its own copy of the literal target.
-    # Keep the lifecycle event, numeric status and already-scrubbed route. Do
-    # not parse the rendered log or change the record used by other handlers.
-    fields = getattr(record, "msg", None)
-    label = "HTTP request"
-    if type(fields) is dict:
-        name = fields.get("event")
-        if type(name) is str and name in (
-            "request_started",
-            "request_finished",
-            "request_failed",
-        ):
-            label = name
-        status = fields.get("code")
-        if type(status) is int and 100 <= status <= 599:
-            event.setdefault("extra", {})["status_code"] = status
-    route = event.get("request", {}).get("url", "unresolved request")
-    summary = f"{label}: {route}"
-    if "message" in event:
-        event["message"] = summary
-    if "logentry" in event:
-        event["logentry"] = {"message": summary}
+def _diagnostic_fields(fields: object, grpc_logger: bool) -> dict:
+    if type(fields) is not dict:
+        return {}
+    result = {
+        k: fields[k]
+        for k in (*_USAGE_FIELDS, "count", "retry_count")
+        if type(fields.get(k)) is int and 0 <= fields[k] < 2**63
+    }
+    status = (
+        _grpc_status_name(fields.get("status_code"))
+        if grpc_logger
+        else _http_status_code(fields)
+    )
+    if status is not None:
+        result["status_code"] = status
+    return result
 
 
 def _scrub_extra(event: dict, grpc_logger: bool) -> None:
-    # Framework extras include the raw protobuf request. Keep only validated
-    # counts and protocol status, even when the failure precedes the receiver.
     if "extra" in event:
-        extra = event["extra"]
-        event["extra"] = {
-            k: extra[k]
-            for k in (*_USAGE_FIELDS, "count", "retry_count")
-            if type(extra) is dict
-            and k in extra
-            and type(extra[k]) is int
-            and 0 <= extra[k] < 2**63
-        }
-        if type(extra) is dict:
-            status = (
-                _grpc_status_name(extra.get("status_code"))
-                if grpc_logger
-                else _http_status_code(extra)
-            )
-            if status is not None:
-                event["extra"]["status_code"] = status
+        event["extra"] = _diagnostic_fields(event["extra"], grpc_logger)
+
+
+_REQUEST_EVENTS = ("request_started", "request_finished", "request_failed")
+_STRUCTURED_EVENTS = ("vapi_api_error", "insight_stage_failed", "model_check_failed")
+
+
+def _structured_fields(payload: object) -> dict | None:
+    if type(payload) is dict:
+        return payload
+    if type(payload) is not str:
+        return None
+    # Standalone Temporal workers use the JSON renderer rather than a dict.
+    # A malformed, oversized or already repr'd object has no trusted fields.
+    if len(payload) > _MAX_TEXT:
+        return {} if payload.startswith("{") else None
+    if not payload.lstrip().startswith("{"):
+        return None
+    try:
+        decoded = json.loads(payload)
+    except (ValueError, RecursionError):
+        return {}
+    return decoded if type(decoded) is dict else {}
+
+
+def _record_title(event: dict, record: object, grpc_logger: bool) -> str | None:
+    """Project the original record, never the SDK's stringification of a dict."""
+    original = getattr(record, "msg", None)
+    fields = _structured_fields(original)
+    entry = event.get("logentry")
+    if record is None and type(entry) is dict:
+        fields = _structured_fields(entry.get("message", entry.get("formatted")))
+    if event.get("logger") == "django_structlog.middlewares.request":
+        name = fields.get("event") if fields is not None else None
+        label = (
+            name if type(name) is str and name in _REQUEST_EVENTS else "HTTP request"
+        )
+        status = fields.get("code") if fields is not None else None
+        if type(status) is int and 100 <= status <= 599:
+            event.setdefault("extra", {})["status_code"] = status
+        route = event.get("request", {}).get("url", "unresolved request")
+        return f"{label}: {route}"
+    if fields is not None:
+        event.setdefault("extra", {}).update(_diagnostic_fields(fields, grpc_logger))
+        name = fields.get("event")
+        if type(name) is str and name in _STRUCTURED_EVENTS:
+            return name
+        return "Structured log"
+    if event.get("logger") == "temporalio.activity":
+        # The Temporal adapter may append run identifiers to its rendered title.
+        # Use only the wrapper's code-owned name and exception class instead.
+        activity = getattr(record, "tfc_failed_activity", None)
+        error = getattr(record, "tfc_error_type", None)
+        if all(
+            type(v) is str and len(v) <= 128 and v.isidentifier()
+            for v in (activity, error)
+        ):
+            return f"Activity '{activity}' FAILED ({error})"
+        return "Temporal activity log"
+    if record is not None and type(original) is not str:
+        return "Log entry"  # Never copy the SDK rendering of an opaque object.
+    return None
+
+
+# Literal diagnostics only: a class like ValueError can carry an entire body.
+# Keep this policy independent of Django, Temporal and optional EE imports.
+_SAFE_EXCEPTION_TEXT = {
+    "ValueError": ("Could not deserialize key data.",),
+    "ApplicationError": (
+        "Insights couldn't load in this build.",
+        "InsightsPipelineImportError: Insights couldn't load in this build.",
+    ),
+}
+
+
+def _exception_text(error: dict) -> str:
+    kind, text = error.get("type"), error.get("value")
+    if type(kind) is str and len(kind) <= 128 and type(text) is str:
+        if text in _SAFE_EXCEPTION_TEXT.get(kind, ()):
+            return text
+    return _REDACTED
 
 
 def _scrub_event(
@@ -781,14 +859,13 @@ def _scrub_event(
 ) -> dict:
     grpc_logger = _is_grpc_framework_logger(event.get("logger"))
     _scrub_breadcrumbs(event)
-    _scrub_transaction_spans(event)
+    event.pop("user", None)  # Also omit explicit scope users and late framework users.
+    _scrub_trace_and_tags(event)
     for key in ("logger", "level"):
         if key in event:
             event[key] = _scrub_text(event[key])
     _scrub_request(event)
     _scrub_extra(event, grpc_logger)
-    if event.get("logger") == "django_structlog.middlewares.request":
-        _scrub_request_log(event, log_record)
 
     replacement = _scrub_frames(event)
     if vertex_log:
@@ -801,7 +878,7 @@ def _scrub_event(
         replacement = replacement or _REDACTED
     for value in event.get("exception", {}).get("values", []):
         if "value" in value:
-            value["value"] = replacement or _scrub_text(value["value"])
+            value["value"] = replacement or _exception_text(value)
         mechanism = value.get("mechanism")
         if type(mechanism) is dict:
             # The SDK can attach an independent description and arbitrary data
@@ -829,14 +906,15 @@ def _scrub_event(
             value["mechanism"] = safe_mechanism
         else:
             value.pop("mechanism", None)
+    title = _record_title(event, log_record, grpc_logger) or replacement
     if "message" in event:
-        event["message"] = replacement or _scrub_text(event["message"])
+        event["message"] = title or _scrub_text(event["message"])
     if "logentry" in event:
         entry = event["logentry"]
         # Never replay a format string, stringify parameters, or guess which
         # argument produced part of a rendered message.
-        if replacement:
-            event["logentry"] = {"message": replacement}
+        if title:
+            event["logentry"] = {"message": title}
         elif type(entry) is not dict:
             event.pop("logentry")
         else:
@@ -958,17 +1036,13 @@ def _expected_log_outcome(event: dict, hint: dict) -> bool:
     if isinstance(logentry, dict):
         candidates.extend([logentry.get("formatted"), logentry.get("message")])
     for payload in candidates:
-        if type(payload) is str and len(payload) <= _MAX_TEXT:
-            try:
-                payload = json.loads(payload)
-            except (ValueError, RecursionError):
-                continue
-        if type(payload) is not dict:
+        fields = _structured_fields(payload)
+        if fields is None:
             continue
-        identity = (event.get("logger"), payload.get("event"), payload.get("reason"))
+        identity = (event.get("logger"), fields.get("event"), fields.get("reason"))
         if not (
             all(type(value) is str and len(value) <= 128 for value in identity)
-            and payload.get("outcome") == "handled"
+            and fields.get("outcome") == "handled"
         ):
             continue
         if identity in EXPECTED_LOG_OUTCOMES:
@@ -1268,8 +1342,7 @@ def init_sentry(
         if tags:
             default_tags.update(tags)
 
-        # Defence-in-depth scrubbing: even with send_default_pii on, redact a
-        # broad denylist of secret-bearing keys recursively before send.
+        # The SDK scrubber runs before serialization; send hooks are the final boundary.
         event_scrubber = _event_scrubber()
 
         sentry_sdk.init(
@@ -1283,9 +1356,8 @@ def init_sentry(
             traces_sampler=_get_traces_sampler(),
             # Profiling configuration
             profiles_sample_rate=PROFILES_SAMPLE_RATE,
-            # Error capture configuration. PII is captured for debugging but
-            # passed through the scrubber + before_send redaction below.
-            send_default_pii=True,
+            # Neither framework identities nor explicit scope users belong on issues.
+            send_default_pii=False,
             event_scrubber=event_scrubber,
             # Keep stack frames and request values readable without bloating events.
             max_value_length=_MAX_TEXT,
@@ -1334,22 +1406,7 @@ def init_sentry(
 
 
 def set_user_context(user_id: str, email: str = "", username: str = "") -> None:
-    """Set user context for Sentry events."""
-    if not SENTRY_ENABLED:
-        return
-
-    try:
-        import sentry_sdk
-
-        sentry_sdk.set_user(
-            {
-                "id": str(user_id),
-                "email": email,
-                "username": username,
-            }
-        )
-    except Exception:
-        pass
+    """Compatibility shim: Sentry does not collect account identities."""
 
 
 def capture_exception_with_context(

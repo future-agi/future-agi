@@ -12,7 +12,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from sentry_sdk.integrations.dedupe import DedupeIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 
-from tfc.logging.sentry import _get_before_send
+from tfc.logging.sentry import _REDACTED, _get_before_send
 from tfc.tests.sentry_capture import sentry_capture
 
 LOGGER = "ee.agenthub.explanation_agent.exp_agent"
@@ -292,19 +292,13 @@ async def test_expected_activity_denial_is_not_an_issue(transport, monkeypatch):
             "other refusal", type="ProviderMisconfigured", non_retryable=True
         ),
     ]
-    for error in genuine:
+    for count, error in enumerate(genuine, 1):
         with pytest.raises(type(error)):
             await interceptor_raising(error).execute_activity(activity_input)
-    assert [
-        event["exception"]["values"][-1]["value"] for event in transport.events
-    ] == [
-        "synthetic activity fault",
-        "retryable",
-        "retryable capability",
-        "lookup unavailable",
-        "untyped refusal",
-        "other refusal",
-    ]
+        assert len(transport.events) == count
+        reported = transport.events[-1]["exception"]["values"][-1]
+        assert reported["type"] == type(error).__name__
+        assert reported["value"] == _REDACTED
 
 
 @pytest.fixture

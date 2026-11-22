@@ -7,6 +7,7 @@ import logging
 import sys
 from types import SimpleNamespace
 from unittest import mock
+from uuid import uuid4
 
 import grpc
 import jinja2
@@ -105,7 +106,7 @@ def test_init_sentry_preserves_strings_at_the_limit(initialized_sentry):
     assert len(events) == 1
     assert events[0]["message"] == message
     assert events[0]["tags"]["component"] == "temporal"
-    assert events[0]["tags"]["queue"] == "tasks_l"
+    assert "queue" not in events[0]["tags"]
 
 
 def test_scope_processor_bounds_supplied_payload_before_sdk_frame_processing(
@@ -130,17 +131,21 @@ def test_scope_processor_bounds_supplied_payload_before_sdk_frame_processing(
         return event
 
     raw = RawRequest()
+    location = {"module": "tfc.example", "vars": {"payload": raw}}
     with sentry_sdk.new_scope() as scope:
         scope.add_event_processor(witness)
         sentry_sdk.capture_event(
             {
                 "logger": "django_socio_grpc.request",
                 "extra": {"request": raw, "status_code": grpc.StatusCode.INTERNAL},
-                "stacktrace": {
-                    "frames": [{"module": "tfc.example", "vars": {"payload": raw}}]
-                },
+                "stacktrace": {"frames": [{"vars": {"payload": raw}}]},
                 "exception": {
-                    "values": [{"type": "LookupError", "stacktrace": {"frames": [{}]}}]
+                    "values": [
+                        {
+                            "type": "LookupError",
+                            "stacktrace": {"frames": [location]},
+                        }
+                    ]
                 },
             }
         )
@@ -167,7 +172,7 @@ def test_sdk_attached_message_stack_is_bounded_before_serialization(
 
     monkeypatch.setitem(client.options, "before_send", witness)
     sentry_sdk.capture_message("message with an SDK-attached stack")
-    assert seen == [(0, sentry._REDACTED)]
+    assert seen == [(1, sentry._REDACTED)]
 
 
 # Trace ingestion: its frames hold the raw span batch, which the key-name
@@ -286,9 +291,8 @@ def test_missing_ingestion_project_is_not_in_task_or_interceptor_envelopes(
 
     task = next(e for e in events if e.get("logger") == "tracer.utils.trace_ingestion")
     [direct] = [e for e in events if not e.get("logger")]
-    assert (
-        direct["tags"]["temporal.activity_type"] == "bulk_create_observation_span_task"
-    )
+    assert direct["tags"]["component"] == "temporal"
+    assert "temporal.activity_type" not in direct["tags"]
     assert direct["exception"]["values"][-1]["type"] == "ValueError"
     assert all(v["value"] == sentry._REDACTED for v in direct["exception"]["values"])
     for event in (task, direct):
@@ -769,7 +773,7 @@ def test_ordinary_errors_keep_type_and_location_but_no_locals(initialized_sentry
 
     issue, logged = events
     assert issue["exception"]["values"][-1]["type"] == "RuntimeError"
-    assert issue["exception"]["values"][-1]["value"] == "unrelated"
+    assert issue["exception"]["values"][-1]["value"] == sentry._REDACTED
     assert logged["logger"] == "accounts.views"
     for event in events:
         assert any(
@@ -781,19 +785,20 @@ def test_ordinary_errors_keep_type_and_location_but_no_locals(initialized_sentry
 
 
 def test_template_error_keeps_location_but_no_render_context(initialized_sentry):
-    _client, events = initialized_sentry
+    client, events = initialized_sentry
     env = jinja2.Environment(undefined=jinja2.StrictUndefined)
+    block = "section_" + uuid4().hex
+    template = "{% block " + block + " %}{{ user.name }}{% endblock %}"
     try:
-        env.from_string("Hi {{ user.name }}").render(user={"note": SPAN_TEXT})
+        env.from_string(template).render(user={"note": SPAN_TEXT})
     except jinja2.UndefinedError as exc:
         sentry_sdk.capture_exception(exc)
 
     [event] = events
     assert event["exception"]["values"][-1]["type"] == "UndefinedError"
-    assert any(
-        frame.get("module") == "<template>" and frame.get("lineno", 0) > 0
-        for frame in iter_event_frames(event)
-    )
+    rewritten = [f for f in iter_event_frames(event) if f.get("module") == "<template>"]
+    assert rewritten and all(f["lineno"] > 0 and "function" not in f for f in rewritten)
+    assert all(block.encode() not in e.serialize() for e in client.transport.envelopes)
     _assert_sent_without_frame_vars(events, "<template>")
 
 
@@ -809,3 +814,54 @@ def test_an_error_logged_while_a_template_renders_loses_frame_vars(
     [event] = events
     assert None in _frame_modules(event)
     assert [frame for frame in iter_event_frames(event) if "vars" in frame] == []
+
+
+def test_exception_group_keeps_root_and_children(initialized_sentry, monkeypatch):
+    client, events = initialized_sentry
+    monkeypatch.setattr(sentry, "_MAX_ITEMS", 3)
+    marker = uuid4().hex
+    try:
+        raise ExceptionGroup(marker, [ValueError(marker) for _ in range(4)])
+    except ExceptionGroup as error:
+        sentry_sdk.capture_exception(error)
+
+    [event] = events
+    first, second, root = event["exception"]["values"]
+    assert root["type"] == "ExceptionGroup"
+    site = root["stacktrace"]["frames"][-1]
+    assert site["function"] == "test_exception_group_keeps_root_and_children"
+    assert site["lineno"] > 0
+    assert root["mechanism"]["is_exception_group"]
+    for child in (first, second):
+        assert child["type"] == "ValueError"
+        assert child["mechanism"]["parent_id"] == root["mechanism"]["exception_id"]
+    assert all(marker.encode() not in e.serialize() for e in client.transport.envelopes)
+
+
+@pytest.mark.parametrize(("width", "total"), [(2, 8), (8, 2)])
+def test_traceback_keeps_innermost_locations(
+    initialized_sentry, monkeypatch, width, total
+):
+    client, events = initialized_sentry
+    monkeypatch.setattr(sentry, "_MAX_ITEMS", width)
+    monkeypatch.setattr(sentry, "_MAX_FRAMES", total)
+    marker = uuid4().hex
+
+    def failing_site():
+        raise ValueError(marker)
+
+    def caller():
+        failing_site()
+
+    try:
+        caller()
+    except ValueError as exc:
+        sentry_sdk.capture_exception(exc)
+
+    [event] = events
+    [error] = event["exception"]["values"]
+    assert error["type"] == "ValueError" and error["value"] == sentry._REDACTED
+    frames = error["stacktrace"]["frames"]
+    assert [f["function"] for f in frames] == ["caller", "failing_site"]
+    assert all(f["filename"] and f["lineno"] > 0 and "vars" not in f for f in frames)
+    assert all(marker.encode() not in e.serialize() for e in client.transport.envelopes)

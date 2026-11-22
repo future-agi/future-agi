@@ -12,7 +12,19 @@ BACKEND = CASES.parents[2]
 
 
 @pytest.mark.parametrize(
-    "case", ["registered_activity", "middleware_503", "supplied_frame"]
+    "case",
+    [
+        "registered_activity",
+        "middleware_503",
+        "supplied_frame",
+        "authenticated_request",
+        "request_span_overflow",
+        "structured_provider_log",
+        "embedding_rejection",
+        "activity_scope_tags",
+        "missing_stage_retryable",
+        "worker_local_error",
+    ],
 )
 def test_runtime_contract(case, tmp_path):
     # The production handler configuration and SDK integration setup both have

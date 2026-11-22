@@ -545,12 +545,16 @@ def test_frame_budget_is_shared_and_checked_before_iteration(monkeypatch):
     }
     out = before_send(event, {})
     assert out is not None
-    assert out["stacktrace"]["frames"] == [{"lineno": 2}, {"lineno": 3}]
+    assert out["stacktrace"]["frames"] == [{"lineno": 3}]
     [error] = out["exception"]["values"]
-    assert error == {"type": "LookupError", "value": _REDACTED, "stacktrace": {}}
+    assert error == {
+        "type": "LookupError",
+        "value": _REDACTED,
+        "stacktrace": {"frames": [{}, {}]},
+    }
     assert out["threads"]["values"] == [
         {"stacktrace": {}},
-        {"stacktrace": {"frames": [{"lineno": 9}]}},
+        {"stacktrace": {}},
     ]
 
 

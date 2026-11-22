@@ -63,7 +63,7 @@ def test_ordinary_event_and_next_event(at_ingestion):
             "params": [sentry._REDACTED],
         }
         assert second["exception"]["values"][-1]["type"] == "LookupError"
-        assert second["exception"]["values"][-1]["value"] == "row missing"
+        assert second["exception"]["values"][-1]["value"] == sentry._REDACTED
         assert second["extra"] == {"count": 2, "input_tokens": 17}
         assert second["request"]["method"] == "GET"
         assert second["request"]["cookies"] == sentry._REDACTED
@@ -304,7 +304,7 @@ def test_response_context_keeps_only_http_status_alongside_trace(status):
         assert MARKER.encode() not in envelope.serialize()
 
 
-def test_over_budget_span_list_is_dropped_without_losing_the_transaction(monkeypatch):
+def test_over_budget_span_list_keeps_a_bounded_prefix(monkeypatch):
     monkeypatch.setattr(sentry, "_MAX_ITEMS", 2)
     with sentry_capture(
         before_send_transaction=sentry._before_send_transaction,
@@ -319,7 +319,7 @@ def test_over_budget_span_list_is_dropped_without_losing_the_transaction(monkeyp
         [item] = transaction.items
         assert item.headers["type"] == "transaction"
         assert item.payload.json["transaction"] == "process job"
-        assert not item.payload.json.get("spans")
+        assert [s["op"] for s in item.payload.json["spans"]] == ["task.read"] * 2
         assert transport.events[0]["message"] == "next diagnostic"
         assert MARKER.encode() not in transaction.serialize()
         assert MARKER.encode() not in following.serialize()
