@@ -112,6 +112,7 @@ export const paths = {
     feed: `${ROOTS.DASHBOARD}/error-feed`,
     errorFeed: {
       root: `${ROOTS.DASHBOARD}/error-feed`,
+      alerts: `${ROOTS.DASHBOARD}/error-feed/alerts`,
       detail: (id) => `${ROOTS.DASHBOARD}/error-feed/${id}`,
     },
     derivedMetrics: `${ROOTS.DASHBOARD}/derived-metrics`,

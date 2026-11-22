@@ -161,6 +161,42 @@ def current_finding_ids_by_trace(
     return result
 
 
+def list_omega_attributions_for_cluster(
+    cluster_uuid: str, limit: int = 8
+) -> list[dict[str, object]]:
+    """[transitive] Preload Omega v20.9 grounded origin -> symptom span attributions
+    for a tenant-validated cluster so the EE cluster-RCA agent starts from verified
+    causal chains instead of re-scanning raw spans from scratch.
+    """
+    findings = list(
+        _current_findings(cluster_uuid)
+        .select_related("report")
+        .prefetch_related("attributions")
+        .order_by("-report__recorded_at", "ordinal")[:limit]
+    )
+    out: list[dict[str, object]] = []
+    for f in findings:
+        roles: dict[str, dict[str, object]] = {}
+        for attr in f.attributions.all():
+            roles[attr.role] = {
+                "status": attr.status,
+                "span_id": attr.span_id,
+                "explanation": (attr.explanation or "")[:240],
+            }
+        out.append(
+            {
+                "trace_id": str(f.report.trace_id) if f.report.trace_id else None,
+                "finding_id": f.finding_id,
+                "kind": f.category or f.kind,
+                "fix_layer": f.fix_layer,
+                "statement": (f.statement or "")[:320],
+                "origin": roles.get("origin"),
+                "symptom": roles.get("symptom"),
+            }
+        )
+    return out
+
+
 # ── TraceErrorGroup (the cluster) ────────────────────────────────────────────
 
 

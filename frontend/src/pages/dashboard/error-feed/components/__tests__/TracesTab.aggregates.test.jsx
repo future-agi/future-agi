@@ -4,11 +4,9 @@ import { render, screen } from "src/utils/test-utils";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import TracesTab from "../TracesTab";
 
-// Only the stat tiles are under test; the grid, drawers and hooks are stubs.
+// Only the MetricStrip tiles are under test; the drawers and hooks are stubs.
 const state = vi.hoisted(() => ({ aggregates: {}, source: "prototype" }));
 
-vi.mock("ag-grid-react", () => ({ AgGridReact: () => null }));
-vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => ({}) }));
 vi.mock("src/api/errorFeed/error-feed", () => ({
   useErrorFeedTraces: () => ({
     data: { traces: [], total: 0, aggregates: state.aggregates },
@@ -48,7 +46,7 @@ describe("TracesTab stat tiles", () => {
 
     render(<TracesTab error={error} />);
 
-    expect(screen.getByText("Avg score").previousSibling).toHaveTextContent(
+    expect(screen.getByText("Avg score").nextSibling).toHaveTextContent(
       "—",
     );
     expect(screen.queryByText("Avg turns")).not.toBeInTheDocument();
@@ -60,10 +58,10 @@ describe("TracesTab stat tiles", () => {
 
     render(<TracesTab error={error} />);
 
-    expect(screen.getByText("Avg score").previousSibling).toHaveTextContent(
+    expect(screen.getByText("Avg score").nextSibling).toHaveTextContent(
       "0.40",
     );
-    expect(screen.getByText("Avg turns").previousSibling).toHaveTextContent(
+    expect(screen.getByText("Avg turns").nextSibling).toHaveTextContent(
       "3.5",
     );
   });

@@ -23,7 +23,6 @@ import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 import DataTablePagination from "src/components/data-table/DataTablePagination";
 import ErrorStatusChip from "./ErrorStatusChip";
-import ErrorSeverityBadge from "./ErrorSeverityBadge";
 import ErrorTrendSparkline from "./ErrorTrendSparkline";
 import {
   issueEpochStatus,
@@ -100,51 +99,62 @@ SourceTag.propTypes = {
   source: PropTypes.string,
 };
 
-// ── Fix layer chip ──────────────────────────────────────────────────────────
-const FIX_LAYER_CONFIG = {
-  prompt: { label: "Prompt" },
-  orchestration: { label: "Orchestration" },
-  tools: { label: "Tools" },
-  guardrails: { label: "Guardrails" },
-  data: { label: "Data" },
-  memory: { label: "Memory" },
+const SEVERITY_META = {
+  critical: {
+    label: "Critical",
+    dot: "status.danger.solid",
+    text: "status.danger.fg",
+  },
+  high: {
+    label: "High",
+    dot: "status.warning.fg",
+    text: "text.primary",
+  },
+  medium: {
+    label: "Medium",
+    dot: "text.secondary",
+    text: "text.secondary",
+  },
+  low: {
+    label: "Low",
+    dot: "text.disabled",
+    text: "text.tertiary",
+  },
 };
-
-function FixLayerChip({ layer }) {
-  const theme = useTheme();
-  const cfg = FIX_LAYER_CONFIG[layer];
-  if (!cfg)
-    return (
-      <span style={{ color: theme.palette.text.disabled, fontSize: 12 }}>
-        —
-      </span>
-    );
-  return (
-    <Typography
-      noWrap
-      sx={{ fontSize: "12px", fontWeight: 500, color: "text.primary" }}
-    >
-      {cfg.label}
-    </Typography>
-  );
-}
-FixLayerChip.propTypes = { layer: PropTypes.string };
 
 const COLUMNS = [
   {
     id: "error",
-    label: "Error",
+    label: "Issue",
     sortable: false,
     width: "auto",
     minWidth: 340,
   },
-  { id: "severity", label: "Severity", sortable: true, width: 100 },
-  { id: "status", label: "Status", sortable: false, width: 118 },
-  { id: "traceCount", label: "Events", sortable: true, width: 85 },
-  { id: "usersAffected", label: "Users", sortable: false, width: 75 },
-  { id: "fixLayer", label: "Fix Layer", sortable: false, width: 120 },
-  { id: "trends", label: "Trend (14d)", sortable: false, width: 130 },
-  { id: "lastSeen", label: "Last seen", sortable: true, width: 120 },
+  { id: "project", label: "Project", sortable: false, width: 152 },
+  { id: "severity", label: "Severity", sortable: true, width: 96 },
+  { id: "status", label: "Status", sortable: false, width: 120 },
+  {
+    id: "traceCount",
+    label: "Events",
+    sortable: true,
+    width: 76,
+    align: "right",
+  },
+  {
+    id: "usersAffected",
+    label: "Users",
+    sortable: false,
+    width: 66,
+    align: "right",
+  },
+  { id: "trends", label: "Activity (7d)", sortable: false, width: 102 },
+  {
+    id: "lastSeen",
+    label: "Last seen",
+    sortable: true,
+    width: 110,
+    align: "right",
+  },
 ];
 
 function SortIcon({ active, dir }) {
@@ -186,28 +196,25 @@ function SkeletonRow() {
         <Box sx={{ ...pulse, height: 14, width: "85%" }} />
       </TableCell>
       <TableCell>
-        <Box sx={{ ...pulse, height: 14, width: 60 }} />
+        <Box sx={{ ...pulse, height: 14, width: 100 }} />
       </TableCell>
       <TableCell>
-        <Box sx={{ ...pulse, height: 20, width: 70, borderRadius: "4px" }} />
+        <Box sx={{ ...pulse, height: 14, width: 64 }} />
       </TableCell>
       <TableCell>
-        <Box sx={{ ...pulse, height: 14, width: 40 }} />
+        <Box sx={{ ...pulse, height: 20, width: 78, borderRadius: "4px" }} />
+      </TableCell>
+      <TableCell align="right">
+        <Box sx={{ ...pulse, height: 14, width: 32, ml: "auto" }} />
+      </TableCell>
+      <TableCell align="right">
+        <Box sx={{ ...pulse, height: 14, width: 28, ml: "auto" }} />
       </TableCell>
       <TableCell>
-        <Box sx={{ ...pulse, height: 14, width: 35 }} />
+        <Box sx={{ ...pulse, height: 20, width: 76, borderRadius: "4px" }} />
       </TableCell>
-      <TableCell>
-        <Box sx={{ ...pulse, height: 14, width: 35 }} />
-      </TableCell>
-      <TableCell>
-        <Box sx={{ ...pulse, height: 20, width: 90, borderRadius: "4px" }} />
-      </TableCell>
-      <TableCell>
-        <Box sx={{ ...pulse, height: 36, width: "100%" }} />
-      </TableCell>
-      <TableCell>
-        <Box sx={{ ...pulse, height: 12, width: 80 }} />
+      <TableCell align="right">
+        <Box sx={{ ...pulse, height: 12, width: 72, ml: "auto" }} />
       </TableCell>
     </TableRow>
   );
@@ -217,7 +224,7 @@ function SkeletonRow() {
 function EmptyState({ filtered }) {
   return (
     <TableRow>
-      <TableCell colSpan={9} align="center" sx={{ py: 8 }}>
+      <TableCell colSpan={10} align="center" sx={{ py: 8 }}>
         <Stack alignItems="center" gap={1.5}>
           <Box
             sx={{
@@ -410,7 +417,7 @@ export default function ErrorFeedTable({
           <TableHead>
             <TableRow
               sx={{
-                /* The product's DataTable header: no fill, a quiet 13px title. */
+                /* The product's DataTable header: no fill, a quiet title. */
                 "& .MuiTableCell-head": {
                   bgcolor: "background.paper",
                   /* The theme paints table heads with a grey gradient — off. */
@@ -443,16 +450,21 @@ export default function ErrorFeedTable({
               {COLUMNS.map((col) => (
                 <TableCell
                   key={col.id}
+                  align={col.align || "left"}
                   sx={{ width: col.width, minWidth: col.minWidth }}
                 >
                   {col.sortable ? (
                     <Stack
                       direction="row"
                       alignItems="center"
+                      justifyContent={
+                        col.align === "right" ? "flex-end" : "flex-start"
+                      }
                       gap={0.25}
                       sx={{
                         cursor: "pointer",
                         userSelect: "none",
+                        ml: col.align === "right" ? "auto" : 0,
                         width: "fit-content",
                       }}
                       onClick={() => setSortBy(col.id)}
@@ -477,7 +489,7 @@ export default function ErrorFeedTable({
                   )}
                 </TableCell>
               ))}
-              <TableCell sx={{ width: 40 }} />
+              <TableCell sx={{ width: 36 }} />
             </TableRow>
           </TableHead>
 
@@ -530,11 +542,11 @@ export default function ErrorFeedTable({
                       />
                     </TableCell>
 
-                    {/* Error name + type */}
+                    {/* Issue: crisp title on line 1, plain-English cause sentence on line 2 */}
                     <TableCell>
                       <Stack
                         direction="column"
-                        gap={0.5}
+                        gap={0.35}
                         justifyContent="center"
                       >
                         <Stack direction="row" alignItems="center" gap={0.75}>
@@ -551,7 +563,7 @@ export default function ErrorFeedTable({
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
                                 whiteSpace: "nowrap",
-                                maxWidth: 420,
+                                maxWidth: 480,
                                 display: "block",
                               }}
                             >
@@ -564,30 +576,71 @@ export default function ErrorFeedTable({
                             )}
                           />
                         </Stack>
-                        <Stack direction="row" alignItems="center" gap={0.75}>
-                          <SourceTag source={row.source} />
-                          <ErrorTypeTag type={row.error.type} />
-                          {row.eval_score != null && (
+                        <Stack
+                          direction="row"
+                          alignItems="center"
+                          gap={0.75}
+                          sx={{ minWidth: 0 }}
+                        >
+                          {row.root_cause_preview ? (
                             <Typography
                               typography="s3"
-                              color="text.disabled"
-                              sx={{ fontFeatureSettings: "'tnum'" }}
+                              color="text.tertiary"
+                              noWrap
+                              sx={{ maxWidth: 480 }}
                             >
-                              eval: {row.eval_score.toFixed(2)}
+                              {row.root_cause_preview}
                             </Typography>
+                          ) : (
+                            <>
+                              <SourceTag source={row.source} />
+                              <ErrorTypeTag type={row.error.type} />
+                            </>
                           )}
                         </Stack>
                       </Stack>
                     </TableCell>
 
-                    {/* Severity */}
+                    {/* Project (identical name across list & detail) */}
                     <TableCell>
-                      <ErrorSeverityBadge
-                        severity={row.severity}
-                        assessmentStatus={row.severity_assessment_status}
-                        source={row.severity_source}
-                        reason={row.severity_reason}
-                      />
+                      <Tooltip title={row.project || "—"} arrow>
+                        <Typography
+                          typography="s3"
+                          color="text.secondary"
+                          noWrap
+                          sx={{ maxWidth: 144, display: "block" }}
+                        >
+                          {row.project || "—"}
+                        </Typography>
+                      </Tooltip>
+                    </TableCell>
+
+                    {/* Readable sortable Severity column */}
+                    <TableCell>
+                      {(() => {
+                        const sev =
+                          SEVERITY_META[row.severity] || SEVERITY_META.medium;
+                        return (
+                          <Stack direction="row" alignItems="center" gap={0.75}>
+                            <Box
+                              sx={{
+                                width: 7,
+                                height: 7,
+                                borderRadius: "50%",
+                                flexShrink: 0,
+                                bgcolor: sev.dot,
+                              }}
+                            />
+                            <Typography
+                              typography="s3"
+                              fontWeight={500}
+                              color={sev.text}
+                            >
+                              {sev.label}
+                            </Typography>
+                          </Stack>
+                        );
+                      })()}
                     </TableCell>
 
                     {/* Status */}
@@ -596,7 +649,7 @@ export default function ErrorFeedTable({
                     </TableCell>
 
                     {/* Events */}
-                    <TableCell>
+                    <TableCell align="right">
                       <Typography
                         typography="s2_1"
                         fontWeight="fontWeightMedium"
@@ -608,7 +661,7 @@ export default function ErrorFeedTable({
                     </TableCell>
 
                     {/* Users */}
-                    <TableCell>
+                    <TableCell align="right">
                       <Typography
                         typography="s2_1"
                         color="text.secondary"
@@ -618,39 +671,38 @@ export default function ErrorFeedTable({
                       </Typography>
                     </TableCell>
 
-                    {/* Fix Layer */}
+                    {/* Discrete 7d daily activity sparkline */}
                     <TableCell>
-                      <FixLayerChip layer={row.fix_layer} />
-                    </TableCell>
-
-                    {/* Trend sparkline */}
-                    <TableCell sx={{ p: "0 8px !important" }}>
                       <ErrorTrendSparkline
                         data={row.trends}
-                        severity={row.severity}
+                        days={7}
+                        totalEvents={row.trace_count}
                       />
                     </TableCell>
 
                     {/* Last seen */}
-                    <TableCell>
-                      <Typography typography="s3" color="text.disabled" noWrap>
+                    <TableCell align="right">
+                      <Typography typography="s3" color="text.secondary" noWrap>
                         {row.lastSeenHuman ?? humanizeTime(row.last_seen)}
                       </Typography>
                     </TableCell>
 
                     {/* Actions */}
-                    <TableCell onClick={(e) => e.stopPropagation()}>
+                    <TableCell
+                      onClick={(e) => e.stopPropagation()}
+                      sx={{ pr: 1 }}
+                    >
                       <Tooltip title="View details" arrow>
                         <IconButton
                           size="small"
+                          aria-label={`Open ${row.error.name}`}
                           sx={{
-                            opacity: 0,
-                            transition: "opacity 0.15s",
-                            ".MuiTableRow-root:hover &": { opacity: 1 },
+                            color: "text.tertiary",
+                            "&:hover": { color: "text.primary" },
                           }}
                           onClick={() => handleRowClick(row.cluster_id)}
                         >
-                          <Iconify icon="solar:arrow-right-linear" width={16} />
+                          <Iconify icon="solar:arrow-right-linear" width={15} />
                         </IconButton>
                       </Tooltip>
                     </TableCell>
@@ -662,17 +714,26 @@ export default function ErrorFeedTable({
         </Table>
       </TableContainer>
 
-      {/* ── Pagination ── */}
+      {/* ── Pagination (full-width top divider; inner controls clear bottom-right FAB) ── */}
       {pageState === FEED_PAGE_STATE.FEED && totalCount > 0 && (
-        <DataTablePagination
-          page={page}
-          pageSize={pageSize}
-          total={totalCount}
-          onPageChange={setPage}
-          onPageSizeChange={(size) =>
-            useErrorFeedStore.setState({ pageSize: size, page: 0 })
-          }
-        />
+        <Box
+          sx={{
+            borderTop: "1px solid",
+            borderColor: "divider",
+            pr: 7,
+            "& > *": { borderTop: "none !important" },
+          }}
+        >
+          <DataTablePagination
+            page={page}
+            pageSize={pageSize}
+            total={totalCount}
+            onPageChange={setPage}
+            onPageSizeChange={(size) =>
+              useErrorFeedStore.setState({ pageSize: size, page: 0 })
+            }
+          />
+        </Box>
       )}
     </>
   );

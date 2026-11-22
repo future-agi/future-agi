@@ -17,6 +17,7 @@ export const TRACE_BUILT_IN_COLUMNS = [
   makeColumn("output", "Output"),
   makeColumn("start_time", "Timestamp"),
   makeColumn("status", "Status"),
+  makeColumn("issues", "Issues"),
   makeColumn("latency", "Latency"),
   makeColumn("total_tokens", "Tokens"),
   makeColumn("cost", "Total Cost"),

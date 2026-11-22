@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   CircularProgress,
+  Collapse,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -21,6 +22,7 @@ import {
 import { formatDistanceToNowStrict } from "date-fns";
 import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
+import { copyToClipboard } from "src/utils/utils";
 import { paths } from "src/routes/paths";
 import { useSnackbar } from "src/components/snackbar";
 import {
@@ -29,6 +31,8 @@ import {
   useLinearTeams,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
+import { useErrorFeedAlerts } from "src/api/errorFeed/alerts";
+import { useIntegrationConnections } from "src/api/integrations";
 import { useOrgMembers } from "src/api/annotation-queues/annotation-queues";
 import { useOrganization } from "src/contexts/OrganizationContext";
 import { useSharedIssueSidebar } from "src/api/shared-links";
@@ -70,7 +74,7 @@ function FieldRow({ label, children }) {
 FieldRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
 
 // ── Meta row ────────────────────────────────────────────────────────────────
-function MetaRow({ label, value, icon, monospace, linkHref }) {
+function MetaRow({ label, value, icon, linkHref }) {
   if (value == null || value === "") return null;
   return (
     <Stack
@@ -155,20 +159,19 @@ MetaRow.propTypes = {
 // ── Section ──────────────────────────────────────────────────────────────────
 function Section({ title, children }) {
   return (
-    <Stack gap={1}>
+    <Stack gap={0.85}>
       <Typography
         sx={{
-          fontSize: "12px",
+          fontSize: "11px",
           fontWeight: 600,
-          color: "text.secondary",
+          color: "text.tertiary",
           textTransform: "none",
-          letterSpacing: 0,
+          letterSpacing: "0.01em",
         }}
       >
         {title}
       </Typography>
       {children}
-      <Divider sx={{ borderColor: "divider", mt: 0.25 }} />
     </Stack>
   );
 }
@@ -248,6 +251,8 @@ function StatusDropdown({ clusterId, current }) {
         PaperProps={{
           sx: {
             borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
             minWidth: 150,
             mt: 0.5,
           },
@@ -382,6 +387,8 @@ function SeverityDropdown({ current, onChange }) {
         PaperProps={{
           sx: {
             borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
             minWidth: 200,
             mt: 0.5,
           },
@@ -512,9 +519,9 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
             <Iconify
               icon="solar:user-plus-linear"
               width={12}
-              sx={{ color: "text.disabled" }}
+              sx={{ color: "text.secondary" }}
             />
-            <Typography fontSize="12px" color="text.disabled">
+            <Typography fontSize="12px" color="text.secondary">
               Assign
             </Typography>
           </>
@@ -522,7 +529,7 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         <Iconify
           icon="solar:alt-arrow-down-linear"
           width={12}
-          sx={{ color: "text.disabled", opacity: 0.7 }}
+          sx={{ color: "text.secondary", opacity: 0.75 }}
         />
       </Box>
       <Menu
@@ -532,6 +539,8 @@ function AssigneeDropdown({ current, onChange, members = [] }) {
         PaperProps={{
           sx: {
             borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
             minWidth: 200,
             mt: 0.5,
           },
@@ -615,212 +624,38 @@ AssigneeDropdown.propTypes = {
   members: PropTypes.array,
 };
 
-// ── Eval row ──────────────────────────────────────────────────────────────────
-function EvalRow({ label, type, result, score, value }) {
-  const theme = useTheme();
-
-  const passed = result === "passed";
-  const resultColors = statusColors(theme, passed ? "success" : "danger");
-  const resultColor = resultColors.solid;
-  const resultIcon = passed
-    ? "solar:check-circle-linear"
-    : "solar:close-circle-linear";
-
-  // Deterministic: use the returned value as the display label (coloured by pass/fail)
-  // Pass/Fail: "Passed" / "Failed"
-  const verdictLabel =
-    type === "deterministic" ? value ?? "—" : passed ? "Passed" : "Failed";
-
-  return (
-    <Stack
-      gap={0.55}
-      sx={{
-        px: 1,
-        py: 0.75,
-        borderRadius: "6px",
-        border: "1px solid",
-        borderColor: "divider",
-        bgcolor: "action.hover",
-      }}
-    >
-      {/* Header: name only */}
-      <Typography
-        fontSize="12px"
-        fontWeight={500}
-        color="text.primary"
-        noWrap
-        sx={{ flex: 1, minWidth: 0 }}
-      >
-        {label}
-      </Typography>
-
-      {/* LLM Judge — score bar + percentage only (no pass/fail chip) */}
-      {type === "llm" && score != null && (
-        <Stack direction="row" alignItems="center" gap={0.75}>
-          <Box
-            sx={{
-              flex: 1,
-              height: 3,
-              borderRadius: 2,
-              overflow: "hidden",
-              bgcolor: "action.selected",
-            }}
-          >
-            <Box
-              sx={{
-                width: `${score * 100}%`,
-                height: "100%",
-                bgcolor: resultColor,
-                borderRadius: 2,
-              }}
-            />
-          </Box>
-          <Typography
-            fontSize="12px"
-            fontWeight={600}
-            sx={{
-              color: "text.secondary",
-              fontFeatureSettings: "'tnum'",
-              flexShrink: 0,
-            }}
-          >
-            {Math.round(score * 100)}%
-          </Typography>
-        </Stack>
-      )}
-
-      {/* Pass/Fail + Deterministic — verdict label with result colour */}
-      {(type === "pass" || type === "deterministic") && (
-        <Stack direction="row" alignItems="center" gap={0.35}>
-          <Iconify
-            icon={resultIcon}
-            width={12}
-            sx={{ color: resultColors.fg }}
-          />
-          <Typography
-            fontSize="12px"
-            fontWeight={500}
-            sx={{ color: resultColors.fg }}
-          >
-            {verdictLabel}
-          </Typography>
-        </Stack>
-      )}
-    </Stack>
-  );
-}
-EvalRow.propTypes = {
-  label: PropTypes.string,
-  type: PropTypes.string,
-  result: PropTypes.string,
-  score: PropTypes.number,
-  value: PropTypes.string,
-};
-
-// ── Activity timeline item ────────────────────────────────────────────────────
-function ActivityItem({ text, meta, isLast }) {
-  return (
-    <Stack direction="row" gap={1} alignItems="flex-start">
-      {/* Timeline spine */}
-      <Stack alignItems="center" sx={{ flexShrink: 0, width: 10 }}>
-        <Box
-          sx={{
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            flexShrink: 0,
-            border: "1.5px solid",
-            borderColor: "text.disabled",
-            bgcolor: "action.selected",
-            mt: "3px",
-          }}
-        />
-        {!isLast && (
-          <Box
-            sx={{
-              width: 1.5,
-              flex: 1,
-              minHeight: 14,
-              bgcolor: "divider",
-              mt: "2px",
-            }}
-          />
-        )}
-      </Stack>
-      <Stack gap={0} pb={isLast ? 0 : 1}>
-        <Typography
-          fontSize="12px"
-          color="text.primary"
-          sx={{ lineHeight: 1.5 }}
-        >
-          {text}
-        </Typography>
-        <Typography fontSize="12px" color="text.secondary">
-          {meta}
-        </Typography>
-      </Stack>
-    </Stack>
-  );
-}
-ActivityItem.propTypes = {
-  text: PropTypes.string,
-  meta: PropTypes.string,
-  isLast: PropTypes.bool,
-};
-
 // ── Co-occurring issues ───────────────────────────────────────────────────────
-const SEV_COLOR = {
-  critical: "#DB2F2D",
-  high: "#E9690C",
-  medium: "#F5A623",
-  low: "#71717a",
-};
-
 function CoOccurringList({ issues, readOnly = false }) {
   const navigate = useNavigate();
   return (
-    <Stack gap={0.5}>
-      {issues.map((issue) => {
-        const c = SEV_COLOR[issue.severity] || "#71717a";
-        return (
-          <Stack
-            key={issue.id}
-            direction="row"
-            alignItems="center"
-            gap={0.75}
-            onClick={
-              readOnly
-                ? undefined
-                : () => navigate(paths.dashboard.errorFeed.detail(issue.id))
-            }
-            sx={{
-              px: 1,
-              py: 0.7,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "6px",
-              bgcolor: "transparent",
-              cursor: "pointer",
-              "&:hover": {
-                borderColor: "status.discovery.border",
-                bgcolor: "status.discovery.bg",
-              },
-              transition: "all 0.15s",
-            }}
-          >
-            <Stack gap={0.1} flex={1} minWidth={0}>
-              <Typography fontSize="12px" color="text.primary" noWrap>
-                {issue.title}
-              </Typography>
-              <Typography fontSize="12px" color="text.secondary">
-                {issue.count?.toLocaleString()} shared
-                {issue.co_occurrence != null &&
-                  ` · ${Math.round(issue.co_occurrence * 100)}%`}
-              </Typography>
-            </Stack>
-          </Stack>
-        );
-      })}
+    <Stack gap={0.75}>
+      {issues.map((issue) => (
+        <Stack
+          key={issue.id}
+          gap={0.2}
+          onClick={
+            readOnly
+              ? undefined
+              : () => navigate(paths.dashboard.errorFeed.detail(issue.id))
+          }
+          sx={{
+            py: 0.5,
+            px: 0.75,
+            mx: -0.75,
+            borderRadius: "6px",
+            cursor: readOnly ? "default" : "pointer",
+            "&:hover": readOnly ? undefined : { bgcolor: "action.hover" },
+          }}
+        >
+          <Typography typography="s1" color="text.primary" noWrap>
+            {issue.title}
+          </Typography>
+          <Typography typography="s3" color="text.tertiary">
+            {issue.count?.toLocaleString()} shared{" "}
+            {issue.count === 1 ? "trace" : "traces"}
+          </Typography>
+        </Stack>
+      ))}
     </Stack>
   );
 }
@@ -901,7 +736,7 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
           justifyContent="space-between"
         >
           <Stack gap={0.2}>
-            <Typography fontSize="12px" fontWeight={600} color="text.primary">
+            <Typography fontSize="13px" fontWeight={600} color="text.primary">
               Create Linear Issue
             </Typography>
             <Typography fontSize="12px" color="text.secondary">
@@ -1003,20 +838,20 @@ function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
       alignItems="center"
       gap={1}
       sx={{
-        px: 1,
-        py: 0.7,
+        px: 1.25,
+        py: 1,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: "6px",
-        bgcolor: "transparent",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
       }}
     >
       <Box
         sx={{
-          width: 22,
-          height: 22,
-          borderRadius: "4px",
-          bgcolor: alpha(color, 0.1),
+          width: 24,
+          height: 24,
+          borderRadius: "6px",
+          bgcolor: alpha(color, 0.12),
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -1027,11 +862,12 @@ function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
       </Box>
 
       <Stack gap={0} flex={1} minWidth={0}>
-        <Typography fontSize="12px" fontWeight={600} color="text.primary">
+        <Typography typography="s1" fontWeight={600} color="text.primary" noWrap>
           {name}
         </Typography>
         <Typography
-          fontSize="12px"
+          typography="s3"
+          noWrap
           color={subtitle === "Connected" ? undefined : "text.secondary"}
           sx={
             subtitle === "Connected"
@@ -1048,7 +884,12 @@ function ConnectorRow({ icon, color, name, subtitle, action, onAction }) {
           size="small"
           variant="outlined"
           onClick={onAction}
-          sx={{ whiteSpace: "nowrap", flexShrink: 0 }}
+          sx={{
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+            borderColor: "divider",
+            color: "text.primary",
+          }}
         >
           {action}
         </Button>
@@ -1104,9 +945,11 @@ SharedLinearLink.propTypes = {
 function Integrations({
   clusterId,
   traceId,
+  projectId,
   externalIssueUrl,
   externalIssueId,
 }) {
+  const theme = useTheme();
   const navigate = useNavigate();
   // Live active org (matches the X-Organization-Id header) rather than the
   // cached user.organization.id, which can drift and 404 the request (TH-6156).
@@ -1116,7 +959,15 @@ function Integrations({
     isLoading: linearLoading,
     isError: linearError,
   } = useLinearTeams(currentOrganizationId);
+  const { data: alertRules = [] } = useErrorFeedAlerts();
+  const { data: connections = [] } = useIntegrationConnections();
   const linearConnected = linearData?.connected === true;
+  const slackConnected = connections.some((c) => c.platform === "slack");
+  const matchingAlertRules = alertRules.filter(
+    (r) =>
+      r.enabled !== false &&
+      (!r.project_id || String(r.project_id) === String(projectId)),
+  );
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
 
   const linked = !!externalIssueUrl;
@@ -1132,6 +983,33 @@ function Integrations({
     }
     setTeamPickerOpen(true);
   };
+
+  const handleSlackAction = () => {
+    const q = new URLSearchParams();
+    if (matchingAlertRules.length === 0) {
+      q.set("create", "1");
+      if (projectId) q.set("project_id", projectId);
+    }
+    const qs = q.toString();
+    navigate(`${paths.dashboard.errorFeed.alerts}${qs ? `?${qs}` : ""}`);
+  };
+
+  const firstAlertRule = matchingAlertRules[0] || null;
+  const alertChannelsSummary = (() => {
+    if (!firstAlertRule) {
+      return slackConnected ? "Off" : "Not set up";
+    }
+    const parts = [];
+    if (firstAlertRule.slack_enabled && firstAlertRule.slack_channel_name) {
+      parts.push(`#${firstAlertRule.slack_channel_name}`);
+    }
+    const emails = firstAlertRule.email_recipients || [];
+    if (firstAlertRule.email_enabled && emails.length > 0) {
+      parts.push(emails.length === 1 ? "Email" : `Email (${emails.length})`);
+    }
+    return parts.length > 0 ? parts.join(" · ") : "Active";
+  })();
+  const alertAction = matchingAlertRules.length > 0 ? "Manage" : "Set up";
 
   const linearSubtitle = linked
     ? externalIssueId
@@ -1153,6 +1031,18 @@ function Integrations({
   return (
     <>
       <Stack gap={0.75}>
+        <ConnectorRow
+          icon="solar:bell-bing-linear"
+          color={
+            matchingAlertRules.length > 0
+              ? theme.palette.status.success.solid
+              : theme.palette.status.warning.solid
+          }
+          name="Alerts"
+          subtitle={alertChannelsSummary}
+          action={alertAction}
+          onAction={handleSlackAction}
+        />
         <ConnectorRow
           icon="simple-icons:linear"
           // eslint-disable-next-line no-restricted-syntax -- ds: brand (Linear)
@@ -1178,6 +1068,7 @@ function Integrations({
 Integrations.propTypes = {
   clusterId: PropTypes.string,
   traceId: PropTypes.string,
+  projectId: PropTypes.string,
   externalIssueUrl: PropTypes.string,
   externalIssueId: PropTypes.string,
 };
@@ -1240,16 +1131,10 @@ export default function ErrorMetadataPanel({ error }) {
   const effectiveTraceId =
     selectedTraceId ?? sidebar?.ai_metadata?.trace_id ?? null;
 
-  if (!error) return null;
+  const [relatedOpen, setRelatedOpen] = useState(false);
+  const [idCopied, setIdCopied] = useState(false);
 
-  // Prefer backend-computed age_days; fall back to client calc if sidebar
-  // hasn't loaded yet so the UI still renders something.
-  const fallbackAgeMs = error.first_seen
-    ? Date.now() - new Date(error.first_seen).getTime()
-    : null;
-  const ageDays =
-    sidebar?.timeline?.age_days ??
-    (fallbackAgeMs ? Math.floor(fallbackAgeMs / (1000 * 60 * 60 * 24)) : null);
+  if (!error) return null;
 
   const qualityScores = (sidebar?.evaluations ?? []).map((ev) => ({
     label: ev.label,
@@ -1260,22 +1145,21 @@ export default function ErrorMetadataPanel({ error }) {
   }));
   const coOccurringIssues = sidebar?.co_occurring_issues ?? [];
 
-  const activityLog = error.first_seen
-    ? [
-        {
-          color: "status.warning.solid",
-          text: "First detected",
-          meta: `System · ${error.firstSeenHuman ?? humanizeTime(error.first_seen)}${
-            ageDays != null ? ` — ${ageDays} days open` : ""
-          }`,
-        },
-      ]
-    : [];
+  const fixLayerLabel = error.fix_layer
+    ? String(error.fix_layer).replace(/^\w/, (c) => c.toUpperCase())
+    : null;
+
+  const handleCopyId = async () => {
+    if (!error.cluster_id) return;
+    await copyToClipboard(error.cluster_id);
+    setIdCopied(true);
+    setTimeout(() => setIdCopied(false), 1500);
+  };
 
   return (
     <Box
       sx={{
-        width: 280,
+        width: 268,
         flexShrink: 0,
         borderLeft: "1px solid",
         borderColor: "divider",
@@ -1284,8 +1168,8 @@ export default function ErrorMetadataPanel({ error }) {
         flexDirection: "column",
       }}
     >
-      <Stack gap={1.75} sx={{ p: 1.5 }}>
-        {/* ── Status / Severity / Assignee ── */}
+      <Stack gap={2.25} sx={{ p: 2, pb: 9 }}>
+        {/* ── Triage (single source of truth for Status & Severity) ── */}
         <Section title="Triage">
           <Stack gap={0.9}>
             <FieldRow label="Status">
@@ -1310,9 +1194,9 @@ export default function ErrorMetadataPanel({ error }) {
                 <SeverityDropdown current={severity} onChange={setSeverity} />
               )}
             </FieldRow>
-            <FieldRow label="Assignee">
+            <FieldRow label="Owner">
               {shared ? (
-                <Typography fontSize="12px" color="text.primary" noWrap>
+                <Typography typography="s1" color="text.primary" noWrap>
                   {assignee || "Unassigned"}
                 </Typography>
               ) : (
@@ -1326,238 +1210,150 @@ export default function ErrorMetadataPanel({ error }) {
           </Stack>
         </Section>
 
-        {/* ── Cluster at-a-glance ── */}
-        <Section title="Cluster">
-          <Box
-            sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0.6 }}
-          >
-            {[
-              {
-                label: "Traces",
-                value: error.trace_count?.toLocaleString(),
-                icon: "mdi:counter",
-              },
-              {
-                label: "Users affected",
-                value: error.users_affected?.toLocaleString(),
-                icon: "solar:users-group-rounded-linear",
-              },
-              {
-                label: "Sessions",
-                value: error.sessions?.toLocaleString(),
-                icon: "solar:monitor-linear",
-              },
-              {
-                label: "Cluster ID",
-                value: error.cluster_id,
-                icon: "solar:hashtag-linear",
-              },
-            ].map((item) => (
-              <Box
-                key={item.label}
-                sx={{
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: "4px",
-                  px: 1,
-                  py: 0.6,
-                }}
-              >
-                <Stack direction="row" alignItems="center" gap={0.4} mb={0.2}>
-                  <Iconify
-                    icon={item.icon}
-                    width={12}
-                    sx={{ color: "text.secondary" }}
-                  />
-                  <Typography fontSize="12px" color="text.secondary">
-                    {item.label}
-                  </Typography>
-                </Stack>
-                <Typography
-                  fontSize="12px"
-                  fontWeight={600}
-                  color="text.primary"
-                  noWrap
-                >
-                  {item.value ?? "—"}
-                </Typography>
-              </Box>
-            ))}
-          </Box>
-        </Section>
-
-        {/* ── Timeline ── */}
-        <Section title="Timeline">
-          <Stack gap={0.5}>
+        {/* ── Issue Details (non-duplicated rail facts; users/traces/project live in header) ── */}
+        <Section title="Details">
+          <Stack gap={0.7}>
+            {fixLayerLabel && <MetaRow label="Fix layer" value={fixLayerLabel} />}
             <MetaRow
               label="First seen"
               value={error.firstSeenHuman ?? humanizeTime(error.first_seen)}
-              icon="solar:stopwatch-linear"
             />
             <MetaRow
               label="Last seen"
               value={error.lastSeenHuman ?? humanizeTime(error.last_seen)}
-              icon="solar:clock-circle-linear"
             />
-            {ageDays != null && (
-              <MetaRow
-                label="Age"
-                value={`${ageDays} days`}
-                icon="solar:calendar-mark-linear"
-              />
-            )}
+            <FieldRow label="Issue ID">
+              <Stack direction="row" alignItems="center" gap={0.5}>
+                <Typography
+                  typography="s3"
+                  color="text.secondary"
+                  sx={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
+                >
+                  {String(error.cluster_id || "").slice(0, 8)}
+                </Typography>
+                <Tooltip title={idCopied ? "Copied" : "Copy issue ID"} arrow>
+                  <IconButton
+                    size="small"
+                    aria-label="Copy issue ID"
+                    onClick={handleCopyId}
+                    sx={{ p: 0.25, color: "text.secondary" }}
+                  >
+                    <Iconify
+                      icon={idCopied ? "solar:check-linear" : "solar:copy-linear"}
+                      width={14}
+                    />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+            </FieldRow>
           </Stack>
         </Section>
 
-        {/* ── AI Metadata ── */}
-        <Section title="AI Metadata">
-          <Stack gap={0.5}>
-            <MetaRow
-              label="Model"
-              value={sidebar?.ai_metadata?.model ?? error.model}
-              icon="solar:brain-linear"
-              monospace
-            />
-            <MetaRow
-              label="Version"
-              value={sidebar?.ai_metadata?.model_version ?? error.model_version}
-              icon="solar:tag-linear"
-              monospace
-            />
-            <MetaRow
-              label="Agent"
-              value={error.agent}
-              icon="solar:bot-linear"
-              monospace
-            />
-            <MetaRow label="Pipeline" value={error.pipeline} icon="mdi:pipe" />
-            {error.connector && (
-              <MetaRow
-                label="Connector"
-                value={error.connector}
-                icon="solar:plug-circle-linear"
-              />
-            )}
-            <MetaRow
-              label="Project"
-              value={sidebar?.ai_metadata?.project ?? error.project}
-              icon="solar:folder-linear"
-            />
-            {(sidebar?.ai_metadata?.eval_score ?? error.eval_score) != null && (
-              <MetaRow
-                label="Eval score"
-                value={`${(
-                  sidebar?.ai_metadata?.eval_score ?? error.eval_score
-                ).toFixed(2)} / 1.00`}
-                icon="solar:graph-up-linear"
-              />
-            )}
-            <MetaRow
-              label="Trace ID"
-              value={sidebar?.ai_metadata?.trace_id ?? error.trace_id}
-              icon="solar:graph-linear"
-              monospace
-            />
-          </Stack>
-        </Section>
-
-        {/* ── Evaluations ── */}
+        {/* ── Verification Checks (calm semantic colours, never red-washed) ── */}
         {sidebarPending ? (
-          <Section title="Evaluations">
+          <Section title="Checks">
             <Stack gap={0.75}>
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Stack key={i} direction="row" alignItems="center" gap={0.75}>
-                  <Skeleton
-                    width={90}
-                    height={12}
-                    sx={{ borderRadius: "4px" }}
-                  />
-                  <Box sx={{ flex: 1 }} />
-                  <Skeleton
-                    width={36}
-                    height={12}
-                    sx={{ borderRadius: "4px" }}
-                  />
-                </Stack>
+              {[0, 1].map((i) => (
+                <Skeleton key={i} height={18} sx={{ borderRadius: "4px" }} />
               ))}
             </Stack>
           </Section>
         ) : (
           qualityScores.length > 0 && (
-            <Section title="Evaluations">
-              <Stack gap={0.5}>
-                {qualityScores.map((qs) => (
-                  <EvalRow
-                    key={qs.label}
-                    label={qs.label}
-                    type={qs.type}
-                    result={qs.result}
-                    score={qs.score}
-                    value={qs.value}
-                  />
-                ))}
+            <Section title="Checks">
+              <Stack gap={0.65}>
+                {qualityScores.map((qs) => {
+                  const isConfirmed = qs.result === "CONFIRMED" || qs.value === "Confirmed";
+                  const isPath = qs.result === "INFO" || qs.type === "info";
+                  return (
+                    <FieldRow key={qs.label} label={qs.label}>
+                      <Typography
+                        typography="s3"
+                        fontWeight={500}
+                        color={
+                          isPath
+                            ? "text.primary"
+                            : isConfirmed
+                              ? "status.warning.fg"
+                              : qs.result === "FAIL"
+                                ? "status.danger.fg"
+                                : "status.success.fg"
+                        }
+                        sx={
+                          isPath
+                            ? { fontFamily: "ui-monospace, SFMono-Regular, monospace" }
+                            : undefined
+                        }
+                        noWrap
+                      >
+                        {qs.value || qs.result}
+                      </Typography>
+                    </FieldRow>
+                  );
+                })}
               </Stack>
             </Section>
           )
         )}
 
-        {/* ── Co-occurring Issues ── */}
-        {sidebarPending ? (
-          <Section title="Co-occurring Issues">
-            <Stack gap={0.75}>
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Stack key={i} direction="row" alignItems="center" gap={0.75}>
-                  <Skeleton
-                    width="65%"
-                    height={12}
-                    sx={{ borderRadius: "4px" }}
-                  />
-                  <Box sx={{ flex: 1 }} />
-                  <Skeleton
-                    width={28}
-                    height={12}
-                    sx={{ borderRadius: "4px" }}
-                  />
+        {coOccurringIssues.length > 0 && (
+          <Stack gap={0.75}>
+            <Tooltip
+              title="Other issues detected on the same user traces/sessions"
+              arrow
+              placement="left"
+            >
+              <Box
+                component="button"
+                type="button"
+                aria-expanded={relatedOpen}
+                onClick={() => setRelatedOpen((v) => !v)}
+                sx={{
+                  width: "100%",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  border: 0,
+                  p: 0,
+                  bgcolor: "transparent",
+                  fontFamily: "inherit",
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <Stack gap={0}>
+                  <Typography typography="s3" fontWeight={600} color="text.secondary">
+                    Co-occurring issues ({coOccurringIssues.length})
+                  </Typography>
+                  <Typography typography="s3" color="text.tertiary">
+                    Seen on same traces
+                  </Typography>
                 </Stack>
-              ))}
-            </Stack>
-          </Section>
-        ) : (
-          coOccurringIssues.length > 0 && (
-            <Section title="Co-occurring Issues">
-              <CoOccurringList issues={coOccurringIssues} readOnly={!!shared} />
-            </Section>
-          )
-        )}
-
-        {/* ── Activity ── */}
-        {activityLog.length > 0 && (
-          <Section title="Activity">
-            <Stack gap={0}>
-              {activityLog.map((item, i) => (
-                <ActivityItem
-                  key={i}
-                  text={item.text}
-                  meta={item.meta}
-                  isLast={i === activityLog.length - 1}
+                <Iconify
+                  icon={
+                    relatedOpen
+                      ? "solar:alt-arrow-up-linear"
+                      : "solar:alt-arrow-down-linear"
+                  }
+                  width={14}
+                  sx={{ color: "text.tertiary" }}
                 />
-              ))}
-            </Stack>
-          </Section>
+              </Box>
+            </Tooltip>
+            <Collapse in={relatedOpen}>
+              <CoOccurringList issues={coOccurringIssues} readOnly={!!shared} />
+            </Collapse>
+          </Stack>
         )}
 
-        {/* ── Integrations ── */}
         <Stack gap={1}>
           <Typography
-            sx={{
-              fontSize: "12px",
-              fontWeight: 600,
-              color: "text.disabled",
-              textTransform: "none",
-              letterSpacing: 0,
-            }}
+            typography="s3"
+            fontWeight={600}
+            color="text.tertiary"
+            sx={{ letterSpacing: "0.01em" }}
           >
-            Integrations
+            Alerts & integrations
           </Typography>
           {shared ? (
             <SharedLinearLink
@@ -1568,6 +1364,7 @@ export default function ErrorMetadataPanel({ error }) {
             <Integrations
               clusterId={error?.cluster_id}
               traceId={effectiveTraceId}
+              projectId={error?.project_id}
               externalIssueUrl={error?.external_issue_url}
               externalIssueId={error?.external_issue_id}
             />

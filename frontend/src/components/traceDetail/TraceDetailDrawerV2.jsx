@@ -58,6 +58,7 @@ import AddTagsPopover from "./AddTagsPopover";
 import SaveViewPopover from "./SaveViewDialog";
 import { buildPromptConfigFromSpan } from "./promptFromSpan";
 import { useNavigate } from "react-router";
+import { paths } from "src/routes/paths";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import ImagineTab from "src/components/imagine/ImagineTab";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
@@ -138,6 +139,8 @@ const TraceDetailDrawerV2 = ({
   open,
   onClose,
   projectId,
+  clusterId = null,
+  defaultCompressed = false,
   testExecutionId,
   onPrev,
   onNext,
@@ -354,7 +357,11 @@ const TraceDetailDrawerV2 = ({
         showAgentGraph,
         filters: spanFilters,
       };
-      localStorage.setItem(storageKey, JSON.stringify(config));
+      try {
+        localStorage?.setItem(storageKey, JSON.stringify(config));
+      } catch {
+        // Storage can be unavailable in restricted/private environments.
+      }
       return;
     }
     // Skip auto-save for imagine tabs (they save via their own Save View button)
@@ -529,11 +536,22 @@ const TraceDetailDrawerV2 = ({
     setActiveDrawerTab("__new_imagine__");
   }, []);
 
+  const issueScopeKey = `${traceId || ""}::${clusterId || ""}`;
+  const [selectedIssue, setSelectedIssue] = useState({
+    scopeKey: issueScopeKey,
+    clusterId: clusterId || null,
+  });
+  const activeClusterId =
+    selectedIssue.scopeKey === issueScopeKey
+      ? selectedIssue.clusterId
+      : clusterId || null;
+
   const queryClient = useQueryClient();
   // A shared issue's viewer may be signed out: read through the share token.
   const ownTrace = useGetTraceDetail(open && !sharedToken ? traceId : null, {
     projectId,
     testExecutionId,
+    ...(activeClusterId ? { clusterId: activeClusterId } : {}),
   });
   const sharedTrace = useSharedIssueTrace(
     sharedToken,
@@ -1348,6 +1366,27 @@ const TraceDetailDrawerV2 = ({
                 setVisibleMetrics={setVisibleMetrics}
                 showAgentGraph={showAgentGraph}
                 onRefresh={handleRefresh}
+                traceIssues={data?.issues || []}
+                activeClusterId={
+                  activeClusterId || data?.active_cluster_id || null
+                }
+                defaultCompressed={defaultCompressed}
+                onSelectIssue={(nextCid) => {
+                  setSelectedIssue({
+                    scopeKey: issueScopeKey,
+                    clusterId: nextCid,
+                  });
+                  const target = (data?.issues || []).find(
+                    (iss) => iss.cluster_id === nextCid,
+                  );
+                  if (target?.origin_span_id) {
+                    setSelectedSpanId(target.origin_span_id);
+                  }
+                }}
+                onOpenIssue={(cid) => {
+                  onClose?.();
+                  navigate(paths.dashboard.errorFeed.detail(cid));
+                }}
               />
 
               {/* Resizable divider with visual handle */}
@@ -1675,6 +1714,8 @@ TraceDetailDrawerV2.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   projectId: PropTypes.string,
+  clusterId: PropTypes.string,
+  defaultCompressed: PropTypes.bool,
   testExecutionId: PropTypes.string,
   onPrev: PropTypes.func,
   onNext: PropTypes.func,

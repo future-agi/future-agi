@@ -27,10 +27,25 @@ vi.mock("src/api/project/observe-project-list", () => ({
   fetchAllObserveProjects,
 }));
 vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
-// The rows' epoch icons read their own endpoint; these tests count feed reads only.
+// The rows' epoch icons, stats, and alerts banner read their own endpoints;
+// these tests count feed list reads only.
 vi.mock("src/api/errorFeed/epochFromIssue", async (importOriginal) => ({
   ...(await importOriginal()),
   useIssueEpochs: () => ({ jobs: {}, isError: false, isLoading: false }),
+}));
+vi.mock("src/api/errorFeed/alerts", () => ({
+  useErrorFeedAlerts: () => ({ data: [], isError: false, isLoading: false }),
+}));
+vi.mock("src/api/integrations", () => ({
+  useIntegrationConnections: () => ({
+    data: [],
+    isError: false,
+    isLoading: false,
+  }),
+}));
+vi.mock("src/api/errorFeed/error-feed", async (importOriginal) => ({
+  ...(await importOriginal()),
+  useErrorFeedStats: () => ({ data: null, isError: false, isLoading: false }),
 }));
 
 import ErrorFeedView from "../ErrorFeedView";

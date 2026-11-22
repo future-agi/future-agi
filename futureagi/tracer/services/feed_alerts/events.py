@@ -154,18 +154,26 @@ def _queue_event(event: ErrorFeedIssueEvent) -> None:
                 < state.last_queued_at + timedelta(seconds=rule.cooldown_seconds)
             ):
                 continue
-            delivery, created = (
-                ErrorFeedAlertDelivery.no_workspace_objects.get_or_create(
+            channels_to_queue: list[str] = []
+            if getattr(rule, "slack_enabled", True) and rule.slack_channel_id:
+                channels_to_queue.append(rule.slack_channel_id)
+            if getattr(rule, "email_enabled", False) and (
+                getattr(rule, "email_recipients", None) or []
+            ):
+                channels_to_queue.append("email")
+            any_created = False
+            for channel_id in channels_to_queue:
+                _, created = ErrorFeedAlertDelivery.no_workspace_objects.get_or_create(
                     rule=rule,
                     event=event,
-                    channel_id=rule.slack_channel_id,
+                    channel_id=channel_id,
                     defaults={
                         "cluster": event.cluster,
                         "next_attempt_at": timezone.now(),
                     },
                 )
-            )
-            if created:
+                any_created = any_created or created
+            if any_created:
                 state.last_event = event
                 state.last_queued_at = event.created_at
                 fields = ["last_event", "last_queued_at", "updated_at"]
@@ -277,60 +285,131 @@ def _send_delivery(delivery_id: uuid.UUID) -> None:
         delivery.save(update_fields=["status", "attempts", "updated_at"])
 
     rule = delivery.rule
-    connection = IntegrationConnection.no_workspace_objects.filter(
-        pk=rule.slack_connection_id,
-        organization_id=rule.organization_id,
-        workspace_id=rule.workspace_id,
-        platform=IntegrationPlatform.SLACK,
-        status=ConnectionStatus.ACTIVE,
-        deleted=False,
-    ).first()
-    if not rule.enabled or rule.deleted or connection is None:
-        delivery.status = FeedAlertDeliveryStatus.FAILED
-        delivery.error_code = "rule_or_integration_unavailable"
-    else:
-        from integrations.services.slack_service import SlackApiError, SlackService
+    if delivery.channel_id == "email":
+        recipients = list(getattr(rule, "email_recipients", None) or [])
+        if (
+            not rule.enabled
+            or rule.deleted
+            or not getattr(rule, "email_enabled", False)
+            or not recipients
+        ):
+            delivery.status = FeedAlertDeliveryStatus.FAILED
+            delivery.error_code = "rule_or_integration_unavailable"
+        else:
+            from tfc.utils.email import email_helper
 
-        try:
-            text, blocks = _message(delivery)
-            credentials = CredentialManager.decrypt(
-                bytes(connection.encrypted_credentials)
+            after = delivery.event.after
+            title = " ".join(str(after.get("title") or "Error Feed issue").split())[
+                :200
+            ]
+            project_name = str(delivery.event.project.name)[:100]
+            severity = str(after.get("severity") or "unknown").lower()
+            status_label = (
+                str(after.get("status") or "unknown").replace("_", " ").title()
             )
-            sent = SlackService().post_message(
-                credentials, delivery.channel_id, text, blocks=blocks
+            issue_id = str(after.get("cluster_id") or "")
+            app_base = getattr(settings, "APP_BASE_URL", "").rstrip("/")
+            issue_url = (
+                f"{app_base}/dashboard/error-feed/{quote(issue_id, safe='')}"
+                if app_base and issue_id
+                else ""
             )
-            delivery.status = FeedAlertDeliveryStatus.SENT
-            delivery.slack_ts = str(sent.get("ts") or "")
-            delivery.sent_at = timezone.now()
-            delivery.error_code = ""
-            ErrorFeedAlertRule.no_workspace_objects.filter(pk=rule.pk).update(
-                last_triggered_at=delivery.sent_at
+            alert_message = (
+                f"{title} — Project: {project_name} · Severity: {severity.title()} · "
+                f"State: {status_label}"
+                + (f" · Inspect: {issue_url}" if issue_url else "")
             )
-        except SlackApiError as exc:
-            delivery.error_code = str(exc.code)[:100]
-            retry_after = exc.retry_after
-            permanent = exc.code in {
-                "invalid_auth",
-                "account_inactive",
-                "channel_not_found",
-                "not_in_channel",
-                "missing_scope",
-            }
-            delivery.status = (
-                FeedAlertDeliveryStatus.FAILED
-                if permanent or delivery.attempts >= 5
-                else FeedAlertDeliveryStatus.RETRY
-            )
-        except Exception:
-            logger.exception(
-                "feed_alert_slack_send_failed", delivery_id=str(delivery.id)
-            )
-            delivery.error_code = "send_failed"
-            delivery.status = (
-                FeedAlertDeliveryStatus.FAILED
-                if delivery.attempts >= 5
-                else FeedAlertDeliveryStatus.RETRY
-            )
+            try:
+                email_helper(
+                    mail_subject=f"[Error Feed · {severity.upper()}] {title}",
+                    template_name="alert_user.html",
+                    template_data={
+                        "alert_name": rule.name,
+                        "alert_message": alert_message,
+                        "alert_type": "Error Feed",
+                    },
+                    to_email_list=recipients,
+                )
+                delivery.status = FeedAlertDeliveryStatus.SENT
+                delivery.sent_at = timezone.now()
+                delivery.error_code = ""
+                ErrorFeedAlertRule.no_workspace_objects.filter(pk=rule.pk).update(
+                    last_triggered_at=delivery.sent_at
+                )
+            except Exception:
+                logger.exception(
+                    "feed_alert_email_send_failed", delivery_id=str(delivery.id)
+                )
+                delivery.error_code = "email_send_failed"
+                delivery.status = (
+                    FeedAlertDeliveryStatus.FAILED
+                    if delivery.attempts >= 5
+                    else FeedAlertDeliveryStatus.RETRY
+                )
+    else:
+        connection = (
+            IntegrationConnection.no_workspace_objects.filter(
+                pk=rule.slack_connection_id,
+                organization_id=rule.organization_id,
+                workspace_id=rule.workspace_id,
+                platform=IntegrationPlatform.SLACK,
+                status=ConnectionStatus.ACTIVE,
+                deleted=False,
+            ).first()
+            if rule.slack_connection_id
+            else None
+        )
+        if (
+            not rule.enabled
+            or rule.deleted
+            or not getattr(rule, "slack_enabled", True)
+            or connection is None
+        ):
+            delivery.status = FeedAlertDeliveryStatus.FAILED
+            delivery.error_code = "rule_or_integration_unavailable"
+        else:
+            from integrations.services.slack_service import SlackApiError, SlackService
+
+            try:
+                text, blocks = _message(delivery)
+                credentials = CredentialManager.decrypt(
+                    bytes(connection.encrypted_credentials)
+                )
+                sent = SlackService().post_message(
+                    credentials, delivery.channel_id, text, blocks=blocks
+                )
+                delivery.status = FeedAlertDeliveryStatus.SENT
+                delivery.slack_ts = str(sent.get("ts") or "")
+                delivery.sent_at = timezone.now()
+                delivery.error_code = ""
+                ErrorFeedAlertRule.no_workspace_objects.filter(pk=rule.pk).update(
+                    last_triggered_at=delivery.sent_at
+                )
+            except SlackApiError as exc:
+                delivery.error_code = str(exc.code)[:100]
+                retry_after = exc.retry_after
+                permanent = exc.code in {
+                    "invalid_auth",
+                    "account_inactive",
+                    "channel_not_found",
+                    "not_in_channel",
+                    "missing_scope",
+                }
+                delivery.status = (
+                    FeedAlertDeliveryStatus.FAILED
+                    if permanent or delivery.attempts >= 5
+                    else FeedAlertDeliveryStatus.RETRY
+                )
+            except Exception:
+                logger.exception(
+                    "feed_alert_slack_send_failed", delivery_id=str(delivery.id)
+                )
+                delivery.error_code = "send_failed"
+                delivery.status = (
+                    FeedAlertDeliveryStatus.FAILED
+                    if delivery.attempts >= 5
+                    else FeedAlertDeliveryStatus.RETRY
+                )
     if delivery.status == FeedAlertDeliveryStatus.RETRY:
         delivery.next_attempt_at = timezone.now() + timedelta(
             seconds=max(

@@ -43,8 +43,9 @@ const shared = {
   token: "tok",
   sidebar: {
     timeline: { age_days: 5 },
-    ai_metadata: { model: "gpt-4o-mini", project: "Support Bot" },
-    evaluations: [],
+    evaluations: [
+      { label: "Groundedness", type: "deterministic", result: "FAIL", value: "Failed check" },
+    ],
     co_occurring_issues: [],
   },
 };
@@ -58,7 +59,7 @@ describe("ErrorMetadataPanel on a shared issue", () => {
     );
 
     expect(screen.getByText("owner@acme.test")).toBeInTheDocument();
-    expect(screen.getByText("gpt-4o-mini")).toBeInTheDocument();
+    expect(screen.getByText("Groundedness")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /TH-1/ })).toHaveAttribute(
       "href",
       "https://linear.app/acme/issue/TH-1",
@@ -80,7 +81,12 @@ describe("ErrorMetadataPanel on a shared issue", () => {
       selectedTraceIdByCluster: { "E-1": "trace-2" },
     });
     mocks.useSharedIssueSidebar.mockReturnValue({
-      data: { ...shared.sidebar, ai_metadata: { model: "claude-haiku" } },
+      data: {
+        ...shared.sidebar,
+        evaluations: [
+          { label: "Tool schema", type: "deterministic", result: "FAIL", value: "Mismatch" },
+        ],
+      },
       isLoading: false,
     });
 
@@ -91,8 +97,8 @@ describe("ErrorMetadataPanel on a shared issue", () => {
     );
 
     expect(mocks.useSharedIssueSidebar).toHaveBeenCalledWith("tok", "trace-2");
-    expect(screen.getByText("claude-haiku")).toBeInTheDocument();
-    expect(screen.queryByText("gpt-4o-mini")).not.toBeInTheDocument();
+    expect(screen.getByText("Tool schema")).toBeInTheDocument();
+    expect(screen.queryByText("Groundedness")).not.toBeInTheDocument();
   });
 
   it("does not show the first trace's metadata while the picked trace loads", () => {
@@ -110,7 +116,7 @@ describe("ErrorMetadataPanel on a shared issue", () => {
       </SharedIssueContext.Provider>,
     );
 
-    expect(screen.queryByText("gpt-4o-mini")).not.toBeInTheDocument();
+    expect(screen.queryByText("Groundedness")).not.toBeInTheDocument();
   });
 
   it("never links a Linear URL that is not http or https", () => {

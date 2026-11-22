@@ -45227,6 +45227,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               format: "uuid",
             },
           },
+          cluster_id: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 128,
+            },
+          },
         },
         responses: {
           200: {
@@ -57526,15 +57533,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Filters",
           type: "object",
         },
+        slack_enabled: {
+          title: "Slack enabled",
+          type: "boolean",
+        },
         slack_connection_id: {
           title: "Slack connection id",
           type: "string",
           format: "uuid",
+          "x-nullable": true,
         },
         slack_channel_id: {
           title: "Slack channel id",
           type: "string",
-          minLength: 1,
+          "x-nullable": true,
+        },
+        email_enabled: {
+          title: "Email enabled",
+          type: "boolean",
+        },
+        email_recipients: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "email",
+            minLength: 1,
+          },
+          maxItems: 50,
         },
         cooldown_seconds: {
           title: "Cooldown seconds",
@@ -102685,20 +102710,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Filters",
           type: "object",
         },
+        slack_enabled: {
+          title: "Slack enabled",
+          type: "boolean",
+        },
         slack_connection_id: {
           title: "Slack connection id",
           type: "string",
           format: "uuid",
+          "x-nullable": true,
         },
         slack_channel_id: {
           title: "Slack channel id",
           type: "string",
-          minLength: 1,
+          "x-nullable": true,
         },
         slack_channel_name: {
           title: "Slack channel name",
           type: "string",
-          minLength: 1,
+          "x-nullable": true,
+        },
+        email_enabled: {
+          title: "Email enabled",
+          type: "boolean",
+        },
+        email_recipients: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "email",
+            minLength: 1,
+          },
         },
         cooldown_seconds: {
           title: "Cooldown seconds",
@@ -102911,7 +102953,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         slack_ts: {
           title: "Slack ts",
           type: "string",
-          minLength: 1,
         },
       },
     },
@@ -128841,6 +128882,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Graph",
           type: "object",
         },
+        issues: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/TraceErrorFeedIssue",
+          },
+        },
+        active_cluster_id: {
+          title: "Active cluster id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
       },
     },
     TraceErrorAnalysisResult: {
@@ -142287,6 +142340,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        severity: {
+          title: "Severity",
+          type: "string",
+          enum: ["critical", "high", "medium", "low"],
+          "x-nullable": true,
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          maxLength: 256,
+          "x-nullable": true,
+        },
+        rca: {
+          $ref: "#/definitions/InvestigationRca",
+        },
         attribution: {
           $ref: "#/definitions/FindingAttribution",
         },
@@ -145682,6 +145750,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             type: "object",
           },
+        },
+      },
+    },
+    TraceErrorFeedIssue: {
+      required: ["cluster_id", "title", "severity", "status"],
+      type: "object",
+      properties: {
+        cluster_id: {
+          title: "Cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          minLength: 1,
+        },
+        severity: {
+          title: "Severity",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        origin_span_id: {
+          title: "Origin span id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        symptom_span_id: {
+          title: "Symptom span id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },
@@ -149441,6 +149547,102 @@ export const OPENAPI_CONTRACT = Object.freeze({
           $ref: "#/definitions/FindingAttributionRole",
         },
       },
+    },
+    InvestigationRca: {
+      type: "object",
+      properties: {
+        title: {
+          title: "Title",
+          type: "string",
+          maxLength: 256,
+          "x-nullable": true,
+        },
+        severity: {
+          title: "Severity",
+          type: "string",
+          enum: ["critical", "high", "medium", "low"],
+          "x-nullable": true,
+        },
+        workflow_type: {
+          title: "Workflow type",
+          type: "string",
+          maxLength: 64,
+          "x-nullable": true,
+        },
+        root_cause: {
+          title: "Root cause",
+          type: "string",
+          maxLength: 4000,
+          "x-nullable": true,
+        },
+        trigger_span_id: {
+          title: "Trigger span id",
+          type: "string",
+          maxLength: 128,
+          "x-nullable": true,
+        },
+        trigger_span_alias: {
+          title: "Trigger span alias",
+          type: "string",
+          maxLength: 128,
+          "x-nullable": true,
+        },
+        symptom_span_id: {
+          title: "Symptom span id",
+          type: "string",
+          maxLength: 128,
+          "x-nullable": true,
+        },
+        causal_chain: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 400,
+            minLength: 1,
+          },
+          maxItems: 20,
+        },
+        user_impact: {
+          title: "User impact",
+          type: "string",
+          maxLength: 2000,
+          "x-nullable": true,
+        },
+        suggested_fix: {
+          title: "Suggested fix",
+          type: "string",
+          maxLength: 2000,
+          "x-nullable": true,
+        },
+        evidence_refs: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 128,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+        linked_traces: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 128,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+        media_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 128,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+      },
+      "x-nullable": true,
     },
     QueueAnalyticsThroughputDaily: {
       required: ["date", "count"],

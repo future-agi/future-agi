@@ -1,6 +1,9 @@
 import React from "react";
-import { Box } from "@mui/material";
+import { Box, ButtonBase, Tooltip } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
+import StatusBadge from "src/components/status-badge";
+import { paths } from "src/routes/paths";
 import VersionCellRenderer from "src/sections/workbench/createPrompt/Metrics/CellRenderers/VersionCellRenderer";
 import LabelCellRenderer from "src/sections/workbench/createPrompt/Metrics/CellRenderers/LabelCellRenderer";
 import { interpolateColorTokenBasedOnScore } from "src/utils/utils";
@@ -20,6 +23,7 @@ import {
 import { useNavigationHandlers } from "./useNavigationHandlers";
 
 const CustomTraceRenderer = (params) => {
+  const navigate = useNavigate();
   const column = params.colDef.context?.sourceColumn;
   const colId = column?.id;
   const value = params.value;
@@ -84,6 +88,45 @@ const CustomTraceRenderer = (params) => {
           // into the readable token; the trace list and other consumers are unchanged.
           neutralTextColor={isSpanLevel ? "text.secondary" : undefined}
         />
+      </Box>
+    );
+  }
+
+  if (colId === "issues") {
+    const list = Array.isArray(value) ? value : [];
+    if (!list.length) return null;
+    const first = list[0];
+    const countLabel =
+      list.length === 1 ? "1 issue" : `${list.length} issues`;
+    const tooltipText = list
+      .map((iss, idx) => `${idx + 1}. ${iss.title || "Error Feed issue"}`)
+      .join("\n");
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          height: "100%",
+          px: 1,
+        }}
+      >
+        <Tooltip
+          title={<Box sx={{ whiteSpace: "pre-line" }}>{tooltipText}</Box>}
+          arrow
+          placement="top"
+        >
+          <ButtonBase
+            onClick={(e) => {
+              e.stopPropagation();
+              if (first?.cluster_id) {
+                navigate(paths.dashboard.errorFeed.detail(first.cluster_id));
+              }
+            }}
+            sx={{ borderRadius: "4px" }}
+          >
+            <StatusBadge role="danger" label={countLabel} size="sm" />
+          </ButtonBase>
+        </Tooltip>
       </Box>
     );
   }

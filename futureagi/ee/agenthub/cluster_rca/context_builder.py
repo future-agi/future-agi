@@ -47,8 +47,11 @@ _BUILTIN_COLUMNS: list[str] = [
 _TOP_N_ATTRIBUTES = 50
 
 
-def build_project_schema_context(project_id: str | None) -> str:
-    """Render the 'Available filters in this project' section.
+def build_project_schema_context(
+    project_id: str | None, cluster_uuid: str | None = None
+) -> str:
+    """Render the 'Available filters in this project' section plus Omega v20.9
+    pre-computed origin -> symptom attributions when cluster_uuid is supplied.
 
     Returns the empty string when project_id is missing or the schema lookup
     fails — the agent's general harness instructions still apply. Logs but
@@ -65,7 +68,7 @@ def build_project_schema_context(project_id: str | None) -> str:
             project_id=project_id,
             error=str(exc),
         )
-        return ""
+        keys = []
 
     top_keys = keys[:_TOP_N_ATTRIBUTES]
 
@@ -86,6 +89,34 @@ def build_project_schema_context(project_id: str | None) -> str:
             "Span attributes — use `attr.<key>`: none discovered for this project yet."
         )
     lines.append("")
+
+    # Preload Omega v20.9 grounded origin -> symptom attributions for this cluster
+    if cluster_uuid:
+        try:
+            from ee.agenthub.cluster_rca.selectors import (
+                list_omega_attributions_for_cluster,
+            )
+
+            attributions = list_omega_attributions_for_cluster(cluster_uuid, limit=6)
+            if attributions:
+                lines.append(
+                    "# Omega v20.9 Grounded Causal Attributions (preloaded for this cluster)"
+                )
+                for a in attributions:
+                    orig = a.get("origin") or {}
+                    symp = a.get("symptom") or {}
+                    lines.append(
+                        f"  - trace={a.get('trace_id')} [{a.get('kind')}] "
+                        f"origin={orig.get('span_id') or 'unknown'} -> "
+                        f"symptom={symp.get('span_id') or 'unknown'}: {a.get('statement')}"
+                    )
+                lines.append("")
+        except Exception as exc:
+            logger.warning(
+                "cluster_rca_omega_attribution_preload_failed",
+                cluster_uuid=cluster_uuid,
+                error=str(exc),
+            )
 
     # Eval / annotation discovery lands in a follow-up; for now nudge the agent
     # to query them on-demand via the harness tools.

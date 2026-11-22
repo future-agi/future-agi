@@ -22,29 +22,6 @@ const traces = [
   { id: "trace-b", name: "second" },
 ];
 
-vi.mock("ag-grid-react", async () => {
-  const { forwardRef } = await import("react");
-  const AgGridReact = forwardRef(function MockAgGridReact(
-    { rowData, onRowClicked },
-    _ref,
-  ) {
-    return (
-      <div>
-        {rowData.map((row) => (
-          <button
-            key={row.id}
-            type="button"
-            onClick={() => onRowClicked({ data: row })}
-          >
-            {`Row ${row.id}`}
-          </button>
-        ))}
-      </div>
-    );
-  });
-  return { AgGridReact };
-});
-vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => ({}) }));
 vi.mock("src/api/errorFeed/error-feed", () => ({
   useErrorFeedTraces: () => ({
     data: {
@@ -196,7 +173,7 @@ describe("Error Feed traces tab drawer shortcuts", () => {
 
   it("navigates with J while open and closes with Esc", () => {
     renderTracesTab();
-    fireEvent.click(screen.getByRole("button", { name: "Row trace-a" }));
+    fireEvent.click(screen.getByText("trace-a").closest("tr"));
     expect(lastRequestedTraceId()).toBe("trace-a");
 
     act(() => {

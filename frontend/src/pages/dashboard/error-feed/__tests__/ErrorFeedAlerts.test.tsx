@@ -63,9 +63,14 @@ const expectRestoredDraft = () => {
   expect(screen.getByRole("combobox", { name: "Sources" })).toHaveTextContent(
     "Scanner",
   );
-  expect(
-    screen.getByRole("combobox", { name: "Severity filter" }),
-  ).toHaveTextContent("High, Critical");
+  expect(screen.getByRole("button", { name: "High" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(screen.getByRole("button", { name: "Critical" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent(
     "For Review",
   );
@@ -82,12 +87,18 @@ const expectBlankForm = () => {
   expect(screen.getByRole("combobox", { name: "Project" })).toHaveTextContent(
     "All projects in this workspace",
   );
+  expect(screen.getByRole("button", { name: "High" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  expect(screen.getByRole("button", { name: "Critical" })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  fireEvent.click(screen.getByRole("button", { name: /more filters/i }));
   expect(screen.getByRole("combobox", { name: "Sources" })).toHaveTextContent(
     "Any source",
   );
-  expect(
-    screen.getByRole("combobox", { name: "Severity filter" }),
-  ).toHaveTextContent("Any severity");
   expect(screen.getByRole("combobox", { name: "Status" })).toHaveTextContent(
     "Any status",
   );

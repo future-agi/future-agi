@@ -170,6 +170,60 @@ class FindingAttributionSerializer(StrictInputSerializer):
     symptom = FindingAttributionRoleSerializer()
 
 
+class InvestigationRcaSerializer(StrictInputSerializer):
+    """Structured root-cause summary emitted by the Omega v20.9 engine."""
+
+    title = serializers.CharField(
+        max_length=256, required=False, allow_null=True, allow_blank=True
+    )
+    severity = serializers.ChoiceField(
+        choices=("critical", "high", "medium", "low"),
+        required=False,
+        allow_null=True,
+    )
+    workflow_type = serializers.CharField(
+        max_length=64, required=False, allow_null=True, allow_blank=True
+    )
+    root_cause = serializers.CharField(
+        max_length=4000, required=False, allow_null=True, allow_blank=True
+    )
+    trigger_span_id = serializers.CharField(
+        max_length=128, required=False, allow_null=True, allow_blank=True
+    )
+    trigger_span_alias = serializers.CharField(
+        max_length=128, required=False, allow_null=True, allow_blank=True
+    )
+    symptom_span_id = serializers.CharField(
+        max_length=128, required=False, allow_null=True, allow_blank=True
+    )
+    causal_chain = serializers.ListField(
+        child=serializers.CharField(max_length=400),
+        max_length=20,
+        required=False,
+    )
+    user_impact = serializers.CharField(
+        max_length=2000, required=False, allow_null=True, allow_blank=True
+    )
+    suggested_fix = serializers.CharField(
+        max_length=2000, required=False, allow_null=True, allow_blank=True
+    )
+    evidence_refs = serializers.ListField(
+        child=serializers.CharField(max_length=128),
+        max_length=50,
+        required=False,
+    )
+    linked_traces = serializers.ListField(
+        child=serializers.CharField(max_length=128),
+        max_length=50,
+        required=False,
+    )
+    media_ids = serializers.ListField(
+        child=serializers.CharField(max_length=128),
+        max_length=50,
+        required=False,
+    )
+
+
 class InvestigationFindingSerializer(StrictInputSerializer):
     finding_id = serializers.CharField(max_length=128)
     kind = serializers.CharField(max_length=64)
@@ -185,6 +239,15 @@ class InvestigationFindingSerializer(StrictInputSerializer):
     group_label = serializers.CharField(max_length=100, required=False, allow_null=True)
     fix_layer = serializers.CharField(max_length=50, required=False, allow_null=True)
     confidence = serializers.CharField(max_length=2, required=False, allow_null=True)
+    severity = serializers.ChoiceField(
+        choices=("critical", "high", "medium", "low"),
+        required=False,
+        allow_null=True,
+    )
+    title = serializers.CharField(
+        max_length=256, required=False, allow_null=True, allow_blank=True
+    )
+    rca = InvestigationRcaSerializer(required=False, allow_null=True)
     attribution = FindingAttributionSerializer()
 
 

@@ -11,6 +11,7 @@ vi.mock("react-router-dom", async (importOriginal) => ({
 }));
 
 vi.mock("src/api/errorFeed/error-feed", () => ({
+  useErrorFeedList: () => ({ data: { data: [] }, isLoading: false }),
   useErrorFeedRedirect: () => ({
     data: { resolved_cluster_id: CLUSTER_ID },
     isLoading: false,

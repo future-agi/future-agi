@@ -1,18 +1,24 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Box,
   Button,
+  Checkbox,
   Divider,
   IconButton,
   InputAdornment,
   Menu,
   MenuItem,
   OutlinedInput,
+  Popover,
   Select,
   Stack,
+  Tab,
+  Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SelectionBar from "src/components/selection-bar";
 import { FilterButton } from "src/components/filter";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import { useUpdateErrorFeedIssue } from "src/api/errorFeed/error-feed";
 import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
@@ -97,6 +103,258 @@ const buildFilterFields = (projectOptions) => [
   },
 ];
 
+// ── searchable multi-select project picker with checkboxes ─────────────────
+function ProjectMultiSelect({ selectedValues, onChange, options }) {
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [query, setQuery] = useState("");
+  const open = Boolean(anchorEl);
+
+  const projectItems = useMemo(
+    () => options.filter((opt) => opt.value !== ""),
+    [options],
+  );
+  const filteredItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return projectItems;
+    return projectItems.filter((opt) =>
+      String(opt.label || "").toLowerCase().includes(q),
+    );
+  }, [projectItems, query]);
+
+  const latestSelectedRef = useRef(selectedValues);
+  useEffect(() => {
+    latestSelectedRef.current = selectedValues;
+  }, [selectedValues]);
+
+  const toggleProject = (val) => {
+    const current = latestSelectedRef.current;
+    const next = current.includes(val)
+      ? current.filter((v) => v !== val)
+      : [...current, val];
+    latestSelectedRef.current = next;
+    onChange(next);
+  };
+
+  const buttonLabel = useMemo(() => {
+    if (selectedValues.length === 0) return "All Projects";
+    if (selectedValues.length === 1) {
+      return (
+        projectItems.find((p) => p.value === selectedValues[0])?.label ||
+        "1 project"
+      );
+    }
+    return `${selectedValues.length} projects`;
+  }, [selectedValues, projectItems]);
+
+  return (
+    <>
+      <Box
+        component="button"
+        type="button"
+        onClick={(e) => setAnchorEl(e.currentTarget)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        sx={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 1,
+          height: 32,
+          minWidth: 170,
+          maxWidth: 230,
+          px: 1.25,
+          borderRadius: "6px",
+          border: "1px solid",
+          borderColor:
+            selectedValues.length > 0 || open ? "primary.main" : "divider",
+          bgcolor:
+            selectedValues.length > 0 ? "action.selected" : "background.paper",
+          color: "text.primary",
+          fontSize: "13px",
+          fontFamily: "inherit",
+          cursor: "pointer",
+          transition: "border-color 120ms, background-color 120ms",
+          "&:hover": {
+            borderColor:
+              selectedValues.length > 0 ? "primary.main" : "text.secondary",
+          },
+        }}
+      >
+        <Typography
+          component="span"
+          noWrap
+          sx={{
+            fontSize: "13px",
+            fontWeight: selectedValues.length > 0 ? 500 : 400,
+            color: "text.primary",
+          }}
+        >
+          {buttonLabel}
+        </Typography>
+        <Iconify
+          icon="solar:alt-arrow-down-linear"
+          width={14}
+          sx={{ color: "text.secondary", flexShrink: 0 }}
+        />
+      </Box>
+
+      <Popover
+        open={open}
+        anchorEl={anchorEl}
+        onClose={() => {
+          setAnchorEl(null);
+          setQuery("");
+        }}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        PaperProps={{
+          elevation: 3,
+          sx: {
+            mt: 0.5,
+            width: 276,
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
+            overflow: "hidden",
+          },
+        }}
+      >
+        {/* Search box */}
+        <Box sx={{ p: 1, borderBottom: "1px solid", borderColor: "divider" }}>
+          <OutlinedInput
+            autoFocus
+            fullWidth
+            size="small"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search projects..."
+            startAdornment={
+              <InputAdornment position="start">
+                <Iconify
+                  icon="solar:magnifier-linear"
+                  width={14}
+                  sx={{ color: "text.secondary" }}
+                />
+              </InputAdornment>
+            }
+            endAdornment={
+              query ? (
+                <InputAdornment position="end">
+                  <IconButton
+                    size="small"
+                    aria-label="Clear project search"
+                    onClick={() => setQuery("")}
+                    edge="end"
+                  >
+                    <Iconify icon="solar:close-linear" width={13} />
+                  </IconButton>
+                </InputAdornment>
+              ) : null
+            }
+            sx={{
+              height: 30,
+              fontSize: "12.5px",
+              borderRadius: "6px",
+              "& .MuiOutlinedInput-notchedOutline": { borderColor: "divider" },
+            }}
+            notched={false}
+          />
+        </Box>
+
+        {/* Quick actions row */}
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          sx={{
+            px: 1.25,
+            py: 0.6,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            bgcolor: "action.hover",
+          }}
+        >
+          <Typography typography="s3" color="text.secondary">
+            {selectedValues.length > 0
+              ? `${selectedValues.length} selected`
+              : `${projectItems.length} projects`}
+          </Typography>
+          <Stack direction="row" gap={0.75}>
+            <Button
+              size="small"
+              variant="text"
+              onClick={() =>
+                onChange(filteredItems.map((opt) => opt.value))
+              }
+              sx={{ minWidth: 0, px: 0.5, py: 0, color: "primary.main" }}
+            >
+              Select all
+            </Button>
+            {selectedValues.length > 0 && (
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => onChange([])}
+                sx={{ minWidth: 0, px: 0.5, py: 0, color: "text.secondary" }}
+              >
+                Clear
+              </Button>
+            )}
+          </Stack>
+        </Stack>
+
+        {/* Scrollable checkbox list */}
+        <Box sx={{ maxHeight: 260, overflowY: "auto", py: 0.5 }}>
+          {filteredItems.length === 0 ? (
+            <Typography
+              typography="s3"
+              color="text.secondary"
+              sx={{ px: 1.5, py: 2, textAlign: "center" }}
+            >
+              No matching projects
+            </Typography>
+          ) : (
+            filteredItems.map((opt) => {
+              const checked = selectedValues.includes(opt.value);
+              return (
+                <MenuItem
+                  key={opt.value}
+                  dense
+                  onClick={() => toggleProject(opt.value)}
+                  sx={{ px: 1, py: 0.45, gap: 0.5 }}
+                >
+                  <Checkbox
+                    size="small"
+                    checked={checked}
+                    sx={{ p: 0.35 }}
+                    tabIndex={-1}
+                    disableRipple
+                  />
+                  <Typography
+                    typography="s2"
+                    color="text.primary"
+                    noWrap
+                    sx={{ flex: 1, minWidth: 0 }}
+                  >
+                    {opt.label}
+                  </Typography>
+                </MenuItem>
+              );
+            })
+          )}
+        </Box>
+      </Popover>
+    </>
+  );
+}
+ProjectMultiSelect.propTypes = {
+  selectedValues: PropTypes.arrayOf(PropTypes.string).isRequired,
+  onChange: PropTypes.func.isRequired,
+  options: PropTypes.arrayOf(
+    PropTypes.shape({ value: PropTypes.string, label: PropTypes.string }),
+  ).isRequired,
+};
+
 // ── compact select ─────────────────────────────────────────────────────────
 function CompactSelect({ value, onChange, options, minWidth = 130 }) {
   return (
@@ -107,7 +365,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
       displayEmpty
       SelectDisplayProps={{
         style: {
-          fontSize: "12px",
+          fontSize: "13px",
           lineHeight: "32px",
           padding: "0 28px 0 10px",
           minHeight: "unset",
@@ -115,7 +373,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
       }}
       sx={{
         height: 32,
-        fontSize: "12px",
+        fontSize: "13px",
         minWidth,
         borderRadius: "6px",
         "& .MuiOutlinedInput-notchedOutline": { borderColor: "divider" },
@@ -127,7 +385,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
           borderWidth: "1px",
         },
         "& .MuiSelect-select": {
-          fontSize: "12px !important",
+          fontSize: "13px !important",
           padding: "0 28px 0 10px !important",
           lineHeight: "32px",
         },
@@ -142,7 +400,7 @@ function CompactSelect({ value, onChange, options, minWidth = 130 }) {
             borderColor: "divider",
             mt: 0.5,
             "& .MuiMenuItem-root": {
-              fontSize: "12px",
+              fontSize: "13px",
               minHeight: 32,
               py: 0.75,
             },
@@ -240,6 +498,8 @@ function BulkActionMenu({ count, selected, onClear }) {
           elevation: 3,
           sx: {
             borderRadius: 1,
+            border: "1px solid",
+            borderColor: "divider",
             minWidth: 180,
           },
         }}
@@ -278,6 +538,7 @@ export default function ErrorFeedFilters({
   selected,
   onClearSelection,
   projectOptions = DEFAULT_PROJECT_OPTIONS,
+  stats = null,
 }) {
   const {
     searchQuery,
@@ -297,6 +558,20 @@ export default function ErrorFeedFilters({
     setTimeRange,
   } = useErrorFeedStore();
 
+  const selectedProjectIds = useMemo(
+    () =>
+      selectedProject
+        ? String(selectedProject)
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [],
+    [selectedProject],
+  );
+  const handleProjectsChange = (ids) => {
+    setSelectedProject(ids.join(","));
+  };
+
   const filterFields = useMemo(
     () => buildFilterFields(projectOptions),
     [projectOptions],
@@ -304,21 +579,21 @@ export default function ErrorFeedFilters({
   const filterValue = useMemo(
     () =>
       [
-        ["project", selectedProject],
-        ["status", selectedStatus],
-        ["severity", selectedSeverity],
-        ["fix_layer", selectedFixLayer],
-        ["source", selectedSource],
+        ["project", selectedProjectIds],
+        ["status", selectedStatus ? [selectedStatus] : []],
+        ["severity", selectedSeverity ? [selectedSeverity] : []],
+        ["fix_layer", selectedFixLayer ? [selectedFixLayer] : []],
+        ["source", selectedSource ? [selectedSource] : []],
       ]
-        .filter(([, value]) => value)
-        .map(([field, value]) => ({
+        .filter(([, vals]) => vals.length > 0)
+        .map(([field, vals]) => ({
           field,
           fieldType: "categorical",
           operator: "equals",
-          value: [value],
+          value: vals,
         })),
     [
-      selectedProject,
+      selectedProjectIds,
       selectedStatus,
       selectedSeverity,
       selectedFixLayer,
@@ -326,37 +601,51 @@ export default function ErrorFeedFilters({
     ],
   );
   const handleFilterChange = (rows) => {
-    const valueOf = (field) =>
-      (rows || []).find((row) => row.field === field)?.value?.[0] ?? "";
-    setSelectedProject(valueOf("project"));
-    setSelectedStatus(valueOf("status"));
-    setSelectedSeverity(valueOf("severity"));
-    setSelectedFixLayer(valueOf("fix_layer"));
-    setSelectedSource(valueOf("source"));
+    const valuesOf = (field) =>
+      (rows || []).find((row) => row.field === field)?.value ?? [];
+    setSelectedProject(valuesOf("project").join(","));
+    setSelectedStatus(valuesOf("status")[0] ?? "");
+    setSelectedSeverity(valuesOf("severity")[0] ?? "");
+    setSelectedFixLayer(valuesOf("fix_layer")[0] ?? "");
+    setSelectedSource(valuesOf("source")[0] ?? "");
   };
+
+  const quickViews = useMemo(
+    () => [
+      { value: "", label: "All", count: stats?.total_errors ?? null },
+      { value: "escalating", label: "Escalating", count: stats?.escalating ?? null },
+      { value: "for_review", label: "For review", count: stats?.for_review ?? null },
+      { value: "resolved", label: "Resolved", count: stats?.resolved ?? null },
+    ],
+    [stats],
+  );
+  const segmentedValue = quickViews.some((q) => q.value === (selectedStatus || ""))
+    ? selectedStatus || ""
+    : false;
 
   return (
     <Stack gap={1.25}>
-      {/* Row 1: search + quick filters */}
+      {/* Unified single toolbar: Search + Filters on left, native SegmentedTabs queue switch (or Bulk actions) on right */}
       <Stack
         direction="row"
         alignItems="center"
         justifyContent="space-between"
         gap={1.5}
+        flexWrap="wrap"
       >
-        <Stack direction="row" alignItems="center" gap={1}>
+        <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap">
           {/* Search */}
           <OutlinedInput
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search errors"
+            placeholder="Search issues"
             size="small"
             startAdornment={
               <InputAdornment position="start">
                 <Iconify
                   icon="solar:magnifier-linear"
                   width={16}
-                  sx={{ color: "text.disabled" }}
+                  sx={{ color: "text.secondary" }}
                 />
               </InputAdornment>
             }
@@ -375,8 +664,8 @@ export default function ErrorFeedFilters({
             }
             sx={{
               height: 32,
-              width: 280,
-              fontSize: "12px",
+              width: 240,
+              fontSize: "13px",
               borderRadius: "6px",
               "& .MuiOutlinedInput-notchedOutline": { borderColor: "divider" },
             }}
@@ -390,11 +679,18 @@ export default function ErrorFeedFilters({
           />
 
           {/* Quick selects */}
+          {projectOptions.length > 1 && (
+            <ProjectMultiSelect
+              selectedValues={selectedProjectIds}
+              onChange={handleProjectsChange}
+              options={projectOptions}
+            />
+          )}
           <CompactSelect
             value={timeRange}
             onChange={setTimeRange}
             options={TIME_RANGE_OPTIONS}
-            minWidth={140}
+            minWidth={132}
           />
           <FilterButton
             fields={filterFields}
@@ -403,14 +699,45 @@ export default function ErrorFeedFilters({
           />
         </Stack>
 
-        {/* Right: bulk actions */}
+        {/* Right: bulk actions when rows selected; otherwise native Future AGI SegmentedTabs queue switch */}
         <Stack direction="row" alignItems="center" gap={1}>
-          {selected.length > 0 && (
+          {selected.length > 0 ? (
             <BulkActionMenu
               count={selected.length}
               selected={selected}
               onClear={onClearSelection}
             />
+          ) : (
+            <SegmentedTabs
+              value={segmentedValue}
+              onChange={(_, val) => setSelectedStatus(val)}
+            >
+              {quickViews.map((item) => (
+                <Tab
+                  key={item.value || "all"}
+                  value={item.value}
+                  label={
+                    <Stack direction="row" alignItems="center" gap={0.6}>
+                      <span>{item.label}</span>
+                      {item.count != null && (
+                        <Typography
+                          component="span"
+                          typography="s3"
+                          color={
+                            item.value === "escalating" && item.count > 0
+                              ? "status.danger.fg"
+                              : "text.tertiary"
+                          }
+                          sx={{ fontVariantNumeric: "tabular-nums" }}
+                        >
+                          {item.count.toLocaleString()}
+                        </Typography>
+                      )}
+                    </Stack>
+                  }
+                />
+              ))}
+            </SegmentedTabs>
           )}
         </Stack>
       </Stack>
@@ -424,4 +751,11 @@ ErrorFeedFilters.propTypes = {
   projectOptions: PropTypes.arrayOf(
     PropTypes.shape({ value: PropTypes.string, label: PropTypes.string }),
   ),
+  stats: PropTypes.shape({
+    total_errors: PropTypes.number,
+    escalating: PropTypes.number,
+    for_review: PropTypes.number,
+    acknowledged: PropTypes.number,
+    resolved: PropTypes.number,
+  }),
 };
