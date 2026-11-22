@@ -88,13 +88,21 @@ class UpdateCiAdmission(unittest.TestCase):
     def triggers(self):
         return self.WORKFLOW.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
 
-    def test_a_pull_request_starts_the_workflow_whatever_it_touches(self):
-        # A trigger-level path filter stops the workflow before any job: a pull
-        # request into main or a labelled one never got its rehearsals.
+    def test_pull_requests_start_the_workflow_on_devs_path_list(self):
+        # No wider than dev: a pull request touching none of these files does
+        # not start Update CI. Only the host-update API contracts are push-only.
         pull_request = (
             self.triggers().split("  pull_request:\n", 1)[1].split("  push:\n", 1)[0]
         )
-        self.assertNotIn("paths", pull_request)
+        push = self.triggers().split("  push:\n", 1)[1].split("  merge_group:", 1)[0]
+        listed = re.findall(r'^      - "([^"]+)"$', pull_request, re.MULTILINE)
+        pushed = re.findall(r'^      - "([^"]+)"$', push, re.MULTILINE)
+        self.assertEqual(len(listed), 47)
+        self.assertEqual(
+            [path for path in pushed if path not in listed],
+            ["api_contracts/host-update/**"],
+        )
+        self.assertEqual([path for path in listed if path not in pushed], [])
         self.assertIn("    branches: [dev, main]\n", pull_request)
 
     def test_the_policy_list_is_the_push_list(self):
@@ -194,7 +202,9 @@ class UpdateCiAdmission(unittest.TestCase):
         self.assertIn("""--jq 'any(.labels[]; .name == "update-rehearsal")'""", changes)
         self.assertIn("BASE_REF: ${{ github.base_ref || github.ref_name }}", changes)
 
-    def test_when_the_decision_fails_the_real_jobs_and_the_ordinary_jobs_run(self):
+    def test_when_the_decision_fails_the_ordinary_jobs_run_and_real_jobs_only_off_pull_requests(
+        self,
+    ):
         for job, output in (
             ("automatic-upgrade", "upgrade"),
             ("automatic-a-b-c", "abc"),
@@ -208,6 +218,9 @@ class UpdateCiAdmission(unittest.TestCase):
                 f"needs.changes.outputs.{output} == 'true' || (needs.changes.result != 'success'",
                 condition,
             )
+            # Fails closed on a pull request: a failed decision starts neither
+            # ~3 h rehearsal there; push to dev and schedules still run them.
+            self.assertIn("github.event_name != 'pull_request'", condition)
         names = re.findall(
             r"^  ([a-z0-9-]+):$", self.WORKFLOW.split("\njobs:\n", 1)[1], re.MULTILINE
         )
@@ -300,12 +313,14 @@ class RehearsalInputs(unittest.TestCase):
             "deploy/helm/futureagi/values.yaml",
         ):
             self.assertEqual(rehearsal(path), (False, True), path)
-        # Prose in the chart: packaged, but nothing the job runs changes.
+        # Prose and example values in the chart: packaged, but nothing the
+        # job runs changes. Ordinary chart checks still cover them.
         for path in (
             "deploy/helm/futureagi/README.md",
             "deploy/helm/futureagi/UPGRADING.md",
             "deploy/helm/futureagi/LICENSE",
             "deploy/helm/futureagi/examples/README.md",
+            "deploy/helm/futureagi/examples/cloud/gke.yaml",
         ):
             self.assertEqual(rehearsal(path), (False, False), path)
         acceptance = (ROOT / ACCEPTANCE).read_text()
@@ -330,7 +345,10 @@ class RehearsalInputs(unittest.TestCase):
         self.assertEqual(listed, read)
         static = {path.decode() for path in scope["STATIC_GATE_REGISTERS"]}
         gate = (ROOT / "scripts/check_update_safety.py").read_text()
-        self.assertEqual(static | listed, set(registers))
+        # Known readers only: any other JSON file there (a read-only review
+        # record, say) is inert and starts no rehearsal, without being listed.
+        self.assertLessEqual(static | listed, set(registers))
+        self.assertFalse(static & listed)
         for path in registers:
             self.assertEqual(rehearsal(path)[0], path in listed, path)
         for path in static:

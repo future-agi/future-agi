@@ -105,6 +105,11 @@ def update_ci_relevant(paths):
 # JSON file there (a review record, say) starts no rehearsal until it is added
 # here. test_ci_scope.py derives the set from the names the rehearsal modules
 # open and keeps the two equal.
+#
+# Deliberate runtime-JSON exception (TH-10556): release-policy.json is policy
+# data, but scripts/generate_update_manifest.py reads it when the rehearsal
+# publisher signs each fixture release, so an edit to it alone changes what
+# both rehearsals publish and install. It runs both rehearsals on purpose.
 RUNTIME_JSON = {
     b"deploy/update/automatic-layout.json",
     b"deploy/update/backup-proof.schema.json",
@@ -142,7 +147,9 @@ BOOT_FILES = re.compile(
 )
 # The chart, as deploy/tests/update_e2e/acceptance.py packages it: without its
 # hack/ and ci/ directories and without dot-files. Its prose (Markdown and the
-# licence) is packaged too but changes nothing the job runs.
+# licence) and its examples/ values are packaged too, as opaque bytes, but
+# change nothing the job runs: the rehearsal installs no Helm release and
+# applies no example values. Ordinary chart checks still cover examples/.
 CHART = b"deploy/helm/futureagi/"
 # The updater's two frozen runtime schemas, outside deploy/update.
 UPDATER_SCHEMAS = {
@@ -157,7 +164,7 @@ def packaged_chart_file(path):
     parts = path[len(CHART) :].split(b"/")
     prose = parts[-1].endswith(b".md") or parts[-1] == b"LICENSE"
     return (
-        parts[0] not in (b"hack", b"ci")
+        parts[0] not in (b"hack", b"ci", b"examples")
         and not any(part.startswith(b".") for part in parts)
         and not prose
     )

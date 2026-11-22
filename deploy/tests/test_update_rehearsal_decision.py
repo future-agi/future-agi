@@ -100,8 +100,10 @@ class RehearsalWorkflowTest(unittest.TestCase):
             "\n  safety:\n", 1
         )[0]
 
-    def test_both_real_jobs_follow_the_decision_and_fail_open(self):
-        fail_open = "(needs.changes.result != 'success' && github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))"
+    def test_both_real_jobs_follow_the_decision_and_fail_closed_on_pull_requests(self):
+        # A failed decision runs both rehearsals on a push to dev, a schedule or
+        # a dispatch, never on a pull request or a merge group.
+        fail_open = "(needs.changes.result != 'success' && github.event_name != 'merge_group' && github.event_name != 'pull_request' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))"
         for job, output in (
             ("automatic-upgrade", "upgrade"),
             ("automatic-a-b-c", "abc"),

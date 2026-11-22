@@ -21,14 +21,63 @@
 name: Update CI
 
 on:
-  # No path filter for pull requests: GitHub applies one before any job runs,
-  # so a pull request into main, or one with the update-rehearsal label, never
-  # got its Real rehearsals when none of its files matched. The `changes` job
-  # decides instead: the same list is UPDATE_CI_PATHS in
-  # .github/scripts/ci_scope.py, and it selects the ordinary jobs.
+  # Pull requests start this workflow on dev's path list, the push list without
+  # api_contracts/host-update/** (a push to dev still covers that path). The
+  # `changes` job then selects jobs with UPDATE_CI_PATHS in .github/scripts/ci_scope.py.
   pull_request:
     types: [opened, synchronize, reopened, edited]
     branches: [dev, main]
+    paths:
+      - "bin/update"
+      - "deploy/update/**"
+      - "deploy/tests/test_update_*.py"
+      - "deploy/tests/update_e2e/**"
+      - "scripts/generate_update_manifest.py"
+      - "scripts/check_update_safety.py"
+      - "**/*.py"
+      - "**/*.go"
+      - "**/*.sql"
+      - "**/*.sh"
+      - "bin/**"
+      - "scripts/**"
+      - "deploy/**"
+      - "fi-collector/**"
+      - "agentcc-gateway/**"
+      - "docker-compose*.yml"
+      - "futureagi/**"
+      - "bin/lib/**"
+      - ".github/workflows/backend-ci.yml"
+      - "docker-compose.yml"
+      - "docker-compose.distributed.yml"
+      - "deploy/docker-compose.production.yml"
+      - "deploy/docker-compose.host-status.standalone.yml"
+      - "deploy/docker-compose.host-status.distributed.yml"
+      - "bin/install"
+      - "deploy/setup.sh"
+      - ".env.example"
+      - "deploy/.env.production.example"
+      - "deploy/env-reference.toml"
+      - ".gitignore"
+      # Private retained env files must never enter any Docker build context.
+      - "**/.dockerignore"
+      - "**/*.dockerignore"
+      - "**/Dockerfile*"
+      - ".github/actions/setup-helm-tools/**"
+      - ".github/workflows/release-update-manifest.yml"
+      - ".github/workflows/release-images.yml"
+      - ".github/workflows/update-ci.yml"
+      - ".github/workflows/build-image-multiarch.yml"
+      - ".github/workflows/helm-release.yml"
+      # deploy/update/deployment-files.txt: a release hashes these, and its
+      # generator refuses a git-tracked file the digest of a directory skips.
+      - "agentcc-gateway/config.example.yaml"
+      - "deploy/clickhouse/users.d/**"
+      - "deploy/standalone/clickhouse/**"
+      - "futureagi/.ci/clickhouse-storage-policy.xml"
+      - "futureagi/config/peerdb/temporal-dynamicconfig.yaml"
+      - "futureagi/scripts/property_catalog_oss/**"
+      - "futureagi/tracer/services/clickhouse/v2/observed_catalog/**"
+      - ".gitattributes"
   push:
     branches: [dev, main]
     paths:
@@ -380,7 +429,7 @@ jobs:
   automatic-upgrade:
     name: Real automatic latest-stable to PR and cold restore
     needs: changes
-    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.outputs.upgrade == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
+    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.outputs.upgrade == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && github.event_name != 'pull_request' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:
@@ -559,7 +608,7 @@ jobs:
   automatic-a-b-c:
     name: Real one-opt-in v1.53.0 to v1.54.0 to v1.55.0
     needs: changes
-    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.outputs.abc == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
+    if: ${{ !cancelled() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) && (needs.changes.outputs.abc == 'true' || (needs.changes.result != 'success' && github.event_name != 'merge_group' && github.event_name != 'pull_request' && (github.event_name != 'push' || github.ref == 'refs/heads/dev'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 355
     permissions:
