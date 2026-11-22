@@ -185,9 +185,11 @@ def validate_annotation_type_choice(value):
 
 
 class AnnotationsLabels(BaseModel):
-    objects = PgResponseBaseManager()
-    all_objects = PgResponseAllManager()
-    no_workspace_objects = PgResponseNoWorkspaceManager()
+    # Django managers are class attributes; mypy reads these unannotated
+    # overrides of BaseModel's managers as instance variables.
+    objects = PgResponseBaseManager()  # type: ignore[misc]
+    all_objects = PgResponseAllManager()  # type: ignore[misc]
+    no_workspace_objects = PgResponseNoWorkspaceManager()  # type: ignore[misc]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)

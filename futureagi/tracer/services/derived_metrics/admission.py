@@ -357,7 +357,7 @@ def reserve_projects(*, clock: Callable = timezone.now) -> list[Reservation]:
             limit
             - MetricProjectRefresh.objects.filter(lease_expires_at__gt=now).count(),
         )
-        reservations = []
+        reservations: list[Reservation] = []
         # Never hold a refresh row then acquire its project serialization lock:
         # the publication protocol acquires these locks in the opposite order.
         for state in eligible_projects(now).iterator(chunk_size=100):
@@ -849,8 +849,12 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
     state = MetricProjectRefresh.objects.select_related("project").get(
         project_id=lease.project_id
     )
+    # A NULL workspace is passed through deliberately: the writer and plan()
+    # fail closed on it ("refresh scope mismatch") rather than guessing one.
     scope = Scope(
-        state.project.organization_id, state.project.workspace_id, lease.project_id
+        state.project.organization_id,
+        state.project.workspace_id,  # type: ignore[arg-type]
+        lease.project_id,
     )
     config = get_v2_config()
     client = Client(

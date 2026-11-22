@@ -7,6 +7,7 @@ BL01-Q must supply the shared pin; no HTTP request can assert its own coverage.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -38,7 +39,7 @@ def activity_read_available(
         or builder._order_by() != ORDER
     ):
         return False
-    projects = (
+    projects: Sequence[str | None] = (
         builder.project_ids if builder.project_ids is not None else [builder.project_id]
     )
     if len(projects) != 1 or not projects[0]:
@@ -73,6 +74,8 @@ def build_activity_page(
     if type(limit) is not int or limit <= 0 or type(offset) is not int or offset < 0:
         raise ValueError("user activity requires finite pagination")
     start, end = window or builder.parse_time_range(builder.filters)
+    # parse_time_range always fills missing bounds with its finite defaults.
+    assert start is not None and end is not None
     params = {
         "org_id": builder.organization_id,
         "activity_start_us": _unix_microseconds(start),
