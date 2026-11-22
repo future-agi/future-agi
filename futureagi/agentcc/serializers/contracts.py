@@ -371,7 +371,7 @@ class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
             name_field.run_validation(name_field.get_value(self.initial_data))
         except serializers.ValidationError:
             if errors := self.limit_errors(config, None):
-                raise serializers.ValidationError(errors["config"])
+                raise serializers.ValidationError(errors["config"]) from None
         return config
 
     @staticmethod
