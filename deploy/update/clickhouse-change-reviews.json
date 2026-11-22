@@ -687,6 +687,145 @@
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/v2/schema/039_skill_attribution.sql",
+      "before_sha256": null,
+      "after_sha256": "ad2619673601e7df807bd62fe6ba0117e24b8f50e911c05c182ec0d2790c973b",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:skill_trace_links",
+          "clickhouse:skill_load_failures",
+          "clickhouse:skill_trace_links_mv",
+          "clickhouse:skill_load_failures_mv",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Additive only: CREATE TABLE IF NOT EXISTS for skill_trace_links and skill_load_failures (ReplacingMergeTree, monthly partitions, bloom indexes, by_trace projection) and CREATE MATERIALIZED VIEW IF NOT EXISTS for their two views over skill.load spans. No ALTER, DROP, INSERT, MATERIALIZE, POPULATE or OPTIMIZE; spans gets no column or index, and no existing table, view or dictionary changes. The views capture new spans only; the extra insert-time work selects narrow columns from skill.load spans. Rollback: drop the two views, then the two new tables. The existing-install updater rehearsal for 039 has not run yet; it is still required before this ships to existing installs.",
+        "review": "https://github.com/future-agi/future-agi/pull/4263#discussion_r4657808791",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/management/commands/ch25_backfill_skill_trace_links.py",
+      "before_sha256": null,
+      "after_sha256": "5a1fc943d17139c864052c7ca134db0143355db9f8dd74cfece66043d97dd711",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:skill_trace_links",
+          "clickhouse:skill_load_failures",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Operator-run only, never at boot, deploy or update. INSERT INTO each new table SELECT the exact view SELECT from 039 over 1-31 UTC-day windows, optional project filter and --dry-run, capped at 120 s and 512 MiB per query. Versions and tombstones are kept, so re-runs and overlap with live view inserts are safe. Reads spans; writes only the two new tables. Rollback: stop the command; rows can be removed with the tables. The existing-install updater rehearsal for 039 has not run yet; it is still required before this ships to existing installs.",
+        "review": "https://github.com/future-agi/future-agi/pull/4263#discussion_r4657808791",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tfc/management/commands/bootstrap_install.py",
+      "before_sha256": "1f6504e06ce50f8f2e9feab146b2d6252fc73977489e906ced4a4a2b28ecc080",
+      "after_sha256": "6b729735be0e45e06d016c98818613524cc6631e759503187830f10fde41d2ba",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:skill_trace_links",
+          "clickhouse:skill_load_failures",
+          "clickhouse:skill_trace_links_mv",
+          "clickhouse:skill_load_failures_mv",
+          "clickhouse:spans",
+          "clickhouse:schema_versions"
+        ],
+        "mitigation": "One change: the native install phase passes --with-skill-schema, which applies 039 under the installer's existing lock, records its schema_versions receipt and verifies the result. Fresh native installs only. The CREATE DATABASE / CREATE USER / ALTER USER statements the gate finds already exist and are unchanged. Rollback: drop the flag; 039 objects are additive (see the 039 entry). The existing-install updater rehearsal for 039 has not run yet; it is still required before this ships to existing installs.",
+        "review": "https://github.com/future-agi/future-agi/pull/4263#discussion_r4657808791",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "fi-collector/pkg/chwriter/skill_schema.go",
+      "before_sha256": null,
+      "after_sha256": "1e206216ea049a9c44003a59df725f3fa83a1791b0116c54f6b8e795f6c82304",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:tables",
+          "clickhouse:databases",
+          "clickhouse:schema_versions",
+          "clickhouse:skill_trace_links",
+          "clickhouse:skill_load_failures",
+          "clickhouse:skill_trace_links_mv",
+          "clickhouse:skill_load_failures_mv",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Read-only readiness probe (readonly=1), run at collector start only with --require-skill-schema. It reads system.tables, system.databases and schema_versions to confirm the 039 receipt hash, both new tables and that both views match the packaged SELECTs. It runs no DDL; the CREATE MATERIALIZED VIEW text is the expected-definition reference. Rollback: run the collector without the flag. The existing-install updater rehearsal for 039 has not run yet; it is still required before this ships to existing installs.",
+        "review": "https://github.com/future-agi/future-agi/pull/4263#discussion_r4657808791",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "fi-collector/pkg/chwriter/skill_schema_test.go",
+      "before_sha256": null,
+      "after_sha256": "4481f68413c5fadafd22addec1825c23bae9f34f90dfe5bf547d932f4ad32019",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:skill_trace_links",
+          "clickhouse:skill_load_failures",
+          "clickhouse:skill_trace_links_mv",
+          "clickhouse:skill_load_failures_mv",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Unit test only (go test): checks that the collector's embedded view SELECTs match the CREATE MATERIALIZED VIEW statements in 039, so the readiness probe cannot drift from the schema file. It connects to no ClickHouse server and executes no statement. The existing-install updater rehearsal for 039 has not run yet; it is still required before this ships to existing installs.",
+        "review": "https://github.com/future-agi/future-agi/pull/4263#discussion_r4657808791",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "fi-collector/exporter/clickhouse25exporter/converter_test.go",
+      "before_sha256": "9c20f3eb66ae37d4979d373e27b96041c0397b263494ad91d351d08d4546ed01",
+      "after_sha256": "ecc0381ec1cfb66076fef843a15d47763488b2a8549a71734a64fa758e22ab0a",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:skill_trace_links",
+          "clickhouse:skill_load_failures",
+          "clickhouse:skill_trace_links_mv",
+          "clickhouse:skill_load_failures_mv",
+          "clickhouse:spans",
+          "clickhouse:schema_versions",
+          "clickhouse:other_spans",
+          "clickhouse:other_links",
+          "clickhouse:columns",
+          "clickhouse:tables"
+        ],
+        "mitigation": "Opt-in integration test: runs only when SKILL_TEST_CH_URL points at a loopback test server. It creates a throwaway database, applies 002/013/039, writes spans and checks both views, confirms spans gets no new column, exercises probe mismatches (other_spans, other_links, a dropped or detached view) inside that database, then drops the database with SYNC. It never touches a real install's data. The existing-install updater rehearsal for 039 has not run yet; it is still required before this ships to existing installs.",
+        "review": "https://github.com/future-agi/future-agi/pull/4263#discussion_r4657808791",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
     }
   ]
 }
