@@ -32,15 +32,33 @@ EE_AVAILABLE = has_ee("ee")
 _EE_CLOUD_DIR = _project_root / "ee" / "cloud"
 
 
+# Attachment modules that run only in their own Backend CI jobs, each with a
+# dedicated database. The value is the variable that job sets.
+_ISOLATED_ATTACHMENT_MODULES = {
+    "test_attachment_simplify_review_schema_postgres.py": "ATT_SCHEMA_REVIEW_ISOLATED",
+    "test_attachment_completed_import_binding_postgres.py": "ATT_SCHEMA_REVIEW_ISOLATED",
+    "test_attachment_simplify_combined_review.py": "ATT_COMBINED_REVIEW",
+    "test_attachment_simplify_review_imports_db.py": "ATT_REVIEW_IMPORTS",
+}
+_TRACER_TESTS_DIR = _project_root / "tracer" / "tests"
+
+
 def pytest_ignore_collect(collection_path, config):
-    """Keep cloud-only suites out of non-cloud test runs.
+    """Keep cloud-only suites and isolated attachment modules out of shared runs.
 
     ee/cloud tests exercise Django apps (ee.cloud.control_plane, cloud
     billing/temporal) that only cloud-mode settings install. Collecting
     them under tfc.settings.test fails at import time ("Model class ...
     isn't in an application in INSTALLED_APPS"), so ignore the tree unless
     the control-plane app is installed.
+
+    The isolated attachment modules are collected only by the job that sets
+    their variable, instead of skipping at collection in every shard.
     """
+    path = Path(collection_path)
+    gate = _ISOLATED_ATTACHMENT_MODULES.get(path.name)
+    if gate is not None and path.parent == _TRACER_TESTS_DIR:
+        return None if os.environ.get(gate) == "1" else True
     try:
         Path(collection_path).relative_to(_EE_CLOUD_DIR)
     except ValueError:
