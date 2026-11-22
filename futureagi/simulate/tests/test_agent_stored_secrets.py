@@ -6,7 +6,9 @@ from accounts.tests.test_rbac_regressions import _member_client, _viewer_client
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.services.agent_definition import (
     MASKED_VALUE,
+    is_masked,
     mask_websocket_url,
+    merge_websocket_secrets,
     sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
@@ -217,6 +219,102 @@ def test_editing_one_url_parameter_keeps_the_masked_token(
     assert socket_agent.websocket_url == (
         "https://agent.example.com/socket?token=url-secret&region=eu"
     )
+
+
+def test_repeated_masked_url_values_each_keep_their_own_stored_value(
+    organization, workspace, socket_agent
+):
+    AgentDefinition.objects.filter(id=socket_agent.id).update(
+        websocket_url="https://agent.example.com/socket?k=first&k=second"
+    )
+
+    response = _edit(
+        _member_client(organization, workspace),
+        socket_agent,
+        websocket_url=f"https://agent.example.com/socket?k={MASKED_VALUE}&k={MASKED_VALUE}",
+    )
+
+    assert response.status_code == 200, response.content
+    socket_agent.refresh_from_db()
+    assert socket_agent.websocket_url == (
+        "https://agent.example.com/socket?k=first&k=second"
+    )
+
+
+def test_a_new_host_needs_the_saved_headers_sent_again_or_cleared(
+    organization, workspace, socket_agent
+):
+    client = _member_client(organization, workspace)
+
+    refused = _edit(
+        client, socket_agent, websocket_url="https://someone-else.example/ws"
+    )
+
+    assert refused.status_code == 400, refused.content
+    assert "header values again, or clear them" in str(refused.data)
+    socket_agent.refresh_from_db()
+    assert (socket_agent.websocket_url, socket_agent.websocket_headers) == (
+        SOCKET_URL,
+        HEADERS,
+    )
+
+    cleared = _edit(
+        client,
+        socket_agent,
+        websocket_url="https://someone-else.example/ws",
+        websocket_headers={},
+    )
+
+    assert cleared.status_code == 200, cleared.content
+    socket_agent.refresh_from_db()
+    assert (socket_agent.websocket_url, socket_agent.websocket_headers) == (
+        "https://someone-else.example/ws",
+        {},
+    )
+
+
+def test_a_stored_url_with_an_invalid_port_still_takes_back_its_masked_value():
+    stored = "https://agent.example.com:99999/socket?token=url-secret"
+
+    merged = merge_websocket_secrets(
+        {
+            "websocket_url": f"https://agent.example.com:99999/socket?token={MASKED_VALUE}"
+        },
+        stored,
+        None,
+    )
+
+    assert merged == {"websocket_url": stored}
+
+
+def test_a_masked_save_takes_the_values_another_save_wrote_meanwhile(
+    organization, workspace, socket_agent
+):
+    fresher = "https://agent.example.com/socket?token=rotated-secret&region=us"
+    written = []
+
+    def a_save_lands_meanwhile(value):
+        if not written:
+            written.append(fresher)
+            AgentDefinition.objects.filter(id=socket_agent.id).update(
+                websocket_url=fresher
+            )
+        return is_masked(value)
+
+    with patch(
+        "simulate.views.agent_definition.is_masked", side_effect=a_save_lands_meanwhile
+    ):
+        response = _edit(
+            _member_client(organization, workspace),
+            socket_agent,
+            api_key=MASKED_VALUE,
+            websocket_url=f"https://agent.example.com/socket?token={MASKED_VALUE}&region=us",
+        )
+
+    assert response.status_code == 200, response.content
+    assert written
+    socket_agent.refresh_from_db()
+    assert socket_agent.websocket_url == fresher
 
 
 def test_the_operations_endpoint_keeps_masked_headers_too(

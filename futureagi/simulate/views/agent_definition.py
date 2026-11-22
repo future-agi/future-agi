@@ -817,11 +817,6 @@ class EditAgentDefinitionView(APIView):
                 "websocket_url",
                 "websocket_headers",
             ]
-            validated.update(
-                merge_websocket_secrets(
-                    validated, agent.websocket_url, agent.websocket_headers
-                )
-            )
             changed_fields = []
             for field in update_fields:
                 if field == "api_key" and preserve_existing_api_key:
@@ -835,6 +830,15 @@ class EditAgentDefinitionView(APIView):
             # Only what this request set: a full save of this copy could undo an
             # observability link another request wrote meanwhile.
             with transaction.atomic():
+                current = (
+                    AgentDefinition.objects.select_for_update(of=("self",))
+                    .only("id", "websocket_url", "websocket_headers")
+                    .get(pk=agent.pk)
+                )
+                for field, value in merge_websocket_secrets(
+                    validated, current.websocket_url, current.websocket_headers
+                ).items():
+                    setattr(agent, field, value)
                 agent.save(update_fields=[*changed_fields, "updated_at"])
 
                 # Route livekit_* fields to ProviderCredentials so they

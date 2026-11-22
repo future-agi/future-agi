@@ -14,6 +14,7 @@ from simulate.serializers.websocket_fields import (
 )
 from simulate.services.agent_definition import (
     CredentialsNeedReentry,
+    WebsocketFields,
     is_masked,
     merge_websocket_secrets,
     sync_provider_credentials,
@@ -63,6 +64,15 @@ def _extract_credentials_input(
 def _save_credentials(version, creds_input):
     try:
         sync_provider_credentials(version, creds_input)
+    except CredentialsNeedReentry as error:
+        raise serializers.ValidationError(error.message) from error
+
+
+def _merged_websocket(data, instance: AgentDefinition) -> WebsocketFields:
+    try:
+        return merge_websocket_secrets(
+            data, instance.websocket_url, instance.websocket_headers
+        )
     except CredentialsNeedReentry as error:
         raise serializers.ValidationError(error.message) from error
 
@@ -440,16 +450,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                 )
 
         if self.instance is not None:
-            try:
-                attrs.update(
-                    merge_websocket_secrets(
-                        attrs,
-                        self.instance.websocket_url,
-                        self.instance.websocket_headers,
-                    )
-                )
-            except CredentialsNeedReentry as error:
-                raise serializers.ValidationError(error.message) from error
+            _merged_websocket(attrs, self.instance)
         return attrs
 
     @transaction.atomic
@@ -476,6 +477,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         instance = AgentDefinition.objects.select_for_update(of=("self",)).get(
             pk=instance.pk
         )
+        validated_data.update(_merged_websocket(validated_data, instance))
 
         creds_input = _extract_credentials_input(
             validated_data, fallback_provider=instance.provider or ""

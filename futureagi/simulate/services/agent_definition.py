@@ -1,4 +1,5 @@
-from typing import Any
+from collections import defaultdict
+from typing import TypedDict
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import UUID
 
@@ -59,9 +60,18 @@ def mask_websocket_url(url: str | None) -> str | None:
     return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
 
 
-def _destination(url: str) -> tuple[str, str | None, int | None]:
+class WebsocketFields(TypedDict, total=False):
+    websocket_url: str | None
+    websocket_headers: dict[str, str] | None
+
+
+def _destination(url: str) -> tuple[str, str | None, int | str | None]:
     parts = urlsplit(url)
-    return parts.scheme, parts.hostname, parts.port
+    try:
+        port: int | str | None = parts.port
+    except ValueError:
+        port = parts.netloc.rsplit(":", 1)[-1]
+    return parts.scheme, parts.hostname, port
 
 
 def _restore_url(url: str | None, stored: str | None, moved: bool) -> str | None:
@@ -72,14 +82,18 @@ def _restore_url(url: str | None, stored: str | None, moved: bool) -> str | None
             "Enter the websocket URL's credentials again to change where it connects."
         )
     new, old = urlsplit(url), urlsplit(stored)
-    old_values = dict(parse_qsl(old.query, keep_blank_values=True))
-    query = urlencode(
-        [
-            (name, old_values.get(name, value) if value == MASKED_VALUE else value)
-            for name, value in parse_qsl(new.query, keep_blank_values=True)
-        ],
-        safe="*",
-    )
+    old_values: defaultdict[str, list[str]] = defaultdict(list)
+    for name, value in parse_qsl(old.query, keep_blank_values=True):
+        old_values[name].append(value)
+    seen: defaultdict[str, int] = defaultdict(int)
+    restored = []
+    for name, value in parse_qsl(new.query, keep_blank_values=True):
+        index = seen[name]
+        seen[name] += 1
+        if value == MASKED_VALUE and index < len(old_values[name]):
+            value = old_values[name][index]
+        restored.append((name, value))
+    query = urlencode(restored, safe="*")
     netloc = old.netloc if new.netloc.startswith(f"{MASKED_VALUE}@") else new.netloc
     return urlunsplit((new.scheme, netloc, new.path, query, new.fragment))
 
@@ -101,15 +115,21 @@ def _restore_headers(
 
 
 def merge_websocket_secrets(
-    incoming: dict[str, Any],
+    incoming: WebsocketFields,
     stored_url: str | None,
     stored_headers: dict[str, str] | None,
-) -> dict[str, Any]:
+) -> WebsocketFields:
     """Masked websocket values sent back on save take their stored values, but only
-    while the URL still points at the same host; otherwise they must be typed again."""
+    while the URL still points at the same host; otherwise they must be typed again.
+    Saved headers are never kept for a new host: they must be sent again or cleared."""
     url = incoming.get("websocket_url", stored_url)
     moved = bool(stored_url and url and _destination(url) != _destination(stored_url))
-    merged: dict[str, Any] = {}
+    if moved and stored_headers and "websocket_headers" not in incoming:
+        raise CredentialsNeedReentry(
+            "Enter the websocket header values again, or clear them, to change "
+            "where it connects."
+        )
+    merged: WebsocketFields = {}
     if "websocket_url" in incoming:
         merged["websocket_url"] = _restore_url(
             incoming["websocket_url"], stored_url, moved
