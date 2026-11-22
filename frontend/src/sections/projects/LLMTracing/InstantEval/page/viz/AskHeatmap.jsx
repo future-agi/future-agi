@@ -8,7 +8,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { alpha, getContrastRatio, useTheme } from "@mui/material/styles";
+import { alpha, useTheme } from "@mui/material/styles";
 import { UNITS } from "src/sections/projects/observePopulation";
 import { formatCount, formatShare, isYesNo, resolveFocus } from "./askAnswers";
 import {
@@ -27,6 +27,7 @@ import {
 import { groupEntries, runTally } from "./askSummary";
 import AnswerMatrix from "./AnswerMatrix";
 import CellGrid from "./CellGrid";
+import { inkCache } from "./chartInk";
 import { dayText } from "./timelineBins";
 import {
   Swatch,
@@ -120,12 +121,6 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
   const peak = gridPeak(grid, answer);
   const { rows, columns, cells } = grid;
   const matchesOf = (cell) => cell?.byLabel.get(answer) || 0;
-  const inkOn = (level, small) =>
-    !small &&
-    level >= 3 &&
-    getContrastRatio(ramp[level], theme.palette.common.white) >= 3
-      ? theme.palette.common.white
-      : theme.palette.text.primary;
   const overallShare = grid.overall.answered
     ? (grid.overall.byLabel.get(answer) || 0) / grid.overall.answered
     : null;
@@ -181,6 +176,9 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
     }[grid.pivot] ||
     `day and ${grid.step === 1 ? "hour" : `${grid.step}-hour block`}`;
 
+  // One ink per ramp step, shared by the cells and the totals row, and only
+  // for the cells that show a number.
+  const inkFor = useMemo(() => inkCache(theme), [theme]);
   const paint = useMemo(
     () => (r, c) => {
       const cell = cells.get(`${rows[r].key}|${columns[c].key}`);
@@ -189,17 +187,19 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
       const level = cell.answered
         ? shareLevel(matchesOf(cell) / cell.answered, peak)
         : 0;
+      const fill = cell.answered ? (small ? ramp[0] : ramp[level]) : null;
+      const text = showCounts ? formatCount(cell.n) : null;
       return {
-        fill: cell.answered ? (small ? ramp[0] : ramp[level]) : null,
+        fill,
         hatch: small ? ramp[Math.max(level, 2)] : null,
         outline: cell.pending ? (cell.answered ? "solid" : "dashed") : null,
         dot: dotted(cell),
-        text: showCounts ? formatCount(cell.n) : null,
-        ink: cell.answered ? inkOn(level, small) : null,
+        text,
+        ink: text && fill ? inkFor(fill) : null,
       };
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [cells, rows, columns, answer, peak, showCounts, theme, stats],
+    [cells, rows, columns, answer, peak, showCounts, theme, stats, inkFor],
   );
   const footer = useMemo(
     () => ({
@@ -214,14 +214,16 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
           return { fill: alpha(theme.palette.text.disabled, 0.08) };
         const small = t.answered < SMALL_N;
         const level = shareLevel(t.matches / t.answered, peak);
+        const fill = small ? ramp[0] : ramp[level];
+        const text =
+          cellW >= TOTAL_FITS
+            ? String(Math.round((t.matches / t.answered) * 100))
+            : null;
         return {
-          fill: small ? ramp[0] : ramp[level],
+          fill,
           hatch: small ? ramp[Math.max(level, 2)] : null,
-          text:
-            cellW >= TOTAL_FITS
-              ? String(Math.round((t.matches / t.answered) * 100))
-              : null,
-          ink: inkOn(level, small),
+          text,
+          ink: text ? inkFor(fill) : null,
         };
       },
       describe: (c) => {
@@ -235,7 +237,7 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
         : "–",
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stats, columns, peak, cellW, theme, answer],
+    [stats, columns, peak, cellW, theme, answer, inkFor],
   );
 
   const describe = (r, c) => {
@@ -317,7 +319,7 @@ function TimeGrid({ grid, question, answer, onSelect, unit, sample, running }) {
                     height: 6,
                     ml: 1.5,
                     borderRadius: "50%",
-                    bgcolor: "error.main",
+                    bgcolor: "status.danger.solid",
                   }}
                 />
                 <Typography variant="caption" color="text.disabled">
@@ -447,7 +449,7 @@ function Panel({
           variant="caption"
           noWrap
           title={label}
-          sx={{ fontWeight: 600, fontSize: 12, minWidth: 0, flex: 1 }}
+          sx={{ fontWeight: 600, typography: "s1", minWidth: 0, flex: 1 }}
         >
           {label}
         </Typography>
@@ -455,7 +457,6 @@ function Panel({
           variant="caption"
           color="text.secondary"
           sx={{
-            fontSize: 11.5,
             flexShrink: 0,
             fontVariantNumeric: "tabular-nums",
           }}
@@ -522,11 +523,7 @@ function Panel({
             sx={{ width: 10, height: 6, borderRadius: "1px", bgcolor: step }}
           />
         ))}
-        <Typography
-          variant="caption"
-          color="text.disabled"
-          sx={{ fontSize: 10.5 }}
-        >
+        <Typography variant="caption" color="text.disabled">
           {flat
             ? `near usual (${pct(overallShare)}) · no cell clearly more`
             : `near usual (${pct(overallShare)}) → clearly more`}
@@ -768,11 +765,7 @@ export default function AskHeatmap({
   if (kind === "time") {
     if (!grid?.rows.length)
       body = (
-        <Typography
-          variant="body2"
-          color="text.secondary"
-          sx={{ fontSize: 12 }}
-        >
+        <Typography variant="body1" color="text.secondary">
           No {plural} to place yet.
         </Typography>
       );
@@ -801,7 +794,7 @@ export default function AskHeatmap({
       );
   } else if (!matrix?.rows.length || !matrix.rows.some((r) => r.answered))
     body = (
-      <Typography variant="body2" color="text.secondary" sx={{ fontSize: 12 }}>
+      <Typography variant="body1" color="text.secondary">
         No {plural} answered yet.
       </Typography>
     );
