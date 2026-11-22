@@ -102,7 +102,14 @@ jobs:
                 [[ $HEAD_SHA == "$GITHUB_SHA" ]]
                 git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
               else
-                [[ $(git show -s --format=%P HEAD) == "$BASE_SHA $HEAD_SHA" ]]
+                # The event's base.sha can predate the base tip GitHub built its
+                # test merge on: it is not refreshed until the head merges the
+                # base. Plan from the merge's own first parent, which must
+                # descend from the event base, with the head as second parent.
+                read -r first second extra <<< "$(git show -s --format=%P HEAD)"
+                [[ -z ${extra:-} && ${second:-} == "$HEAD_SHA" ]]
+                git merge-base --is-ancestor "$BASE_SHA" "$first"
+                BASE_SHA=$first
               fi
               policy=$BASE_SHA ;;
             *) policy=$GITHUB_SHA; export BASE_SHA=$policy HEAD_SHA=$policy ;;
