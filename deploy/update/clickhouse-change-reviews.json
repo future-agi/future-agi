@@ -687,6 +687,80 @@
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
+    },
+    {
+      "path": "deploy/standalone/bin/bootstrap.py",
+      "before_sha256": "fbf8c6a36f72adba275ad3c7f11a9bda2095ee424730dc3567a8b4badedd76b3",
+      "after_sha256": "473950a5fe018504ccdac4b96fb9623c783b64e3dec1f37628aadc3aeee43246",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:eval_per_config",
+          "clickhouse:eval_per_config_mv",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:derived_metric_inputs",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits",
+          "clickhouse:derived_metrics",
+          "clickhouse:metric_field_values",
+          "clickhouse:metric_field_values_checkpoint",
+          "clickhouse:metric_bucket_totals",
+          "clickhouse:metric_bucket_totals_checkpoint",
+          "clickhouse:metric_unit_state",
+          "clickhouse:metric_source_dependencies",
+          "clickhouse:metric_bucket_retired_parts",
+          "clickhouse:list_current_root_facts",
+          "clickhouse:list_current_members",
+          "clickhouse:list_current_user_activity",
+          "clickhouse:derived_metric_snapshot_units",
+          "clickhouse:derived_metric_snapshot_buckets",
+          "clickhouse:schema_versions"
+        ],
+        "mitigation": "Adds only the Metrics schema step; existing statements are unchanged. While METRICS_ENABLED is on it runs the packaged receipt-based runner on files 009, 011 and 028-038 (CREATE/ADD COLUMN IF NOT EXISTS and view replacement; 011's materialized view is protected by its receipt). No backfill, mutation or TTL change, never --force, skipped on hosted production. A failure or drift is logged at ERROR and startup continues with only Metrics unavailable. Rollback: older code ignores the new tables; no data is dropped.",
+        "review": "https://github.com/future-agi/future-agi/pull/4309#discussion_r4657946974",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tfc/management/commands/bootstrap_install.py",
+      "before_sha256": "1f6504e06ce50f8f2e9feab146b2d6252fc73977489e906ced4a4a2b28ecc080",
+      "after_sha256": "46ca8571505b08339bc91588b5001bcfc48ff7539ca50232eb3d97fb1c307652",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:eval_per_config",
+          "clickhouse:eval_per_config_mv",
+          "clickhouse:tracer_eval_logger_v2",
+          "clickhouse:derived_metric_inputs",
+          "clickhouse:derived_metric_results",
+          "clickhouse:derived_metric_commits",
+          "clickhouse:derived_metrics",
+          "clickhouse:metric_field_values",
+          "clickhouse:metric_field_values_checkpoint",
+          "clickhouse:metric_bucket_totals",
+          "clickhouse:metric_bucket_totals_checkpoint",
+          "clickhouse:metric_unit_state",
+          "clickhouse:metric_source_dependencies",
+          "clickhouse:metric_bucket_retired_parts",
+          "clickhouse:list_current_root_facts",
+          "clickhouse:list_current_members",
+          "clickhouse:list_current_user_activity",
+          "clickhouse:derived_metric_snapshot_units",
+          "clickhouse:derived_metric_snapshot_buckets",
+          "clickhouse:schema_versions"
+        ],
+        "mitigation": "Adds only the Metrics schema step; existing statements are unchanged. While METRICS_ENABLED is on it runs the packaged receipt-based runner on files 009, 011 and 028-038 (CREATE/ADD COLUMN IF NOT EXISTS and view replacement; 011's materialized view is protected by its receipt). No backfill, mutation or TTL change, never --force, skipped on hosted production. A failure or drift is logged at ERROR and startup continues with only Metrics unavailable. Rollback: older code ignores the new tables; no data is dropped.",
+        "review": "https://github.com/future-agi/future-agi/pull/4309#discussion_r4657946974",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
     }
   ]
 }
