@@ -394,6 +394,21 @@ class TestReadingSandbox:
 
         assert env["ALK_READING_MAX_DURATION_SECONDS"] == "60"
 
+    def test_a_reading_is_given_the_platforms_call_limit(self, settings, simulator):
+        settings.ALK_HOSTED_READING_MAX_MODEL_CALLS = 7
+
+        _spec, env, material, _timeout = _launch_spec(_Provider(), {})
+
+        assert env["ALK_READING_MAX_MODEL_CALLS"] == "7"
+        assert "ALK_READING_MAX_MODEL_CALLS" not in material
+
+    def test_the_call_limit_is_60_unless_set(self, settings, simulator):
+        del settings.ALK_HOSTED_READING_MAX_MODEL_CALLS
+
+        _spec, env, _material, _timeout = _launch_spec(_Provider(), {})
+
+        assert env["ALK_READING_MAX_MODEL_CALLS"] == "60"
+
     def test_the_simulator_values_reach_the_sandbox_in_a_private_file(
         self, simulator, monkeypatch
     ):
