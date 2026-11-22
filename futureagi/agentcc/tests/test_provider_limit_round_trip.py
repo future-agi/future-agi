@@ -139,12 +139,15 @@ def test_changed_negative(
     pushes[method].assert_not_called()
 
 
-@pytest.mark.parametrize(("method", "key"), CASES)
+@pytest.mark.parametrize(
+    ("method", "key", "other"),
+    [(m, k, COLUMNS[(COLUMNS.index(column(k)) + 1) % len(COLUMNS)]) for m, k in CASES]
+    + [(m, "conn_pool_size", "max_concurrent") for m in ("put", "patch", "gateway")],
+)
 @pytest.mark.parametrize("include_echo", [True, False])
 def test_only_same_field_is_grandfathered(
-    auth_client, organization, make_row, pushes, method, key, include_echo
+    auth_client, organization, make_row, pushes, method, key, other, include_echo
 ):
-    other = COLUMNS[(COLUMNS.index(column(key)) + 1) % len(COLUMNS)]
     row = make_row(organization, **{column(key): 100, other: -1})
     before = snapshot(row)
     source = read(auth_client, method, row)
@@ -161,9 +164,33 @@ def test_only_same_field_is_grandfathered(
     else:
         response = write(auth_client, method, row, source, limits)
     assert response.status_code == 400
-    assert response.data["details"] == details(method, key)
     assert snapshot(row) == before
     pushes[method].assert_not_called()
+    assert response.data["details"] == details(method, key)
+
+
+@pytest.mark.parametrize(
+    ("name", "message"),
+    [({}, "This field is required."), ({"name": ""}, "This field may not be blank.")],
+)
+def test_negative_config_with_invalid_name(
+    auth_client, organization, make_row, pushes, name, message
+):
+    make_row(organization, max_concurrent=-1)
+    rows = AgentccProviderCredential._base_manager.filter(
+        organization=organization
+    ).order_by("pk")
+    before = list(rows.values())
+    response = auth_client.post(
+        UPDATE, {**name, "config": {"max_concurrent": -1}}, format="json"
+    )
+    assert response.status_code == 400
+    assert list(rows.values()) == before
+    pushes["gateway"].assert_not_called()
+    assert response.data["details"] == {
+        "name": [message],
+        **details("gateway", "max_concurrent"),
+    }
 
 
 @pytest.mark.parametrize(

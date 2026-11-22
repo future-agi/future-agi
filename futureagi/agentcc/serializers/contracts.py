@@ -363,6 +363,15 @@ class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
     name = serializers.CharField()
     config = serializers.DictField(child=JsonValueField())
 
+    def validate_config(self, config):
+        # A missing or blank name cannot identify a row whose limit may be echoed.
+        # Validate both fields here so DRF reports their errors in one response.
+        name = self.initial_data.get("name", "")
+        if isinstance(name, str) and not name.strip():
+            if errors := self.limit_errors(config, None):
+                raise serializers.ValidationError(errors["config"])
+        return config
+
     @staticmethod
     def limit_errors(config, stored):
         """Allow a negative only when the same provider already stores it."""
