@@ -70,7 +70,7 @@ def _metric_schema_installed(monkeypatch):
     resets this to exercise the probe itself."""
     from tracer.services.derived_metrics import schema_install
 
-    monkeypatch.setattr(schema_install, "_installed", True)
+    monkeypatch.setattr(schema_install._cache, "installed", True)
 
 
 @pytest.fixture(autouse=True)

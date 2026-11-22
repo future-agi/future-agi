@@ -94,9 +94,18 @@ HINT = (
 RECHECK_SECONDS = 30.0
 
 _IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
-_installed = False
-_recheck_at = 0.0
-_absent: tuple[str, ...] = ()
+
+
+class _Readiness:
+    """Per-process probe cache: a found schema is final, a missing one is
+    reused until ``recheck_at``."""
+
+    installed = False
+    recheck_at = 0.0
+    absent: tuple[str, ...] = ()
+
+
+_cache = _Readiness()
 
 
 class MetricSchemaNotInstalled(Exception):
@@ -116,7 +125,7 @@ def probe_query() -> str:
             raise ValueError(f"not a plain identifier: {name!r}")
     return (
         "SELECT table, name FROM system.columns WHERE database = currentDatabase()"
-        f" AND table IN ({', '.join(repr(t) for t in tables)})"
+        f" AND table IN ({', '.join(repr(t) for t in tables)})"  # noqa: S608 - constant identifiers, validated above
         f" AND name IN ({', '.join(repr(c) for c in columns)})"
     )
 
@@ -164,20 +173,20 @@ def ensure_installed(
     ``execute`` runs the probe on an open connection; without one a short-lived
     connection from get_v2_config() is used. A probe that cannot reach
     ClickHouse raises its own error and caches nothing."""
-    global _installed, _recheck_at, _absent
-    if _installed:
+    if _cache.installed:
         return
-    if clock() < _recheck_at:
-        raise MetricSchemaNotInstalled(_absent)
+    if clock() < _cache.recheck_at:
+        raise MetricSchemaNotInstalled(_cache.absent)
     absent = missing(execute) if execute is not None else _probe()
     if absent:
-        _absent, _recheck_at = tuple(absent), clock() + RECHECK_SECONDS
+        _cache.absent, _cache.recheck_at = tuple(absent), clock() + RECHECK_SECONDS
         raise MetricSchemaNotInstalled(absent)
-    _installed = True
+    _cache.installed = True
 
 
 def _say(message: str) -> None:
-    print(f"[metrics-schema] {message}", flush=True)
+    sys.stdout.write(f"[metrics-schema] {message}\n")
+    sys.stdout.flush()
 
 
 def _apply() -> int:
@@ -234,7 +243,7 @@ def _apply() -> int:
 def _check() -> int:
     try:
         absent = _probe()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - any unreadable probe is reported as exit 3
         # Driver messages can carry connection details; the type is enough.
         _say(f"could not read system.columns ({type(exc).__name__})")
         return 3

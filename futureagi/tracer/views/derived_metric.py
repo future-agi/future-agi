@@ -113,7 +113,7 @@ def _require_metric_schema():
         schema_install.ensure_installed()
     except schema_install.MetricSchemaNotInstalled as exc:
         raise service.MetricUnavailableError(exc.code, str(exc)) from None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - a guard, never a new failure mode
         # Driver messages can carry connection details; the type is enough.
         structlog.get_logger(__name__).warning(
             "metric_schema_probe_failed", error_type=type(exc).__name__

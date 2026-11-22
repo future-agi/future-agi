@@ -34,9 +34,9 @@ CONFIG = {
 @pytest.fixture
 def probe(monkeypatch):
     """The real cache, starting empty; the probe's answer is set per test."""
-    monkeypatch.setattr(schema_install, "_installed", False)
-    monkeypatch.setattr(schema_install, "_recheck_at", 0.0)
-    monkeypatch.setattr(schema_install, "_absent", ())
+    monkeypatch.setattr(schema_install._cache, "installed", False)
+    monkeypatch.setattr(schema_install._cache, "recheck_at", 0.0)
+    monkeypatch.setattr(schema_install._cache, "absent", ())
     answer = {"rows": [], "calls": 0}
 
     def fake_probe():
