@@ -3,15 +3,15 @@ from typing import Any
 
 from rest_framework import serializers
 
+from simulate.constants.agent_filters import (
+    AGENT_ENVIRONMENT_FILTERS,
+    AGENT_OBSERVE_FILTERS,
+    AGENT_SOURCE_FILTERS,
+)
 from simulate.models.agent_definition import (
     AgentDefinition,
     AgentDefinitionAuthenticationChoices,
     AgentTypeChoices,
-)
-from simulate.services.agent_overview import (
-    AGENT_ENVIRONMENT_FILTERS,
-    AGENT_OBSERVE_FILTERS,
-    AGENT_SOURCE_FILTERS,
 )
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
