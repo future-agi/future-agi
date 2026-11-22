@@ -432,6 +432,39 @@ def report_runtime_skips(
         )
 
 
+def producer_attempt(matches, name):
+    """The latest job of a leg, and the attempt that produced its receipt.
+
+    "Re-run failed jobs" starts a new attempt in which each job it does not
+    re-run appears again as a copy: the new run_attempt, but the original
+    start and end times, and no new artifact. So a leg's receipt carries the
+    earliest attempt of the copies of its latest job, the same rule as the
+    e2e report (e2e/scripts/shard-report.mjs shardAttempts). Fails closed:
+    the latest job must have finished, and its copies must be consecutive.
+    """
+    matches = sorted(matches, key=lambda job: job["run_attempt"], reverse=True)
+    if (
+        not matches
+        or not matches[0].get("started_at")
+        or not matches[0].get("completed_at")
+    ):
+        raise ValueError(f"missing producer job {name!r}")
+    attempts = [job["run_attempt"] for job in matches]
+    if len(set(attempts)) != len(attempts):
+        raise ValueError(f"repeated producer job {name!r}")
+    latest = matches[0]
+    copies = [
+        job
+        for job in matches
+        if (job.get("started_at"), job.get("completed_at"))
+        == (latest["started_at"], latest["completed_at"])
+    ]
+    first = copies[-1]["run_attempt"]
+    if len(copies) != latest["run_attempt"] - first + 1:
+        raise ValueError(f"inconsistent producer copies {name!r}")
+    return latest, first
+
+
 def malformed_inventory(inventory):
     """Whether an inventory is not a list of [id, test path, expectation] rows."""
     return not isinstance(inventory, list) or any(
@@ -482,11 +515,9 @@ def verify_run():
         raise ValueError("empty or duplicated matrix")
     # Queue runs call backend-ci through the explicitly named reusable job.
     prefix = "backend / " if os.environ["GITHUB_EVENT_NAME"] == "merge_group" else ""
-    jobs = {}
+    by_job = collections.defaultdict(list)
     for job in pages(root + "/jobs?filter=all&per_page=100", "jobs"):
-        name = job["name"]
-        if name not in jobs or job["run_attempt"] > jobs[name]["run_attempt"]:
-            jobs[name] = job
+        by_job[job["name"]].append(job)
     artifacts = [
         a
         for a in pages(root + "/artifacts?per_page=100", "artifacts")
@@ -524,16 +555,18 @@ def verify_run():
         for key, leg in wanted.items():
             suite, group = leg["suite"], leg["group"]
             name = f"{prefix}{leg['name']} shard {group}"
-            if name not in jobs:
-                problems.append(f"missing producer job {name!r}")
+            try:
+                latest, producer = producer_attempt(by_job.get(name, []), name)
+            except ValueError as exc:
+                problems.append(str(exc))
                 continue
-            if jobs[name]["conclusion"] != "success":
+            if latest["conclusion"] != "success":
                 problems.append(f"unsuccessful producer for {suite}/{group}")
             if len(by_name[key]) == 1:
                 artifact = by_name[key][0]
                 futures[pool.submit(verify_artifact, artifact, repo)] = (
                     artifact,
-                    jobs[name],
+                    {**latest, "producer_attempt": producer},
                     suite,
                     group,
                 )
@@ -546,7 +579,7 @@ def verify_run():
                     or receipt["group"] != group
                     or receipt["run"] != run_id
                     or receipt["sha"] != os.environ["GITHUB_SHA"]
-                    or receipt["attempt"] != job["run_attempt"]
+                    or receipt["attempt"] != job["producer_attempt"]
                     or receipt["matrix"] != plan_digest
                 ):
                     raise ValueError(
@@ -595,7 +628,7 @@ def verify_run():
                 expected[suite] = inventory
             outcomes[suite].extend(rows)
             sys.stdout.write(
-                f"{suite}/{group}: attempt {job['run_attempt']}, artifact {artifact['id']} {artifact['digest']}\n"
+                f"{suite}/{group}: attempt {job['producer_attempt']}, artifact {artifact['id']} {artifact['digest']}\n"
             )
     if not problems:
         try:

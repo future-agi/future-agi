@@ -709,11 +709,14 @@ class ProducerIdentityTest(unittest.TestCase):
             "temporal": "1" * 64,
             "matrix": hashlib.sha256(matrix.encode()).hexdigest(),
         }
+        # Each job ran on its own: distinct start and end times.
         jobs = [
             {
                 "name": f"pytest shard {group}",
                 "run_attempt": attempt,
                 "conclusion": "success",
+                "started_at": f"2026-11-22T10:0{group}:0{attempt}Z",
+                "completed_at": f"2026-11-22T10:1{group}:0{attempt}Z",
             }
             for group, attempt in ((1, 1), (2, 1), (2, 2))
         ]
@@ -812,6 +815,43 @@ class ProducerIdentityTest(unittest.TestCase):
             artifacts.pop()
             with self.assertRaises(ValueError):
                 checker.verify_run()
+
+    def test_a_rerun_of_failed_jobs_qualifies_on_carried_over_receipts(self):
+        # Attempt 2 re-ran shard 2 only. Shard 1 appears again as a copy (same
+        # start and end, the new attempt number) and keeps its attempt 1 receipt.
+        def job(group, attempt, start, conclusion="success"):
+            return {
+                "name": f"pytest shard {group}",
+                "run_attempt": attempt,
+                "conclusion": conclusion,
+                "started_at": f"2026-11-22T10:{start}:00Z",
+                "completed_at": f"2026-11-22T10:{start}:30Z",
+            }
+
+        carried = [job(1, 1, "01"), job(1, 2, "01")]
+        rerun = [job(2, 1, "02", "failure"), job(2, 2, "20")]
+        self.assertEqual(checker.producer_attempt(carried, "pytest shard 1")[1], 1)
+        self.assertEqual(checker.producer_attempt(rerun, "pytest shard 2")[1], 2)
+        self.assertEqual(
+            checker.producer_attempt(rerun, "pytest shard 2")[0]["conclusion"],
+            "success",
+        )
+        # Three attempts, the shard re-run in the second and copied into the third.
+        self.assertEqual(
+            checker.producer_attempt(
+                [job(3, 1, "03", "failure"), job(3, 2, "30"), job(3, 3, "30")], "s"
+            )[1],
+            2,
+        )
+        for bad, cause in (
+            ([], "missing producer"),
+            ([{**job(1, 1, "01"), "completed_at": None}], "missing producer"),
+            ([job(1, 1, "01"), job(1, 1, "01")], "repeated producer"),
+            # A copy two attempts on with no copy between is not a re-run copy.
+            ([job(1, 1, "01"), job(1, 3, "01")], "inconsistent producer copies"),
+        ):
+            with self.subTest(cause=cause), self.assertRaisesRegex(ValueError, cause):
+                checker.producer_attempt(bad, "pytest shard 1")
 
     def test_failed_inventory_cannot_qualify_even_when_it_wrote_json(self):
         for status in (None, b"1\n", b"0\n"):
