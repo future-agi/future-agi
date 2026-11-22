@@ -2,7 +2,6 @@ import Section from "src/components/section";
 import React, { useEffect, useId, useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Box, Popper, Skeleton, Stack, Typography } from "@mui/material";
-import { alpha } from "@mui/material/styles";
 import { useRunUnit } from "./insightsApi";
 import { parseCitations } from "./insightsCitations";
 import { highlightTitle } from "./insightsFindings";
@@ -31,9 +30,9 @@ export function EvidenceQuote({ quote, dense, sx }) {
         py: dense ? 0.5 : 0.75,
         px: dense ? 1 : 1.25,
         borderLeft: "2px solid",
-        borderColor: "warning.main",
+        borderColor: "text.disabled",
         borderRadius: "0 4px 4px 0",
-        bgcolor: (theme) => alpha(theme.palette.warning.main, 0.1),
+        bgcolor: "action.hover",
         color: "text.primary",
         fontSize: (dense ? 12 : 13) - (code ? 1 : 0),
         lineHeight: 1.55,
@@ -118,7 +117,7 @@ function CitationCard({ n, unitId }) {
               variant="body2"
               color="text.secondary"
               sx={{
-                fontSize: 12,
+                typography: "m3",
                 display: "-webkit-box",
                 WebkitLineClamp: 4,
                 WebkitBoxOrient: "vertical",
@@ -207,22 +206,22 @@ export function CitationChip({ n, unitId }) {
           px: 0.5,
           mx: 0.25,
           border: "1px solid",
-          borderColor: anchor ? "primary.main" : "divider",
-          borderRadius: 0.75,
+          borderColor: anchor ? "border.selected" : "divider",
+          borderRadius: "4px",
           bgcolor: anchor ? "action.selected" : "background.neutral",
-          color: anchor ? "primary.main" : "text.secondary",
+          color: anchor ? "text.primary" : "text.secondary",
           font: "inherit",
-          fontSize: 11,
+          typography: "s2",
           fontWeight: 600,
           fontStyle: "normal",
           lineHeight: 1,
           verticalAlign: "1px",
           cursor: "pointer",
           fontVariantNumeric: "tabular-nums",
-          "&:hover": { color: "primary.main", borderColor: "primary.main" },
+          "&:hover": { color: "text.primary", borderColor: "border.hover" },
           "&:focus-visible": {
             outline: "2px solid",
-            outlineColor: "primary.main",
+            outlineColor: "border.focus",
             outlineOffset: 1,
           },
         }}
@@ -307,20 +306,20 @@ export function MoreRefs({ refs }) {
         mx: 0.25,
         border: "1px dashed",
         borderColor: "divider",
-        borderRadius: 0.75,
+        borderRadius: "4px",
         bgcolor: "transparent",
         color: "text.secondary",
         font: "inherit",
-        fontSize: 11,
+        typography: "s2",
         fontWeight: 600,
         fontStyle: "normal",
         lineHeight: 1,
         verticalAlign: "1px",
         cursor: "pointer",
-        "&:hover": { color: "primary.main", borderColor: "primary.main" },
+        "&:hover": { color: "text.primary", borderColor: "border.hover" },
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: 1,
         },
       }}
