@@ -894,6 +894,61 @@ class GitComparisonTests(unittest.TestCase):
         self.assertIn("merge-base", command.call_args_list[2].args)
 
 
+class ShippedReleaseRestoreTests(unittest.TestCase):
+    """A changed migration may only restore the latest release's exact text."""
+
+    path = "futureagi/example/migrations/0001_seed.py"
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix="gate-shipped-restore-")
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.run_git("init", "-q", "-b", "main")
+        self.commit("v1 text\n", tag="v1.0.0")
+        self.commit("v1.1 text\n", tag="v1.1.0")
+        self.commit("release candidate text\n", tag="v1.2.0-rc1")
+        self.run_git("checkout", "-q", "-b", "side")
+        self.commit("unreachable text\n", tag="v9.0.0")
+        self.run_git("checkout", "-q", "main")
+        self.commit("developer edit\n")
+
+    def run_git(self, *args):
+        subprocess.run(["git", "-C", str(self.root), "-c", "user.name=fixture", "-c", "user.email=fixture@example.com",
+                        "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args], check=True, capture_output=True)
+
+    def commit(self, text, tag=None):
+        target = self.root / self.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+        self.run_git("add", "-A")
+        self.run_git("commit", "-q", "-m", text.strip())
+        if tag:
+            self.run_git("tag", tag)
+
+    def restore(self, text):
+        (self.root / self.path).write_text(text)
+        return gate.shipped_release_restore(self.root, self.path)
+
+    def test_latest_reachable_plain_release_is_the_baseline(self):
+        self.assertEqual(gate.latest_release_tag(self.root), "v1.1.0")
+
+    def test_restoring_the_latest_release_text_is_allowed_and_named(self):
+        tag, blob = self.restore("v1.1 text\n")
+        self.assertEqual(tag, "v1.1.0")
+        self.assertRegex(blob, r"^[0-9a-f]{40}$")
+
+    def test_other_texts_are_refused(self):
+        for text in ("developer edit, changed again\n", "v1 text\n", "release candidate text\n",
+                     "unreachable text\n", "v1.1 text"):
+            with self.subTest(text=text):
+                self.assertIsNone(self.restore(text))
+
+    def test_no_reachable_release_fails_closed(self):
+        for tag in ("v1.0.0", "v1.1.0"):
+            self.run_git("tag", "-d", tag)
+        self.assertIsNone(self.restore("v1.1 text\n"))
+
+
 class DeclarationTests(unittest.TestCase):
     def setUp(self):
         self.risks = [{"table": "postgres:hot_events", "risk_class": "data_migration"}]

@@ -492,6 +492,32 @@ def declaration_only_addition(root, baseline, path):
     return ast.dump(new, include_attributes=False) == ast.dump(old, include_attributes=False)
 
 
+RELEASE_TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
+
+
+def latest_release_tag(root, head="HEAD"):
+    """The highest plain vX.Y.Z tag reachable from head, by version; None if none."""
+    tags = [t for t in git(root, "tag", "--merged", head, "--list", "v*").split() if RELEASE_TAG.fullmatch(t)]
+    return max(tags, key=lambda t: tuple(int(n) for n in RELEASE_TAG.fullmatch(t).groups()), default=None)
+
+
+def shipped_release_restore(root, path):
+    """Name the latest release whose exact blob this migration file now carries.
+
+    A restore of the released text is the deployed history, not an edit of it.
+    Only the latest release counts: an older release's text is refused, as is
+    any file when no release tag is reachable. Exact bytes, no normalisation.
+    """
+    tag = latest_release_tag(root)
+    current = root / path
+    if tag is None or not current.is_file():
+        return None
+    released = base_bytes(root, tag, path)
+    if released is None or released != current.read_bytes():
+        return None
+    return tag, git(root, "rev-parse", f"{tag}:{path}").strip()
+
+
 def declaration(source, path):
     tree = ast.parse(source)
     values = [n.value for n in tree.body if declaration_assignment(n)]
@@ -1096,6 +1122,11 @@ def main(argv=None):
         migrations = []
         for status, path in changes:
             if not migration_path(path):
+                continue
+            restored = shipped_release_restore(root, path) if status == "M" else None
+            if restored:
+                # Restoring the latest release's exact text: nothing new to declare.
+                print(f"update-safety: {path} restores release {restored[0]} (blob {restored[1]})", file=sys.stderr)
                 continue
             require(status == "A" or status == "M" and declaration_only_addition(root, baseline, path),
                     "existing migration changed/deleted: deployed histories are immutable", "add a new migration instead of editing the existing migration")
