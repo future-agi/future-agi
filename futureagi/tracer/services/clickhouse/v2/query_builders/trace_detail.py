@@ -580,6 +580,8 @@ def retrieve_trace_detail_ch(
     if capture is not None:
         result["capture_coverage"] = capture
     if run_scope is None:
+        from django.db import DatabaseError
+
         try:
             from tracer.queries.trace_error_feed import (
                 annotate_trace_detail_with_error_feed,
@@ -594,7 +596,7 @@ def retrieve_trace_detail_ch(
             if issues:
                 result["issues"] = issues
                 result["active_cluster_id"] = active_cluster_id
-        except Exception as exc:
+        except (DatabaseError, LookupError, ValueError, TypeError) as exc:
             logger.warning(
                 "trace_detail_error_feed_enrichment_failed",
                 trace_id=str(trace_id),

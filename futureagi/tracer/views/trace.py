@@ -5916,6 +5916,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             if filter_evidence["query_applied_filter_count"]:
                 metadata.update(filter_evidence)
         if table_data:
+            from django.db import DatabaseError
+
             try:
                 from tracer.queries.trace_error_feed import list_issues_for_traces
 
@@ -5937,7 +5939,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     row["issues"] = issues_by_trace.get(
                         str(row.get("trace_id") or ""), []
                     )
-            except Exception as exc:
+            except (DatabaseError, LookupError, ValueError, TypeError) as exc:
                 logger.warning(
                     "trace_list_error_feed_enrichment_failed",
                     project_id=str(project_id) if project_id else None,

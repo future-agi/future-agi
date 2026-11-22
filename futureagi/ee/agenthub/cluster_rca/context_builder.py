@@ -12,6 +12,7 @@ preload lands in a follow-up when those helpers exist.
 from __future__ import annotations
 
 import structlog
+from django.db import DatabaseError
 
 from tracer.services.clickhouse.span_attribute_lookups import (
     list_attribute_keys_for_project,
@@ -111,7 +112,7 @@ def build_project_schema_context(
                         f"symptom={symp.get('span_id') or 'unknown'}: {a.get('statement')}"
                     )
                 lines.append("")
-        except Exception as exc:
+        except (DatabaseError, LookupError, ValueError, TypeError) as exc:
             logger.warning(
                 "cluster_rca_omega_attribution_preload_failed",
                 cluster_uuid=cluster_uuid,
