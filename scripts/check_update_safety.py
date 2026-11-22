@@ -496,8 +496,15 @@ RELEASE_TAG = re.compile(r"v(\d+)\.(\d+)\.(\d+)")
 
 
 def latest_release_tag(root, head="HEAD"):
-    """The highest plain vX.Y.Z tag reachable from head, by version; None if none."""
-    tags = [t for t in git(root, "tag", "--merged", head, "--list", "v*").split() if RELEASE_TAG.fullmatch(t)]
+    """The highest plain vX.Y.Z tag reachable from head, by version; None if none.
+
+    Fails closed: a tree git cannot read (no repository, no HEAD) has no release.
+    """
+    try:
+        listed = git(root, "tag", "--merged", head, "--list", "v*")
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    tags = [t for t in listed.split() if RELEASE_TAG.fullmatch(t)]
     return max(tags, key=lambda t: tuple(int(n) for n in RELEASE_TAG.fullmatch(t).groups()), default=None)
 
 

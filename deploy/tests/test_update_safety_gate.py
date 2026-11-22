@@ -943,6 +943,10 @@ class ShippedReleaseRestoreTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(self.restore(text))
 
+    def test_a_tree_git_cannot_read_has_no_release(self):
+        with tempfile.TemporaryDirectory(prefix="gate-not-a-repo-") as other:
+            self.assertIsNone(gate.latest_release_tag(Path(other)))
+
     def test_no_reachable_release_fails_closed(self):
         for tag in ("v1.0.0", "v1.1.0"):
             self.run_git("tag", "-d", tag)
