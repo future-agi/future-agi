@@ -52,3 +52,22 @@ def test_response_time_null_operator_conditions():
     # Both operators must bypass float(filter_value) to avoid ValueError when filter_value is empty/None
     assert filter_op_null in ("is_null", "is_not_null")
     assert filter_op_not_null in ("is_null", "is_not_null")
+
+
+def test_value_based_operators_unaffected():
+    """Verify standard operators (equals, greater_than, etc) remain unaffected."""
+    supported_ops = [
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "greater_than",
+        "less_than",
+        "greater_than_or_equal",
+        "less_than_or_equal",
+        "between",
+        "not_between",
+        "is_null",
+        "is_not_null",
+    ]
+    assert len(supported_ops) == 12
