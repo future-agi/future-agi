@@ -208,10 +208,14 @@ jobs:
           case "$GITHUB_EVENT_NAME" in
             merge_group) ranges=("$BASE_SHA $HEAD_SHA") ;;
             pull_request)
-              # What the merge changes on the base, and, as the planner does, the
-              # head's own edits in case the base renamed a path. Unknown: run all.
-              if roots=$(git merge-base --all "$BASE_SHA" "$HEAD_SHA") && [[ $roots =~ ^[0-9a-f]{40}$ ]]; then
-                ranges=("$BASE_SHA $GITHUB_SHA" "$roots $HEAD_SHA")
+              # What the merge changes on the base it was built on (its first
+              # parent; the event's base.sha can be an older tip), and, as the
+              # planner does, the head's own edits in case the base renamed a
+              # path. Unknown: run all.
+              read -r first second extra <<< "$(git show -s --format=%P "$GITHUB_SHA")"
+              if [[ -z ${extra:-} && ${second:-} == "$HEAD_SHA" ]] && git merge-base --is-ancestor "$BASE_SHA" "$first" &&
+                  roots=$(git merge-base --all "$first" "$HEAD_SHA") && [[ $roots =~ ^[0-9a-f]{40}$ ]]; then
+                ranges=("$first $GITHUB_SHA" "$roots $HEAD_SHA")
               fi ;;
           esac
           # git diff --quiet exits 1 when paths differ; anything above 1 is an error, never "unchanged".
