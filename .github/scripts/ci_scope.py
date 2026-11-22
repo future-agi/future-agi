@@ -21,8 +21,8 @@ PIN_INPUTS = {
 SUITES = ("backend", "metrics", "any", "collector", "ordinary_update")
 # The paths for which a pull request runs Update CI's ordinary jobs. It is the
 # workflow's push path list (test_ci_scope.py keeps the two equal). Pull
-# requests have no path filter in the workflow, so the Real rehearsals can
-# still run for a release, a label or a tooling change whatever the files.
+# requests start the workflow on dev's list, this list without the host-update
+# API contracts, so neither list starts Update CI for more than dev did.
 UPDATE_CI_PATHS = (
     "bin/update",
     "deploy/update/**",

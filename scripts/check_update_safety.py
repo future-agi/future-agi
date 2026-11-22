@@ -935,13 +935,14 @@ def review_history(root, baseline, registry):
     relative = "deploy/update/clickhouse-change-reviews.json"
     commits = git(root, "log", "--format=%H", f"{baseline}..HEAD", "--", relative).split()
     edges = {}
+    # Newest first: a pair reviewed twice keeps its latest declaration.
     for commit in commits:
         blob = base_bytes(root, commit, relative)
         if blob is None:
             continue
         rows = review_rows(json.loads(blob), registry, f"{relative}@{commit[:12]}")
         for path, row in rows.items():
-            edges.setdefault(path, set()).add((row["before_sha256"], row["after_sha256"]))
+            edges.setdefault(path, {}).setdefault((row["before_sha256"], row["after_sha256"]), row["declaration"])
     return edges
 
 
@@ -962,18 +963,52 @@ def release_span_history(root, base, baseline, registry):
     return functools.cache(lambda: review_history(root, baseline, registry))
 
 
-def reviewed_chain(edges, start, end):
-    """Whether reviewed transitions lead from blob `start` to blob `end`."""
-    seen, frontier = {start}, [start]
-    while frontier:
-        current = frontier.pop()
-        for before, after in edges:
-            if before == current and after not in seen:
-                if after == end:
-                    return True
-                seen.add(after)
-                frontier.append(after)
-    return False
+def path_revisions(root, baseline, relative):
+    """The contents `relative` had at `baseline`, then after each commit since that changed it.
+
+    Oldest first, consecutive duplicates removed. Merge commits are included
+    (--full-history), so a pull request's merge is one revision.
+    """
+    commits = git(root, "log", "--full-history", "--reverse", "--format=%H", f"{baseline}..HEAD", "--", relative).split()
+    states = [base_bytes(root, baseline, relative)]
+    for commit in commits:
+        blob = base_bytes(root, commit, relative)
+        if blob != states[-1]:
+            states.append(blob)
+    return states
+
+
+def needs_review(relative, before, after, sources):
+    """Whether a pull request making exactly this change would need a review row."""
+    if before == after or excluded_source(relative, sources["exclusions"], after if after is not None else before):
+        return False
+    return bool((schema_statements(before) if source_blob(relative, before) else [])
+                or (schema_statements(after) if source_blob(relative, after) else []))
+
+
+def reviewed_chain(states, edges, relative, sources):
+    """The reviewed declarations along a chain through the actual revisions, or None.
+
+    A chain runs from the first revision to the last, only forward through
+    revisions the file actually had in this span. Each link is a transition a
+    review row records (from the registry's history), or one a pull request
+    could make without a review: the same rule the gate applies per pull
+    request. A row for contents the file never had in this span links nothing.
+    """
+    shas = [content_sha(state) for state in states]
+    reached = {0: []}
+    for later in range(1, len(states)):
+        for earlier in range(later):
+            if earlier not in reached:
+                continue
+            declaration = edges.get((shas[earlier], shas[later]))
+            if declaration is not None:
+                reached[later] = reached[earlier] + [declaration]
+                break
+            if not needs_review(relative, states[earlier], states[later], sources):
+                reached[later] = reached[earlier]
+                break
+    return reached.get(len(states) - 1)
 
 
 def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry, history=None):
@@ -999,23 +1034,26 @@ def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry
     for candidate in candidates:
         relative = candidate["path"]
         row = entries[relative]
-        exact = all(row[key] == candidate[key] for key in ("before_sha256", "after_sha256"))
-        # The current review must end at the head blob; earlier links come from
-        # the registry's own history since the base.
-        chained = (
-            history is not None
-            and row["after_sha256"] == candidate["after_sha256"]
-            and reviewed_chain(
-                history().get(relative, set()) | {(row["before_sha256"], row["after_sha256"])},
-                candidate["before_sha256"],
-                candidate["after_sha256"],
-            )
-        )
-        require(exact or chained,
-                f"{relative}: review hashes do not match this exact base-to-head change, and no chain of reviewed "
-                "changes since the base leads from the base blob to the head blob", path)
-        value = row["declaration"]
-        required.append({"path": relative, "tables": value["tables"], "risk_classes": value["risk_classes"], "large_volume_rehearsal": True})
+        declarations = [row["declaration"]]
+        # An exact review is the whole change: no history is read for it.
+        if not all(row[key] == candidate[key] for key in ("before_sha256", "after_sha256")):
+            chain = None
+            # The current review must end at the head blob; earlier links come
+            # from the registry's own history, bound to the file's revisions.
+            if history is not None and row["after_sha256"] == candidate["after_sha256"]:
+                states = path_revisions(root, baseline, relative)
+                edges = {**history().get(relative, {}), (row["before_sha256"], row["after_sha256"]): row["declaration"]}
+                if content_sha(states[-1]) == candidate["after_sha256"]:
+                    chain = reviewed_chain(states, edges, relative, sources)
+            require(chain is not None,
+                    f"{relative}: review hashes do not match this exact base-to-head change, and no chain of reviewed "
+                    "changes through the file's revisions since the base leads from the base blob to the head blob", path)
+            declarations = chain
+        # Every reviewed link's tables are retained, not only the latest one's,
+        # in first-declared order (one declaration: exactly as declared).
+        tables = list(dict.fromkeys(table for value in declarations for table in value["tables"]))
+        classes = list(dict.fromkeys(risk for value in declarations for risk in value["risk_classes"]))
+        required.append({"path": relative, "tables": tables, "risk_classes": classes, "large_volume_rehearsal": True})
     return required
 
 
