@@ -20,7 +20,7 @@ test('the E2E stack applies the whole packaged Metrics ClickHouse schema before 
   const base = await services('docker-compose.distributed.yml');
   const job = base['metrics-schema-bootstrap'];
   assert.deepEqual(job.entrypoint, ['python', '-m', 'tracer.services.derived_metrics.schema_install']);
-  assert.deepEqual(job.command, ['--apply'], 'no --force, no password in argv');
+  assert.deepEqual(job.command, ['--apply', '--advisory'], 'no --force, no password in argv; never blocks startup');
   assert.equal(job.depends_on['clickhouse-cdc-bootstrap'].condition, 'service_completed_successfully');
 
   // The installer's one file list: 009, 011, then every packaged 028-038 file.
