@@ -48,7 +48,9 @@ export default function TraceCallPanel({ traceId, projectId }) {
   if (!call) return <Message>No call data available for this trace</Message>;
 
   return (
-    <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+    <Box
+      sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+    >
       {/* Round play and the peaks waveform (seek bar without peaks). */}
       <VoiceLeftPanel data={call} recordingVariant="trace" />
     </Box>

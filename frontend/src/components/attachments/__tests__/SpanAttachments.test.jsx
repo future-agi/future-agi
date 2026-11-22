@@ -239,9 +239,9 @@ describe("video, audio and file attachments (U04)", () => {
           <SpanAttachments projectId={projectId} span={value} allSpans={[]} />
         </SpanAttachmentsProvider>,
       );
-      expect(screen.queryAllByRole("button", { name: /Load audio/ })).toHaveLength(
-        count,
-      );
+      expect(
+        screen.queryAllByRole("button", { name: /Load audio/ }),
+      ).toHaveLength(count);
       expect(resolveAttachments).not.toHaveBeenCalled();
     },
   );

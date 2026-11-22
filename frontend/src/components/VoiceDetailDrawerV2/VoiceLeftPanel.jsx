@@ -98,7 +98,8 @@ const VoiceLeftPanel = ({
     : TABS.TRANSCRIPT;
   const isTranscriptTab = selectedTab === TABS.TRANSCRIPT;
   const activeExtraTab = extraTabs.find((tab) => tab.value === selectedTab);
-  const isPathTab = selectedTab === TABS.CHECKLIST || selectedTab === TABS.GRAPH;
+  const isPathTab =
+    selectedTab === TABS.CHECKLIST || selectedTab === TABS.GRAPH;
 
   return (
     <Stack

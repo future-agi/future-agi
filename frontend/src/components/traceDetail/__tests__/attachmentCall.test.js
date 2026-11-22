@@ -52,10 +52,10 @@ describe("isAttachmentCall", () => {
   });
 
   it("needs the conversation root Voice Observability reads", () => {
-    expect(isAttachmentCall(livekit({ observation_type: "agent" }))).toBe(false);
-    expect(
-      isAttachmentCall(livekit({ parent_span_id: "outer" })),
-    ).toBe(false);
+    expect(isAttachmentCall(livekit({ observation_type: "agent" }))).toBe(
+      false,
+    );
+    expect(isAttachmentCall(livekit({ parent_span_id: "outer" }))).toBe(false);
   });
 
   it("ignores attachments that are not an audio call recording", () => {
@@ -64,7 +64,11 @@ describe("isAttachmentCall", () => {
     expect(isAttachmentCall(other({}))).toBe(false);
     expect(
       isAttachmentCall(
-        other({ modality: "audio", mime_type: "audio/wav", purpose: "turn_recording" }),
+        other({
+          modality: "audio",
+          mime_type: "audio/wav",
+          purpose: "turn_recording",
+        }),
       ),
     ).toBe(false);
     expect(

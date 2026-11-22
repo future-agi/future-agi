@@ -59,7 +59,10 @@ vi.mock("src/api/project/saved-views", async (importOriginal) => ({
 vi.mock("src/api/project/trace-detail", () => ({
   useGetTraceDetail: () => ({
     isLoading: false,
-    data: { trace: { id: "trace-1", tags: [] }, observation_spans: mocks.spans },
+    data: {
+      trace: { id: "trace-1", tags: [] },
+      observation_spans: mocks.spans,
+    },
   }),
 }));
 vi.mock("src/api/shared-links", async (importOriginal) => ({
