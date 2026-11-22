@@ -3,14 +3,17 @@
 import asyncio
 import json
 import logging
+import os
 import sys
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from uuid import uuid4
 
 import pytest
+import requests
 import sentry_sdk
 import sentry_sdk.client as sdk_client
 import structlog
@@ -366,49 +369,117 @@ def test_request_span_overflow(monkeypatch):
     assert kept[trace["span_id"]]["op"] == "qa.lookup"
 
 
-def test_structured_provider_log(monkeypatch):
-    marker = uuid4().hex
-    # Same application renderer and record shape as VapiService.get_chat_session,
-    # without requiring the optional provider package in OSS.
-    log = structlog.get_logger("ee.voice.services.vapi_service")
-    with capture(monkeypatch, "django") as wire:
-        log.error(
-            "vapi_api_error",
-            action="get chat session",
-            status_code=429,
-            response_body=marker,
+def stub_provider_http(monkeypatch, replies):
+    calls = []
+
+    def send(adapter, request, **kwargs):
+        key = (request.method, request.url)
+        calls.append(key)
+        status, text = replies[key]
+        response = requests.Response()
+        response.status_code = status
+        response.url = request.url
+        response.request = request
+        response._content = text.encode()
+        return response
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
+    return calls
+
+
+@contextmanager
+def provider_capture(monkeypatch, pipeline, component):
+    component = component if pipeline == "django" else "temporal"
+    with capture(monkeypatch, component) as wire:
+        if pipeline != "django":
+            from tfc.logging.temporal import configure_temporal_logging
+
+            # Same order as run_worker: SDK first, then the worker's processors.
+            monkeypatch.setenv("ENV_TYPE", pipeline)
+            configure_temporal_logging()
+        yield wire
+
+
+def assert_local_error(pipeline, logger_name, marker, **expected):
+    # The real file handler in sentry_runtime_settings writes JSON. A worker
+    # renders its message *before* that handler; Django hands it an event dict.
+    with (Path(os.environ["TMPDIR"]) / "logs" / "wsgi.log").open() as stream:
+        rows = (json.loads(line) for line in stream if marker in line)
+        [row] = [
+            r for r in rows if r["logger"] == logger_name and r["level"] == "error"
+        ]
+    if pipeline == "local":
+        rendered = row["event"]
+        assert "\x1b[" in rendered
+        for key, value in expected.items():
+            assert key == "event" or key in rendered
+            assert str(value) in rendered
+    else:
+        fields = json.loads(row["event"]) if pipeline == "production" else row
+        assert {k: fields[k] for k in expected} == expected
+
+
+@pytest.mark.parametrize("pipeline", ["django", "local", "production"])
+def test_structured_provider_log(monkeypatch, pipeline):
+    marker, unknown_name = uuid4().hex, uuid4().hex
+    base = "https://vapi.fixture.invalid"
+    monkeypatch.setenv("VAPI_API_BASE_URL", base)
+    request = ("GET", f"{base}/session/example")
+    calls = stub_provider_http(monkeypatch, {request: (400, marker)})
+    with provider_capture(monkeypatch, pipeline, "django") as wire:
+        from ee.voice.services.vapi_service import VapiService
+
+        assert VapiService(api_key="fixture").get_chat_session("example") is None
+        structlog.get_logger(VapiService.__module__).error(
+            unknown_name, status_code=unknown_name, count=2
         )
-        log.error(marker, status_code=marker, count=2)
         sentry_sdk.capture_message("next diagnostic")
-    known, unknown, following = [b for _, k, b in wire.items if k == "event"]
+    assert calls == [request]  # A 429 would have gone through the retry loop.
+    assert_local_error(
+        pipeline,
+        VapiService.__module__,
+        marker,
+        event="vapi_api_error",
+        action="get chat session",
+        status_code=400,
+        response_body=marker,
+    )
+    events = [b for _, k, b in wire.items if k == "event"]
+    known, unknown = [b for b in events if b.get("logger") == VapiService.__module__]
     assert known["logentry"] == {"message": "vapi_api_error"}
-    assert known["extra"] == {"status_code": 429}
+    assert known["extra"] == {"status_code": 400}
     assert unknown["logentry"] == {"message": "Structured log"}
     assert unknown["extra"] == {"count": 2}
-    assert following["message"] == "next diagnostic"
-    assert all(marker.encode() not in packet for packet in wire.raw)
+    assert any(b.get("message") == "next diagnostic" for b in events)
+    for value in (marker, unknown_name):
+        assert all(value.encode() not in packet for packet in wire.raw)
 
 
-def test_embedding_rejection(monkeypatch):
-    from agentic_eval.core.embeddings.serving_client import ModelServingClient
-
+@pytest.mark.parametrize("pipeline", ["django", "local", "production"])
+def test_embedding_rejection(monkeypatch, pipeline):
     marker = uuid4().hex
-    serving = ModelServingClient(base_url="http://fixture.invalid")
-    monkeypatch.setattr(serving, "_require_serving", lambda: None)
-    response = SimpleNamespace(status_code=400, text=marker)
-    monkeypatch.setattr(serving.session, "post", lambda *args, **kwargs: response)
-    with capture(monkeypatch, "temporal") as wire:
+    base = "https://embedding.fixture.invalid"
+    health, embed = ("GET", f"{base}/health"), ("POST", f"{base}/model/v1/embed")
+    calls = stub_provider_http(monkeypatch, {health: (200, ""), embed: (400, marker)})
+    with provider_capture(monkeypatch, pipeline, "temporal") as wire:
+        from agentic_eval.core.embeddings.serving_client import ModelServingClient
+
         with pytest.raises(ValueError, match=marker) as raised:
-            serving.embed_text("fixture input")
-        sentry_sdk.capture_exception(raised.value)
+            ModelServingClient(base_url=base).embed_text("fixture input")
+        error_id = sentry_sdk.capture_exception(raised.value)
+    assert calls == [health, embed]
+    assert_local_error(
+        pipeline,
+        ModelServingClient.__module__,
+        marker,
+        event=f"Text embedding failed: Bad request: {marker}",
+    )
     events = [b for _, k, b in wire.items if k == "event"]
-    assert any(b.get("logger") == ModelServingClient.__module__ for b in events)
-    [error] = [
-        e
-        for b in events
-        for e in b.get("exception", {}).get("values", [])
-        if e["type"] == "ValueError"
-    ]
+    [logged] = [b for b in events if b.get("logger") == ModelServingClient.__module__]
+    assert logged["logentry"] == {"message": "Structured log"}
+    [issue] = [b for b in events if b["event_id"] == error_id]
+    [error] = issue["exception"]["values"]
+    assert error["type"] == "ValueError"
     assert error["value"] == sentry._REDACTED
     assert error["stacktrace"]["frames"][-1]["function"] == "_make_request"
     assert all(marker.encode() not in packet for packet in wire.raw)

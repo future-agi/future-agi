@@ -1,8 +1,7 @@
 """
 Centralized Sentry configuration for all backend components.
 
-Keep Sentry and structlog separate.
-Sentry SDK integrations handle error capture automatically.
+Render logs for local handlers; let the SDK logging integration capture issues.
 
 Usage:
     from tfc.logging.sentry import init_sentry
@@ -28,6 +27,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from sentry_sdk.types import Event, Hint
+    from structlog.typing import EventDict, Processor
 
 # Environment detection
 ENV_TYPE = os.getenv("ENV_TYPE", "local")
@@ -776,6 +776,35 @@ def _scrub_extra(event: dict, grpc_logger: bool) -> None:
 
 _REQUEST_EVENTS = ("request_started", "request_finished", "request_failed")
 _STRUCTURED_EVENTS = ("vapi_api_error", "insight_stage_failed", "model_check_failed")
+_WORKER_LOG_FIELDS = "_tfc_sentry_log_fields"
+
+
+def with_sentry_log_fields(
+    renderer: "Callable[[Any, str, EventDict], str | bytes]",
+) -> "Processor":
+    """Pass worker diagnostics via logging.extra, separate from the rendered line."""
+    if not SENTRY_ENABLED or not SENTRY_DSN:
+        return renderer
+
+    def render(logger: Any, method: str, fields: "EventDict") -> tuple:
+        # ConsoleRenderer consumes fields. Take the projection first, without
+        # putting it into the event dict or rewriting a handler's LogRecord.
+        try:
+            safe = _diagnostic_fields(fields, _is_grpc_framework_logger(logger.name))
+            name = fields.get("event")
+            if type(name) is str and (
+                name in _STRUCTURED_EVENTS or name in _REQUEST_EVENTS
+            ):
+                safe["event"] = name
+            code = fields.get("code")
+            if type(code) is int and 100 <= code <= 599:
+                safe["code"] = code
+        except Exception:  # noqa: BLE001 - telemetry must not break local logging
+            safe = {}  # Still identify it as structured; never reuse the rendered text.
+        message = renderer(logger, method, fields)
+        return (message,), {"extra": {_WORKER_LOG_FIELDS: safe}}
+
+    return render
 
 
 def _structured_fields(payload: object) -> dict | None:
@@ -783,7 +812,7 @@ def _structured_fields(payload: object) -> dict | None:
         return payload
     if type(payload) is not str:
         return None
-    # Standalone Temporal workers use the JSON renderer rather than a dict.
+    # Also support records supplied as serialized JSON without the worker fields.
     # A malformed, oversized or already repr'd object has no trusted fields.
     if len(payload) > _MAX_TEXT:
         return {} if payload.startswith("{") else None
@@ -799,7 +828,9 @@ def _structured_fields(payload: object) -> dict | None:
 def _record_title(event: dict, record: object, grpc_logger: bool) -> str | None:
     """Project the original record, never the SDK's stringification of a dict."""
     original = getattr(record, "msg", None)
-    fields = _structured_fields(original)
+    fields = getattr(record, _WORKER_LOG_FIELDS, None)
+    if type(fields) is not dict:
+        fields = _structured_fields(original)
     entry = event.get("logentry")
     if record is None and type(entry) is dict:
         fields = _structured_fields(entry.get("message", entry.get("formatted")))

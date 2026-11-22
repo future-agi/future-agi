@@ -30,6 +30,7 @@ import temporalio.activity
 import temporalio.workflow
 
 from ..processors import add_otel_context, add_pid_and_tid
+from ..sentry import with_sentry_log_fields
 from .context import get_temporal_activity_context, get_temporal_workflow_context
 
 
@@ -96,10 +97,12 @@ def configure_temporal_logging():
         add_otel_context,
     ]
 
-    if is_production():
-        processors.append(structlog.processors.JSONRenderer())
-    else:
-        processors.append(structlog.dev.ConsoleRenderer(colors=True))
+    renderer = (
+        structlog.processors.JSONRenderer()
+        if is_production()
+        else structlog.dev.ConsoleRenderer(colors=True)
+    )
+    processors.append(with_sentry_log_fields(renderer))
 
     structlog.configure(
         processors=processors,
