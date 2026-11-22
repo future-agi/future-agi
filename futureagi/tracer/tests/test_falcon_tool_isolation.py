@@ -90,18 +90,19 @@ def test_held_worker_does_not_score_an_accessible_colliding_root(
     from ai_tools.tools.tracing.access import get_trace_project
 
     trace_id = str(uuid.uuid4())
-    reader = install_reader(monkeypatch, project, trace_id, foreign=other_project)
     ctx = ToolContext(
         project.workspace.created_by,
         project.organization,
         project.workspace,
         project=project,
     )
-    # Resolution remains testable independently of starting the worker.
-    assert get_trace_project(trace_id, ctx) == project
-    reader.root_ids_by_trace_ids.assert_called_once_with(
-        [trace_id], project_ids=[str(project.id)]
-    )
+    # Keep this resolver stub out of the imports that the worker probes observe.
+    with monkeypatch.context() as resolver_patch:
+        reader = install_reader(resolver_patch, project, trace_id, foreign=other_project)
+        assert get_trace_project(trace_id, ctx) == project
+        reader.root_ids_by_trace_ids.assert_called_once_with(
+            [trace_id], project_ids=[str(project.id)]
+        )
     stream = scripted_tool_stream(
         read_call(trace_id), ("submit_trace_scores", score_params(trace_id))
     )
@@ -410,9 +411,10 @@ def assert_queued_pair_refused(project_id, pair):
     assert_tool_refused(ctx, outside, project_id, [assigned, other])
     # Even an entirely claimed batch must not get an already_running success.
     assert_tool_refused(ctx, outside, project_id, [other])
-    # A pre-hold Temporal message is a separate ingress, not a fabricated
-    # successful dispatch from today's tool. It must not consume another claim.
-    assert_activity_refused(project_id, [assigned])
+    # A pre-hold Temporal message can contain a trace with a live claim.
+    # Refusing that message must preserve even the claim for its own input.
+    assert deep_analysis_state.is_running(other, project_id=project_id)
+    assert_activity_refused(project_id, [assigned, other])
     assert deep_analysis_state.is_running(other, project_id=project_id)
 
 

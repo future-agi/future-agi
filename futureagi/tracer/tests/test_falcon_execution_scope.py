@@ -37,9 +37,7 @@ from tracer.services.falcon_execution_scope import (
 from tracer.tests._falcon_analysis import finding_params, install_reader, score_params
 
 
-@pytest.fixture
-def assignment(observe_project, user, monkeypatch):
-    project = observe_project
+def make_credentialed_attempt(project, user, monkeypatch):
     idp = SAMLMetadataModel.objects.create(
         id=str(uuid4()), organization=project.organization, is_enabled=True,
         identity_type=SAMLMetadataModel.IDENTITY_OKTA, relay_state=str(uuid4()),
@@ -55,7 +53,6 @@ def assignment(observe_project, user, monkeypatch):
     )
     foreground = ToolContext(user, project.organization, project.workspace, auth_scope=credential)
     attempt = TraceErrorAnalysis.objects.create(trace_id=uuid4(), project=project)
-    reader = install_reader(monkeypatch, project, str(attempt.trace_id))
     # Supply only license data. The foreground Falcon gate, registry and
     # capability service evaluate the snapshot on every capture and recheck.
     resolver = Mock(spec=service.LicenseResolver)
@@ -66,6 +63,13 @@ def assignment(observe_project, user, monkeypatch):
     monkeypatch.setattr(service, "_deployment_location", DeploymentLocation.SELF_HOSTED)
     monkeypatch.setattr(service, "_deployment_flavor", DeploymentFlavor.SELF_HOSTED_EE)
     monkeypatch.setattr(service, "_license_resolver", resolver)
+    return foreground, attempt, resolver
+
+
+@pytest.fixture
+def assignment(observe_project, user, monkeypatch):
+    foreground, attempt, resolver = make_credentialed_attempt(observe_project, user, monkeypatch)
+    reader = install_reader(monkeypatch, observe_project, str(attempt.trace_id))
     return foreground, attempt, reader, resolver
 
 

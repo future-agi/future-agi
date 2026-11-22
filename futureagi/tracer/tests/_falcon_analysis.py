@@ -56,7 +56,7 @@ def tool_chunk(index, name, params):
 
 
 def scripted_tool_stream(*tool_calls, fail_after_tool=False, finish="stop"):
-    """Synthetic provider scenario; a held entrypoint must never request a turn."""
+    """Emit the scripted tool calls one turn at a time, then finish or interrupt."""
     turns = iter(enumerate(tool_calls))
 
     async def stream(messages, tools=None):

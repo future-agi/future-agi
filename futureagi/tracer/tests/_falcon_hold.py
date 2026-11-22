@@ -69,7 +69,7 @@ def _snapshot(trace_ids):
 
 @contextmanager
 def no_background_work(*trace_ids, stream=None, summary=None):
-    """Observe every boundary even if an entrypoint swallows a downstream exception."""
+    """Assert the listed calls were absent and the selected rows did not change."""
     from agentic_eval.core.embeddings.embedding_manager import ModelManager
     from ee.usage.deployment import DeploymentMode
 
@@ -93,12 +93,15 @@ def no_background_work(*trace_ids, stream=None, summary=None):
     }
     for path in (
         "tracer.services.clickhouse.v2.get_reader",
+        "tracer.queries.error_analysis.get_reader",
+        "tracer.queries.feed.get_reader",
         "tracer.services.clickhouse.client.ClickHouseClient.__init__",
         "tracer.services.clickhouse.client.ClickHouseClient.insert",
         "tracer.queries.deep_analysis_state.set_running",
         "tracer.queries.deep_analysis_state.set_failed",
         "tracer.queries.deep_analysis_state.clear",
         "tracer.tasks.error_analysis.analyze_traces_on_demand.delay",
+        "tracer.tasks.error_analysis.analyze_traces_on_demand.apply_async",
         "tracer.tasks.error_analysis.ThreadPoolExecutor",
         "ee.falcon_ai.agent.AgentLoop.__init__",
         "ee.falcon_ai.agent.AgentLoop._load_mcp_tools",
@@ -106,10 +109,12 @@ def no_background_work(*trace_ids, stream=None, summary=None):
         "ee.licensing.managed_ai.stream_chat_completion",
         "litellm.completion",
         "ee.usage.services.emitter.emit",
+        "ee.usage.utils.usage_entries.log_and_deduct_cost_for_api_request",
         "tracer.queries.error_analysis.TraceErrorAnalysisDB.ingest_trace_error_embeddings",
         "agentic_eval.core.database.ch_vector.ClickHouseVectorDB.bulk_upsert_vectors",
         "agentic_eval.core.embeddings.embedding_manager.EmbeddingManager.bulk_insert_vectors",
         "tracer.tasks.error_analysis.cluster_project_errors.delay",
+        "tracer.tasks.error_analysis.cluster_project_errors.apply_async",
         "tracer.queries.error_clustering.ErrorClusteringDB.cluster_unclustered_errors",
         "ee.agenthub.traceerroragent.error_cluster.ErrorEmbeddingClusterer._compute_centroid",
         "ee.agenthub.traceerroragent.error_cluster.ErrorEmbeddingClusterer._update_centroid_incremental",
