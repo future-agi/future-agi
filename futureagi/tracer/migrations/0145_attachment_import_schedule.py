@@ -11,8 +11,8 @@ UPDATE_SAFETY = {
         "postgres:django_migrations",
     ],
     "mitigation": "Create an empty table referencing existing immutable job IDs. No backfill, trigger changes, lease transitions, or reservation writes.",
-    "reviewer": "",
-    "review": "",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3943#discussion_r4657808637",
     "large_volume_rehearsal": True,
 }
 

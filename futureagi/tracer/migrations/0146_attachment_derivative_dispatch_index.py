@@ -12,8 +12,8 @@ UPDATE_SAFETY = {
         "postgres:django_migrations",
     ],
     "mitigation": "Build a partial queue index concurrently; leave the existing production and cleanup indexes in place.",
-    "reviewer": "",
-    "review": "",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3943#discussion_r4657808637",
     "large_volume_rehearsal": True,
 }
 

@@ -29,7 +29,7 @@ DEPLOY.md "Attachments: database fences".
 
 from django.db import migrations
 
-# Deliberately leaves human review fields blank until migration review.
+# Repository owner's migration review, recorded inline on the PR.
 UPDATE_SAFETY = {
     "schema_version": 1,
     "risk_classes": ["data_migration"],
@@ -52,8 +52,8 @@ UPDATE_SAFETY = {
         "Run the migration with the attachment writers quiesced and rehearse the "
         "trigger behavior on a representative large-volume database before rollout."
     ),
-    "reviewer": "",
-    "review": "",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3943#discussion_r4657808637",
     "large_volume_rehearsal": True,
 }
 

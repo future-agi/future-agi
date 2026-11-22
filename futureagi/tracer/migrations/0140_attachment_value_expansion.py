@@ -5,7 +5,7 @@ import uuid
 import django.db.models.deletion
 from django.db import migrations, models
 
-# REVIEW REQUIRED: empty reviewer/review intentionally fail UPDATE_SAFETY.
+# Repository owner's migration review, recorded inline on the PR.
 UPDATE_SAFETY = {
     "schema_version": 1,
     "risk_classes": ["constraint", "index", "not_null", "volatile_default"],
@@ -36,8 +36,8 @@ UPDATE_SAFETY = {
         "postgres:tracer_uploadreservation",
     ],
     "mitigation": "Append nullable value groups and new immutable resource table without dropping source data; add indexes/checks during the later quiesced fence stage. Existing migration bodies and SQL remain byte-identical. Review lock/WAL bounds and qualify populated upgrade before running on retained data.",
-    "reviewer": "",
-    "review": "",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3943#discussion_r4657808637",
     "large_volume_rehearsal": True,
 }
 

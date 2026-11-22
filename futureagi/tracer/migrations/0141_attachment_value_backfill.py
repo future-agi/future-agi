@@ -35,7 +35,7 @@ from django.db import migrations, transaction
 from django.utils import timezone
 
 # Deliberately invalid until a real human review supplies these two values.
-# Empty references must fail the repository's UPDATE_SAFETY gate.
+# Repository owner's migration review, recorded inline on the PR.
 UPDATE_SAFETY = {
     "schema_version": 1,
     "risk_classes": ["data_migration"],
@@ -62,15 +62,15 @@ UPDATE_SAFETY = {
         "postgres:tracer_attachmentoccurrence",
     ],
     "mitigation": "Quiesce all old writers and accepted operations, preserve sealed backup and applied-history fingerprints, copy exact IDs/times in resumable 250-row batches, reject unproven provenance, reconcile rather than clamp counters, then qualify populated interruption and cold restore before activation.",
-    "reviewer": "",
-    "review": "",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3943#discussion_r4657808637",
     "large_volume_rehearsal": True,
 }
 
 BATCH = 250
 HISTORICAL_FILES = {
     "0136_attachment_control_records": "9632b3082a904290f4a413d36b73cb9e2ae1144e77e36c97745a0994645a5c02",
-    "0137_attachment_fences": "39e13ae91471a79f2892ab176643983b4e20947516df1fd48ebfa905961e7db9",
+    "0137_attachment_fences": "42e32281dca1f4a92331b586e50e0310e0c69819d688b9f4ceca792ecffaaf6f",
     "0138_attachment_binding_claims": "2b21dbc43a56ec9b42d3fd0daf0e9ce14cc4418745bfa51f574812f1ed42232e",
     "0139_attachment_recordings": "f8dde92abd8f54f0a6345cea8fc2e0ef8b7cfe2b6eab5bf77cee60a5a2e1890a",
 }

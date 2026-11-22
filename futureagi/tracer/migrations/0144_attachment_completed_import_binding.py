@@ -21,8 +21,8 @@ UPDATE_SAFETY = {
         "postgres:pg_index",
     ],
     "mitigation": "Backfill only auto mode and NULL pending fields. Preserve original event replay identities and all historical sources. Install immutable mode/link and bounded ciphertext guards transactionally. Qualify on disposable PostgreSQL and full app graph before human approval; never replace applied drafts.",
-    "reviewer": "",
-    "review": "",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3943#discussion_r4657808637",
     "large_volume_rehearsal": True,
 }
 

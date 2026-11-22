@@ -116,15 +116,19 @@ def registration(case, connection, mode="auto"):
     )
 
 
-def test_pending_columns_and_blank_human_gate(binding_case):
+def test_pending_columns_and_recorded_human_review(binding_case):
     case = binding_case
     model = case.model("AttachmentProviderEvent")
     fields = [
         model._meta.get_field(field) for field in case.modules["0144"].PENDING_FIELDS
     ]
     assert len(fields) == 6 and all(field.null for field in fields)
-    assert case.modules["0144"].UPDATE_SAFETY["reviewer"] == ""
-    assert case.modules["0144"].UPDATE_SAFETY["review"] == ""
+    # The repository owner's migration review, recorded inline on the PR.
+    assert case.modules["0144"].UPDATE_SAFETY["reviewer"] == "nik13"
+    assert (
+        case.modules["0144"].UPDATE_SAFETY["review"]
+        == "https://github.com/future-agi/future-agi/pull/3943#discussion_r4657808637"
+    )
     assert (
         case.model("AttachmentProviderRecording")
         ._meta.get_field("dispatch_mode")

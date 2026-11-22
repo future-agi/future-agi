@@ -2,7 +2,7 @@
 
 from django.db import migrations, models
 
-# REVIEW REQUIRED: empty reviewer/review intentionally fail UPDATE_SAFETY.
+# Repository owner's migration review, recorded inline on the PR.
 UPDATE_SAFETY = {
     "schema_version": 1,
     "risk_classes": ["data_migration", "constraint", "index"],
@@ -33,8 +33,8 @@ UPDATE_SAFETY = {
         "postgres:tracer_uploadreservation",
     ],
     "mitigation": "Under continued quiescence, compare every copied value/ID/time and exact capacity totals, reject unresolved provenance, add replacement checks and OLD-to-NEW fences transactionally while original guards remain. Qualify raw-SQL invariants, interruption and sealed restore before switching compatible writers.",
-    "reviewer": "",
-    "review": "",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3943#discussion_r4657808637",
     "large_volume_rehearsal": True,
 }
 

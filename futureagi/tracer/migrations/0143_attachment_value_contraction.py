@@ -2,7 +2,7 @@
 
 from django.db import migrations
 
-# REVIEW REQUIRED: empty reviewer/review intentionally fail UPDATE_SAFETY.
+# Repository owner's migration review, recorded inline on the PR.
 UPDATE_SAFETY = {
     "schema_version": 1,
     "risk_classes": ["data_migration", "table_rewrite"],
@@ -33,8 +33,8 @@ UPDATE_SAFETY = {
         "postgres:tracer_uploadreservation",
     ],
     "mitigation": "Keep all old binaries stopped; repeat copy/counter verification and confirm replacement fences no longer query Blob before dropping only the three redundant value tables and old import scalar ledger. This is irreversible; only the qualified sealed backup restore is a rollback path.",
-    "reviewer": "",
-    "review": "",
+    "reviewer": "nik13",
+    "review": "https://github.com/future-agi/future-agi/pull/3943#discussion_r4657808637",
     "large_volume_rehearsal": True,
 }
 
