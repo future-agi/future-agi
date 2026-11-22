@@ -1020,280 +1020,63 @@ class UserRoleUpdateAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request):
-        """Update user role at organization or workspace level"""
+        from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+        from rest_framework.serializers import UUIDField
+
+        from accounts.services.legacy_role_assignments import (
+            ORG_ROLES,
+            RoleWorkspaceNotFound,
+            assign_role,
+        )
+
+        data = request.validated_data
+        organization = resolve_org(request)
+        selected = getattr(request, "workspace", None)
+        workspace_id = (
+            data.get("workspace_id")
+            or request.query_params.get("workspace_id")
+            or request.query_params.get("workspaceId")
+            or getattr(selected, "pk", None)
+        )
         try:
-            data = request.validated_data
-
-            user = request.user
-            organization = resolve_org(request)
-
-            if not organization:
-                return self._gm.bad_request(
-                    get_error_message("USER_ORGANIZATION_CONNECTION_ERROR")
-                )
-
-            target_user_id = data["user_id"]
-            new_role = data["new_role"]
-
-            try:
-                target_user = User.objects.get(
-                    id=target_user_id, organization=organization
-                )
-            except User.DoesNotExist:
-                return self._gm.not_found("User not found in organization")
-
-            # Prevent changing own role
-            if target_user == user:
-                return self._gm.bad_request("Cannot change your own role")
-
-            # Resolve workspace context: prefer explicit request data, then query param, then request-global
-            workspace_id = (
-                data.get("workspace_id")
-                or request.query_params.get("workspace_id")
-                or request.query_params.get("workspaceId")
+            if workspace_id is not None:
+                workspace_id = UUIDField().run_validation(workspace_id)
+            target, workspace, _ = assign_role(
+                actor=request.user,
+                organization=organization,
+                target_user_id=data["user_id"],
+                role=data["new_role"],
+                workspace_id=workspace_id,
             )
-            current_workspace = None
-            if workspace_id:
-                try:
-                    current_workspace = Workspace.objects.get(
-                        id=workspace_id, organization=organization, is_active=True
-                    )
-                except Workspace.DoesNotExist:
-                    return self._gm.bad_request(
-                        "Invalid workspace_id or workspace not in your organization"
-                    )
-            else:
-                current_workspace = get_current_workspace()
-                if not current_workspace:
-                    try:
-                        current_workspace = Workspace.objects.get(
-                            organization=organization, is_default=True, is_active=True
-                        )
-                    except Workspace.DoesNotExist:
-                        # No workspace context - will update organization role
-                        pass
-
-            # Define organization-level and workspace-level roles
-            organization_level_roles = [
-                OrganizationRoles.OWNER,
-                OrganizationRoles.ADMIN,
-                OrganizationRoles.MEMBER,
-                OrganizationRoles.MEMBER_VIEW_ONLY,
-            ]
-            workspace_level_roles = [
-                OrganizationRoles.WORKSPACE_ADMIN,
-                OrganizationRoles.WORKSPACE_MEMBER,
-                OrganizationRoles.WORKSPACE_VIEWER,
-            ]
-
-            # Check permissions: allow org-level OWNER/ADMIN/MEMBER or workspace-level ADMIN
-            org_role = resolve_org_role(user, organization)
-            has_org_permission = org_role and org_role in [
-                OrganizationRoles.OWNER,
-                OrganizationRoles.ADMIN,
-                OrganizationRoles.MEMBER,
-            ]
-
-            has_workspace_permission = False
-            if current_workspace and not has_org_permission:
-                try:
-                    user_workspace_membership = (
-                        WorkspaceMembership.no_workspace_objects.get(
-                            workspace=current_workspace, user=user, is_active=True
-                        )
-                    )
-                    has_workspace_permission = (
-                        user_workspace_membership.role
-                        == OrganizationRoles.WORKSPACE_ADMIN
-                    )
-                except WorkspaceMembership.DoesNotExist:
-                    pass
-
-            # Restrict workspace admins from assigning organization-level roles
-            # Only org owners/admins can assign organization-level roles
-            if new_role in organization_level_roles and not has_org_permission:
-                return self._gm.forbidden_response(
-                    "Only organization owners or admins can assign organization-level roles (owner, admin, member, member_view_only)"
-                )
-
-            # Validate that the role is either organization-level or workspace-level
-            if (
-                new_role not in organization_level_roles
-                and new_role not in workspace_level_roles
-            ):
-                return self._gm.bad_request(
-                    f"Invalid role. Must be either an organization-level role ({', '.join([r.value for r in organization_level_roles])}) or a workspace-level role ({', '.join([r.value for r in workspace_level_roles])})"
-                )
-
-            if not (has_org_permission or has_workspace_permission):
-                return self._gm.forbidden_response(
-                    get_error_message("UNAUTHORIZED_ACCESS")
-                )
-
-            # Determine workspace role: if role is org-level, map to workspace role; otherwise use role as-is
-            if new_role in organization_level_roles:
-                # Map organization role to workspace role
-                workspace_role = RoleMapping.get_workspace_role(new_role)
-            else:
-                # Role is already a workspace-level role
-                workspace_role = new_role
-
-            if new_role in organization_level_roles:
-                # Update organization-level role
-                # Only org-level OWNER/ADMIN can update organization roles
-                org_role = resolve_org_role(user, organization)
-                if not org_role or org_role not in [
-                    OrganizationRoles.OWNER,
-                    OrganizationRoles.ADMIN,
-                ]:
-                    return self._gm.forbidden_response(
-                        get_error_message("UNAUTHORIZED_ACCESS")
-                    )
-
-                # Prevent demoting the last owner
-                if (
-                    target_user.organization_role == OrganizationRoles.OWNER
-                    and new_role != OrganizationRoles.OWNER
-                ):
-                    with transaction.atomic():
-                        owner_count = (
-                            User.objects.select_for_update()
-                            .filter(
-                                organization=organization,
-                                organization_role=OrganizationRoles.OWNER,
-                                is_active=True,
-                            )
-                            .count()
-                        )
-                        if owner_count <= 1:
-                            return self._gm.bad_request("Cannot demote the last owner")
-
-                        # Update organization role within transaction
-                        target_user.organization_role = new_role
-                        target_user.save()
-                else:
-                    # Update organization role
-                    target_user.organization_role = new_role
-                    target_user.save()
-
-                # If workspace context exists, also update workspace membership
-                if current_workspace:
-                    try:
-                        workspace_membership = (
-                            WorkspaceMembership.no_workspace_objects.get(
-                                workspace=current_workspace,
-                                user=target_user,
-                                is_active=True,
-                            )
-                        )
-                        # Update existing membership with mapped workspace role
-                        workspace_membership.role = workspace_role
-                        workspace_membership.save()
-                    except WorkspaceMembership.DoesNotExist:
-                        # Check if there's a soft-deleted membership that we should reactivate
-                        existing_deleted_membership = (
-                            WorkspaceMembership.all_objects.filter(
-                                workspace=current_workspace,
-                                user=target_user,
-                                deleted=True,
-                            ).first()
-                        )
-
-                        if existing_deleted_membership:
-                            # Reactivate the soft-deleted membership
-                            existing_deleted_membership.deleted = False
-                            existing_deleted_membership.is_active = True
-                            existing_deleted_membership.role = workspace_role
-                            existing_deleted_membership.invited_by = user
-                            existing_deleted_membership.save()
-                        else:
-                            # Create workspace membership if it doesn't exist
-                            create_workspace_membership(
-                                workspace=current_workspace,
-                                user=target_user,
-                                role=workspace_role,
-                                is_active=True,
-                                invited_by=user,
-                            )
-
-                return self._gm.success_response(
-                    {
-                        "message": "User organization role updated successfully",
-                        "user_id": str(target_user_id),
-                        "new_role": new_role,
-                        "workspace_role": (
-                            workspace_role.value if current_workspace else None
-                        ),
-                        "workspace": (
-                            current_workspace.name if current_workspace else None
-                        ),
-                        "level": "organization",
-                    }
-                )
-            else:
-                # Update workspace-level role only
-                if not current_workspace:
-                    return self._gm.bad_request(
-                        "Workspace context is required for workspace-level roles"
-                    )
-
-                # Additional check: workspace admins cannot change other workspace admins (only org owners/admins can)
-                try:
-                    workspace_membership = WorkspaceMembership.no_workspace_objects.get(
-                        workspace=current_workspace, user=target_user, is_active=True
-                    )
-                    if (
-                        workspace_membership.role == OrganizationRoles.WORKSPACE_ADMIN
-                        and new_role != OrganizationRoles.WORKSPACE_ADMIN
-                        and not has_org_permission
-                    ):
-                        return self._gm.forbidden_response(
-                            "Only organization owners/admins can change workspace admin roles"
-                        )
-                    # Update existing membership
-                    workspace_membership.role = new_role
-                    workspace_membership.save()
-                except WorkspaceMembership.DoesNotExist:
-                    # Check if there's a soft-deleted membership that we should reactivate
-                    existing_deleted_membership = (
-                        WorkspaceMembership.all_objects.filter(
-                            workspace=current_workspace,
-                            user=target_user,
-                            deleted=True,
-                        ).first()
-                    )
-
-                    if existing_deleted_membership:
-                        # Reactivate the soft-deleted membership
-                        existing_deleted_membership.deleted = False
-                        existing_deleted_membership.is_active = True
-                        existing_deleted_membership.role = new_role
-                        existing_deleted_membership.invited_by = user
-                        existing_deleted_membership.save()
-                    else:
-                        # Create workspace membership if it doesn't exist
-                        create_workspace_membership(
-                            workspace=current_workspace,
-                            user=target_user,
-                            role=new_role,
-                            is_active=True,
-                            invited_by=user,
-                        )
-
-                return self._gm.success_response(
-                    {
-                        "message": "User workspace role updated successfully",
-                        "user_id": str(target_user_id),
-                        "new_role": new_role,
-                        "workspace": current_workspace.name,
-                        "level": "workspace",
-                    }
-                )
-
-        except Exception as e:
-            traceback.print_exc()
-            logger.exception(f"Error in updating user role: {str(e)}")
+        except RoleWorkspaceNotFound:
+            return self._gm.bad_request(
+                "Invalid workspace_id or workspace not in your organization"
+            )
+        except NotFound as exc:
+            return self._gm.not_found(exc.detail)
+        except PermissionDenied as exc:
+            return self._gm.forbidden_response(exc.detail)
+        except ValidationError as exc:
+            return self._gm.bad_request(exc.detail)
+        except Exception:  # noqa: BLE001 - retain the legacy endpoint's opaque error response
+            logger.exception("Error in updating user role")
             return self._gm.bad_request("Error in updating user role")
+        role = data["new_role"]
+        org_change = role in ORG_ROLES
+        result = {
+            "message": "User organization role updated successfully"
+            if org_change
+            else "User workspace role updated successfully",
+            "user_id": str(target.pk),
+            "new_role": role,
+            "workspace": workspace.name if workspace else None,
+            "level": "organization" if org_change else "workspace",
+        }
+        if org_change:
+            result["workspace_role"] = (
+                RoleMapping.get_workspace_role(role).value if workspace else None
+            )
+        return self._gm.success_response(result)
 
 
 class ResendInviteAPIView(APIView):

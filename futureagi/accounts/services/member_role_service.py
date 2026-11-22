@@ -12,7 +12,7 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from tfc.constants.levels import Level
-from tfc.permissions.utils import can_invite_at_level, get_org_membership
+from tfc.permissions.utils import can_invite_at_level
 
 
 class MemberRoleUpdateError(Exception):
@@ -29,6 +29,7 @@ class MemberRoleUpdateError(Exception):
         self.status_code = status_code
 
 
+@transaction.atomic
 def update_member_role(
     *,
     organization: Organization,
@@ -47,22 +48,52 @@ def update_member_role(
 
     Returns a ``changes`` dict for audit log + response.
     """
-    try:
-        target_membership = OrganizationMembership.objects.get(
-            user_id=target_user_id,
-            organization=organization,
-        )
-    except OrganizationMembership.DoesNotExist as exc:
-        raise MemberRoleUpdateError("MEMBER_NOT_IN_ORG") from exc
+    if organization is None or actor is None or not actor.is_active:
+        raise MemberRoleUpdateError("ROLE_ASSIGN_FORBIDDEN", status_code=403)
+    memberships = {
+        str(member.user_id): member
+        for member in OrganizationMembership.no_workspace_objects.select_for_update()
+        .filter(organization=organization, user_id__in=[actor.pk, target_user_id])
+        .order_by("pk")
+    }
+    actor_membership = memberships.get(str(actor.pk))
+    target_membership = memberships.get(str(target_user_id))
+    if (
+        actor_membership is None
+        or not actor_membership.is_active
+        or not User.objects.filter(pk=actor.pk, is_active=True).exists()
+        or str(actor.pk) == str(target_user_id)
+    ):
+        raise MemberRoleUpdateError("ROLE_ASSIGN_FORBIDDEN", status_code=403)
+    if target_membership is None:
+        raise MemberRoleUpdateError("MEMBER_NOT_IN_ORG")
+    actor_level = actor_membership.level_or_legacy
+    if actor_level < Level.OWNER and actor_level <= target_membership.level_or_legacy:
+        raise MemberRoleUpdateError("ROLE_ASSIGN_FORBIDDEN", status_code=403)
+    if org_level is not None and (
+        type(org_level) is not int
+        or org_level not in dict(Level.CHOICES)
+        or not can_invite_at_level(actor_level, org_level)
+    ):
+        raise MemberRoleUpdateError("ROLE_ASSIGN_FORBIDDEN", status_code=403)
+    if ws_level is not None and workspace_id is None:
+        raise MemberRoleUpdateError("WS_NOT_IN_ORG")
 
     if not target_membership.is_active and not _has_pending_invite(
         organization, target_user_id
     ):
         raise MemberRoleUpdateError("MEMBER_DEACTIVATED_ROLE_UPDATE")
 
-    _validate_workspace_access_in_org(workspace_access, organization)
-    if ws_level is not None and workspace_id is not None:
-        _validate_workspace_in_org(workspace_id, organization)
+    _authorize_workspace_mutations(
+        organization=organization,
+        actor_membership=actor_membership,
+        target_membership=target_membership,
+        workspace_access=workspace_access or [],
+        workspace_access_provided=workspace_access_provided,
+        org_level=org_level,
+        ws_level=ws_level,
+        workspace_id=workspace_id,
+    )
 
     changes: dict[str, Any] = {}
 
@@ -74,6 +105,7 @@ def update_member_role(
                 target_user_id=target_user_id,
                 target_membership=target_membership,
                 new_level=org_level,
+                actor_level=actor_level,
                 workspace_access=workspace_access or [],
                 workspace_access_provided=workspace_access_provided,
                 ws_level=ws_level,
@@ -105,37 +137,80 @@ def _has_pending_invite(organization: Organization, target_user_id: UUID) -> boo
     ).exists()
 
 
-def _validate_workspace_access_in_org(
-    workspace_access: Optional[list[dict]], organization: Organization
-) -> None:
-    """Reject cross-org workspace_ids; without this the writes below silently
-    create a row pointing at a foreign workspace."""
-    if not workspace_access:
-        return
-    ws_ids = [
-        entry.get("workspace_id")
-        for entry in workspace_access
-        if entry.get("workspace_id")
-    ]
-    if not ws_ids:
-        return
-    valid_count = Workspace.objects.filter(
-        id__in=ws_ids, organization=organization
-    ).count()
-    if valid_count != len(set(ws_ids)):
-        raise MemberRoleUpdateError("WS_NOT_IN_ORG")
+def _authorize_workspace_mutations(
+    *,
+    organization,
+    actor_membership,
+    target_membership,
+    workspace_access,
+    workspace_access_provided,
+    org_level,
+    ws_level,
+    workspace_id,
+):
+    """Authorize every grant at the shared mutation boundary before any write."""
+    actor_level = actor_membership.level_or_legacy
+    default_level = Level.get_default_ws_level(
+        org_level if org_level is not None else target_membership.level_or_legacy
+    )
+    grants = []
+    for entry in workspace_access:
+        if not isinstance(entry, dict) or not entry.get("workspace_id"):
+            raise MemberRoleUpdateError("WS_NOT_IN_ORG")
+        grants.append((entry["workspace_id"], entry.get("level", default_level)))
+    if ws_level is not None:
+        grants.append((workspace_id, ws_level))
+    if any(
+        type(level) is not int or level not in dict(Level.WORKSPACE_CHOICES)
+        for _, level in grants
+    ):
+        raise MemberRoleUpdateError("WS_ROLE_ASSIGN_FORBIDDEN", status_code=403)
 
-
-def _validate_workspace_in_org(workspace_id: UUID, organization: Organization) -> None:
-    """Reject a direct ``workspace_id`` (the ``ws_level`` path) that is not in
-    the actor's org. Without this the ``_apply_ws_level_change`` write below
-    would silently create a membership in a foreign workspace — the same
-    privilege-boundary gap ``_validate_workspace_access_in_org`` closes for the
-    ``workspace_access`` list."""
-    if not Workspace.objects.filter(
-        id=workspace_id, organization=organization
-    ).exists():
+    # Stable locking order also protects membership edits made by other callers.
+    workspaces = {
+        str(ws.pk): ws
+        for ws in Workspace.no_workspace_objects.select_for_update()
+        .filter(organization=organization, is_active=True)
+        .order_by("pk")
+    }
+    if any(str(ws_id) not in workspaces for ws_id, _ in grants):
         raise MemberRoleUpdateError("WS_NOT_IN_ORG")
+    if actor_level >= Level.ADMIN:
+        return
+
+    memberships = list(
+        WorkspaceMembership.no_workspace_objects.select_for_update()
+        .filter(
+            user_id__in=[actor_membership.user_id, target_membership.user_id],
+            workspace_id__in=[ws.pk for ws in workspaces.values()],
+            is_active=True,
+        )
+        .order_by("pk")
+    )
+    actor_workspaces = {
+        str(member.workspace_id): member.level_or_legacy
+        for member in memberships
+        if member.user_id == actor_membership.user_id
+        and member.organization_membership_id in (None, actor_membership.pk)
+        and member.level_or_legacy >= Level.WORKSPACE_ADMIN
+    }
+    if not actor_workspaces:
+        raise MemberRoleUpdateError("WS_ROLE_ASSIGN_FORBIDDEN", status_code=403)
+    for ws_id, level in grants:
+        actor_ws_level = actor_workspaces.get(str(ws_id), 0)
+        # Match the workspace role writer: non-org-admins grant only below self.
+        if actor_ws_level < Level.WORKSPACE_ADMIN or level >= actor_ws_level:
+            raise MemberRoleUpdateError("WS_ROLE_ASSIGN_FORBIDDEN", status_code=403)
+    affected = {str(ws_id) for ws_id, _ in grants}
+    if workspace_access_provided and org_level is not None:
+        affected.update(actor_workspaces)
+    if any(
+        member.user_id == target_membership.user_id
+        and str(member.workspace_id) in affected
+        and member.level_or_legacy >= actor_workspaces.get(str(member.workspace_id), 0)
+        for member in memberships
+    ):
+        raise MemberRoleUpdateError("WS_ROLE_ASSIGN_FORBIDDEN", status_code=403)
 
 
 def _invite_workspace_access(
@@ -211,6 +286,7 @@ def _apply_org_level_change(
     target_user_id: UUID,
     target_membership: OrganizationMembership,
     new_level: int,
+    actor_level: int,
     workspace_access: list[dict],
     workspace_access_provided: bool,
     ws_level: Optional[int],
@@ -219,8 +295,6 @@ def _apply_org_level_change(
 ) -> None:
     old_level = target_membership.level_or_legacy
 
-    actor_membership = get_org_membership(actor)
-    actor_level = actor_membership.level_or_legacy if actor_membership else 0
     if not can_invite_at_level(actor_level, new_level):
         raise MemberRoleUpdateError("ROLE_ASSIGN_FORBIDDEN", status_code=403)
 
@@ -252,7 +326,10 @@ def _apply_org_level_change(
             changes=changes,
         )
 
-    User.objects.filter(id=target_user_id).update(
+    # The legacy profile role pairs with ``User.organization`` (the primary
+    # organization), and legacy paths there read it as the role in that
+    # organization. Only a change in that organization may rewrite it.
+    User.objects.filter(id=target_user_id, organization=organization).update(
         organization_role=Level.to_org_string(new_level)
     )
 
@@ -418,20 +495,28 @@ def _revocable_workspace_ids(
     - Everyone else (an org member/viewer who happens to be a workspace admin)
       may revoke only within the workspaces they themselves administer.
     """
-    actor_membership = get_org_membership(actor)
-    actor_level = actor_membership.level_or_legacy if actor_membership else 0
-    if actor_level >= Level.ADMIN:
+    actor_membership = OrganizationMembership.no_workspace_objects.filter(
+        user=actor, organization=organization, is_active=True
+    ).first()
+    if actor_membership is None:
+        return set()
+    if actor_membership.level_or_legacy >= Level.ADMIN:
         return None
 
-    memberships = WorkspaceMembership.objects.filter(
+    memberships = WorkspaceMembership.no_workspace_objects.filter(
         user=actor,
         workspace__organization=organization,
+        workspace__is_active=True,
+        workspace__deleted=False,
         is_active=True,
-    ).only("workspace_id", "level", "role")
+    ).only("workspace_id", "organization_membership_id", "level", "role")
     return {
         m.workspace_id
         for m in memberships
-        if m.level_or_legacy >= Level.WORKSPACE_ADMIN
+        # Match _authorize_workspace_mutations: a live legacy NULL link is
+        # supported, but an explicit link to another membership grants nothing.
+        if m.organization_membership_id in (None, actor_membership.pk)
+        and m.level_or_legacy >= Level.WORKSPACE_ADMIN
     }
 
 

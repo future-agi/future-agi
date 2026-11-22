@@ -45,10 +45,22 @@ def admin_user(db, organization, workspace):
         organization=organization,
         organization_role=OrganizationRoles.ADMIN,
     )
+    from accounts.models.organization_membership import OrganizationMembership
+    from tfc.constants.levels import Level
+
+    membership = OrganizationMembership.no_workspace_objects.create(
+        user=admin,
+        organization=organization,
+        role=OrganizationRoles.ADMIN,
+        level=Level.ADMIN,
+        is_active=True,
+    )
     WorkspaceMembership.no_workspace_objects.create(
         workspace=workspace,
         user=admin,
         role=OrganizationRoles.WORKSPACE_ADMIN,
+        level=Level.WORKSPACE_ADMIN,
+        organization_membership=membership,
     )
     return admin
 
@@ -64,10 +76,22 @@ def member_user(db, organization, workspace):
         organization=organization,
         organization_role=OrganizationRoles.MEMBER,
     )
+    from accounts.models.organization_membership import OrganizationMembership
+    from tfc.constants.levels import Level
+
+    membership = OrganizationMembership.no_workspace_objects.create(
+        user=member,
+        organization=organization,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=True,
+    )
     WorkspaceMembership.no_workspace_objects.create(
         workspace=workspace,
         user=member,
         role=OrganizationRoles.WORKSPACE_MEMBER,
+        level=Level.WORKSPACE_MEMBER,
+        organization_membership=membership,
     )
     return member
 
@@ -95,17 +119,25 @@ def inactive_user(db, organization, workspace, user):
 
 
 @pytest.fixture
-def admin_client(api_client, admin_user):
-    """Authenticated API client for admin user."""
-    api_client.force_authenticate(user=admin_user)
-    return api_client
+def admin_client(admin_user, workspace):
+    from conftest import WorkspaceAwareAPIClient
+
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=admin_user)
+    client.set_workspace(workspace)
+    yield client
+    client.stop_workspace_injection()
 
 
 @pytest.fixture
-def member_client(api_client, member_user):
-    """Authenticated API client for member user."""
-    api_client.force_authenticate(user=member_user)
-    return api_client
+def member_client(member_user, workspace):
+    from conftest import WorkspaceAwareAPIClient
+
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=member_user)
+    client.set_workspace(workspace)
+    yield client
+    client.stop_workspace_injection()
 
 
 @pytest.fixture
@@ -514,8 +546,8 @@ class TestUserRoleUpdateAPIView:
             status.HTTP_403_FORBIDDEN,
         ]
 
-    def test_update_role_as_member_success(self, member_client, admin_user):
-        """Member can update roles (with org-level permission)."""
+    def test_update_role_as_member_forbidden(self, member_client, admin_user):
+        """Ordinary org membership does not grant role-management authority."""
         response = member_client.post(
             "/accounts/user/role/update/",
             {
@@ -524,8 +556,8 @@ class TestUserRoleUpdateAPIView:
             },
             format="json",
         )
-        # Members with org-level MEMBER role can now update roles
-        assert response.status_code == status.HTTP_200_OK
+        # Ordinary members cannot grant or replace another user role.
+        assert response.status_code == status.HTTP_403_FORBIDDEN
 
     def test_update_role_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
