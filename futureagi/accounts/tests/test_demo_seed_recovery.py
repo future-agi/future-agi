@@ -308,7 +308,7 @@ def test_legacy_reseed_works_before_publication_table_exists(signup):
             "accounts_demotracepublication"
             not in connection.introspection.table_names()
         )
-        # 0020 explicitly uses this historical-compatible seeding path.
+        # The historical-compatible seeding path, before the publication table exists.
         assert (
             create_demo_traces_and_spans(str(user.organization_id), publish=False)
             is None

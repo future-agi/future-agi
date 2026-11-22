@@ -1,4 +1,4 @@
-import { request, type Page } from '@playwright/test';
+import { request, type APIRequestContext, type Page } from '@playwright/test';
 import { test, expect } from '../../lib/fixtures';
 import type { TestActor } from '../../lib/provisioning';
 import { sendTrace, type SeededTrace } from '../../lib/otlp';
@@ -31,11 +31,19 @@ type VoiceDetail = { status: boolean; result: VoiceRow & {
   } };
 } };
 
-async function createVoiceProject(actor: TestActor, projectName: string) {
+async function createVoiceProject(req: APIRequestContext, actor: TestActor, projectName: string) {
   // Public create shape also exercised by OBS-E2E-008; no source rewrite in SQL.
-  const body = await actor.api.post<{ result: { project_id: string; name: string } }>(PROJECT, {
-    name: projectName, model_type: 'GenerativeLLM', trace_type: 'observe', source: 'simulator',
+  // Keep the main fixture's exact create status as well as dev's identity checks.
+  const response = await req.post(E2E.apiUrl + PROJECT, {
+    headers: {
+      Authorization: `Bearer ${actor.tokens.access}`,
+      'X-Organization-Id': actor.organizationId,
+      'X-Workspace-Id': actor.workspaceId,
+    },
+    data: { name: projectName, model_type: 'GenerativeLLM', trace_type: 'observe', source: 'simulator' },
   });
+  expect(response.status()).toBe(200);
+  const body = await response.json() as { result: { project_id: string; name: string } };
   expect(body.result.name).toBe(projectName);
   expect(body.result.project_id).toMatch(/^[0-9a-f-]{36}$/);
   return body.result.project_id;
@@ -115,7 +123,7 @@ test('OBS-E2E-012: an unreachable recording shows an error, not an endless loade
   try {
     const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
     const projectName = `e2e-voice-err-${suffix}`, callId = `e2e-voice-err-call-${suffix}`;
-    const projectId = await createVoiceProject(actor, projectName);
+    const projectId = await createVoiceProject(req, actor, projectName);
     const seeded = await sendTrace(req, {
       collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey,
       projectName, rootName: `e2e.voice-call-${suffix}`,
@@ -167,7 +175,7 @@ test('OBS-E2E-013: a voice call with no recording says so', {
   try {
     const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
     const projectName = `e2e-voice-none-${suffix}`, callId = `e2e-voice-none-call-${suffix}`;
-    const projectId = await createVoiceProject(actor, projectName);
+    const projectId = await createVoiceProject(req, actor, projectName);
     const seeded = await sendTrace(req, {
       collectorUrl: E2E.collectorUrl, apiKey: actor.apiKey, secretKey: actor.secretKey,
       projectName, rootName: `e2e.voice-call-silent-${suffix}`,

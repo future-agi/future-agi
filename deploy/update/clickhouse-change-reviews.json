@@ -93,8 +93,8 @@
     },
     {
       "path": "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
-      "before_sha256": "5c59bfeebdf31fdcfe99364f086f5ddc1f305fc214ef18520a4cb2400d599748",
-      "after_sha256": "865a7b9ad1fc7370858c981d695f8ef8a92bdc99b34132287bc2f83226f1ac3a",
+      "before_sha256": "865a7b9ad1fc7370858c981d695f8ef8a92bdc99b34132287bc2f83226f1ac3a",
+      "after_sha256": "0513e7322cf9a6705a7144fe4c0fe6bf4adc0f8ad764481c4acb1be53b580226",
       "declaration": {
         "schema_version": 1,
         "risk_classes": [
@@ -175,8 +175,8 @@
           "clickhouse:tracer_trace",
           "clickhouse:traces"
         ],
-        "mitigation": "Pure SQL transformation; the caller submits DDL and records the original file hash per topology. The new branch adds ON CLUSTER once at the ordinary view declaration, leaves the SELECT unchanged, and does not rewrite its engine. It changes the packaged derived_metrics view on the selected cluster, not its backing rows. Existing table/projection transforms retain their prior potentially rewriting DDL. Restore the prior view on every replica or restore the failed transition's backup; reverting code alone does not undo executed DDL.",
-        "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "mitigation": "Merge of main into dev: adds main's reviewed dictionary handling (#4162) to dev's rewriter. Replicated mode now appends ON CLUSTER to CREATE [OR REPLACE] DICTIONARY [IF NOT EXISTS] as well as to ordinary views, tables, MVs and ALTER TABLE; no other rewrite changes. Dev side: Pure SQL transformation; the caller submits DDL and records the original file hash per topology. The new branch adds ON CLUSTER once at the ordinary view declaration, leaves the SELECT unchanged, and does not rewrite its engine. It changes the packaged derived_metrics view on the selected cluster, not its backing rows. Existing table/projection transforms retain their prior potentially rewriting DDL. Restore the prior view on every replica or restore the failed transition's backup; reverting code alone does not undo executed DDL. Main side: Replicated-mode rewriter now appends ON CLUSTER to CREATE [OR REPLACE] DICTIONARY [IF NOT EXISTS], with the same object-name grammar as tables and MVs. Table, MV and ALTER handling is unchanged. Affects only dictionary DDL over traces, end_users and trace_sessions (read by spans via dictGet). Exercised with 028 on two-replica production-chart rehearsals (17 and 18 Nov).",
+        "review": "https://github.com/future-agi/future-agi/pull/4162#discussion_r4608730344",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
@@ -199,6 +199,27 @@
         ],
         "mitigation": "Add status and config_hash to direct-write eval rows using ADD COLUMN IF NOT EXISTS, then create three metric stores and the committed-only ordinary view with IF NOT EXISTS. No SQL backfill or deletion; existing eval reads see defaults where columns were absent. A partial apply can be replayed after shape checks. Keep additive objects on code rollback; restore the sealed snapshot for exact pre-update state.",
         "review": "https://github.com/future-agi/future-agi/pull/3588#discussion_r4642126126",
+        "reviewer": "nik13",
+        "large_volume_rehearsal": true
+      }
+    },
+    {
+      "path": "futureagi/tracer/services/clickhouse/v2/schema/028_reconcile_metadata_dictionaries.sql",
+      "before_sha256": null,
+      "after_sha256": "4fa7df992ce443f48b762fc32a92deeb72462dbf5e95b3cb300f0eda2b40defc",
+      "declaration": {
+        "schema_version": 1,
+        "risk_classes": [
+          "clickhouse_change"
+        ],
+        "tables": [
+          "clickhouse:traces",
+          "clickhouse:end_users",
+          "clickhouse:trace_sessions",
+          "clickhouse:spans"
+        ],
+        "mitigation": "Forward-only metadata repair. CREATE OR REPLACE DICTIONARY for trace_dict, end_users_dict and trace_sessions_dict, byte-identical to 015/017/018, runs ON CLUSTER through the fixed rewriter so every replica holds the dictionaries. No source table is altered, rewritten or replayed; each replica loads the dictionary the way the first replica already does. Rollback: the identical earlier definitions. Exercised on two-replica production-chart rehearsals (17 and 18 Nov).",
+        "review": "https://github.com/future-agi/future-agi/pull/4162#discussion_r4608730337",
         "reviewer": "nik13",
         "large_volume_rehearsal": true
       }
