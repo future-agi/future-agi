@@ -68,6 +68,7 @@ def recorded_steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         "clickhouse_native_schema",
         lambda log, timeout: steps.append(f"clickhouse {timeout}"),
     )
+    monkeypatch.setattr(command, "metrics_schema", lambda log: steps.append("metrics"))
     monkeypatch.setattr(
         command, "property_catalog", lambda log: steps.append("catalog")
     )
@@ -96,6 +97,7 @@ def test_runs_every_step_in_order(local_operator, recorded_steps) -> None:
         "wait Temporal",
         "migrate",
         "clickhouse 321",
+        "metrics",
         "catalog",
         "search attributes",
         "cdc",
@@ -266,6 +268,27 @@ def test_clickhouse_native_schema_failure_is_fatal(
         command.clickhouse_native_schema(lambda _: None, 42)
 
     assert seen == [["--phase", "native", "--apply", "--timeout", "42"]]
+
+
+def test_metrics_schema_applies_and_a_failure_is_fatal_with_a_way_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tracer.services.derived_metrics import schema_install
+
+    seen: list[list[str]] = []
+    exits = [0, 2]
+    monkeypatch.setattr(
+        schema_install, "main", lambda argv: seen.append(argv) or exits.pop(0)
+    )
+    logged: list[str] = []
+
+    command.metrics_schema(logged.append)
+    assert logged[0] == "Metrics schema ..."
+    assert logged[1].startswith("Metrics schema done in ")
+    with pytest.raises(command.BootstrapError, match="METRICS_ENABLED=0"):
+        command.metrics_schema(logged.append)
+
+    assert seen == [["--apply"], ["--apply"]]
 
 
 def test_wait_tcp_gives_up_with_an_actionable_message(

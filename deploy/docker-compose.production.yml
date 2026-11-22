@@ -70,6 +70,13 @@ services:
       <<: *production-backend-env
     command: ["--phase", "cdc", "--wait-for-mirrors", "--timeout", "900"]
 
+  # Read-only: with METRICS_ENABLED on, fails until deploy/README.md step 6 ran.
+  metrics-schema-bootstrap:
+    image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
+    environment:
+      <<: *production-backend-env
+    command: ["--check"]
+
   backend:
     image: futureagi/future-agi:${FUTURE_AGI_VERSION:?must be set for production}
     environment:

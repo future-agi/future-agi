@@ -38,7 +38,7 @@ from tracer.serializers.derived_metric import (
     DerivedMetricValidationSerializer,
     DerivedMetricWriteSerializer,
 )
-from tracer.services.derived_metrics import reads, service
+from tracer.services.derived_metrics import reads, schema_install, service
 from tracer.services.derived_metrics.contributors import read_contributors
 from tracer.services.derived_metrics.cursor import newest_first_page
 from tracer.services.derived_metrics.errors import MetricBusyError, MetricInputError
@@ -104,13 +104,31 @@ def _metric_error(code, message, *, status_code, retryable, **extra):
     )
 
 
+def _require_metric_schema():
+    """Enabled without its ClickHouse schema, Metrics refuses every action with
+    one stable code instead of reporting "recalculating" forever. The probe is
+    a guard, not a new dependency: when it cannot reach ClickHouse the request
+    goes on and its own storage reads report the failure."""
+    try:
+        schema_install.ensure_installed()
+    except schema_install.MetricSchemaNotInstalled as exc:
+        raise service.MetricUnavailableError(exc.code, str(exc)) from None
+    except Exception as exc:
+        # Driver messages can carry connection details; the type is enough.
+        structlog.get_logger(__name__).warning(
+            "metric_schema_probe_failed", error_type=type(exc).__name__
+        )
+
+
 class MetricViewSet(viewsets.GenericViewSet):
     def initial(self, request, *args, **kwargs):
         # Hide every recipe/run action, including OPTIONS, before permissions,
         # validation, or storage work. Enabling leaves normal auth/RBAC intact.
         if not metrics_enabled(org=getattr(request, "organization", None)):
             raise Http404
-        return super().initial(request, *args, **kwargs)
+        result = super().initial(request, *args, **kwargs)
+        _require_metric_schema()
+        return result
 
     def handle_exception(self, exc):
         if isinstance(exc, service.MetricUnavailableError):

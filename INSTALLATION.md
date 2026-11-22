@@ -869,8 +869,10 @@ Image by image (ports, users, health checks, sizes): [Container images](https://
 | `peerdb-*` (7 containers)                                | Postgres → ClickHouse change data capture.                                                                                                                                                                                                                                                                                                                                                 |
 
 The one-shot jobs (`postgres-schema-bootstrap`, `clickhouse-native-bootstrap`,
-`clickhouse-cdc-bootstrap`, `peerdb-temporal-init`, `peerdb-init` and four for
-the catalog) set up the schema, the mirrors and the catalog, then exit.
+`clickhouse-cdc-bootstrap`, `metrics-schema-bootstrap`, `peerdb-temporal-init`,
+`peerdb-init` and four for the catalog) set up the schema, the mirrors and the
+catalog, then exit. `metrics-schema-bootstrap` changes nothing unless
+`METRICS_ENABLED=1` is set in `.env`.
 
 ---
 

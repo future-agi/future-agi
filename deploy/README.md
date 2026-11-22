@@ -74,8 +74,8 @@ migrations, native ClickHouse objects, the two isolated observed indexes and the
 reader/writer grants, and compatible PeerDB namespace/peers/mirrors. All source and
 native database routing must match. See [the native bootstrap contract](../fi-collector/PROPERTY_CATALOG_OSS.md).
 
-The overlay runs `migrate --check --noinput`, observed-index `--check`, and native/
-CDC/PeerDB checks without `--apply`. Missing or incompatible state must block boot;
+The overlay runs `migrate --check --noinput`, observed-index `--check`, the Metrics
+schema `--check`, and native/CDC/PeerDB checks without `--apply`. Missing or incompatible state must block boot;
 a compatible in-progress snapshot has a bounded readiness wait. Neither setup nor
 this guide runs initialization, replaces mirrors, rewrites sources, or grants
 migration authority. Do not remove these guards or run the mutating root-only
@@ -136,6 +136,13 @@ $COMPOSE run --rm \
   -e CLICKHOUSE_PASSWORD=<clickhouse admin password> \
   --entrypoint /bin/sh property-catalog-clickhouse-bootstrap \
   /bootstrap/bootstrap_clickhouse.sh
+
+# 6. The Metrics ClickHouse schema (packaged files 009, 011 and 028-038).
+#    Only while METRICS_ENABLED=1; with it off this exits without a change.
+#    Run it again whenever you turn Metrics on: the overlay's --check then
+#    blocks the backend and workers until the schema exists. Each file has a
+#    receipt, so a rerun applies only what is missing.
+$COMPOSE run --rm metrics-schema-bootstrap --apply
 ```
 
 The writer and reader passwords this step installs come from
@@ -648,7 +655,8 @@ git fetch --tags && git checkout vX.Y.Z
 $COMPOSE pull
 # run the release's initialization jobs: the commands of "Performing that
 # initialization" above that its release notes call for (every release with
-# database migrations needs step 1); `run --rm` starts nothing else
+# database migrations needs step 1, and step 6 is a no-op unless
+# METRICS_ENABLED=1); `run --rm` starts nothing else
 $COMPOSE up -d --no-build --wait --wait-timeout 1200
 ```
 

@@ -49,6 +49,8 @@ INDEX_BOOTSTRAP = "property-catalog-clickhouse-bootstrap"
 INSTALLER = "tracer.services.clickhouse.oss_cdc_install"
 PEERDB_SETUP = "tracer.services.clickhouse.oss_cdc_setup"
 TEMPORAL_SETUP = "tracer.services.clickhouse.oss_peerdb_temporal"
+METRICS_BOOTSTRAP = "metrics-schema-bootstrap"
+METRICS_SCHEMA = "tracer.services.derived_metrics.schema_install"
 RUNTIMES = (
     "backend",
     "worker",
@@ -221,6 +223,29 @@ class StartupComposeContractTests(unittest.TestCase):
                 self.assertLess(timeout_index, len(cdc_command))
                 self.assertGreater(int(cdc_command[timeout_index]), 0)
 
+    def test_metrics_schema_job_applies_after_cdc_only_in_root_and_e2e(self):
+        for variant in OVERLAYS:
+            with self.subTest(variant=variant):
+                services = render(variant)
+                job = services[METRICS_BOOTSTRAP]
+                self.assert_python_job(job, ["python", "-m", METRICS_SCHEMA])
+                self.assertEqual(job["image"], services["backend"]["image"])
+                self.assertEqual(
+                    argv(job)[3:],
+                    ["--apply"] if variant in ("root", "e2e") else ["--check"],
+                )
+                self.assert_gate(
+                    services,
+                    METRICS_BOOTSTRAP,
+                    self.phase_job(services, "cdc"),
+                    "service_completed_successfully",
+                )
+                # METRICS_ENABLED reaches it from .env like the backend; the E2E
+                # stack sets it on the job instead.
+                if variant == "e2e":
+                    self.assertEqual(job["environment"].get("METRICS_ENABLED"), "1")
+                self.assertEqual(job.get("restart"), "no")
+
     def test_native_peerdb_and_cdc_dependency_conditions(self):
         for variant in OVERLAYS:
             with self.subTest(variant=variant):
@@ -344,7 +369,12 @@ class StartupComposeContractTests(unittest.TestCase):
                     },
                 )
                 backend = services["backend"]["environment"]
-                jobs = [PG_BOOTSTRAP, "peerdb-init", "peerdb-temporal-init"]
+                jobs = [
+                    PG_BOOTSTRAP,
+                    "peerdb-init",
+                    "peerdb-temporal-init",
+                    METRICS_BOOTSTRAP,
+                ]
                 jobs.extend(
                     self.phase_job(services, phase) for phase in ("native", "cdc")
                 )
@@ -367,7 +397,7 @@ class StartupComposeContractTests(unittest.TestCase):
                 services = render(variant, full=True)
                 cdc = self.phase_job(services, "cdc")
                 for runtime in RUNTIMES:
-                    for dependency in (cdc, INDEX_BOOTSTRAP):
+                    for dependency in (cdc, INDEX_BOOTSTRAP, METRICS_BOOTSTRAP):
                         self.assert_gate(
                             services,
                             runtime,
@@ -424,7 +454,12 @@ class StartupComposeContractTests(unittest.TestCase):
                     argv(postgres),
                     ["python", "manage.py", "migrate", "--check", "--noinput"],
                 )
-                jobs = [PG_BOOTSTRAP, "peerdb-init", "peerdb-temporal-init"]
+                jobs = [
+                    PG_BOOTSTRAP,
+                    "peerdb-init",
+                    "peerdb-temporal-init",
+                    METRICS_BOOTSTRAP,
+                ]
                 jobs.extend(
                     self.phase_job(services, phase) for phase in ("native", "cdc")
                 )
@@ -468,7 +503,7 @@ class StartupComposeContractTests(unittest.TestCase):
             "MINIO_ROOT_PASSWORD",
         )
         services = render("production", full=True, overrides=OPERATOR_OVERRIDES)
-        jobs = [PG_BOOTSTRAP, "peerdb-init", "peerdb-temporal-init"]
+        jobs = [PG_BOOTSTRAP, "peerdb-init", "peerdb-temporal-init", METRICS_BOOTSTRAP]
         jobs.extend(self.phase_job(services, phase) for phase in ("native", "cdc"))
         for name in (*RUNTIMES, *jobs):
             with self.subTest(service=name):

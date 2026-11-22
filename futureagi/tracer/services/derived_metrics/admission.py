@@ -65,6 +65,10 @@ from tracer.services.derived_metrics.lease import (
 )
 from tracer.services.derived_metrics.refresh import RefreshWriter
 from tracer.services.derived_metrics.retention import expiry_interval
+from tracer.services.derived_metrics.schema_install import (
+    MetricSchemaNotInstalled,
+    ensure_installed,
+)
 from tracer.services.private_boundary_log import PrivateBoundaryLogger
 
 private_logger = PrivateBoundaryLogger(__name__)
@@ -463,7 +467,11 @@ def request_refresh(project_id: UUID, *, clock: Callable = timezone.now) -> bool
 
 def record_failure(reservation: Reservation, *, now: datetime, code: str) -> None:
     # Only fixed internal codes, never exception messages or private payloads.
-    if code not in {"metric_dispatch_failed", "metric_refresh_failed"}:
+    if code not in {
+        "metric_dispatch_failed",
+        "metric_refresh_failed",
+        MetricSchemaNotInstalled.code,
+    }:
         raise ValueError("unsupported metric failure code")
     grant = reservation.grant
     fenced = MetricProjectRefresh.objects.filter(
@@ -721,6 +729,14 @@ def execute_reservation(
             return False
         except MetricFencingError:
             return False
+        except MetricSchemaNotInstalled:
+            # Checked before any attempt is prepared: a stable, named failure
+            # rather than a refresh that never publishes.
+            if claimed:
+                record_failure(
+                    reservation, now=clock(), code=MetricSchemaNotInstalled.code
+                )
+            raise
         except Exception:
             if claimed:
                 record_failure(reservation, now=clock(), code="metric_refresh_failed")
@@ -863,6 +879,9 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
         send_receive_timeout=60,
     )
     try:
+        # Before the due hint or any attempt: without the Metrics schema a
+        # refresh would prepare an attempt it can never publish.
+        ensure_installed(client.execute)
         store = ClickHousePublicationStore(client, lease=lease)
         writer = _ScheduledRefreshWriter(
             lease,
