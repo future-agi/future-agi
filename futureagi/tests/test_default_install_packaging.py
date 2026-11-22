@@ -748,7 +748,7 @@ def test_start_gives_the_ui_the_api_on_backend_port(tmp_path, env, expected) -> 
 
 def test_app_urls_have_working_defaults_in_both_setups() -> None:
     """APP_URL builds invite and reset links (unset: 'None/...');
-    FI_COLLECTOR_PUBLIC_URL is the FI_BASE_URL the UI tells SDKs to use."""
+    FI_COLLECTOR_PUBLIC_URL is the FI_TRACES_URL the UI tells SDKs to use."""
     public_url = (
         "${FI_COLLECTOR_PUBLIC_URL:-http://localhost:"
         "${FI_COLLECTOR_OTLP_HTTP_PORT:-4318}}"

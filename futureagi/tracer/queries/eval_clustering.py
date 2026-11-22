@@ -266,11 +266,17 @@ def get_unclustered_eval_results(
     # session→project. ``trace_id`` / ``trace_session_id`` are read below from the
     # eval row's own FK columns (no join). Targets still never co-cluster: the
     # centroid family is keyed by (target_type, eval_name) downstream.
-    evals = EvalLogger.objects.filter(
-        _FAILING_EVAL_Q,
-        custom_eval_config__project_id=project_id,
-        created_at__gte=since,
-    ).select_related("custom_eval_config", "custom_eval_config__eval_template")
+    # Primary: the anti-membership subquery below must see the junction rows
+    # the previous drain batch just wrote, or the batch re-clusters them.
+    evals = (
+        EvalLogger.objects.using("default")
+        .filter(
+            _FAILING_EVAL_Q,
+            custom_eval_config__project_id=project_id,
+            created_at__gte=since,
+        )
+        .select_related("custom_eval_config", "custom_eval_config__eval_template")
+    )
     # Instant eval answers never cluster, even when a regular eval's failure
     # starts the drain.
     instant_task_ids = _instant_eval_task_ids()

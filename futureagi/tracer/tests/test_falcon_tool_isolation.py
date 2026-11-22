@@ -239,6 +239,65 @@ def test_failed_stream_after_scoring_does_not_publish_completion(
 
 
 @pytest.mark.django_db(transaction=True)
+def test_queued_activity_keeps_scored_interruption_failed_in_feed(project, monkeypatch):
+    from ai_tools.registry import registry
+    from ee.usage.deployment import DeploymentMode
+    from tracer.models.trace_error_analysis import ErrorClusterTraces
+    from tracer.queries import deep_analysis_state, feed
+    from tracer.queries.error_analysis import TraceErrorAnalysisDB
+    from tracer.tasks.error_analysis import (
+        analyze_traces_on_demand,
+        cluster_project_errors,
+    )
+    from tracer.tests.test_error_analysis import make_feed_group
+
+    trace_id, project_id = str(uuid.uuid4()), str(project.id)
+    group = make_feed_group(project, "queued-score")
+    ErrorClusterTraces.objects.create(cluster=group, trace_id=trace_id)
+    reader = install_reader(monkeypatch, project, trace_id)
+    monkeypatch.setattr(DeploymentMode, "is_oss", staticmethod(lambda: False))
+    install_tool_stream(
+        monkeypatch, "submit_trace_scores", score_params(trace_id), fail_after_tool=True
+    )
+    queued, cluster, ingest, clickhouse = Mock(), Mock(), Mock(), Mock()
+    monkeypatch.setattr(analyze_traces_on_demand, "delay", queued)
+    monkeypatch.setattr(cluster_project_errors, "delay", cluster)
+    monkeypatch.setattr(TraceErrorAnalysisDB, "ingest_trace_error_embeddings", ingest)
+    monkeypatch.setattr("tracer.services.clickhouse.client.ClickHouseClient", clickhouse)
+
+    context = ToolContext(
+        user=project.workspace.created_by,
+        organization=project.organization,
+        workspace=project.workspace,
+    )
+    try:
+        result = registry.get("analyze_project_traces").run(
+            {"project_id": project_id, "trace_ids": [trace_id]}, context
+        )
+        assert not result.is_error, result.content
+        queued.assert_called_once_with(project_id, [trace_id])
+        assert deep_analysis_state.is_running(trace_id, project_id=project_id)
+
+        # Deliver exactly what the dispatch tool queued to the real threaded activity.
+        analyze_traces_on_demand(*queued.call_args.args)
+
+        saved = TraceErrorAnalysis.objects.get(trace_id=trace_id, project=project)
+        assert saved.overall_score == 2.0  # The tool actually ran before the interruption.
+        status = feed.get_deep_analysis(group.cluster_id, trace_id, [project_id])
+        assert status.status == "failed"
+        assert not deep_analysis_state.is_running(trace_id, project_id=project_id)
+        assert not status.recommendations
+        assert reader.root_ids_by_trace_ids.call_count == 2  # Dispatch and score lookup.
+        for lookup in reader.root_ids_by_trace_ids.call_args_list:
+            assert lookup.kwargs["project_ids"] == [project_id]
+        ingest.assert_not_called()
+        cluster.assert_not_called()
+        clickhouse.return_value.insert.assert_not_called()
+    finally:
+        deep_analysis_state.clear(trace_id, project_id=project_id)
+
+
+@pytest.mark.django_db(transaction=True)
 def test_background_cannot_invoke_unscoped_registry_tools(
     project, falcon_boundaries, monkeypatch
 ):
@@ -247,12 +306,19 @@ def test_background_cannot_invoke_unscoped_registry_tools(
     tool = registry.get("analyze_project_traces")
     execute = Mock()
     monkeypatch.setattr(tool, "execute", execute)
-    install_tool_stream(
+    calls = install_tool_stream(
         monkeypatch, "analyze_project_traces", {"project_id": str(project.id)}
     )
 
-    _falcon_analyze_single_trace(str(uuid.uuid4()), str(project.id))
+    result = _falcon_analyze_single_trace(str(uuid.uuid4()), str(project.id))
 
+    assert result["success"] is True
+    assert len(calls) == 2
+    assert any(
+        message.get("role") == "tool"
+        and "Tool 'analyze_project_traces' not found" in message["content"]
+        for message in calls[1]
+    )
     execute.assert_not_called()
 
 

@@ -351,12 +351,13 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         "scenario-b",
     ]
     assert detail.json()["overview"]["runs_count"] == 2
-    latest_run = environment.simulation_runs.filter(deleted=False).order_by(
-        "-created_at", "-id"
-    ).first()
-    assert (
-        detail.json()["overview"]["run"]["test_execution_id"]
-        == str(latest_run.test_execution_id)
+    latest_run = (
+        environment.simulation_runs.filter(deleted=False)
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    assert detail.json()["overview"]["run"]["test_execution_id"] == str(
+        latest_run.test_execution_id
     )
     assert detail.json()["overview"]["run"]["simulation_url"].endswith(
         f"/runs/{environment.run_test_id}/{latest_run.test_execution_id}"
@@ -382,7 +383,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         assert failed_dispatch.status_code == 503
         child = environment.simulation_runs.get(scenario_count=2)
         assert child.state == HostedHarnessJob.State.FAILED
-        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.FAILED
+        assert (
+            child.test_execution.status
+            == SimulationTestExecution.ExecutionStatus.FAILED
+        )
 
         start.side_effect = None
         response = client.post(
@@ -402,7 +406,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         child.refresh_from_db()
         child.test_execution.refresh_from_db()
         assert child.state == HostedHarnessJob.State.QUEUED
-        assert child.test_execution.status == SimulationTestExecution.ExecutionStatus.PENDING
+        assert (
+            child.test_execution.status
+            == SimulationTestExecution.ExecutionStatus.PENDING
+        )
 
         duplicate = client.post(
             f"/simulate/api/harness-environments/{environment.id}/run/",
@@ -413,7 +420,10 @@ def test_selected_run_creates_independent_scenario_trials_and_preserves_history(
         )
         assert duplicate.status_code == 202
         assert duplicate.json()["job_id"] == response.json()["job_id"]
-        assert duplicate.json()["test_execution_id"] == response.json()["test_execution_id"]
+        assert (
+            duplicate.json()["test_execution_id"]
+            == response.json()["test_execution_id"]
+        )
         assert start.call_count == 2
     for payload in (
         {"scenario_ids": [], "trials": 1},
@@ -665,6 +675,7 @@ def test_daytona_preflight_rejects_known_egress_overflow(settings):
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
     request = SimpleNamespace(
         validated_data=_v1_payload(),
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -681,6 +692,7 @@ def test_daytona_preflight_requires_only_the_provider_the_source_uses(settings):
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -726,6 +738,7 @@ def test_daytona_preflight_leaves_credentials_optional_when_source_is_unclassifi
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -762,6 +775,7 @@ def test_daytona_preflight_requires_detected_vertex_credential_file(settings):
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -916,6 +930,7 @@ def test_preflight_rejects_unknown_provider_target_before_run(settings):
     payload["credential_values"] = {"RETELL_API_KEY": "valid-key"}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
     failed_target = SimpleNamespace(
@@ -1065,6 +1080,7 @@ def test_sandbox_flatten_maps_github_source():
                 "repository": "acme/agent",
                 "ref": "main",
                 "commit_sha": "a" * 40,
+                "subfolder": "agents/support",
                 "visibility": "public",
             },
             "agent": {
@@ -1080,12 +1096,26 @@ def test_sandbox_flatten_maps_github_source():
     assert flat["github_repository"] == "acme/agent"
     assert flat["github_ref"] == "main"
     assert flat["github_commit_sha"] == "a" * 40
+    assert flat["github_subfolder"] == "agents/support"
+    assert flat["metadata"] == {"k": "v", "generic_harness_v1": True}
     assert flat["github_visibility"] == "public"
     assert flat["connector"] == "livekit"
     assert flat["connector_config"] == {"room": "r1"}
     assert flat["scenario_count"] == 7
     assert flat["seed"] == 42
     assert "source_path" not in flat and "source_id" not in flat
+
+
+def test_sandbox_flatten_asks_for_the_generic_harness_only_with_a_subfolder():
+    flat = SandboxHarnessProvider._flatten_source(
+        {
+            "source": {"kind": "github", "repository": "acme/agent"},
+            "agent": {"connector": "auto"},
+            "metadata": {"k": "v"},
+        }
+    )
+    assert "github_subfolder" not in flat
+    assert flat["metadata"] == {"k": "v"}
 
 
 def test_sandbox_flatten_maps_archive_source():
@@ -1497,6 +1527,7 @@ def test_daytona_preflight_source_failure_keeps_status_and_reports_check(setting
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
     clone_failed = HostedHarnessError(
@@ -1529,6 +1560,7 @@ def test_daytona_preflight_lists_six_checks_in_order(settings):
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 

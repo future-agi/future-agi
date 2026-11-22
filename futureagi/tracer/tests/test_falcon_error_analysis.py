@@ -29,9 +29,11 @@ def test_falcon_analysis_runs_agent_and_records_clean_result(project, monkeypatc
         instructions=instructions,
     )
     streamed_messages = []
+    advertised_tools = []
 
     async def stream_completion(self, messages, tools=None):
         streamed_messages.append(messages)
+        advertised_tools.append({tool["function"]["name"] for tool in tools or []})
         yield {
             "choices": [
                 {
@@ -44,7 +46,8 @@ def test_falcon_analysis_runs_agent_and_records_clean_result(project, monkeypatc
 
     monkeypatch.setattr(DeploymentMode, "is_oss", staticmethod(lambda: False))
     monkeypatch.setattr(FalconLLMClient, "stream_completion", stream_completion)
-    monkeypatch.setattr(AgentLoop, "_load_mcp_tools", AsyncMock(return_value=[]))
+    discover = AsyncMock(return_value=[])
+    monkeypatch.setattr(AgentLoop, "_load_mcp_tools", discover)
     clear = Mock()
     failed = Mock()
     monkeypatch.setattr("tracer.queries.deep_analysis_state.clear", clear)
@@ -58,6 +61,16 @@ def test_falcon_analysis_runs_agent_and_records_clean_result(project, monkeypatc
 
     assert result == {"success": True, "trace_id": trace_id, "error_count": 0}
     assert len(streamed_messages) == 1
+    discover.assert_not_called()
+    assert advertised_tools == [
+        {
+            "explore_trace",
+            "explore_trace_legacy",
+            "read_trace_span",
+            "submit_trace_finding",
+            "submit_trace_scores",
+        }
+    ]
     assert instructions in streamed_messages[0][0]["content"]
     assert (
         streamed_messages[0][-1]["content"] == f"Analyze trace {trace_id} for errors."

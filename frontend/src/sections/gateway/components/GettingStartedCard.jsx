@@ -110,7 +110,7 @@ const GettingStartedCard = ({ completionState, onDismiss }) => {
               <Typography
                 sx={{
                   flex: 1,
-                  fontSize: 13,
+                  fontSize: 12,
                   color: done ? "text.disabled" : "text.primary",
                 }}
               >

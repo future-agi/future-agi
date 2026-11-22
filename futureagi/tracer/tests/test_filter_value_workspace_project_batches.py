@@ -96,11 +96,21 @@ def _request(params):
     )
 
 
+RETAINED_SPAN_AGE = timedelta(days=3)
+
+
 def _install_scope_and_seen_state(monkeypatch, projects: _ProjectQuery):
     monkeypatch.setattr(
         dashboard_view,
         "project_queryset_for_request",
         lambda _request: projects._clone(),
+    )
+    # The span_system lane bounds a first workspace page at the retained
+    # spans boundary (ClickHouse part metadata); keep these tests storage-free.
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector,
+        "retained_window_start",
+        lambda _self, _project_ids, *, window_end: window_end - RETAINED_SPAN_AGE,
     )
     monkeypatch.setattr(
         dashboard_view,
@@ -1124,3 +1134,86 @@ def test_workspace_categorical_annotation_uses_only_configured_values(monkeypatc
     assert result["query_complete"] is True
     assert result["browse_status"] == "exhausted"
     assert result["has_more"] is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("retained_age", "expected_age"),
+    [
+        (RETAINED_SPAN_AGE, RETAINED_SPAN_AGE),
+        # No active span part before the window: an empty interval, not 1970.
+        (None, timedelta(microseconds=1)),
+    ],
+)
+def test_workspace_span_system_walk_starts_at_retained_span_boundary(
+    monkeypatch, retained_age, expected_age
+):
+    """A workspace Project picker must not walk empty slices back to 1970.
+
+    The fixed-scope lane already starts at the retained-data boundary; the
+    batched workspace lane used the Unix epoch, which made the picker issue
+    dozens of sequential empty continuation requests per chain.
+    """
+
+    project_ids = [_uuid(index) for index in range(1, 3)]
+    projects = _ProjectQuery(project_ids, [])
+    _install_scope_and_seen_state(monkeypatch, projects)
+    monkeypatch.setattr(
+        dashboard_view.AttributeReadSelector,
+        "retained_window_start",
+        lambda _self, _project_ids, *, window_end: (
+            None if retained_age is None else window_end - retained_age
+        ),
+    )
+    monkeypatch.setattr(dashboard_view, "V2AnalyticsQueryService", object)
+    windows = []
+
+    def read_page(_analytics, **kwargs):
+        windows.append((kwargs["window_start"], kwargs["window_end"]))
+        return FilterValueCursorPageRead(
+            (),
+            kwargs["window_start"],
+            kwargs["window_end"],
+            True,
+            kwargs["window_end"] - timedelta(minutes=5),
+            None,
+            None,
+            (),
+            "continuation",
+        )
+
+    monkeypatch.setattr(
+        dashboard_view,
+        "read_span_system_filter_value_cursor_page",
+        read_page,
+    )
+    monkeypatch.setattr(
+        dashboard_view,
+        "Project",
+        SimpleNamespace(
+            objects=SimpleNamespace(
+                filter=lambda **_kwargs: SimpleNamespace(values_list=lambda *_args: [])
+            )
+        ),
+    )
+    params = {
+        "metric_name": "project",
+        "metric_type": "system_metric",
+        "source": "traces",
+        "project_ids": [],
+        "search": "",
+        "page_size": 10,
+    }
+
+    first = _result(_invoke(params))
+    if retained_age is not None:
+        assert first["next_cursor"]
+        _result(_invoke({**params, "cursor": first["next_cursor"]}))
+        assert len(windows) == 2
+
+    assert windows
+    start, end = windows[0]
+    assert start > datetime(1971, 1, 1, tzinfo=UTC)
+    assert end - start == expected_age
+    # The continuation resumes the frozen window from the signed cursor.
+    assert all(window == windows[0] for window in windows)

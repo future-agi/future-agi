@@ -12,5 +12,5 @@ __all__ = [
     "Loader",
     "BaseLoader",
     "LoadFormat",
-    "JsonLoader"
+    "JsonLoader",
 ]

@@ -789,7 +789,7 @@ const PathAnalysisView = ({
                 letterSpacing: 0,
               }}
             >
-              Falcon analysis
+              AI analysis
             </Typography>
           </Stack>
           <Typography

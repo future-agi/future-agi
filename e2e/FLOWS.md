@@ -230,6 +230,55 @@
 - public soft deletion excludes retained predicates without changing source spans
 - sibling project, owner B organization and owner A explicit other workspace cannot read target Scores/catalog/results
 
+### ANNOT-E2E-005 — queue members drill into disagreements and recover from unavailable items
+
+**Goal:** A queue member opens the exact disagreed item in the appropriate workspace and can recover when that item is unavailable
+
+**Spec:** `flows/annotations/agreement-drilldown.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed synthetic dataset rows, numeric labels and four non-admin queue roles through public APIs
+2. read zero, three and twenty-five disagreements; open the exact capped list with five more
+3. use keyboard open, traversal, Escape and Enter to inspect the exact item in each role
+4. read a long label in light and dark without horizontal overflow
+5. open an unassigned and a deleted item, read a persistent explanation and return to the queue
+6. resolve disagreements, then remove a label and delete its synthetic scores; reconnect after each real stale interval and see the popup close
+
+**Backend state verified:**
+
+- four non-admin viewer_roles and real agreement responses match the seeded 0/3/25 conflicts and capped item sets
+- each role opens the exact source row and permitted score authors in review or annotate mode
+- unassigned and deleted item navigation returns real 403 and 404 while the UI offers persistent queue recovery
+- score corrections resolve disagreements; label removal retains historical agreement until all 54 synthetic label scores are deleted, then refetch closes the already-open popup
+
+### ANNOT-E2E-007 — queue managers widen item data columns while selection and actions stay fixed
+
+**Goal:** A queue manager widens the data columns of a queue's item list to read them, while the selection and row-action columns stay fixed and selecting an item or backing out of removal leaves the queue item and its source row untouched
+
+**Spec:** `flows/annotations/queue-items-column-resize.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a numeric label, a one-row synthetic dataset with a minted cell, an active manual queue and one dataset-row item through public APIs
+2. open the queue item list at 1440x900 and wait for the seeded row
+3. see resize handles on Preview and Source but not on selection or Actions, which measure 44 and 60 px
+4. drag the Preview and Source header edges wider; column order and the fixed columns stay unchanged
+5. tick and untick the seeded row and see Remove Selected (1) appear and go
+6. open Remove item on the row, cancel the dialog and still see the row with 1 of 1 items
+7. reload and see the seeded row still listed
+
+**Backend state verified:**
+
+- PG model_hub_queueitem row is unchanged after select, remove-cancel and reload: not deleted, same queue, dataset row, status and updated_at
+- PG model_hub_row and model_hub_cell keep the seeded order, minted value, deleted=false and updated_at
+- items API the grid calls returns exactly the seeded item with its dataset_row preview, and the grid Preview cell reads that exact text
+- the browser sends no DELETE for the item and no POST to items/bulk-remove/
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password
@@ -323,6 +372,29 @@
 - the fresh user organization has both demo datasets and both demo projects, each with one trace, one session and 35 linked spans in PostgreSQL
 - ClickHouse has the same trace, session and span identities for both projects, without depending on legacy span CDC
 
+### AUTH-E2E-005 — Google sign-in accepts only verified identities including rotated keys
+
+**Goal:** An existing user signs in with Google only when Google supplies a valid identity, including after signing-key rotation
+
+**Spec:** `flows/auth/google-signin.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision one uniquely named synthetic account
+2. click Continue with Google on the real login page
+3. authorize the identity at the owned mock provider
+4. see the authenticated dataset dashboard for a valid identity
+5. see login refusal for invalid signature, issuer, audience, expiry and unknown key
+6. sign in successfully after the provider rotates its signing key
+
+**Backend state verified:**
+
+- Successful Google callbacks persist exactly one new active AuthToken for the minted user and its existing organization.
+- Rejected Google callbacks leave account and token counts unchanged and return the expected login-error redirect.
+- The owned provider witnesses token exchange and JWKS verification; an unknown cached kid refreshes once, then succeeds only when the key is published.
+
 ### AUTH-E2E-016 — after a same-tab logout the next account sees none of the previous account's state
 
 **Goal:** After account A logs out in a tab, account B signing in on the same tab sees none of A's state
@@ -346,6 +418,26 @@
 - no request B sends carries another organization, every request B sends from the app after signing in carries exactly B's organization, and no Error Feed list request of B carries a search value
 - the access token left in the tab after B signs in resolves to B's user and organization
 - no A-identifying value appears in B's page text, API requests, localStorage or sessionStorage
+
+### AUTH-E2E-017 — late SAML markers do not replace an existing session
+
+**Goal:** Keep the same authorized workspace and session after an invalid late SAML code URL, while ordinary navigation remains usable
+
+**Spec:** `flows/auth/late-saml-marker.spec.ts:20`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Observe with an existing session and a uniquely named project
+2. reject late hash, pushState, replaceState, object URL and history-restoration markers
+3. preserve native ordinary-anchor events and history errors
+4. reload Observe and read the same authorized project without obtaining new credentials
+
+**Backend state verified:**
+
+- The exact active token row IDs for the actor are unchanged after rejected markers
+- The same authenticated project-list API and UI still expose the seeded project with the unchanged credential pair
 
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
@@ -836,6 +928,58 @@
 - the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max
 - chart_config.chart_type round-trips as column and then as line through the widget detail endpoint
 
+### DASH-E2E-017 — a saved custom-formula metric persists a correct value, renders on a dashboard and records an alert
+
+**Goal:** Save a custom-formula conversation metric, read its settled value on the Overview, freeze it as a snapshot, and see that snapshot render on a dashboard and record a threshold alert. The Add to dashboard and Create alert menu items are disabled in the product, so the widget and monitor are created through the API the product used.
+
+**Spec:** `flows/dashboards/derived-metric.spec.ts:92`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two minted conversations, each a root and a child span with numeric resolved/escalated outcomes, aged an hour so their 15-minute bucket is closed
+2. create the metric through New metric: name, project, Custom formula over conversations, two span-attribute inputs and the formula; Save metric validates, creates and queues the first calculation
+3. give this project a 5-minute settle and a 60-second cadence (the defaults are 30 minutes and 900 seconds, and no API sets them), see a publication report the window as not final while the conversations are open, then wait for them to settle (5 minutes after their last arrival) and the next refresh to publish them
+4. reload the metric page and read the Overview value on the default 7-day window and on a Custom window around the seeded bucket
+5. create a static below-threshold monitor through POST /tracer/user-alerts/, then Save snapshot on the Custom window
+6. create a dashboard with a metric widget pinned to the snapshot through the dashboard and widget APIs, then open it in the browser
+7. wait for the 60-second alert check to record the monitor alert for the snapshot window
+
+**Backend state verified:**
+
+- The exact four seeded spans, their typed outcomes and two distinct conversations belong to the minted project in the actor organization/default workspace.
+- Validate accepts the formula, and the saved metric is version 1 of a custom conversation recipe in PG and in the metric API, with the same definition hash.
+- While the conversations are open the KPI API reports the Custom window as partial; it reports a final value no earlier than the last arrival plus the settle time: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.
+- The snapshot run completes; it froze exactly the two seeded conversations, its committed overall result is numerator 1, denominator 2, value 0.5, and its commit row names that result.
+- The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.
+- The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.
+
+### DASH-E2E-018 — rapid date presets query only the final range, custom Done and Refresh apply at once
+
+**Goal:** A user flicking through date presets sees each chip highlight as they click, while the widgets load only the range they land on; a custom range applies as soon as they press Done, and Refresh still brings the widgets to a completed result.
+
+**Spec:** `flows/dashboards/preset-burst-requests.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed 3 traces into a minted project and a dashboard with trace_count and span_count widgets stored at 7D
+2. open the dashboard on the Default chip and wait for both widgets to load
+3. click Today, 7D and 30D back to back
+4. see the 30D chip highlighted, then both widgets load the 30-day range with the seeded totals
+5. open Custom, type today's date as Start Date and End Date and press Done
+6. click Refresh with the custom range applied and wait for it to finish
+
+**Backend state verified:**
+
+- the preset burst sends exactly one time range per widget on POST /tracer/dashboard/query/, the 30-day one; no Today or 7D range is ever sent, the 30D chip is primary before the first 30D query, and that query starts at least 450 ms after the 30D click
+- each completed, exact 30D response spans the expected start and end and contains 3 traces or 6 spans
+- custom Done sends exactly one range per widget, [local midnight today, local midnight tomorrow), dispatched under 450 ms after Done
+- the custom-range responses are complete and exact with the seeded totals
+- Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals; Refreshing returns to Refresh and Last updated shows that completion
+
 ## datasets
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
@@ -883,6 +1027,54 @@
 - latest edited ClickHouse cells match the exact Postgres identities and values
 - current property label, value choices and filtered UI/API rows agree after editing
 - removed columns and datasets cannot be rediscovered through metadata or value requests
+
+### DATA-E2E-003 — dataset PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a dataset cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the dataset document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
+
+### DATA-E2E-004 — experiment PDFs render without a runtime CDN worker
+
+**Goal:** Read a stored PDF from a experiment cell without a CDN dependency and recognize an unreadable document
+
+**Spec:** `flows/datasets/pdf-document-preview.spec.ts:31`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a document dataset and upload a synthetic PDF through the product input
+2. open the experiment document preview with external runtime requests denied
+3. read both pages and the JPEG 2000 image, navigate back, follow the in-document link to page 2, follow section links to a position on the same page and on page 2, close and reopen, then download the PDF
+4. upload an unreadable PDF and verify the error state with no rendered page
+
+**Backend state verified:**
+
+- the stored dataset and document cell belong to the actor scope
+- the storage URL and browser download return exactly the uploaded PDF bytes
+- the document cell opens the correct PDF through a same-origin worker without a CDN request
+- the JPEG 2000 image is decoded with same-origin decoder files and painted on the page
+- the in-document link moves the preview to its page and the external link opens in a new tab
+- a section link scrolls its destination position to the top of the preview, on its own page or another
 
 ## error-feed
 
@@ -950,11 +1142,11 @@
 - successful reconnect preserves the same workspace connection ID
 - disconnect removes the connection from the scoped integrations API
 
-### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV
+### ERR-E2E-004 — an issue's traces download as a dataset-ready CSV and its analysis as Markdown
 
-**Goal:** A developer downloads an issue's traces from the issue page and uploads the file unchanged as a dataset (overview response stubbed)
+**Goal:** A developer downloads an issue's traces and its stored analysis from the issue page, and uploads the traces file unchanged as a dataset (detail and overview responses stubbed)
 
-**Spec:** `flows/error-feed/export-traces-csv.spec.ts:33`
+**Spec:** `flows/error-feed/export-traces-csv.spec.ts:36`
 
 **Tags:** —
 
@@ -962,8 +1154,12 @@
 
 1. open the issue page
 2. click Export
-3. save the downloaded CSV
-4. upload the downloaded CSV using the Add Dataset form
+3. choose Traces
+4. save the downloaded CSV
+5. click Export
+6. choose Analysis
+7. save the downloaded Markdown
+8. upload the downloaded CSV using the Add Dataset form
 
 **Backend state verified:**
 
@@ -972,8 +1168,9 @@
 
 **Browser observations:**
 
-- the export requests the issue overview once, with rep_limit=200
+- the traces export requests the issue overview once, with rep_limit=200, and the analysis export once more, with rep_limit=10
 - the file is named error-feed-<issue>-traces.csv and its header is exactly the 12 export columns
+- the analysis is named error-feed-<issue>-analysis.md, holds the stubbed likely cause, suggested change and wrong-if under their headings, and samples exactly the two stubbed traces
 - the file has exactly one row per stubbed trace, with quoted cells intact and no formula prefix
 - the snackbar reports exactly the exported trace count
 - the uploaded dataset's grid shows exactly the exported trace ids
@@ -992,7 +1189,7 @@
 2. read the issue on Overview
 3. pick another trace in Traces affected
 4. open a trace from the Traces tab
-5. open the Trends and Fix tabs
+5. open the Trends and Root cause tabs
 6. open a restricted share link while signed out
 
 **Browser observations:**
@@ -1001,7 +1198,41 @@
 - the browser never calls the signed-in Error Feed endpoints (/tracer/feed/issues/)
 - picking a trace reads the sidebar through the share token for exactly that trace
 - opening a trace reads it through the share token and shows its spans
+- Root cause shows the saved analysis and the eval issue's explanation from the share
 - a restricted link shows Sign in required, with no error toast, and stays on the shared URL
+
+### ERR-E2E-006 — a developer runs an Epoch from an Error Feed issue and follows it from the issue
+
+**Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
+
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:130`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the issue
+2. press Run Epoch
+3. pick the environment
+4. read the plan and swap one trace
+5. press Draft scenarios
+6. untick one drafted scenario
+7. press Run Epoch in the review
+8. read the status strip
+9. reload once the epoch is ready
+10. read the header action
+11. press View Epoch 3
+12. reload the epoch page
+13. open the issue list and hover the epoch icon
+
+**Browser observations:**
+
+- the plan is read only after Run Epoch, first with the issue and project, then with the picked environment, and the picker lists only the code agent's environment
+- the create POST body is exactly the issue, project, environment and the picks after the swap
+- the run POST body is exactly the kept scenario and the review's launch rows at their defaults
+- the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
+- the epoch page's breadcrumb is the issue's cluster id linking to the issue, and it survives a reload
+- the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
 
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
@@ -1075,7 +1306,7 @@
 
 **Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly
 
-**Spec:** `flows/evals/catalog-result-types.spec.ts:137`
+**Spec:** `flows/evals/catalog-result-types.spec.ts:139`
 
 **Tags:** —
 
@@ -1129,10 +1360,10 @@
 **User steps:**
 
 1. seed two differently attributed spans in an isolated project
-2. select the project, custom property and value on the task create page
+2. select the project, All sampling preset, custom property and value on the task create page
 3. verify the exact matching preview
 4. select and configure an echo judge
-5. click the final Create Task button
+5. click the final Create task button
 6. verify task and result inclusion and exclusion
 
 **Backend state verified:**
@@ -1145,7 +1376,7 @@
 
 **Goal:** Open the trace behind an eval task result without leaving the task Usage tab
 
-**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:36`
+**Spec:** `flows/evals/task-usage-trace-drawer.spec.ts:45`
 
 **Tags:** —
 
@@ -1292,7 +1523,7 @@
 
 **Browser observations:**
 
-- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows FutureAGI Models
+- searching Jev lists exactly Jev 1.14, Jev 1.13 and Jev latest, in catalog order, with native TypeSafe selected; the Decision models group follows Future AGI
 - all three Jev rows are enabled, prompt for a TypeSafe API key and have no plan-denied label (a locked row carries "Not included in your plan")
 
 ### EVAL-E2E-012 — a decision evaluator runs through the chosen direct or OpenRouter connection and retains it after reload
@@ -1346,6 +1577,108 @@
 - Jev latest does not move at loading onset or response completion
 - one native pointer gesture closes the picker and opens one TypeSafe drawer without selecting a model
 - the picker stays within the viewport at both heights
+
+### EVAL-E2E-014 — an eval log opens the exact trace span it evaluated from the eval Usage tab
+
+**Goal:** Open an evaluation, open one of its Observe evaluation logs, and view exactly the trace span that log evaluated
+
+**Spec:** `flows/evals/eval-log-source-navigation.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a root → child → grandchild trace and run one eval task over it via the managed mock judge
+2. open the eval, its Usage tab, and the grandchild span's evaluation log
+3. View trace opens that trace on the grandchild span; Back to evaluation returns to the same log
+4. open the child span's log; View trace opens the child span; Esc closes only the trace, then the log
+5. reopen the grandchild log, delete its project, then View trace: unavailable, with no trace and no link
+6. read the log through the API without the opt-in
+
+**Backend state verified:**
+
+- the task completes with the child and grandchild evaluations completed and the unmapped root errored
+- the usage ledger holds one successful Observe log per evaluated span, stamped with its exact project, trace and span, and both reach the ClickHouse mirror the Usage tab reads
+- the Usage tab lists exactly those two logs, as source tracer
+- opening a log asks for its source with the opt-in and gets ready/trace with the exact project, trace and span
+- the trace opens on the evaluated span (grandchild, then child), not the root or the sibling
+- when the project is deleted after the log opened, View trace re-checks and gets unavailable with every id null; no trace or link opens
+- without the opt-in the log response has no source_navigation, and =false is identical
+
+### EVAL-E2E-015 — Recalculate on an eval task's result replaces it in place
+
+**Goal:** A user who disagrees with an eval task's verdict on a span leaves feedback and recalculates that result, and the span keeps exactly one result, computed again on the span's current input
+
+**Spec:** `flows/evals/recalculate-task-result.spec.ts:34`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trace through the collector, and register its trace and LLM span through the public trace and span API
+2. author an LLM-as-a-judge eval (mock LLM through the gateway) and run an eval task over the project
+3. leave feedback on the task's result for the LLM span (the Observe feedback form's request)
+4. re-send the span with a new value for the eval's mapped attribute
+5. open the eval, its Feedback tab, the feedback, Edit Feedback
+6. pick Re-calculate and re-tune and submit the feedback
+7. read the span's eval result in Observe
+
+**Backend state verified:**
+
+- the eval task completes with one live completed entry for the span and eval in PG tracer_eval_logger, its verdict naming the span's first input
+- Recalculate answers 200 and the feedback row records action recalculate with the user's note
+- afterwards the span and eval have exactly one live entry: completed, of the same eval task, a new row whose verdict names the span's new input (the judge ran again)
+- the previous entry is retired (deleted = true), not left live beside the new one
+- the CDC mirror carries both to CH tracer_eval_logger: the new entry completed, the previous one deleted
+
+### EVAL-E2E-016 — shipped link evaluators accept approved links and refuse other destinations
+
+**Goal:** Run the shipped link evaluators on approved reachable links and ordinary prose while refusing unapproved, private and redirected destinations without contacting them
+
+**Spec:** `flows/evals/link-destinations.spec.ts:16`
+
+**Tags:** —
+
+**User steps:**
+
+1. resolve the two shipped system template IDs without rewriting their code
+2. open each system evaluator in the browser
+3. submit approved links, link-free prose and refused destinations in the Custom playground
+4. read exact verdicts and explanations
+5. inspect the exact request set on the owned canary
+
+**Backend state verified:**
+
+- both shipped templates retain their system identity and text input contract
+- browser-submitted playground responses match the exact verdict and explanation matrix
+- the owned canary records only approved HEAD requests and never receives refused destinations
+
+### EVAL-E2E-020 — sample whole contacts, retain late spans, and explicitly rerun an edited quota
+
+**Goal:** Preview and run a contact quota without splitting contacts, including late spans, then edit the quota with clear new-run provenance
+
+**Spec:** `flows/evals/cohort-sampling.spec.ts:36`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions with two traces and two spans per trace
+2. choose the project, set a past live start and preview incoming conversation shares
+3. choose the historical schedule, confirm count one, preview, configure an echo judge and create the task
+4. verify the independently hash-ranked contact is the exact evaluated set
+5. ingest late traces and Edit & Re-run to expand only the frozen sampled contact
+6. reload the saved count, edit it to two, preview and explicitly Delete & rerun
+7. verify one new cohort with probability one and the exact expanded span set
+
+**Backend state verified:**
+
+- all eight initial spans have two canonical session identities in ClickHouse
+- incoming 100 percent share preview selects both contacts and all eight spans with an open-ended live policy
+- historical count preview returns exactly two eligible contacts, one selected contact and four selected spans
+- created task evaluates exactly the independently hash-ranked contact with probability one half
+- historical append rerun admits late rows only for the frozen contact without reranking
+- edited quota is persisted and visible results have one new cohort with probability one, while old provenance remains archived
 
 ## gateway
 
@@ -1401,7 +1734,7 @@
 
 **Goal:** A platform engineer shows a declared custom property beside the built-in Request Logs columns, keeps that choice across reloads in this browser, and never sees it under another organization
 
-**Spec:** `flows/gateway/request-log-columns.spec.ts:83`
+**Spec:** `flows/gateway/request-log-columns.spec.ts:87`
 
 **Tags:** —
 
@@ -1436,6 +1769,140 @@
 
 - the picker opens, toggles, reorders and closes by keyboard alone: focus stays on the pressed Move button, moves to the opposite Move button when the column reaches the end of its group, and returns to Columns on Escape
 - a tenant value longer than 80 characters shows its preview in the cell, and Tab to it shows the full value in a tooltip
+
+### GW-E2E-004 — an organization explicitly opts into continuing after a guardrail outage
+
+**Goal:** An organization owner explicitly opts into continuing through a failed guardrail, and can turn that permission off again
+
+**Spec:** `flows/gateway/org-fail-open.spec.ts:23`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a local mock provider and a failing local webhook without opting into fail-open
+2. open Guardrails Rules and see Fail Open off; a gateway request is refused
+3. turn Fail Open on, save and reload; the same request succeeds with its unique mock echo
+4. turn Fail Open off, save and reload; the same request is refused again
+5. submit an invalid boolean and confirm no configuration version is created
+
+**Backend state verified:**
+
+- the active organization config and pushed gateway config store false before opt-in, true after opt-in, and false after revocation
+- the gateway refuses the local webhook outage before opt-in and after revocation, and returns the unique mock echo only while opted in
+- an invalid boolean is refused without creating a configuration version
+
+### GW-E2E-007 — an admin applies a guardrail policy to one gateway key, first monitoring and then enforcing it
+
+**Goal:** An admin monitors and enforces a guardrail on one API key, corrects invalid keyword and built-in configurations without losing edits, and preserves cache isolation, org-wide protections and safe refusal of uninspectable selected content
+
+**Spec:** `flows/gateway/key-guardrail-policy.spec.ts:53`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a local mock provider, two gateway keys and enabled organization caching with a minted cache namespace
+2. open Guardrails Policies, create a Secret Detection block policy for key A in Monitor mode, picking the key by name; the dialog offers no Org-wide scope
+3. send the same fake AWS-key prompt twice with key A and twice with key B: A is monitored on each uncached echo, while B repeats from the exact cache
+4. switch the policy to Enforce in the dialog; the identical key A request is refused with content_blocked and key B still gets an exact-cache echo
+5. add an org-wide Secret Detection block with caching disabled and set the key policy back to Monitor; key A is still refused
+6. create the documented key policy body through the API; an unknown key ID is refused without creating a policy
+7. try an empty Keyword Blocklist in the policy dialog, retain its inline error and correct it through Configure; the saved selected key is blocked while clean and unselected requests pass
+8. reject malformed keyword creates and updates atomically; retain an edited draft on a real server validation error, then save the corrected draft
+9. correct syntax and family-invalid JSON for PII, Content Moderation, Secret Detection, Language Detection, Topic Restriction and Input Validation, including disabled-draft re-enable refusal without policy writes
+10. save each corrected policy for its own key, verify exact persisted and pushed configuration, then reload and reopen Configure
+11. send safe text with each corrected selected key and read its unique uncached mock echo
+12. refuse a selected native Responses request with previous_response_id without releasing content, verify its blocked log, and confirm ordinary chat still works
+13. correct malformed Prompt Injection JSON through Configure to instruction_override and HIGH with unknown metadata, save the intended key, reopen and send safe text
+14. reopen the existing Content Moderation policy, retain an unreachable count of 50 without writing, correct it to 3 and reopen the same metadata
+15. reject an active API alias collision including a disabled row, save it inactive, refuse activation through Save policy and save inactive without losing either raw check
+
+**Backend state verified:**
+
+- the gateway admin config carries enabled caching and the UI-saved key policy mode, block action and key A gateway key ID during the cache phase
+- both identical key A Monitor requests return skip_key_policy and have distinct uncached logs with exactly one would_block policy result and no triggered response header
+- unselected key B returns miss then hit_exact, and remains hit_exact after Enforce; all three exact request logs have no guardrail entry and cache_hit false, true, true
+- after the UI Enforce save, the identical key A request gets 403 content_blocked, no choices and an uncached blocked key-policy log
+- an org-wide block wins over a key policy in monitor mode for the same check
+- the documented request body is accepted verbatim, and an unknown key ID returns 400 without a new agentcc_guardrail_policy row
+- keyword correction persists exact words and the intended key in PostgreSQL and the pushed gateway config; selected matching requests are blocked while clean and unselected requests pass
+- invalid keyword creates and updates return 400 without partial policy or assignment changes; the real server error retains the UI draft and a corrected retry saves it
+- six built-in invalid drafts make no policy write, and correction retains the exact authored configuration and intended key in the policy API and PostgreSQL
+- all six corrected built-in policies reach the gateway with exact enabled checks, thresholds, configurations and selected gateway key IDs
+- safe text on every corrected selected key returns the unique mock echo without a guardrail trigger or cache reuse
+- a native Responses request with uninspectable selected input returns input_guardrail_unsupported without content and records the exact blocked selected-policy request
+- Prompt Injection invalid drafts make no policy write; correction preserves exact HIGH sensitivity, supported category, unknown metadata and intended key in API, PostgreSQL, pushed config and reopened JSON, with a safe uncached echo
+- an unreachable Content Moderation count retains the draft without writing; correcting it to 3 preserves the existing policy, key and metadata in API, PostgreSQL, pushed config and reopened JSON
+- an active alias collision including a disabled duplicate returns 400 without a row; inactive API save and UI activation refusal preserve both raw checks, and inactive UI save retains their exact options in API and PostgreSQL
+
+### GW-E2E-020 — named providers save their native API format
+
+**Goal:** A user changes named providers without saving a connection under the previous provider’s protocol
+
+**Spec:** `flows/gateway/provider-format.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Add Provider and switch from OpenAI to Anthropic, Google and Azure in turn
+2. see the selected native API format, with no incompatible choices
+3. save each provider with a synthetic endpoint, key and unique manually entered model
+4. reopen each saved provider and see the same API format
+5. switch from Anthropic back to OpenAI, then to Custom and choose a format explicitly
+
+**Backend state verified:**
+
+- the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
+
+### GW-E2E-024 — Add/Edit Provider saves only the models the user picked or typed
+
+**Goal:** A platform engineer adds and then edits a provider, and only the models they deliberately picked or typed are saved: hovering a listed model and clicking away neither selects it nor drops a selected one, and a typed model ID is kept, trimmed and once, whether they click away or press Save directly
+
+**Spec:** `flows/gateway/provider-model-selection.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway providers and start adding a custom provider with a base URL and API key
+2. pick one listed model, hover another listed model and click away
+3. type a model ID with surrounding spaces and click away
+4. add the provider
+5. edit the provider, hover a selected and an unselected listed model and click away
+6. type another model ID and press Save Changes directly
+7. reopen the provider and see exactly the picked and typed models
+
+**Backend state verified:**
+
+- the Add save posts config.models exactly [listedA, typedOne] to update-provider (typed ID trimmed, hovered listedB absent) and gets 200
+- the gateway config API returns the added provider with models exactly [listedA, typedOne]
+- the Edit direct save posts and persists models exactly [listedA, typedOne, typedTwo]: update-provider body and gateway config API agree
+
+## knowledge-base
+
+### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
+
+**Goal:** A workspace reader downloads an uploaded file with its original filename and exact bytes, while other scopes cannot download it
+
+**Spec:** `flows/knowledge-base/file-download.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. upload a synthetic text document
+2. open its knowledge-base file table
+3. click Download on the file row
+4. save the browser download
+5. check foreign-organization, sibling-workspace and anonymous refusals
+
+**Backend state verified:**
+
+- the file list API returns the uploaded file identity and name
+- authorized download returns exactly the uploaded bytes as an attachment with no storage URL
+- foreign-org, sibling-workspace and anonymous requests return refusal without file bytes
 
 ## observe
 
@@ -2346,7 +2813,7 @@
 
 **Goal:** A developer trusts native trace accounting and can filter and sort costs without treating unknown as zero
 
-**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:8`
+**Spec:** `flows/observe/native-accounting-and-source-details.spec.ts:17`
 
 **Tags:** —
 
@@ -2508,6 +2975,27 @@
 - the saved project query and dashboard widget persist the same scoped query reference
 - the dashboard starts a new personal execution of the saved query and shows the same exact rows
 
+### OBS-E2E-062 — Users setup preserves project names as Python string literals
+
+**Goal:** A developer opens an empty project's Users setup and obtains a Python example that preserves the project name as one string literal
+
+**Spec:** `flows/observe/user-code-literal.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest a trace without end-user attributes for an ordinary project
+2. open project Users and read its setup example
+3. repeat for names containing a quote, a backslash and a non-BMP Unicode character
+4. compare displayed code with the public API result and inspect the project_name argument
+
+**Backend state verified:**
+
+- the collector-created PostgreSQL project retains the exact minted name and actor organization
+- the example API encodes the exact project name into one quoted Python literal
+- the visible Users setup code equals the exact example API result
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -2531,6 +3019,30 @@
 - no prompt-run WebSocket is constructed before the selected model save responds; real mock output and the evaluation binding retain exact parent, actor scope and model with terminal stored results
 - current prompt catalog identifies the exact binding and its two configured choices
 - mapping edit preserves binding ID/name, completes, and deletion removes it from UI and current discovery
+
+## sdk-ingestion
+
+### SDK-E2E-001 — SDK returns a saved evaluator structure only in its own workspace
+
+**Goal:** Inspect a saved legacy-numeric evaluator in the browser and retrieve its structure with API credentials, while evaluators of other organizations and workspaces are reported as not found
+
+**Spec:** `flows/sdk-ingestion/eval-structure-scope.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. create one evaluator in each of two isolated organizations and assign distinct legacy identities through the separate test-image fixture
+2. open the owner's evaluator detail and inspect its exact name and instructions
+3. retrieve the same evaluator using the owner API credentials
+4. check that other-organization, sibling-workspace, malformed and nonexistent evaluator IDs return the same not-found response and that anonymous requests are refused
+5. retrieve the other organization's evaluator with that organization's own credentials
+
+**Backend state verified:**
+
+- the created evaluator identity and organization/workspace are stored in Postgres and its name is visible in the owner browser
+- the owner API credentials retrieve the exact saved evaluator ID, name and criteria
+- other-organization and nonexistent evaluator requests get the identical not-found response while the other organization still retrieves its own evaluator
 
 ## settings
 
@@ -2579,6 +3091,33 @@
 - an atomic replace on the host is seen by the container without restarting anything
 - with the file removed the API reports the unavailable state and the page shows reporting unavailable and never up to date
 - POST, PUT, PATCH and DELETE return 405 and an unauthenticated GET returns 401
+
+### SET-E2E-003 — optional-expiry keys stop access and remain distinguishable from disabled keys
+
+**Goal:** An administrator creates optional-expiry keys and distinguishes automatically expired access from a manually disabled key while non-expiring and future keys keep working.
+
+**Spec:** `flows/settings/api-key-expiry.spec.ts:33`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a short-lived key and a manually disabled key through the public key API
+2. open Keys and create a non-expiring key without touching the optional date
+3. create a future calendar-expiry key and see both saved expiries without reloading
+4. authenticate non-expiring and future keys through headers and Basic auth
+5. after natural expiry, replay both auth paths and distinguish expired from disabled rejection
+6. reload Keys and read the exact Expired and Disabled rows
+7. warm collector authentication with non-expiring and far-future keys
+8. save past and near-future expiries in Django admin and refuse previously cached access at each boundary
+9. keep the unrelated non-expiring key usable and show the admin-edited keys as Expired
+
+**Backend state verified:**
+
+- UI-created no-expiry and future keys persist with their exact optional expiry and actor organization.
+- Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.
+- The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
+- Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
 
 ## simulate
 
@@ -2635,3 +3174,334 @@
 
 - the Simulate menu is exactly Environment, Scenarios, Run Simulation
 - each of those two items opens its page by URL and title, never /404
+
+### SIM-E2E-003 — an environment-only org turns Observe sessions into an environment test import through the reviewed bridge
+
+**Goal:** An environment-only organisation turns production sessions from Observe into a draft regression import for one of its environments, through the reviewed bridge and never legacy Replay, and sees what the evidence holds and lacks
+
+**Spec:** `flows/simulate/evidence-import-from-observe.spec.ts:43`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two sessions in a minted Observe project; one user turn carries a minted ask and a minted email
+2. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
+3. open the project's Sessions and select the two seeded rows
+4. open Actions and read the menu
+5. choose Create environment test, pick the seeded environment and import
+6. land on the environment's Scenarios tab with the import's review open
+
+**Backend state verified:**
+
+- both seeded sessions are stored for the minted project in ClickHouse trace_sessions (FINAL)
+- the Actions menu is exactly "Add to annotation queue" and "Create environment test": no Replay for an environment-only org
+- from the Actions click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, and no request names replay
+- simulate_evidence_import has one row for the actor org, the seeded environment and the minted project, with two pending cases whose source ids are the seeded sessions
+- the import's bundle re-reads Observe: each case's transcript holds its minted ask, redaction reports the minted email as an EMAIL_ADDRESS finding, and each case's starting state is missing, with the reason that the draft labels what it assumes synthetic
+- the review shows both cases waiting, the transcript present, the starting state missing, and one Starting state alert saying Observe lacks the seed records (an earlier refund), the draft marks them synthetic and the test is not an exact replay; it never claims an exact replay
+
+### SIM-E2E-004 — a person pastes a transcript into an environment and sees its personal data replaced and marked as their transcript
+
+**Goal:** A person pastes a transcript, imports it into an environment, and sees its personal data replaced and marked as their transcript
+
+**Spec:** `flows/simulate/evidence-import-transcript.spec.ts:44`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment in the actor workspace (lib/environment-seed.ts)
+2. open the environment's Scenarios tab, choose Import evidence, then Add a transcript
+3. paste a transcript whose second line has an unknown speaker, import it and read the refusal
+4. fix the line, name the transcript and import it
+5. land on the Scenarios tab with the import's review open
+
+**Backend state verified:**
+
+- the first import is answered 400 transcript_unreadable naming transcript 1 and line 2, the dialog shows that message, and no simulate_evidence_import row is made
+- from the fixed import on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201
+- simulate_evidence_import has one row for the actor org and the seeded environment: source_kind transcript, no project, not declared production, with one pending case transcript-1
+- neither the import's stored redaction nor its case's stored transcript holds the minted email, and the stored transcript holds the minted ask
+- the bundle read again holds the minted ask, shows the email as <EMAIL_ADDRESS>, counts at least one replaced value, lists no finding and is not production
+- the review shows the case under its given name, marked "Your transcript", says "1 transcript you added" and that it is not marked production, shows tool calls missing, and that the test is not an exact replay
+
+### SIM-E2E-005 — a person picks dataset rows and their columns and reviews them in an environment as evidence read live from the dataset
+
+**Goal:** A person picks rows in a dataset, says which column is the conversation, the labels and the expected outcome, and reviews them in an environment as evidence read live from the dataset
+
+**Spec:** `flows/simulate/evidence-import-from-dataset.spec.ts:63`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment (lib/environment-seed.ts) and a dataset with text columns chat, intent and expected, and three rows
+2. open the dataset and tick the two rows whose chat holds a minted ask
+3. choose Create environment test, pick the environment, chat as the conversation, intent as a label and expected as the expected outcome, leave production off and import
+4. land on the environment's Scenarios tab with the import's review open
+5. edit one picked row's expected cell through the dataset API and reload the review
+
+**Backend state verified:**
+
+- from the Import click on, the only mutating /simulate/ request is one POST to the environment evidence-imports route, answered 201, naming the dataset, the two ticked rows, the three picked columns and production false
+- simulate_evidence_import has one row for the actor org and the seeded environment: source_kind dataset, no project, the seeded dataset, not declared production, with the picked column ids; its two cases are pending, store no transcript and carry a 64-character digest
+- no simulate_evidence_import or simulate_evidence_import_case row holds the minted asks, email or expected text
+- the bundle read again shows the first row as the dataset holds it now, a transcript finding that replaces the minted email with <EMAIL_ADDRESS>, the intent label on the row, the minted expected text as the expected outcome, and is not production
+- after the cell edit the bundle says only the edited row changed since import, and shows its new expected text
+- the review shows two cards marked "Dataset row", each with its expected outcome, "2 rows from a dataset" and that they are not marked production; after the reload only the edited card says the source changed
+
+### SIM-E2E-006 — a person finds two imports they never drafted under Draft imports, resumes one and discards the other
+
+**Goal:** A person finds two imports they never drafted under Draft imports on an environment's Scenarios tab, resumes one, and discards the other
+
+**Spec:** `flows/simulate/evidence-import-resume.spec.ts:32`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned environment (lib/environment-seed.ts) and two transcript imports, A then B, through the create route
+2. open the environment's Scenarios tab and read the Draft imports strip
+3. resume A: its review opens
+4. close the review
+5. discard B and confirm
+
+**Backend state verified:**
+
+- the strip rows are exactly B then A, newest first, each "1 transcript · waiting to be drafted", and equal the list route's answer
+- Resume sends no mutating /simulate/ request, puts import=<A> in the URL, and the review shows A's name
+- from the confirm on, the only mutating /simulate/ request is DELETE on B, answered 204; B is deleted with its redaction and its case's stored transcript cleared, and A is untouched
+- afterwards the list route answers exactly [A] and the strip shows only A
+
+### SIM-E2E-007 — a run with fewer failing cases than an epoch needs starts one that writes variations first
+
+**Goal:** A developer whose run has fewer failing cases than an epoch needs starts one that first writes variations of them, and the epoch page shows that step
+
+**Spec:** `flows/simulate/epoch-variations-launch.spec.ts:226`
+
+**Tags:** —
+
+**User steps:**
+
+1. open a finished run of the environment
+2. open Debug failures
+3. press Run Epoch
+4. read the Scenarios row of the launch form
+5. press Run Epoch in the form
+6. read the epoch page
+
+**Browser observations:**
+
+- the Scenarios row reads "6 failing, and up to 18 variations of them · 6 protected", with the note that an epoch needs 12 failing cases and first writes 3 variations of each
+- the launch POST body is exactly the run id, the 6 failing cases, the 6 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, 25% reply-time and cost margins and no cost limit
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+- the epoch page's steps are Variations, Reproduce, Search, Verify and Ready for review, and Variations reads "Writes variations of the 6 failing cases, then keeps those the current version also fails"
+- the drawer reads the finished diagnosis and never queues another (no POST to debug-analysis)
+
+### SIM-E2E-008 — an epoch that found no safe improvement shows why and starts a new one with limits
+
+**Goal:** A developer whose epoch found no safe improvement sees why, with the numbers it was decided on, and starts a new epoch from it with the agent's models locked and a cost limit
+
+**Spec:** `flows/simulate/epoch-limits-rerun.spec.ts:206`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the finished epoch
+2. read its ending
+3. open How it was decided
+4. press Run a new epoch
+5. read the model lock
+6. type a cost limit of 0.01
+7. press Run Epoch
+8. read the new epoch's page
+
+**Browser observations:**
+
+- the ending reads "No safe improvement: the only candidate went over the cost or latency limit."
+- the rejected candidate's Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too
+- the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
+- the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
+- the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
+
+### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World state reads a read apart from a write
+
+**Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World state says what the agent only read apart from what it committed
+
+**Spec:** `flows/simulate/actors-world-changes.spec.ts:22`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose refunds include a world actor with no channel and one finished trial (e2e/lib/harness_environment_seed.py)
+2. read the cast (GET actors)
+3. check an edit to the actor (POST actor-validation)
+4. read the scenarios (GET harness-jobs/<id>/scenarios)
+5. read the trial (GET v3/call-executions/<id>)
+6. open the Actors tab and pick a side from Add actor
+7. open the Scenarios tab
+8. open the trial's World state
+
+**Backend state verified:**
+
+- the cast lists the actor with no channel
+- checking an edit to it finds nothing to fix and writes nothing
+- the refund scenario includes it by id
+- the trial's World state count 1 committed (issue_refund) and 1 read (lookup_order)
+
+**Browser observations:**
+
+- Add actor offers the caller's side and the world, and opens Add actor on the side picked
+- the Scenarios table names the actor, never its raw id
+- World state reads "1 read" and "Committed: issue_refund"
+
+### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
+
+**Goal:** A developer inspects each tool of the test world: its inputs with units, the fields it returns, whether it changes records, whether it is reset between trials, and which tools only production answers
+
+**Spec:** `flows/simulate/tool-contract-view.spec.ts:13`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose contract records each tool's fields and one tool that reaches production (e2e/lib/harness_environment_seed.py)
+2. read the environment (GET harness-environments/<id>/)
+3. open the Contract tab
+4. expand lookup_order
+5. read issue_refund's Unsupported label
+
+**Backend state verified:**
+
+- the contract section names issue_refund production-only
+- lookup_order returns status and total
+
+**Browser observations:**
+
+- lookup_order reads "Reads only" and its returned fields with units
+- issue_refund reads Unsupported, never Simulated
+
+### SIM-E2E-019 — World state shows a faulted call apart from a commit, and an actor's change made during the call
+
+**Goal:** A developer reads what each trial did to the world: a call the scenario's test condition faulted, counted apart from what was committed, and what a world actor decided and committed during the call
+
+**Spec:** `flows/simulate/world-changes-fault-and-actor.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial whose refund was faulted by its test condition (e2e/lib/harness_environment_seed.py)
+2. open its World state
+3. seed a trial where the world actor approved during the call
+4. open its World state
+
+**Backend state verified:**
+
+- seeded through the backend container; the World state record is the one ingestion keeps
+
+**Browser observations:**
+
+- the faulted trial reads 1 faulted and No change, never Committed: issue_refund
+- the actor trial names Dana Brooks, her committed approvals.put and her decision
+
+### SIM-E2E-020 — giving an actor an action only another actor holds is flagged before saving
+
+**Goal:** A developer adding an actor sees, before saving, that an action they give it is held only by another actor, and saves only once they confirm both should have it
+
+**Spec:** `flows/simulate/actor-permission-conflict.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a built, versioned Environment whose world actor alone may take approvals.put (e2e/lib/harness_environment_seed.py)
+2. check a new actor given approvals.put (POST actor-validation)
+3. open the Actors tab and add an actor in the world
+4. name it and give it approvals.put
+5. tick Both should have it
+
+**Backend state verified:**
+
+- the check names Dana Brooks as the only holder of approvals.put and writes nothing
+
+**Browser observations:**
+
+- the form says approvals.put is held only by Dana Brooks before anything is saved
+- Save to draft stays off until Both should have it is ticked
+
+### SIM-E2E-021 — World state flags a write committed twice
+
+**Goal:** A developer sees that the world committed the agent's refund twice after its first answer was lost, said apart from a single commit
+
+**Spec:** `flows/simulate/world-state-duplicate-and-refusal.spec.ts:19`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial whose refund the world committed twice (e2e/lib/harness_environment_seed.py)
+2. read the trial (GET v3/call-executions/<id>)
+3. open its World state
+
+**Backend state verified:**
+
+- the trial's World state lists issue_refund among the writes committed twice
+
+**Browser observations:**
+
+- World state reads "Committed twice: issue_refund" and counts 1 duplicate
+
+### SIM-E2E-022 — World state says an approval was refused and the agent committed anyway
+
+**Goal:** A developer reads that an approver refused the agent's request and that the agent committed the change after the refusal, never that the agent waited for the decision and stopped
+
+**Spec:** `flows/simulate/world-state-duplicate-and-refusal.spec.ts:48`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a trial where Dana Brooks refused the refund and the agent issued it anyway (e2e/lib/harness_environment_seed.py)
+2. read the trial (GET v3/call-executions/<id>)
+3. open its World state
+
+**Backend state verified:**
+
+- the trial's decision by Dana Brooks is refused and flagged committed after the refusal
+
+**Browser observations:**
+
+- her decision reads Refused
+- a line says the agent committed the change after Dana Brooks refused it
+- the approval names the refund the agent wrote after the decision
+
+### SIM-E2E-036 — an environment-only org imports Observe sessions only into its own workspace's environments, and no other org or workspace reaches them
+
+**Goal:** A person in an environment-only organisation creates an environment test from Observe and reaches only their own workspace's environments and projects, while another organisation or workspace can neither import into them nor read the import
+
+**Spec:** `flows/simulate/evidence-import-tenant-scope.spec.ts:38`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one session in a minted Observe project for each of two organisations' owners, A and B
+2. seed three built, versioned environments: in A's workspace, in A's sibling workspace and in B's (lib/environment-seed.ts)
+3. as A, open the project's Sessions, select the seeded session, choose Actions then Create environment test, and open the environment picker
+4. pick A's environment and import; land on its review
+5. as A, and as A scoped to the sibling workspace, import naming another organisation's or workspace's environment or project
+6. as B, read A's import through A's environment and through B's own
+7. as a viewer of A's workspace, import into A's environment and draft A's import
+
+**Backend state verified:**
+
+- both seeded sessions are stored for their own project in ClickHouse trace_sessions (FINAL)
+- A's organisation is environment-only, and the environment picker lists exactly A's environment: not the sibling workspace's, not B's
+- the import answers 201 and lands on the review; simulate_evidence_import has one row for A's organisation, A's environment and A's project, with one pending case for the seeded session
+- the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
+- B reading A's import answers 404, through A's environment and through B's own
+- a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending

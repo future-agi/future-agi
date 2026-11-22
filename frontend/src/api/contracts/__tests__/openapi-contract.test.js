@@ -13,6 +13,67 @@ describe("OpenAPI runtime contract", () => {
     vi.unstubAllEnvs();
   });
 
+  it("keeps the metrics rollout capability typed and default-OFF", () => {
+    expect(
+      OPENAPI_CONTRACT.definitions.CapabilitiesResponse.properties
+        .metrics_enabled,
+    ).toMatchObject({ type: "boolean", default: false });
+  });
+
+  it("does not expose the retired comparison route while keeping saved-run reads", () => {
+    const runId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
+    expect(
+      findOpenApiEndpoint(
+        `/tracer/derived-metric-runs/${runId}/compare/`,
+        "get",
+      ),
+    ).toBeNull();
+    expect(
+      findOpenApiEndpoint(`/tracer/derived-metric-runs/${runId}/`, "get"),
+    ).toMatchObject({
+      template: "/tracer/derived-metric-runs/{id}/",
+      method: "get",
+    });
+  });
+
+  it("accepts a run seed as the decimal text a run shows, past what a JSON number keeps", () => {
+    const run = (seed) =>
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/run/",
+        method: "post",
+        data: { scenario_ids: ["refund"], trials: 1, seed },
+      });
+    expect(run("42")).toMatchObject({ ok: true });
+    expect(run("7902065059689103066")).toMatchObject({ ok: true });
+    // Past 2^63 - 1 it is still sent: the server refuses it with its own message, never a silent client gate.
+    expect(run("12345678901234567890123")).toMatchObject({ ok: true });
+  });
+
+  it("sends an actor check whatever id was typed, so the check itself says what is wrong with it", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-validation/",
+        method: "post",
+        data: {
+          op: "create",
+          changes: { name: "Priya Raman" },
+          id: "a".repeat(70),
+        },
+      }),
+    ).toMatchObject({ ok: true });
+    // A value over a field's bound reaches the check too, which says so on that field.
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-validation/",
+        method: "post",
+        data: {
+          op: "create",
+          changes: { name: "x".repeat(501), max_turns: 0 },
+        },
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   it("accepts typed Error Feed thresholds in create, update and list contracts", () => {
     const alertId = "0050b1f4-0b65-4787-bd3f-f4ad4b61e661";
     expect(
@@ -63,6 +124,49 @@ describe("OpenAPI runtime contract", () => {
           },
         },
       }),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("accepts an Observe eval log's 16-hex collector span id (TH-4804)", () => {
+    const traceId = "22222222-2222-4222-8222-222222222222";
+    const spanId = "f9da550bd36da78b";
+    const response = (sourceNavigation) => ({
+      config: { url: "/model-hub/get-eval-logs", method: "get" },
+      status: 200,
+      data: {
+        status: true,
+        result: {
+          log_id: "10000000-0000-4000-8000-000000000001",
+          created_at: "2026-11-11T22:40:00Z",
+          evaluation_id: "10000000-0000-4000-8000-000000000001",
+          source: "Tracer",
+          required_keys: ["output"],
+          values: { output: "stored input" },
+          output: { output: 1, reason: "judged the span" },
+          input_data_types: { output: "text" },
+          span_id: spanId,
+          trace_id: traceId,
+          ...sourceNavigation,
+        },
+      },
+    });
+
+    expect(validateContractedResponse(response())).toMatchObject({
+      ok: true,
+    });
+    expect(
+      validateContractedResponse(
+        response({
+          source_navigation: {
+            status: "ready",
+            kind: "trace",
+            project_id: "33333333-3333-4333-8333-333333333333",
+            trace_id: traceId,
+            span_id: spanId,
+            retryable: false,
+          },
+        }),
+      ),
     ).toMatchObject({ ok: true });
   });
 
@@ -140,6 +244,60 @@ describe("OpenAPI runtime contract", () => {
     expect(result.error.message).toContain(
       "request body contract validation failed",
     );
+  });
+
+  it("accepts an actor record of any fields on add and edit", () => {
+    const base =
+      "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actors/";
+    const manager = {
+      id: "manager",
+      name: "Priya Raman",
+      role: "store manager",
+      permitted_actions: ["refunds.approve"],
+      constraints: { may_agree: ["Refunds up to $500"], private: [] },
+      activation: {
+        trigger: { kind: "on_tool", tool: "refunds.request_approval" },
+        fallback: "silent",
+      },
+      loudness_ratio: null,
+    };
+    const colleague = {
+      id: "colleague",
+      name: "Jordan",
+      channel: "audio_mix",
+      loudness_ratio: 0.5,
+    };
+    for (const [url, method, actor] of [
+      [base, "post", manager],
+      [`${base}manager/`, "put", manager],
+      [base, "post", colleague],
+    ]) {
+      expect(
+        validateContractedRequestConfig({
+          url,
+          method,
+          data: { actor, expected_revision: 0 },
+        }),
+      ).toMatchObject({ ok: true });
+    }
+  });
+
+  it("accepts actor limits as numbers, nulls and a model name", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/simulate/api/harness-environments/0050b1f4-0b65-4787-bd3f-f4ad4b61e661/actor-limits/",
+        method: "put",
+        data: {
+          limits: {
+            live_turns_per_actor: 7,
+            max_active: null,
+            max_messages: 12,
+            model: "gemini-3.7-flash",
+          },
+          expected_revision: 3,
+        },
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it("accepts provider-ID harness requests without a source upload", () => {
