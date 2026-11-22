@@ -74,7 +74,7 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
         {toolRows.map((r) => (
           <MapRow
             key={r.key}
-           
+
             name={r.name}
             origin={r.origin}
             target={r.target}

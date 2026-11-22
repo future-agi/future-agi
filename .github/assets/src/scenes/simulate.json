@@ -1,0 +1,169 @@
+{
+ "url": "",
+ "imgW": 3024,
+ "imgH": 1890,
+ "duration": 13.0,
+ "images": {
+  "debug": "shots/debug.png",
+  "epoch": "shots/epoch.png"
+ },
+ "keys": [
+  {
+   "t": 0,
+   "img": "debug",
+   "view": [
+    0,
+    0,
+    3024,
+    1890
+   ]
+  },
+  {
+   "t": 1.2,
+   "img": "debug",
+   "view": [
+    0,
+    0,
+    3024,
+    1890
+   ]
+  },
+  {
+   "t": 2.6,
+   "img": "debug",
+   "view": [
+    1880,
+    150,
+    1144,
+    712
+   ]
+  },
+  {
+   "t": 4.4,
+   "img": "debug",
+   "view": [
+    1880,
+    150,
+    1144,
+    712
+   ]
+  },
+  {
+   "t": 5.4,
+   "img": "debug",
+   "view": [
+    1880,
+    1160,
+    1144,
+    712
+   ]
+  },
+  {
+   "t": 6.4,
+   "img": "debug",
+   "view": [
+    1880,
+    1160,
+    1144,
+    712
+   ]
+  },
+  {
+   "t": 7.0,
+   "img": "epoch",
+   "view": [
+    0,
+    0,
+    3024,
+    1890
+   ],
+   "switchAt": 6.6
+  },
+  {
+   "t": 7.8,
+   "img": "epoch",
+   "view": [
+    0,
+    0,
+    3024,
+    1890
+   ]
+  },
+  {
+   "t": 9.0,
+   "img": "epoch",
+   "view": [
+    420,
+    150,
+    2580,
+    1560
+   ]
+  },
+  {
+   "t": 10.4,
+   "img": "epoch",
+   "view": [
+    420,
+    150,
+    2580,
+    1560
+   ]
+  },
+  {
+   "t": 11.6,
+   "img": "epoch",
+   "view": [
+    430,
+    1130,
+    1620,
+    975
+   ]
+  },
+  {
+   "t": 13.0,
+   "img": "epoch",
+   "view": [
+    430,
+    1130,
+    1620,
+    975
+   ]
+  }
+ ],
+ "cursor": [
+  {
+   "t": 5.4,
+   "x": 2900,
+   "y": 1500
+  },
+  {
+   "t": 6.1,
+   "x": 2460,
+   "y": 1822,
+   "click": true
+  },
+  {
+   "t": 6.5,
+   "x": 2460,
+   "y": 1822
+  }
+ ],
+ "cursorEnd": 6.6,
+ "captions": [
+  {
+   "t0": 0.3,
+   "t1": 2.4,
+   "text": "Sample run: a pharmacy phone agent tested in a simulated world"
+  },
+  {
+   "t0": 2.6,
+   "t1": 5.2,
+   "text": "Debug failures reads the whole run and names each goal the agent broke"
+  },
+  {
+   "t0": 8.0,
+   "t1": 12.9,
+   "text": "Epoch finds a fix, then proves it on cases it never saw"
+  }
+ ]
+}
