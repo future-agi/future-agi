@@ -938,6 +938,11 @@ def _scrub_event(
         else:
             value.pop("mechanism", None)
     title = _record_title(event, log_record, grpc_logger) or replacement
+    if title is None and log_record is not None:
+        # Without arguments a literal and an f-string containing a response look alike.
+        args = getattr(log_record, "args", None)
+        if args is None or (type(args) in (tuple, list, dict) and not args):
+            title = "Log entry"
     if "message" in event:
         event["message"] = title or _scrub_text(event["message"])
     if "logentry" in event:

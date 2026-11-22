@@ -372,6 +372,44 @@ def test_request_span_overflow(monkeypatch):
     assert kept[trace["span_id"]]["op"] == "qa.lookup"
 
 
+def test_preformatted_validation_error(monkeypatch, tmp_path):
+    from pydantic import BaseModel, ValidationError
+
+    class PromptVariations(BaseModel):
+        variations: list[str]
+
+    marker = f"plum-{uuid4().hex[:12]}"
+    with pytest.raises(ValidationError) as invalid:
+        PromptVariations.model_validate_json(marker)
+    logger = logging.getLogger("ee.agent_opt.optimizers.random_search")
+
+    def emit(path):
+        handler = logging.FileHandler(path, encoding="utf-8")
+        logger.addHandler(handler)
+        try:
+            logger.error(f"Failed to parse teacher model response: {invalid.value}")
+        finally:
+            logger.removeHandler(handler)
+            handler.close()
+        return path.read_bytes()
+
+    assert not sentry.SENTRY_ENABLED and not sentry_sdk.is_initialized()
+    baseline = emit(tmp_path / "off.log")
+    assert marker.encode() in baseline
+    with capture(monkeypatch, "temporal") as wire:
+        assert emit(tmp_path / "on.log") == baseline
+        sentry_sdk.capture_message("next diagnostic")
+
+    logged, following = [body for _, kind, body in wire.items if kind == "event"]
+    assert logged["logger"] == logger.name and logged["level"] == "error"
+    assert logged["logentry"] == {"message": "Log entry"}
+    assert following["message"] == "next diagnostic"
+    assert any(
+        c.get("category") == logger.name for c in following["breadcrumbs"]["values"]
+    )
+    assert all(marker.encode() not in packet for packet in wire.raw)
+
+
 def stub_provider_http(monkeypatch, replies):
     calls = []
 

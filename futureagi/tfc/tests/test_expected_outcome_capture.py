@@ -204,7 +204,7 @@ def test_unexpected_litellm_error_is_an_issue(transport):
     logging.getLogger("LiteLLM").error("Unexpected response parser failure")
     [event] = transport.events
     assert event["logger"] == "LiteLLM"
-    assert event["logentry"]["formatted"] == "Unexpected response parser failure"
+    assert event["logentry"] == {"message": "Log entry"}
 
 
 def test_real_litellm_vertex_key_failure_is_not_an_issue(transport):

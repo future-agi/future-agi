@@ -19,6 +19,7 @@ BACKEND = CASES.parents[2]
         "supplied_frame",
         "authenticated_request",
         "request_span_overflow",
+        "preformatted_validation_error",
         pytest.param("structured_provider_log[django]", id="structured_provider_log"),
         pytest.param("structured_provider_log[local]", id="worker_vapi_console"),
         pytest.param("structured_provider_log[production]", id="worker_vapi_json"),
