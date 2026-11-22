@@ -16,6 +16,9 @@ import structlog
 from django.core.handlers.asgi import ASGIHandler
 from django.core.signals import request_finished, request_started
 from django.db import close_old_connections
+from django.http import HttpResponse
+from django.test import override_settings
+from django.urls import path
 from django_socio_grpc.settings import grpc_settings
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceRequest,
@@ -25,6 +28,7 @@ from sentry_sdk.utils import iter_event_frames
 
 from tfc.logging import sentry
 from tfc.temporal.common.sentry_interceptor import SentryActivityInboundInterceptor
+from tfc.tests.sentry_capture import EnvelopeTransport
 from tfc.utils.payload_storage import get_payload_storage
 from tracer.services.grpc import ObservationSpanService
 from tracer.utils import otel, pii_scrubber, trace_ingestion
@@ -43,13 +47,15 @@ def initialized_sentry(request, monkeypatch):
 @pytest.fixture
 def django_sentry(monkeypatch):
     """The web process's Sentry: its Django integration attaches the request."""
+    monkeypatch.setattr(sentry, "TRACES_SAMPLE_RATE", 1.0)
+    monkeypatch.setattr(sentry, "PROFILES_SAMPLE_RATE", 0.0)
     with _sentry_for(monkeypatch, "django", "ERROR") as pair:
         yield pair
 
 
 @contextlib.contextmanager
 def _sentry_for(monkeypatch, component, level, tags=None):
-    events = []
+    transport = EnvelopeTransport()
     real_init = sentry_sdk.init
     monkeypatch.setenv("SENTRY_LOG_LEVEL", level)
     global_scope = sentry_sdk.get_global_scope()
@@ -60,7 +66,7 @@ def _sentry_for(monkeypatch, component, level, tags=None):
         # network I/O and auto-instrumenting unrelated installed test packages.
         return real_init(
             **options,
-            transport=events.append,
+            transport=transport,
             default_integrations=False,
             auto_enabling_integrations=False,
         )
@@ -70,10 +76,11 @@ def _sentry_for(monkeypatch, component, level, tags=None):
     monkeypatch.setattr(sentry, "SENTRY_DSN", "https://public@example.invalid/1")
     monkeypatch.setattr(sentry, "IS_STAGING", False)
     monkeypatch.setattr(sentry, "_initialized_components", set())
-    with sentry_sdk.isolation_scope():
+    with sentry_sdk.isolation_scope() as isolated:
+        isolated.clear_breadcrumbs()
         try:
             assert sentry.init_sentry(component=component, tags=tags)
-            yield sentry_sdk.get_client(), events
+            yield sentry_sdk.get_client(), transport.events
         finally:
             client = global_scope.client
             if client is not previous_client:
@@ -99,6 +106,68 @@ def test_init_sentry_preserves_strings_at_the_limit(initialized_sentry):
     assert events[0]["message"] == message
     assert events[0]["tags"]["component"] == "temporal"
     assert events[0]["tags"]["queue"] == "tasks_l"
+
+
+def test_scope_processor_bounds_supplied_payload_before_sdk_frame_processing(
+    initialized_sentry, monkeypatch
+):
+    _client, events = initialized_sentry
+    monkeypatch.setattr(sentry, "_MAX_FRAMES", 1)
+    renders = []
+
+    class RawRequest:
+        def __repr__(self):
+            renders.append(True)
+            return "synthetic-request"
+
+    seen = []
+
+    def witness(event, hint):
+        # Snapshot before handle_in_app mutates the surviving frame in place.
+        seen.append((list(map(dict, iter_event_frames(event))), dict(event["extra"])))
+        # Like a request-local integration, add an extra *after* that boundary.
+        event["extra"]["late_argument"] = raw
+        return event
+
+    raw = RawRequest()
+    with sentry_sdk.new_scope() as scope:
+        scope.add_event_processor(witness)
+        sentry_sdk.capture_event(
+            {
+                "logger": "django_socio_grpc.request",
+                "extra": {"request": raw, "status_code": grpc.StatusCode.INTERNAL},
+                "stacktrace": {
+                    "frames": [{"module": "tfc.example", "vars": {"payload": raw}}]
+                },
+                "exception": {
+                    "values": [{"type": "LookupError", "stacktrace": {"frames": [{}]}}]
+                },
+            }
+        )
+
+    assert seen == [([{"module": "tfc.example"}], {"status_code": "INTERNAL"})]
+    [event] = events
+    [frame] = iter_event_frames(event)
+    assert frame["in_app"] is True  # The SDK still performed its own processing.
+    assert event["extra"] == {"status_code": "INTERNAL"}
+    assert not renders
+
+
+def test_sdk_attached_message_stack_is_bounded_before_serialization(
+    initialized_sentry, monkeypatch
+):
+    client, _ = initialized_sentry
+    monkeypatch.setattr(sentry, "_MAX_FRAMES", 1)
+    before_send = client.options["before_send"]
+    seen = []
+
+    def witness(event, hint):
+        seen.append((len(list(iter_event_frames(event))), event["message"]))
+        return before_send(event, hint)
+
+    monkeypatch.setitem(client.options, "before_send", witness)
+    sentry_sdk.capture_message("message with an SDK-attached stack")
+    assert seen == [(0, sentry._REDACTED)]
 
 
 # Trace ingestion: its frames hold the raw span batch, which the key-name
@@ -193,6 +262,36 @@ def test_a_failed_ingestion_batch_reaches_sentry_without_frame_vars(
 
     assert len(events) == 2
     _assert_sent_without_frame_vars(events, "tracer.utils.trace_ingestion")
+
+
+def test_missing_ingestion_project_is_not_in_task_or_interceptor_envelopes(
+    payload_store, initialized_sentry
+):
+    client, events = initialized_sentry
+    # The real converter fails on its project lookup, the task logs and
+    # rethrows, and the interceptor directly captures the chained ValueError.
+    project = "-".join(("synthetic", "missing", "project"))
+    spans = [{"project_name": project, "project_type": "observe", "attributes": {}}]
+    with (
+        mock.patch.object(otel, "_bulk_get_or_create_projects", return_value={}),
+        _ingestion_batch(
+            _parse_otel_request=mock.Mock(return_value=spans),
+            get_pii_settings_for_projects=mock.Mock(return_value={}),
+            scrub_pii_in_span_batch=mock.Mock(),
+            bulk_convert_otel_spans_to_observation_spans=otel.bulk_convert_otel_spans_to_observation_spans,
+        ),
+        pytest.raises(ValueError, match=project),
+    ):
+        _run_ingestion_task()
+
+    task = next(e for e in events if e.get("logger") == "tracer.utils.trace_ingestion")
+    [direct] = [e for e in events if not e.get("logger")]
+    assert direct["tags"]["temporal.activity_type"] == "bulk_create_observation_span_task"
+    assert direct["exception"]["values"][-1]["type"] == "ValueError"
+    assert all(v["value"] == sentry._REDACTED for v in direct["exception"]["values"])
+    for event in (task, direct):
+        assert "tracer.utils.trace_ingestion" in _frame_modules(event)
+    assert all(project.encode() not in e.serialize() for e in client.transport.envelopes)
 
 
 def test_an_error_logged_inside_the_task_reaches_sentry_without_frame_vars(
@@ -503,7 +602,7 @@ def test_the_transaction_hook_drops_a_langfuse_body(initialized_sentry, shape):
     assert sent["exception"]["values"] == [
         {"type": "LookupError", "value": sentry._REDACTED}
     ]
-    assert sent["request"] == {"url": url, "method": "POST"}
+    assert sent["request"] == {"method": "POST"}  # No resolver template supplied.
     kept = [
         {"category": "httplib", "data": {"method": "POST"}},
         {"category": "django_socio_grpc.request", "data": {"status_code": "INTERNAL"}},
@@ -522,7 +621,7 @@ class _ResolvedApiKey:
         return user, None
 
 
-def _post_through_asgi(path, body):
+def _post_through_asgi(path, body, headers=()):
     """One HTTP request through Django's ASGIHandler, as granian serves it.
     Sentry wraps that handler: its middleware adds the request URL, and the
     Django integration adds the parsed body."""
@@ -539,6 +638,7 @@ def _post_through_asgi(path, body):
             (b"host", b"testserver"),
             (b"content-type", b"application/json"),
             (b"content-length", str(len(body)).encode()),
+            *headers,
         ],
         "client": ("127.0.0.1", 50000),
         "server": ("testserver", 80),
@@ -564,6 +664,54 @@ def _post_through_asgi(path, body):
         request_started.connect(close_old_connections)
         request_finished.connect(close_old_connections)
     return next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+
+def _report_request(request, token=None, exception=None):
+    sentry_sdk.capture_message("request diagnostic")
+    return HttpResponse(status=404 if exception else 200)
+
+
+# A local URLconf uses the same converter as tracer's public shared-link route.
+# The custom 404 exercises Django/ASGI's fallback to the literal request path.
+urlpatterns = [path("tracer/shared/<str:token>/", _report_request)]
+
+handler404 = _report_request
+
+
+@pytest.mark.parametrize("resolved", [True, False])
+@override_settings(
+    ROOT_URLCONF=__name__, MIDDLEWARE=[], DEBUG=False, ALLOWED_HOSTS=["testserver"]
+)
+def test_request_metadata_in_error_and_transaction_envelopes(django_sentry, resolved):
+    client, _ = django_sentry
+    marker = "-".join(("synthetic", "opaque", "value"))
+    prefix = "/tracer/shared/" if resolved else "/unmatched/"
+    status = _post_through_asgi(
+        prefix + marker + "/",
+        b"{}",
+        headers=[
+            (b"x-harness-fence", marker.encode()),
+            (b"x-harness-conversation-fence", marker.encode()),
+            (b"accept", marker.encode()),
+        ],
+    )
+    assert status == (200 if resolved else 404)
+    envelopes = client.transport.envelopes
+    payloads = {
+        item.headers["type"]: item.payload.json
+        for envelope in envelopes
+        for item in envelope.items
+    }
+    for kind in ("event", "transaction"):
+        event = payloads[kind]
+        request = event["request"]
+        assert request["headers"] == {"Content-Type": "application/json"}
+        if resolved:
+            assert request["url"] == event["transaction"] == "/tracer/shared/{token}/"
+        else:
+            assert "url" not in request
+            assert event["transaction"] == "unresolved request"
+    assert all(marker.encode() not in e.serialize() for e in envelopes)
 
 
 def test_a_failed_langfuse_batch_sends_no_frame_vars_and_no_body(django_sentry):
@@ -617,6 +765,7 @@ def test_ordinary_errors_keep_type_and_location_but_no_locals(initialized_sentry
 
     issue, logged = events
     assert issue["exception"]["values"][-1]["type"] == "RuntimeError"
+    assert issue["exception"]["values"][-1]["value"] == "unrelated"
     assert logged["logger"] == "accounts.views"
     for event in events:
         assert any(

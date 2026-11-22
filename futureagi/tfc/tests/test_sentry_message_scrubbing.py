@@ -10,6 +10,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.tracing import Transaction
 
 from tfc.logging import sentry
+from tfc.logging.sentry_payloads import PayloadBoundsIntegration
 from tfc.tests.sentry_capture import sentry_capture
 
 MARKER = "synthetic-payload-marker"
@@ -324,8 +325,32 @@ def test_over_budget_span_list_is_dropped_without_losing_the_transaction(monkeyp
         assert MARKER.encode() not in following.serialize()
 
 
+@pytest.mark.parametrize("key", ["trace_id", "span_id"])
+def test_zero_root_id_rejects_transaction(key):
+    with sentry_capture(
+        PayloadBoundsIntegration(),
+        before_send_transaction=sentry._before_send_transaction,
+    ) as transport:
+        trace = {"trace_id": "a" * 32, "span_id": "b" * 16}
+        trace[key] = "0" * len(trace[key])
+        result = sentry_sdk.capture_event(
+            {"type": "transaction", "transaction": "process job", "contexts": {"trace": trace}}
+        )
+        assert result is None
+        assert not transport.envelopes
+
+
+def test_zero_optional_span_and_sampling_ids_are_not_forwarded():
+    span = sentry._span_structure({
+        "parent_span_id": "0" * 16,
+        "dynamic_sampling_context": {"trace_id": "0" * 32, "sampled": "true"},
+    })
+    assert span == {"dynamic_sampling_context": {"sampled": "true"}}
+
+
 def test_profile_and_transaction_share_trace_despite_over_budget_context():
     with sentry_capture(
+        PayloadBoundsIntegration(),
         before_send_transaction=sentry._before_send_transaction,
         traces_sample_rate=1.0,
         profiles_sample_rate=1.0,

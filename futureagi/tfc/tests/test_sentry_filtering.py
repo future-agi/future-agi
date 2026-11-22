@@ -381,7 +381,7 @@ def test_before_send_scrubs_request_and_extra():
         "logger": "tracer.views.foo",
         "message": "real error",
         "request": {
-            "headers": {"Authorization": "Bearer secret", "Accept": "json"},
+            "headers": {"Authorization": "Bearer secret", "Accept": "application/json"},
             "cookies": {"sessionid": "xyz"},
             "query_string": "api_key=leak&page=1",
         },
@@ -389,8 +389,7 @@ def test_before_send_scrubs_request_and_extra():
     }
     out = before_send(event, {})
     assert out is not None
-    assert out["request"]["headers"]["Authorization"] == _REDACTED
-    assert out["request"]["headers"]["Accept"] == "json"
+    assert out["request"]["headers"] == {"Accept": "application/json"}
     assert out["request"]["query_string"] == _REDACTED
     assert out["request"]["cookies"] == _REDACTED  # cookies redacted wholesale
     assert "api_key" not in out["extra"]

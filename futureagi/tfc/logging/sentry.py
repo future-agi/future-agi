@@ -168,6 +168,16 @@ _MAX_TEXT = 8192
 _MAX_ITEMS = 128
 _MAX_FRAMES = 512
 _HTTP_METHODS = frozenset({"GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS"})
+_INGESTION_FRAMES = (
+    ("tracer.utils.trace_ingestion", "bulk_create_observation_span_task"),
+    ("tracer.utils.otel", "bulk_convert_otel_spans_to_observation_spans"),
+)
+_HEADER_MEDIA_TYPES = frozenset(
+    {
+        "application/json", "application/x-protobuf", "application/grpc",
+        "text/html", "text/plain", "*/*",
+    }
+)
 _SPAN_STATUSES = frozenset(
     "ok cancelled unknown_error invalid_argument deadline_exceeded not_found "
     "already_exists permission_denied resource_exhausted failed_precondition aborted "
@@ -385,14 +395,14 @@ def _entries(container: dict, key: str) -> list | tuple | None:
     return cast("list | tuple", items)
 
 
-def _scrub_frames(event: dict) -> bool | None:
-    """Return whether a Vertex loader was found, or None for an incomplete walk."""
+def _scrub_frames(event: dict) -> str | None:
+    """Return a safe replacement for text from sensitive or incomplete stacks."""
     remaining = _MAX_FRAMES
     complete = True
-    matched = False
+    replacement: str | None = None
 
     def inspect_stack(owner: dict) -> None:
-        nonlocal remaining, complete, matched
+        nonlocal remaining, complete, replacement
         # Restored events can carry a second, unsymbolicated copy of the stack.
         # Do not traverse it or forward its locals outside the frame budget.
         if "raw_stacktrace" in owner:
@@ -423,7 +433,14 @@ def _scrub_frames(event: dict) -> bool | None:
                 complete = False
                 return
             frame.pop("vars", None)
-            matched |= _vertex_auth_frame(frame.get("module"), frame.get("function"))
+            module, function = frame.get("module"), frame.get("function")
+            if _vertex_auth_frame(module, function):
+                replacement = _VERTEX_SAFE_MESSAGE
+            elif replacement is None and type(module) is str and type(function) is str:
+                # Both the task logger and the Temporal interceptor capture this
+                # traceback. The latter has no logger; neither needs its text.
+                if (module, function) in _INGESTION_FRAMES:
+                    replacement = _REDACTED
 
     inspect_stack(event)
     for section in ("exception", "threads"):
@@ -438,9 +455,7 @@ def _scrub_frames(event: dict) -> bool | None:
             continue
         for item in items:
             inspect_stack(item)
-    if matched:
-        return True
-    return False if complete else None
+    return replacement or (None if complete else _REDACTED)
 
 
 def _span_structure(span: dict) -> dict:
@@ -457,7 +472,10 @@ def _span_structure(span: dict) -> dict:
     ):
         value = span.get(key)
         if type(value) is str and len(value) <= 128 and re.fullmatch(pattern, value):
-            result[key] = value if key.endswith("_id") else _scrub_text(value)
+            if not key.endswith("_id"):
+                result[key] = _scrub_text(value)
+            elif int(value, 16):
+                result[key] = value
     # SDK child spans carry status as a tag; the root trace uses a field.
     for owner in (span, span.get("tags")):
         if type(owner) is dict:
@@ -489,7 +507,8 @@ def _span_structure(span: dict) -> dict:
         ):
             value = sampling.get(key)
             if type(value) is str and len(value) <= 32 and re.fullmatch(pattern, value):
-                dsc[key] = value
+                if key != "trace_id" or int(value, 16):
+                    dsc[key] = value
         result["dynamic_sampling_context"] = dsc
     data = span.get("data")
     if type(data) is dict:
@@ -608,34 +627,60 @@ def _parameterized_logentry(entry: dict, log_record: object) -> dict:
     return {"message": message}
 
 
-def _scrub_event(
-    event: dict, *, vertex_log: bool = False, log_record: object = None
-) -> dict:
-    grpc_logger = _is_grpc_framework_logger(event.get("logger"))
-    _scrub_breadcrumbs(event)
-    _scrub_transaction_spans(event)
-    for key in ("logger", "level"):
-        if key in event:
-            event[key] = _scrub_text(event[key])
+def _scrub_request(event: dict) -> None:
     request = event.get("request")
-    if type(request) is dict:
-        if _is_telemetry_url(request.get("url", "")):
-            request.pop("data", None)
-        if "url" in request:
-            url = _scrub_text(request["url"])
-            request["url"] = url.partition("?")[0].partition("#")[0]
-        for section in ("cookies", "query_string", "data"):
-            if section in request:
-                request[section] = _REDACTED
-        for section in ("headers", "env"):
-            if section in request:
-                clean = (
-                    _scrub(request[section]) if type(request[section]) is dict else None
-                )
-                request[section] = clean if type(clean) is dict else {}
-    else:
+    info = event.get("transaction_info")
+    source = info.get("source") if type(info) is dict else None
+    name = event.get("transaction")
+    # DjangoIntegration(url) labels resolver templates 'route'; its unresolved
+    # fallback and the ASGI middleware label the literal path 'url'. Never
+    # re-resolve a path/import URLconf from an error hook during bootstrap.
+    route = None
+    if (
+        source == "route"
+        and type(name) is str
+        and len(name) <= 1024
+        and re.fullmatch(r"/(?!/)[\w./{}:-]*", name)
+    ):
+        route = name
+    if source == "url" or (type(request) is dict and name is not None and not route):
+        # A profiled transaction requires a name, even without a matched route.
+        event["transaction"] = "unresolved request"
+        event["transaction_info"] = {"source": "url"}
+    if type(request) is not dict:
         event.pop("request", None)
+        return
 
+    clean: dict[str, Any] = {}
+    if route:
+        clean["url"] = route
+    method = request.get("method")
+    if type(method) is str and len(method) <= 7 and method in _HTTP_METHODS:
+        clean["method"] = method
+    for key in ("cookies", "query_string"):
+        if key in request:
+            clean[key] = _REDACTED
+    if "data" in request and not _is_telemetry_url(request.get("url")):
+        clean["data"] = _REDACTED
+    headers = request.get("headers")
+    if type(headers) is dict and len(headers) <= _MAX_ITEMS:
+        safe_headers = {}
+        for key, value in headers.items():
+            if (
+                type(key) is str
+                and len(key) <= 12
+                and key.lower() in ("accept", "content-type")
+                and type(value) is str
+                and len(value) <= 128
+            ):
+                media_type = value.partition(";")[0].strip().lower()
+                if media_type in _HEADER_MEDIA_TYPES:
+                    safe_headers[key.title()] = media_type
+        clean["headers"] = safe_headers
+    event["request"] = clean
+
+
+def _scrub_extra(event: dict, grpc_logger: bool) -> None:
     # Framework extras include the raw protobuf request. Keep only validated
     # counts and protocol status, even when the failure precedes the receiver.
     if "extra" in event:
@@ -657,17 +702,28 @@ def _scrub_event(
             if status is not None:
                 event["extra"]["status_code"] = status
 
-    frame_match = _scrub_frames(event)
-    replacement = None
-    if vertex_log or frame_match is True:
+
+def _scrub_event(
+    event: dict, *, vertex_log: bool = False, log_record: object = None
+) -> dict:
+    grpc_logger = _is_grpc_framework_logger(event.get("logger"))
+    _scrub_breadcrumbs(event)
+    _scrub_transaction_spans(event)
+    for key in ("logger", "level"):
+        if key in event:
+            event[key] = _scrub_text(event[key])
+    _scrub_request(event)
+    _scrub_extra(event, grpc_logger)
+
+    replacement = _scrub_frames(event)
+    if vertex_log:
         replacement = _VERTEX_SAFE_MESSAGE
     elif (
-        frame_match is None
-        or grpc_logger
+        grpc_logger
         or event.get("logger") == "tracer.services.grpc"
         or event.get("type") == "transaction"
     ):
-        replacement = _REDACTED
+        replacement = replacement or _REDACTED
     for value in event.get("exception", {}).get("values", []):
         if "value" in value:
             value["value"] = replacement or _scrub_text(value["value"])
@@ -751,7 +807,45 @@ def _event_scrubber() -> Any:
         + sorted(_CREDENTIAL_ALIASES)
         + [k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST]
     )
-    return EventScrubber(denylist=denylist, recursive=True)
+
+    class FrameworkScrubber(EventScrubber):
+        def scrub_request(self, event: "Event") -> None:
+            # Request-local SDK processors can attach the HTTP request *after*
+            # the application processor. Bound it before the recursive walk.
+            try:
+                _scrub_request(cast(dict, event))
+            except Exception:  # noqa: BLE001 - never serialize uninspectable HTTP metadata
+                event.pop("request", None)
+                if "transaction" in event:
+                    event["transaction"] = "unresolved request"
+                event.pop("transaction_info", None)
+            super().scrub_request(event)
+
+        def scrub_frames(self, event: "Event") -> None:
+            # attach_stacktrace may have just built a message stack. Its capture
+            # and in-app marking have already happened; bound the remaining SDK
+            # walk and serialization, including the task logger's fallback stack.
+            if "threads" in event and "exception" not in event and "stacktrace" not in event:
+                try:
+                    replacement = _scrub_frames(cast(dict, event))
+                except ValueError:
+                    event.pop("threads", None)
+                    replacement = _REDACTED
+                if replacement:
+                    if "message" in event:
+                        event["message"] = replacement
+                    if "logentry" in event:
+                        event["logentry"] = {"message": replacement}
+            super().scrub_frames(event)
+
+        def scrub_extra(self, event: "Event") -> None:
+            # Celery's request-local processor can add task arguments here too.
+            _scrub_extra(
+                cast(dict, event), _is_grpc_framework_logger(event.get("logger"))
+            )
+            super().scrub_extra(event)
+
+    return FrameworkScrubber(denylist=denylist, recursive=True)
 
 
 def _expected_feature_denial(hint: dict) -> bool:
@@ -1032,6 +1126,8 @@ def init_sentry(
             ignore_logger,
         )
 
+        from tfc.logging.sentry_payloads import PayloadBoundsIntegration
+
         # Suppress pure-infrastructure loggers at the source. This is the
         # single most important noise lever: it stops the OTel exporter's
         # transient "failed to reach collector" ERRORs from becoming issues.
@@ -1056,6 +1152,7 @@ def init_sentry(
                 event_level=_event_level,  # send ERROR+ as events
             ),
             HttpxIntegration(),  # Track outgoing HTTP requests via httpx
+            PayloadBoundsIntegration(),
         ]
 
         # Add component-specific integrations
