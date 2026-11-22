@@ -281,4 +281,18 @@ def test_same_hour_replacements_different_hour_controls_and_old_child(
         width = timedelta(hours=4 if all_history else 1)
         assert replay["filter_slice_start"] == b.plain(replay_end - width)
         assert replay["filter_slice_end"] == b.plain(replay_end)
-    assert not b.globals_used(transport)
+    # The short-text seed uses the scalar witness CTE too. What makes this
+    # a slice-local seed (even at zero slack) is its *inner* root population;
+    # the global fallback has only the outer root bounds.
+    for query, params, _ in b.seeds(transport):
+        witness, roots = query.split("SELECT trace_id, id AS root_span_id", 1)
+        assert "SELECT trace_id FROM matching_scalar_trace_identities" in roots
+        assert "AND trace_id IN (" in witness
+        assert (
+            "%(filter_slice_start_us)s" in witness
+            and "%(filter_slice_end_us)s" in witness
+        )
+        assert "WHERE parent_span_id IS NULL OR parent_span_id = ''" in witness
+        for bound in ("filter_witness_start_us", "filter_witness_end_us"):
+            assert (bound in params) is (not all_history)
+            assert (f"%({bound})s" in witness) is (not all_history)

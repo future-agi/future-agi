@@ -59,20 +59,26 @@ def query(target, **kwargs):
     )
 
 
-def sparse_hops(execute, target, filters, **options):
+def sparse_hops(execute, target, filters, *, query_limited_hop=None, **options):
     """Walk the public cursor, not an offset or an inferred time interval."""
     previous = None
     # Even a day at a time, a 64-acquisition request has room to cover 48
     # empty days after warm-up, proofs and replay. Eight hops cover a year;
     # the separate small-window controls below must finish in ONE request.
-    for _ in range(8):
+    for hop in range(8):
         page = _engine_population_page(execute, target, filters, **options)
+        if page.complete:
+            assert query_limited_hop is None or hop > query_limited_hop
+        else:
+            if hop == query_limited_hop:
+                assert page.error_code == "query_budget_exceeded", page
+                assert sum(a.kind != "seed_density_probe" for a in page.attempts) == 64
+            else:
+                assert page.error_code == "scan_budget_exceeded", page
+            assert page.has_more or page.continuation_slice_end is not None
         yield page
         if page.complete and not page.has_more:
             return
-        if not page.complete:
-            assert page.error_code == "scan_budget_exceeded", page
-            assert page.has_more or page.continuation_slice_end is not None
         order = _span_cursor_order_for_partial_page(
             rows=page.rows, bounded_page=page, cursor_state=None
         )
@@ -104,12 +110,20 @@ class LadderControl(SpanListQueryBuilderV2):
         return None
 
 
-def budgeted_sparse_walk(execute, filters, expected, record_property, *, page_size=25):
+def budgeted_sparse_walk(
+    execute, filters, expected, record_property, *, page_size=25, query_limited_hop=None
+):
     """Run the real row-budgeted selector over the SAME year as the ladder control."""
     pages = []
     target = builder(filters=filters)
     for hop, page in enumerate(
-        sparse_hops(execute, target, filters, page_size=page_size)
+        sparse_hops(
+            execute,
+            target,
+            filters,
+            page_size=page_size,
+            query_limited_hop=query_limited_hop,
+        )
     ):
         trace = [
             (
@@ -355,7 +369,13 @@ def test_full_year_sparse_numeric_gap_uses_adjacent_proofs_then_latest_replay(
         insert(id="deleted", attrs_number={"tag": 4})
         insert(id="deleted", _version=2, is_deleted=1, attrs_number={"tag": 4})
     budgeted_sparse_walk(
-        execute, filters, ["wanted"] if present else [], record_property
+        execute,
+        filters,
+        ["wanted"] if present else [],
+        record_property,
+        # On the second hop the classifier for the live hit costs one of the
+        # 64 statements: 60 seeds + 3 proofs + 1 classifier, not 64 scan steps.
+        query_limited_hop=1 if present else None,
     )
     target = ladder_control(filters)
     result = _engine_population_page(execute, target, filters)
@@ -1044,9 +1064,19 @@ def test_mixed_value_discovery_replays_stale_hours_and_preserves_reference_order
     # Check both page boundaries with one request each on that window before
     # allowing empty continuations across the year-long, text-capped tail.
     short = [time_filter(start, START + timedelta(days=7)), *filters[1:]]
-    for window, read in ((short, _engine_population_page), (filters, sparse_page)):
+    # Unlike the daily text proofs, the wider number/Boolean proofs hit
+    # stale hours and replay them in the same scan step. The first year hop
+    # spends its 64 statements (54 seeds + 10 proofs) before 64 scan steps.
+    for window, read, first_options in (
+        (short, _engine_population_page, {}),
+        (
+            filters,
+            sparse_page,
+            {"query_limited_hop": 0 if pair == "number_boolean" else None},
+        ),
+    ):
         target = builder(filters=window)
-        page = read(execute, target, window, page_size=2)
+        page = read(execute, target, window, page_size=2, **first_options)
         assert page.complete and page.has_more
         next_page = read(
             execute,
