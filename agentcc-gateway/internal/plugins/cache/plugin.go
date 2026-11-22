@@ -450,6 +450,9 @@ func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
 	h.Write(msgBytes)
 
 	// Include parameters that affect output — direct byte writes, no fmt.Fprintf.
+	// Content-only settings the Responses route omits (stop, penalties,
+	// logit_bias) stay out of the key by design (see route_drops.go); the
+	// settings below decide which fields the response body has at all.
 	if req.Temperature != nil {
 		h.Write([]byte("|t="))
 		h.Write([]byte(strconv.FormatFloat(float64(*req.Temperature), 'g', -1, 32)))
@@ -457,6 +460,10 @@ func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
 	if req.TopP != nil {
 		h.Write([]byte("|p="))
 		h.Write([]byte(strconv.FormatFloat(float64(*req.TopP), 'g', -1, 32)))
+	}
+	if req.N != nil {
+		h.Write([]byte("|n="))
+		h.Write([]byte(strconv.Itoa(*req.N)))
 	}
 	if req.MaxTokens != nil {
 		h.Write([]byte("|m="))
@@ -483,6 +490,24 @@ func BuildCacheKey(namespace string, req *models.ChatCompletionRequest) string {
 	if req.Seed != nil {
 		h.Write([]byte("|seed="))
 		h.Write([]byte(strconv.Itoa(*req.Seed)))
+	}
+	if req.Logprobs != nil {
+		h.Write([]byte("|logprobs="))
+		h.Write([]byte(strconv.FormatBool(*req.Logprobs)))
+	}
+	if req.TopLogprobs != nil {
+		h.Write([]byte("|top_logprobs="))
+		h.Write([]byte(strconv.Itoa(*req.TopLogprobs)))
+	}
+	if len(req.Modalities) > 0 {
+		modalitiesBytes, _ := json.Marshal(req.Modalities)
+		h.Write([]byte("|modalities="))
+		h.Write(modalitiesBytes)
+	}
+	if req.Audio != nil {
+		audioBytes, _ := json.Marshal(req.Audio)
+		h.Write([]byte("|audio="))
+		h.Write(audioBytes)
 	}
 
 	return hex.EncodeToString(h.Sum(nil))
