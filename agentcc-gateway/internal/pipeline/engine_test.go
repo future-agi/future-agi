@@ -357,6 +357,28 @@ func TestRunPostPluginsSkipOnCacheHitTimings(t *testing.T) {
 	}
 }
 
+// A miss must never skip: SkipOnCacheHit only applies to short-circuited
+// cache hits, so a normal response still runs every post-plugin.
+func TestRunPostPluginsNoSkipOnMiss(t *testing.T) {
+	engine := NewEngine(
+		skipOnCacheHitPostPlugin{readOnlyPostPlugin{name: "skipped"}},
+	)
+
+	rc := &models.RequestContext{
+		RequestID: "req",
+		StartTime: time.Now(),
+		Metadata:  map[string]string{"cache_status": "miss"},
+		Timings:   map[string]time.Duration{},
+		Errors:    []error{},
+	}
+
+	engine.RunPostPlugins(context.Background(), rc)
+
+	if _, ok := rc.Timings["post_skipped"]; !ok {
+		t.Error("miss: skip-on-cache-hit plugin did not run")
+	}
+}
+
 type skipOnCacheHitPostPlugin struct{ readOnlyPostPlugin }
 
 func (skipOnCacheHitPostPlugin) ShouldSkipOnCacheHit() bool { return true }

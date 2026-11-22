@@ -109,6 +109,15 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		return pipeline.ResultContinue()
 	}
 
+	// A cache hit serves a stored response with no provider call. The cost
+	// plugin still records a catalogue price on semantic/conditional hits
+	// for budgets, but no credits are deducted for any hit kind. Read the
+	// flag, not the SkipOnCacheHit interface: the engine only applies that
+	// to hit_exact.
+	if rc.Flags.CacheHit {
+		return pipeline.ResultContinue()
+	}
+
 	costStr, ok := rc.Metadata["cost"]
 	if !ok || costStr == "" {
 		return pipeline.ResultContinue()
