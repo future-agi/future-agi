@@ -2,15 +2,30 @@ name: Backend CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, edited]
     # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
-  merge_group:
+  # The queue entrypoint calls this workflow without forwarding any secrets.
+  workflow_call:
+    outputs:
+      verdict:
+        description: Result of the required backend aggregate step
+        value: ${{ jobs.backend-tests.outputs.verdict }}
   workflow_dispatch:
+    inputs:
+      backend_setup:
+        type: choice
+        description: Frozen shard dependency/service setup for a paired timing run
+        default: baseline
+        options: [baseline, overlap, tuned]
+      backend_cold_fanout:
+        type: boolean
+        description: On an exact cold miss, try one validated producer before scheduling shards
+        default: false
 
 permissions:
   contents: read
-  pull-requests: read # dorny/paths-filter reads the PR's file list
 
 concurrency:
   # PRs: one active run per PR, cancel stale. Push: per-SHA so dev/main runs
@@ -18,20 +33,20 @@ concurrency:
   # Keyed on github.ref, not head_ref: for PRs that is refs/pull/N/merge, unique
   # per PR even across forks, whereas a fork branch also named "dev" would share
   # a head_ref group with internal dev runs and cancel them.
-  group: backend-ci-${{ github.event_name == 'push' && github.sha || github.ref }}
+  # Manual profiles can be dispatched together without replacing a pending trial.
+  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Shard counts. "pytest shard N" runs everything but the Metrics suite on
-  # every backend change; "metrics shard N" runs only that suite, on Metrics
-  # changes and on every push (see the changes job). The Metrics suite was
+  # every selected backend change; "metrics shard N" runs its complementary
+  # suite on the same candidates and full controls. The Metrics suite was
   # measured at about 368 test-minutes; its two longest cases run about 19
   # minutes each against the real pass deadline, which bounds every shard.
   # The main suite was measured at about 196 test-minutes (dev, 21 Nov 2026),
-  # so 24 legs carry about 8 minutes of tests each, on top of what every leg
-  # pays whatever its share: 2 to 3 minutes before its test step (measured:
-  # dependency install and service start), and inside that step pytest
-  # collecting the whole suite before it deselects.
+  # so 24 legs carry about 8 minutes of tests each, on top of about 5.5
+  # minutes that every leg pays (dependency install, and pytest collecting
+  # the whole suite before it deselects).
   SPLITS: "24"
   METRICS_SPLITS: "16"
   # pytest.ini's addopts -m, which a command-line -m replaces. Each shard
@@ -39,147 +54,118 @@ env:
   PYTEST_MARKERS: "not live_llm and not e2e and not vapi and not phone and not benchmark and not stress and not multiworker"
 
 jobs:
+  policy-self-test:
+    name: Scope policy fixtures
+    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Exercise the candidate policy against Git fixtures
+        run: python3 -I .github/scripts/test_ci_scope.py
+
   changes:
+    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      backend: ${{ steps.filter.outputs.backend || steps.always.outputs.backend }}
-      update_safety: ${{ steps.filter.outputs.update_safety || 'false' }}
-      executor_base: ${{ steps.filter.outputs.executor_base || 'false' }}
-      metrics: ${{ steps.filter.outputs.metrics || steps.always.outputs.metrics }}
+      queue_target: ${{ steps.queue.outputs.target }}
+      backend: ${{ steps.filter.outputs.backend }}
+      update_safety: ${{ steps.filter.outputs.update_safety }}
+      executor_base: ${{ steps.filter.outputs.executor_base }}
+      metrics: ${{ steps.filter.outputs.metrics }}
+      scope: ${{ steps.filter.outputs.scope }}
       shards: ${{ steps.shards.outputs.matrix }}
+      internal: ${{ steps.overlay.outputs.internal }}
     steps:
       - uses: actions/checkout@v4
-      - id: filter
-        if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v3
         with:
-          filters: |
-            backend:
-              - 'futureagi/**'
-              - 'api_contracts/gateway/provider-url-policy.json'
-              - 'api_contracts/gateway/decision-cases.json'
-              - 'api_contracts/gateway/decision-providers.json'
-              - 'docker-compose*.yml'
-              - 'fi-collector/Dockerfile'
-              - 'bin/install*'
-              - 'bin/lib/**'
-              - 'bin/uninstall'
-              - 'deploy/**'
-              - '.github/workflows/backend-ci.yml'
-              - '.github/actions/backend-test-packages/**'
-              - '.github/actions/checkout-ee/**'
-              # Read by futureagi/tests/test_env_reference.py and test_log_stream.py
-              # (deploy/env-reference.toml is under deploy/**)
-              - 'bin/dev'
-              - '.env.example'
-              - 'INSTALLATION.md'
-              - 'frontend/docker-entrypoint.sh'
-              - 'scripts/env_reference.py'
-              - 'scripts/docs_site.py'
-              - 'scripts/check_update_safety.py'
-              - '.github/workflows/update-ci.yml'
-            # The gate also discovers shell sources by reading shebangs, which
-            # paths-filter cannot express (for example docs/rebuild-catalog).
-            # Run this daemon-free gate for every changed path without widening
-            # the separate backend filter that controls the heavy test shards.
-            update_safety:
-              - '**'
-            executor_base:
-              - 'futureagi/code-executor/Dockerfile.base'
-              - 'futureagi/code-executor/requirements.sandbox.txt'
-            # The Metrics suite (the modules tracer/tests/conftest.py marks
-            # `metrics`) and the code it exercises. Every path is also a
-            # backend path, so plan still runs. Runs that are not pull requests
-            # (every push to dev and main, manual dispatch) always run the
-            # suite, catching breakage from code outside this list after merge.
-            metrics:
-              - 'futureagi/tracer/services/derived_metrics/**'
-              - 'futureagi/tracer/models/derived_metric.py'
-              - 'futureagi/tracer/models/metric_pg_revision.py'
-              - 'futureagi/tracer/models/metric_source_intent.py'
-              - 'futureagi/tracer/models/monitor.py'
-              - 'futureagi/tracer/models/project.py'
-              - 'futureagi/tracer/models/trace_session.py'
-              - 'futureagi/tracer/apps.py'
-              - 'futureagi/tracer/tasks/__init__.py'
-              - 'futureagi/tracer/services/project_deletion.py'
-              # Two cases migrate back to tracer 0125 and forward to every leaf.
-              - 'futureagi/**/migrations/**'
-              # Metrics owns 028-038, but the suite applies every file in order.
-              - 'futureagi/tracer/services/clickhouse/v2/schema/*.sql'
-              - 'futureagi/tracer/services/clickhouse/v2/__init__.py'
-              - 'futureagi/tracer/services/clickhouse/v2/apply_schema*.py'
-              - 'futureagi/tracer/services/clickhouse/v2/id_remap_sql.py'
-              - 'futureagi/tracer/services/clickhouse/v2/query_builders/filters.py'
-              - 'futureagi/tracer/services/clickhouse/v2/property_catalog/source_adapters.py'
-              - 'futureagi/tracer/services/clickhouse/__init__.py'
-              - 'futureagi/tracer/services/clickhouse/client.py'
-              - 'futureagi/tracer/services/clickhouse/application_read_*.py'
-              - 'futureagi/tracer/services/clickhouse/native_read_stream.py'
-              - 'futureagi/tracer/services/clickhouse/read_budget.py'
-              - 'futureagi/tracer/services/clickhouse/query_service.py'
-              - 'futureagi/tracer/services/clickhouse/eval_logger_table.py'
-              - 'futureagi/tracer/services/clickhouse/query_builders/base.py'
-              - 'futureagi/tracer/services/clickhouse/query_builders/dashboard.py'
-              - 'futureagi/tracer/services/clickhouse/query_builders/filters.py'
-              - 'futureagi/tracer/services/private_boundary_log.py'
-              - 'futureagi/tracer/views/derived_metric.py'
-              - 'futureagi/tracer/serializers/derived_metric.py'
-              - 'futureagi/tracer/serializers/dashboard.py'
-              - 'futureagi/tracer/serializers/filters.py'
-              - 'futureagi/tracer/tasks/derived_metric.py'
-              - 'futureagi/tracer/permissions/metrics.py'
-              - 'futureagi/tracer/management/commands/erase_metric_data.py'
-              - 'futureagi/tracer/urls.py'
-              - 'futureagi/tracer/utils/filter_operators.py'
-              - 'futureagi/tracer/utils/helper.py'
-              - 'futureagi/tracer/utils/monitor.py'
-              - 'futureagi/tracer/utils/monitor_graphs.py'
-              - 'futureagi/tracer/selectors/eval_tasks/**'
-              - 'futureagi/tracer/sql_workbench/metric_retention.py'
-              - 'futureagi/tracer/sql_workbench/catalog.py'
-              - 'futureagi/tracer/sql_workbench/service.py'
-              - 'futureagi/tracer/sql_workbench/tasks.py'
-              - 'futureagi/tracer/sql_workbench/access.py'
-              - 'futureagi/tfc/capabilities/**'
-              - 'futureagi/tfc/settings/runtime_setting_specs.py'
-              - 'futureagi/tfc/settings/settings.py'
-              - 'futureagi/tfc/settings/test.py'
-              - 'futureagi/tfc/temporal/schedules/tracer.py'
-              - 'futureagi/model_hub/apps.py'
-              - 'futureagi/model_hub/models/score.py'
-              - 'futureagi/model_hub/models/develop_annotations.py'
-              # The suite, its fixtures and the modules it imports helpers from
-              - 'futureagi/tracer/tests/test_derived_metric_*.py'
-              - 'futureagi/tracer/tests/test_metric_*.py'
-              - 'futureagi/tracer/tests/_metric_busy_fixture.py'
-              - 'futureagi/tracer/tests/metric_read_fixtures.py'
-              - 'futureagi/tracer/tests/_ch_seed.py'
-              - 'futureagi/tracer/tests/conftest.py'
-              - 'futureagi/tracer/tests/test_base_list_current_pg_state.py'
-              - 'futureagi/tracer/tests/test_property_catalog_metric_fields.py'
-              - 'futureagi/tracer/sql_workbench/tests/test_permissions.py'
-              - 'futureagi/conftest.py'
-              - 'futureagi/pytest.ini'
-              - 'futureagi/.test_durations'
-              - 'futureagi/docker-compose.test.yml'
-              - 'futureagi/.ci/clickhouse-*.xml'
-              - 'futureagi/pyproject.toml'
-              - 'futureagi/uv.lock'
-              - '.github/workflows/backend-ci.yml'
-              - '.github/actions/backend-test-packages/**'
-              - '.github/actions/checkout-ee/**'
-      - id: always
-        if: github.event_name != 'pull_request'
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/workflows
+      - id: queue
+        if: github.event_name == 'merge_group'
+        env:
+          BASE_REF: ${{ github.event.merge_group.base_ref }}
         run: |
-          echo "backend=true" >> "$GITHUB_OUTPUT"
-          echo "metrics=true" >> "$GITHUB_OUTPUT"
+          [[ $BASE_REF == refs/heads/* ]]
+          git check-ref-format "$BASE_REF"
+          printf 'target=%s\n' "${BASE_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
+      - name: Plan from the event base and complete candidate diff
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          CI_SCOPE_MODE: ${{ vars.CI_SCOPE_MODE }}
+          STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
+        # Bootstrap is workflow policy; never execute a candidate loader.
+        run: |
+          set -euo pipefail
+          [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
+          case "$GITHUB_EVENT_NAME" in
+            pull_request|merge_group)
+              for sha in "$BASE_SHA" "$HEAD_SHA"; do
+                [[ $sha =~ ^[0-9a-f]{40}$ && ! $sha =~ ^0+$ ]]
+                git cat-file -e "${sha}^{commit}"
+              done
+              if [[ $GITHUB_EVENT_NAME == merge_group ]]; then
+                [[ $HEAD_SHA == "$GITHUB_SHA" ]]
+                git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+              else
+                [[ $(git show -s --format=%P HEAD) == "$BASE_SHA $HEAD_SHA" ]]
+              fi
+              policy=$BASE_SHA ;;
+            *) policy=$GITHUB_SHA; export BASE_SHA=$policy HEAD_SHA=$policy ;;
+          esac
+          file=.github/scripts/ci_scope.py
+          # Check presence separately: a corrupt/missing object is not a legacy base.
+          entry=$(git ls-tree "$policy" -- "$file")
+          if [[ -n $entry ]]; then
+            git show "$policy:$file" > "$RUNNER_TEMP/ci-scope.py"
+            exec python3 -I "$RUNNER_TEMP/ci-scope.py"
+          fi
+          # First landing / stacked PR onto a base predating the planner. Run all suites.
+          # The unpublished executor-tag assertion applies only to changes to its inputs.
+          pin=false
+          if [[ $GITHUB_EVENT_NAME == pull_request || $GITHUB_EVENT_NAME == merge_group ]]; then
+            start=$BASE_SHA
+            if [[ $GITHUB_EVENT_NAME == pull_request ]]; then
+              if ! start=$(git merge-base --all "$BASE_SHA" "$HEAD_SHA"); then start=unknown; fi
+            fi
+            if ! [[ $start =~ ^[0-9a-f]{40}$ ]] || ! git diff --quiet --no-renames "$start" "$HEAD_SHA" -- \
+                futureagi/code-executor/{Dockerfile.base,requirements.sandbox.txt} ||
+                ! git diff --quiet --no-renames "$BASE_SHA" "$GITHUB_SHA" -- \
+                futureagi/code-executor/{Dockerfile.base,requirements.sandbox.txt}; then pin=true; fi
+          fi
+          {
+            for key in backend metrics any collector ordinary_update update_safety tooling built python; do echo "$key=true"; done
+            echo "executor_base=$pin"
+            echo "scope=$(jq -cn --arg sha "$GITHUB_SHA" --arg base "$policy" '{version:0,mode:"full",reason:"legacy policy base",tested_commit:$sha,policy_base:$base}')"
+          } >> "$GITHUB_OUTPUT"
+      - id: overlay
+        env:
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          # The merge-group event does not attest to the provenance of every member.
+          internal=false
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) if [[ -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
+            push|workflow_dispatch|schedule) internal=true ;;
+          esac
+          echo "internal=$internal" >> "$GITHUB_OUTPUT"
       - id: shards
         # The pytest shard matrix: the main legs always, the Metrics legs only
         # when that suite is due. An absent leg leaves no check, so say which.
         env:
-          METRICS: ${{ steps.filter.outputs.metrics || steps.always.outputs.metrics }}
+          BACKEND: ${{ steps.filter.outputs.backend }}
+          METRICS: ${{ steps.filter.outputs.metrics }}
         run: |
           set -euo pipefail
           legs() { # suite, check name, marker term, timeout minutes, shard count
@@ -188,13 +174,13 @@ jobs:
               '[{suite: $suite, name: $name, markers: $markers, timeout: $timeout,
                  splits: $n, group: range(1; $n + 1)}]'
           }
-          main=$(legs main pytest "not metrics" 45 "$SPLITS")
-          metrics='[]'
-          if [ "$METRICS" = true ]; then
+          [[ "$METRICS" == true || "$METRICS" == false ]]
+          [[ "$BACKEND" == "$METRICS" ]]
+          [[ $SPLITS =~ ^[1-9][0-9]*$ && $METRICS_SPLITS =~ ^[1-9][0-9]*$ ]]
+          main='[]' metrics='[]'
+          if [[ $BACKEND == true ]]; then
+            main=$(legs main pytest "not metrics" 45 "$SPLITS")
             metrics=$(legs metrics metrics metrics 50 "$METRICS_SPLITS")
-            echo "::notice::Metrics suite scheduled: metrics shard 1-$METRICS_SPLITS"
-          else
-            echo "::notice::Metrics suite not scheduled: no Metrics-related path changed"
           fi
           echo "matrix=$(jq -nc --argjson a "$main" --argjson b "$metrics" '{include: ($a + $b)}')" >> "$GITHUB_OUTPUT"
 
@@ -274,57 +260,13 @@ jobs:
     # .test_durations when there is none.
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - name: Restore newest timing cache over the committed floor
-        uses: actions/cache/restore@v4
-        with:
-          path: futureagi/.test_durations
-          key: test-durations-${{ github.run_id }} # never matches; forces prefix restore
-          restore-keys: |
-            test-durations-
-      - name: Test CI asset verification and failure paths
-        run: python3 -I -m unittest discover -s futureagi/.ci -p 'test_*.py' -v
-      - name: Restore pinned Temporal archive
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ runner.temp }}/temporal-archive
-          key: temporal-test-server-linux-x64-${{ hashFiles('futureagi/.ci/temporal-test-server.sh') }}
-      - name: Prefetch and verify Temporal test server once per run
-        run: bash futureagi/.ci/temporal-test-server.sh fetch "$RUNNER_TEMP/temporal-archive"
-      - name: Distribute pinned Temporal archive to shards
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: temporal-test-server
-          path: ${{ runner.temp }}/temporal-archive/*.tar.gz
-          if-no-files-found: error
-          compression-level: 0
-      - uses: actions/upload-artifact@v4
-        with:
-          name: test-durations-plan
-          path: futureagi/.test_durations
-          # .test_durations is a dotfile and upload-artifact@v4 defaults
-          # include-hidden-files: false, dropping it even when named literally.
-          include-hidden-files: true
-          if-no-files-found: error
-
-  test:
-    # "pytest shard N" and "metrics shard N" share these steps; the changes
-    # job builds the matrix (suite, splits, marker term, timeout per leg).
-    name: ${{ matrix.name }} shard ${{ matrix.group }}
-    needs: [changes, plan]
-    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.timeout }}
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.shards) }}
-    defaults:
-      run:
-        working-directory: futureagi
-    env:
+    timeout-minutes: ${{ inputs.backend_cold_fanout && 45 || 5 }}
+    outputs:
+      cold_control: ${{ steps.cold.outcome }}
+      db_artifact: ${{ steps.cold.outputs.artifact }}
+      db_recipe: ${{ steps.cold.outputs.recipe }}
+    env: &backend_database_env
       LITELLM_MODE: PRODUCTION
       CH25_DATABASE: test_tfc
       CH_DATABASE: test_tfc
@@ -344,9 +286,96 @@ jobs:
       FI_CH_TEST_SIDECAR_HTTP_PORT: "18123"
       PYTHONHASHSEED: "0"
       FI_CH25_SCHEMA_APPLY_STRICT: "1"
-      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
-      EE_BASE_REF: ${{ github.base_ref || 'dev' }}
-      IS_INTERNAL_RUN: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+      EE_REPO_BRANCH: ${{ needs.changes.outputs.queue_target || github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ needs.changes.outputs.queue_target || github.base_ref || 'dev' }}
+      # Queue events identify a base branch, not the origin of every queued PR.
+      IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore newest timing cache over the committed floor
+        uses: actions/cache/restore@v4
+        with:
+          path: futureagi/.test_durations
+          key: test-durations-${{ github.run_id }} # never matches; forces prefix restore
+          restore-keys: |
+            test-durations-
+      - name: Test CI asset verification and failure paths
+        run: python3 -I -m unittest discover -s futureagi/.ci -p 'test_*.py' -v
+      - name: Restore pinned Temporal archive
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/temporal-archive
+          key: temporal-test-server-linux-x64-${{ hashFiles('futureagi/.ci/temporal-test-server.sh') }}
+      - name: Prefetch and verify Temporal test server once per run
+        run: bash futureagi/.ci/temporal-test-server.sh fetch "$RUNNER_TEMP/temporal-archive"
+      # The opt-in cold trial reuses this prerequisite runner. The normal and
+      # warm paths never depend on the independent fresh-migration control.
+      - name: Checkout EE package (internal runs only)
+        if: inputs.backend_cold_fanout && env.IS_INTERNAL_RUN == 'true'
+        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
+        with: &ee_checkout
+          token: ${{ secrets.EE_REPO_READ_TOKEN }}
+          branch: ${{ env.EE_REPO_BRANCH }}
+          base-ref: ${{ env.EE_BASE_REF }}
+
+      - name: Probe the exact recipe for the cold trial
+        if: inputs.backend_cold_fanout
+        id: probe
+        working-directory: futureagi
+        run: |
+          docker compose -f docker-compose.test.yml -p futureagi-test pull --quiet
+          key=$(bash ../.github/actions/backend-test-packages/database/key.sh probe)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - id: present
+        if: inputs.backend_cold_fanout
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          key: ${{ steps.probe.outputs.key }}
+          lookup-only: true
+      - id: cold
+        if: inputs.backend_cold_fanout && steps.present.outputs.cache-hit != 'true'
+        uses: ./.github/actions/backend-test-packages/database
+        with:
+          profile: ${{ inputs.backend_setup }}
+          handoff: 'true'
+      - name: Dump producer service logs on failure
+        if: failure() && steps.cold.outcome == 'failure'
+        working-directory: futureagi
+        run: docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 200
+
+      - name: Distribute pinned Temporal archive to shards
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: temporal-test-server
+          path: ${{ runner.temp }}/temporal-archive/*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-durations-plan
+          path: futureagi/.test_durations
+          # .test_durations is a dotfile and upload-artifact@v4 defaults
+          # include-hidden-files: false, dropping it even when named literally.
+          include-hidden-files: true
+          if-no-files-found: error
+
+
+  test:
+    # "pytest shard N" and "metrics shard N" share these steps; the changes
+    # job builds the matrix (suite, splits, marker term, timeout per leg).
+    name: ${{ matrix.name }} shard ${{ matrix.group }}
+    needs: [changes, plan]
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.changes.outputs.shards) }}
+    defaults:
+      run:
+        working-directory: futureagi
+    env: *backend_database_env
     steps:
       - uses: actions/checkout@v4
 
@@ -362,33 +391,12 @@ jobs:
 
       - name: Checkout EE package (internal runs only)
         if: env.IS_INTERNAL_RUN == 'true'
-        uses: ./.github/actions/checkout-ee
+        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
+        with: *ee_checkout
+
+      - uses: ./.github/actions/backend-test-packages/environment
         with:
-          token: ${{ secrets.EE_REPO_READ_TOKEN }}
-          branch: ${{ env.EE_REPO_BRANCH }}
-          base-ref: ${{ env.EE_BASE_REF }}
-
-      - name: Key of the migrated database for this checkout
-        id: db-key
-        run: |
-          key=$(python3 -I .ci/db_dump.py key)
-          echo "key=$key" >> "$GITHUB_OUTPUT"
-
-      - name: Look for a dump of the migrated database
-        id: db-dump
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ runner.temp }}/migrated-db
-          # Exact key only, no restore-keys: a dump of other migrations is
-          # never a starting point.
-          key: ${{ steps.db-key.outputs.key }}
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: futureagi/uv.lock
-
-      - uses: ./.github/actions/backend-test-packages
+          profile: ${{ inputs.backend_setup || 'baseline' }}
 
       - name: Fetch this run's pinned Temporal archive
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -401,43 +409,49 @@ jobs:
           bash .ci/temporal-test-server.sh install "$RUNNER_TEMP/temporal-archive" "$RUNNER_TEMP/temporal-bin"
           echo "TEMPORAL_TEST_SERVER=$RUNNER_TEMP/temporal-bin/temporal-test-server" >> "$GITHUB_ENV"
 
-      - name: Install dependencies (overlaps with service startup)
-        run: uv sync --frozen --all-extras
-
-      - name: Gate on service health
-        # Blocks until every service is healthy; no need to wait on the
-        # background launcher's PID (which belongs to another step's shell).
+      - name: Key of the migrated database for this checkout
+        id: db-key
         run: |
-          docker compose -f docker-compose.test.yml -p futureagi-test \
-            up -d --wait --wait-timeout 180
-
+          key=$(bash ../.github/actions/backend-test-packages/database/key.sh)
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - name: Fetch the same-run dump only for the identical recipe
+        if: needs.plan.outputs.db_artifact != '' && needs.plan.outputs.db_recipe == steps.db-key.outputs.key
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.plan.outputs.db_artifact }}
+          path: ${{ runner.temp }}/migrated-db
+      - name: Look for a dump of the migrated database
+        id: cached-db
+        if: needs.plan.outputs.db_artifact == '' || needs.plan.outputs.db_recipe != steps.db-key.outputs.key
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/migrated-db
+          key: ${{ steps.db-key.outputs.key }}
+      - name: Validate the selected recipe
+        id: db-dump
+        working-directory: ${{ runner.temp }}
+        env:
+          RECIPE: ${{ steps.db-key.outputs.key }}
+          FOUND: ${{ steps.cached-db.outputs.cache-hit == 'true' || (needs.plan.outputs.db_artifact != '' && needs.plan.outputs.db_recipe == steps.db-key.outputs.key) }}
+        run: |
+          if [[ $FOUND == true ]]; then
+            hit=$(bash "$GITHUB_WORKSPACE/.github/actions/backend-test-packages/database/verify-record.sh" migrated-db "$RECIPE")
+            echo "cache-hit=$hit" >> "$GITHUB_OUTPUT"
+          fi
       - name: Restore the migrated database (exact key hit only)
-        # Saves the shard its own six-minute migrate. On a miss this step does
-        # not run and the next step migrates from zero, then rebuilds the
-        # database from its own dump. A failed restore fails
-        # the job: nothing falls back to a half-loaded database. The dump is
-        # the schema and the list of applied migrations. pytest (--reuse-db)
-        # then runs Django's migrate on it, which applies nothing and sends
-        # post_migrate, so every seed row comes from the code under test.
         if: steps.db-dump.outputs.cache-hit == 'true'
         run: |
           db=(docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db)
           "${db[@]}" createdb -U test_user test_tfc_test
           python3 -I .ci/db_dump.py restore "$RUNNER_TEMP/migrated-db/dump.sql.gz" test_user test_tfc_test "${db[@]}"
+          # conftest applies the ClickHouse schema to this runner's real
+          # sidecar with FI_CH25_SCHEMA_APPLY_STRICT. The dump is Postgres only.
+          CI_PRESEED_DIGEST="$RUNNER_TEMP/replayed" uv run pytest .ci/migrated_db.py -q
+          cmp "$RUNNER_TEMP/replayed" "$RUNNER_TEMP/migrated-db/preseed"
 
       - name: Migrate the test database from zero (no dump for this key)
-        # A step of its own, before the shard's pytest run, so no test's
-        # recorded time includes the migrate: the recorded times become the
-        # next sharding plan. .ci/migrated_db.py sets the database up and runs
-        # no test against it. The shard then replaces the database by a restore
-        # of its own dump: a restored database holds no row a data migration
-        # wrote, and every shard must start from the same state whether a
-        # dump was cached or not.
         if: steps.db-dump.outputs.cache-hit != 'true'
-        run: |
-          uv run pytest .ci/migrated_db.py -q
-          python3 -I .ci/db_dump.py rebuild "$RUNNER_TEMP/own-db/dump.sql.gz" test_user test_tfc_test \
-            docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
+        run: uv run pytest .ci/migrated_db.py --create-db -q
 
       - name: Apply pinned sharding plan
         uses: actions/download-artifact@v4
@@ -445,25 +459,54 @@ jobs:
           name: test-durations-plan
           path: futureagi
 
+      - name: Exercise terminal recording with the installed shard pytest
+        if: matrix.group == 1 && matrix.suite == 'main'
+        run: uv run --no-sync python -I .ci/test_collected_ids.py PluginProtocolTest RecordTest
+
+      - name: Collect the eligible inventory without sharding
+        if: matrix.group == 1
+        env:
+          PYTHONPATH: .ci
+          SUITE_MARKERS: ${{ matrix.markers }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/shard-receipt"
+          # A failure in the independent inventory must not preempt the real shard.
+          # The terminal verifier requires a successful exit as well as the inventory.
+          status=0
+          uv run pytest --collect-only -q --ignore=tests/stress -p collected_ids \
+            --ci-eligible-ids="$RUNNER_TEMP/shard-receipt/eligible.json" \
+            -m "($PYTEST_MARKERS) and $SUITE_MARKERS" > "$RUNNER_TEMP/collection.log" || status=$?
+          printf '%s\n' "$status" > "$RUNNER_TEMP/shard-receipt/inventory-exit.txt"
+          if [[ $status != 0 ]]; then tail -c 8192 "$RUNNER_TEMP/collection.log"; fi
+
       - name: Run shard
         id: run-shard
         env:
           SUITE: ${{ matrix.suite }}
+          GROUP: ${{ matrix.group }}
+          SHARDS: ${{ needs.changes.outputs.shards }}
           SUITE_MARKERS: ${{ matrix.markers }}
           SUITE_SPLITS: ${{ matrix.splits }}
-          # .ci/collected_ids.py records every test id this shard collected
-          # and every one it kept; the "collection" job fails the run when two
-          # shards collected differently or kept the same test.
+          DB_KEY: ${{ steps.db-key.outputs.key }}
           PYTHONPATH: .ci
-          COLLECTED_IDS_FILE: ${{ runner.temp }}/shard-ids/collected-ids.txt
-          SELECTED_IDS_FILE: ${{ runner.temp }}/shard-ids/selected-ids.txt
         run: |
-          mkdir -p "$RUNNER_TEMP/shard-ids"
-          set +e
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/shard-receipt"
+          ee=oss
+          if [[ $IS_INTERNAL_RUN == true ]]; then ee=$(git -C ee/cloud rev-parse HEAD); fi
+          [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]]
+          jq -nc --arg run "$GITHUB_RUN_ID" --arg sha "$GITHUB_SHA" --arg suite "$SUITE" \
+            --argjson attempt "$GITHUB_RUN_ATTEMPT" --argjson group "$GROUP" --arg ee "$ee" --arg db "${DB_KEY:?}" \
+            --arg matrix "$(printf %s "$SHARDS" | sha256sum | cut -d' ' -f1)" \
+            --arg durations "$(sha256sum .test_durations | cut -d' ' -f1)" \
+            --arg temporal "$(sha256sum "$TEMPORAL_TEST_SERVER" | cut -d' ' -f1)" \
+            '$ARGS.named' > "$RUNNER_TEMP/shard-receipt/receipt.json"
           # pytest.ini adds -v; -q restores compact module progress. Verbose
           # auto-generated parameter IDs can exceed 1 MiB and stall Actions log
           # processing after the tests have passed. Keep full JUnit results.
           uv run pytest -q -ra --ignore=tests/stress -p collected_ids \
+            --ci-collected-ids="$RUNNER_TEMP/shard-receipt/collected-ids.txt" \
+            --ci-terminal-ids="$RUNNER_TEMP/shard-receipt/terminal.jsonl" \
             -m "($PYTEST_MARKERS) and $SUITE_MARKERS" \
             --splits "$SUITE_SPLITS" --group "${{ matrix.group }}" \
             --splitting-algorithm least_duration \
@@ -471,14 +514,7 @@ jobs:
             --durations=25 --durations-min=1.0 \
             ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' && '--store-durations' || '' }} \
             --junitxml=junit-${{ matrix.group }}.xml
-          code=$?
-          set -e
-          # Every Metrics shard has cases; none collected means the marker broke.
-          if [ "$code" -eq 5 ] && [ "$SUITE" = main ]; then
-            echo "::warning::No tests collected for this shard — expected when splitting, but investigate if MANY shards report this"
-            exit 0
-          fi
-          exit $code
+          echo "Restore through last test: $(( $(date +%s) - $(cat "$RUNNER_TEMP/backend-setup-start") ))s" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload JUnit results
         # Skip when the shard never ran: a missing-file error here would bury
@@ -496,13 +532,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: collected-ids-${{ matrix.suite }}-${{ matrix.group }}
-          path: ${{ runner.temp }}/shard-ids
-          # As long as a failed run can be re-run and inspected.
-          retention-days: 14
+          path: ${{ runner.temp }}/shard-receipt
+          retention-days: 3
           overwrite: true
-          # A shard that died before it collected has none; the collection
-          # job counts the records and fails on a missing one.
-          if-no-files-found: warn
+          if-no-files-found: error
 
       - name: Upload timing data (dev pushes only)
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
@@ -593,132 +626,29 @@ jobs:
           pkill -KILL -f 'granian --interface asgi' || true
 
   migrated-database:
-    # The from-zero migrate of every run, and the source of the dump the pytest
-    # shards restore. A shard skips its own migrate only when a dump exists for
-    # exactly this checkout's inputs (.ci/db_dump.py key). This job never
-    # restores a cached dump: it always migrates an empty database. On a cache
-    # miss it saves the schema it got. On a hit it compares the cached dump
-    # with its fresh migrate (schema, and applied migrations by name) and
-    # fails on any difference, so a dump that no longer matches cannot keep
-    # passing. It also measures what a restore loses: it rebuilds its database
-    # from its own dump, starts pytest on it, and fails when a table holds
-    # fewer rows than after the migrate and .ci/migration-seeded-tables.json
-    # does not list it. The SAML job migrates from zero as well.
+    # Exactly one fresh control: plan owns it on an opt-in cold miss. On a
+    # warm hit this job and all shards start independently after plan.
     name: Fresh migrate and database dump
-    needs: changes
+    needs: [changes, plan]
     if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    defaults:
-      run:
-        working-directory: futureagi
-    env:
-      # The environment a pytest shard creates its database in.
-      LITELLM_MODE: PRODUCTION
-      CH25_DATABASE: test_tfc
-      CH_DATABASE: test_tfc
-      PYTHONHASHSEED: "0"
-      FI_CH25_SCHEMA_APPLY_STRICT: "1"
-      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
-      EE_BASE_REF: ${{ github.base_ref || 'dev' }}
-      IS_INTERNAL_RUN: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
+    timeout-minutes: 45
+    env: *backend_database_env
     steps:
       - uses: actions/checkout@v4
-
+        if: needs.plan.outputs.cold_control != 'success'
       - name: Checkout EE package (internal runs only)
-        if: env.IS_INTERNAL_RUN == 'true'
-        uses: ./.github/actions/checkout-ee
+        if: needs.plan.outputs.cold_control != 'success' && env.IS_INTERNAL_RUN == 'true'
+        uses: future-agi/future-agi/.github/actions/checkout-ee@6a05e37f2c9e35dc4cea484d5e6263d4f33e2fc2
+        with: *ee_checkout
+
+      - uses: ./.github/actions/backend-test-packages/database
+        if: needs.plan.outputs.cold_control != 'success'
         with:
-          token: ${{ secrets.EE_REPO_READ_TOKEN }}
-          branch: ${{ env.EE_REPO_BRANCH }}
-          base-ref: ${{ env.EE_BASE_REF }}
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: futureagi/uv.lock
-
-      - uses: ./.github/actions/backend-test-packages
-
-      - name: Install dependencies
-        run: uv sync --frozen --all-extras
-
-      - name: Start test services
-        run: docker compose -f docker-compose.test.yml -p futureagi-test up -d --wait --wait-timeout 180
-
-      - name: Key of the migrated database for this checkout
-        id: db-key
-        run: |
-          key=$(python3 -I .ci/db_dump.py key)
-          echo "key=$key" >> "$GITHUB_OUTPUT"
-
-      - name: Look for a dump of the migrated database
-        id: db-dump
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ runner.temp }}/migrated-db
-          key: ${{ steps.db-key.outputs.key }}
-
-      - name: Migrate an empty test database from zero
-        # What a shard runs on a cache miss, with --create-db so it can never
-        # start from a database that is already there.
-        run: uv run pytest .ci/migrated_db.py --create-db -q
-
-      - name: Tables that hold rows after the fresh migrate
-        run: |
-          python3 -I .ci/db_dump.py tables "$RUNNER_TEMP/fresh-db/tables.txt" test_user test_tfc_test \
-            docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
-
-      - name: Dump the fresh database and rebuild it from the dump
-        # The dump is of the fresh migrate. The database is then what a shard
-        # gets: the dump, restored.
-        run: |
-          python3 -I .ci/db_dump.py rebuild "$RUNNER_TEMP/fresh-db/dump.sql.gz" test_user test_tfc_test \
-            docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
-
-      - name: Start pytest on the rebuilt database
-        # A shard's start-up: migrate applies nothing and post_migrate reseeds.
-        run: uv run pytest .ci/migrated_db.py -q
-
-      - name: Tables that hold rows after the restore
-        run: |
-          python3 -I .ci/db_dump.py tables "$RUNNER_TEMP/fresh-db/restored-tables.txt" test_user test_tfc_test \
-            docker compose -f docker-compose.test.yml -p futureagi-test exec -T test-db
-
-      - name: A restore empties only the tables that are listed
-        run: python3 -I .ci/db_dump.py seeded "$RUNNER_TEMP/fresh-db/tables.txt" "$RUNNER_TEMP/fresh-db/restored-tables.txt"
-
-      - name: Keep the fresh dump for inspection
-        # The schema of the test database and its list of applied migrations;
-        # no other row. It shows what a failed comparison below compared.
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: migrated-db-pytest
-          path: ${{ runner.temp }}/fresh-db/dump.sql.gz
-          retention-days: 3
-          overwrite: true
-          if-no-files-found: warn
-
-      - name: The cached dump equals this fresh migrate
-        if: steps.db-dump.outputs.cache-hit == 'true'
-        run: python3 -I .ci/db_dump.py compare "$RUNNER_TEMP/migrated-db/dump.sql.gz" "$RUNNER_TEMP/fresh-db/dump.sql.gz"
-
-      - name: Stage the fresh dump for the cache
-        if: steps.db-dump.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p "$RUNNER_TEMP/migrated-db"
-          cp "$RUNNER_TEMP/fresh-db/dump.sql.gz" "$RUNNER_TEMP/migrated-db/dump.sql.gz"
-
-      - name: Save the dump for later runs
-        if: steps.db-dump.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: ${{ runner.temp }}/migrated-db
-          key: ${{ steps.db-key.outputs.key }}
-
+          profile: ${{ inputs.backend_setup || 'baseline' }}
       - name: Dump test service logs on failure
         if: failure()
+        working-directory: futureagi
         run: docker compose -f docker-compose.test.yml -p futureagi-test logs --tail 100
 
   agentic-eval:
@@ -972,7 +902,7 @@ jobs:
     # never, with every job green. Each shard records what it collected
     # (.ci/collected_ids.py) and this job compares the records. It runs
     # whenever the shards ran, and the gate fails if it did not succeed then.
-    name: Every shard collected the same tests and kept its own
+    name: Every shard collected the same tests
     needs: [changes, test]
     if: ${{ !cancelled() && needs.test.result != 'skipped' }}
     runs-on: ubuntu-latest
@@ -985,45 +915,85 @@ jobs:
         with:
           pattern: collected-ids-*
           path: ${{ runner.temp }}/collected
-      - name: Compare the shards' collection and selection records
+      - name: Compare the shards' collection records
         env:
           SHARDS: ${{ needs.changes.outputs.shards }}
         run: |
           python3 -I futureagi/.ci/check_collected_ids.py "$(jq '.include | length' <<<"$SHARDS")" \
             "$RUNNER_TEMP"/collected/*/collected-ids.txt
 
+  terminal-parity:
+    # Verify the unsharded eligible inventory against terminal outcomes. Use
+    # artifact IDs/digests and the latest producer attempt, not names alone.
+    permissions:
+      contents: read
+      actions: read
+    name: Backend terminal inventory qualification
+    needs: [changes, test]
+    if: ${{ !cancelled() && needs.test.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: futureagi/.ci
+      - name: Verify each planned shard receipt
+        id: qualification
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARDS: ${{ needs.changes.outputs.shards }}
+          # Set this repository variable to 'true' to fail on unexpected runtime
+          # skips. Until then they are warnings with a summary and JSON evidence.
+          # Inventory, collection parity and complete exactly-once protocols
+          # are mandatory in both modes, as are all other outcome checks.
+          BACKEND_ENFORCE_RUNTIME_SKIPS: ${{ vars.BACKEND_ENFORCE_RUNTIME_SKIPS }}
+        run: python3 -I futureagi/.ci/check_collected_ids.py --terminal
+      - name: Upload unexpected runtime skips
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-runtime-skips
+          path: ${{ runner.temp }}/backend-runtime-skips.json
+          overwrite: true
+          # An early qualification error (e.g. listing artifacts failed) has no report.
+          if-no-files-found: ${{ steps.qualification.outcome == 'success' && 'error' || 'ignore' }}
+
   backend-tests:
-    name: Backend Tests Pass # the ONLY required status check
+    name: ${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && 'Backend metadata edit' || 'Backend Tests Pass' }} # the ONLY required status check
     needs:
       [
         changes,
+        policy-self-test,
         update-safety,
         plan,
         test,
         collection,
+        terminal-parity,
         saml-multiworker,
         migrated-database,
         agentic-eval,
         slim-smoke,
         code-executor-base-pin,
       ]
-    if: always()
+    if: ${{ always() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      verdict: ${{ steps.verdict.outcome }}
     steps:
-      - name: Fail closed unless every dependency succeeded or was skipped
+      - id: verdict
+        name: Require exactly the outcomes the change plan selected
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          # No -e flag and a non-empty success output: `jq -e` exits 4 when a
-          # filter produces no output, which would fail the gate on green runs.
-          echo "$NEEDS" | jq 'with_entries(.value |= .result)
-            | to_entries
-            | map(select(.value != "success" and .value != "skipped"))
-            | if length > 0 then ("failing: " + (map(.key) | join(", ")) | halt_error)
-              else "all dependencies green (or legitimately skipped)" end'
-          # A skipped collection check passes the filter above. It may be
-          # skipped only when the shards were.
-          echo "$NEEDS" | jq 'if .test.result != "skipped" and .collection.result != "success"
-            then ("the shards ran but the collection check is " + .collection.result | halt_error)
-            else "collection check: " + .collection.result end'
+          jq -e '
+            def flag: if . == "true" then true elif . == "false" then false else error("invalid plan flag") end;
+            def status: if . then "success" else "skipped" end;
+            .changes.outputs as $p | ($p.backend|flag) as $b | ($p.metrics|flag) as $m |
+            ($p.update_safety|flag) as $u | ($p.executor_base|flag) as $x |
+            .changes.result == "success" and .["policy-self-test"].result == "success" and ($m == $b) and
+            .["update-safety"].result == (($b or $u)|status) and
+            .["code-executor-base-pin"].result == ($x|status) and
+            ([.plan, .test, .collection, .["terminal-parity"], .["saml-multiworker"], .["migrated-database"],
+              .["agentic-eval"], .["slim-smoke"]] | all(.result == ($b|status)))
+          ' <<<"$NEEDS"

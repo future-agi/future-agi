@@ -148,13 +148,30 @@ class GitProbe:
         return sha, missing
 
 
+def branch_inputs() -> tuple[str, str]:
+    if os.environ.get("GITHUB_EVENT_NAME") != "merge_group":
+        return os.environ.get("HEAD_REF", ""), os.environ.get("BASE_REF", "")
+    # A queue ref is not a product feature branch. Prefer the actual target to
+    # the normal dev/main fallbacks, and don't guess if the event is malformed.
+    ref = os.environ.get("QUEUE_BASE_REF", "")
+    if not ref.startswith("refs/heads/"):
+        raise InvalidRefError("Merge group requires a fully qualified base branch")
+    validate_ref(ref)
+    branch = ref.removeprefix("refs/heads/")
+    if branch.startswith("refs/"):
+        raise InvalidRefError("Ambiguous SDK branch name")
+    validate_ref(branch)
+    return "", branch
+
+
 def main() -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="sdk-test-ref-") as directory:
+            head, base = branch_inputs()
             sha, selected = choose_ref(
                 os.environ.get("SDK_REF_INPUT", ""),
-                os.environ.get("HEAD_REF", ""),
-                os.environ.get("BASE_REF", ""),
+                head,
+                base,
                 GitProbe(Path(directory)),
             )
         output = os.environ.get("GITHUB_OUTPUT")

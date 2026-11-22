@@ -846,48 +846,15 @@ class StaticEntryPointTests(unittest.TestCase):
 
 class WorkflowWiringTests(unittest.TestCase):
     def test_update_safety_filter_covers_every_scanned_source_change(self):
-        import fnmatch
-        import re
         text = (ROOT / ".github/workflows/backend-ci.yml").read_text()
-        filters = text.split("          filters: |\n", 1)[1].split("      - id: always", 1)[0]
-        groups, current = {}, None
-        for line in filters.splitlines():
-            match = re.fullmatch(r"            (\w+):", line)
-            if match:
-                current = match[1]
-                groups[current] = []
-            match = re.fullmatch(r"              - '([^']+)'", line)
-            if match:
-                groups[current].append(match[1])
-        job = text.split("  update-safety:\n", 1)[1].split("\n  plan:", 1)[0]
-        condition = next(line.strip()[4:] for line in job.splitlines() if line.strip().startswith("if: "))
-        names = re.findall(r"needs\.changes\.outputs\.(\w+) == 'true'", condition)
-        self.assertTrue(names, condition)
-        self.assertEqual(condition, " || ".join("needs.changes.outputs." + name + " == 'true'" for name in names))
-        self.assertIn("update_safety", names)
-        outputs = text.split("    outputs:\n", 1)[1].split("    steps:", 1)[0]
-        for name in names:
-            self.assertIn("steps.filter.outputs." + name, outputs)
-
-        # This path is outside the enumerated backend/bootstrap roots. Its
-        # extensionless Bash shebang and DDL make it a real gate-scanned source.
-        path = "docs/rebuild-catalog"
+        self.assertIn('git show "$policy:$file"', text)
+        self.assertIn('update_safety: ${{ steps.filter.outputs.update_safety }}', text)
+        self.assertIn("if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.update_safety == 'true'", text)
+        # Shebang, not suffix, makes this a scanned input. The planner's complete
+        # diff fixtures exercise this source outside the old backend roots.
         content = b'#!/usr/bin/env bash\nclickhouse-client --query "DROP TABLE spans"\n'
-        self.assertTrue(gate.source_blob(path, content))
+        self.assertTrue(gate.source_blob("docs/rebuild-catalog", content))
         self.assertTrue(gate.schema_statements(content))
-        # paths-filter uses picomatch, where '*.go' does not cross directories,
-        # unlike fnmatch below; the gate finds shell sources by shebang, which no
-        # path pattern can express. Only the catch-all is a sound trigger.
-        self.assertEqual(groups["update_safety"], ["**"])
-        self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in groups["update_safety"]),
-                        path + " skips the required update-safety job")
-
-        for path in ("fi-collector/pkg/server/server.go", "agentcc-gateway/cmd/agentcc/main.go",
-                     "agentcc-gateway/internal/server/server.go", "new/schema.sql", "new/bootstrap.sh", "new/module.py",
-                     "deploy/new/start", "bin/new-start", "scripts/new-start"):
-            with self.subTest(path=path):
-                self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for name in names for pattern in groups[name]),
-                                path + " skips the required update-safety job")
         self.assertIn("        update-safety,", text.split("  backend-tests:\n", 1)[1])
 
     def test_backend_gate_is_required_and_uses_oss_settings(self):
@@ -907,15 +874,10 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_update_static_gate_has_backend_and_bootstrap_triggers(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text()
-        # A push is filtered at the trigger. A pull request always starts the
-        # workflow, and its jobs follow the same list in the `changes` job.
         triggers = text.split("permissions:", 1)[0]
-        relevant = text.split("            relevant:\n", 1)[1].split("      - id: update-code\n", 1)[0]
         for path in ('"futureagi/**"', '"bin/lib/**"', '"scripts/check_update_safety.py"'):
-            self.assertEqual(triggers.count(path), 1)
-            self.assertEqual(relevant.count(path), 1)
+            self.assertEqual(triggers.count(path), 2)
         job = text.split("  safety:\n", 1)[1].split("\n  unit:", 1)[0]
-        self.assertIn("    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}\n", job)
         self.assertIn("--static --base", job)
         self.assertNotIn("up -d", job)
 

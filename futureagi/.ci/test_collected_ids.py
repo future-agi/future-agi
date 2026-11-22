@@ -1,15 +1,20 @@
 """The record of what each shard collected, the comparison, and their workflow wiring."""
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
+import zipfile
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CI = ROOT / "futureagi/.ci"
@@ -31,105 +36,26 @@ except ImportError:  # the plan job runs these tests before pytest is installed
     plugin = None
 
 
-def shard_dirs(directory, records, selected=None, suites=None):
-    """One artifact directory per shard, as the collection job downloads them."""
-    paths = []
-    for number, lines in enumerate(records):
-        suite = suites[number] if suites else "main"
-        shard = pathlib.Path(directory) / f"collected-ids-{suite}-{number + 1}"
-        shard.mkdir()
-        (shard / "collected-ids.txt").write_text(
-            "".join(line + "\n" for line in lines), encoding="utf-8"
-        )
-        if selected is None:
-            # Shard n keeps every n-th test: a partition.
-            kept = lines[number :: len(records)]
-        else:
-            kept = selected[number]
-        if kept is not None:
-            (shard / "selected-ids.txt").write_text(
-                "".join(line + "\n" for line in kept), encoding="utf-8"
-            )
-        paths.append(str(shard / "collected-ids.txt"))
-    return paths
-
-
 class CheckTest(unittest.TestCase):
-    def check(self, expected, *records, selected=None, suites=None):
+    def check(self, expected, *records):
         with tempfile.TemporaryDirectory() as directory:
-            paths = shard_dirs(directory, records, selected, suites)
+            paths = []
+            for number, lines in enumerate(records):
+                path = pathlib.Path(directory) / f"record-{number}.txt"
+                path.write_text(
+                    "".join(line + "\n" for line in lines), encoding="utf-8"
+                )
+                paths.append(str(path))
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = checker.main(["check", str(expected), *paths])
         return code, out.getvalue()
 
     def test_equal_records_pass(self):
-        record = ["aa a.py::one", "bb a.py::two", "cc a.py::three"]
+        record = ["aa a.py::one", "bb a.py::two"]
         code, out = self.check(3, record, record, record)
-        self.assertEqual(code, 0, out)
-        self.assertIn("3 shards collected the same 3 tests in the same order", out)
-        self.assertIn(
-            "suite main: 3 shards selected 3 tests, each in one shard only", out
-        )
-
-    def test_a_test_in_two_shards_shares_fails_and_is_named(self):
-        # Equal collections do not show this: what each shard kept does.
-        record = ["aa a.py::one", "bb a.py::two", "cc a.py::three"]
-        kept = [["aa a.py::one", "bb a.py::two"], ["bb a.py::two", "cc a.py::three"]]
-        code, out = self.check(2, record, record, selected=kept)
-        self.assertEqual(code, 1)
-        self.assertIn("suite main, shards [1, 2]: a.py::two", out)
-        self.assertIn("::error title=Shards share a test::suite main: 1 tests", out)
-        self.assertNotIn("a.py::one\n", out.split("in the same order", 1)[1])
-        # One shard that keeps a test twice is the same fault.
-        twice = [["aa a.py::one", "aa a.py::one"], ["bb a.py::two"]]
-        self.assertEqual(self.check(2, record, record, selected=twice)[0], 1)
-
-    def test_the_same_test_in_two_suites_is_not_a_shared_test(self):
-        # Each suite runs its own marker; only shards of one suite divide a set.
-        record = ["aa a.py::one", "bb a.py::two"]
-        kept = [["aa a.py::one"], ["bb a.py::two"], ["aa a.py::one"], ["bb a.py::two"]]
-        suites = ["main", "main", "metrics", "metrics"]
-        code, out = self.check(4, *[record] * 4, selected=kept, suites=suites)
-        self.assertEqual(code, 0, out)
-        self.assertIn("suite main: 2 shards selected 2 tests", out)
-        self.assertIn("suite metrics: 2 shards selected 2 tests", out)
-
-    def test_a_shard_without_a_selection_record_fails(self):
-        record = ["aa a.py::one", "bb a.py::two"]
-        code, out = self.check(2, record, record, selected=[["aa a.py::one"], None])
-        self.assertEqual(code, 1)
-        self.assertIn("::error title=Selection records::", out)
-
-    def test_a_suite_that_selected_nothing_fails_and_one_empty_shard_does_not(self):
-        record = ["aa a.py::one", "bb a.py::two"]
-        code, out = self.check(2, record, record, selected=[[], []])
-        self.assertEqual(code, 1)
-        self.assertIn("selected no test at all", out)
-        kept = [["aa a.py::one", "bb a.py::two"], []]
-        self.assertEqual(self.check(2, record, record, selected=kept)[0], 0)
-
-    def test_a_selected_test_that_was_not_collected_fails(self):
-        record = ["aa a.py::one", "bb a.py::two"]
-        kept = [["aa a.py::one"], ["zz a.py::ghost"]]
-        code, out = self.check(2, record, record, selected=kept)
-        self.assertEqual(code, 1)
-        self.assertIn("shard 2 selected a test it did not collect: a.py::ghost", out)
-
-    def test_equal_records_are_compared_by_digest_and_only_one_is_loaded(self):
-        record = [f"{n:02x} a.py::t{n}" for n in range(50)]
-        loaded = []
-        real = checker.read
-        checker.read = lambda path: loaded.append(path) or real(path)
-        try:
-            code, _ = self.check(4, *[record] * 4)
-        finally:
-            checker.read = real
         self.assertEqual(code, 0)
-        collections_read = [
-            path for path in loaded if path.endswith("collected-ids.txt")
-        ]
-        self.assertEqual(len(collections_read), 1)
+        self.assertIn("3 shards collected the same 2 tests in the same order", out)
 
     def test_the_same_tests_in_another_order_fail(self):
         # pytest-split breaks ties between equal times by position.
@@ -173,11 +99,6 @@ class CheckTest(unittest.TestCase):
         record = ["aa a.py::one", "aa a.py::one"]
         self.assertEqual(self.check(2, record, record)[0], 0)
         self.assertEqual(self.check(2, record, record[:1])[0], 1)
-        # ... and may then be kept twice, but not three times.
-        self.assertEqual(self.check(2, record, record, selected=[record, []])[0], 0)
-        self.assertEqual(
-            self.check(2, record, record, selected=[record, record[:1]])[0], 1
-        )
 
 
 @unittest.skipUnless(plugin, "the plugin needs pytest")
@@ -199,76 +120,402 @@ class RecordTest(unittest.TestCase):
     def test_a_collection_of_nothing_fails_the_check(self):
         # What the plugin really writes for no test, through the real checker.
         with tempfile.TemporaryDirectory() as directory:
-            paths = shard_dirs(directory, [["aa a.py::one"]] * 2)
+            paths = [str(pathlib.Path(directory) / f"ids-{n}.txt") for n in (1, 2)]
             for path in paths:
                 plugin.record(iter([]), path)
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(checker.main(["check", "2", *paths]), 1)
 
-    def test_a_real_pytest_run_records_what_it_collected_and_what_it_kept(self):
-        # The plugin under a real pytest with -m, through the real checker.
-        with tempfile.TemporaryDirectory() as directory:
-            root = pathlib.Path(directory)
-            (root / "test_sample.py").write_text(
-                "import pytest\n"
-                "@pytest.mark.parametrize('n', range(6))\n"
-                "def test_case(n):\n    pass\n"
-                "@pytest.mark.slow\ndef test_slow():\n    pass\n"
+
+class TerminalTest(unittest.TestCase):
+    def test_each_planned_id_needs_a_complete_protocol_and_permitted_outcome(self):
+        expected = [["a", "test_a", "pass"]]
+        phases = [["setup", "passed"], ["call", "passed"], ["teardown", "passed"]]
+        row = ["a", "test_a", phases]
+        checker.check_terminals(expected, [row])
+        checker.check_terminals(
+            [["a", "test_a", "skip"]],
+            [["a", "test_a", [["setup", "declared-skip"], ["teardown", "passed"]]]],
+        )
+        for rows in (
+            [],
+            [row, row],
+            [["b", "other", phases]],
+            [["a", "test_a", phases[:-1]]],
+            [["a", "test_a", [["setup", "declared-skip"], ["teardown", "passed"]]]],
+            [["a", "test_a", [["setup", "passed"], ["teardown", "runtime-skip"]]]],
+            [["a", "test_a", [["setup", "runtime-skip"], ["teardown", "failed"]]]],
+        ):
+            with self.assertRaises(ValueError):
+                checker.check_terminals(expected, rows)
+
+    def test_runtime_skip_reporting_never_waives_parity(self):
+        expected = [["a", "test_a", "pass"]]
+        row = [
+            "a",
+            "test_a",
+            [
+                ["setup", "passed"],
+                ["call", "runtime-skip", "missing service"],
+                ["teardown", "passed"],
+            ],
+        ]
+        for inventory, rows in (
+            (expected, [row, row]),
+            (expected + [["b", "test_b", "pass"]], [row]),
+            (expected, [["other", *row[1:]]]),
+        ):
+            with self.assertRaises(ValueError):
+                checker.check_terminals(inventory, rows)
+        with tempfile.TemporaryDirectory() as temp:
+            for enforce in (True, False):
+                with self.subTest(enforce=enforce):
+                    out = io.StringIO()
+                    report = pathlib.Path(temp) / "skips.json"
+                    summary = pathlib.Path(temp) / f"summary-{enforce}"
+                    checker.check_terminals(expected, [row])
+                    skips = [
+                        dict(suite="main", group=3, **skip)
+                        for skip in checker.runtime_skips([row])
+                    ]
+                    with (
+                        contextlib.redirect_stdout(out),
+                        (
+                            self.assertRaisesRegex(ValueError, "1 eligible")
+                            if enforce
+                            else contextlib.nullcontext()
+                        ),
+                    ):
+                        checker.report_runtime_skips(
+                            skips,
+                            enforce=enforce,
+                            partial=False,
+                            report_path=report,
+                            summary_path=summary,
+                        )
+                    self.assertIn("::warning", out.getvalue())
+                    self.assertIn("test_a: call: missing service", out.getvalue())
+                    self.assertIn("| main | 3 | 1 |", summary.read_text())
+                    self.assertEqual(
+                        json.loads(report.read_text()),
+                        {
+                            "enforced": enforce,
+                            "partial": False,
+                            "tests": [
+                                {
+                                    "suite": "main",
+                                    "group": 3,
+                                    "id": "a",
+                                    "test": "test_a",
+                                    "skips": [
+                                        {"phase": "call", "reason": "missing service"}
+                                    ],
+                                }
+                            ],
+                        },
+                    )
+
+
+class ProducerIdentityTest(unittest.TestCase):
+    def test_partial_rerun_needs_the_latest_success_for_each_leg(self):
+        matrix = json.dumps(
+            {
+                "include": [
+                    {"suite": "main", "name": "pytest", "group": n} for n in (1, 2)
+                ]
+            }
+        )
+        temp = self.enterContext(tempfile.TemporaryDirectory())
+        env = {
+            "RUNNER_TEMP": temp,
+            "GITHUB_STEP_SUMMARY": str(pathlib.Path(temp) / "summary"),
+            "GITHUB_EVENT_NAME": "pull_request",
+            "GITHUB_RUN_ID": "100",
+            "GITHUB_REPOSITORY": "fixture/repo",
+            "GITHUB_SHA": "c" * 40,
+            "SHARDS": matrix,
+        }
+        common = {
+            "sha": env["GITHUB_SHA"],
+            "run": "100",
+            "suite": "main",
+            "ee": "oss",
+            "db": "schema",
+            "durations": "0" * 64,
+            "temporal": "1" * 64,
+            "matrix": hashlib.sha256(matrix.encode()).hexdigest(),
+        }
+        jobs = [
+            {
+                "name": f"pytest shard {group}",
+                "run_attempt": attempt,
+                "conclusion": "success",
+            }
+            for group, attempt in ((1, 1), (2, 1), (2, 2))
+        ]
+        artifacts = [
+            {"name": f"collected-ids-main-{n}", "id": n, "digest": "sha256:fixture"}
+            for n in (1, 2)
+        ]
+        receipts = [dict(common, group=n, attempt=n) for n in (1, 2)]
+        rows = [
+            [
+                str(n),
+                f"test_{n}",
+                [["setup", "passed"], ["call", "passed"], ["teardown", "passed"]],
+            ]
+            for n in (1, 2)
+        ]
+
+        def artifact(a, repo):
+            n = a["id"]
+            return (
+                receipts[n - 1],
+                [rows[n - 1]],
+                "same-order",
+                [r[:2] + ["pass"] for r in rows] if n == 1 else None,
             )
-            (root / "pytest.ini").write_text("[pytest]\nmarkers =\n    slow: slow\n")
-            paths = []
-            for group, keyword in ((1, "not slow and not 5"), (2, "5 and not slow")):
-                shard = root / f"collected-ids-main-{group}"
-                shard.mkdir()
-                paths.append(str(shard / "collected-ids.txt"))
-                done = subprocess.run(
-                    [
-                        sys.executable,
-                        "-m",
-                        "pytest",
-                        "-q",
-                        "-p",
-                        "collected_ids",
-                        "-p",
-                        "no:cacheprovider",
-                        "-c",
-                        "pytest.ini",
-                        "-k",
-                        keyword,
-                        "test_sample.py",
-                    ],
-                    cwd=root,
-                    env={
-                        "PATH": "/usr/bin:/bin",
-                        "PYTHONPATH": str(CI),
-                        "COLLECTED_IDS_FILE": paths[-1],
-                        "SELECTED_IDS_FILE": str(shard / "selected-ids.txt"),
-                    },
-                    capture_output=True,
-                    text=True,
+
+        with (
+            patch.dict(os.environ, env),
+            patch.object(
+                checker,
+                "pages",
+                side_effect=lambda _, field: jobs if field == "jobs" else artifacts,
+            ),
+            patch.object(checker, "verify_artifact", side_effect=artifact),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            checker.verify_run()
+            with patch.dict(os.environ, GITHUB_EVENT_NAME="merge_group"):
+                with self.assertRaisesRegex(ValueError, "missing producer"):
+                    checker.verify_run()
+                for job in jobs:
+                    job["name"] = "backend / " + job["name"]
+                checker.verify_run()
+                for job in jobs:
+                    job["name"] = job["name"].removeprefix("backend / ")
+            for field, invalid in (
+                ("attempt", 1),
+                ("sha", "stale"),
+                ("ee", "f" * 40),
+                ("temporal", ""),
+                ("matrix", "other"),
+            ):
+                with (
+                    self.subTest(field=field),
+                    patch.dict(receipts[1], {field: invalid}),
+                    self.assertRaises(ValueError),
+                ):
+                    checker.verify_run()
+            # Failure in the first leg must not discard or misattribute the
+            # other producer's authenticated evidence, even in enforced mode.
+            rows[1][2][1] = ["call", "runtime-skip", "missing service"]
+            report = pathlib.Path(temp) / "backend-runtime-skips.json"
+            for cause, change in (
+                (
+                    "unsuccessful producer for main/1",
+                    patch.dict(jobs[0], conclusion="failure"),
+                ),
+                (
+                    "unsuccessful producer for main/2",
+                    patch.dict(jobs[-1], conclusion="failure"),
+                ),
+                ("shards disagree", patch.dict(receipts[0], ee="f" * 40)),
+            ):
+                with (
+                    self.subTest(cause=cause),
+                    change,
+                    patch.dict(os.environ, BACKEND_ENFORCE_RUNTIME_SKIPS="true"),
+                    contextlib.redirect_stdout(io.StringIO()) as output,
+                ):
+                    with self.assertRaisesRegex(ValueError, cause):
+                        checker.verify_run()
+                    evidence = json.loads(report.read_text())
+                    self.assertTrue(evidence["partial"])
+                    self.assertEqual(
+                        [(s["id"], s["group"]) for s in evidence["tests"]], [("2", 2)]
+                    )
+                    self.assertIn(
+                        "(partial evidence)::main/2 test_2: call: missing service",
+                        output.getvalue(),
+                    )
+                    self.assertIn(
+                        "Partial evidence only",
+                        pathlib.Path(env["GITHUB_STEP_SUMMARY"]).read_text(),
+                    )
+            artifacts.pop()
+            with self.assertRaises(ValueError):
+                checker.verify_run()
+
+    def test_failed_inventory_cannot_qualify_even_when_it_wrote_json(self):
+        for status in (None, b"1\n", b"0\n"):
+            with self.subTest(status=status):
+                stream = io.BytesIO()
+                with zipfile.ZipFile(stream, "w") as archive:
+                    archive.writestr("receipt.json", '{"group":1,"suite":"main"}')
+                    archive.writestr("terminal.jsonl", "[]\n")
+                    archive.writestr("collected-ids.txt", "some-id\n")
+                    archive.writestr("eligible.json", "[]")
+                    if status is not None:
+                        archive.writestr("inventory-exit.txt", status)
+                raw = stream.getvalue()
+                artifact = {
+                    "id": 1,
+                    "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
+                }
+                with patch.object(checker.subprocess, "check_output", return_value=raw):
+                    if status == b"0\n":
+                        self.assertEqual(
+                            checker.verify_artifact(artifact, "repo")[3], []
+                        )
+                    else:
+                        with self.assertRaises((ValueError, KeyError)):
+                            checker.verify_artifact(artifact, "repo")
+
+    def test_raw_archive_digest_is_mandatory(self):
+        with (
+            patch.object(
+                checker.subprocess, "check_output", return_value=b"wrong bytes"
+            ),
+            self.assertRaisesRegex(ValueError, "digest"),
+        ):
+            checker.verify_artifact({"id": 1, "digest": "sha256:other"}, "fixture/repo")
+
+
+@unittest.skipUnless(plugin, "run with the shard pytest installation")
+class PluginProtocolTest(unittest.TestCase):
+    def pytest_run(self, root, *args, env=None, check=True):
+        return subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "-p", "collected_ids", *args],
+            cwd=root,
+            env={
+                **os.environ,
+                "PYTHONPATH": str(CI),
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                "PYTEST_ADDOPTS": "",
+                **(env or {}),
+            },
+            check=check,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_runtime_skip_differs_from_a_declared_skip_in_real_reports(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            (root / "test_outcome.py").write_text(
+                textwrap.dedent("""\
+                    import pytest
+                    import unittest
+
+                    @pytest.mark.skip(reason="declared")
+                    def test_declared(): pass
+
+                    def test_runtime(): pytest.skip("missing service")
+
+                    @pytest.fixture
+                    def engine():
+                        # Pytest reports fixture skips at the item location too.
+                        pytest.importorskip("module_that_is_missing_service")
+
+                    def test_fixture_runtime(engine): pass
+
+                    @pytest.mark.skipif(False, reason="never")
+                    def test_false_condition(): pass
+
+                    class Cases(unittest.TestCase):
+                        def test_ran(self):
+                            for value in (1, 2):
+                                with self.subTest(value=value):
+                                    self.assertGreater(value, 0)
+
+                        def test_subskip(self):
+                            with self.subTest():
+                                self.skipTest("missing service")
+                    """)
+            )
+            inventory = root / "expected.json"
+            receipt = root / "terminal.jsonl"
+            # Simulate a self-test running inside the main shard. None of its
+            # pytest subprocesses may write to any inherited receipt path.
+            outer = root / "outer-receipt"
+            outer.write_text("outer")
+            inherited = dict.fromkeys(
+                ("COLLECTED_IDS_FILE", "TERMINAL_IDS_FILE", "ELIGIBLE_IDS_FILE"),
+                str(outer),
+            )
+            self.pytest_run(
+                root, "--collect-only", f"--ci-eligible-ids={inventory}", env=inherited
+            )
+            self.pytest_run(root, f"--ci-terminal-ids={receipt}", env=inherited)
+            self.assertEqual(outer.read_text(), "outer")
+            rows = [json.loads(line) for line in receipt.read_text().splitlines()]
+            expected = json.loads(inventory.read_text())
+            self.assertEqual(len(expected), 6)
+            checker.check_terminals(expected, rows)
+            skips = checker.runtime_skips(rows)
+            self.assertEqual(
+                {row["test"].split("::")[-1] for row in skips},
+                {"test_runtime", "test_fixture_runtime", "test_subskip"},
+            )
+            for row in skips:
+                self.assertIn("missing", str(row["skips"]))
+
+    def test_only_the_excluded_examples_may_take_their_declared_collection_skip(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = pathlib.Path(temp)
+            (root / "test_other.py").write_text("def test_other(): pass")
+            # Use only the import-time guard, never the live LLM examples.
+            example = root / "ee/experiments/src/agent/test_flow.py"
+            example.parent.mkdir(parents=True)
+            example.write_text(
+                "import pytest\n"
+                "pytestmark = [pytest.mark.external, pytest.mark.live_llm]\n"
+                "pytest.skip('Experimental live LLM example; set RUN_EXPERIMENT_EXAMPLES=1 to run.', allow_module_level=True)\n"
+            )
+            inventory = root / "expected.json"
+
+            def collect(markers):
+                inventory.unlink(missing_ok=True)
+                return self.pytest_run(
+                    root,
+                    "--collect-only",
+                    "-m",
+                    markers,
+                    f"--ci-eligible-ids={inventory}",
+                    env={"RUN_EXPERIMENT_EXAMPLES": "0"},
                     check=False,
                 )
-                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
-            kept = [
-                [
-                    line.partition(" ")[2]
-                    for line in checker.read(
-                        str(pathlib.Path(p).with_name("selected-ids.txt"))
-                    )
-                ]
-                for p in paths
-            ]
-            self.assertEqual(len(checker.read(paths[0])), 7)
-            self.assertEqual(len(kept[0]), 5)
-            self.assertEqual(kept[1], ["test_sample.py::test_case[5]"])
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                self.assertEqual(
-                    checker.main(["check", "2", *paths]), 0, out.getvalue()
-                )
-            self.assertIn(
-                "2 shards selected 6 tests, each in one shard only", out.getvalue()
+
+            result = collect("not live_llm")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(
+                [r[1] for r in json.loads(inventory.read_text())],
+                ["test_other.py::test_other"],
             )
+
+            def rejected(markers):
+                result = collect(markers)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(
+                    "unexpected collection skip:", result.stdout + result.stderr
+                )
+                self.assertFalse(inventory.exists())
+
+            rejected("live_llm")
+            shutil.copyfile(example, root / "test_unrelated.py")
+            rejected("not live_llm")
+            (root / "test_unrelated.py").unlink()
+            # Same path and opt-out reason, but -m now selects the module.
+            example.write_text(
+                example.read_text().replace(", pytest.mark.live_llm", "")
+            )
+            rejected("not live_llm")
+            example.write_text(
+                "import pytest\npytest.skip('missing service', allow_module_level=True)\n"
+            )
+            rejected("not live_llm")
 
 
 class WorkflowTest(unittest.TestCase):
@@ -278,15 +525,17 @@ class WorkflowTest(unittest.TestCase):
         )[0]
         self.assertIn("          PYTHONPATH: .ci\n", shard)
         self.assertIn(
-            "          COLLECTED_IDS_FILE: ${{ runner.temp }}/shard-ids/collected-ids.txt\n",
-            shard,
+            '--ci-collected-ids="$RUNNER_TEMP/shard-receipt/collected-ids.txt"', shard
         )
         self.assertIn(
-            "          SELECTED_IDS_FILE: ${{ runner.temp }}/shard-ids/selected-ids.txt\n",
-            shard,
+            '--ci-terminal-ids="$RUNNER_TEMP/shard-receipt/terminal.jsonl"', shard
         )
-        # Both records travel in one artifact, named after the suite and group.
-        self.assertIn("          path: ${{ runner.temp }}/shard-ids\n", shard)
+        inventory = WORKFLOW.split(
+            "      - name: Collect the eligible inventory without sharding\n", 1
+        )[1].split("      - name:", 1)[0]
+        self.assertIn(
+            '--ci-eligible-ids="$RUNNER_TEMP/shard-receipt/eligible.json"', inventory
+        )
         self.assertIn(" -p collected_ids ", shard)
         self.assertIn(
             "          name: collected-ids-${{ matrix.suite }}-${{ matrix.group }}\n",
@@ -300,50 +549,81 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn(
             "    if: ${{ !cancelled() && needs.test.result != 'skipped' }}\n", job
         )
+        self.assertIn('"$RUNNER_TEMP"/collected/*/collected-ids.txt', job)
+        strict = job.split("  terminal-parity:\n", 1)[1]
+        self.assertIn("check_collected_ids.py --terminal", strict)
         self.assertIn(
-            'check_collected_ids.py "$(jq \'.include | length\' <<<"$SHARDS")"', job
+            "BACKEND_ENFORCE_RUNTIME_SKIPS: ${{ vars.BACKEND_ENFORCE_RUNTIME_SKIPS }}",
+            strict,
         )
+        self.assertIn("name: backend-runtime-skips", strict)
+        self.assertIn(
+            "if-no-files-found: ${{ steps.qualification.outcome == 'success' && 'error' || 'ignore' }}",
+            strict,
+        )
+        self.assertIn("SHARDS: ${{ needs.changes.outputs.shards }}", job)
         gate = WORKFLOW.split("  backend-tests:\n", 1)[1]
-        self.assertIn("        collection,\n", gate.split("    if: always()", 1)[0])
+        self.assertIn("        collection,\n", gate.split("    if:", 1)[0])
 
     @unittest.skipUnless(shutil.which("jq"), "needs jq")
     def test_the_gate_requires_the_check_whenever_the_shards_ran(self):
-        # The general filter passes a skipped job; this one must not, for the collection check.
         gate = WORKFLOW.split("  backend-tests:\n", 1)[1]
-        start = gate.index('          echo "$NEEDS" | jq \'if .test.result')
-        end = gate.index("end'\n", start) + len("end'\n")
-        script = "\n".join(line[10:] for line in gate[start:end].splitlines())
+        script = textwrap.dedent(gate.split("        run: |\n", 1)[1])
+        jobs = (
+            "plan",
+            "test",
+            "collection",
+            "terminal-parity",
+            "saml-multiworker",
+            "migrated-database",
+            "agentic-eval",
+            "slim-smoke",
+        )
+        for selected in (True, False):
+            value = str(selected).lower()
+            wanted = "success" if selected else "skipped"
+            needs = {job: {"result": wanted} for job in jobs}
+            needs.update(
+                {
+                    "changes": {
+                        "result": "success",
+                        "outputs": {
+                            "backend": value,
+                            "metrics": value,
+                            "executor_base": "false",
+                            "update_safety": "true",
+                        },
+                    },
+                    "policy-self-test": {"result": "success"},
+                    "update-safety": {"result": "success"},
+                    "code-executor-base-pin": {"result": "skipped"},
+                }
+            )
 
-        def run(test, collection):
-            needs = {"test": {"result": test}, "collection": {"result": collection}}
-            return subprocess.run(
-                ["bash", "-ec", script],
-                env={
-                    "NEEDS": json.dumps(needs),
-                    "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
-                },
-                capture_output=True,
-                text=True,
-                check=False,
-            ).returncode
+            def passed(needs=needs):
+                return (
+                    subprocess.run(
+                        ["bash", "-ec", script],
+                        env={**os.environ, "NEEDS": json.dumps(needs)},
+                        capture_output=True,
+                    ).returncode
+                    == 0
+                )
 
-        self.assertEqual(run("success", "success"), 0)
-        self.assertEqual(run("skipped", "skipped"), 0)
-        for test, collection in (
-            ("success", "skipped"),
-            ("success", "failure"),
-            ("failure", "skipped"),
-            ("failure", "cancelled"),
-            ("success", "cancelled"),
-        ):
-            self.assertNotEqual(run(test, collection), 0, (test, collection))
-        # A failed shard with a passed check is the general filter's business, not this one's.
-        self.assertEqual(run("failure", "success"), 0)
-
-    def test_the_record_is_not_an_input_of_the_database_dump_key(self):
-        # conftest.py and pytest.ini are key inputs; the plugin is loaded with -p instead.
-        dump = load("db_dump")
-        self.assertFalse(any("collected_ids" in spec for spec in dump.INPUTS))
+            self.assertTrue(passed())
+            for job in list(needs):
+                previous = needs[job]["result"]
+                for wrong in {"skipped", "cancelled", "success", "failure"} - {
+                    previous
+                }:
+                    needs[job]["result"] = wrong
+                    self.assertFalse(passed(), (job, wrong))
+                needs[job]["result"] = previous
+            for flag in needs["changes"]["outputs"]:
+                previous = needs["changes"]["outputs"][flag]
+                needs["changes"]["outputs"][flag] = ""
+                self.assertFalse(passed(), flag)
+                needs["changes"]["outputs"][flag] = previous
 
 
 if __name__ == "__main__":
