@@ -296,7 +296,7 @@ def _ch_test_native_port(
     environ: Mapping[str, str] = os.environ, *, allow_legacy_ch_port: bool = False
 ) -> ClickHouseTestPort:
     # Only legacy callers that explicitly named a CH25 host used CH_PORT.
-    general = _GENERAL_CH_NATIVE_PORT_VARIABLES
+    general: tuple[str, ...] = _GENERAL_CH_NATIVE_PORT_VARIABLES
     if allow_legacy_ch_port and environ.get("CH25_HOST"):
         general += ("CH_PORT",)
     return _resolve_ch_test_port(
