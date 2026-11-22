@@ -297,9 +297,6 @@ export function fileDurations(merged) {
   );
 }
 
-// The stack image set is not independently digest-pinned across producer
-// attempts yet. Reuse a complete, unsuperseded stack (e.g. a report-only
-// retry); require rerunning the cohort rather than combining unlike stacks.
 /**
  * The attempt that produced each shard's receipts, by shard number (1-based).
  *
@@ -348,15 +345,23 @@ export function shardAttempts(stack, total, jobs) {
 }
 
 /**
- * Fails unless every shard ran the same pulled images.
+ * Fails when shards from different attempts ran different pulled images.
  *
  * Each record lists the images its stack's containers ran, with registry
- * digests. A pulled image (one with a digest) can change behind a mutable tag
- * between attempts, so a shard carried over from an earlier attempt joins the
- * report only when every shard pulled identical digests. Images built in the
- * job from this commit have no digest and are bound by the commit instead.
+ * digests, and marks the ones the job built from this commit (`built`). Built
+ * images are bound by the commit; their digests differ on every shard, so they
+ * are never compared. A pulled image can change behind a mutable tag, so a
+ * shard carried over from an earlier attempt ("Re-run failed jobs") joins the
+ * report only when every shard pulled identical digests. Shards of one attempt
+ * ran together and are not compared, as before re-run shards could join.
  */
-export function checkStackImages(records) {
+export function checkStackImages(records, attempts) {
+  if (
+    !Array.isArray(attempts) ||
+    attempts.length !== records.length ||
+    !attempts.every((attempt) => Number.isSafeInteger(attempt) && attempt >= 1)
+  )
+    throw new Error("invalid shard attempts");
   const pulled = records.map((rows, index) => {
     if (
       !Array.isArray(rows) ||
@@ -364,6 +369,7 @@ export function checkStackImages(records) {
       rows.some(
         (row) =>
           typeof row?.ref !== "string" ||
+          typeof row.built !== "boolean" ||
           !Array.isArray(row.digests) ||
           row.digests.some((digest) => typeof digest !== "string"),
       )
@@ -371,10 +377,11 @@ export function checkStackImages(records) {
       throw new Error(`invalid stack image record for shard ${index + 1}`);
     return new Map(
       rows
-        .filter((row) => row.digests.length)
+        .filter((row) => !row.built && row.digests.length)
         .map((row) => [row.ref, JSON.stringify([...row.digests].sort())]),
     );
   });
+  if (new Set(attempts).size === 1) return;
   const refs = new Set(pulled.flatMap((map) => [...map.keys()]));
   const drift = [...refs]
     .filter((ref) => new Set(pulled.map((map) => map.get(ref) ?? "absent")).size > 1)
@@ -452,7 +459,7 @@ function downloadReceipts(stack, total) {
     }
     // A re-run of failed jobs combines shards of different attempts: only
     // when every shard pulled the same images does the report describe one
-    // stack.
+    // stack. Every record is still read and validated on a single attempt.
     const images = [];
     for (let i = 1; i <= total; i++) {
       const target = path.join(temp, `stack-images-${i}.json`);
@@ -464,7 +471,7 @@ function downloadReceipts(stack, total) {
       );
       images.push(JSON.parse(readFileSync(target, "utf8")));
     }
-    checkStackImages(images);
+    checkStackImages(images, attempts);
     unpack(
       `once-per-stack-${stack}-attempt-${recordAttempt}`,
       "record.json",
@@ -573,7 +580,7 @@ function main([command, ...args]) {
       return 1;
     }
     console.log(
-      `Every listed test has exactly one result; ${skipped.length} listed-to-pass tests skipped at runtime.`,
+      `Every listed test has exactly one result; ${skipped.length + result.allowedRuntimeSkips.length} listed-to-pass tests skipped at runtime (${result.allowedRuntimeSkips.length} allowed, ${skipped.length} unexpected).`,
     );
     return 0;
   }

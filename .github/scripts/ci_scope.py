@@ -142,7 +142,7 @@ BOOT_INPUTS = (
 )
 BOOT_FILES = re.compile(
     rb"futureagi/(tfc/management/commands/bootstrap_install"
-    rb"|tracer/services/clickhouse/(oss_cdc_install|oss_cdc_bootstrap|oss_native_bootstrap"
+    rb"|tracer/services/clickhouse/(oss_cdc_install|oss_cdc_bootstrap|oss_native_bootstrap|oss_outbox_cdc"
     rb"|v2/apply_schema[^/]*|v2/schema_topology))\.py"
 )
 # The chart, as deploy/tests/update_e2e/acceptance.py packages it: without its

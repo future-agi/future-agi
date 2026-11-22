@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -680,13 +681,12 @@ test("parity names a test that no shard ran, ran twice, never started or was not
 
 // --- workflow wiring ---------------------------------------------------------
 
-const workflow = () =>
-  parseYaml(
-    readFileSync(
-      new URL("../../.github/workflows/e2e-ci.yml", import.meta.url),
-      "utf8",
-    ),
+const workflowText = () =>
+  readFileSync(
+    new URL("../../.github/workflows/e2e-ci.yml", import.meta.url),
+    "utf8",
   );
+const workflow = () => parseYaml(workflowText());
 
 test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on it", () => {
   const jobs = workflow().jobs;
@@ -735,13 +735,47 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
     "${{ !cancelled() && needs.changes.outputs.any == 'true' }}",
   );
   assert.deepEqual(jobs["e2e-tests"].needs, ["changes", "e2e", "report"]);
+  // A title or body edit, or a label other than e2e-standalone, is metadata:
+  // its run has no jobs and no "E2E Tests Pass" check.
   const metadata =
-    "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)";
+    "((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'e2e-standalone'))";
   assert.equal(
     jobs["e2e-tests"].name,
     `\${{ ${metadata} && 'E2E metadata edit' || 'E2E Tests Pass' }}`,
   );
-  assert.equal(jobs["e2e-tests"].if, `\${{ always() && !(${metadata}) }}`);
+  assert.equal(jobs["e2e-tests"].if, `\${{ always() && !${metadata} }}`);
+  assert.equal(jobs.changes.if, `\${{ !${metadata} }}`);
+  assert.ok(
+    workflowText().includes(`${metadata} && github.run_id || 'candidate'`),
+  );
+  assert.deepEqual(workflow().on.pull_request.types, [
+    "opened",
+    "synchronize",
+    "reopened",
+    "edited",
+    "labeled",
+  ]);
+  // The same expressions, evaluated: only a real candidate event, or adding
+  // e2e-standalone, gets jobs and the protected check name.
+  const evaluate = (expression, event) =>
+    new Function("github", `return (${expression});`)({ event });
+  const name = jobs["e2e-tests"].name.slice(4, -3);
+  for (const [event, real] of [
+    [{ action: "opened", changes: {} }, true],
+    [{ action: "synchronize", changes: {} }, true],
+    [{ action: "edited", changes: { body: { from: "x" } } }, false],
+    [{ action: "edited", changes: { title: { from: "x" } } }, false],
+    [{ action: "edited", changes: { base: { ref: { from: "main" } }, body: {} } }, true],
+    [{ action: "labeled", changes: {}, label: { name: "e2e-standalone" } }, true],
+    [{ action: "labeled", changes: {}, label: { name: "general-factory" } }, false],
+  ]) {
+    assert.equal(!evaluate(metadata, event), real, JSON.stringify(event));
+    assert.equal(
+      evaluate(name, event),
+      real ? "E2E Tests Pass" : "E2E metadata edit",
+      JSON.stringify(event),
+    );
+  }
 });
 
 test("the E2E gate passes only on a green suite with its report, or when nothing was needed", () => {
@@ -887,22 +921,189 @@ test("one run uses one date for the quarantine filter", () => {
   }
 });
 
+// Trimmed from run 45034667773 (one attempt, six shards): each job's own
+// build has its own digest; the pulled images were the same on every shard.
+const BUILT_DIGESTS = [
+  "futureagi/future-agi@sha256:c6788e915a5eb6e6f7b316b00a875314224374d8118a67a65ac9cec95e16310c",
+  "futureagi/future-agi@sha256:ed3f275ec2c5318327acdbab48e3ddb043daf72c325d3e99612d26b39c024021",
+  "futureagi/future-agi@sha256:5ce2bddd0adf0916d07d90e3472b146e1cf94de6e7ae0abd4e24c49616d92b40",
+];
+const PULLED_LATEST = "futureagi/future-agi@sha256:5299263cf2029419b301d6fe7dd401e5d21bdc3011da832928ccb57dea9f99fe";
+const PULLED_POSTGRES = "postgres@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f";
+const stackRecord = (built, postgres = PULLED_POSTGRES) => [
+  { ref: "futureagi/future-agi:e2e-ci", built: true, digests: [built] },
+  { ref: "futureagi/future-agi:latest", built: false, digests: [PULLED_LATEST] },
+  { ref: "postgres:16", built: false, digests: [postgres] },
+];
+
 test("shards from different attempts join one report only with the same pulled images", () => {
-  const pg = (digest) => ({ ref: "postgres:16", digests: [`postgres@sha256:${digest}`] });
-  const built = (id) => ({ ref: `futureagi/future-agi:${id}`, digests: [] });
-  // Identical pulls pass; images built in each job (no digest) are not compared.
-  checkStackImages([[pg("a"), built("x")], [built("y"), pg("a")]]);
+  const moved = "postgres@sha256:" + "b".repeat(64);
+  const [a, b, c] = BUILT_DIGESTS;
+  // The real one-attempt run: only the job-built images differ, and they are
+  // never compared, on one attempt or across attempts.
+  checkStackImages([stackRecord(a), stackRecord(b), stackRecord(c)], [1, 1, 1]);
+  checkStackImages([stackRecord(a), stackRecord(b), stackRecord(c)], [2, 1, 2]);
+  // Shards of one attempt ran together: a mutable tag that moved between two
+  // of them does not fail the run (as before re-run shards could join).
+  checkStackImages([stackRecord(a), stackRecord(b, moved), stackRecord(c)], [1, 1, 1]);
   assert.throws(
-    () => checkStackImages([[pg("a")], [pg("b")], [pg("a")]]),
+    () => checkStackImages([stackRecord(a), stackRecord(b, moved), stackRecord(c)], [1, 2, 1]),
     /shards ran different pulled images \(postgres:16\); rerun all jobs/,
   );
   // A pulled image only one shard ran is drift too.
+  const redis = { ref: "redis:7", built: false, digests: ["redis@sha256:c"] };
   assert.throws(
-    () => checkStackImages([[pg("a")], [pg("a"), { ref: "redis:7", digests: ["redis@sha256:c"] }]]),
+    () => checkStackImages([stackRecord(a), [...stackRecord(b), redis]], [2, 1]),
     /\(redis:7\)/,
   );
-  for (const bad of [[], [[]], [[{ ref: 1, digests: [] }]], [[{ ref: "x" }]], [[{ ref: "x", digests: [1] }]]])
-    if (bad.length) assert.throws(() => checkStackImages(bad), /invalid stack image record/);
+  // Every record is validated on every run, including the built marker.
+  for (const bad of [
+    [],
+    [{ ref: 1, built: false, digests: [] }],
+    [{ ref: "x", built: false }],
+    [{ ref: "x", built: false, digests: [1] }],
+    [{ ref: "x", digests: [] }],
+    [{ ref: "x", built: "true", digests: [] }],
+  ])
+    assert.throws(() => checkStackImages([bad], [1]), /invalid stack image record/);
+  for (const attempts of [[], [0], [1, 1], ["1"]])
+    assert.throws(() => checkStackImages([stackRecord(a)], attempts), /invalid shard attempts/);
+});
+
+test("receipts take each shard from the attempt that ran it and the stack record from the last shard's", () => {
+  // Drives `shard-report.mjs receipts` against fake gh, unzip and sha256sum.
+  const root = mkdtempSync(path.join(tmpdir(), "e2e-receipts-test-"));
+  const tool = (name, body) =>
+    writeFileSync(path.join(root, "bin", name), `#!/usr/bin/env node\n${body}\n`, { mode: 0o755 });
+  mkdirSync(path.join(root, "bin"));
+  tool(
+    "gh",
+    `const fs = require("node:fs");
+const url = process.argv[process.argv.length - 1];
+const store = process.env.FAKE_STORE;
+const zip = /\\/artifacts\\/(\\d+)\\/zip$/.exec(url);
+if (zip) process.stdout.write(fs.readFileSync(store + "/" + zip[1]));
+else if (url.includes("/jobs?")) process.stdout.write(fs.readFileSync(store + "/jobs.json"));
+else if (url.includes("/artifacts?")) process.stdout.write(fs.readFileSync(store + "/artifacts.json"));
+else process.exit(3);`,
+  );
+  tool(
+    "unzip",
+    `const fs = require("node:fs");
+const [flag, file, member] = process.argv.slice(2);
+const archive = JSON.parse(fs.readFileSync(file, "utf8"));
+if (flag === "-Z1") process.stdout.write(archive.member + "\\n");
+else if (flag === "-p" && member === archive.member) process.stdout.write(archive.content);
+else process.exit(9);`,
+  );
+  tool(
+    "sha256sum",
+    `const file = process.argv[2];
+const hash = require("node:crypto").createHash("sha256").update(require("node:fs").readFileSync(file)).digest("hex");
+process.stdout.write(hash + "  " + file + "\\n");`,
+  );
+  const job = (i, attempt, ran = attempt) => ({
+    name: `e2e (distributed, ${i}/3)`,
+    run_attempt: attempt,
+    started_at: `2026-11-22T0${ran}:00:00Z`,
+    completed_at: `2026-11-22T0${ran}:30:00Z`,
+  });
+  // `ran` lists, per attempt, the shards that ran in it; `images` gives a
+  // shard's record for the attempt that ran it.
+  const receipts = (name, ran, images) => {
+    const dir = path.join(root, name);
+    const store = path.join(dir, "store");
+    const work = path.join(dir, "work");
+    mkdirSync(store, { recursive: true });
+    mkdirSync(work);
+    const jobs = [];
+    const artifacts = [];
+    const put = (artifact, member, content) => {
+      const bytes = Buffer.from(JSON.stringify({ member, content }));
+      const id = 100 + artifacts.length;
+      writeFileSync(path.join(store, String(id)), bytes);
+      artifacts.push({
+        id,
+        name: artifact,
+        expired: false,
+        digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+      });
+    };
+    const last = [];
+    ran.forEach((shards, index) => {
+      const attempt = index + 1;
+      for (let i = 1; i <= 3; i++) {
+        if (shards.includes(i)) {
+          last[i] = attempt;
+          jobs.push(job(i, attempt));
+          put(`blob-report-distributed-${i}-attempt-${attempt}`, `report-${i}-of-3.zip`, `blob ${i} attempt ${attempt}`);
+          put(`stack-images-distributed-${i}-attempt-${attempt}`, "images.json", JSON.stringify(images(i, attempt)));
+          if (i === 3)
+            put(`once-per-stack-distributed-attempt-${attempt}`, "record.json", JSON.stringify({
+              run: "77", sha: "a".repeat(40), stack: "distributed", total: 3,
+              attempt, date: "2026-11-22", sdk: "b".repeat(40),
+            }));
+        } else jobs.push(job(i, attempt, last[i]));
+      }
+    });
+    writeFileSync(path.join(store, "jobs.json"), JSON.stringify([{ jobs }]));
+    writeFileSync(path.join(store, "artifacts.json"), JSON.stringify([{ artifacts }]));
+    const run = spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("./shard-report.mjs", import.meta.url)), "receipts"],
+      {
+        cwd: work,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${path.join(root, "bin")}${path.delimiter}${process.env.PATH}`,
+          FAKE_STORE: store,
+          GITHUB_REPOSITORY: "owner/repo",
+          GITHUB_RUN_ID: "77",
+          GITHUB_SHA: "a".repeat(40),
+          E2E_STACK: "distributed",
+          SHARD_TOTAL: "3",
+          E2E_QUARANTINE_TODAY: "2026-11-22",
+        },
+      },
+    );
+    const read = (file) => readFileSync(path.join(work, file), "utf8");
+    return { ...run, read };
+  };
+  const moved = "postgres@sha256:" + "b".repeat(64);
+  const own = (i, attempt) => stackRecord(BUILT_DIGESTS[(i + attempt) % 3]);
+  try {
+    // Re-run failed jobs re-ran shard 1 and the last shard; shard 2 is carried
+    // over from attempt 1. Each job rebuilt its images; the pulls match.
+    const mixed = receipts("mixed", [[1, 2, 3], [1, 3]], own);
+    assert.equal(mixed.status, 0, mixed.stderr);
+    assert.equal(mixed.read("all-blob-reports/report-1-of-3.zip"), "blob 1 attempt 2");
+    assert.equal(mixed.read("all-blob-reports/report-2-of-3.zip"), "blob 2 attempt 1");
+    assert.equal(mixed.read("all-blob-reports/report-3-of-3.zip"), "blob 3 attempt 2");
+    assert.equal(JSON.parse(mixed.read("once-per-stack/record.json")).attempt, 2);
+    assert.match(mixed.stdout, /stack-images-distributed-2-attempt-1: attempt 1/);
+    assert.match(mixed.stdout, /once-per-stack-distributed-attempt-2: attempt 2/);
+    // The same re-run after a mutable tag moved: the report says to rerun all.
+    const drift = receipts("drift", [[1, 2, 3], [1, 3]], (i, attempt) =>
+      attempt === 2 ? stackRecord(BUILT_DIGESTS[i % 3], moved) : own(i, attempt),
+    );
+    assert.notEqual(drift.status, 0);
+    assert.match(drift.stderr, /shards ran different pulled images \(postgres:16\); rerun all jobs/);
+    // One attempt: the tag moved between two shards, and the run still passes.
+    const single = receipts("single", [[1, 2, 3]], (i) =>
+      i === 2 ? stackRecord(BUILT_DIGESTS[1], moved) : own(i, 1),
+    );
+    assert.equal(single.status, 0, single.stderr);
+    assert.equal(JSON.parse(single.read("once-per-stack/record.json")).attempt, 1);
+    // A record without the built marker fails even on one attempt.
+    const unmarked = receipts("unmarked", [[1, 2, 3]], (i) =>
+      own(i, 1).map(({ built, ...row }) => (i === 3 ? row : { built, ...row })),
+    );
+    assert.notEqual(unmarked.status, 0);
+    assert.match(unmarked.stderr, /invalid stack image record for shard 3/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("both workflows record and upload each shard's pulled images under one name", () => {
@@ -918,5 +1119,16 @@ test("both workflows record and upload each shard's pulled images under one name
   assert.ok(ci.includes("name: stack-images-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}"));
   const report = readFileSync(new URL("./shard-report.mjs", import.meta.url), "utf8");
   assert.ok(report.includes("`stack-images-${stack}-${i}-attempt-${attempts[i - 1]}`"));
+  assert.ok(report.includes("checkStackImages(images, attempts);"));
+  // Every image a build step tags is marked built in the record.
+  for (const file of ["e2e-ci.yml", "e2e-stack-profile.yml"]) {
+    const text = readFileSync(new URL(`../../.github/workflows/${file}`, import.meta.url), "utf8");
+    const tagged = new Set(
+      [...text.matchAll(/(?:tags: |-t ")(futureagi\/[a-z-]+):(?:\$\{\{ env\.IMAGE_TAG \}\}|\$IMAGE_TAG)/g)].map((m) => m[1]),
+    );
+    assert.equal(tagged.size, 5, file);
+    for (const repo of tagged) assert.ok(ci.includes(`"${repo}:$IMAGE_TAG"`), `${file}: ${repo}`);
+  }
+  assert.ok(ci.includes('if [[ $E2E_STACK == standalone ]]; then built+=("futureagi/standalone:$IMAGE_TAG"); fi'));
 });
 

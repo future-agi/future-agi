@@ -371,6 +371,8 @@ class RehearsalInputs(unittest.TestCase):
             "futureagi/tracer/services/clickhouse/oss_cdc_install.py",
             "futureagi/tracer/services/clickhouse/oss_native_bootstrap.py",
             "futureagi/tracer/services/clickhouse/oss_cdc_bootstrap.py",
+            # bootstrap_install and the Standalone bootstrap install it at boot.
+            "futureagi/tracer/services/clickhouse/oss_outbox_cdc.py",
             "futureagi/tracer/services/clickhouse/v2/apply_schema.py",
             "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
             "futureagi/tracer/services/clickhouse/v2/schema_topology.py",
@@ -572,25 +574,49 @@ class CandidateScope(unittest.TestCase):
                 self.assertTrue(all(flags.values()), missing)
 
     def test_retargets_replan_and_metadata_edits_never_issue_protected_names(self):
-        metadata = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)"
-        for workflow, check in (
-            ("backend-ci", "Backend"),
-            ("e2e-ci", "E2E"),
-            ("update-ci", None),
+        edit = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)"
+
+        def labelled_except(*labels):
+            # A label the workflow does not read is metadata too: its run has no jobs.
+            return (
+                "(("
+                + edit
+                + ") || (github.event.action == 'labeled' && "
+                + " && ".join(
+                    f"github.event.label.name != '{label}'" for label in labels
+                )
+                + "))"
+            )
+
+        for workflow, check, types, metadata in (
+            ("backend-ci", "Backend", "edited", edit),
+            ("e2e-ci", "E2E", "edited, labeled", labelled_except("e2e-standalone")),
+            (
+                "update-ci",
+                None,
+                "edited, labeled",
+                labelled_except("update-rehearsal", "e2e-standalone"),
+            ),
         ):
             text = (SCRIPTS.parent / "workflows" / (workflow + ".yml")).read_text()
             self.assertIn(
-                "  pull_request:\n    types: [opened, synchronize, reopened, edited]",
+                "  pull_request:\n    types: [opened, synchronize, reopened, "
+                + types
+                + "]",
                 text,
             )
             self.assertIn(metadata + " && github.run_id || 'candidate'", text)
-            self.assertIn("  changes:\n    if: ${{ !(" + metadata + ") }}", text)
+            guard = metadata if metadata.startswith("((") else "(" + metadata + ")"
+            self.assertIn("  changes:\n    if: ${{ !" + guard + " }}", text)
+            if metadata != edit:
+                # No job keeps the narrower guard, so a stray label starts none.
+                self.assertNotIn("!(" + edit + ")", text)
             if check:
                 self.assertIn(
                     metadata + f" && '{check} metadata edit' || '{check} Tests Pass'",
                     text,
                 )
-                self.assertIn("always() && !(" + metadata + ")", text)
+                self.assertIn("always() && !" + guard, text)
 
     def test_private_overlay_is_not_selected_from_merge_group_heads(self):
         workflow = (SCRIPTS.parent / "workflows/backend-ci.yml").read_text()

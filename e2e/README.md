@@ -599,9 +599,9 @@ minute; they are skipped only when the stack never booted.
 
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
-label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
-only if the PR has it when the run starts, so add it and then push: a re-run keeps the labels of
-the run it repeats. The Standalone leg builds the four component images with the layer cache,
+label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. Adding the label
+starts a new run with both legs; any other label starts a run with no jobs and no `E2E Tests Pass`
+check, like a title or body edit. A re-run keeps the labels of the run it repeats. The Standalone leg builds the four component images with the layer cache,
 assembles the app image with `bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
 The `upgrade` job in `.github/workflows/standalone-ci.yml` runs weekly, on demand, and on a pull
 request labelled `upgrade-check` (the same rule: add the label, then push). It installs v1.41.1
@@ -668,9 +668,17 @@ anchored reason, the ticket that removes it, an owner
 and an expiry at most 45 days after the run date; there is no by-design exemption. A skip is
 allowed only for a listed file and a matching reason, for the test path the independent inventory
 recorded, and only up to that file's measured count. An enforced run fails on an unexpected skip
-and on a rule problem: a file over its count, an expired rule that still matches, or a rule file
-the run scheduled that matched nothing. A rule can be limited to fork runs (`"runs": "oss"`) or
-internal runs (`"runs": "internal"`).
+and on a rule problem: an expired rule that still matches, and, judged on the whole run and only
+when its evidence is complete, a file over its count or a rule file the run scheduled that matched
+nothing. A rule can be limited to oss runs (`"runs": "oss"`: a fork pull request or a merge group,
+without the private package) or internal runs (`"runs": "internal"`).
+
+A skip that depends on data other tests leave behind cannot have an exact count. Its rule says why
+in `"varies"`, and each of its files maps to the number of tests the inventory collects there: an
+upper bound, checked against the inventory on every complete run, and matching nothing is no
+problem. Exact counts stay the default. Today one rule varies: `tracer/tests/test_hourly_aggregate_state_route_live_ch.py`
+(TH-10618, up to its 8 tests) skips when its shard's earlier tests left no spans in the shared
+ClickHouse table; 1 or 2 of its tests skipped in six runs on 22 Nov.
 
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
 SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
