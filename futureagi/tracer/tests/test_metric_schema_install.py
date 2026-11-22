@@ -281,7 +281,7 @@ def test_the_api_refuses_metrics_without_their_schema(auth_client, settings, pro
 
     probe["rows"] = ConnectionError("refused")
     assert auth_client.get(ROOT).status_code == 503  # still within the recheck
-    schema_install._recheck_at = 0.0
+    schema_install._cache.recheck_at = 0.0
     # A probe that cannot connect is not a refusal: the request goes on.
     assert auth_client.get(ROOT).status_code == 200
 
