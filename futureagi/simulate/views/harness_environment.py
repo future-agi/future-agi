@@ -18,6 +18,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.pydantic_schemas.evidence_import import DatasetColumns
+from simulate.selectors.agent_fix_issue import issue_scenarios
 from simulate.selectors.evidence_import import (
     environment_evidence_import,
     evidence_dataset,
@@ -260,6 +261,22 @@ def _uuid_or_none(value):
         return UUID(str(value))
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _editable_import(job, identifier):
+    """An import this page may draft, add or discard. An Error Feed issue's import
+    belongs to its epoch, whose page finishes it."""
+    evidence_import = environment_evidence_import(job, identifier)
+    if evidence_import is None:
+        raise NotFound("Evidence import not found")
+    if evidence_import.source_issue_id is not None:
+        raise HostedHarnessError(
+            "evidence_import_of_issue",
+            "This import belongs to an epoch from an Error Feed issue. Review it on"
+            " that epoch's page.",
+            status_code=409,
+        )
+    return evidence_import
 
 
 class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
@@ -540,8 +557,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         url_path=r"versions/suite/(?P<version_id>[0-9a-fA-F-]{36})/members",
     )
     def suite_members(self, request, pk=None, version_id=None):
-        """The scenarios in one suite version, by number; a coding agent's read leaves
-        out the held-back cases."""
+        """The scenarios in one suite version, by number, each with the Error Feed
+        issue it came from, if any; a coding agent's read leaves out the held-back
+        cases."""
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
@@ -550,8 +568,19 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         if identifier is None:
             raise version_reads.version_not_found()
         hidden = _held_back_from(request, job, identifier)
-        members = version_reads.suite_members(job, identifier)
-        return Response(members_without(members, hidden))
+        members = members_without(version_reads.suite_members(job, identifier), hidden)
+        issues = issue_scenarios(job, [member["scenario_key"] for member in members])
+        return Response(
+            [
+                {
+                    **member,
+                    "issue_cluster_id": issue.cluster_id if issue else None,
+                    "issue_project_id": issue.project_id if issue else None,
+                }
+                for member in members
+                for issue in [issues.get(member["scenario_key"])]
+            ]
+        )
 
     @validated_request(
         request_serializer=HarnessVerifyCreateSerializer,
@@ -990,9 +1019,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         identifier = _uuid_or_none(import_id)
         if job is None or identifier is None:
             return self._not_found()
-        evidence_import = environment_evidence_import(job, identifier)
-        if evidence_import is None:
-            raise NotFound("Evidence import not found")
+        evidence_import = _editable_import(job, identifier)
         discard_evidence_import(evidence_import)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1018,9 +1045,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         identifier = _uuid_or_none(import_id)
         if job is None or identifier is None:
             return self._not_found()
-        evidence_import = environment_evidence_import(job, identifier)
-        if evidence_import is None:
-            raise NotFound("Evidence import not found")
+        evidence_import = _editable_import(job, identifier)
         start_drafting(
             evidence_import,
             [str(case_id) for case_id in request.validated_data["case_ids"]],
@@ -1056,9 +1081,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         identifier = _uuid_or_none(import_id)
         if job is None or identifier is None:
             return self._not_found()
-        evidence_import = environment_evidence_import(job, identifier)
-        if evidence_import is None:
-            raise NotFound("Evidence import not found")
+        evidence_import = _editable_import(job, identifier)
         body = request.validated_data
         saved = add_to_suite(
             evidence_import,

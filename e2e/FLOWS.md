@@ -254,6 +254,31 @@
 - unassigned and deleted item navigation returns real 403 and 404 while the UI offers persistent queue recovery
 - score corrections resolve disagreements; label removal retains historical agreement until all 54 synthetic label scores are deleted, then refetch closes the already-open popup
 
+### ANNOT-E2E-007 — queue managers widen item data columns while selection and actions stay fixed
+
+**Goal:** A queue manager widens the data columns of a queue's item list to read them, while the selection and row-action columns stay fixed and selecting an item or backing out of removal leaves the queue item and its source row untouched
+
+**Spec:** `flows/annotations/queue-items-column-resize.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a numeric label, a one-row synthetic dataset with a minted cell, an active manual queue and one dataset-row item through public APIs
+2. open the queue item list at 1440x900 and wait for the seeded row
+3. see resize handles on Preview and Source but not on selection or Actions, which measure 44 and 60 px
+4. drag the Preview and Source header edges wider; column order and the fixed columns stay unchanged
+5. tick and untick the seeded row and see Remove Selected (1) appear and go
+6. open Remove item on the row, cancel the dialog and still see the row with 1 of 1 items
+7. reload and see the seeded row still listed
+
+**Backend state verified:**
+
+- PG model_hub_queueitem row is unchanged after select, remove-cancel and reload: not deleted, same queue, dataset row, status and updated_at
+- PG model_hub_row and model_hub_cell keep the seeded order, minted value, deleted=false and updated_at
+- items API the grid calls returns exactly the seeded item with its dataset_row preview, and the grid Preview cell reads that exact text
+- the browser sends no DELETE for the item and no POST to items/bulk-remove/
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password
@@ -903,6 +928,58 @@
 - the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max
 - chart_config.chart_type round-trips as column and then as line through the widget detail endpoint
 
+### DASH-E2E-017 — a saved custom-formula metric persists a correct value, renders on a dashboard and records an alert
+
+**Goal:** Save a custom-formula conversation metric, read its settled value on the Overview, freeze it as a snapshot, and see that snapshot render on a dashboard and record a threshold alert. The Add to dashboard and Create alert menu items are disabled in the product, so the widget and monitor are created through the API the product used.
+
+**Spec:** `flows/dashboards/derived-metric.spec.ts:92`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two minted conversations, each a root and a child span with numeric resolved/escalated outcomes, aged an hour so their 15-minute bucket is closed
+2. create the metric through New metric: name, project, Custom formula over conversations, two span-attribute inputs and the formula; Save metric validates, creates and queues the first calculation
+3. give this project a 5-minute settle and a 60-second cadence (the defaults are 30 minutes and 900 seconds, and no API sets them), see a publication report the window as not final while the conversations are open, then wait for them to settle (5 minutes after their last arrival) and the next refresh to publish them
+4. reload the metric page and read the Overview value on the default 7-day window and on a Custom window around the seeded bucket
+5. create a static below-threshold monitor through POST /tracer/user-alerts/, then Save snapshot on the Custom window
+6. create a dashboard with a metric widget pinned to the snapshot through the dashboard and widget APIs, then open it in the browser
+7. wait for the 60-second alert check to record the monitor alert for the snapshot window
+
+**Backend state verified:**
+
+- The exact four seeded spans, their typed outcomes and two distinct conversations belong to the minted project in the actor organization/default workspace.
+- Validate accepts the formula, and the saved metric is version 1 of a custom conversation recipe in PG and in the metric API, with the same definition hash.
+- While the conversations are open the KPI API reports the Custom window as partial; it reports a final value no earlier than the last arrival plus the settle time: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.
+- The snapshot run completes; it froze exactly the two seeded conversations, its committed overall result is numerator 1, denominator 2, value 0.5, and its commit row names that result.
+- The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.
+- The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.
+
+### DASH-E2E-018 — rapid date presets query only the final range, custom Done and Refresh apply at once
+
+**Goal:** A user flicking through date presets sees each chip highlight as they click, while the widgets load only the range they land on; a custom range applies as soon as they press Done, and Refresh still brings the widgets to a completed result.
+
+**Spec:** `flows/dashboards/preset-burst-requests.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed 3 traces into a minted project and a dashboard with trace_count and span_count widgets stored at 7D
+2. open the dashboard on the Default chip and wait for both widgets to load
+3. click Today, 7D and 30D back to back
+4. see the 30D chip highlighted, then both widgets load the 30-day range with the seeded totals
+5. open Custom, type today's date as Start Date and End Date and press Done
+6. click Refresh with the custom range applied and wait for it to finish
+
+**Backend state verified:**
+
+- the preset burst sends exactly one time range per widget on POST /tracer/dashboard/query/, the 30-day one; no Today or 7D range is ever sent, the 30D chip is primary before the first 30D query, and that query starts at least 450 ms after the 30D click
+- each completed, exact 30D response spans the expected start and end and contains 3 traces or 6 spans
+- custom Done sends exactly one range per widget, [local midnight today, local midnight tomorrow), dispatched under 450 ms after Done
+- the custom-range responses are complete and exact with the seeded totals
+- Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals; Refreshing returns to Refresh and Last updated shows that completion
+
 ## datasets
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
@@ -1124,6 +1201,39 @@
 - Root cause shows the saved analysis and the eval issue's explanation from the share
 - a restricted link shows Sign in required, with no error toast, and stays on the shared URL
 
+### ERR-E2E-006 — a developer runs an Epoch from an Error Feed issue and follows it from the issue
+
+**Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
+
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:130`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the issue
+2. press Run Epoch
+3. pick the environment
+4. read the plan and swap one trace
+5. press Draft scenarios
+6. untick one drafted scenario
+7. press Run Epoch in the review
+8. read the status strip
+9. reload once the epoch is ready
+10. read the header action
+11. press View Epoch 3
+12. reload the epoch page
+13. open the issue list and hover the epoch icon
+
+**Browser observations:**
+
+- the plan is read only after Run Epoch, first with the issue and project, then with the picked environment, and the picker lists only the code agent's environment
+- the create POST body is exactly the issue, project, environment and the picks after the swap
+- the run POST body is exactly the kept scenario and the review's launch rows at their defaults
+- the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
+- the epoch page's breadcrumb is the issue's cluster id linking to the issue, and it survives a reload
+- the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
 **Goal:** A saved link to a retired issue opens its surviving issue
@@ -1196,7 +1306,7 @@
 
 **Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly
 
-**Spec:** `flows/evals/catalog-result-types.spec.ts:137`
+**Spec:** `flows/evals/catalog-result-types.spec.ts:139`
 
 **Tags:** —
 
@@ -1745,6 +1855,30 @@
 **Backend state verified:**
 
 - the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
+
+### GW-E2E-024 — Add/Edit Provider saves only the models the user picked or typed
+
+**Goal:** A platform engineer adds and then edits a provider, and only the models they deliberately picked or typed are saved: hovering a listed model and clicking away neither selects it nor drops a selected one, and a typed model ID is kept, trimmed and once, whether they click away or press Save directly
+
+**Spec:** `flows/gateway/provider-model-selection.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway providers and start adding a custom provider with a base URL and API key
+2. pick one listed model, hover another listed model and click away
+3. type a model ID with surrounding spaces and click away
+4. add the provider
+5. edit the provider, hover a selected and an unselected listed model and click away
+6. type another model ID and press Save Changes directly
+7. reopen the provider and see exactly the picked and typed models
+
+**Backend state verified:**
+
+- the Add save posts config.models exactly [listedA, typedOne] to update-provider (typed ID trimmed, hovered listedB absent) and gets 200
+- the gateway config API returns the added provider with models exactly [listedA, typedOne]
+- the Edit direct save posts and persists models exactly [listedA, typedOne, typedTwo]: update-provider body and gateway config API agree
 
 ## knowledge-base
 

@@ -989,7 +989,7 @@ class TestConnectedAgentCreationCheck:
         calls = maker(user.organization, str(agent.id), workspace)
 
         assert calls.asked == []
-        assert calls.made == [CreationCheck(report={}, required_variable_names=[])]
+        assert calls.made == [CreationCheck(report={}, required_variable_names=None)]
 
     def test_an_agent_an_environment_made_is_checked(
         self, maker, user, agent, workspace

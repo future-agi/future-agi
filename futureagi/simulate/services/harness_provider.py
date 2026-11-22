@@ -1461,7 +1461,9 @@ def _environment_agent_maker(
         }
     secret_submitted = submitted_credentials(organization, secret_refs, secret_values)
     check = (
-        CreationCheck(report={}, required_variable_names=[])
+        # Not run for a connected agent or a pinned version: no answer to which
+        # names it needs.
+        CreationCheck(report={}, required_variable_names=None)
         if version_bound or _builds_connected_agent(organization, workspace, payload)
         else check_creation_credentials(
             organization, payload, secret_submitted, analysis
