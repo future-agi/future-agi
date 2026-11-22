@@ -121,9 +121,13 @@ export class ScopeActors {
     return actor;
   }
 
+  private inviteCredentials(label: string) {
+    return { email: `${this.prefix}-${label}@futureagi.com`, password: `H1-${this.prefix}-${label}!` };
+  }
+
   private async invite(label: string, level: 1 | 3, workspaceIds: string[]): Promise<ScopeActor> {
     // accounts/serializers/rbac.py:34 and views/rbac_views.py:238.
-    const email = `${this.prefix}-${label}@futureagi.com`;
+    const { email, password } = this.inviteCredentials(label);
     const invited = await this.send<{ result: { invited: string[];
       invites?: { email: string; invite_link: string }[] } }>(
       this.ownerA, 'POST', '/accounts/organization/invite/', {
@@ -150,7 +154,6 @@ export class ScopeActors {
     expect(preview.status).toBe(200);
     expect(preview.body).toMatchObject({ valid: true, email });
     // accounts/serializers/contracts.py:414; views/signup.py:724,806.
-    const password = `H1-${this.prefix}-${label}!`;
     const accepted = await this.sendOn<Tokens>(req, 'POST', path,
       { new_password: password, repeat_password: password });
     expect(accepted.status).toBe(200);
@@ -222,6 +225,20 @@ export class ScopeActors {
       expect(info.body.org_level).toBe(3);
     }
     return { a: this.member, b: this.memberInB, foreign: this.foreign };
+  }
+
+  /** Log the same invited member back in without reusing the revoked bearer. */
+  async signInMember(): Promise<ScopeActor> {
+    const { email, password } = this.inviteCredentials('member');
+    const req = this.requests.get(email)!;
+    const login = await this.sendOn<Tokens>(req, 'POST', '/accounts/token/',
+      { email, password, remember_me: true });
+    expect(login.status).toBe(200);
+    const { access, refresh } = login.body;
+    expect(Boolean(access && refresh)).toBe(true);
+    const tokens = { access, refresh };
+    const { organizationId, workspaceId } = this.member;
+    return { ...this.member, tokens, api: new ApiClient(req, E2E.apiUrl).withAuth(tokens, organizationId, workspaceId) };
   }
 
   /** Additional non-admin members in owner A's default workspace. */

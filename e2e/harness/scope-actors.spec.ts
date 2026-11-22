@@ -260,13 +260,17 @@ test.describe('H1 attachment identities', () => {
       expect(removed.status).toBe(200);
       expect(removed.body.result.user_id).toBe(a.userId);
       expect(await memberships()).toEqual([{ user_id: a.userId, organization_id: a.organizationId }]);
-      expect(await orgs(a)).toEqual([a.organizationId]);
-      expect((await scopes.send(a, 'POST', '/accounts/organizations/switch/',
+      // Removal invalidates the old session, including requests in the surviving scope.
+      expect((await scopes.send(a, 'GET', '/accounts/organizations/')).status).toBe(401);
+      const signedIn = await scopes.signInMember();
+      expect(await orgs(signedIn)).toEqual([a.organizationId]);
+      expect((await scopes.send(signedIn, 'POST', '/accounts/organizations/switch/',
         { organization_id: b.organizationId })).status).toBe(403);
-      const survivor = await scopes.send<ScopeUserInfo>(a, 'GET', '/accounts/user-info/');
+      const survivor = await scopes.send<ScopeUserInfo>(signedIn, 'GET', '/accounts/user-info/');
       expect(survivor.status).toBe(200);
       expect(survivor.body.id).toBe(a.userId);
       expect(survivor.body.organization.id).toBe(a.organizationId);
+      expect(survivor.body.default_workspace_id).toBe(a.workspaceId);
       await testInfo.attach('h1-two-org-identities', { contentType: 'application/json',
         body: JSON.stringify({ ...scopes.evidence(), linked, afterRemoval: await memberships() }) });
     });
