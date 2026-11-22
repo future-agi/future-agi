@@ -201,8 +201,11 @@ def read_runtime_skip_rules(path=RUNTIME_SKIP_RULES, today=None):
     is limited to, an anchored reason, why, the
     ticket that removes it, an owner and an expiry at most 45 days after
     `today` (the run date). An expired rule is still read but allows nothing.
-    A rule may name the kind of run it covers: "oss" (a fork, without the
-    private package) or "internal". Without it a rule covers both.
+    A rule may name the kind of run it covers: "oss" (a fork pull request or a
+    merge group, without the private package) or "internal". Without it a rule
+    covers both. A rule whose skips depend on data other tests leave behind
+    says why in "varies": each of its files then maps to the number of tests the
+    inventory collects there, an upper bound, and matching nothing is no problem.
     """
     today = today or datetime.datetime.now(datetime.UTC).date()
     entries = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -261,6 +264,12 @@ def read_runtime_skip_rules(path=RUNTIME_SKIP_RULES, today=None):
             )
         if entry.get("runs", "oss") not in RUNS:
             raise ValueError(f"{path}: runs is one of {RUNS}: {entry!r}")
+        if "varies" in entry and (
+            not isinstance(entry["varies"], str) or not entry["varies"].strip()
+        ):
+            raise ValueError(
+                f"{path}: varies says why a rule's count depends on other tests: {entry!r}"
+            )
         rules.append(
             {
                 **entry,
@@ -316,15 +325,19 @@ def report_runtime_skips(
     rules=None,
     runs=RUNS,
     inventory_files=None,
+    collected=None,
     today=None,
 ):
     """Publish the full list in either mode before optionally failing qualification.
 
-    Skips a rule of runtime-skips.json covers, up to the rule's measured count
-    in each file, are listed under "allowed" with the rule; the others are
-    unexpected. Rule problems (a file over its measured count, an expired rule
-    that still matches, a rule file this run scheduled that matched nothing)
-    are errors. Unexpected skips and rule problems fail an enforced, complete run.
+    Skips a rule of runtime-skips.json covers, up to the rule's count in each
+    file, are listed under "allowed" with the rule; the others are unexpected.
+    Rule problems are errors, judged on the whole run: an expired rule that
+    still matches, and on complete evidence only, a file over its count, a
+    scheduled rule file that matched nothing (unless the rule varies), and a
+    varying rule whose bound is not what the inventory collected for the file
+    (`collected`). Unexpected skips and rule problems fail an enforced,
+    complete run.
     """
     rules = read_runtime_skip_rules(today=today) if rules is None else rules
     skips.sort(key=lambda row: (row["suite"], row["group"], row["test"], row["id"]))
@@ -345,12 +358,18 @@ def report_runtime_skips(
                 continue
             over[index, path] += 1
         unexpected.append(row)
-    problems = [
-        f"{path}: {used[key] + count} tests skip under the rule for {rules[key[0]]['issue']},"
-        f" above its measured {rules[key[0]]['files'][path]}"
-        for key, count in sorted(over.items())
-        for path in [key[1]]
-    ]
+    # Counts are judged on the whole run, and only on complete evidence.
+    problems = (
+        []
+        if partial
+        else [
+            f"{path}: {used[key] + count} tests skip under the rule for {rules[key[0]]['issue']},"
+            f" above its {'bound' if 'varies' in rules[key[0]] else 'measured'}"
+            f" {rules[key[0]]['files'][path]}"
+            for key, count in sorted(over.items())
+            for path in [key[1]]
+        ]
+    )
     for index, rule in enumerate(rules):
         if rule["expired"]:
             matching = sum(covers(row, rule) for row in unexpected)
@@ -363,7 +382,14 @@ def report_runtime_skips(
             # Only a file this run's inventory scheduled can be stale: per-change
             # selection does not run every suite, and an internal run says
             # nothing about a fork-only rule.
-            for path in rule["files"]:
+            for path, count in rule["files"].items():
+                if "varies" in rule:
+                    if collected is not None and collected.get(path, count) != count:
+                        problems.append(
+                            f"{path}: the rule for {rule['issue']} bounds it at {count} tests,"
+                            f" but the inventory collected {collected[path]}"
+                        )
+                    continue
                 if (inventory_files is None or path in inventory_files) and not used[
                     index, path
                 ]:
@@ -434,8 +460,9 @@ def report_runtime_skips(
             per_rule[index] += count
         for index, count in sorted(per_rule.items()):
             rule = rules[index]
+            total = sum(rule["files"].values())
             summary.write(
-                f"- {count} (of {sum(rule['files'].values())} measured), {rule['issue']},"
+                f"- {count} (of {f'up to {total} collected' if 'varies' in rule else f'{total} measured'}), {rule['issue']},"
                 f" {rule['owner']}, expires {rule['expires']}: {rule['why']}\n"
             )
         if problems:
@@ -675,6 +702,11 @@ def verify_run():
             for inventory in expected.values()
             for _, label, _ in inventory
         },
+        collected=collections.Counter(
+            label.split("::", 1)[0]
+            for inventory in expected.values()
+            for _, label, _ in inventory
+        ),
         today=today,
     )
     if problems:

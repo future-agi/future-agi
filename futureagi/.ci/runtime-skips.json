@@ -125,10 +125,11 @@
   },
   {
     "files": {
-      "tracer/tests/test_hourly_aggregate_state_route_live_ch.py": 1
+      "tracer/tests/test_hourly_aggregate_state_route_live_ch.py": 8
     },
+    "varies": "The skip depends on spans other tests on the same shard leave in the shared ClickHouse table.",
     "reason": "^Skipped: test ClickHouse has no spans to plan against$",
-    "why": "The test needs spans it does not create. 1 test.",
+    "why": "The test needs spans it does not create. Its shard's earlier tests decide whether any are there, so 1 or 2 of the file's 8 tests skipped in six runs on 22 Nov.",
     "issue": "TH-10618",
     "owner": "tracer",
     "expires": "2027-01-06"
@@ -180,10 +181,32 @@
     "files": {
       "tfc/tests/test_temporal_billing_imports.py": 1
     },
-    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.dunning': No module named 'ee\\.cloud\\.billing\\.dunning'$",
-    "why": "Not applicable by design on a fork: the private package is not checked out. 1 test.",
+    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.dunning': No module named 'ee\\.cloud'$",
+    "why": "Not applicable by design on an oss run (a fork pull request or a merge group): the private package is not checked out. 1 test.",
     "issue": "TH-10618",
     "owner": "tfc platform",
+    "expires": "2027-01-06",
+    "runs": "oss"
+  },
+  {
+    "files": {
+      "tfc/tests/test_temporal_billing_cancellation.py": 5
+    },
+    "reason": "^Skipped: could not import 'ee\\.cloud\\.billing\\.invoice_generation': No module named 'ee\\.cloud'$",
+    "why": "Not applicable by design on an oss run: the private package is not checked out. 5 tests.",
+    "issue": "TH-10618",
+    "owner": "tfc platform",
+    "expires": "2027-01-06",
+    "runs": "oss"
+  },
+  {
+    "files": {
+      "tracer/tests/test_analysis_retention.py": 1
+    },
+    "reason": "^Skipped: the Cloud retention scheduler ships in the private ee/cloud tree$",
+    "why": "Not applicable by design on an oss run: the private package is not checked out. 1 test.",
+    "issue": "TH-10618",
+    "owner": "tracer",
     "expires": "2027-01-06",
     "runs": "oss"
   },

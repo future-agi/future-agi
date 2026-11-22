@@ -257,6 +257,10 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     """runtime-skips.json: the expected backend run-time skips, as bounded rules."""
 
     MEASURED = json.loads((CI / "fixtures/runtime-skips-measured.json").read_text())
+    # A real merge group, an oss run: the private package is not checked out.
+    MEASURED_OSS = json.loads(
+        (CI / "fixtures/runtime-skips-measured-oss.json").read_text()
+    )
     # The measurement date; rules are read as of it so these tests do not age.
     DAY = datetime.date(2026, 11, 22)
 
@@ -291,7 +295,14 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         )
 
     def report(
-        self, rows, rules=None, *, files=None, runs=("internal",), partial=False
+        self,
+        rows,
+        rules=None,
+        *,
+        files=None,
+        runs=("internal",),
+        partial=False,
+        collected=None,
     ):
         rules = self.rules() if rules is None else rules
         with tempfile.TemporaryDirectory() as temp:
@@ -309,6 +320,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                         rules=rules,
                         runs=runs,
                         inventory_files=files,
+                        collected=collected,
                     )
                     error = None
                 except ValueError as exc:
@@ -325,7 +337,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         "::test_create_dataset_creates_rows_with_integer_keys"
     )
 
-    def measured_rows(self):
+    def measured_rows(self, measured=None, runs="internal"):
         # One row per measured test, so each file reaches its measured count.
         # The dataset skip is one known test, recorded by its node id.
         return self.rows(
@@ -336,9 +348,10 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                     else pair["file"],
                     pair["reason"],
                 )
-                for pair in self.MEASURED["pairs"]
+                for pair in (measured or self.MEASURED)["pairs"]
                 for _ in range(pair["tests"])
-            ]
+            ],
+            runs=runs,
         )
 
     def measured_files(self):
@@ -356,6 +369,20 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertEqual(report["rule_problems"], [])
         self.assertEqual(len(report["allowed"]), self.MEASURED["total"])
 
+    def test_enforced_a_measured_oss_run_passes(self):
+        # Every skipped test of a real merge group on 22 Nov. An oss run also
+        # skips the tests that import the private package, under its own names.
+        self.assertEqual(self.MEASURED_OSS["total"], 1818)
+        error, report, _ = self.report(
+            self.measured_rows(self.MEASURED_OSS, runs="oss"),
+            files={pair["file"] for pair in self.MEASURED_OSS["pairs"]},
+            runs=("oss",),
+        )
+        self.assertIsNone(error)
+        self.assertEqual(report["tests"], [])
+        self.assertEqual(report["rule_problems"], [])
+        self.assertEqual(len(report["allowed"]), self.MEASURED_OSS["total"])
+
     def test_rules_are_exactly_the_measured_files_and_counts(self):
         rules = self.rules()
         measured = collections.Counter()
@@ -367,6 +394,12 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             if rule.get("runs") == "oss":
                 continue  # the measured run was internal
             with self.subTest(rule=rule["issue"], files=list(rule["files"])[:1]):
+                if "varies" in rule:
+                    # An upper bound: the file's collected tests, never fewer
+                    # than skipped.
+                    for path, bound in rule["files"].items():
+                        self.assertLessEqual(measured[index, path], bound)
+                    continue
                 self.assertEqual(
                     rule["files"],
                     {
@@ -530,8 +563,14 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def test_fork_and_internal_skips_each_need_a_ticket_owner_and_expiry(self):
         rules = self.rules()
         pair = self.measured("dunning")
+        # An oss run has no ee/cloud at all, so Python names the missing parent.
+        oss_pair = next(
+            p for p in self.MEASURED_OSS["pairs"] if "dunning" in p["reason"]
+        )
+        self.assertEqual(oss_pair["file"], pair["file"])
+        self.assertTrue(oss_pair["reason"].endswith("No module named 'ee.cloud'"))
         fork = checker.allowing_rule(
-            self.rows([(pair["file"], pair["reason"])], runs="oss")[0], rules
+            self.rows([(pair["file"], oss_pair["reason"])], runs="oss")[0], rules
         )
         internal = checker.allowing_rule(
             self.rows([(pair["file"], pair["reason"])], runs="internal")[0], rules
@@ -541,13 +580,17 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         for index in (fork, internal):
             self.assertEqual(rules[index]["issue"], "TH-10618")
             self.assertTrue(rules[index]["owner"].strip())
-        fork_only = [rule for rule in rules if rule.get("runs") != "internal"]
-        self.assertIsNone(
-            checker.allowing_rule(
-                self.rows([(pair["file"], pair["reason"])], runs="internal")[0],
-                fork_only,
+        # Each run kind's reason is allowed only on that kind of run.
+        for reason, runs in (
+            (pair["reason"], "oss"),
+            (oss_pair["reason"], "internal"),
+        ):
+            self.assertIsNone(
+                checker.allowing_rule(
+                    self.rows([(pair["file"], reason)], runs=runs)[0], rules
+                ),
+                runs,
             )
-        )
 
     def test_every_committed_rule_expires_within_45_days_of_the_measurement(self):
         for rule in self.rules():
@@ -594,6 +637,54 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         )
         self.assertEqual(len(report["rule_problems"]), 1)
         self.assertIn("(internal runs) matched nothing", report["rule_problems"][0])
+
+    def test_a_varying_rule_is_an_upper_bound_from_the_inventory(self):
+        rules = self.rules()
+        (rule,) = [r for r in rules if "varies" in r]
+        ((path, bound),) = rule["files"].items()
+        self.assertEqual(bound, 8)  # the file's collected tests on 22 Nov
+        reason = "Skipped: test ClickHouse has no spans to plan against"
+        collected = {path: bound}
+        for skipped, unexpected, problems in (
+            (0, 0, 0),
+            (1, 0, 0),
+            (2, 0, 0),
+            (8, 0, 0),
+            (9, 1, 1),
+        ):
+            with self.subTest(skipped=skipped):
+                error, report, out = self.report(
+                    self.rows([(path, reason)] * skipped),
+                    files={path},
+                    collected=collected,
+                )
+                self.assertEqual(len(report["tests"]), unexpected)
+                self.assertEqual(len(report["rule_problems"]), problems)
+                self.assertEqual(error is not None, bool(unexpected or problems))
+                if problems:
+                    self.assertIn("above its bound 8", report["rule_problems"][0])
+        self.assertIn("(of up to 8 collected)", out)
+        # The bound is what the inventory collects there, checked on each run.
+        _, report, _ = self.report([], files={path}, collected={path: 9})
+        self.assertEqual(
+            report["rule_problems"],
+            [
+                f"{path}: the rule for {rule['issue']} bounds it at 8 tests, but the inventory collected 9"
+            ],
+        )
+        # A run that did not schedule the file says nothing about it.
+        _, report, _ = self.report([], files=set(), collected={})
+        self.assertEqual(report["rule_problems"], [])
+
+    def test_counts_are_judged_only_on_a_complete_run(self):
+        pair = self.measured("test_relational_filter_native")
+        rows = self.rows([(pair["file"], pair["reason"])] * (pair["tests"] + 2))
+        error, report, _ = self.report(rows, files={pair["file"]}, partial=True)
+        # Partial evidence lists the skips and never fails on counts.
+        self.assertIsNone(error)
+        self.assertTrue(report["partial"])
+        self.assertEqual(report["rule_problems"], [])
+        self.assertEqual(len(report["tests"]), 2)
 
     def test_a_skip_is_allowed_only_for_the_path_the_inventory_recorded(self):
         rules = self.rules()
@@ -683,6 +774,8 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                 json.dumps([{**good, "tests": ["b/tests/test_b.py::t"]}]),
                 json.dumps([{**good, "tests": ["a/tests/test_a.py"]}]),
                 json.dumps([{**good, "tests": ["a/tests/test_a.py::test_*"]}]),
+                json.dumps([{**good, "varies": " "}]),
+                json.dumps([{**good, "varies": True}]),
             ):
                 path.write_text(bad)
                 with self.assertRaises((ValueError, re.error), msg=bad):
@@ -697,10 +790,11 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                             "runs": "oss",
                             "tests": ["a/tests/test_a.py::TestA::test_a[1-x]"],
                         },
+                        {**good, "varies": "rows other tests leave"},
                     ]
                 )
             )
-            self.assertEqual(len(self.rules(path)), 2)
+            self.assertEqual(len(self.rules(path)), 3)
 
     def test_a_malformed_inventory_row_is_caught_once_at_ingest(self):
         self.assertFalse(checker.malformed_inventory([["a", "t.py::test_a", "pass"]]))
