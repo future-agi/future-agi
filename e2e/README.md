@@ -627,9 +627,9 @@ minute; they are skipped only when the stack never booted.
 
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
-label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
-only if the PR has it when the run starts, so add it and then push: a re-run keeps the labels of
-the run it repeats. The Standalone leg builds the four component images with the layer cache,
+label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. Adding the label
+starts a new run with both legs; any other label starts a run with no jobs and no `E2E Tests Pass`
+check, like a title or body edit. A re-run keeps the labels of the run it repeats. The Standalone leg builds the four component images with the layer cache,
 assembles the app image with `bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
 The `upgrade` job in `.github/workflows/standalone-ci.yml` runs weekly, on demand, and on a pull
 request labelled `upgrade-check` (the same rule: add the label, then push). It installs v1.41.1
@@ -665,9 +665,10 @@ runners in November 2026:
 - With four shards a shard took 36 to 48 minutes, because one flow waited out a 30-minute product
   default.
 - That flow now gives its own project a five-minute settle (`lib/metric-settle.ts`). It asserts
-  that the value is reported as not final while the conversations are open, and that it becomes
-  final no earlier than five minutes after their last arrival. A backend unit test pins the
-  30-minute default.
+  that the value is reported as not final while the conversations are open, and that its own poll
+  first observes the final value no earlier than five minutes after their last arrival, less 5
+  seconds of clock tolerance. That is an observation time, not the publication time, which the
+  API does not return. A backend unit test pins the 30-minute default.
 - With six shards a shard takes about 20 to 30 minutes, 11 to 15 of them fixed cost (the boot
   alone varied from 7 to 11), and `E2E Tests Pass` reports a little over 30 minutes after the push.
 
@@ -675,6 +676,37 @@ runners in November 2026:
 compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
 test has no result in any shard, ran in two shards, never started, or when a shard reported a test
 the listing does not have. Quarantined and `@live-llm` flows are out of both sides.
+
+**Run-time skips.** A test the listing expects to pass but that skips itself while it runs fails
+the gate when the repository variable `E2E_ENFORCE_RUNTIME_SKIPS` is `true`, unless
+`.runtime-skips.json` lists its flow id for that stack: `{ "id": "OBS-E2E-031", "stack":
+"distributed" | "standalone", "reason": "...", "issue": "<ticket>", "owner": "...", "expires":
+"YYYY-MM-DD" }`. The id must equal the id in the test's flow annotation; a title match is not
+enough. An entry that is not by design names the ticket that removes it, an owner, and an expiry
+at most 45 days ahead; after that date it no longer allows the skip. Each listed skip gets a
+warning on the run, and an entry whose test ran and passed is reported as out of date. Expiry is
+judged on the run's date, so re-running only the report job cannot change its verdict. Today it
+lists OBS-E2E-031 and OBS-E2E-032 on both stacks (TH-10597, expiring 2027-01-06): their churn
+guard measures no DOM mutations in CI, so they skip themselves and their bodies never run.
+
+The backend has a stricter rule for its own skips in `futureagi/.ci/runtime-skips.json`
+(`BACKEND_ENFORCE_RUNTIME_SKIPS`). Each rule names the exact test files it covers, each with the
+number of tests measured to skip there, optionally the exact node ids it is limited to, an
+anchored reason, the ticket that removes it, an owner
+and an expiry at most 45 days after the run date; there is no by-design exemption. A skip is
+allowed only for a listed file and a matching reason, for the test path the independent inventory
+recorded, and only up to that file's measured count. An enforced run fails on an unexpected skip
+and on a rule problem: an expired rule that still matches, and, judged on the whole run and only
+when its evidence is complete, a file over its count or a rule file the run scheduled that matched
+nothing. A rule can be limited to oss runs (`"runs": "oss"`: a fork pull request or a merge group,
+without the private package) or internal runs (`"runs": "internal"`).
+
+A skip that depends on data other tests leave behind cannot have an exact count. Its rule says why
+in `"varies"`, and each of its files maps to the number of tests the inventory collects there: an
+upper bound, checked against the inventory on every complete run, and matching nothing is no
+problem. Exact counts stay the default. Today one rule varies: `tracer/tests/test_hourly_aggregate_state_route_live_ch.py`
+(TH-10618, up to its 8 tests) skips when its shard's earlier tests left no spans in the shared
+ClickHouse table; 1 or 2 of its tests skipped in six runs on 22 Nov.
 
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
 SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
