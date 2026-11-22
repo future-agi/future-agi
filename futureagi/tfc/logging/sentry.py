@@ -16,12 +16,15 @@ Usage:
     init_sentry(component="temporal", tags={"queue": "tasks_l"})
 """
 
+import hashlib
 import json
+import logging
 import os
 import re
 from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
 
@@ -885,8 +888,47 @@ def _exception_text(error: dict) -> str:
     return _REDACTED
 
 
+_BACKEND_SOURCE_PREFIX = str(Path(__file__).parents[2]) + os.sep
+
+
+def _group_stackless_log(event: dict, record: object) -> None:
+    if not isinstance(record, logging.LogRecord):
+        return
+    if event.get("stacktrace", {}).get("frames") or any(
+        thread.get("stacktrace", {}).get("frames")
+        for thread in event.get("threads", {}).get("values", [])
+    ):
+        return  # Leave SDK stack grouping alone.
+
+    # Replace supplied grouping only for the final stackless fallback.
+    event.pop("fingerprint", None)
+    # findCaller supplies these reserved LogRecord fields; logging.extra cannot
+    # override them. Logger names, SDK extras and rendered messages aren't sites.
+    path, function, line = record.pathname, record.funcName, record.lineno
+    if not (
+        type(path) is str
+        and 0 < len(path) <= 4096
+        and type(function) is str
+        and 0 < len(function) <= 256
+        and type(line) is int
+        and 0 < line < 2**31
+    ):
+        return
+    # Application and installed-package locations are independent of the checkout
+    # or venv. Never export a path, including for code outside either root.
+    source = path.removeprefix(_BACKEND_SOURCE_PREFIX).rsplit(
+        f"{os.sep}site-packages{os.sep}", 1
+    )[-1]
+    site = f"{source}\0{function}\0{line}".encode("utf-8", "surrogatepass")
+    event["fingerprint"] = ["log-callsite", hashlib.sha256(site).hexdigest()]
+
+
 def _scrub_event(
-    event: dict, *, vertex_log: bool = False, log_record: object = None
+    event: dict,
+    *,
+    vertex_log: bool = False,
+    log_record: object = None,
+    final_error: bool = False,
 ) -> dict:
     grpc_logger = _is_grpc_framework_logger(event.get("logger"))
     _scrub_breadcrumbs(event)
@@ -943,6 +985,16 @@ def _scrub_event(
         args = getattr(log_record, "args", None)
         if args is None or (type(args) in (tuple, list, dict) and not args):
             title = "Log entry"
+    if (
+        title == "Log entry"
+        and log_record is not None
+        and final_error
+        and "logentry" in event
+        and "exception" not in event
+    ):
+        # Both opaque records and unclassified text use this generic title.
+        # Only the final pass knows whether the SDK attached a message stack.
+        _group_stackless_log(event, log_record)
     if "message" in event:
         event["message"] = title or _scrub_text(event["message"])
     if "logentry" in event:
@@ -1233,6 +1285,7 @@ def _get_before_send() -> Callable:
             _scrub_event(
                 event,
                 log_record=record,
+                final_error=True,
                 vertex_log=_vertex_log_message(
                     record_name, getattr(record, "msg", None)
                 ),

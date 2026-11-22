@@ -410,6 +410,83 @@ def test_preformatted_validation_error(monkeypatch, tmp_path):
     assert all(marker.encode() not in packet for packet in wire.raw)
 
 
+def test_stackless_log_grouping(monkeypatch, tmp_path):
+    logger = logging.getLogger("tfc.qa.grouping")
+    first, other, supplied = (uuid4().hex[:12] for _ in range(3))
+
+    def emit(path):
+        records = []
+
+        def keep_record(record):
+            records.append(record)
+            return True
+
+        handler = logging.FileHandler(path, encoding="utf-8")
+        handler.addFilter(keep_record)
+        logger.addHandler(handler)
+        try:
+            for payload in (first, other, "503", 503):
+                logger.error(payload)
+            logger.error(first)  # Same logger, function and text; different line.
+        finally:
+            logger.removeHandler(handler)
+            handler.close()
+        assert [(r.msg, r.args) for r in records] == [
+            (s, ()) for s in (first, other, "503", 503, first)
+        ]
+        return path.read_bytes()
+
+    assert not sentry.SENTRY_ENABLED and not sentry_sdk.is_initialized()
+    baseline = emit(tmp_path / "off.log")
+    assert baseline.splitlines() == [
+        s.encode() for s in (first, other, "503", "503", first)
+    ]
+    with capture(monkeypatch, "temporal") as wire:
+        with monkeypatch.context() as options, sentry_sdk.new_scope() as scope:
+            # init_sentry normally enables message stacks. Exercise the case
+            # with no stack to group on, using the real 2.49 LoggingIntegration.
+            options.setitem(sentry_sdk.get_client().options, "attach_stacktrace", False)
+
+            def late_override(event, hint):
+                # Keep both sites clean; try overriding just the repeat after
+                # PayloadBoundsIntegration has already seen the scope's event.
+                if getattr(hint.get("log_record"), "msg", None) in (other, 503):
+                    event["fingerprint"] = [supplied]
+                return event
+
+            scope.add_event_processor(late_override)
+            assert emit(tmp_path / "on.log") == baseline
+            sentry_sdk.capture_message("next diagnostic")  # Same scope and processors.
+        with sentry_sdk.new_scope() as scope:
+            scope.fingerprint = ["qa-code-owned-stacked"]
+            logger.error("diagnostic with a stack", stack_info=True)
+        try:
+            raise LookupError("fixture")
+        except LookupError:
+            logger.exception("ordinary failure")
+
+    events = [v for _, k, v in wire.items if k == "event"]
+    a, repeat, text_number, number, b, following, stacked, exception = events
+    assert a.get("fingerprint") != b.get("fingerprint")
+    assert repeat["fingerprint"] == a["fingerprint"]
+    assert text_number["fingerprint"] == number["fingerprint"] == a["fingerprint"]
+    for item in (a, repeat, text_number, number, b):
+        assert item["logger"] == logger.name and item["level"] == "error"
+        assert item["logentry"] == {"message": "Log entry"}
+        assert not {"exception", "stacktrace", "threads"}.intersection(item)
+        label, digest = item["fingerprint"]
+        assert label == "log-callsite" and len(digest) == 64 and bytes.fromhex(digest)
+    assert stacked["fingerprint"] == ["qa-code-owned-stacked"]
+    assert any(t["stacktrace"]["frames"] for t in stacked["threads"]["values"])
+    assert "fingerprint" not in exception
+    assert exception["exception"]["values"][-1]["type"] == "LookupError"
+    assert following["message"] == "next diagnostic" and "fingerprint" not in following
+    categories = [c.get("category") for c in following["breadcrumbs"]["values"]]
+    assert categories.count(logger.name) == 5
+    for marker in (first, other, supplied):
+        assert all(marker.encode() not in packet for packet in wire.raw)
+
+
 def stub_provider_http(monkeypatch, replies):
     calls = []
 
