@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "controller": {
+    "location": "outside_public_ci",
+    "policy_source": "reviewed_protected_base",
+    "repository": "future-agi/future-agi",
+    "base_ref": "refs/heads/dev",
+    "on_unknown_or_unavailable": "hold",
+    "grants_spend_or_merge_authority": false
+  },
+  "launch": {
+    "require_existing_compute_authorization": true,
+    "require_available_controller_capacity": true,
+    "max_active_revisions_per_ticket": 1,
+    "preflight_before_first_push": ".github/merge-queue/cloud-preflight.sh",
+    "max_automatic_code_repair_rounds_per_ticket": 1,
+    "on_second_code_failure": "stop_and_return_evidence",
+    "max_assertion_retries": 0,
+    "max_identified_transient_job_retries_per_head": 1,
+    "retry_only_failed_infrastructure_job_on_current_head": true,
+    "retain_first_failure": true
+  },
+  "enqueue": {
+    "require_available_controller_capacity": true,
+    "require_open_non_draft_pr": true,
+    "require_existing_explicit_human_go_for_current_head": true,
+    "require_current_ruleset_approvals_and_checks": true,
+    "require_live_head_equals_reviewed_oid": true,
+    "allow_admission_label_as_authorization": false,
+    "idempotency_key": ["repository", "pull_request_id", "head_oid"],
+    "serialize_by": ["repository", "pull_request_id"],
+    "already_queued_for_current_head": "no_op",
+    "on_uncertain_mutation_result": "reconcile_before_any_resubmission",
+    "mutation": "enqueuePullRequest",
+    "expectedHeadOid": "reviewed_head_oid",
+    "jump": false,
+    "allow_direct_merge_or_bypass": false
+  },
+  "quarantine": {
+    "require_exact_test_id_owner_issue_reason_and_expiry": true,
+    "allow_controller_to_waive_tests": false,
+    "require_independent_full_controls_including_quarantined_ids": true
+  },
+  "measure": [
+    "first_attempt_green_rate",
+    "superseded_heads",
+    "partial_cancellation_runner_seconds",
+    "off_actions_preflight_cost"
+  ]
+}

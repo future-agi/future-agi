@@ -3965,6 +3965,21 @@ class ClosingDeploymentFileCoverageTests(unittest.TestCase):
                 with self.subTest(event=event, workflow=workflow):
                     self.assertIn(f".github/workflows/{workflow}", paths)
 
+    def test_update_ci_receives_every_candidate_and_control_diff(self):
+        text = (ROOT / ".github/workflows/update-ci.yml").read_text()
+        triggers = text.split("permissions:", 1)[0]
+        for event in ("pull_request", "push", "merge_group"):
+            self.assertIn(f"  {event}:\n", triggers)
+        self.assertIn("ordinary: ${{ steps.filter.outputs.ordinary_update }}", text)
+        # Changes to the manifest itself or anything it covers must select the
+        # whole ordinary Update suite even after activating the scope policy.
+        import runpy
+        policy = runpy.run_path(str(ROOT / ".github/scripts/ci_scope.py"))
+        for entry in self.entries():
+            self.assertNotIn(entry.encode(), policy["METADATA"])
+        for workflow in ("release-images", "release-update-manifest", "build-image-multiarch", "helm-release", "update-ci"):
+            self.assertNotIn(f".github/workflows/{workflow}.yml".encode(), policy["METADATA"])
+
     def test_update_ci_e2e_matrix_and_native_jobs_run_every_e2e_suite(self):
         text = (ROOT / ".github/workflows/update-ci.yml").read_text(encoding="utf-8")
         listed = re.findall(r"^        suite: \[([^\]]*)\]$", text, re.M)
