@@ -47,13 +47,40 @@ def test_get_agent_answers_the_stored_agent_without_its_raw_setup(
 
     assert response.status_code == status.HTTP_200_OK
     body = response.json()
-    assert sorted(body) == ["agent", "sdk_version", "setup_stale", "stored_at"]
+    assert sorted(body) == [
+        "agent",
+        "origin",
+        "sdk_version",
+        "setup_stale",
+        "stored_at",
+    ]
     expected = {
-        key: value for key, value in source_agent().items() if key != "extension"
+        **source_agent(),
+        "extension": {"framework": None, "source": None},
     }
     assert body["agent"] == expected
-    assert (body["sdk_version"], body["setup_stale"]) == ("0.2.3", False)
+    assert (body["sdk_version"], body["setup_stale"], body["origin"]) == (
+        "0.2.3",
+        False,
+        "build",
+    )
     assert body["stored_at"]
+
+
+@pytest.mark.django_db
+def test_get_agent_answers_a_source_echo_without_a_folder(
+    auth_client, definition, version
+):
+    store_agent(
+        agent_version_id=version.id,
+        agent=source_agent(extension={"framework": None, "source": {}}),
+        sdk_version="0.2.3",
+    )
+
+    response = auth_client.get(_agent_url(definition.id, version.id))
+
+    assert response.status_code == status.HTTP_200_OK, response.content
+    assert response.json()["agent"]["name"] == "harbor_hotels"
 
 
 @pytest.mark.django_db

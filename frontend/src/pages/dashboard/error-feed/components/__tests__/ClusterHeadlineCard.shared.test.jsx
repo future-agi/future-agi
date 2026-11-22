@@ -39,6 +39,8 @@ describe("ClusterHeadlineCard on a shared issue", () => {
       screen.getByText("The prompt says refunds are usually allowed."),
     ).toBeInTheDocument();
     expect(screen.getByText("State the 30 day rule.")).toBeInTheDocument();
+    expect(screen.getByText("In-depth suggestion")).toBeInTheDocument();
+    expect(screen.queryByText("Fix")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /linear|reasoning/i }),
     ).not.toBeInTheDocument();

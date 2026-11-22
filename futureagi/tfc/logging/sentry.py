@@ -22,6 +22,7 @@ import os
 import re
 from collections.abc import Callable
 from datetime import datetime
+from types import TracebackType
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
@@ -165,6 +166,7 @@ _initialized_components: set = set()
 # before serialization, so check sizes before scanning, copying or decoding.
 _MAX_TEXT = 8192
 _MAX_ITEMS = 128
+_MAX_FRAMES = 512
 _HTTP_METHODS = frozenset({"GET", "POST", "PATCH", "PUT", "DELETE", "HEAD", "OPTIONS"})
 _SPAN_STATUSES = frozenset(
     "ok cancelled unknown_error invalid_argument deadline_exceeded not_found "
@@ -255,8 +257,9 @@ def _scrub(value: Any) -> Any:
 
 def _vertex_log_message(logger: object, message: object) -> bool:
     return (
-        logger == "LiteLLM"
-        and isinstance(message, str)
+        type(logger) is str
+        and logger == "LiteLLM"
+        and type(message) is str
         and message.startswith(
             (_VERTEX_LOAD_MESSAGE, "Failed to load vertex credentials: ")
         )
@@ -264,6 +267,8 @@ def _vertex_log_message(logger: object, message: object) -> bool:
 
 
 def _vertex_auth_frame(module: object, function: object) -> bool:
+    if type(module) is not str or type(function) is not str:
+        return False
     return module == _VERTEX_MODULE and function in (
         "load_auth",
         "get_access_token",
@@ -285,9 +290,54 @@ def _http_status_code(data: dict) -> int | None:
     return status if type(status) is int and 100 <= status <= 599 else None
 
 
-def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
-    # Breadcrumbs outlive their originating event. Do not keep rendered log
-    # arguments, request bodies, or arbitrary integration data in the trail.
+def _is_grpc_framework_logger(name: Any) -> bool:
+    return type(name) is str and (
+        name == "django_socio_grpc" or name.startswith("django_socio_grpc.")
+    )
+
+
+def _grpc_status_name(value: Any) -> str | None:
+    # Scope breadcrumbs see the live enum; serialized error extras and restored
+    # breadcrumbs may contain its repr. Never render a supplied request/object.
+    from grpc import StatusCode
+
+    if type(value) is StatusCode:
+        return value.name
+    if type(value) is str and len(value) <= 96:
+        for code in StatusCode:
+            if value == code.name or value == repr(code):
+                return code.name
+    return None
+
+
+def _vertex_breadcrumb(crumb: dict, hint: dict) -> bool:
+    message = crumb.get("message")
+    if type(message) is str and (
+        message == _VERTEX_SAFE_MESSAGE
+        or _vertex_log_message(crumb.get("category"), message)
+    ):
+        return True
+    exc_info = getattr(hint.get("log_record"), "exc_info", None)
+    if not isinstance(exc_info, tuple) or len(exc_info) != 3:
+        return False
+    tb = exc_info[2]
+    for _ in range(_MAX_FRAMES):
+        if not isinstance(tb, TracebackType):
+            break
+        frame = tb.tb_frame
+        if _vertex_auth_frame(frame.f_globals.get("__name__"), frame.f_code.co_name):
+            return True
+        tb = tb.tb_next
+    return False
+
+
+def _before_breadcrumb(crumb: dict, hint: dict) -> dict | None:
+    # Called at scope ingestion and again on retained/restored trails. Rebuild
+    # from bounded fields without mutating the record shared with later events.
+    data = crumb.get("data")
+    grpc_logger = _is_grpc_framework_logger(crumb.get("category"))
+    if grpc_logger and "data" in crumb and type(data) is not dict:
+        return None
     result: dict[str, Any] = {}
     timestamp = crumb.get("timestamp")
     if _is_timestamp(timestamp):
@@ -295,28 +345,39 @@ def _before_breadcrumb(crumb: dict, hint: dict) -> dict:
     for key in ("category", "type", "level"):
         if key in crumb:
             result[key] = _scrub_text(crumb[key])
-    msg = crumb.get("message")
-    if _vertex_log_message(crumb.get("category"), msg) or msg == _VERTEX_SAFE_MESSAGE:
+    if _vertex_breadcrumb(crumb, hint):
         result["message"] = _VERTEX_SAFE_MESSAGE
-    data = crumb.get("data")
+        return result
     if type(data) is dict:
         fields: dict[str, Any] = {}
         method = data.get("method")
         if type(method) is str and len(method) <= 7 and method in _HTTP_METHODS:
             fields["method"] = method
-        status = _http_status_code(data)
-        if status is not None:
-            fields["status_code"] = status
+        if grpc_logger:
+            code = _grpc_status_name(data.get("status_code"))
+            if code is not None:
+                fields["status_code"] = code
+                # Keep only the known framework summary for our Export RPC, not
+                # arbitrary exception text or a path supplied by a caller.
+                label = "OK" if code == "OK" else code.title().replace("_", "")
+                summary = f"{label} : ObservationSpan/Export"
+                message = crumb.get("message")
+                if type(message) is str and message == summary:
+                    result["message"] = summary
+        else:
+            status = _http_status_code(data)
+            if status is not None:
+                fields["status_code"] = status
         result["data"] = fields
     return result
 
 
-def _entries(container: dict, key: str, limit: int) -> list | tuple | None:
+def _entries(container: dict, key: str) -> list | tuple | None:
     items = container.get(key)
     if (
         items is None
         or type(items) not in (list, tuple)
-        or len(items) > min(limit, _MAX_ITEMS)
+        or len(items) > _MAX_ITEMS
         or not all(type(item) is dict for item in items)
     ):
         container.pop(key, None)
@@ -326,12 +387,17 @@ def _entries(container: dict, key: str, limit: int) -> list | tuple | None:
 
 def _scrub_frames(event: dict) -> bool | None:
     """Return whether a Vertex loader was found, or None for an incomplete walk."""
-    remaining = 512
+    remaining = _MAX_FRAMES
     complete = True
     matched = False
 
     def inspect_stack(owner: dict) -> None:
         nonlocal remaining, complete, matched
+        # Restored events can carry a second, unsymbolicated copy of the stack.
+        # Do not traverse it or forward its locals outside the frame budget.
+        if "raw_stacktrace" in owner:
+            owner.pop("raw_stacktrace")
+            complete = False
         if "stacktrace" not in owner:
             return
         stack = owner["stacktrace"]
@@ -339,12 +405,23 @@ def _scrub_frames(event: dict) -> bool | None:
             owner.pop("stacktrace")
             complete = False
             return
-        frames = _entries(stack, "frames", remaining)
-        if frames is None:
+        # Check width and the event-wide budget *before* touching any frame.
+        # Charge malformed lists too; never collect an SDK frame iterator here.
+        frames = stack.get("frames")
+        if (
+            frames is None
+            or type(frames) not in (list, tuple)
+            or len(frames) > min(_MAX_ITEMS, remaining)
+        ):
+            stack.pop("frames", None)
             complete = False
             return
         remaining -= len(frames)
         for frame in frames:
+            if type(frame) is not dict:
+                stack.pop("frames")
+                complete = False
+                return
             frame.pop("vars", None)
             matched |= _vertex_auth_frame(frame.get("module"), frame.get("function"))
 
@@ -354,10 +431,8 @@ def _scrub_frames(event: dict) -> bool | None:
             continue
         container = event[section]
         if type(container) is not dict:
-            event.pop(section)
-            complete = False
-            continue
-        items = _entries(container, "values", _MAX_ITEMS)
+            raise ValueError("Malformed Sentry stack container")
+        items = _entries(container, "values")
         if items is None:
             complete = False
             continue
@@ -429,7 +504,7 @@ def _span_structure(span: dict) -> dict:
 
 
 def _scrub_transaction_spans(event: dict) -> None:
-    spans = _entries(event, "spans", _MAX_ITEMS)
+    spans = _entries(event, "spans")
     if spans is not None:
         event["spans"] = [_span_structure(span) for span in spans]
     # The SDK promotes root-span tags to transaction-level tags. Do not
@@ -536,6 +611,7 @@ def _parameterized_logentry(entry: dict, log_record: object) -> dict:
 def _scrub_event(
     event: dict, *, vertex_log: bool = False, log_record: object = None
 ) -> dict:
+    grpc_logger = _is_grpc_framework_logger(event.get("logger"))
     _scrub_breadcrumbs(event)
     _scrub_transaction_spans(event)
     for key in ("logger", "level"):
@@ -560,8 +636,8 @@ def _scrub_event(
     else:
         event.pop("request", None)
 
-    # Extras and frame locals are arbitrary application objects. Only retain
-    # exact, nonnegative diagnostic counts rather than guessing their meaning.
+    # Framework extras include the raw protobuf request. Keep only validated
+    # counts and protocol status, even when the failure precedes the receiver.
     if "extra" in event:
         extra = event["extra"]
         event["extra"] = {
@@ -572,12 +648,25 @@ def _scrub_event(
             and type(extra[k]) is int
             and 0 <= extra[k] < 2**63
         }
+        if type(extra) is dict:
+            status = (
+                _grpc_status_name(extra.get("status_code"))
+                if grpc_logger
+                else _http_status_code(extra)
+            )
+            if status is not None:
+                event["extra"]["status_code"] = status
 
     frame_match = _scrub_frames(event)
     replacement = None
     if vertex_log or frame_match is True:
         replacement = _VERTEX_SAFE_MESSAGE
-    elif frame_match is None:
+    elif (
+        frame_match is None
+        or grpc_logger
+        or event.get("logger") == "tracer.services.grpc"
+        or event.get("type") == "transaction"
+    ):
         replacement = _REDACTED
     for value in event.get("exception", {}).get("values", []):
         if "value" in value:
@@ -642,26 +731,9 @@ def _scrub_event(
                         if k in entry
                     }
 
-    # Serializer annotations describe the original fields, not the outgoing ones.
-    meta = event.get("_meta")
-    if type(meta) is dict:
-        for key in (
-            "breadcrumbs",
-            "contexts",
-            "spans",
-            "logger",
-            "level",
-            "request",
-            "extra",
-            "stacktrace",
-            "threads",
-            "exception",
-            "message",
-            "logentry",
-        ):
-            meta.pop(key, None)
-        if event.get("type") == "transaction":
-            meta.pop("tags", None)
+    # SDK annotations describe the original values (including arbitrary keys),
+    # not the rebuilt event. They aren't diagnostic fields we can validate.
+    event.pop("_meta", None)
     return event
 
 
@@ -755,7 +827,11 @@ def _scrub_breadcrumbs(event: dict) -> None:
         items = crumbs.get("values") if wrapped else crumbs
         clean = []
         if type(items) in (list, tuple) and len(items) <= _MAX_ITEMS:
-            clean = [_before_breadcrumb(c, {}) for c in items if type(c) is dict]
+            for crumb in items:
+                if type(crumb) is dict:
+                    safe = _before_breadcrumb(crumb, {})
+                    if safe is not None:
+                        clean.append(safe)
         event["breadcrumbs"] = {"values": clean} if wrapped else clean
 
 
@@ -869,7 +945,7 @@ def _get_before_send() -> Callable:
         if _expected_feature_denial(hint) or _expected_log_outcome(event, hint):
             return None
 
-        # 3. Scrub secrets/PII from the surviving event.
+        # 3. Use the same bounded frame walk for all surviving events.
         try:
             _scrub_event(
                 event,
@@ -878,7 +954,7 @@ def _get_before_send() -> Callable:
                     record_name, getattr(record, "msg", None)
                 ),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - fail closed at the SDK hook boundary
             # Never emit the original payload after a partial scrub.
             return None
 

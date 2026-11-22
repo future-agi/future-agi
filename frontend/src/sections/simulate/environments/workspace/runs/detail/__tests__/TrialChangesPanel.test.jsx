@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cleanup, render, screen } from "src/utils/test-utils";
+import { cleanup, fireEvent, render, screen } from "src/utils/test-utils";
 import PropTypes from "prop-types";
 import TrialChangesPanelView from "../TrialChangesPanel";
 
@@ -70,10 +70,10 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByText("2 attempted · 0 committed · 2 read"),
+      screen.getByLabelText("2 attempted · 0 committed · 2 read"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Read, changing nothing: get_order, list_refunds"),
+      screen.getByLabelText("Read, changing nothing: get_order, list_refunds"),
     ).toBeInTheDocument();
     expect(
       screen.getByText("No change: it committed nothing"),
@@ -109,6 +109,8 @@ describe("TrialChangesPanel", () => {
                   tool: "issue_refund",
                   count: 3,
                 },
+                // An older trial sent no count: one call, grouped with its host.
+                { host: "refunds.example.com", method: "CONNECT", tool: null },
               ],
             },
           ],
@@ -116,14 +118,14 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByText("2 attempted · 0 committed · 2 refused"),
+      screen.getByLabelText("2 attempted · 0 committed · 2 refused"),
     ).toBeInTheDocument();
     expect(
       screen.getAllByTestId("blocked-call").map((one) => one.textContent),
-    ).toEqual([
-      "Blocked: refunds.example.com (CONNECT) ×1",
-      "Blocked: api.example.com (POST) ×3",
-    ]);
+    ).toEqual(["refunds.example.com CONNECT ×2", "api.example.com POST ×3"]);
+    // No faulted or read column when nobody faulted or read.
+    expect(screen.queryByText("Faulted")).toBeNull();
+    expect(screen.queryByText("Read")).toBeNull();
     expect(
       screen.getByText("No change: it committed nothing"),
     ).toBeInTheDocument();
@@ -151,7 +153,7 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByRole("link", { name: "download its records and action log" }),
+      screen.getByRole("link", { name: "Download end state" }),
     ).toHaveAttribute("href", "http://localhost:9005/bucket/end-state");
     unmount();
     render(<TrialChangesPanel trialState={{ state_changes: changes }} />);
@@ -206,20 +208,29 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByText("3 attempted · 2 committed · 1 refused"),
+      screen.getByLabelText("3 attempted · 2 committed · 1 refused"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Committed: crm.request_approval, crm.update_deal"),
+      screen.getByLabelText("Committed: crm.request_approval, crm.update_deal"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Priya Raman · Decided · crm.request_approval · 12% is within my limit",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Priya Raman · Decided · Did nothing · already approved",
       ),
+    ).toBeInTheDocument();
+    // On screen the choice reads as plain sentences beside the name.
+    expect(
+      screen.getByText(
+        "Chose to run crm.request_approval. Why: 12% is within my limit.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Chose to do nothing. Why: already approved."),
     ).toBeInTheDocument();
   });
 
@@ -277,15 +288,17 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByText("Committed but answered with a timeout: apply_discount"),
+      screen.getByLabelText(
+        "Committed but answered with a timeout: apply_discount",
+      ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Alex Vance · Timed out · No answer: their fallback action was tried for them and refused by the world",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Alex Vance · Timed out · No answer: their fallback action was taken for them",
       ),
     ).toBeInTheDocument();
@@ -355,9 +368,11 @@ describe("TrialChangesPanel", () => {
         }}
       />,
     );
-    expect(screen.getByText("Priya: 20% for Acme?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 message" }));
+    expect(screen.getByLabelText("Priya: 20% for Acme?")).toBeInTheDocument();
+    expect(screen.getByText("20% for Acme?")).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "request_discount, then Priya: approve · the agent waited for the decision",
       ),
     ).toBeInTheDocument();
@@ -403,13 +418,13 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByText("Priya on m1: 2 model calls, 30 tokens, $0.0030"),
+      screen.getByLabelText("Priya on m1: 2 model calls, 30 tokens, $0.0030"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("ravi: 1 model call, 15 tokens, $0.0005"),
+      screen.getByLabelText("ravi: 1 model call, 15 tokens, $0.0005"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "In all: 3 model calls, 45 tokens, $0.0035, counted in the simulator's usage",
       ),
     ).toBeInTheDocument();
@@ -425,9 +440,7 @@ describe("TrialChangesPanel", () => {
         }}
       />,
     );
-    expect(
-      screen.getByText("Worth knowing about this trial"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Worth knowing")).toBeInTheDocument();
     expect(screen.getByText(message)).toBeInTheDocument();
     expect(
       screen.getByText("Nothing changed in the world in this trial."),
@@ -436,9 +449,7 @@ describe("TrialChangesPanel", () => {
 
   it("shows no notices heading when the trial has none", () => {
     render(<TrialChangesPanel trialState={{ state_changes: [] }} />);
-    expect(
-      screen.queryByText("Worth knowing about this trial"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Worth knowing")).not.toBeInTheDocument();
   });
 
   it("shows a write the world committed twice in red", () => {
@@ -500,15 +511,13 @@ describe("TrialChangesPanel", () => {
     );
     expect(screen.getByText("Records before and after")).toBeInTheDocument();
     expect(
-      screen.getByText("orders [1042] · Changed: status"),
+      screen.getByLabelText("orders [1042] · Changed: status"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("Before: id: 1042, status: paid"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("After: id: 1042, status: refunded"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("refunds [1] · Added")).toBeInTheDocument();
+    // The changed field shows first, before and after; the unchanged id folds away.
+    expect(screen.getByText("paid")).toBeInTheDocument();
+    expect(screen.getByText("refunded")).toBeInTheDocument();
+    expect(screen.getByText("Show 1 unchanged field")).toBeInTheDocument();
+    expect(screen.getByLabelText("refunds [1] · Added")).toBeInTheDocument();
     expect(
       screen.getByText("Not compared: audit (no primary key)"),
     ).toBeInTheDocument();
@@ -564,9 +573,7 @@ describe("TrialChangesPanel", () => {
         }}
       />,
     );
-    expect(
-      screen.getByText("Worth knowing about this trial"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Worth knowing")).toBeInTheDocument();
     expect(screen.getAllByText(message)).toHaveLength(1);
   });
 
@@ -595,7 +602,7 @@ describe("TrialChangesPanel", () => {
       message,
     );
     expect(screen.queryByText("No record changed in this trial.")).toBeNull();
-    expect(screen.queryByText("Worth knowing about this trial")).toBeNull();
+    expect(screen.queryByText("Worth knowing")).toBeNull();
   });
 
   it("says what changed could not be read, never that nothing changed", () => {
@@ -660,7 +667,7 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Priya Raman · Decided · approvals.put · committed · Refused",
       ),
     ).toBeInTheDocument();
@@ -668,12 +675,12 @@ describe("TrialChangesPanel", () => {
       "The agent committed the change after Priya Raman refused it",
     );
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "approvals.request, then Priya Raman: approvals.put · Refused · the agent committed the change anyway · then the agent wrote: apply_discount (committed)",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "A request, then no decision · the agent waited for the decision",
       ),
     ).toBeInTheDocument();
@@ -700,7 +707,7 @@ describe("TrialChangesPanel", () => {
       />,
     );
     expect(
-      screen.getByText(
+      screen.getByLabelText(
         "Priya Raman · Decided · approvals.put · committed · Approved",
       ),
     ).toBeInTheDocument();
@@ -776,9 +783,7 @@ describe("TrialChangesPanel", () => {
       },
     ];
     render(<TrialChangesPanel trialState={{ notices }} />);
-    expect(
-      screen.getByText("Worth knowing about this trial"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Worth knowing")).toBeInTheDocument();
     for (const one of notices)
       expect(screen.getByText(one.message)).toBeInTheDocument();
   });

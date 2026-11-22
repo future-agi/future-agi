@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import {
   act,
   fireEvent,
@@ -58,6 +58,16 @@ vi.mock("src/components/page-header", () => ({
     </div>
   ),
 }));
+
+const mockAvailability = { current: {} };
+
+vi.mock("src/api/agents/agentConnect", () => ({
+  useConnectAvailability: () => mockAvailability.current,
+}));
+
+beforeEach(() => {
+  mockAvailability.current = { data: { readingEnabled: true } };
+});
 
 vi.mock("../hooks/useCanEditAgent", () => ({
   default: () => ({ canCreate: true, canUpdate: true, canDelete: true }),
@@ -210,7 +220,14 @@ describe("AgentsLanding", () => {
     expect(currentLocation.pathname).toBe("/dashboard/agents/connected");
   });
 
-  it("sends Connect an agent to the environments build page", () => {
+  it("sends Connect an agent to the connect page", () => {
+    renderAt("/dashboard/agents/connected");
+    fireEvent.click(screen.getByRole("button", { name: "Connect an agent" }));
+    expect(currentLocation.pathname).toBe("/dashboard/agents/connect");
+  });
+
+  it("sends Connect an agent to Environments while reading agents is off", () => {
+    mockAvailability.current = { data: { readingEnabled: false } };
     renderAt("/dashboard/agents/connected");
     fireEvent.click(screen.getByRole("button", { name: "Connect an agent" }));
     expect(currentLocation.pathname).toBe("/dashboard/simulate/environments");

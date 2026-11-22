@@ -6,6 +6,7 @@ import {
   PROVIDER_TO_CONNECTOR,
   environmentNameFor,
   draftToPreflightPayload,
+  isValidSubfolder,
 } from "../preflightPayload";
 
 const repoDraft = (over = {}) => ({
@@ -104,6 +105,25 @@ describe("draftToPreflightPayload — repo", () => {
     expect("installation_id" in pub.source).toBe(false);
   });
 
+  it("sends the agent folder as source.subfolder, trimmed of ./ and trailing slashes", () => {
+    const { payload } = draftToPreflightPayload(repoDraft({ subfolder: " ./agents/support/ " }));
+    expect(payload.source.subfolder).toBe("agents/support");
+    expect("subfolder" in draftToPreflightPayload(repoDraft({ subfolder: "  " })).payload.source).toBe(false);
+  });
+
+  it.each([
+    ["", true],
+    ["agents/support", true],
+    ["agents/support/", true],
+    ["/agents", false],
+    ["agents/../secrets", false],
+    ["agents/./support", false],
+    ["agents//support", false],
+    ["agents/sup port", false],
+  ])("accepts %j as an agent folder: %s", (value, valid) => {
+    expect(isValidSubfolder(value)).toBe(valid);
+  });
+
   it("adds security only when egress yields at least one public domain", () => {
     const { payload } = draftToPreflightPayload(
       repoDraft({ egress: "api.acme.com, localhost" }),
@@ -191,6 +211,38 @@ describe("draftToPreflightPayload — platform", () => {
       inbound: true,
       target_speaks_first: true,
     });
+  });
+
+  it("maps livekit in phone mode to the number and prompt only, always inbound", () => {
+    const { payload } = draftToPreflightPayload(
+      platformDraft({
+        provider: "livekit",
+        agentId: undefined,
+        agentMode: "prompt",
+        prompt: " You handle returns. ",
+        callDirection: "outbound",
+        contact: {
+          mode: "phone",
+          inboundCalls: false,
+          agentSpeaksFirst: true,
+          countryCode: "+1",
+          number: "4155550100",
+        },
+      }),
+    );
+    expect(payload.agent).toStrictEqual({
+      connector: "livekit",
+      mode: "connect_only",
+      config: {
+        phone_number: "+14155550100",
+        target_system_prompt: "You handle returns.",
+        inbound: true,
+        target_speaks_first: true,
+      },
+      secret_refs: {},
+      call_direction: "inbound",
+    });
+    expect(payload.metadata.name).toBe("phone-agent");
   });
 
   it("skips a livekit draft that has no system prompt", () => {
