@@ -3,9 +3,13 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional, Type
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Type
+from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
+
+if TYPE_CHECKING:
+    from accounts.saml_credential import SamlCredential
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +18,19 @@ class EmptyInput(PydanticBaseModel):
     """Input model for tools that take no parameters."""
 
     pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class BackgroundExecutionScope:
+    """Server-captured bounds for one analysis attempt; not a grant or wire format."""
+
+    org_id: UUID
+    workspace_id: UUID
+    project_id: UUID
+    assigned_trace_id: str
+    initiating_user_id: UUID
+    analysis_attempt_id: UUID
+    auth_scope: SamlCredential = field(repr=False)
 
 
 @dataclass
@@ -30,6 +47,11 @@ class ToolContext:
     # Trusted background-job scope, never a model-supplied tool argument.
     project: Any = None  # tracer.models.Project
     assigned_trace_id: str | None = None
+    # Preserve the transport's exact credential, including None for unscoped auth.
+    auth_scope: SamlCredential | None = field(default=None, kw_only=True, repr=False)
+    background_execution_scope: BackgroundExecutionScope | None = field(
+        default=None, kw_only=True
+    )
 
     @property
     def user_id(self):

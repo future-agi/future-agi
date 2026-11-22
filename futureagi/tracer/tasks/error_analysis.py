@@ -9,6 +9,8 @@ Tasks for:
 
 import gc
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import TYPE_CHECKING
+from uuid import UUID
 
 import structlog
 from django.conf import settings
@@ -23,7 +25,12 @@ from tracer.services.falcon_background_analysis import (
     require_background_analysis_ready,
 )
 
+if TYPE_CHECKING:
+    from ai_tools.base import BackgroundExecutionScope
+
 logger = structlog.get_logger(__name__)
+
+_NO_FALCON_INITIATOR = "Background runs without an initiating user are not authorized."
 
 
 def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
@@ -421,7 +428,13 @@ def process_trace_error_batch(task_id: str, trace_ids: list):
         close_old_connections()
 
 
-def _falcon_analyze_single_trace(trace_id: str, project_id: str):
+def _falcon_analyze_single_trace(
+    trace_id: str,
+    project_id: str,
+    *,
+    background_execution_scope: "BackgroundExecutionScope | None" = None,
+    analysis_attempt_id: UUID | None = None,
+):
     """
     Analyze a single trace using a headless Falcon agent loop with the
     analyze-trace-errors skill. Replaces TraceErrorAnalysisAgent.
@@ -457,6 +470,32 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
             "success": False,
             "trace_id": trace_id,
             "error_code": exc.code,
+            "error": (
+                f"{exc} {_NO_FALCON_INITIATOR}"
+                if background_execution_scope is None else str(exc)
+            ),
+        }
+
+    # A scope cannot bypass readiness. Old queue messages have neither an
+    # initiator nor a trusted attempt; never select a substitute organization user.
+    from tfc.ee_gating import FeatureUnavailable
+    from tracer.services.falcon_execution_scope import (
+        BackgroundScopeDenied,
+        revalidate_background_execution_scope,
+    )
+
+    try:
+        ctx = revalidate_background_execution_scope(
+            background_execution_scope,
+            project_id=project_id,
+            trace_id=trace_id,
+            analysis_attempt_id=analysis_attempt_id,
+        )
+    except (BackgroundScopeDenied, FeatureUnavailable) as exc:
+        return {
+            "success": False,
+            "trace_id": trace_id,
+            "error_code": exc.error_code,
             "error": str(exc),
         }
 
@@ -475,14 +514,12 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
             "error": "Falcon AI not available (requires EE)",
         }
 
-    from ai_tools.base import ToolContext
     from tfc.middleware.workspace_context import (
         get_current_organization,
         get_current_user,
         get_current_workspace,
         set_workspace_context,
     )
-    from tracer.models.project import Project
     from tracer.queries import deep_analysis_state
 
     close_old_connections()
@@ -493,43 +530,8 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
     }
 
     try:
-        # The caller passes project_id (traces live only in CH post-cutover);
-        # load the PG Project (kept) for org / user / workspace resolution.
-        project = (
-            Project.no_workspace_objects.select_related("organization").filter(id=project_id).first()
-        )
-        if project is None:
-            logger.error(f"Project {project_id} not found, skipping trace {trace_id}")
-            return {
-                "success": False,
-                "trace_id": trace_id,
-                "error": "Project not found",
-            }
-        org = project.organization
-
-        # Find a user in this org for the conversation
-        from accounts.models.user import User
-
-        user = User.objects.filter(organization=org).first()
-        if not user:
-            logger.error(f"No user found for org {org.id}, skipping trace {trace_id}")
-            return {"success": False, "trace_id": trace_id, "error": "No user"}
-
-        # Get workspace
-        from tracer.queries.helpers import get_default_workspace_for_project
-
-        workspace = get_default_workspace_for_project(project)
-
-        if workspace.organization_id != org.id:
-            raise ValueError("Project workspace does not belong to its organization")
+        user, org, workspace, project = ctx.user, ctx.organization, ctx.workspace, ctx.project
         set_workspace_context(workspace=workspace, organization=org, user=user)
-        ctx = ToolContext(
-            user=user,
-            organization=org,
-            workspace=workspace,
-            project=project,
-            assigned_trace_id=str(trace_id),
-        )
 
         # The seeded builtin is visible to every workspace, but the ordinary
         # workspace manager hides global rows. Never substitute a tenant skill.
@@ -799,7 +801,9 @@ def analyze_traces_on_demand(project_id: str, trace_ids: list):
     except BackgroundAnalysisUnavailable as exc:
         from temporalio.exceptions import ApplicationError
 
-        raise ApplicationError(str(exc), type=exc.code, non_retryable=True) from exc
+        raise ApplicationError(
+            f"{exc} {_NO_FALCON_INITIATOR}", type=exc.code, non_retryable=True
+        ) from exc
 
     try:
         close_old_connections()

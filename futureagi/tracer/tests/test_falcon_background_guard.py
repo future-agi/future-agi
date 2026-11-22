@@ -69,6 +69,8 @@ def test_unready_background_analysis_fails_before_spend_or_dispatch(
     assert code == "FALCON_BACKGROUND_ACCOUNTING_UNAVAILABLE"
     assert "allowance" in message and "usage recording" in message
     assert "nested trace explorer" in message
+    if entry != "tool":
+        assert "without an initiating user" in message
     for call in sentinels:
         call.assert_not_called()
     assert not TraceErrorAnalysis.objects.filter(trace_id=trace_id, project=project).exists()

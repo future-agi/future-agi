@@ -2,7 +2,8 @@
 
 from django.db.models import Q
 
-from ai_tools.base import ToolContext
+from accounts.saml_credential import SamlCredential
+from ai_tools.base import BackgroundExecutionScope, ToolContext
 from tracer.models.project import Project
 
 
@@ -11,6 +12,25 @@ def get_analysis_projects(context: ToolContext):
     if context.organization is None or context.workspace is None:
         return Project.objects.none()
     if context.workspace.organization_id != context.organization.id:
+        return Project.objects.none()
+
+    # Replacing or reconstructing the mutable tool context may never widen a
+    # captured assignment. Ordinary foreground contexts keep their existing rules.
+    scope = context.background_execution_scope
+    if scope is not None and (
+        not isinstance(scope, BackgroundExecutionScope)
+        or context.user is None
+        or context.user_id != scope.initiating_user_id
+        or context.organization_id != scope.org_id
+        or context.workspace_id != scope.workspace_id
+        or context.project is None
+        or context.project.pk != scope.project_id
+        or context.assigned_trace_id != scope.assigned_trace_id
+        or not isinstance(context.auth_scope, SamlCredential)
+        or context.auth_scope.user_id != context.user_id
+        or context.auth_scope.org_id != context.organization_id
+        or context.auth_scope != scope.auth_scope
+    ):
         return Project.objects.none()
 
     workspace_scope = Q(workspace=context.workspace)
