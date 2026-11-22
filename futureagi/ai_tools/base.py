@@ -3,10 +3,16 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Optional
+from functools import wraps
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Type
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
+
+from tracer.services.falcon_background_analysis import (
+    BackgroundAnalysisUnavailable,
+    require_background_analysis_ready,
+)
 
 if TYPE_CHECKING:
     from accounts.saml_credential import SamlCredential
@@ -22,7 +28,7 @@ class EmptyInput(PydanticBaseModel):
 
 @dataclass(frozen=True, kw_only=True)
 class BackgroundExecutionScope:
-    """Server-captured bounds for one analysis attempt; not a grant or wire format."""
+    """Legacy constructor shape. Its presence refuses execution; it is not a grant."""
 
     org_id: UUID
     workspace_id: UUID
@@ -44,14 +50,23 @@ class ToolContext:
     user: Any  # accounts.models.User
     organization: Any  # accounts.models.Organization
     workspace: Any  # accounts.models.Workspace
-    # Trusted background-job scope, never a model-supplied tool argument.
+    # Compatibility fields, never model-supplied tool arguments.
     project: Any = None  # tracer.models.Project
     assigned_trace_id: str | None = None
-    # Preserve the transport's exact credential, including None for unscoped auth.
+    # An optional credential is not a background marker or an execution grant.
     auth_scope: SamlCredential | None = field(default=None, kw_only=True, repr=False)
     background_execution_scope: BackgroundExecutionScope | None = field(
         default=None, kw_only=True
     )
+
+    def require_foreground_execution(self) -> None:
+        # An assignment (even without its captured credential) is not an
+        # interactive request. Do not infer assignment from ordinary foreground fields.
+        if (
+            self.background_execution_scope is not None
+            or self.assigned_trace_id is not None
+        ):
+            require_background_analysis_ready()
 
     @property
     def user_id(self):
@@ -94,6 +109,14 @@ class ToolResult:
             is_error=True,
             error_code=error_code or "INTERNAL_ERROR",
         )
+
+    @classmethod
+    def background_refusal(cls, context: ToolContext) -> ToolResult | None:
+        try:
+            context.require_foreground_execution()
+        except BackgroundAnalysisUnavailable as exc:
+            return cls.error(str(exc), error_code=exc.code)
+        return None
 
     @classmethod
     def not_found(cls, entity_type: str, entity_id: str) -> ToolResult:
@@ -146,7 +169,24 @@ class BaseTool(ABC):
     name: str
     description: str
     category: str
-    input_model: ClassVar[type[PydanticBaseModel]] = EmptyInput
+    input_model: ClassVar[Type[PydanticBaseModel]] = EmptyInput
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Native callers can invoke a concrete execute() without run(). Guard
+        # that boundary too, without changing the foreground tool implementations.
+        implementation = cls.__dict__.get("execute")
+        if implementation is None:
+            return
+
+        @wraps(implementation)
+        def execute(self, params, context):
+            refusal = ToolResult.background_refusal(context)
+            if refusal is not None:
+                return refusal
+            return implementation(self, params, context)
+
+        cls.execute = execute
 
     @abstractmethod
     def execute(self, params: PydanticBaseModel, context: ToolContext) -> ToolResult:
@@ -166,6 +206,10 @@ class BaseTool(ABC):
         so that BaseModel managers, AutoWorkspaceField, and queryset scoping
         work correctly without touching django.conf.settings.
         """
+        refusal = ToolResult.background_refusal(context)
+        if refusal is not None:
+            return refusal
+
         from tfc.middleware.workspace_context import workspace_context
 
         try:

@@ -80,10 +80,7 @@ class SubmitTraceFindingTool(BaseTool):
     ) -> ToolResult:
         from django.db import transaction
 
-        from ai_tools.tools.tracing.access import (
-            get_trace_project,
-            select_analysis_for_write,
-        )
+        from tracer.models.trace import Trace
         from tracer.models.trace_error_analysis import (
             TraceErrorAnalysis,
             TraceErrorDetail,
@@ -109,41 +106,34 @@ class SubmitTraceFindingTool(BaseTool):
                 f"Invalid impact '{params.impact}'. Must be HIGH, MEDIUM, or LOW."
             )
 
-        project = get_trace_project(params.trace_id, context)
-        if project is None:
+        # Verify trace access
+        try:
+            trace = Trace.objects.select_related("project").get(
+                id=params.trace_id,
+                project__organization=context.organization,
+            )
+        except Trace.DoesNotExist:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
-        if context.assigned_trace_id is not None and params.location_spans:
-            from tracer.services.clickhouse.v2 import get_reader
-
-            with get_reader() as reader:
-                trace_ids = reader.trace_ids_for_span_ids(
-                    params.location_spans, project_id=str(project.pk)
-                )
-            if any(
-                trace_ids.get(sid) != context.assigned_trace_id
-                for sid in params.location_spans
-            ):
-                return ToolResult.validation_error(
-                    "Finding references a span outside the assigned trace."
-                )
-
         with transaction.atomic():
-            analysis = select_analysis_for_write(
-                context,
-                project,
-                params.trace_id,
-                params.analysis_id,
-                reuse_latest=False,
-            )
-            if isinstance(analysis, ToolResult):
-                return analysis
+            analysis = None
+
+            # If analysis_id provided, reuse that specific analysis
+            if params.analysis_id:
+                try:
+                    analysis = TraceErrorAnalysis.objects.get(
+                        id=params.analysis_id,
+                        trace=trace,
+                    )
+                except TraceErrorAnalysis.DoesNotExist:
+                    # Invalid analysis_id — create a new one
+                    analysis = None
 
             # Create a new analysis record (same as the old agent did)
             if analysis is None:
                 analysis = TraceErrorAnalysis.objects.create(
-                    trace_id=params.trace_id,
-                    project=project,
+                    trace=trace,
+                    project=trace.project,
                     overall_score=None,
                     total_errors=0,
                     high_impact_errors=0,

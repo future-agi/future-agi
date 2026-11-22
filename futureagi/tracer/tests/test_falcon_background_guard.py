@@ -8,6 +8,7 @@ from temporalio.exceptions import ApplicationError
 
 from ai_tools.base import ToolContext
 from tracer.models.trace_error_analysis import TraceErrorAnalysis
+from tracer.tests._falcon_hold import assert_hold
 from tracer.tasks.error_analysis import (
     _falcon_analyze_single_trace,
     analyze_traces_on_demand,
@@ -21,14 +22,14 @@ def test_unready_background_analysis_fails_before_spend_or_dispatch(
     project, monkeypatch, entry
 ):
     from ai_tools.registry import registry
-    from ee.usage.deployment import DeploymentMode
 
     trace_id, project_id = str(uuid.uuid4()), str(project.id)
-    monkeypatch.setattr(DeploymentMode, "is_oss", staticmethod(lambda: False))
     sentinels = []
     for target in (
         "tracer.services.clickhouse.v2.get_reader",
         "tracer.queries.deep_analysis_state.set_running",
+        "django.core.cache.cache.add",
+        "django.core.cache.cache.set",
         "tracer.queries.deep_analysis_state.set_failed",
         "tracer.queries.deep_analysis_state.clear",
         "tracer.tasks.error_analysis.analyze_traces_on_demand.delay",
@@ -68,11 +69,7 @@ def test_unready_background_analysis_fails_before_spend_or_dispatch(
         assert result["trace_id"] == trace_id
         code, message = result["error_code"], result["error"]
 
-    assert code == "FALCON_BACKGROUND_ACCOUNTING_UNAVAILABLE"
-    assert "allowance" in message and "usage recording" in message
-    assert "nested trace explorer" in message
-    if entry != "tool":
-        assert "without an initiating user" in message
+    assert_hold(code, message)
     for call in sentinels:
         call.assert_not_called()
     assert not TraceErrorAnalysis.objects.filter(

@@ -11,19 +11,18 @@ from ai_tools.base import ToolContext
 from tracer.models.trace_error_analysis import TraceErrorAnalysis, TraceErrorDetail
 
 HOLD_CODE = "FALCON_BACKGROUND_ACCOUNTING_UNAVAILABLE"
+HOLD_MESSAGE = "Background multi-trace analysis is unavailable. No background analysis was started."
 
 
-def _assert_hold(code, message):
+def assert_hold(code, message):
     assert code == HOLD_CODE
-    assert "allowance" in message and "usage recording" in message
-    assert "nested trace explorer" in message
+    assert HOLD_MESSAGE in message
 
 
 def assert_worker_refused(result, trace_id):
     assert result["success"] is False and result["trace_id"] == trace_id
     assert "error_count" not in result
-    _assert_hold(result["error_code"], result["error"])
-    assert "without an initiating user" in result["error"]
+    assert_hold(result["error_code"], result["error"])
 
 
 def assert_activity_refused(project_id, trace_ids):
@@ -34,8 +33,7 @@ def assert_activity_refused(project_id, trace_ids):
     with pytest.raises(ApplicationError) as denied:
         analyze_traces_on_demand(project_id, trace_ids)
     assert denied.value.non_retryable is True
-    _assert_hold(denied.value.type, str(denied.value))
-    assert "without an initiating user" in str(denied.value)
+    assert_hold(denied.value.type, str(denied.value))
 
 
 def assert_tool_refused(context: ToolContext, outside_workspace, project_id, trace_ids):
@@ -43,14 +41,13 @@ def assert_tool_refused(context: ToolContext, outside_workspace, project_id, tra
 
     tool = registry.get("analyze_project_traces")
     params = {"project_id": project_id, "trace_ids": trace_ids}
-    # An existing project outside the caller's active workspace must not even
-    # disclose the readiness error. Exercise the real project lookup both ways.
+    # The generic refusal does not disclose whether this project exists.
     hidden = tool.run(params, replace(context, workspace=outside_workspace))
-    assert hidden.is_error and hidden.error_code == "NOT_FOUND" and hidden.data is None
-    assert "allowance" not in hidden.content
+    assert hidden.is_error and hidden.data is None
+    assert_hold(hidden.error_code, hidden.content)
     denied = tool.run(params, context)
     assert denied.is_error and denied.data is None
-    _assert_hold(denied.error_code, denied.content)
+    assert_hold(denied.error_code, denied.content)
 
 
 def _snapshot(trace_ids):
@@ -71,7 +68,6 @@ def _snapshot(trace_ids):
 def no_background_work(*trace_ids, stream=None, summary=None):
     """Assert the listed calls were absent and the selected rows did not change."""
     from agentic_eval.core.embeddings.embedding_manager import ModelManager
-    from ee.usage.deployment import DeploymentMode
 
     before = _snapshot(trace_ids)
     calls = []
@@ -127,8 +123,6 @@ def no_background_work(*trace_ids, stream=None, summary=None):
         )
 
     with ExitStack() as stack:
-        # Select the EE worker, not the separate unsupported-OSS result.
-        stack.enter_context(patch.object(DeploymentMode, "is_oss", return_value=False))
         for boundary in patches:
             stack.enter_context(boundary)
         stack.enter_context(

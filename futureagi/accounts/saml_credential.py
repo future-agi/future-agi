@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, TypeAlias
@@ -17,7 +16,7 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from saml2_auth.models import SAMLMetadataModel
 
-TokenRow: TypeAlias = Mapping[str, Any]
+TokenRow: TypeAlias = dict[str, Any]
 
 
 class SamlCredentialInvalid(AuthenticationFailed):

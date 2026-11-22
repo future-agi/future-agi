@@ -30,8 +30,6 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-_NO_FALCON_INITIATOR = "Background runs without an initiating user are not authorized."
-
 
 def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
     """
@@ -161,11 +159,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
 
         if error_count > 0 and ingest_embeddings:
             error_analysis_db = TraceErrorAnalysisDB()
-            error_analysis_db.ingest_trace_error_embeddings(
-                trace_id,
-                project_id=str(project.id),
-                organization_id=str(organization.id),
-            )
+            error_analysis_db.ingest_trace_error_embeddings(trace_id)
 
         # Mark the API call as successful
         if api_call_log_row:
@@ -437,33 +431,7 @@ def _falcon_analyze_single_trace(
     background_execution_scope: "BackgroundExecutionScope | None" = None,
     analysis_attempt_id: UUID | None = None,
 ):
-    """
-    Analyze a single trace using a headless Falcon agent loop with the
-    analyze-trace-errors skill. Replaces TraceErrorAnalysisAgent.
-    """
-    import asyncio
-
-    # Falcon is gated on deployment mode (EE / Cloud) AND code presence.
-    # In OSS mode or when ee/falcon_ai/ isn't installed, skip cleanly so
-    # the enclosing task doesn't surface an ImportError.
-    try:
-        from ee.usage.deployment import DeploymentMode
-
-        _is_oss = DeploymentMode.is_oss()
-    except ImportError:
-        _is_oss = True
-
-    if _is_oss:
-        logger.warning(
-            "falcon_trace_analysis_skipped_no_ee",
-            trace_id=trace_id,
-            reason="Deployment is OSS — Falcon AI requires EE license or Cloud deployment",
-        )
-        return {
-            "success": False,
-            "trace_id": trace_id,
-            "error": "Falcon AI not available (requires EE)",
-        }
+    """Refuse background execution, including previously validated assignments."""
 
     try:
         require_background_analysis_ready()
@@ -472,328 +440,8 @@ def _falcon_analyze_single_trace(
             "success": False,
             "trace_id": trace_id,
             "error_code": exc.code,
-            "error": (
-                f"{exc} {_NO_FALCON_INITIATOR}"
-                if background_execution_scope is None
-                else str(exc)
-            ),
-        }
-
-    # A scope cannot bypass readiness. Old queue messages have neither an
-    # initiator nor a trusted attempt; never select a substitute organization user.
-    from tfc.ee_gating import FeatureUnavailable
-    from tracer.services.falcon_execution_scope import (
-        BackgroundScopeDenied,
-        revalidate_background_execution_scope,
-    )
-
-    try:
-        ctx = revalidate_background_execution_scope(
-            background_execution_scope,
-            project_id=project_id,
-            trace_id=trace_id,
-            analysis_attempt_id=analysis_attempt_id,
-        )
-    except (BackgroundScopeDenied, FeatureUnavailable) as exc:
-        return {
-            "success": False,
-            "trace_id": trace_id,
-            "error_code": exc.error_code,
             "error": str(exc),
         }
-
-    try:
-        from ee.falcon_ai.agent import AgentLoop
-        from ee.falcon_ai.models import Conversation, Skill
-    except ImportError:
-        logger.warning(
-            "falcon_trace_analysis_skipped_no_ee",
-            trace_id=trace_id,
-            reason="ee.falcon_ai not installed — unexpected for non-OSS deployment",
-        )
-        return {
-            "success": False,
-            "trace_id": trace_id,
-            "error": "Falcon AI not available (requires EE)",
-        }
-
-    from tfc.middleware.workspace_context import (
-        get_current_organization,
-        get_current_user,
-        get_current_workspace,
-        set_workspace_context,
-    )
-    from tracer.queries import deep_analysis_state
-
-    close_old_connections()
-    previous_context = {
-        "workspace": get_current_workspace(),
-        "organization": get_current_organization(),
-        "user": get_current_user(),
-    }
-
-    try:
-        user, org, workspace, project = (
-            ctx.user,
-            ctx.organization,
-            ctx.workspace,
-            ctx.project,
-        )
-        set_workspace_context(workspace=workspace, organization=org, user=user)
-
-        # The seeded builtin is visible to every workspace, but the ordinary
-        # workspace manager hides global rows. Never substitute a tenant skill.
-        skill = Skill.no_workspace_objects.get(
-            slug="analyze-trace-errors",
-            is_active=True,
-            is_builtin=True,
-            organization__isnull=True,
-            workspace__isnull=True,
-        )
-
-        # Create a hidden conversation (filtered out from user's chat list)
-        conversation = Conversation.objects.create(
-            user=user,
-            organization=org,
-            workspace=workspace,
-            title=f"Auto-analysis: {trace_id[:8]}",
-            metadata={"hidden": True, "type": "background_analysis"},
-        )
-
-        from ai_tools.tools.tracing.explore_trace import ExploreTraceTool
-        from ai_tools.tools.tracing.read_trace_span import ReadTraceSpanTool
-        from ai_tools.tools.tracing.submit_trace_finding import SubmitTraceFindingTool
-        from ai_tools.tools.tracing.submit_trace_scores import SubmitTraceScoresTool
-
-        # The general chat catalog includes unrelated datasets, projects and MCP
-        # tools. A background analysis may use only these scoped trace tools.
-        explorer = ExploreTraceTool()
-        explorer.name = "explore_trace"  # Name used by the analysis skill.
-        analysis_tools = [
-            explorer,
-            ExploreTraceTool(),
-            ReadTraceSpanTool(),
-            SubmitTraceFindingTool(),
-            SubmitTraceScoresTool(),
-        ]
-        agent = AgentLoop(tool_context=ctx, conversation=conversation)
-
-        # Collect ALL events for comprehensive logging
-        all_events = []
-        collected_tool_calls = []
-        text_deltas = []
-        agent_error = None
-
-        async def logging_callback(event):
-            nonlocal agent_error
-            etype = event.get("type", "")
-            all_events.append({"type": etype})
-
-            if etype == "tool_call_start":
-                collected_tool_calls.append(
-                    {
-                        "tool_name": event["data"].get("tool_name", ""),
-                        "params": event["data"].get("params", {}),
-                        "step": event["data"].get("step", 0),
-                        "call_id": event["data"].get("call_id", ""),
-                        "status": "started",
-                        "result_summary": "",
-                        "result_full": "",
-                    }
-                )
-            elif etype == "tool_call_result":
-                call_id = event["data"].get("call_id", "")
-                for tc in collected_tool_calls:
-                    if tc.get("call_id") == call_id:
-                        tc["status"] = event["data"].get("status", "")
-                        tc["result_summary"] = event["data"].get("result_summary", "")[
-                            :500
-                        ]
-                        tc["result_full"] = event["data"].get("result_full", "")[:2000]
-                        break
-            elif etype == "text_delta":
-                text_deltas.append(event["data"].get("delta", ""))
-            elif etype == "error":
-                agent_error = event["data"].get("message") or "Falcon agent failed"
-                logger.error(
-                    f"Falcon agent error for trace {trace_id}: {event['data']}"
-                )
-
-        import time as _time
-
-        start_time = _time.time()
-
-        async def run():
-            return await agent.run(
-                user_message=f"Analyze trace {trace_id} for errors.",
-                history_messages=[],
-                send_callback=logging_callback,
-                context_page="tracing",
-                skill=skill,
-                tools_override=analysis_tools,
-            )
-
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(run())
-        finally:
-            loop.close()
-
-        # AgentLoop reports terminal streaming failures through the callback
-        # rather than raising. Do not turn those failures into clean analyses.
-        if agent_error is not None:
-            raise RuntimeError(agent_error)
-        if result.get("finish_reason") not in ("stop", "end_turn"):
-            raise RuntimeError("Falcon analysis did not finish normally")
-
-        # These are executor outcomes, not claims in the model's final text.
-        # Both explorer aliases and the span reader enforce the job's scope.
-        inspected_with = {"explore_trace", "explore_trace_legacy", "read_trace_span"}
-        completed = {
-            c["tool_name"] for c in collected_tool_calls if c["status"] == "completed"
-        }
-        if not completed.intersection(inspected_with):
-            raise RuntimeError("Falcon did not inspect the assigned trace")
-
-        write_tools = {"submit_trace_finding", "submit_trace_scores"}
-        submitted = bool(completed.intersection(write_tools))
-        if not submitted and any(
-            c["tool_name"] in write_tools for c in collected_tool_calls
-        ):
-            raise RuntimeError("Falcon failed to save its analysis")
-
-        elapsed = _time.time() - start_time
-
-        # Log what happened in the agent loop
-        event_types = [e["type"] for e in all_events]
-        logger.info(
-            f"Falcon loop for trace {trace_id[:8]}: "
-            f"elapsed={elapsed:.1f}s tools={len(collected_tool_calls)} "
-            f"events={len(all_events)} event_types={event_types} "
-            f"response_len={len(result.get('content', '') or '')} "
-            f"tokens={result.get('input_tokens', 0)}+{result.get('output_tokens', 0)}"
-        )
-
-        # Check if Falcon created an analysis — if not, create a "clean" one
-        from tracer.models.trace_error_analysis import TraceErrorAnalysis
-
-        analysis = (
-            TraceErrorAnalysis.objects.filter(
-                trace_id=trace_id, project=project, project__organization=org
-            )
-            .order_by("-analysis_date")
-            .first()
-        )
-
-        if analysis is not None and not submitted:
-            # A prior attempt may have left a partial row. A read-only turn
-            # cannot attest to those scores or finalize them on a retry.
-            raise RuntimeError(
-                "Falcon did not submit an update to the existing analysis"
-            )
-
-        if analysis is None:
-            if submitted:
-                raise RuntimeError("Submitted Falcon analysis could not be found")
-            # Falcon found no errors — create a clean analysis record
-            analysis = TraceErrorAnalysis.objects.create(
-                trace_id=trace_id,
-                project=project,
-                overall_score=4.0,
-                total_errors=0,
-                high_impact_errors=0,
-                medium_impact_errors=0,
-                low_impact_errors=0,
-                recommended_priority="LOW",
-                insights="No errors found during analysis.",
-                agent_version="falcon-skill-1.0",
-            )
-        elif analysis.overall_score is None:
-            # Falcon submitted findings but didn't call submit_trace_scores.
-            # Compute fallback scores from the errors found.
-            from tracer.models.trace_error_analysis import TraceErrorDetail
-
-            details = TraceErrorDetail.objects.filter(analysis=analysis)
-            high = details.filter(impact="HIGH").count()
-            medium = details.filter(impact="MEDIUM").count()
-            low = details.filter(impact="LOW").count()
-            total = high + medium + low
-
-            # Score: start at 5, deduct per error severity
-            score = max(1.0, 5.0 - (high * 1.5) - (medium * 0.75) - (low * 0.25))
-            analysis.overall_score = round(score, 1)
-            analysis.factual_grounding_score = max(1.0, 5.0 - high)
-            analysis.factual_grounding_reason = f"Computed from {total} error(s)"
-            analysis.privacy_and_safety_score = 5.0
-            analysis.privacy_and_safety_reason = "No safety issues detected"
-            analysis.instruction_adherence_score = max(1.0, 5.0 - high - (medium * 0.5))
-            analysis.instruction_adherence_reason = f"Computed from {total} error(s)"
-            analysis.optimal_plan_execution_score = max(1.0, 5.0 - high - medium)
-            analysis.optimal_plan_execution_reason = f"Computed from {total} error(s)"
-            analysis.insights = (
-                f"Fallback scores computed from {total} detected error(s)."
-            )
-            analysis.save()
-            logger.info(f"Computed fallback scores for trace {trace_id}: score={score}")
-
-        error_count = analysis.total_errors or 0
-
-        # Done is derived from the TraceErrorAnalysis row above; release marker.
-        deep_analysis_state.clear(str(trace_id), project_id=str(project.id))
-
-        # Do not produce embeddings here pending the centroid schema review.
-        # Other workers drain the shared embedding backlog independently.
-
-        # Log complete results to ClickHouse
-        try:
-            import json as _json
-
-            from tracer.services.clickhouse.client import ClickHouseClient
-
-            ch = ClickHouseClient()
-            ch.insert(
-                "falcon_analysis_log",
-                [
-                    {
-                        "conversation_id": str(conversation.id),
-                        "trace_id": str(trace_id),
-                        "project_id": project_id,
-                        "organization_id": str(org.id),
-                        "model": str(result.get("model_used") or ""),
-                        "mode": str(result.get("mode") or ""),
-                        "skill_slug": "analyze-trace-errors",
-                        "input_tokens": int(result.get("input_tokens") or 0),
-                        "output_tokens": int(result.get("output_tokens") or 0),
-                        "tool_calls": _json.dumps(collected_tool_calls, default=str),
-                        "response": str(result.get("content") or "")[:10000],
-                        "errors_found": int(error_count),
-                        "overall_score": (
-                            float(analysis.overall_score)
-                            if analysis.overall_score is not None
-                            else None
-                        ),
-                        "recommended_priority": str(
-                            analysis.recommended_priority or ""
-                        ),
-                    }
-                ],
-            )
-        except Exception as e:
-            logger.warning(f"Failed to log to ClickHouse: {str(e)}")
-
-        logger.info(
-            f"Falcon analyzed trace {trace_id}: {error_count} errors, "
-            f"score={analysis.overall_score}, elapsed={elapsed:.1f}s"
-        )
-        return {"success": True, "trace_id": trace_id, "error_count": error_count}
-
-    except Exception as e:
-        logger.exception(f"Falcon analysis failed for trace {trace_id}: {str(e)}")
-        deep_analysis_state.set_failed(str(trace_id), project_id=str(project_id))
-        return {"success": False, "trace_id": trace_id, "error": str(e)}
-    finally:
-        set_workspace_context(**previous_context)
-        close_old_connections()
 
 
 @temporal_activity(
@@ -802,11 +450,7 @@ def _falcon_analyze_single_trace(
     queue="agent_compass",
 )
 def analyze_traces_on_demand(project_id: str, trace_ids: list):
-    """
-    On-demand trace analysis triggered by Falcon.
-    Each trace is analyzed by a headless Falcon agent loop with the
-    analyze-trace-errors skill. Runs in parallel via ThreadPoolExecutor.
-    """
+    """Reject previously queued batches; no background work is admitted."""
     # Jobs already in the queue bypass the tool. Fail the activity itself,
     # without fan-out or mutating claims (these messages have no owner token).
     try:
@@ -815,48 +459,8 @@ def analyze_traces_on_demand(project_id: str, trace_ids: list):
         from temporalio.exceptions import ApplicationError
 
         raise ApplicationError(
-            f"{exc} {_NO_FALCON_INITIATOR}", type=exc.code, non_retryable=True
+            str(exc), type=exc.code, non_retryable=True
         ) from exc
-
-    try:
-        close_old_connections()
-        successful = 0
-        failed = 0
-        total_errors = 0
-
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [
-                executor.submit(_falcon_analyze_single_trace, trace_id, project_id)
-                for trace_id in trace_ids
-            ]
-
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result.get("success"):
-                        successful += 1
-                        total_errors += result.get("error_count", 0)
-                    else:
-                        failed += 1
-                except Exception as e:
-                    failed += 1
-                    logger.error(f"Error processing future: {str(e)}")
-
-        logger.info(
-            f"On-demand batch complete for project {project_id}: "
-            f"{successful} successful, {failed} failed, "
-            f"{total_errors} total errors found"
-        )
-
-        # This producer must not dispatch centroid writes before schema review.
-
-    except Exception as e:
-        logger.exception(
-            f"Error in on-demand analysis for project {project_id}: {str(e)}"
-        )
-        raise
-    finally:
-        close_old_connections()
 
 
 @temporal_activity(

@@ -6,7 +6,6 @@ from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
 from ai_tools.base import BaseTool, ToolContext, ToolResult
-from ai_tools.formatting import key_value_block, section
 from ai_tools.registry import register_tool
 
 
@@ -16,10 +15,7 @@ class AnalyzeProjectTracesInput(PydanticBaseModel):
     )
     trace_ids: list[str] = Field(
         default_factory=list,
-        description=(
-            "Specific trace IDs to analyze. If empty, analyzes all "
-            "un-analyzed traces in the project."
-        ),
+        description="Optional trace IDs for the request; an empty list denotes project scope.",
     )
     max_traces: int = Field(
         default=50,
@@ -33,8 +29,7 @@ class AnalyzeProjectTracesInput(PydanticBaseModel):
 class AnalyzeProjectTracesTool(BaseTool):
     name = "analyze_project_traces"
     description = (
-        "Requests background error analysis for traces in a project. Currently "
-        "unavailable until background usage accounting covers all model calls."
+        "Background multi-trace analysis is currently unavailable."
     )
     category = "error_feed"
     input_model = AnalyzeProjectTracesInput
@@ -42,146 +37,12 @@ class AnalyzeProjectTracesTool(BaseTool):
     def execute(
         self, params: AnalyzeProjectTracesInput, context: ToolContext
     ) -> ToolResult:
-        import structlog
-
-        from ai_tools.tools.tracing.access import get_analysis_projects
         from tracer.services.falcon_background_analysis import (
             BackgroundAnalysisUnavailable,
             require_background_analysis_ready,
         )
 
-        logger = structlog.get_logger(__name__)
-
-        # Verify project access
-        project = get_analysis_projects(context).filter(id=params.project_id).first()
-        if project is None:
-            return ToolResult.not_found("Project", str(params.project_id))
-
-        # Reject before discovery, claims or queueing; don't promise feed results.
         try:
             require_background_analysis_ready()
         except BackgroundAnalysisUnavailable as exc:
             return ToolResult.error(str(exc), error_code=exc.code)
-
-        from tracer.models.trace_error_analysis import TraceErrorAnalysis
-        from tracer.queries import deep_analysis_state
-        from tracer.services.clickhouse.v2 import get_reader
-
-        # Determine which traces to analyze. Traces live only in CH post-cutover,
-        # so listing/validating goes through the CH root spans.
-        if params.trace_ids and len(params.trace_ids) > 0:
-            # Specific traces requested — validate they exist in this project.
-            with get_reader() as reader:
-                found = reader.root_ids_by_trace_ids(
-                    [str(t) for t in params.trace_ids], project_ids=[str(project.id)]
-                )
-            trace_ids = list(found.keys())
-            if not trace_ids:
-                return ToolResult.error(
-                    "None of the specified trace IDs were found in this project."
-                )
-        else:
-            # Find un-analyzed traces in the project (analyzed set is feed-owned).
-            already_analyzed = {
-                str(t)
-                for t in TraceErrorAnalysis.objects.filter(project=project).values_list(
-                    "trace_id", flat=True
-                )
-            }
-            with get_reader() as reader:
-                all_trace_ids = reader.recent_root_trace_ids_by_project(
-                    str(project.id), limit=params.max_traces
-                )
-            trace_ids = [t for t in all_trace_ids if t not in already_analyzed]
-
-            if not trace_ids:
-                # All traces already analyzed — offer to re-analyze
-                with get_reader() as reader:
-                    total = reader.count_with_filters(
-                        project_id=str(project.id), roots_only=True
-                    )
-                analyzed = len(already_analyzed)
-                return ToolResult(
-                    content=section(
-                        "Analysis Status",
-                        f"All {analyzed} of {total} traces in project "
-                        f"**{project.name}** have already been analyzed.\n\n"
-                        f"To re-analyze specific traces, pass their trace_ids explicitly.",
-                    ),
-                    data={
-                        "status": "already_analyzed",
-                        "total_traces": total,
-                        "analyzed_traces": analyzed,
-                    },
-                )
-
-        # Only the caller that won the atomic claim may enqueue that trace.
-        trace_ids = [
-            tid
-            for tid in trace_ids
-            if deep_analysis_state.set_running(str(tid), project_id=str(project.id))
-        ]
-        if not trace_ids:
-            return ToolResult(
-                content="Analysis is already running for the requested traces.",
-                data={
-                    "status": "already_running",
-                    "project_id": str(project.id),
-                    "trace_count": 0,
-                    "trace_ids": [],
-                    "batches": 0,
-                },
-            )
-
-        # Dispatch via Temporal in batches of 10 (same as old beat task)
-        try:
-            from tracer.tasks.error_analysis import analyze_traces_on_demand
-
-            batch_size = 10
-            batches_dispatched = 0
-            for i in range(0, len(trace_ids), batch_size):
-                batch = trace_ids[i : i + batch_size]
-                analyze_traces_on_demand.delay(str(project.id), batch)
-                batches_dispatched += 1
-
-            logger.info(
-                "analyze_project_traces_dispatched",
-                project_id=str(project.id),
-                trace_count=len(trace_ids),
-                batches=batches_dispatched,
-            )
-        except Exception as e:
-            logger.exception("Failed to dispatch trace analysis")
-            return ToolResult.error(f"Failed to start background analysis: {str(e)}")
-
-        # Build response
-        info = key_value_block(
-            [
-                ("Status", "Analysis started in background"),
-                ("Project", project.name),
-                ("Traces queued", str(len(trace_ids))),
-                ("Batches", str(batches_dispatched)),
-                ("Batch size", str(batch_size)),
-            ]
-        )
-
-        content = section("Trace Analysis Triggered", info)
-        content += (
-            "\n\nEach trace will be analyzed independently using the full "
-            "error analysis pipeline. Results will appear on the **Feed** tab "
-            "once analysis and clustering complete.\n\n"
-            f"Estimated time: {len(trace_ids) * 30}–{len(trace_ids) * 60} seconds "
-            f"for {len(trace_ids)} traces."
-        )
-
-        return ToolResult(
-            content=content,
-            data={
-                "status": "dispatched",
-                "project_id": str(project.id),
-                "project_name": project.name,
-                "trace_count": len(trace_ids),
-                "trace_ids": trace_ids,
-                "batches": batches_dispatched,
-            },
-        )

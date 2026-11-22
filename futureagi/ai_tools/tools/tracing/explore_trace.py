@@ -48,23 +48,25 @@ class ExploreTraceTool(BaseTool):
     input_model = ExploreTraceInput
 
     def execute(self, params: ExploreTraceInput, context: ToolContext) -> ToolResult:
-        from ai_tools.tools.tracing.access import get_trace_project
+        from tracer.models.trace import Trace
         from tracer.services.clickhouse.v2 import get_reader
 
-        project = get_trace_project(params.trace_id, context)
-        if project is None:
+        # Verify trace access (Trace stays in PG; project__organization is the
+        # tenant scope check)
+        try:
+            trace = Trace.objects.select_related("project").get(
+                id=params.trace_id,
+                project__organization=context.organization,
+            )
+        except Trace.DoesNotExist:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
         # Load all spans from CH 25.3 — was ObservationSpan.objects.filter(
         # trace=, deleted=False).order_by("start_time", "created_at").
         with get_reader() as reader:
-            spans = reader.list_by_trace(
-                str(params.trace_id), project_id=str(project.id)
-            )
+            spans = reader.list_by_trace(str(trace.id))
 
         if not spans:
-            if context.assigned_trace_id is not None:
-                return ToolResult.error("No spans were available to inspect.")
             return ToolResult(
                 content=section(
                     "Trace Exploration",
@@ -117,14 +119,6 @@ class ExploreTraceTool(BaseTool):
 
         # Run Chauffeur (Haiku) for sub-flow identification
         chauffeur_report = self._run_chauffeur(execution_summary)
-
-        if context.assigned_trace_id is not None and not chauffeur_report.get(
-            "sub_flows"
-        ):
-            # An outline alone does not tell the worker what happened in the spans.
-            return ToolResult.error(
-                f"Trace summary unavailable. Use read_trace_span with a span ID from:\n{outline}"
-            )
 
         # Build the output
         content = section("Trace Exploration", outline)
@@ -288,10 +282,7 @@ class ExploreTraceTool(BaseTool):
                         + f"\n... [{len(soutput_str) - 1500} chars truncated]"
                     )
                 detail_lines.append(f"Output: {soutput_str}")
-            # CHSpan carries the typed JSON column as text, not a PG dict.
-            if isinstance(smetadata, str):
-                smetadata = json.loads(smetadata)
-            if isinstance(smetadata, dict):
+            if smetadata:
                 relevant = {
                     k: v
                     for k, v in smetadata.items()

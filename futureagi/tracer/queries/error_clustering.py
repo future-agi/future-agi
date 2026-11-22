@@ -123,7 +123,6 @@ class ErrorClusteringDB:
                 if best_cluster:
                     # Add to existing cluster
                     self.add_to_existing_cluster(
-                        project_id=project_id,
                         cluster_id=best_cluster["cluster_id"],
                         error_detail_pk=error_detail_pk,
                         vector=vector,
@@ -252,7 +251,6 @@ class ErrorClusteringDB:
 
     def add_to_existing_cluster(
         self,
-        project_id: str,
         cluster_id: str,
         error_detail_pk: str,
         vector: list[float],
@@ -261,9 +259,8 @@ class ErrorClusteringDB:
         """Add an error to an existing cluster and update centroid."""
 
         try:
-            detail = TraceErrorDetail.objects.select_related("analysis").get(
-                id=error_detail_pk, analysis__project_id=project_id
-            )
+            detail = TraceErrorDetail.objects.get(id=error_detail_pk)
+            project_id = detail.analysis.project_id
             cluster = TraceErrorGroup.objects.get(
                 cluster_id=cluster_id, project_id=project_id
             )
@@ -279,22 +276,20 @@ class ErrorClusteringDB:
             )
 
             # Update affected traces using junction table
-            trace_id = detail.analysis.trace_id
+            trace = detail.analysis.trace
 
             # Prepare junction entries for bulk creation
             junction_entries = []
             if detail.location_spans:
                 # Create entries for each span
                 junction_entries = [
-                    ErrorClusterTraces(
-                        cluster=cluster, trace_id=trace_id, span_id=span_id
-                    )
+                    ErrorClusterTraces(cluster=cluster, trace=trace, span_id=span_id)
                     for span_id in detail.location_spans
                 ]
             else:
                 # Create entry for trace without specific span
                 junction_entries = [
-                    ErrorClusterTraces(cluster=cluster, trace_id=trace_id, span=None)
+                    ErrorClusterTraces(cluster=cluster, trace=trace, span=None)
                 ]
 
             # Bulk create with ignore_conflicts to handle duplicates
@@ -322,12 +317,11 @@ class ErrorClusteringDB:
                     SELECT centroid, member_count
                     FROM cluster_centroids
                     WHERE cluster_id = %(cluster_id)s
-                    AND project_id = %(project_id)s
                     LIMIT 1
                 """
                 rows = db.execute_read(
                     query,
-                    {"cluster_id": cluster_id, "project_id": str(project_id)},
+                    {"cluster_id": cluster_id},
                     max_result_rows=1,
                 )
 
@@ -464,15 +458,11 @@ class ErrorClusteringDB:
             cluster_id = f"K-{h.upper()}"
 
             # Get error details
-            details = list(
-                TraceErrorDetail.objects.filter(
-                    id__in=error_detail_pks, analysis__project_id=project_id
-                ).select_related("analysis")
-            )
+            details = TraceErrorDetail.objects.filter(
+                id__in=error_detail_pks
+            ).select_related("analysis__trace")
 
-            # Reject a mixed or stale vector batch rather than combining its
-            # centroid with another project's descriptions or memberships.
-            if not details or len(details) != len(set(error_detail_pks)):
+            if not details:
                 return None
 
             # Compute centroid
@@ -498,13 +488,13 @@ class ErrorClusteringDB:
                 total_events += len(detail.location_spans or [])
 
                 # Collect trace-span pairs for later insertion
-                trace_id = detail.analysis.trace_id
+                trace = detail.analysis.trace
                 if detail.location_spans:
                     for span_id in detail.location_spans:
-                        trace_span_pairs.append((trace_id, span_id))
+                        trace_span_pairs.append((trace, span_id))
                 else:
                     # Add trace without specific span
-                    trace_span_pairs.append((trace_id, None))
+                    trace_span_pairs.append((trace, None))
 
                 imp = detail.impact or "MEDIUM"
                 if order.get(imp, 0) > order.get(combined_impact, 0):
@@ -544,13 +534,13 @@ class ErrorClusteringDB:
             junction_entries = []
             seen_pairs = set()  # To avoid duplicates
 
-            for trace_id, span_id in trace_span_pairs:
-                pair = (trace_id, span_id)
+            for trace, span_id in trace_span_pairs:
+                pair = (trace.id, span_id)
                 if pair not in seen_pairs:
                     seen_pairs.add(pair)
                     junction_entries.append(
                         ErrorClusterTraces(
-                            cluster=cluster, trace_id=trace_id, span_id=span_id
+                            cluster=cluster, trace=trace, span_id=span_id
                         )
                     )
 

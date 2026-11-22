@@ -1,7 +1,6 @@
-"""Background refusal and independent project scoping of the registered tools."""
+"""Refusal, untouched rows and pinned foreground behavior."""
 
 import uuid
-from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
 import pytest
@@ -11,7 +10,6 @@ from tracer.models.trace_error_analysis import TraceErrorAnalysis, TraceErrorDet
 from tracer.tasks.error_analysis import _falcon_analyze_single_trace
 from tracer.tests._falcon_analysis import (
     finding_params,
-    install_reader,
     read_call,
     score_params,
     scripted_tool_stream,
@@ -82,36 +80,21 @@ def test_held_scoring_leaves_local_and_foreign_analyses_untouched(
 
 
 @pytest.mark.django_db(transaction=True)
-def test_held_worker_does_not_score_an_accessible_colliding_root(
+def test_held_worker_does_not_score_a_sibling_analysis(
     project,
     other_project,
-    monkeypatch,
 ):
-    from ai_tools.tools.tracing.access import get_trace_project
-
     trace_id = str(uuid.uuid4())
-    ctx = ToolContext(
-        project.workspace.created_by,
-        project.organization,
-        project.workspace,
-        project=project,
-    )
-    # Keep this resolver stub out of the imports that the worker probes observe.
-    with monkeypatch.context() as resolver_patch:
-        reader = install_reader(
-            resolver_patch, project, trace_id, foreign=other_project
-        )
-        assert get_trace_project(trace_id, ctx) == project
-        reader.root_ids_by_trace_ids.assert_called_once_with(
-            [trace_id], project_ids=[str(project.id)]
-        )
+    foreign = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=other_project)
     stream = scripted_tool_stream(
         read_call(trace_id), ("submit_trace_scores", score_params(trace_id))
     )
     with no_background_work(trace_id, stream=stream):
         result = _falcon_analyze_single_trace(trace_id, str(project.id))
         assert_worker_refused(result, trace_id)
-    assert not TraceErrorAnalysis.objects.filter(trace_id=trace_id).exists()
+    foreign.refresh_from_db()
+    assert foreign.overall_score is None
+    assert not TraceErrorAnalysis.objects.filter(trace_id=trace_id, project=project).exists()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -129,7 +112,7 @@ def test_held_worker_never_starts_interruptible_scoring(project):
 
 
 @pytest.mark.django_db(transaction=True)
-def test_held_activity_preserves_prior_scored_interruption_in_feed(
+def test_held_activity_preserves_existing_feed_result_and_failure_marker(
     project, queued_trace_pair
 ):
     from tracer.models.trace_error_analysis import ErrorClusterTraces
@@ -147,7 +130,7 @@ def test_held_activity_preserves_prior_scored_interruption_in_feed(
     TraceErrorDetail.objects.create(
         analysis=saved, error_id="E001", category="Own finding", location_spans=[root]
     )
-    deep_analysis_state.set_failed(assigned, project_id=project_id)
+    deep_analysis_state.set_failed(assigned)
     stream = scripted_tool_stream(
         read_call(assigned, root),
         ("submit_trace_finding", finding_params(assigned) | {"location_spans": [root]}),
@@ -157,9 +140,10 @@ def test_held_activity_preserves_prior_scored_interruption_in_feed(
     with no_background_work(assigned, other, stream=stream):
         assert_queued_pair_refused(project_id, queued_trace_pair)
     status = feed.get_deep_analysis(group.cluster_id, assigned, [project_id])
-    assert status.status == "failed"
-    assert not deep_analysis_state.is_running(assigned, project_id=project_id)
-    assert not status.recommendations
+    assert status.status == "done"  # Pinned Feed prefers the stored analysis row.
+    assert [r.id for r in status.recommendations] == ["E001"]
+    assert deep_analysis_state.status(assigned, has_analysis=False) == "failed"
+    assert not deep_analysis_state.is_running(assigned)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -183,154 +167,79 @@ def test_held_worker_never_invokes_unscoped_registry_tools(project, monkeypatch)
 @pytest.mark.parametrize(
     "tool_name", ["read_trace_span", "explore_trace_legacy", "submit_trace_finding"]
 )
-def test_analysis_tools_use_project_scoped_ch_and_analysis_rows(
-    project,
-    other_project,
-    monkeypatch,
-    tool_name,
-):
+def test_foreground_trace_tools_require_dev_pg_trace(project, other_project, monkeypatch, tool_name):
     from ai_tools.registry import registry
 
-    trace_id = str(uuid.uuid4())
-    foreign = TraceErrorAnalysis.objects.create(
-        trace_id=trace_id, project=other_project
-    )
+    trace_id = str(uuid.uuid4())  # Analysis rows do not create a PG Trace.
+    foreign = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=other_project)
     before = TraceErrorAnalysis.objects.filter(pk=foreign.pk).values().get()
-    context = ToolContext(
-        user=project.workspace.created_by,
-        organization=project.organization,
-        workspace=project.workspace,
-    )
-    context.project = project
-    reader = install_reader(monkeypatch, project, trace_id, foreign=other_project)
-    if tool_name == "explore_trace_legacy":
-        reader.list_by_trace.return_value = []
+    ctx = ToolContext(project.workspace.created_by, project.organization, project.workspace)
+    reader = Mock(side_effect=AssertionError("Read spans without the PG trace"))
+    monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", reader)
     params = {"trace_id": trace_id}
     if tool_name == "read_trace_span":
         params["span_id"] = "shared-span"
     elif tool_name == "submit_trace_finding":
-        params = finding_params(trace_id) | {"analysis_id": str(foreign.id)}
-
-    result = registry.get(tool_name).run(params, context)
-
-    assert not result.is_error, result.content
+        params = finding_params(trace_id) | {"analysis_id": str(foreign.pk)}
+    result = registry.get(tool_name).run(params, ctx)
+    assert result.is_error and result.error_code == "NOT_FOUND"
     assert TraceErrorAnalysis.objects.filter(pk=foreign.pk).values().get() == before
-    reader.root_ids_by_trace_ids.assert_called_once_with(
-        [trace_id], project_ids=[str(project.id)]
-    )
-    if tool_name == "submit_trace_finding":
-        own = TraceErrorAnalysis.objects.get(project=project, trace_id=trace_id)
-        assert own.total_errors == 1
-        assert TraceErrorDetail.objects.get(analysis=own).description == "Own finding"
-        assert not TraceErrorDetail.objects.filter(analysis=foreign).exists()
-    else:
-        reader.list_by_trace.assert_called_once_with(
-            trace_id, project_id=str(project.id)
-        )
-        if tool_name == "read_trace_span":
-            assert "Own evidence" in result.content
+    assert not TraceErrorDetail.objects.filter(analysis=foreign).exists()
+    reader.assert_not_called()
 
 
 @pytest.mark.django_db
-def test_embedding_ingestion_selects_only_requesting_project(
-    project, other_project, monkeypatch
-):
-    from agentic_eval.core.embeddings.embedding_manager import (
-        EmbeddingManager,
-        model_manager,
-    )
-    from ee.agenthub.traceerroragent.error_cluster import ErrorEmbeddingClusterer
-    from tracer.queries.error_analysis import TraceErrorAnalysisDB
-
+def test_refused_batch_does_not_embed_either_project(project, other_project):
     trace_id = str(uuid.uuid4())
-    own = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=project)
-    foreign = TraceErrorAnalysis.objects.create(
-        trace_id=trace_id, project=other_project
-    )
-    detail = TraceErrorDetail.objects.create(
-        analysis=own, error_id="E001", category="Own", description="Own evidence"
-    )
-    TraceErrorDetail.objects.create(
-        analysis=foreign, error_id="E001", category="Foreign", description="Private"
-    )
-    embed = Mock(return_value=[0.1, 0.2])
-    monkeypatch.setattr(type(model_manager), "text_model", property(lambda self: embed))
-    db_client = MagicMock()
-    monkeypatch.setattr(
-        EmbeddingManager, "__init__", lambda self: setattr(self, "db_client", db_client)
-    )
-    monkeypatch.setattr(EmbeddingManager, "close", Mock())
-    monkeypatch.setattr(
-        TraceErrorAnalysisDB, "_embedding_exists_for_detail", lambda *args: False
-    )
-    build = Mock(side_effect=lambda row: row.description)
-    monkeypatch.setattr(
-        ErrorEmbeddingClusterer, "_build_embedding_text_from_detail", build
-    )
-
-    count = TraceErrorAnalysisDB().ingest_trace_error_embeddings(
-        trace_id,
-        project_id=str(project.id),
-        organization_id=str(project.organization_id),
-    )
-
-    assert count == 1
-    embed.assert_called_once_with("Own evidence")
-    assert build.call_args.args[0].id == detail.id
-    assert db_client.bulk_upsert_vectors.call_args.kwargs["eval_id"] == str(project.id)
-    assert db_client.bulk_upsert_vectors.call_args.kwargs["unique_keys"] == [
-        "project_id",
-        "error_detail_pk",
-    ]
+    for owner in (project, other_project):
+        analysis = TraceErrorAnalysis.objects.create(trace_id=trace_id, project=owner)
+        TraceErrorDetail.objects.create(
+            analysis=analysis, error_id="E001", category="Evidence", description=owner.name
+        )
+    with no_background_work(trace_id):
+        assert_activity_refused(str(project.pk), [trace_id])
 
 
-def test_project_markers_do_not_collide_and_failure_wins_over_partial_analysis():
+def test_dev_claim_and_completed_row_precedence():
     from django.core.cache import cache
 
     from tracer.queries import deep_analysis_state as state
 
-    trace_id = str(uuid.uuid4())
-    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    tid = str(uuid.uuid4())
     try:
-        assert state.set_running(trace_id, project_id=first)
-        assert state.set_running(trace_id, project_id=second)
-        state.set_failed(trace_id, project_id=first)
-        assert state.status(trace_id, project_id=first, has_analysis=True) == "failed"
-        assert (
-            state.status(trace_id, project_id=second, has_analysis=False) == "running"
-        )
-        state.clear(trace_id, project_id=second)
-        assert state.status(trace_id, project_id=first, has_analysis=False) == "failed"
+        assert state.set_running(tid)
+        assert cache.get(f"deep_analysis:running:{tid}") == "1"
+        assert not state.set_running(tid)
+        assert state.status(tid, has_analysis=False) == "running"
+        state.set_failed(tid)
+        assert cache.get(f"deep_analysis:failed:{tid}") == "1"
+        assert state.status(tid, has_analysis=False) == "failed"
+        assert state.status(tid, has_analysis=True) == "done"
+        assert state.set_running(tid)
+        assert cache.get(f"deep_analysis:failed:{tid}") is None
     finally:
-        cache.clear()
+        state.clear(tid)
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize(
-    "missing_scope", ["organization", "workspace", "foreign_project"]
-)
-def test_trace_access_fails_closed_before_clickhouse(
-    project, other_project, monkeypatch, missing_scope
-):
-    from ai_tools.tools.tracing.access import get_trace_project
+@pytest.mark.parametrize("missing_scope", ["organization", "workspace", "foreign_project"])
+def test_foreground_span_uses_dev_trace_lookup(project, other_project, monkeypatch, missing_scope):
+    from ai_tools.registry import registry
+    from tracer.models.trace import Trace
 
-    context = ToolContext(
-        user=project.workspace.created_by,
-        organization=project.organization,
-        workspace=project.workspace,
-        project=project,
-    )
+    tid = uuid.uuid4()
+    ctx = ToolContext(project.workspace.created_by, project.organization, project.workspace)
     if missing_scope == "foreign_project":
-        context.organization = other_project.organization
-        context.workspace = other_project.workspace
-        # Even in the same workspace, bind an unavailable project explicitly.
-        context.project = SimpleNamespace(pk=uuid.uuid4())
+        ctx.project = other_project
     else:
-        setattr(context, missing_scope, None)
-    reader = Mock()
+        setattr(ctx, missing_scope, None)
+    lookup = Mock(side_effect=Trace.DoesNotExist)
+    monkeypatch.setattr(Trace.objects, "get", lookup)
+    reader = Mock(side_effect=AssertionError("Reader used for a missing trace"))
     monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", reader)
-
-    assert get_trace_project(str(uuid.uuid4()), context) is None
+    result = registry.get("read_trace_span").run({"trace_id": str(tid), "span_id": "absent"}, ctx)
+    assert result.is_error and result.error_code == "NOT_FOUND"
+    lookup.assert_called_once_with(id=tid, project__organization=ctx.organization)
     reader.assert_not_called()
 
 
@@ -347,7 +256,7 @@ def outside_workspace(project):
 
 
 @pytest.mark.django_db
-def test_held_dispatch_still_scopes_legacy_project_to_default_workspace(
+def test_producer_refuses_legacy_project_without_disclosing_scope(
     project, outside_workspace
 ):
     context = ToolContext(
@@ -366,6 +275,7 @@ def test_held_dispatch_still_scopes_legacy_project_to_default_workspace(
 @pytest.fixture
 def queued_trace_pair(project, settings, outside_workspace):
     """Two real CH roots and an existing competing claim; do not enqueue a job in setup."""
+    from django.core.cache import cache
     from django.utils import timezone
 
     from ee.usage.deployment import _detect_mode
@@ -397,16 +307,19 @@ def queued_trace_pair(project, settings, outside_workspace):
     )
     try:
         seed_ch_spans(roots)
-        assert deep_analysis_state.set_running(other, project_id=project_id)
+        assert deep_analysis_state.set_running(other)
         yield assigned, other, ctx, outside_workspace
     finally:
         _detect_mode.cache_clear()
+        cache.delete(f"deep_analysis:running:{other}")
         for tid in (assigned, other):
-            deep_analysis_state.clear(tid, project_id=project_id)
+            deep_analysis_state.clear(tid)
         delete_ch_spans([row["id"] for row in roots])
 
 
 def assert_queued_pair_refused(project_id, pair):
+    from django.core.cache import cache
+
     from tracer.queries import deep_analysis_state
 
     assigned, other, ctx, outside = pair
@@ -415,9 +328,10 @@ def assert_queued_pair_refused(project_id, pair):
     assert_tool_refused(ctx, outside, project_id, [other])
     # A pre-hold Temporal message can contain a trace with a live claim.
     # Refusing that message must preserve even the claim for its own input.
-    assert deep_analysis_state.is_running(other, project_id=project_id)
+    assert deep_analysis_state.is_running(other)
     assert_activity_refused(project_id, [assigned, other])
-    assert deep_analysis_state.is_running(other, project_id=project_id)
+    assert cache.get(f"deep_analysis:running:{other}") == "1"
+    assert deep_analysis_state.is_running(other)
 
 
 @pytest.mark.django_db(transaction=True)
@@ -500,9 +414,7 @@ def test_held_activity_leaves_sibling_trace_and_claim_untouched(
     assert not analyses.filter(trace_id=assigned).exists()
     assert list(analyses.filter(trace_id=other).values()) == [before]
     assert not TraceErrorDetail.objects.filter(analysis=existing).exists()
-    assert deep_analysis_state.is_running(other, project_id=str(project.id))
-    state = deep_analysis_state.status(
-        assigned, project_id=str(project.id), has_analysis=False
-    )
+    assert deep_analysis_state.is_running(other)
+    state = deep_analysis_state.status(assigned, has_analysis=False)
     assert state == "idle"
     summary.assert_not_called()

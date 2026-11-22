@@ -149,9 +149,5 @@ def test_falcon_analysis_still_skips_oss_without_creating_agent(monkeypatch):
 
     result = _falcon_analyze_single_trace(trace_id, str(uuid.uuid4()))
 
-    assert result == {
-        "success": False,
-        "trace_id": trace_id,
-        "error": "Falcon AI not available (requires EE)",
-    }
+    assert_worker_refused(result, trace_id)
     constructor.assert_not_called()

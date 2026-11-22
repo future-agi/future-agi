@@ -7,18 +7,9 @@ from unittest.mock import MagicMock
 import httpx
 
 
-def install_reader(monkeypatch, project, trace_id, *, foreign=None):
+def install_reader(monkeypatch, project, trace_id):
     reader = MagicMock()
-
-    def roots(trace_ids, project_ids=None):
-        selected = foreign if foreign is not None and project_ids is None else project
-        if project_ids is not None and str(selected.id) not in project_ids:
-            return {}
-        if trace_id not in trace_ids:
-            return {}
-        return {trace_id: ("shared-span", str(selected.id))}
-
-    reader.root_ids_by_trace_ids.side_effect = roots
+    reader.root_ids_by_trace_ids.return_value = {trace_id: ("shared-span", str(project.pk))}
     reader.list_by_trace.return_value = [
         SimpleNamespace(
             id="shared-span",

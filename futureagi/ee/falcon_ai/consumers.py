@@ -386,7 +386,6 @@ class FalconAIConsumer(AsyncJsonWebsocketConsumer):
                 user=self.user,
                 organization=self.organization,
                 workspace=self.workspace,
-                auth_scope=self.scope.get("auth_scope"),
             )
 
             # Resolve skill from DB if skill_id provided
