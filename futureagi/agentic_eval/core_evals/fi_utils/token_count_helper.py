@@ -302,7 +302,9 @@ def calculate_total_cost(
             chars_per_unit = 1_000
         input_characters = token_usage.get("input_characters") or 0
 
-        prompt_cost = round((input_characters / chars_per_unit) * input_cost_per_chars, 6)
+        prompt_cost = round(
+            (input_characters / chars_per_unit) * input_cost_per_chars, 6
+        )
         completion_cost = 0.0  # TTS doesn't have completion cost
 
     # Minute-based pricing (STT models). input_per_minute and
