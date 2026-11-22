@@ -849,8 +849,9 @@ def run_project_pass(lease: ProjectLease, purpose: str) -> None:
     state = MetricProjectRefresh.objects.select_related("project").get(
         project_id=lease.project_id
     )
-    # A NULL workspace is passed through deliberately: the writer and plan()
-    # fail closed on it ("refresh scope mismatch") rather than guessing one.
+    # A NULL workspace reaches the writer, which fails closed ("refresh scope
+    # mismatch"). For legacy NULL-workspace projects that is a known bug: their
+    # metrics never publish. TH-10607 resolves the default workspace here.
     scope = Scope(
         state.project.organization_id,
         state.project.workspace_id,  # type: ignore[arg-type]
