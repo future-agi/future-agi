@@ -24,9 +24,10 @@ import { grepInvertPattern } from "../lib/quarantine.ts";
 import {
   annotation,
   checkParity,
-  cohortAttempt,
   fileDurations,
   readRuntimeSkips,
+  receiptArtifact,
+  shardAttempts,
 } from "./shard-report.mjs";
 
 const flat = (groups) => groups.flat().sort();
@@ -286,21 +287,68 @@ test("parity passes only when every listed test has exactly one result", () => {
   });
 });
 
-test("a report can reuse an unsuperseded cohort but not a missing or changed sibling", () => {
-  const job = (i, attempt) => ({
-    name: `e2e (distributed, ${i}/2)`,
+test("each shard's receipts come from the attempt that ran it", () => {
+  // A copy of an unre-run shard keeps the original start and end times.
+  const job = (i, attempt, ran = attempt) => ({
+    name: `e2e (distributed, ${i}/3)`,
     run_attempt: attempt,
+    started_at: `2026-11-22T0${ran}:00:00Z`,
+    completed_at: `2026-11-22T0${ran}:30:00Z`,
   });
-  const jobs = [job(1, 1), job(2, 1)];
-  assert.equal(cohortAttempt("distributed", 2, jobs), 1);
-  assert.throws(() => cohortAttempt("distributed", 2, [jobs[0]]), /missing/);
+  const first = [job(1, 1), job(2, 1), job(3, 1)];
+  assert.deepEqual(shardAttempts("distributed", 3, first), [1, 1, 1]);
+  // Re-run failed jobs re-ran only shard 2: its receipts are from attempt 2,
+  // the others' from attempt 1 (as on run 45013774687).
+  const rerun = [...first, job(1, 2, 1), job(2, 2), job(3, 2, 1)];
+  assert.deepEqual(shardAttempts("distributed", 3, rerun), [1, 2, 1]);
+  // A third attempt that re-ran only the report job copies all of them.
+  const again = [...rerun, job(1, 3, 1), job(2, 3, 2), job(3, 3, 1)];
+  assert.deepEqual(shardAttempts("distributed", 3, again), [1, 2, 1]);
+  // Re-run all jobs: every shard ran at attempt 2.
+  const all = [...first, job(1, 2), job(2, 2), job(3, 2)];
+  assert.deepEqual(shardAttempts("distributed", 3, all), [2, 2, 2]);
+  // Fails closed.
   assert.throws(
-    () => cohortAttempt("distributed", 2, [...jobs, job(2, 2)]),
-    /mixed/,
+    () => shardAttempts("distributed", 3, first.slice(0, 2)),
+    /missing/,
   );
-  assert.equal(
-    cohortAttempt("distributed", 2, [...jobs, job(2, 2), job(1, 2)]),
-    2,
+  const unfinished = { ...job(2, 2), completed_at: null };
+  assert.throws(
+    () => shardAttempts("distributed", 3, [...first, unfinished]),
+    /missing/,
+  );
+  assert.throws(
+    () => shardAttempts("distributed", 3, [...first, job(2, 1)]),
+    /repeated/,
+  );
+  // A copy at attempt 3 of a job last run at attempt 1, with no attempt-2 copy.
+  assert.throws(
+    () => shardAttempts("distributed", 3, [...first, job(2, 3, 1)]),
+    /inconsistent/,
+  );
+});
+
+test("a receipt is exactly one unexpired artifact", () => {
+  const name = "blob-report-distributed-2-attempt-2";
+  const row = { name, id: 1, digest: "sha256:x", expired: false };
+  assert.equal(receiptArtifact([row], name), row);
+  assert.throws(() => receiptArtifact([], name), /missing or repeated/);
+  assert.throws(
+    () => receiptArtifact([row, { ...row, id: 2 }], name),
+    /missing or repeated/,
+  );
+  assert.throws(
+    () => receiptArtifact([{ ...row, expired: true }], name),
+    /missing or repeated/,
+  );
+  // A receipt of another attempt does not stand in for this one.
+  assert.throws(
+    () =>
+      receiptArtifact(
+        [{ ...row, name: "blob-report-distributed-2-attempt-1" }],
+        name,
+      ),
+    /missing or repeated/,
   );
 });
 

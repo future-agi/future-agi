@@ -288,31 +288,59 @@ export function fileDurations(merged) {
 // The stack image set is not independently digest-pinned across producer
 // attempts yet. Reuse a complete, unsuperseded stack (e.g. a report-only
 // retry); require rerunning the cohort rather than combining unlike stacks.
-export function cohortAttempt(stack, total, jobs) {
+/**
+ * The attempt that produced each shard's receipts, by shard number (1-based).
+ *
+ * "Re-run failed jobs" starts a new attempt in which each shard that is not
+ * re-run appears again as a copy: same name, the new run_attempt, but the
+ * original start and end times, and no new artifacts. So a shard's receipts
+ * carry the earliest attempt of the copies of its latest job. Fails closed:
+ * every shard needs a finished latest job, and the copies must agree.
+ */
+export function shardAttempts(stack, total, jobs) {
   if (
     !["distributed", "standalone"].includes(stack) ||
     !Number.isSafeInteger(total) ||
     total < 1
   )
     throw new Error("invalid stack plan");
-  const attempts = new Set();
+  const produced = [];
   for (let i = 1; i <= total; i++) {
     const matches = jobs
       .filter((job) => job.name === `e2e (${stack}, ${i}/${total})`)
       .sort((a, b) => b.run_attempt - a.run_attempt);
     if (
       !matches.length ||
-      !Number.isSafeInteger(matches[0].run_attempt) ||
-      matches[0].run_attempt < 1
+      !matches.every(
+        (job) => Number.isSafeInteger(job.run_attempt) && job.run_attempt >= 1,
+      ) ||
+      !matches[0].started_at ||
+      !matches[0].completed_at
     )
       throw new Error(`missing producer ${stack}/${i}`);
-    attempts.add(matches[0].run_attempt);
-  }
-  if (attempts.size !== 1)
-    throw new Error(
-      `mixed ${stack} producers; rerun all jobs to qualify one stack`,
+    if (new Set(matches.map((job) => job.run_attempt)).size !== matches.length)
+      throw new Error(`repeated producer ${stack}/${i}`);
+    const latest = matches[0];
+    const copies = matches.filter(
+      (job) =>
+        job.started_at === latest.started_at &&
+        job.completed_at === latest.completed_at,
     );
-  return [...attempts][0];
+    // A copy is one attempt after another back to the producer, never a gap.
+    const first = copies[copies.length - 1].run_attempt;
+    if (copies.length !== latest.run_attempt - first + 1)
+      throw new Error(`inconsistent producer copies ${stack}/${i}`);
+    produced.push(first);
+  }
+  return produced;
+}
+
+/** The one unexpired artifact with this name, or an error. */
+export function receiptArtifact(artifacts, name) {
+  const matches = artifacts.filter((row) => row.name === name && !row.expired);
+  if (matches.length !== 1)
+    throw new Error(`missing or repeated receipt: ${name}`);
+  return matches[0];
 }
 
 function downloadReceipts(stack, total) {
@@ -325,11 +353,13 @@ function downloadReceipts(stack, total) {
         maxBuffer: 64 * 1024 * 1024,
       }),
     ).flatMap((page) => page[key]);
-  const attempt = cohortAttempt(
+  const attempts = shardAttempts(
     stack,
     total,
     pages(`${run}/jobs?filter=all&per_page=100`, "jobs"),
   );
+  // The last shard writes the once-per-stack record.
+  const recordAttempt = attempts[total - 1];
   const artifacts = pages(`${run}/artifacts?per_page=100`, "artifacts");
   const temp = mkdtempSync(path.join(tmpdir(), "e2e-receipts-"));
   const stream = (command, args, file) => {
@@ -340,13 +370,8 @@ function downloadReceipts(stack, total) {
       closeSync(fd);
     }
   };
-  const unpack = (name, member, target) => {
-    const matches = artifacts.filter(
-      (row) => row.name === name && !row.expired,
-    );
-    if (matches.length !== 1)
-      throw new Error(`missing or repeated receipt: ${name}`);
-    const { id, digest } = matches[0];
+  const unpack = (name, member, target, attempt) => {
+    const { id, digest } = receiptArtifact(artifacts, name);
     const archive = path.join(temp, String(id));
     stream("gh", ["api", `${repo}/artifacts/${id}/zip`], archive);
     const hash = execFileSync("sha256sum", [archive], {
@@ -369,15 +394,17 @@ function downloadReceipts(stack, total) {
     for (let i = 1; i <= total; i++) {
       const blob = `report-${i}-of-${total}.zip`;
       unpack(
-        `blob-report-${stack}-${i}-attempt-${attempt}`,
+        `blob-report-${stack}-${i}-attempt-${attempts[i - 1]}`,
         blob,
         `all-blob-reports/${blob}`,
+        attempts[i - 1],
       );
     }
     unpack(
-      `once-per-stack-${stack}-attempt-${attempt}`,
+      `once-per-stack-${stack}-attempt-${recordAttempt}`,
       "record.json",
       "once-per-stack/record.json",
+      recordAttempt,
     );
     const record = JSON.parse(
       readFileSync("once-per-stack/record.json", "utf8"),
@@ -387,7 +414,7 @@ function downloadReceipts(stack, total) {
       record.sha !== process.env.GITHUB_SHA ||
       record.stack !== stack ||
       record.total !== total ||
-      record.attempt !== attempt ||
+      record.attempt !== recordAttempt ||
       record.date !== process.env.E2E_QUARANTINE_TODAY ||
       !/^[0-9a-f]{40}$/.test(record.sdk)
     )
