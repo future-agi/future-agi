@@ -294,3 +294,39 @@ class TestRunClusterRcaPersistsThroughTheWorker:
         assert cluster.rca_synthesis == "Auth pool exhaustion causes the timeout."
         assert cluster.rca_confidence == "M"
         assert cluster.rca_failures_at_run == 12
+
+    @pytest.mark.django_db(transaction=True)
+    def test_completed_low_confidence_run_still_reaches_the_row(self):
+        """The maintainer's carve-out, driven through the real bridge.
+
+        Confidence is not the gate: a completed analysis that only came out low
+        still has to save and notify. The helper test pins the gate; this pins
+        that the production path agrees.
+        """
+        from ee.agenthub.cluster_rca.constants import Confidence as _Conf
+        from ee.agenthub.cluster_rca.types import (
+            ClusterAnalysisResult as _Res,
+        )
+        from ee.agenthub.cluster_rca.types import (
+            ClusterSynthesis as _Syn,
+        )
+
+        low = _Syn(
+            synthesis="Two of the sampled traces time out on auth, but the third "
+            "returns a provider 429, so the cluster may mix two causes.",
+            fix="Split the cluster before concluding, then re-run the analysis.",
+            confidence=_Conf.LOW,
+        )
+        result = _Res(
+            cluster_id="E-x",
+            synthesis=low,
+            terminated_reason="synthesis_submitted",
+            investigation_complete=True,
+            synthesis_is_last_resort=False,
+        )
+
+        cluster, _before_at, _before_trace = self._drive(result)
+
+        assert cluster.rca_synthesis == low.synthesis
+        assert cluster.rca_confidence == "L"
+        assert cluster.rca_failures_at_run == 12

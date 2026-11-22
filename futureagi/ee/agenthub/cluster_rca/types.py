@@ -64,9 +64,13 @@ class ClusterAnalysisResult:
     findings: list[ClusterFinding] = field(default_factory=list)
     turn_count: int = 0
     terminated_reason: str = (
-        ""  # the loop's own exit: "synthesis_submitted" | "stopped" |
-        # "error" | "max_turns" | "cost_ceiling" | "converged" (the first two
-        # are the model's own conclusion; the rest are resource exits)
+        ""
+        # What the result carries, by exit: "synthesis_submitted" (the model
+        # concluded), "stopped" (an explicit user Stop, no synthesis),
+        # "synthesis_forced" (a resource exit it was salvaged from),
+        # "error", plus the pre-rewrite loop exits "max_turns", "cost_ceiling"
+        # and "converged" that ``run()`` rewrites to "synthesis_forced" when a
+        # synthesis was salvaged.
     )
     error: Optional[str] = None
     cost_usd: float = 0.0

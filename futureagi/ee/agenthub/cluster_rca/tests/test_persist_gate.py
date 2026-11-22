@@ -400,16 +400,26 @@ class TestAgentFlagsTheTextItProduced:
         assert result.synthesis_is_last_resort is False
 
     def test_deterministic_fallback_is_last_resort(self):
-        agent = self._loop_agent()
-        agent._force_synthesis = lambda messages, turn: agent._fallback_synthesis()
+        """Run the real chain: the forced call goes out, the model declines, and
+        ``_force_synthesis`` falls through to ``_fallback_synthesis``.
 
-        with patch(
-            "ee.agenthub.cluster_rca.agent.call_llm_raw",
-            return_value=self._reply(finish="stop"),
-        ):
+        Stubbing ``_force_synthesis`` out would pin only "the flag is set and
+        ``run()`` copies it", not that this is how production reaches the text.
+        """
+        agent = self._loop_agent()
+        replies = [
+            self._reply(finish="stop"),  # the loop stops with no conclusion
+            self._reply(finish="stop"),  # the forced call: model declines
+        ]
+
+        def _fake(_client, **kwargs):
+            return replies.pop(0)
+
+        with patch("ee.agenthub.cluster_rca.agent.call_llm_raw", side_effect=_fake):
             result = agent.run()
 
         assert result.synthesis is not None, "the stream still needs an answer"
+        assert result.synthesis.confidence == Confidence.LOW
         assert result.terminated_reason == "synthesis_forced"
         assert result.synthesis_is_last_resort is True, (
             "the deterministic text is the thing the gate must refuse"
