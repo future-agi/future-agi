@@ -8,7 +8,9 @@ import { ProjectType, register } from '@traceai/fi-core';
 
 const { credential, apiKey, secretKey, project, agents } = JSON.parse(readFileSync(0, 'utf8'));
 const client = new Client({ baseUrl: 'http://app:8000', auth: { type: 'context', credential }, maxRetries: 0 });
-const provider = register({ projectName: project, projectType: ProjectType.OBSERVE,
+// Skill and agent-context attribution is opt-in per provider in @traceai/fi-core. The
+// isolated stack's collector has no TLS, so plaintext to it is allowed explicitly.
+const provider = register({ projectName: project, projectType: ProjectType.OBSERVE, runtimeAttributes: true, allowInsecureHttp: true,
   endpoint: 'http://app:4318/v1/traces', headers: { 'x-api-key': apiKey, 'x-secret-key': secretKey } });
 const tracer = provider.getTracer('support-ts');
 try {
