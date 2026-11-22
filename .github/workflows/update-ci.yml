@@ -34,6 +34,7 @@ on:
     paths:
       - "bin/update"
       - "deploy/update/**"
+      - "api_contracts/host-update/**"
       - "deploy/tests/test_update_*.py"
       - "deploy/tests/update_e2e/**"
       - "scripts/generate_update_manifest.py"

@@ -26,6 +26,7 @@ SUITES = ("backend", "metrics", "any", "collector", "ordinary_update")
 UPDATE_CI_PATHS = (
     "bin/update",
     "deploy/update/**",
+    "api_contracts/host-update/**",
     "deploy/tests/test_update_*.py",
     "deploy/tests/update_e2e/**",
     "scripts/generate_update_manifest.py",
@@ -87,7 +88,7 @@ def glob_match(pattern, path):
             out, at = out + "[^/]*", at + 1
         else:
             out, at = out + re.escape(pattern[at]), at + 1
-    return re.fullmatch(out, path, re.S) is not None
+    return re.fullmatch(out, path, re.DOTALL) is not None
 
 
 def update_ci_relevant(paths):
@@ -99,31 +100,51 @@ def update_ci_relevant(paths):
     )
 
 
-# Registers under deploy/update that only scripts/check_update_safety.py reads.
-# Ordinary pull requests edit them to record a review, and no rehearsal step
-# opens them. Every other file there but a document is input of the update
-# tool or of the qualifier (release-policy.json, high-volume-tables.json, the
-# schemas), so a change to one runs both rehearsals.
+# Registers under deploy/update that are excluded from the rehearsal trigger by
+# policy. Ordinary pull requests edit them to record a review. The static gate
+# (scripts/check_update_safety.py) reads them, and the proof inventory still
+# hashes their bytes; no rehearsal outcome depends on their content. Every
+# other file there but a document is input of the update tool or of the
+# qualifier (release-policy.json, high-volume-tables.json, the schemas), so a
+# change to one runs both rehearsals.
 STATIC_GATE_REGISTERS = {
     b"deploy/update/clickhouse-sources.json",
     b"deploy/update/clickhouse-change-reviews.json",
     b"deploy/update/env-generators.json",
 }
-# The ClickHouse schema that a boot installs (manage.py bootstrap_install),
-# and the other things only latest-stable -> PR takes from the pull request
-# beside its migrations, image builds and settings: the Standalone image's
-# own directory and the chart the job packages.
+# The ClickHouse schema that a boot installs (manage.py bootstrap_install,
+# and oss_native_bootstrap.py, which selects the native DDL), and the other
+# things only latest-stable -> PR takes from the pull request beside its
+# migrations, image builds and settings: the Standalone image's own directory
+# and the chart the job packages (CHART, below).
 BOOT_INPUTS = (
     b"deploy/standalone/",
-    b"deploy/helm/futureagi/",
     b"futureagi/tracer/services/clickhouse/v2/schema/",
     b"futureagi/tracer/services/clickhouse/v2/observed_catalog/",
     b"futureagi/scripts/property_catalog_oss/",
 )
 BOOT_FILES = re.compile(
     rb"futureagi/(tfc/management/commands/bootstrap_install"
-    rb"|tracer/services/clickhouse/(oss_cdc_install|v2/apply_schema[^/]*|v2/schema_topology))\.py"
+    rb"|tracer/services/clickhouse/(oss_cdc_install|oss_native_bootstrap"
+    rb"|v2/apply_schema[^/]*|v2/schema_topology))\.py"
 )
+# The chart, as deploy/tests/update_e2e/acceptance.py packages it: without its
+# hack/ and ci/ directories and without dot-files.
+CHART = b"deploy/helm/futureagi/"
+# The updater's two frozen runtime schemas, outside deploy/update.
+UPDATER_SCHEMAS = {
+    b"api_contracts/host-update/api-response.v1.schema.json",
+    b"api_contracts/host-update/public-status.v1.schema.json",
+}
+
+
+def packaged_chart_file(path):
+    if not path.startswith(CHART):
+        return False
+    parts = path[len(CHART) :].split(b"/")
+    return parts[0] not in (b"hack", b"ci") and not any(
+        part.startswith(b".") for part in parts
+    )
 
 
 def git(*args):
@@ -183,6 +204,7 @@ def rehearsal_inputs(paths):
                 b"deploy/tests/test_update_e2e_automatic.py",
                 b".github/workflows/update-ci.yml",
                 b".github/scripts/ci_scope.py",
+                *UPDATER_SCHEMAS,
             }
             or re.fullmatch(rb"scripts/update_rehearsal_[^/]*\.py", path) is not None
             or path.startswith(
@@ -191,7 +213,7 @@ def rehearsal_inputs(paths):
             or path.startswith(b"deploy/update/")
             and not path.endswith(b".md")
             and path not in STATIC_GATE_REGISTERS
-            or re.fullmatch(rb"(deploy/)?docker-compose[^/]*\.yml", path, re.S)
+            or re.fullmatch(rb"(deploy/)?docker-compose[^/]*\.yml", path, re.DOTALL)
             is not None
         )
         built |= (
@@ -202,6 +224,7 @@ def rehearsal_inputs(paths):
             or name.lower().startswith(b"dockerfile")
             or name.endswith((b".dockerignore", b"entrypoint.sh"))
             or path.startswith(BOOT_INPUTS)
+            or packaged_chart_file(path)
             or BOOT_FILES.fullmatch(path) is not None
         )
     return tooling, built
@@ -274,21 +297,21 @@ def plan(event, tested, base, head, mode, standalone=False):
     )
     # The pin check is a pre-merge invariant, not a suite: already-released
     # pins are expected to exist. Do not demand an unpublished pin on all PRs.
-    return dict(
-        version=VERSION,
-        event=event,
-        policy_base=base,
-        diff_base=start,
-        diff_head=head,
-        tested_commit=tested,
-        tested_tree=tree,
-        path_count=None if paths is None else len(paths),
-        policy_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        mode="qualified" if active else "full",
-        proposed=proposed,
-        forced_standalone=standalone or event == "merge_group",
-        flags=flags,
-        reason=(
+    return {
+        "version": VERSION,
+        "event": event,
+        "policy_base": base,
+        "diff_base": start,
+        "diff_head": head,
+        "tested_commit": tested,
+        "tested_tree": tree,
+        "path_count": None if paths is None else len(paths),
+        "policy_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        "mode": "qualified" if active else "full",
+        "proposed": proposed,
+        "forced_standalone": standalone or event == "merge_group",
+        "flags": flags,
+        "reason": (
             "full control"
             if not candidate
             else "impact unknown"
@@ -297,7 +320,7 @@ def plan(event, tested, base, head, mode, standalone=False):
             if proposed
             else "only certified metadata or empty diff"
         ),
-    )
+    }
 
 
 def main():

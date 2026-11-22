@@ -638,9 +638,9 @@ runners in November 2026:
   default.
 - That flow now gives its own project a five-minute settle (`lib/metric-settle.ts`). It asserts
   that the value is reported as not final while the conversations are open, and that its own poll
-  first sees the final value no earlier than five minutes after their last arrival, less 15
-  seconds (one 10-second poll interval and 5 seconds of clock tolerance). It reads when the test
-  saw the value, not when the product published it. A backend unit test pins the 30-minute default.
+  first observes the final value no earlier than five minutes after their last arrival, less 5
+  seconds of clock tolerance. That is an observation time, not the publication time, which the
+  API does not return. A backend unit test pins the 30-minute default.
 - With six shards a shard takes about 20 to 30 minutes, 11 to 15 of them fixed cost (the boot
   alone varied from 7 to 11), and `E2E Tests Pass` reports a little over 30 minutes after the push.
 

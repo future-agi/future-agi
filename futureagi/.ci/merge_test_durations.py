@@ -29,9 +29,8 @@ main suite both forms gave the same split in that replay.
 
 Times are rounded to a tenth of a millisecond, and a test whose id is longer
 than MAX_ID_LENGTH is left out in both forms: a few generated parameter ids
-are hundreds of kilobytes long, and one of them would be most of the file. On
-a measured run that was fewer than 80 of about 72,900 tests. pytest-split plans
-each of them with its suite's average time, not its own.
+are hundreds of kilobytes long, and one of them would be most of the file.
+pytest-split plans each of them with its suite's average time, not its own.
 
 Standard library only.
 """

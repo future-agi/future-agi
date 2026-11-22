@@ -54,12 +54,12 @@ const VALUE_FINAL = { timeout: SETTLE_MS + 2 * (CADENCE_MS + DISPATCH_TICK_MS) +
 // differ by a little.
 const CLOCK_TOLERANCE_MS = 5_000;
 // What the timing assertion below can and cannot say. The test reads when its
-// own poll first SAW the final value, not when the product published it: the
-// product keeps no publication time the API returns. A poll sees a
-// publication up to one 10-second interval late. So "first seen at or after
-// last arrival + settle - 5 s" means the publication came no earlier than
-// last arrival + settle - 15 s. A settle time that is ignored (a final value
-// minutes early) fails; one that is 15 seconds short does not.
+// own poll first OBSERVED the final value. The product keeps no publication
+// time the API returns, so the assertion is about the observation: the final
+// value was first observed no earlier than last arrival + settle - 5 s. It
+// says nothing exact about when the value was published: a poll can observe
+// it a poll interval (or a slow request) late. A settle time that is ignored
+// (a final value observed minutes early) fails.
 // UserAlertMonitor.alert_frequency MinValueValidator(5) (tracer/models/monitor.py).
 // The product's last create body used 60; the first check can land before the
 // snapshot capture commits, and the next one is alert_frequency later.
@@ -115,7 +115,7 @@ test('DASH-E2E-017: a saved custom-formula metric persists a correct value, rend
     backendChecks: [
       'The exact four seeded spans, their typed outcomes and two distinct conversations belong to the minted project in the actor organization/default workspace.',
       'Validate accepts the formula, and the saved metric is version 1 of a custom conversation recipe in PG and in the metric API, with the same definition hash.',
-      'While the conversations are open the KPI API reports the Custom window as partial; the test first sees a final value no earlier than the last arrival plus the settle time, less 15 seconds of poll and clock slack: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.',
+      'While the conversations are open the KPI API reports the Custom window as partial; the test first observes a final value no earlier than the last arrival plus the settle time, less 5 seconds of clock tolerance: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.',
       'The snapshot run completes; it froze exactly the two seeded conversations, its committed overall result is numerator 1, denominator 2, value 0.5, and its commit row names that result.',
       'The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.',
       'The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.',

@@ -78,6 +78,17 @@ class CheckTest(unittest.TestCase):
         finally:
             checker.read = real
 
+    def test_a_difference_after_the_first_digest_block_fails(self):
+        # The digest reads 1 MiB at a time; the only difference sits in the
+        # second block of an otherwise equal record.
+        record = [f"{n:08x} a.py::test_case_{n:06d}" for n in range(40000)]
+        self.assertGreater(sum(len(line) + 1 for line in record), 1 << 20)
+        late = list(record)
+        late[-1] = late[-1][:9] + "a.py::test_other"
+        code, out = self.check(3, record, record, late)
+        self.assertEqual(code, 1)
+        self.assertIn("in 1 of 3 shards: a.py::test_other", out)
+
     def test_the_same_tests_in_another_order_fail(self):
         # pytest-split breaks ties between equal times by position.
         code, out = self.check(

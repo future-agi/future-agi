@@ -1,8 +1,9 @@
 """The comparison base of the update-safety gate, per GitHub event (stdlib only)."""
-from pathlib import Path
+
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/update-safety-base.sh"
@@ -75,13 +76,21 @@ class UpdateSafetyBaseTest(unittest.TestCase):
         self.assertNotEqual(resolve("merge_group", PR_BASE=SHA, PUSH_BEFORE=SHA)[0], 0)
 
     def test_candidate_bases_must_be_immutable_commits(self):
-        for event, key in (("pull_request", "PR_BASE"), ("merge_group", "MERGE_GROUP_BASE")):
+        for event, key in (
+            ("pull_request", "PR_BASE"),
+            ("merge_group", "MERGE_GROUP_BASE"),
+        ):
             for invalid in ("", ZERO, "origin/dev", "-HEAD", SHA[:12]):
                 self.assertNotEqual(resolve(event, **{key: invalid})[0], 0)
 
     def test_the_event_name_is_required(self):
-        result = subprocess.run(["bash", str(SCRIPT)], env={"PATH": "/usr/bin:/bin"},
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        result = subprocess.run(
+            ["bash", str(SCRIPT)],
+            env={"PATH": "/usr/bin:/bin"},
+            capture_output=True,
+            check=False,
+            timeout=30,
+        )
         self.assertNotEqual(result.returncode, 0)
 
     def test_both_workflows_resolve_the_base_through_the_script(self):
@@ -90,10 +99,12 @@ class UpdateSafetyBaseTest(unittest.TestCase):
             text = (ROOT / ".github/workflows" / workflow).read_text()
             self.assertIn("scripts/update-safety-base.sh", text, workflow)
             self.assertNotIn("DEFAULT_BASE", text, workflow)
-            for name in ("EVENT_NAME: ${{ github.event_name }}",
-                         "PR_BASE: ${{ github.event.pull_request.base.sha }}",
-                         "PUSH_BEFORE: ${{ github.event.before }}",
-                         "MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}"):
+            for name in (
+                "EVENT_NAME: ${{ github.event_name }}",
+                "PR_BASE: ${{ github.event.pull_request.base.sha }}",
+                "PUSH_BEFORE: ${{ github.event.before }}",
+                "MERGE_GROUP_BASE: ${{ github.event.merge_group.base_sha }}",
+            ):
                 self.assertIn(name, text, workflow)
 
 
@@ -112,7 +123,9 @@ class ReleasedLineTest(unittest.TestCase):
     def resolve(self, event, **env):
         return resolve(event, cwd=self.repo.path, **env)
 
-    def test_a_scheduled_run_on_the_release_commit_compares_with_the_release_before(self):
+    def test_a_scheduled_run_on_the_release_commit_compares_with_the_release_before(
+        self,
+    ):
         # A scheduled run checks out main. Against origin/main the diff is
         # empty, so the gate passed whatever the release had changed. (And it
         # must not be origin/dev: a release fix that only main carried then
@@ -136,6 +149,60 @@ class ReleasedLineTest(unittest.TestCase):
         self.repo.origin_main(self.repo.commit(tag="v1.1.0"))
         self.assertEqual(self.resolve("schedule"), (0, "v1.0.0"))
 
+    def test_a_preview_build_tag_is_not_a_release(self):
+        # The real history at v1.34.0 holds v1.33.1-pr2483.11b8626a0, a PR
+        # build that sorts above v1.33.0. Comparing with it would hide what the
+        # release changed since v1.33.0.
+        self.repo.commit(tag="v1.32.0")
+        self.repo.commit(tag="v1.33.0")
+        self.repo.commit(tag="v1.33.1-pr2483.11b8626a0")
+        self.repo.commit(tag="v1.33.1-rc1")
+        self.repo.origin_main(self.repo.commit(tag="v1.34.0"))
+        self.assertEqual(self.resolve("schedule"), (0, "v1.33.0"))
+
+    def test_only_preview_tags_before_the_release_fails(self):
+        self.repo.commit(tag="v1.0.1-pr1.abc")
+        self.repo.origin_main(self.repo.commit(tag="v1.1.0"))
+        code, base = self.resolve("schedule")
+        self.assertNotEqual(code, 0)
+        self.assertEqual(base, "")
+
+    def test_the_real_release_history_gives_the_release_before(self):
+        # Replays the repository's own tags when they are present: v1.34.0
+        # must compare with v1.33.0 and v1.59.1 with v1.59.0.
+        for release, expected in (("v1.34.0", "v1.33.0"), ("v1.59.1", "v1.59.0")):
+            sha = subprocess.run(
+                ["git", "rev-parse", "-q", "--verify", release + "^{commit}"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            ).stdout.strip()
+            if not sha:
+                self.skipTest("release tags not fetched")
+            with tempfile.TemporaryDirectory() as tmp:
+                subprocess.run(
+                    ["git", "clone", "-q", "--shared", "--no-checkout", str(ROOT), tmp],
+                    env=GIT_ENV,
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "checkout", "-q", "--detach", sha],
+                    cwd=tmp,
+                    env=GIT_ENV,
+                    check=True,
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["git", "update-ref", "refs/remotes/origin/main", sha],
+                    cwd=tmp,
+                    env=GIT_ENV,
+                    check=True,
+                    capture_output=True,
+                )
+                self.assertEqual(resolve("schedule", cwd=tmp), (0, expected), release)
+
     def test_a_checkout_of_main_with_no_earlier_release_fails(self):
         # No honest base exists; "origin/main" here would be the empty diff again.
         self.repo.origin_main(self.repo.commit(tag="v1.0.0"))
@@ -152,7 +219,9 @@ class ReleasedLineTest(unittest.TestCase):
         self.assertEqual(self.resolve("push"), (0, "origin/main"))
         # A schedule ignores the values of the other events.
         self.assertEqual(
-            self.resolve("schedule", PR_BASE=SHA, PUSH_BEFORE=SHA, MERGE_GROUP_BASE=SHA),
+            self.resolve(
+                "schedule", PR_BASE=SHA, PUSH_BEFORE=SHA, MERGE_GROUP_BASE=SHA
+            ),
             (0, "origin/main"),
         )
 

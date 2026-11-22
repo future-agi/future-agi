@@ -492,6 +492,13 @@ test("a test keeps its identity when its line moves, and loses it when its title
   assert.equal(renamed.ok, false);
   assert.equal(renamed.problems.missing.length, 1);
   assert.equal(renamed.problems.extra.length, 1);
+  // The id decides, not the title: the same file, line and title with
+  // another Playwright id is another test.
+  const sameTitle = report({ ...withId(3), id: "id-of-another-test" });
+  const otherId = checkParity(listedWithIds, sameTitle, FILES);
+  assert.equal(otherId.ok, false);
+  assert.equal(otherId.problems.missing.length, 1);
+  assert.equal(otherId.problems.extra.length, 1);
   // The key keeps the title in its fourth position for qualify-topology.mjs.
   assert.equal(JSON.parse(renamed.problems.extra[0])[3], "ONE");
 });

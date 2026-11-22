@@ -542,8 +542,9 @@ jobs:
           name: blob-report-${{ matrix.stack }}-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: e2e/blob-report
           # A re-run of the report job alone reuses the blobs of the attempt
-          # that produced them (scripts/shard-report.mjs receipts), so they
-          # live as long as a failed run is still re-run.
+          # that produced them (scripts/shard-report.mjs receipts). 14 days is
+          # the supported window for such a re-run; after that, re-run all
+          # jobs, because the report cannot be built from expired blobs.
           retention-days: 14
           if-no-files-found: error
 

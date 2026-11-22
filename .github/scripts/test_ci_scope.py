@@ -36,7 +36,15 @@ def rehearsal_modules():
         for node in ast.walk(ast.parse((ROOT / path).read_text())):
             if isinstance(node, ast.Import):
                 found = [(alias.name, []) for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            elif isinstance(node, ast.ImportFrom) and node.level:
+                # `from .readiness import x` inside deploy/update/apply.py.
+                package = Path(path).parent
+                for _ in range(node.level - 1):
+                    package = package.parent
+                prefix = ".".join(package.parts)
+                module = prefix + ("." + node.module if node.module else "")
+                found = [(module, [alias.name for alias in node.names])]
+            elif isinstance(node, ast.ImportFrom) and node.module:
                 found = [(node.module, [alias.name for alias in node.names])]
             else:
                 continue
@@ -55,7 +63,9 @@ def rehearsal_modules():
 
 
 def workflow_job(workflow, job):
-    return re.split(r"\n  [a-z0-9-]+:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
+    return re.split(
+        r"\n  [a-z0-9-]+:\n", workflow.split(f"\n  {job}:\n", 1)[1], maxsplit=1
+    )[0]
 
 
 def decide(**env):
@@ -81,28 +91,46 @@ class UpdateCiAdmission(unittest.TestCase):
     def test_a_pull_request_starts_the_workflow_whatever_it_touches(self):
         # A trigger-level path filter stops the workflow before any job: a pull
         # request into main or a labelled one never got its rehearsals.
-        pull_request = self.triggers().split("  pull_request:\n", 1)[1].split("  push:\n", 1)[0]
+        pull_request = (
+            self.triggers().split("  pull_request:\n", 1)[1].split("  push:\n", 1)[0]
+        )
         self.assertNotIn("paths", pull_request)
         self.assertIn("    branches: [dev, main]\n", pull_request)
 
     def test_the_policy_list_is_the_push_list(self):
         push = self.triggers().split("  push:\n", 1)[1].split("  merge_group:", 1)[0]
-        listed = re.findall(r'^      - "([^"]+)"$', push, re.M)
+        listed = re.findall(r'^      - "([^"]+)"$', push, re.MULTILINE)
         self.assertGreater(len(listed), 40)
         self.assertEqual(list(scope["UPDATE_CI_PATHS"]), listed)
 
     def test_which_paths_select_the_ordinary_jobs(self):
         relevant = scope["update_ci_relevant"]
-        for path in ("futureagi/tracer/models.py", "bin/update", "deploy/update/apply.py",
-                     "fi-collector/main.go", "docker-compose.yml", ".github/workflows/update-ci.yml"):
+        for path in (
+            "futureagi/tracer/models.py",
+            "bin/update",
+            "deploy/update/apply.py",
+            "fi-collector/main.go",
+            "docker-compose.yml",
+            ".github/workflows/update-ci.yml",
+        ):
             self.assertTrue(relevant({path.encode()}), path)
-        for path in ("frontend/src/app.jsx", "README.md", "docs/page.mdx", "e2e/flows/a.spec.ts"):
+        for path in (
+            "frontend/src/app.jsx",
+            "README.md",
+            "docs/page.mdx",
+            "e2e/flows/a.spec.ts",
+        ):
             self.assertFalse(relevant({path.encode()}), path)
 
     def test_an_ordinary_pull_request_into_dev_with_no_matching_file_runs_nothing(self):
         # The decision for the Real jobs ...
-        quiet = dict(EVENT_NAME="pull_request", BASE_REF="dev", LABELLED="false",
-                     TOOLING_CHANGED="false", BUILT_CHANGED="false")
+        quiet = {
+            "EVENT_NAME": "pull_request",
+            "BASE_REF": "dev",
+            "LABELLED": "false",
+            "TOOLING_CHANGED": "false",
+            "BUILT_CHANGED": "false",
+        }
         self.assertEqual(decide(**quiet), {"upgrade": "false", "abc": "false"})
         # ... and the plan for the ordinary jobs, on a real pull request merge.
         with tempfile.TemporaryDirectory() as directory:
@@ -114,12 +142,14 @@ class UpdateCiAdmission(unittest.TestCase):
                 git("config", "user.name", "fixture")
                 git("config", "user.email", "fixture@example.invalid")
                 Path("README.md").write_text("a")
-                git("add", "-A"); git("commit", "-qm", "base")
+                git("add", "-A")
+                git("commit", "-qm", "base")
                 base = git("rev-parse", "HEAD")
                 git("checkout", "-qb", "work")
                 Path("frontend").mkdir()
                 Path("frontend/app.jsx").write_text("b")
-                git("add", "-A"); git("commit", "-qm", "frontend only")
+                git("add", "-A")
+                git("commit", "-qm", "frontend only")
                 head = git("rev-parse", "HEAD")
                 git("checkout", "-q", "dev")
                 git("merge", "-q", "--no-ff", "work", "-m", "event merge")
@@ -130,37 +160,71 @@ class UpdateCiAdmission(unittest.TestCase):
                 git("checkout", "-q", "work")
                 Path("futureagi").mkdir()
                 Path("futureagi/x.py").write_text("c")
-                git("add", "-A"); git("commit", "-qm", "backend")
+                git("add", "-A")
+                git("commit", "-qm", "backend")
                 head = git("rev-parse", "HEAD")
                 git("checkout", "-q", "dev")
                 git("reset", "-q", "--hard", base)
                 git("merge", "-q", "--no-ff", "work", "-m", "event merge")
                 tested = git("rev-parse", "HEAD")
-                self.assertTrue(plan("pull_request", tested, base, head, "")["flags"]["ordinary_update"])
+                self.assertTrue(
+                    plan("pull_request", tested, base, head, "")["flags"][
+                        "ordinary_update"
+                    ]
+                )
             finally:
                 os.chdir(original)
 
-    def test_a_labelled_pull_request_or_one_into_main_rehearses_whatever_it_touches(self):
+    def test_a_labelled_pull_request_or_one_into_main_rehearses_whatever_it_touches(
+        self,
+    ):
         # Unit-proven only: this repository's own pull requests are neither.
-        quiet = dict(EVENT_NAME="pull_request", LABELLED="false", TOOLING_CHANGED="false", BUILT_CHANGED="false")
+        quiet = {
+            "EVENT_NAME": "pull_request",
+            "LABELLED": "false",
+            "TOOLING_CHANGED": "false",
+            "BUILT_CHANGED": "false",
+        }
         both = {"upgrade": "true", "abc": "true"}
-        self.assertEqual(decide(**{**quiet, "BASE_REF": "dev", "LABELLED": "true"}), both)
+        self.assertEqual(
+            decide(**{**quiet, "BASE_REF": "dev", "LABELLED": "true"}), both
+        )
         self.assertEqual(decide(**{**quiet, "BASE_REF": "main"}), both)
         changes = workflow_job(self.WORKFLOW, "changes")
         self.assertIn("""--jq 'any(.labels[]; .name == "update-rehearsal")'""", changes)
         self.assertIn("BASE_REF: ${{ github.base_ref || github.ref_name }}", changes)
 
     def test_when_the_decision_fails_the_real_jobs_and_the_ordinary_jobs_run(self):
-        for job, output in (("automatic-upgrade", "upgrade"), ("automatic-a-b-c", "abc")):
-            condition = workflow_job(self.WORKFLOW, job).split("    if: ", 1)[1].split("\n", 1)[0]
-            self.assertIn(f"needs.changes.outputs.{output} == 'true' || (needs.changes.result != 'success'", condition)
-        names = re.findall(r"^  ([a-z0-9-]+):$", self.WORKFLOW.split("\njobs:\n", 1)[1], re.M)
-        ordinary = [n for n in names if n not in ("changes", "automatic-upgrade", "automatic-a-b-c")]
+        for job, output in (
+            ("automatic-upgrade", "upgrade"),
+            ("automatic-a-b-c", "abc"),
+        ):
+            condition = (
+                workflow_job(self.WORKFLOW, job)
+                .split("    if: ", 1)[1]
+                .split("\n", 1)[0]
+            )
+            self.assertIn(
+                f"needs.changes.outputs.{output} == 'true' || (needs.changes.result != 'success'",
+                condition,
+            )
+        names = re.findall(
+            r"^  ([a-z0-9-]+):$", self.WORKFLOW.split("\njobs:\n", 1)[1], re.MULTILINE
+        )
+        ordinary = [
+            n
+            for n in names
+            if n not in ("changes", "automatic-upgrade", "automatic-a-b-c")
+        ]
         self.assertGreaterEqual(len(ordinary), 6)
         for job in ordinary:
             head = workflow_job(self.WORKFLOW, job).split("    steps:", 1)[0]
             self.assertIn("    needs: changes\n", head, job)
-            self.assertIn("(needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false')", head, job)
+            self.assertIn(
+                "(needs.changes.result != 'success' || needs.changes.outputs.ordinary != 'false')",
+                head,
+                job,
+            )
 
 
 class RehearsalInputs(unittest.TestCase):
@@ -173,6 +237,8 @@ class RehearsalInputs(unittest.TestCase):
         modules = rehearsal_modules()
         for required in (
             ACCEPTANCE,
+            # Reached only through relative imports inside deploy/update.
+            "deploy/update/readiness.py",
             "scripts/rehearse_update_compatibility.py",
             "scripts/build_update_compatibility_proof.py",
             "scripts/update_rehearsal_qualification.py",
@@ -195,6 +261,45 @@ class RehearsalInputs(unittest.TestCase):
             self.assertTrue(actions, job)
             for action in actions:
                 self.assertTrue(rehearsal(action + "/action.yml")[0], action)
+
+    def test_the_updaters_frozen_runtime_schemas_start_both(self):
+        for path in (
+            "api_contracts/host-update/api-response.v1.schema.json",
+            "api_contracts/host-update/public-status.v1.schema.json",
+        ):
+            self.assertTrue((ROOT / path).is_file(), path)
+            self.assertEqual(rehearsal(path), (True, False), path)
+            # ... and a pull request that changes only one starts Update CI.
+            self.assertTrue(scope["update_ci_relevant"]({path.encode()}), path)
+
+    def test_a_setup_action_only_change_is_admitted_and_rehearses(self):
+        # The workflow admits every pull request; the policy then selects.
+        path = ".github/actions/setup-helm-tools/action.yml"
+        self.assertTrue((ROOT / path).is_file())
+        self.assertEqual(rehearsal(path), (True, False))
+        self.assertTrue(scope["update_ci_relevant"]({path.encode()}))
+
+    def test_only_the_packaged_chart_starts_latest_stable(self):
+        # acceptance.py packages deploy/helm/futureagi without hack/, ci/ and
+        # dot-files; a change confined to those packages nothing new.
+        chart = ROOT / "deploy/helm/futureagi"
+        excluded = [
+            str(p.relative_to(ROOT))
+            for p in chart.rglob("*")
+            if p.is_file()
+            and (
+                p.relative_to(chart).parts[0] in ("hack", "ci")
+                or any(part.startswith(".") for part in p.relative_to(chart).parts)
+            )
+        ]
+        self.assertGreater(len(excluded), 5)
+        for path in excluded:
+            self.assertEqual(rehearsal(path), (False, False), path)
+        for path in ("deploy/helm/futureagi/Chart.yaml", "deploy/helm/futureagi/values.yaml"):
+            self.assertEqual(rehearsal(path), (False, True), path)
+        acceptance = (ROOT / ACCEPTANCE).read_text()
+        self.assertIn("relative.parts[0] in ('hack','ci')", acceptance)
+        self.assertIn("any(p.startswith('.') for p in relative.parts)", acceptance)
 
     def test_every_register_the_update_tool_reads_starts_both(self):
         # Excluded: documents, and the registers only the static gate reads.
@@ -233,6 +338,7 @@ class RehearsalInputs(unittest.TestCase):
             "deploy/helm/futureagi/Chart.yaml",
             "futureagi/tfc/management/commands/bootstrap_install.py",
             "futureagi/tracer/services/clickhouse/oss_cdc_install.py",
+            "futureagi/tracer/services/clickhouse/oss_native_bootstrap.py",
             "futureagi/tracer/services/clickhouse/v2/apply_schema.py",
             "futureagi/tracer/services/clickhouse/v2/apply_schema_rewriter.py",
             "futureagi/tracer/services/clickhouse/v2/schema_topology.py",
@@ -436,19 +542,29 @@ class CandidateScope(unittest.TestCase):
     def test_retargets_replan_and_metadata_edits_never_issue_protected_names(self):
         metadata = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)"
         for workflow, check in (
-            ("backend-ci", "Backend"), ("e2e-ci", "E2E"), ("update-ci", None)
+            ("backend-ci", "Backend"),
+            ("e2e-ci", "E2E"),
+            ("update-ci", None),
         ):
             text = (SCRIPTS.parent / "workflows" / (workflow + ".yml")).read_text()
-            self.assertIn("  pull_request:\n    types: [opened, synchronize, reopened, edited]", text)
+            self.assertIn(
+                "  pull_request:\n    types: [opened, synchronize, reopened, edited]",
+                text,
+            )
             self.assertIn(metadata + " && github.run_id || 'candidate'", text)
             self.assertIn("  changes:\n    if: ${{ !(" + metadata + ") }}", text)
             if check:
-                self.assertIn(metadata + f" && '{check} metadata edit' || '{check} Tests Pass'", text)
+                self.assertIn(
+                    metadata + f" && '{check} metadata edit' || '{check} Tests Pass'",
+                    text,
+                )
                 self.assertIn("always() && !(" + metadata + ")", text)
 
     def test_private_overlay_is_not_selected_from_merge_group_heads(self):
         workflow = (SCRIPTS.parent / "workflows/backend-ci.yml").read_text()
-        selector = workflow.split("      - id: overlay\n")[1].split("      - id: shards")[0]
+        selector = workflow.split("      - id: overlay\n")[1].split(
+            "      - id: shards"
+        )[0]
         script = textwrap.dedent(selector.split("        run: |\n")[1])
         for event, head_repo, members, wanted in (
             ("pull_request", "base/repo", [], "true"),
@@ -461,7 +577,15 @@ class CandidateScope(unittest.TestCase):
             with self.subTest(event=event, members=members, head=head_repo):
                 # Both group compositions produce the same GitHub event shape:
                 # the head is a synthetic ref, not the provenance of its members.
-                payload = {"merge_group": {"head_ref": "refs/heads/gh-readonly-queue/dev/group"}} if members else {}
+                payload = (
+                    {
+                        "merge_group": {
+                            "head_ref": "refs/heads/gh-readonly-queue/dev/group"
+                        }
+                    }
+                    if members
+                    else {}
+                )
                 self.write("event", json.dumps(payload))
                 output = Path("output").resolve()
                 output.write_text("")
@@ -482,18 +606,38 @@ class CandidateScope(unittest.TestCase):
         self.assertNotIn("test_ci_scope.py", changes)
         self.assertIn('.["policy-self-test"].result == "success"', workflow)
         steps = workflow.split("\n      - ")
-        token_steps = [s for s in steps if "secrets.EE_REPO_READ_TOKEN" in s or "with: *ee_checkout" in s]
-        self.assertEqual(len(token_steps), 3)  # cold producer, shards, independent control
-        guards = [next(line.strip() for line in s.splitlines() if line.startswith("        if:"))
-                  for s in token_steps]
-        self.assertCountEqual(guards, [
-            "if: inputs.backend_cold_fanout && env.IS_INTERNAL_RUN == 'true'",
-            "if: env.IS_INTERNAL_RUN == 'true'",
-            "if: needs.plan.outputs.cold_control != 'success' && env.IS_INTERNAL_RUN == 'true'",
-        ])
+        token_steps = [
+            s
+            for s in steps
+            if "secrets.EE_REPO_READ_TOKEN" in s or "with: *ee_checkout" in s
+        ]
+        self.assertEqual(
+            len(token_steps), 3
+        )  # cold producer, shards, independent control
+        guards = [
+            next(
+                line.strip()
+                for line in s.splitlines()
+                if line.startswith("        if:")
+            )
+            for s in token_steps
+        ]
+        self.assertCountEqual(
+            guards,
+            [
+                "if: inputs.backend_cold_fanout && env.IS_INTERNAL_RUN == 'true'",
+                "if: env.IS_INTERNAL_RUN == 'true'",
+                "if: needs.plan.outputs.cold_control != 'success' && env.IS_INTERNAL_RUN == 'true'",
+            ],
+        )
         for step in token_steps:
-            self.assertRegex(step, r"uses: future-agi/future-agi/\.github/actions/checkout-ee@[a-f0-9]{40}\n")
-        self.assertIn("IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}", workflow)
+            self.assertRegex(
+                step,
+                r"uses: future-agi/future-agi/\.github/actions/checkout-ee@[a-f0-9]{40}\n",
+            )
+        self.assertIn(
+            "IS_INTERNAL_RUN: ${{ needs.changes.outputs.internal }}", workflow
+        )
         self.assertEqual(workflow.count("env: *backend_database_env"), 2)
 
     def test_loader_uses_base_policy_and_bootstraps_conservatively(self):
