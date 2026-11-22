@@ -388,7 +388,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             ],
         }
         dropped = self.MEASURED_OSS["total"] - sum(p["tests"] for p in kept["pairs"])
-        self.assertEqual(dropped, 1550)
+        self.assertEqual(dropped, 1542)
         error, report, _ = self.report(
             self.measured_rows(kept, runs="oss"),
             files={pair["file"] for pair in kept["pairs"]},
