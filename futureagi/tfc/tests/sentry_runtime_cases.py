@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
@@ -24,6 +25,7 @@ from django.http import HttpResponse
 from django.test import override_settings
 from django.urls import path
 from django_structlog.signals import bind_extra_request_finished_metadata
+from temporalio import activity
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import ActivityEnvironment
 from temporalio.worker import ExecuteActivityInput
@@ -33,7 +35,6 @@ from tfc.logging.middleware import CallbackRequestMiddleware
 from tfc.temporal.common.sentry_interceptor import SentryActivityInboundInterceptor
 from tfc.temporal.drop_in.decorator import _create_real_activity
 from tfc.tests.sentry_capture import MemoryWire
-from tracer.utils import otel, trace_ingestion
 
 
 @contextmanager
@@ -82,6 +83,8 @@ class InlineAsyncDispatch:
 
 
 def test_registered_activity(monkeypatch):
+    from tracer.utils import otel, trace_ingestion
+
     project = "-".join(("example", "fixture", "project"))
     attrs = [
         {"key": k, "value": {"string_value": v}}
@@ -374,6 +377,8 @@ def stub_provider_http(monkeypatch, replies):
 
     def send(adapter, request, **kwargs):
         key = (request.method, request.url)
+        if key not in replies or key in calls:
+            pytest.fail(f"Unexpected provider request: {key}")
         calls.append(key)
         status, text = replies[key]
         response = requests.Response()
@@ -388,16 +393,38 @@ def stub_provider_http(monkeypatch, replies):
 
 
 @contextmanager
-def provider_capture(monkeypatch, pipeline, component):
-    component = component if pipeline == "django" else "temporal"
+def provider_capture(monkeypatch, pipeline):
+    component = "django" if pipeline == "django" else "temporal"
     with capture(monkeypatch, component) as wire:
-        if pipeline != "django":
+        integrations = sentry_sdk.get_client().integrations
+        assert "logging" in integrations and "tfc_payload_bounds" in integrations
+        if component == "django":
+            assert "django" in integrations and "celery" in integrations
+        else:
             from tfc.logging.temporal import configure_temporal_logging
+            from tfc.temporal.common.sentry_interceptor import (
+                configure_sentry_for_temporal,
+            )
 
             # Same order as run_worker: SDK first, then the worker's processors.
-            monkeypatch.setenv("ENV_TYPE", pipeline)
-            configure_temporal_logging()
+            configure_sentry_for_temporal(queue_name="tasks_l")
+            with monkeypatch.context() as config:
+                config.setenv("ENV_TYPE", pipeline)
+                configure_temporal_logging()
         yield wire
+        logging.getLogger("qa.ordinary").error("Worker failed after %d retries", 2)
+
+    [ordinary] = [
+        b for _, k, b in wire.items if k == "event" and b.get("logger") == "qa.ordinary"
+    ]
+    assert ordinary["level"] == "error"
+    assert ordinary["logentry"] == {
+        "message": "Worker failed after %d retries",
+        "params": [2],
+    }
+    assert ordinary["tags"]["component"] == (
+        "django" if pipeline == "django" else "temporal-worker"
+    )
 
 
 def assert_local_error(pipeline, logger_name, marker, **expected):
@@ -420,21 +447,70 @@ def assert_local_error(pipeline, logger_name, marker, **expected):
 
 
 @pytest.mark.parametrize("pipeline", ["django", "local", "production"])
+@override_settings(USAGE_EVENTS_ENABLED=False)
 def test_structured_provider_log(monkeypatch, pipeline):
     marker, unknown_name = uuid4().hex, uuid4().hex
     base = "https://vapi.fixture.invalid"
     monkeypatch.setenv("VAPI_API_BASE_URL", base)
-    request = ("GET", f"{base}/session/example")
-    calls = stub_provider_http(monkeypatch, {request: (400, marker)})
-    with provider_capture(monkeypatch, pipeline, "django") as wire:
-        from ee.voice.services.vapi_service import VapiService
+    monkeypatch.setenv("VAPI_API_KEY", "fixture")
+    assistant = ("POST", f"{base}/assistant")
+    session = ("POST", f"{base}/session")
+    lookup = ("GET", f"{base}/session/example")
+    session_body = {
+        "id": "example",
+        "name": "fixture",
+        "status": "active",
+        "assistantId": "fixture-assistant",
+        "messages": [],
+    }
+    calls = stub_provider_http(
+        monkeypatch,
+        {
+            assistant: (201, json.dumps({"id": "fixture-assistant"})),
+            session: (201, json.dumps(session_body)),
+            lookup: (400, marker),
+        },
+    )
+    with provider_capture(monkeypatch, pipeline) as wire:
+        from tfc.tests.sentry_chat_fixture import claimed_prompt_chat
 
-        assert VapiService(api_key="fixture").get_chat_session("example") is None
+        call = claimed_prompt_chat(monkeypatch)
+        from ee.voice.services.vapi_service import VapiService
+        from simulate.tasks.chat_sim import run_single_prompt_chat
+        from tfc.temporal.common.registry import TEMPORAL_ACTIVITY_MODULES
+        from tfc.temporal.drop_in import get_temporal_activities
+
+        # Use the worker's real drop-in registry without loading unrelated queues.
+        assert run_single_prompt_chat.__module__ in TEMPORAL_ACTIVITY_MODULES
+        name = run_single_prompt_chat.name
+        assert name == "run_single_prompt_chat"
+        [registered] = [
+            fn
+            for fn in get_temporal_activities(queue="tasks_l")
+            if activity._Definition.must_from_callable(fn).name == name
+        ]
+        result = run_intercepted(
+            registered,
+            ({"args": [str(call.id)]},),
+            "fixture-chat",
+            activity_type=name,
+            task_queue="tasks_l",
+        )
+        assert result == {"status": "completed", "result": False}
+        assert call.call_metadata["chat_provider"] == "vapi"
+        assert call.call_metadata["chat_session_id"] == "example"
+        assert call.status == call.CallStatus.FAILED
+        assert call.ended_reason == (
+            "Error sending message to chat: Chat session not found: Session not found"
+        )
+        call.save.assert_called_with(
+            update_fields=["status", "ended_reason", "ended_at"]
+        )
         structlog.get_logger(VapiService.__module__).error(
             unknown_name, status_code=unknown_name, count=2
         )
         sentry_sdk.capture_message("next diagnostic")
-    assert calls == [request]  # A 429 would have gone through the retry loop.
+    assert calls == [assistant, session, lookup]  # No retry and no send after the 400.
     assert_local_error(
         pipeline,
         VapiService.__module__,
@@ -450,6 +526,19 @@ def test_structured_provider_log(monkeypatch, pipeline):
     assert known["extra"] == {"status_code": 400}
     assert unknown["logentry"] == {"message": "Structured log"}
     assert unknown["extra"] == {"count": 2}
+    # The router maps the provider's None to an unsuccessful session; the
+    # conversation logs the resulting exception and returns False to the task.
+    assert any(
+        error["type"] == "Exception"
+        and error["value"] == sentry._REDACTED
+        and any(
+            frame.get("function") == "run_prompt_based_conversation"
+            for frame in error["stacktrace"]["frames"]
+        )
+        for event in events
+        if event.get("logger") == "simulate.services.chat_sim"
+        for error in event.get("exception", {}).get("values", [])
+    )
     assert any(b.get("message") == "next diagnostic" for b in events)
     for value in (marker, unknown_name):
         assert all(value.encode() not in packet for packet in wire.raw)
@@ -461,12 +550,21 @@ def test_embedding_rejection(monkeypatch, pipeline):
     base = "https://embedding.fixture.invalid"
     health, embed = ("GET", f"{base}/health"), ("POST", f"{base}/model/v1/embed")
     calls = stub_provider_http(monkeypatch, {health: (200, ""), embed: (400, marker)})
-    with provider_capture(monkeypatch, pipeline, "temporal") as wire:
+    monkeypatch.setenv("MODEL_SERVING_URL", base)
+    with provider_capture(monkeypatch, pipeline) as wire:
+        from agentic_eval.core.embeddings import embedding_manager
         from agentic_eval.core.embeddings.serving_client import ModelServingClient
 
-        with pytest.raises(ValueError, match=marker) as raised:
-            ModelServingClient(base_url=base).embed_text("fixture input")
-        error_id = sentry_sdk.capture_exception(raised.value)
+        # A rejection is logged with its traceback by the real manager, which
+        # returns no matches. It must never reach the vector store.
+        store = Mock(spec=embedding_manager.ClickHouseVectorDB)
+        monkeypatch.setattr(embedding_manager, "ClickHouseVectorDB", lambda: store)
+        manager = embedding_manager.EmbeddingManager()
+        matches = manager.retrieve_rag_based_examples(
+            "fixture input", "feedbacks", "fixture-eval", "question"
+        )
+        assert matches == []
+        assert not store.mock_calls
     assert calls == [health, embed]
     assert_local_error(
         pipeline,
@@ -477,17 +575,35 @@ def test_embedding_rejection(monkeypatch, pipeline):
     events = [b for _, k, b in wire.items if k == "event"]
     [logged] = [b for b in events if b.get("logger") == ModelServingClient.__module__]
     assert logged["logentry"] == {"message": "Structured log"}
-    [issue] = [b for b in events if b["event_id"] == error_id]
+    assert_local_error(
+        pipeline,
+        embedding_manager.__name__,
+        marker,
+        event=f"Error in retrieve_rag_based_examples: Bad request: {marker}",
+    )
+    [issue] = [b for b in events if b.get("logger") == embedding_manager.__name__]
+    assert issue["logentry"] == {"message": "Structured log"}
     [error] = issue["exception"]["values"]
     assert error["type"] == "ValueError"
     assert error["value"] == sentry._REDACTED
-    assert error["stacktrace"]["frames"][-1]["function"] == "_make_request"
+    frames = error["stacktrace"]["frames"]
+    assert [f["function"] for f in frames][-4:] == [
+        "retrieve_rag_based_examples",
+        "text_embedding",
+        "embed_text",
+        "_make_request",
+    ]
     assert all(marker.encode() not in packet for packet in wire.raw)
 
 
-def run_intercepted(fn, args, workflow_id):
+def run_intercepted(fn, args, workflow_id, *, activity_type=None, task_queue=None):
     env = ActivityEnvironment()
-    env.info = replace(env.info, activity_type=fn.__name__, workflow_id=workflow_id)
+    env.info = replace(
+        env.info,
+        activity_type=activity_type or fn.__name__,
+        task_queue=task_queue or env.info.task_queue,
+        workflow_id=workflow_id,
+    )
     interceptor = SentryActivityInboundInterceptor(InlineAsyncDispatch())
     call = ExecuteActivityInput(fn=fn, args=args, headers={}, executor=None)
     return asyncio.run(env.run(interceptor.execute_activity, call))

@@ -60,6 +60,9 @@ def test_runtime_contract(case, tmp_path):
         REDIS_URL="redis://127.0.0.1:6379/0",
         REDIS_LOCK_URL="redis://127.0.0.1:6379/2",
     )
+    if case.startswith("structured_provider_log["):
+        # The router reads its configured default at module import time.
+        env["CHAT_SIMULATION_PROVIDER"] = "vapi"
     subprocess.run(
         [
             sys.executable,
