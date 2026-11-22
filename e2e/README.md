@@ -556,6 +556,11 @@ Quarantine lives in `e2e/.quarantine.json`, a flat array whose entry shape match
   not a parking space.
 - The loader **fails open**: if the file is missing or unparseable it warns and quarantines nothing,
   because a broken JSON file must not be able to silently disable the suite.
+- **Check the spec's recent history before adding an entry.** A flow that failed last week may
+  have been fixed since; an entry for a flow that passes only removes coverage. Count failures on
+  unrelated changes only: a flow that fails on the branch that is changing it is not flaky.
+- Quarantine works the same in every shard, and the shard parity check leaves quarantined flows
+  out of both the listing and the results.
 
 Two escape hatches, both environment variables read by `lib/quarantine.ts`:
 
@@ -574,13 +579,15 @@ passing the live-LLM filter on the command line would silently un-quarantine eve
 ## CI
 
 `.github/workflows/e2e-ci.yml` runs on PRs to and pushes on `dev`/`main`, plus merge queue entries.
-A `changes` job decides, per image, whether to build from the PR's code (tagged `:e2e-ci`) or use the
-released `:latest` — so a frontend-only PR does not rebuild the backend. The job then checks the flow
-catalog, boots the stack with `bin/e2e up`, runs `bin/e2e test`, and always uploads the Playwright
-HTML report (7-day retention); on failure it dumps `bin/e2e ps` and the last 200 log lines. The
-`E2E Tests Pass` gate fails closed unless every dependency succeeded or was legitimately skipped.
+The suite runs as six shards per stack (see [Shards](#shards) below). Each shard builds the images
+from the PR's code (tagged `:e2e-ci`) with the registry layer cache, boots its own stack with
+`bin/e2e up` and runs its share of the spec files with `bin/e2e test`; on failure it dumps
+`bin/e2e ps` and the last 200 log lines and uploads its own Playwright report. A `report` job then
+merges every shard's results into the one Playwright HTML report (7-day retention) and proves that
+the shards together ran the whole suite. The `E2E Tests Pass` gate fails closed unless every
+dependency, the report job included, succeeded or was legitimately skipped.
 
-After the Playwright suite, the same job runs the SDK live suites from
+After the Playwright suite, the last shard runs the SDK live suites from
 [futureagi-sdk](https://github.com/future-agi/futureagi-sdk) against the stack it booted, on every
 PR and push: `python/tests/platform` calls every operation of the generated Python client and
 `src/platform/__tests__/live.test.ts` covers the TypeScript transport, so a backend change that
@@ -604,9 +611,66 @@ and checks four things: the install stays on the Distributed setup
 run the head commit's `:local` images, the first account still signs in, and the trace is still
 there.
 
-**Wall time in CI has not been measured yet** — the job has never run on a real PR. Record it on the
-first run and put the number here; the hard timeout is 90 minutes and the boot budgets above are the
-laptop-measured ones.
+### Shards
+
+`E2E_SHARD=k/N` makes `bin/e2e test` run one of `N` shares of the spec files. CI sets it per matrix
+leg (`E2E_SHARDS` in the workflow, currently 6); it works locally too:
+
+```bash
+E2E_SHARD=2/6 bin/e2e test     # the second of six shares
+```
+
+The split balances **measured time**, not test count (`lib/shard.ts`). Playwright's own `--shard`
+splits by count in file order. Most tests here are harness tests that take almost no time, so
+`--shard=1/4` would keep nearly every flow, and nearly all of the run time, in the first shard.
+The plan gives each spec file its recorded time from `e2e/.test-durations.json`, places the longest
+files first, each into the least loaded shard, and is a pure function of the checkout: every shard
+of a run computes the same split, and a re-run repeats it. A spec without a recorded time (a new
+flow) counts as the median file, so it runs at once. One very long flow fills a shard by itself;
+no number of shards makes a run shorter than its longest flow.
+
+What sets the shard count: every shard pays a fixed cost before its first test (image build, pulls,
+and the stack boot, most of which is the database migrate). Measured on the standard GitHub
+runners in November 2026:
+
+- Unsharded, the suite took about 90 minutes.
+- With four shards a shard took 36 to 48 minutes, because one flow waited out a 30-minute product
+  default.
+- That flow now gives its own project a five-minute settle (`lib/metric-settle.ts`). It asserts
+  that the value is reported as not final while the conversations are open, and that it becomes
+  final no earlier than five minutes after their last arrival. A backend unit test pins the
+  30-minute default.
+- With six shards a shard takes about 20 to 30 minutes, 11 to 15 of them fixed cost (the boot
+  alone varied from 7 to 11), and `E2E Tests Pass` reports a little over 30 minutes after the push.
+
+**Parity is a gate, not an assumption.** The `report` job lists the suite without `E2E_SHARD` and
+compares that with the merged results (`scripts/shard-report.mjs parity`). It fails when a listed
+test has no result in any shard, ran in two shards, never started, or when a shard reported a test
+the listing does not have. Quarantined and `@live-llm` flows are out of both sides.
+
+Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
+SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
+uploads a record of those steps' outcomes, and the `report` job fails without a record that says
+all of them passed, so they cannot be skipped on every shard unseen. A manual run with
+`host_update_fallibility` stays unsharded.
+
+`E2E Tests Pass` passes in two cases only: every shard and the `report` job succeeded, or the
+`changes` job found nothing that needs the suite. A skipped `report` job does not pass.
+
+To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
+artifact of a green run and regenerate the recorded times:
+
+```bash
+node scripts/shard-report.mjs durations --merged merged-report.json   # rewrites .test-durations.json
+```
+
+### Why the E2E stack still migrates from zero
+
+Backend CI restores a cached dump of a migrated database in its pytest shards
+(`futureagi/.ci/db_dump.py`). The E2E stacks do not, on purpose. The stack's Postgres also holds
+Temporal's own tables, and a migration registers Temporal search attributes while it runs. A
+restored database would skip that registration, or carry another job's Temporal state. Every
+shard therefore boots the way an install does: `manage.py migrate` on an empty database.
 
 ---
 
