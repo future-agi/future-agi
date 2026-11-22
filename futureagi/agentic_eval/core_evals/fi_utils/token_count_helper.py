@@ -194,7 +194,7 @@ def calculate_total_cost(
     Args:
         model_name: The model identifier (e.g., "gpt-4o", "tts-1", "whisper-1")
         token_usage: Dict with keys depending on model type:
-            For LLM: {"prompt_tokens": int, "completion_tokens": int}
+            For LLM: {"prompt_tokens": int, "completion_tokens": int, "input_images": int (optional)}
             For TTS: {"input_characters": int, "prompt_tokens": int, "completion_tokens": int}
             For STT: {"audio_seconds": float}
         fallback_pricing: Optional custom fallback pricing dict
@@ -252,10 +252,12 @@ def calculate_total_cost(
     prompt_cost = 0.0
     completion_cost = 0.0
 
-    # Token-based pricing (LLM/Chat models)
-    if "input_per_1M_tokens" in pricing and "output_per_1M_tokens" in pricing:
-        input_cost_per_1M = pricing["input_per_1M_tokens"]
-        output_cost_per_1M = pricing["output_per_1M_tokens"]
+    # Token-based pricing (LLM/Chat models). Either rate may be absent:
+    # embedding and image-input rows publish only an input rate, so a
+    # missing rate prices as zero instead of dropping the whole row to $0.
+    if "input_per_1M_tokens" in pricing or "output_per_1M_tokens" in pricing:
+        input_cost_per_1M = pricing.get("input_per_1M_tokens") or 0.0
+        output_cost_per_1M = pricing.get("output_per_1M_tokens") or 0.0
 
         # Provider usage includes cache reads in prompt_tokens. Price that subset at
         # the model's cache-read rate when the catalog declares one.
@@ -279,17 +281,37 @@ def calculate_total_cost(
             )
         completion_cost = round((completion_tokens / 1_000_000) * output_cost_per_1M, 6)
 
-    # Character-based pricing (TTS models)
-    elif "input_per_1M_characters" in pricing:
-        input_cost_per_1M_chars = pricing["input_per_1M_characters"]
+        # Image input is billed on top of tokens when the catalog prices it
+        # (multimodal embedding rows). No input_images usage means no images.
+        image_rate = pricing.get("input_per_image")
+        if image_rate is None:
+            image_rate = pricing.get("image_input_per_image")
+        if image_rate is not None:
+            input_images = token_usage.get("input_images") or 0
+            prompt_cost = round(prompt_cost + input_images * image_rate, 6)
+
+    # Character-based pricing (TTS models). The catalog mixes per-million
+    # and per-thousand character rates; both price the reported input
+    # characters. (Output per-1k rates have no usage signal to bill.)
+    elif "input_per_1M_characters" in pricing or "input_per_1k_characters" in pricing:
+        if "input_per_1M_characters" in pricing:
+            input_cost_per_chars = pricing["input_per_1M_characters"]
+            chars_per_unit = 1_000_000
+        else:
+            input_cost_per_chars = pricing["input_per_1k_characters"]
+            chars_per_unit = 1_000
         input_characters = token_usage.get("input_characters") or 0
 
-        prompt_cost = round((input_characters / 1_000_000) * input_cost_per_1M_chars, 6)
+        prompt_cost = round((input_characters / chars_per_unit) * input_cost_per_chars, 6)
         completion_cost = 0.0  # TTS doesn't have completion cost
 
-    # Minute-based pricing (STT models)
-    elif "input_per_minute" in pricing:
-        cost_per_minute = pricing["input_per_minute"]
+    # Minute-based pricing (STT models). input_per_minute and
+    # per_minute_audio are the same unit under two catalog spellings.
+    elif "input_per_minute" in pricing or "per_minute_audio" in pricing:
+        if "input_per_minute" in pricing:
+            cost_per_minute = pricing["input_per_minute"]
+        else:
+            cost_per_minute = pricing["per_minute_audio"]
         audio_seconds = token_usage.get("audio_seconds") or 0.0
 
         # Convert seconds to minutes

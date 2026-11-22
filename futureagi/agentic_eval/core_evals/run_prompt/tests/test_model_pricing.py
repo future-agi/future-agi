@@ -909,5 +909,96 @@ class TestEdgeCases:
         assert DEFAULT_IMAGE_COST_PER_IMAGE < 1.0  # Should be less than $1
 
 
+# =============================================================================
+# Unit Tests - Input-Only Rates and Alternate Catalog Units
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestUnpricedUnitCoverage:
+    """Rates the catalog publishes that used to cost as $0.
+
+    Covers embedding rows with an input-only token rate, multimodal rows
+    with an image rate, per-1k character rows and per-minute-audio rows.
+    """
+
+    def test_embedding_input_only_rate(self):
+        """Input-only token rows price their input instead of $0."""
+        pricing = get_model_pricing("text-embedding-3-small")
+        assert pricing is not None
+        assert "input_per_1M_tokens" in pricing
+        assert "output_per_1M_tokens" not in pricing
+
+        result = calculate_total_cost("text-embedding-3-small", {"prompt_tokens": 1000})
+
+        # 1000/1M * 0.02 = 0.00002
+        expected_prompt = round((1000 / 1_000_000) * 0.02, 6)
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected_prompt
+        assert result["pricing_source"] == "available_models"
+
+    def test_multimodal_embedding_adds_image_rate(self):
+        """Image input billed on top of tokens for multimodal rows."""
+        pricing = get_model_pricing("amazon.titan-embed-image-v1")
+        assert pricing is not None
+        assert "input_per_image" in pricing
+
+        result = calculate_total_cost(
+            "amazon.titan-embed-image-v1",
+            {"prompt_tokens": 1000, "input_images": 2},
+        )
+
+        # 1000/1M * 0.8 + 2 * 0.00006 = 0.00092
+        expected_prompt = round((1000 / 1_000_000) * 0.8 + 2 * 6e-05, 6)
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected_prompt
+
+    def test_image_rate_addon_stays_zero_without_images(self):
+        """Rows with an image rate price tokens alone when no images sent."""
+        # NOTE: the vertex_ai image-rate row is SDK-gated out of the catalog
+        # when google-cloud-aiplatform is absent, so this uses the stable
+        # Titan row instead.
+        result = calculate_total_cost(
+            "amazon.titan-embed-image-v1",
+            {"prompt_tokens": 1000},
+        )
+
+        # 1000/1M * 0.8, no image add-on
+        expected_prompt = round((1000 / 1_000_000) * 0.8, 6)
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected_prompt
+
+    def test_per_1k_character_rate(self):
+        """Per-1k character rows divide by 1,000 instead of costing $0."""
+        pricing = get_model_pricing("gemini-1.5-pro")
+        assert pricing is not None
+        assert "input_per_1k_characters" in pricing
+
+        result = calculate_total_cost("gemini-1.5-pro", {"input_characters": 10000})
+
+        # 10000/1k * 0.007 = 0.07
+        expected_prompt = round((10000 / 1_000) * 0.007, 6)
+        assert result["prompt_cost"] == expected_prompt
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected_prompt
+
+    def test_per_minute_audio_rate(self):
+        """per_minute_audio bills like input_per_minute."""
+        pricing = get_model_pricing("azure/whisper-1")
+        assert pricing is not None
+        assert "per_minute_audio" in pricing
+
+        result = calculate_total_cost("azure/whisper-1", {"audio_seconds": 120.0})
+
+        # 2 minutes * 0.006 = 0.012
+        expected_cost = round((120.0 / 60.0) * 0.006, 6)
+        assert result["prompt_cost"] == expected_cost
+        assert result["completion_cost"] == 0.0
+        assert result["total_cost"] == expected_cost
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-m", "unit"])
