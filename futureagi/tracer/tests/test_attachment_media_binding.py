@@ -103,9 +103,12 @@ def test_equal_time_interleaving_keeps_both_exact_pairs(api, monkeypatch):
         "A" * 43,
         "0" * 32,
         "00000000-0000-0000-0000-000000000000",
-        str(uuid.uuid4()).upper(),
-        str(uuid.uuid4()).replace("-", ""),
-        str(uuid.uuid4()),
+        # Fixed, well-formed but unknown handles: random values would give every
+        # CI shard a different test id. Sessions are minted fresh per test, so
+        # these can never name a real one.
+        "6F1C2A3B-4D5E-4F60-8172-93A4B5C6D7E8",
+        "1b2c3d4e5f6047189a0b1c2d3e4f5061",
+        "9e8d7c6b-5a49-4382-a716-05f4e3d2c1b0",
         "../session",
     ],
 )
