@@ -281,13 +281,14 @@ async def _set_db_status(
     the DB row is what the UI reads. ``expected_status`` makes it a guarded
     transition (e.g. only flip ``pending`` → ``running``).
     """
-    return await workflow.execute_activity(
+    ack: dict = await workflow.execute_activity(
         "set_eval_task_status_activity",
         SetStatusInput(task_id=task_id, status=status, expected_status=expected_status),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return ack
 
 
 async def _mark_running(task_id: str) -> dict:
@@ -311,7 +312,7 @@ async def _reconcile(task_id: str, *, first_closed: bool = False) -> dict:
         if first_closed
         else ReconcileActivityInput(task_id=task_id)
     )
-    return await workflow.execute_activity(
+    reconciled: dict = await workflow.execute_activity(
         "reconcile_eval_task_activity",
         args,
         # Exact 100k historical selection is intentionally off the HTTP path.
@@ -322,6 +323,7 @@ async def _reconcile(task_id: str, *, first_closed: bool = False) -> dict:
         heartbeat_timeout=_HEARTBEAT,
         retry_policy=RECONCILE_RETRY_POLICY,
     )
+    return reconciled
 
 
 def _is_retryable_reconcile_budget_error(exc: Exception) -> bool:
@@ -390,32 +392,35 @@ async def _reap(
             task_id=task_id, workflow_confirmed_stopped=workflow_confirmed_stopped
         )
     )
-    return await workflow.execute_activity(
+    reaped: dict = await workflow.execute_activity(
         "reap_stale_running_activity",
         args,
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return reaped
 
 
 async def _task_state(task_id: str) -> dict:
-    return await workflow.execute_activity(
+    state: dict = await workflow.execute_activity(
         "get_eval_task_state_activity",
         TaskStateInput(task_id=task_id),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         heartbeat_timeout=_CONTROL_HEARTBEAT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return state
 
 
 async def _claim(task_id: str, n: int) -> dict:
-    return await workflow.execute_activity(
+    claimed: dict = await workflow.execute_activity(
         "claim_eval_batch_activity",
         ClaimBatchInput(task_id=task_id, n=n),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return claimed
 
 
 async def _finalize(task_id: str) -> bool:
@@ -624,7 +629,9 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
             if first_closed:
                 if ack["status"] not in (STATUS_RUNNING, STATUS_PENDING):
                     return self._stopped(input, ack["status"])
-                remaining = datetime.fromisoformat(deadline) - workflow.now()
+                remaining = (
+                    datetime.fromisoformat(ack["first_reconcile_at"]) - workflow.now()
+                )
                 if remaining > timedelta(0):
                     self._phase = PHASE_SLEEPING
                     await workflow.sleep(remaining)
