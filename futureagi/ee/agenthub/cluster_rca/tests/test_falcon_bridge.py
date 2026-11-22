@@ -193,7 +193,12 @@ class TestRunClusterRcaPersistsThroughTheWorker:
         return _FakeAgent
 
     def _drive(self, result):
-        """Run ``run_cluster_rca`` for a resolved cluster and report what landed."""
+        """Run ``run_cluster_rca`` for a resolved cluster and report what landed.
+
+        Returns ``(cluster, rca_at_before, rca_trace_before, posted)``, where
+        ``posted`` records every ``post_rca_comment_to_linked_issue`` call so
+        a test can assert the linked-issue path itself, not just the row.
+        """
         import asyncio
         from types import SimpleNamespace as _NS
 
@@ -202,6 +207,7 @@ class TestRunClusterRcaPersistsThroughTheWorker:
         cluster = self._cluster()
         before_at = cluster.rca_at
         before_trace = cluster.rca_trace
+        posted: list[str] = []
 
         def _resolve(*a, **k):
             return str(cluster.id), str(cluster.project_id), 12
@@ -219,6 +225,10 @@ class TestRunClusterRcaPersistsThroughTheWorker:
                 "ee.agenthub.cluster_rca.agent.ClusterAnalysisAgent",
                 self._fake_agent_class(result),
             ),
+            patch(
+                "tracer.utils.feed.post_rca_comment_to_linked_issue",
+                lambda cluster_pk: posted.append(cluster_pk) or True,
+            ),
         ):
             asyncio.run(
                 _fb.run_cluster_rca(
@@ -233,7 +243,7 @@ class TestRunClusterRcaPersistsThroughTheWorker:
             )
 
         cluster.refresh_from_db()
-        return cluster, before_at, before_trace
+        return cluster, before_at, before_trace, posted
 
     @pytest.mark.django_db(transaction=True)
     def test_last_resort_run_never_reaches_the_row(self):
@@ -259,12 +269,13 @@ class TestRunClusterRcaPersistsThroughTheWorker:
             synthesis_is_last_resort=True,
         )
 
-        cluster, before_at, before_trace = self._drive(result)
+        cluster, before_at, before_trace, posted = self._drive(result)
 
         assert cluster.rca_synthesis == "Earlier completed root cause."
         assert cluster.rca_confidence == "H"
         assert cluster.rca_at == before_at, "the run reset the staleness signal"
         assert cluster.rca_trace == before_trace, "the replay trail was replaced"
+        assert posted == [], "a last-resort run reached the linked ticket"
 
     @pytest.mark.django_db(transaction=True)
     def test_model_authored_run_reaches_the_row(self):
@@ -289,11 +300,12 @@ class TestRunClusterRcaPersistsThroughTheWorker:
             synthesis_is_last_resort=False,
         )
 
-        cluster, _before_at, _before_trace = self._drive(result)
+        cluster, _before_at, _before_trace, posted = self._drive(result)
 
         assert cluster.rca_synthesis == "Auth pool exhaustion causes the timeout."
         assert cluster.rca_confidence == "M"
         assert cluster.rca_failures_at_run == 12
+        assert posted == [str(cluster.id)], "the linked ticket was not notified"
 
     @pytest.mark.django_db(transaction=True)
     def test_completed_low_confidence_run_still_reaches_the_row(self):
@@ -325,8 +337,9 @@ class TestRunClusterRcaPersistsThroughTheWorker:
             synthesis_is_last_resort=False,
         )
 
-        cluster, _before_at, _before_trace = self._drive(result)
+        cluster, _before_at, _before_trace, posted = self._drive(result)
 
         assert cluster.rca_synthesis == low.synthesis
         assert cluster.rca_confidence == "L"
         assert cluster.rca_failures_at_run == 12
+        assert posted == [str(cluster.id)], "the carve-out did not notify"

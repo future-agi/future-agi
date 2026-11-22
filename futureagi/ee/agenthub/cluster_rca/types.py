@@ -67,10 +67,11 @@ class ClusterAnalysisResult:
         ""
         # What the result carries, by exit: "synthesis_submitted" (the model
         # concluded), "stopped" (an explicit user Stop, no synthesis),
-        # "synthesis_forced" (a resource exit it was salvaged from),
-        # "error", plus the pre-rewrite loop exits "max_turns", "cost_ceiling"
-        # and "converged" that ``run()`` rewrites to "synthesis_forced" when a
-        # synthesis was salvaged.
+        # "synthesis_forced" (a loop exit it was salvaged from, by far the
+        # most common being a plain "stop"), "error". The pre-rewrite loop
+        # exits "stop", "max_turns", "cost_ceiling" and "converged" all
+        # become "synthesis_forced" when a synthesis was salvaged, and stay as
+        # they are when it was not.
     )
     error: Optional[str] = None
     cost_usd: float = 0.0
