@@ -328,7 +328,7 @@ def test_current_administrator_can_grant_without_self_escalation(
 
 @pytest.mark.parametrize("kind", ["http", "tool"])
 @pytest.mark.parametrize("state", ["inactive", "deleted", "missing", "downgraded"])
-def test_stale_administrator_cannot_bypass_current_membership(
+def test_stale_administrator_requires_current_membership(
     organization, workspace, kind, state
 ):
     actor, membership = principal(organization, workspace, Level.ADMIN)
