@@ -363,9 +363,9 @@ class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
     name = serializers.CharField()
     config = serializers.DictField(child=JsonValueField())
 
-    def validate_config(self, config):
-        # This is an open provider-specific dictionary. Check the sign without
-        # coercing the value or changing how existing nonnegative inputs save.
+    @staticmethod
+    def limit_errors(config, stored):
+        """Allow a negative only when the same provider already stores it."""
         for key in (
             "default_timeout",
             "default_timeout_seconds",
@@ -381,10 +381,16 @@ class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
                 if not value.is_finite():
                     continue
             if isinstance(value, (int, float, Decimal)) and value < 0:
-                raise serializers.ValidationError(
-                    {key: "Must be greater than or equal to zero."}
-                )
-        return config
+                column = "default_timeout_seconds" if key == "default_timeout" else key
+                if stored is None or value != getattr(stored, column):
+                    return {
+                        "config": serializers.ValidationError(
+                            {key: "Must be greater than or equal to zero."}
+                        ).detail
+                    }
+                # Persist the already-stored integer, not a raw JSON number/string.
+                config[key] = getattr(stored, column)
+        return None
 
 
 class GatewayNameRequestSerializer(serializers.Serializer):

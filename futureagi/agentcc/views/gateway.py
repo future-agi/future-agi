@@ -691,6 +691,21 @@ class AgentccGatewayViewSet(ViewSet):
             provider_config = request.validated_data.get("config")
             if not provider_name or not provider_config:
                 return self._gm.bad_request("name and config are required")
+            lookup = {
+                "organization": org,
+                "provider_name": provider_name,
+                "deleted": False,
+            }
+            providers = AgentccProviderCredential.no_workspace_objects.filter(**lookup)
+            existing = providers.only(
+                "base_url",
+                "default_timeout_seconds",
+                "max_concurrent",
+                "conn_pool_size",
+            ).first()
+            limit_errors = GatewayProviderUpdateRequestSerializer.limit_errors
+            if errors := limit_errors(provider_config, existing):
+                return self._gm.bad_request(errors)
             if provider_name == "vertex":
                 provider_config = _prepare_vertex_provider_config(provider_config)
             elif "service_account_json" in provider_config:
@@ -700,13 +715,7 @@ class AgentccGatewayViewSet(ViewSet):
             provider_config["base_url"] = ProviderBaseURLField(
                 max_length=500, allow_blank=True
             ).run_validation(provider_config.get("base_url", ""))
-            saved_base_url = (
-                AgentccProviderCredential.no_workspace_objects.filter(
-                    organization=org, provider_name=provider_name, deleted=False
-                )
-                .values_list("base_url", flat=True)
-                .first()
-            )
+            saved_base_url = existing.base_url if existing else None
             try:
                 ensure_provider_base_url_allowed(
                     provider_config.get("base_url", ""), saved_base_url=saved_base_url
@@ -779,18 +788,14 @@ class AgentccGatewayViewSet(ViewSet):
                 "display_name": provider_config.get("display_name", "")
                 or provider_name,
             }
-            lookup = {
-                "organization": org,
-                "provider_name": provider_name,
-                "deleted": False,
-            }
             with transaction.atomic():
                 try:
-                    cred = AgentccProviderCredential.no_workspace_objects.select_for_update().get(
-                        **lookup
-                    )
+                    cred = providers.select_for_update().get()
                 except AgentccProviderCredential.DoesNotExist:
                     cred = None
+                # Recheck against the row we will actually update, not the earlier read.
+                if errors := limit_errors(provider_config, cred):
+                    return self._gm.bad_request(errors)
 
                 # Omitted keys keep the stored credentials; an explicit empty
                 # key must still pass the same rules as a new provider.

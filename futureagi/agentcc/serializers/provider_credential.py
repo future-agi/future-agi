@@ -146,9 +146,18 @@ class AgentccProviderCredentialUpdateSerializer(serializers.Serializer):
     base_url = ProviderBaseURLField(max_length=500, required=False, allow_blank=True)
     api_format = serializers.CharField(max_length=50, required=False)
     models_list = serializers.ListField(child=serializers.CharField(), required=False)
-    default_timeout_seconds = serializers.IntegerField(min_value=0, required=False)
-    max_concurrent = serializers.IntegerField(min_value=0, required=False)
-    conn_pool_size = serializers.IntegerField(min_value=0, required=False)
+
+    class LimitField(serializers.IntegerField):
+        def to_internal_value(self, data):
+            value = super().to_internal_value(data)
+            stored = getattr(self.parent.instance, self.field_name, None)
+            if value < 0 and value != stored:
+                self.fail("min_value", min_value=0)
+            return value
+
+    default_timeout_seconds = LimitField(required=False)
+    max_concurrent = LimitField(required=False)
+    conn_pool_size = LimitField(required=False)
     extra_config = serializers.DictField(required=False)
     is_active = serializers.BooleanField(required=False)
 
