@@ -49,7 +49,9 @@ def test_unknown_field_and_pool_limit(
         expected["typo"] = ["Unknown field."]
     if expect_limit_error:
         expected["config"] = ["conn_pool_size: Must be greater than or equal to zero."]
-    with patch("agentcc.views.gateway.AgentccGatewayViewSet._push_current_config") as push:
+    with patch(
+        "agentcc.views.gateway.AgentccGatewayViewSet._push_current_config"
+    ) as push:
         response = auth_client.post(
             "/agentcc/gateways/default/update-provider/", payload, format="json"
         )

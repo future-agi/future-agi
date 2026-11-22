@@ -374,6 +374,20 @@ class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
                 raise serializers.ValidationError(errors["config"]) from None
         return config
 
+    def validate(self, attrs):
+        # Unknown fields stop the request before the view's row-aware check.
+        # Include its diagnostic in that response, but not for a stored echo.
+        if self.initial_data.keys() - self.fields.keys():
+            config = attrs["config"]
+            if errors := self.limit_errors(config, None):
+                providers = self.context.get("active_providers")
+                if providers is not None:
+                    stored = providers.filter(provider_name=attrs["name"]).first()
+                    errors = self.limit_errors(config, stored)
+                if errors:
+                    raise serializers.ValidationError(errors)
+        return attrs
+
     @staticmethod
     def limit_errors(config, stored):
         """Allow a negative only when the same provider already stores it."""

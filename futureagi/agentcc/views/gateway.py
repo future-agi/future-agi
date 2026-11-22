@@ -676,6 +676,11 @@ class AgentccGatewayViewSet(ViewSet):
 
     @validated_request(
         request_serializer=GatewayProviderUpdateRequestSerializer,
+        serializer_context=lambda request: {
+            "active_providers": AgentccProviderCredential.no_workspace_objects.filter(
+                organization=getattr(request, "organization", None), deleted=False
+            ).only("default_timeout_seconds", "max_concurrent", "conn_pool_size")
+        },
         responses={
             200: GatewayMutationResponseSerializer,
             **GATEWAY_BAD_REQUEST_RESPONSES,
