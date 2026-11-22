@@ -3189,10 +3189,14 @@ class HostedHarnessProvider:
         }
 
     def _job(self, request, pk):
+        try:
+            job_id = uuid.UUID(str(pk))
+        except ValueError:
+            return None
         organization = request_organization(request)
         return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
-                id=pk, organization=organization
+                id=job_id, organization=organization
             ),
             request,
         ).first()
