@@ -123,9 +123,10 @@ def probe_query() -> str:
     for name in (*tables, *columns):
         if not _IDENTIFIER.fullmatch(name):
             raise ValueError(f"not a plain identifier: {name!r}")
+    # Constant identifiers, validated above.
     return (
-        "SELECT table, name FROM system.columns WHERE database = currentDatabase()"
-        f" AND table IN ({', '.join(repr(t) for t in tables)})"  # noqa: S608 - constant identifiers, validated above
+        "SELECT table, name FROM system.columns WHERE database = currentDatabase()"  # noqa: S608
+        f" AND table IN ({', '.join(repr(t) for t in tables)})"
         f" AND name IN ({', '.join(repr(c) for c in columns)})"
     )
 
