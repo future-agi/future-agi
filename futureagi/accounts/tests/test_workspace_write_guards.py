@@ -390,3 +390,13 @@ def test_a_user_with_no_organization_still_reads_their_account(organization, wor
     )
 
     assert response.status_code != 403, response.content
+
+
+def test_a_deleted_membership_does_not_hand_back_the_legacy_role(organization):
+    user = _org_only_user(organization, Level.ADMIN, OrganizationRoles.ADMIN)
+    OrganizationMembership.no_workspace_objects.filter(user=user).update(
+        is_active=False, deleted=True
+    )
+    User.objects.filter(id=user.id).update(organization=organization)
+
+    assert User.objects.get(id=user.id).get_membership_level(organization) is None
