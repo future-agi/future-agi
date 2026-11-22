@@ -10,6 +10,7 @@ import argparse
 import ast
 import contextlib
 import fnmatch
+import functools
 import hashlib
 import inspect
 import json
@@ -900,10 +901,8 @@ def clickhouse_review_candidates(root, changes, baseline, sources, head=None):
     return result
 
 
-def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry):
-    """Require human declarations only for keyword-discovered statement sources."""
-    path = DATA / "clickhouse-change-reviews.json"
-    source_registry(sources)
+def review_rows(reviews, registry, path):
+    """The validated rows of one version of the ClickHouse change-review registry, by path."""
     closed(reviews, {"schema_version", "changes"}, path)
     require(type(reviews["schema_version"]) is int and reviews["schema_version"] == 1 and isinstance(reviews["changes"], list),
             "invalid ClickHouse change-review registry", path)
@@ -920,6 +919,109 @@ def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry
         require(any(t.startswith("clickhouse:") for t in row["declaration"]["tables"]),
                 "ClickHouse review must name ClickHouse tables", path)
         entries[row["path"]] = row
+    return entries
+
+
+def review_history(root, baseline, registry):
+    """Every reviewed transition the registry recorded after `baseline`, by path.
+
+    The registry keeps one row per path: the review of the latest change. A
+    pull request compares with its own base, so that row is the whole change.
+    A scheduled run compares two releases, and between them a path can change
+    several times, each under its own review that the next one replaced. Each
+    version of the registry committed since `baseline` is read and validated
+    as the current one is; an invalid past version fails the gate.
+    """
+    relative = "deploy/update/clickhouse-change-reviews.json"
+    commits = git(root, "log", "--format=%H", f"{baseline}..HEAD", "--", relative).split()
+    edges = {}
+    # Newest first: a pair reviewed twice keeps its latest declaration.
+    for commit in commits:
+        blob = base_bytes(root, commit, relative)
+        if blob is None:
+            continue
+        rows = review_rows(json.loads(blob), registry, f"{relative}@{commit[:12]}")
+        for path, row in rows.items():
+            edges.setdefault(path, {}).setdefault((row["before_sha256"], row["after_sha256"]), row["declaration"])
+    return edges
+
+
+RELEASE_TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+")
+
+
+def release_span_history(root, base, baseline, registry):
+    """The register history for a comparison of two releases, else None.
+
+    Only scripts/update-safety-base.sh's release-span path (a scheduled or
+    dispatched run on main) passes an exact release tag as --base; a pull
+    request, a push or a merge group passes a commit. A pull request's own
+    commits are not reviewed one by one, so there its change must match one
+    row exactly. The history is read only if a row does not match.
+    """
+    if not RELEASE_TAG.fullmatch(base or ""):
+        return None
+    return functools.cache(lambda: review_history(root, baseline, registry))
+
+
+def path_revisions(root, baseline, relative):
+    """The contents `relative` had at `baseline`, then after each commit since that changed it.
+
+    Oldest first, consecutive duplicates removed. Merge commits are included
+    (--full-history), so a pull request's merge is one revision.
+    """
+    commits = git(root, "log", "--full-history", "--reverse", "--format=%H", f"{baseline}..HEAD", "--", relative).split()
+    states = [base_bytes(root, baseline, relative)]
+    for commit in commits:
+        blob = base_bytes(root, commit, relative)
+        if blob != states[-1]:
+            states.append(blob)
+    return states
+
+
+def needs_review(relative, before, after, sources):
+    """Whether a pull request making exactly this change would need a review row."""
+    if before == after or excluded_source(relative, sources["exclusions"], after if after is not None else before):
+        return False
+    return bool((schema_statements(before) if source_blob(relative, before) else [])
+                or (schema_statements(after) if source_blob(relative, after) else []))
+
+
+def reviewed_chain(states, edges, relative, sources):
+    """The reviewed declarations along a chain through the actual revisions, or None.
+
+    A chain runs from the first revision to the last, only forward through
+    revisions the file actually had in this span. Each link is a transition a
+    review row records (from the registry's history), or one a pull request
+    could make without a review: the same rule the gate applies per pull
+    request. A row for contents the file never had in this span links nothing.
+    """
+    shas = [content_sha(state) for state in states]
+    reached = {0: []}
+    for later in range(1, len(states)):
+        for earlier in range(later):
+            if earlier not in reached:
+                continue
+            declaration = edges.get((shas[earlier], shas[later]))
+            if declaration is not None:
+                reached[later] = reached[earlier] + [declaration]
+                break
+            if not needs_review(relative, states[earlier], states[later], sources):
+                reached[later] = reached[earlier]
+                break
+    return reached.get(len(states) - 1)
+
+
+def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry, history=None):
+    """Require human declarations only for keyword-discovered statement sources.
+
+    `history`, a callable returning review_history(), lets a change that
+    spans several reviewed commits pass as a chain of those reviews. It is
+    called only when a review does not match the change exactly. Every link must be a validated
+    row; a gap, a changed hash or an unreviewed step fails as before.
+    """
+    path = DATA / "clickhouse-change-reviews.json"
+    source_registry(sources)
+    entries = review_rows(reviews, registry, path)
     candidates = clickhouse_review_candidates(root, changes, baseline, sources)
     missing = [row for row in candidates if row["path"] not in entries]
     require(not missing,
@@ -932,10 +1034,26 @@ def check_clickhouse_changes(root, changes, baseline, sources, reviews, registry
     for candidate in candidates:
         relative = candidate["path"]
         row = entries[relative]
-        require(all(row[key] == candidate[key] for key in ("before_sha256", "after_sha256")),
-                f"{relative}: review hashes do not match this exact base-to-head change", path)
-        value = row["declaration"]
-        required.append({"path": relative, "tables": value["tables"], "risk_classes": value["risk_classes"], "large_volume_rehearsal": True})
+        declarations = [row["declaration"]]
+        # An exact review is the whole change: no history is read for it.
+        if not all(row[key] == candidate[key] for key in ("before_sha256", "after_sha256")):
+            chain = None
+            # The current review must end at the head blob; earlier links come
+            # from the registry's own history, bound to the file's revisions.
+            if history is not None and row["after_sha256"] == candidate["after_sha256"]:
+                states = path_revisions(root, baseline, relative)
+                edges = {**history().get(relative, {}), (row["before_sha256"], row["after_sha256"]): row["declaration"]}
+                if content_sha(states[-1]) == candidate["after_sha256"]:
+                    chain = reviewed_chain(states, edges, relative, sources)
+            require(chain is not None,
+                    f"{relative}: review hashes do not match this exact base-to-head change, and no chain of reviewed "
+                    "changes through the file's revisions since the base leads from the base blob to the head blob", path)
+            declarations = chain
+        # Every reviewed link's tables are retained, not only the latest one's,
+        # in first-declared order (one declaration: exactly as declared).
+        tables = list(dict.fromkeys(table for value in declarations for table in value["tables"]))
+        classes = list(dict.fromkeys(risk for value in declarations for risk in value["risk_classes"]))
+        required.append({"path": relative, "tables": tables, "risk_classes": classes, "large_volume_rehearsal": True})
     return required
 
 
@@ -1112,7 +1230,8 @@ def main(argv=None):
             sources = document(root / DATA / "clickhouse-sources.json")
             check_source_coverage(root, sources)
             rehearsals += check_clickhouse_changes(root, changes, baseline, sources,
-                                                  document(root / DATA / "clickhouse-change-reviews.json"), registry)
+                                                  document(root / DATA / "clickhouse-change-reviews.json"), registry,
+                                                  history=release_span_history(root, args.base, baseline, registry))
         if args.django:
             # AppConfig.ready() diagnostics must not corrupt the JSON API.
             with contextlib.redirect_stdout(sys.stderr):
