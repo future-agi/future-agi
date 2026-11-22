@@ -7,10 +7,14 @@ import { STATUS_CHIPS } from "./traceTable.constants";
 // Outcome quick-filter — one chip per status bucket plus All. The active chip is
 // the selected (grey) state; the dot carries the status colour. Each chip
 // carries its count so the distribution is legible before you click. Counts follow the table's other filters, not the status one.
+// A bucket with nothing in it is hidden, not greyed out; All and the selected
+// chip always stay so the current filter is never lost.
 export default function StatusFilterChips({ value, counts, onChange, blocked = [] }) {
   return (
     <Stack direction="row" alignItems="center" spacing={0.75} sx={{ flexWrap: "wrap", rowGap: 0.75 }}>
-      {STATUS_CHIPS.map((chip) => {
+      {STATUS_CHIPS.filter(
+        (chip) => chip.id === "all" || chip.id === value || (counts[chip.id] ?? 0) > 0,
+      ).map((chip) => {
         const active = value === chip.id;
         const count = counts[chip.id] ?? 0;
         const blockedByGrouping = blocked.includes(chip.id);

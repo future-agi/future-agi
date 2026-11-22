@@ -1317,8 +1317,10 @@ describe("RunDetail", () => {
       screen.getByText('Passes when the agent says exactly "Hi there."'),
     ).toBeInTheDocument();
     expect(screen.getByText("Omits the word book")).toBeInTheDocument();
-    // One-offs keep Omega's prose, with its call ids read as the call's label.
+    // One-offs are grouped by name; opening a group shows Omega's prose, with
+    // its call ids read as the call's label.
     expect(screen.getByText("Also seen, 1 call each")).toBeInTheDocument();
+    await user.click(screen.getByText("Omitted price information"));
     expect(
       screen.getByText(
         'In call "spanish-meal-policy · Trial 1" the agent never gave the fare',

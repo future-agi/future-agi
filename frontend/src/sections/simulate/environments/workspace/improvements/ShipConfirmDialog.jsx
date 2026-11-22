@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Box, Button, Stack, Typography } from "@mui/material";
 
 import { ConfirmDialog } from "src/components/custom-dialog";
+import Iconify from "src/components/iconify";
 import { fetchCandidatePatch } from "src/api/simulate-environments/fixRuns";
 
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
@@ -11,26 +12,55 @@ import { parseDiff } from "./parseDiff";
 
 const num = { fontVariantNumeric: "tabular-nums" };
 
-function Row({ label, children }) {
+// A destination fact: label, then the value in a quiet code chip with its icon.
+function Row({ label, icon, value }) {
   return (
-    <Stack direction="row" spacing={1.5} alignItems="flex-start">
+    <Stack direction="row" spacing={1.5} alignItems="center">
       <Typography
         sx={{
           typography: "s2",
           color: "text.subtitle",
-          width: 64,
+          width: 56,
           flexShrink: 0,
         }}
       >
         {label}
       </Typography>
-      <Box sx={{ flex: 1, minWidth: 0 }}>{children}</Box>
+      <Stack
+        direction="row"
+        spacing={0.75}
+        alignItems="center"
+        sx={{
+          minWidth: 0,
+          px: 1,
+          py: 0.25,
+          borderRadius: "6px",
+          bgcolor: "action.hover",
+        }}
+      >
+        <Iconify
+          icon={icon}
+          width={14}
+          sx={{ color: "text.secondary", flexShrink: 0 }}
+        />
+        <Typography
+          noWrap
+          sx={{
+            typography: "s2",
+            color: "text.primary",
+            fontFamily: "monospace",
+          }}
+        >
+          {value}
+        </Typography>
+      </Stack>
     </Stack>
   );
 }
 Row.propTypes = {
   label: PropTypes.string.isRequired,
-  children: PropTypes.node,
+  icon: PropTypes.string.isRequired,
+  value: PropTypes.string.isRequired,
 };
 
 function ChangeSummary({ fix, winner }) {
@@ -56,25 +86,81 @@ function ChangeSummary({ fix, winner }) {
       </Typography>
     );
   }
+  const files = parseDiff(data);
   return (
-    <Stack spacing={0.25}>
-      {parseDiff(data).map((f) => {
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        maxHeight: 336,
+        overflowY: "auto",
+      }}
+    >
+      {files.map((f, i) => {
         const added = f.lines.filter((l) => l.type === "add").length;
         const removed = f.lines.filter((l) => l.type === "remove").length;
         return (
-          <Stack key={f.file} direction="row" spacing={1} alignItems="baseline">
-            <Typography noWrap sx={{ typography: "s2", minWidth: 0 }}>
+          <Stack
+            key={f.file}
+            direction="row"
+            spacing={1}
+            alignItems="center"
+            sx={{
+              px: 1.5,
+              minHeight: 32,
+              borderTop: i ? "1px solid" : "none",
+              borderColor: "divider",
+            }}
+          >
+            <Iconify
+              icon="solar:document-text-linear"
+              width={14}
+              sx={{ color: "text.disabled", flexShrink: 0 }}
+            />
+            <Typography
+              noWrap
+              title={f.file}
+              sx={{
+                typography: "s2",
+                color: "text.primary",
+                fontFamily: "monospace",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
               {f.file}
             </Typography>
             <Typography
-              sx={{ typography: "s3", color: "text.secondary", ...num }}
+              sx={{
+                typography: "s3",
+                fontWeight: 500,
+                color: "status.success.fg",
+                width: 28,
+                textAlign: "right",
+                flexShrink: 0,
+                ...num,
+              }}
             >
-              {`+${added} −${removed}`}
+              +{added}
+            </Typography>
+            <Typography
+              sx={{
+                typography: "s3",
+                fontWeight: 500,
+                color: removed ? "status.danger.fg" : "text.disabled",
+                width: 28,
+                textAlign: "right",
+                flexShrink: 0,
+                ...num,
+              }}
+            >
+              −{removed}
             </Typography>
           </Stack>
         );
       })}
-    </Stack>
+    </Box>
   );
 }
 ChangeSummary.propTypes = {
@@ -109,39 +195,54 @@ export default function ShipConfirmDialog({
           ? `Open a pull request for Candidate ${winner.attempt}?`
           : `Make Candidate ${winner.attempt}'s version the default?`
       }
+      PaperProps={{ sx: { maxWidth: 480 } }}
       content={
-        <Stack spacing={1.25}>
-          {github ? (
-            <>
-              {fix.agent?.repository && (
-                <Row label="Repo">
-                  <Typography sx={{ typography: "s2" }}>
-                    {fix.agent.repository}
-                  </Typography>
-                </Row>
-              )}
-              {fix.agent?.ref && (
-                <Row label="Into">
-                  <Typography sx={{ typography: "s2" }}>
-                    {fix.agent.ref}
-                  </Typography>
-                </Row>
-              )}
-            </>
-          ) : (
-            <Row label="Version">
-              <Typography sx={{ typography: "s2" }}>
-                {`${fix.agent?.name ?? "Agent"} · v${winner.version_number}`}
-              </Typography>
-            </Row>
-          )}
-          <Row label="Change">
-            {open && <ChangeSummary fix={fix} winner={winner} />}
-          </Row>
-          {strength && (
-            <Typography sx={{ typography: "s2", color: BUILD_TONES.amber }}>
-              {strengthNote}
+        <Stack spacing={2} sx={{ mt: 0.5 }}>
+          <Stack spacing={1}>
+            {github ? (
+              <>
+                {fix.agent?.repository && (
+                  <Row
+                    label="Repo"
+                    icon="mdi:github"
+                    value={fix.agent.repository}
+                  />
+                )}
+                {fix.agent?.ref && (
+                  <Row
+                    label="Into"
+                    icon="solar:git-branch-linear"
+                    value={fix.agent.ref}
+                  />
+                )}
+              </>
+            ) : (
+              <Row
+                label="Version"
+                icon="solar:layers-minimalistic-linear"
+                value={`${fix.agent?.name ?? "Agent"} · v${winner.version_number}`}
+              />
+            )}
+          </Stack>
+          <Box>
+            <Typography
+              sx={{ typography: "s2", color: "text.subtitle", mb: 0.75 }}
+            >
+              Change
             </Typography>
+            {open && <ChangeSummary fix={fix} winner={winner} />}
+          </Box>
+          {strength && (
+            <Stack direction="row" spacing={0.75} alignItems="flex-start">
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                width={15}
+                sx={{ color: BUILD_TONES.amber, flexShrink: 0, mt: "2px" }}
+              />
+              <Typography sx={{ typography: "s2", color: BUILD_TONES.amber }}>
+                {strengthNote}
+              </Typography>
+            </Stack>
           )}
         </Stack>
       }

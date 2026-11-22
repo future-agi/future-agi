@@ -659,7 +659,9 @@ describe("Ship", () => {
     expect(
       await within(dialog).findByText("instructions.md"),
     ).toBeInTheDocument();
-    expect(within(dialog).getByText("+3 −1")).toBeInTheDocument();
+    // Added and removed lines read as two aligned columns.
+    expect(within(dialog).getByText("+3")).toBeInTheDocument();
+    expect(within(dialog).getByText("−1")).toBeInTheDocument();
     expect(within(dialog).queryByText("Repo")).toBeNull();
     expect(shipPosts()).toHaveLength(0);
     await user.click(confirm);
