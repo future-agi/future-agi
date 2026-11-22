@@ -75,6 +75,13 @@ MARKERS = (
     ("derived_metric_inputs", "value_text"),
 )
 
+# Exit codes of --apply/--check (the runner's 2 and 3 pass through).
+CAUSES = {
+    1: "schema_missing",
+    2: "drift_detected",
+    3: "apply_aborted_or_clickhouse_unreachable",
+}
+
 MESSAGE = "Metrics schema not installed"
 COMMAND = "python -m tracer.services.derived_metrics.schema_install --apply"
 HINT = (
@@ -261,6 +268,18 @@ def main(argv: list[str] | None = None) -> int:
         # Driver messages can carry connection details; the type is enough.
         _say(f"the Metrics schema step failed ({type(exc).__name__})")
         code = 3
+    if code:
+        # Never silent: one ERROR record names the step and the cause, whether
+        # or not startup continues.
+        import structlog
+
+        structlog.get_logger(__name__).error(
+            "metrics_schema_step_failed",
+            step="apply" if args.apply else "check",
+            cause=CAUSES.get(code, f"exit_{code}"),
+            exit_code=code,
+            advisory=args.advisory,
+        )
     if code and args.advisory:
         _say(
             "continuing without Metrics: its pages and refreshes answer "

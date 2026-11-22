@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 import pytest
+import structlog.testing
 
 from tracer.services.clickhouse import v2 as clickhouse_v2
 from tracer.services.clickhouse.v2 import apply_schema
@@ -229,8 +230,12 @@ def test_advisory_reports_a_failure_but_lets_startup_continue(
     runner, probe, capsys, code
 ):
     runner["exit"] = code
-    assert schema_install.main(["--apply", "--advisory"]) == 0
+    with structlog.testing.capture_logs() as logs:
+        assert schema_install.main(["--apply", "--advisory"]) == 0
     assert "continuing without Metrics" in capsys.readouterr().out
+    (record,) = [r for r in logs if r["event"] == "metrics_schema_step_failed"]
+    assert record["log_level"] == "error" and record["step"] == "apply"
+    assert record["cause"] == schema_install.CAUSES[code]
     runner["exit"] = 0
     probe["rows"] = []
     assert schema_install.main(["--check", "--advisory"]) == 0
