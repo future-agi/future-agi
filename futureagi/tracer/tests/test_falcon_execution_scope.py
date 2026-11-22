@@ -39,19 +39,30 @@ from tracer.tests._falcon_analysis import finding_params, install_reader, score_
 
 def make_credentialed_attempt(project, user, monkeypatch):
     idp = SAMLMetadataModel.objects.create(
-        id=str(uuid4()), organization=project.organization, is_enabled=True,
-        identity_type=SAMLMetadataModel.IDENTITY_OKTA, relay_state=str(uuid4()),
+        id=str(uuid4()),
+        organization=project.organization,
+        is_enabled=True,
+        identity_type=SAMLMetadataModel.IDENTITY_OKTA,
+        relay_state=str(uuid4()),
     )
     token = AuthToken.objects.create(
-        user=user, auth_type=AuthTokenType.ACCESS, auth_origin=AuthTokenOrigin.SAML,
-        scoped_organization=project.organization, origin_idp=idp,
-        origin_idp_generation=idp.security_generation, last_used_at=timezone.now(),
+        user=user,
+        auth_type=AuthTokenType.ACCESS,
+        auth_origin=AuthTokenOrigin.SAML,
+        scoped_organization=project.organization,
+        origin_idp=idp,
+        origin_idp_generation=idp.security_generation,
+        last_used_at=timezone.now(),
     )
     credential = validate_saml_credential(
-        AuthToken.objects.values().get(pk=token.pk), str(user.pk),
-        now=timezone.now(), transport="http",
+        AuthToken.objects.values().get(pk=token.pk),
+        str(user.pk),
+        now=timezone.now(),
+        transport="http",
     )
-    foreground = ToolContext(user, project.organization, project.workspace, auth_scope=credential)
+    foreground = ToolContext(
+        user, project.organization, project.workspace, auth_scope=credential
+    )
     attempt = TraceErrorAnalysis.objects.create(trace_id=uuid4(), project=project)
     # Supply only license data. The foreground Falcon gate, registry and
     # capability service evaluate the snapshot on every capture and recheck.
@@ -68,7 +79,9 @@ def make_credentialed_attempt(project, user, monkeypatch):
 
 @pytest.fixture
 def assignment(observe_project, user, monkeypatch):
-    foreground, attempt, resolver = make_credentialed_attempt(observe_project, user, monkeypatch)
+    foreground, attempt, resolver = make_credentialed_attempt(
+        observe_project, user, monkeypatch
+    )
     reader = install_reader(monkeypatch, observe_project, str(attempt.trace_id))
     return foreground, attempt, reader, resolver
 
@@ -91,23 +104,41 @@ def test_capture_revalidate_and_reconstruct_keep_exact_credential(assignment):
         scope.analysis_attempt_id = uuid4()
     ctx = revalidate(scope, attempt)
     assert (ctx.user.pk, ctx.organization.pk, ctx.workspace.pk) == (
-        foreground.user.pk, foreground.organization.pk, foreground.workspace.pk,
+        foreground.user.pk,
+        foreground.organization.pk,
+        foreground.workspace.pk,
     )
     assert ctx.project.pk == attempt.project_id
     assert ctx.assigned_trace_id == str(attempt.trace_id)
     assert ctx.background_execution_scope is scope
     assert ctx.auth_scope is scope.auth_scope is foreground.auth_scope
-    assert resolver.get_snapshot.call_count == reader.root_ids_by_trace_ids.call_count == 2
-    reader.root_ids_by_trace_ids.assert_called_with([str(attempt.trace_id)], project_ids=[str(attempt.project_id)])
+    assert (
+        resolver.get_snapshot.call_count == reader.root_ids_by_trace_ids.call_count == 2
+    )
+    reader.root_ids_by_trace_ids.assert_called_with(
+        [str(attempt.trace_id)], project_ids=[str(attempt.project_id)]
+    )
 
     # Use a current public field for replace; falcon_conversation_id is not on
     # this public branch. Ordinary init fields survive replace and reconstruction.
     copied = replace(ctx, project=attempt.project)
     rebuilt = ToolContext(**{f.name: getattr(copied, f.name) for f in fields(copied)})
-    assert rebuilt.background_execution_scope is scope and rebuilt.auth_scope is ctx.auth_scope
-    assert next(f for f in fields(ctx) if f.name == "background_execution_scope").kw_only
+    assert (
+        rebuilt.background_execution_scope is scope
+        and rebuilt.auth_scope is ctx.auth_scope
+    )
+    assert next(
+        f for f in fields(ctx) if f.name == "background_execution_scope"
+    ).kw_only
     with pytest.raises(TypeError):
-        ToolContext(ctx.user, ctx.organization, ctx.workspace, ctx.project, ctx.assigned_trace_id, scope)
+        ToolContext(
+            ctx.user,
+            ctx.organization,
+            ctx.workspace,
+            ctx.project,
+            ctx.assigned_trace_id,
+            scope,
+        )
 
 
 @pytest.mark.requires_ee
@@ -142,8 +173,20 @@ def test_accounting_hold_also_denies_a_valid_scope(assignment, monkeypatch):
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "change",
-    ["no_user", "ordinary_bearer", "unknown_scope", "user_binding", "org_binding",
-     "project", "trace", "assigned_without_project", "other_workspace", "nested", "api_key", "mcp"],
+    [
+        "no_user",
+        "ordinary_bearer",
+        "unknown_scope",
+        "user_binding",
+        "org_binding",
+        "project",
+        "trace",
+        "assigned_without_project",
+        "other_workspace",
+        "nested",
+        "api_key",
+        "mcp",
+    ],
 )
 def test_capture_denies_missing_identity_or_outside_foreground(assignment, change):
     ctx, attempt, reader, _ = assignment
@@ -161,8 +204,12 @@ def test_capture_denies_missing_identity_or_outside_foreground(assignment, chang
         from mcp_server.oauth_provider import FutureAGIAccessToken
 
         token = FutureAGIAccessToken(
-            token="test", client_id="test", scopes=["read"], user_id=str(ctx.user_id),
-            organization_id=str(ctx.organization_id), workspace_id=str(ctx.workspace_id),
+            token="test",
+            client_id="test",
+            scopes=["read"],
+            user_id=str(ctx.user_id),
+            organization_id=str(ctx.organization_id),
+            workspace_id=str(ctx.workspace_id),
             expires_at=int((timezone.now() + timedelta(minutes=10)).timestamp()),
         )
         ctx = replace(ctx, auth_scope=token)
@@ -196,8 +243,21 @@ def test_capture_denies_missing_identity_or_outside_foreground(assignment, chang
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "change",
-    ["token", "non_saml_origin", "expired", "generation", "rebound_token", "user", "membership",
-     "workspace", "viewer", "entitlement", "project", "trace", "attempt"],
+    [
+        "token",
+        "non_saml_origin",
+        "expired",
+        "generation",
+        "rebound_token",
+        "user",
+        "membership",
+        "workspace",
+        "viewer",
+        "entitlement",
+        "project",
+        "trace",
+        "attempt",
+    ],
 )
 def test_live_revocation_after_capture(assignment, change):
     ctx, attempt, reader, resolver = assignment
@@ -246,7 +306,9 @@ def test_live_revocation_after_capture(assignment, change):
         Project.objects.filter(pk=attempt.project_id).update(deleted=True)
     elif change == "trace":
         reader.root_ids_by_trace_ids.side_effect = None
-        reader.root_ids_by_trace_ids.return_value = {str(attempt.trace_id): ("root", str(uuid4()))}
+        reader.root_ids_by_trace_ids.return_value = {
+            str(attempt.trace_id): ("root", str(uuid4()))
+        }
     else:
         attempt.delete()
     with pytest.raises(BackgroundScopeDenied):
@@ -260,18 +322,26 @@ def test_no_widening_on_replace_or_worker_assignment_mismatch(assignment):
     bound = revalidate(scope, attempt)
     reader.root_ids_by_trace_ids.reset_mock()
     for overrides in (
-        {"project_id": str(uuid4())}, {"trace_id": str(uuid4())},
-        {"analysis_attempt_id": uuid4()}, {"analysis_attempt_id": None},
+        {"project_id": str(uuid4())},
+        {"trace_id": str(uuid4())},
+        {"analysis_attempt_id": uuid4()},
+        {"analysis_attempt_id": None},
     ):
         with pytest.raises(BackgroundScopeDenied, match="assignment mismatch"):
             revalidate(scope, attempt, **overrides)
     with pytest.raises(BackgroundScopeDenied, match="initiating user"):
         revalidate(None, attempt)
     for overrides in (
-        {"project": None}, {"assigned_trace_id": None}, {"auth_scope": None},
-        {"user": None}, {"workspace": None},
+        {"project": None},
+        {"assigned_trace_id": None},
+        {"auth_scope": None},
+        {"user": None},
+        {"workspace": None},
     ):
-        assert get_trace_project(str(attempt.trace_id), replace(bound, **overrides)) is None
+        assert (
+            get_trace_project(str(attempt.trace_id), replace(bound, **overrides))
+            is None
+        )
     reader.root_ids_by_trace_ids.assert_not_called()
 
 
@@ -290,19 +360,27 @@ def scoring_followups(monkeypatch):
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("target", ["implicit", "explicit", "different", "deleted", "deleted_last"])
-def test_background_tools_write_only_to_captured_attempt(assignment, scoring_followups, target):
+@pytest.mark.parametrize(
+    "target", ["implicit", "explicit", "different", "deleted", "deleted_last"]
+)
+def test_background_tools_write_only_to_captured_attempt(
+    assignment, scoring_followups, target
+):
     from ai_tools.tools.tracing.submit_trace_finding import SubmitTraceFindingTool
     from ai_tools.tools.tracing.submit_trace_scores import SubmitTraceScoresTool
 
     foreground, attempt, reader, _ = assignment
     trace_id = str(attempt.trace_id)
-    foreground = replace(foreground, project=attempt.project, assigned_trace_id=trace_id)
+    foreground = replace(
+        foreground, project=attempt.project, assigned_trace_id=trace_id
+    )
     scope = capture_background_execution_scope(foreground, attempt=attempt)
     bound = revalidate(scope, attempt)
     reader.trace_ids_for_span_ids.return_value = {"shared-span": trace_id}
     rows = TraceErrorAnalysis.objects.filter(project=attempt.project, trace_id=trace_id)
-    later = rows.create(project=attempt.project, trace_id=trace_id, insights="Leave alone")
+    later = rows.create(
+        project=attempt.project, trace_id=trace_id, insights="Leave alone"
+    )
     later_before = rows.values().get(pk=later.pk)
     assert rows.latest("analysis_date").pk == later.pk
 
@@ -339,11 +417,15 @@ def test_background_tools_write_only_to_captured_attempt(assignment, scoring_fol
         assert set(rows.values_list("pk", flat=True)) == {later.pk, attempt.pk}
         attempt.refresh_from_db()
         assert attempt.total_errors == 1 and attempt.overall_score == 2.0
-        assert TraceErrorDetail.objects.get(analysis=attempt).description == "Own finding"
+        assert (
+            TraceErrorDetail.objects.get(analysis=attempt).description == "Own finding"
+        )
 
 
 @pytest.mark.django_db
-def test_interactive_tools_keep_creation_and_latest_selection(assignment, scoring_followups):
+def test_interactive_tools_keep_creation_and_latest_selection(
+    assignment, scoring_followups
+):
     from ai_tools.tools.tracing.submit_trace_finding import SubmitTraceFindingTool
     from ai_tools.tools.tracing.submit_trace_scores import SubmitTraceScoresTool
 
@@ -387,7 +469,10 @@ def test_revoked_org_falcon_entitlement_denies_live_initiator(assignment, monkey
     monkeypatch.setattr(entitlements, "get_redis", lambda: cache)
     monkeypatch.setattr(metering, "get_redis", lambda: cache)
     grant = PlanEntitlement.objects.create(
-        feature="has_falcon_ai", organization=ctx.organization, plan="free", value_bool=True,
+        feature="has_falcon_ai",
+        organization=ctx.organization,
+        plan="free",
+        value_bool=True,
     )
     scope = capture_background_execution_scope(ctx, attempt=attempt)
     assert revalidate(scope, attempt).auth_scope is ctx.auth_scope
@@ -426,7 +511,9 @@ def test_socket_passes_only_middleware_authority_to_agent(
         token_id = AuthToken.objects.create(
             user=ctx.user, auth_type=AuthTokenType.ACCESS, last_used_at=timezone.now()
         ).pk
-    token = generate_encrypted_message({"user_id": str(ctx.user_id), "id": str(token_id)})
+    token = generate_encrypted_message(
+        {"user_id": str(ctx.user_id), "id": str(token_id)}
+    )
     query = urlencode({"token": token, "workspace_id": str(ctx.workspace_id)})
     conversation = Conversation.objects.create(
         organization=ctx.organization, workspace=ctx.workspace, user=ctx.user
@@ -458,11 +545,17 @@ def test_socket_passes_only_middleware_authority_to_agent(
         try:
             connected, _ = await socket.connect(timeout=5)
             assert connected
-            await socket.send_json_to({
-                "type": "chat", "message": "Check this trace", "conversation_id": str(conversation.pk),
-                # Client context is not transport authority, even for the same user.
-                "context": {"auth_scope": {"token_id": str(ctx.auth_scope.token_id)}},
-            })
+            await socket.send_json_to(
+                {
+                    "type": "chat",
+                    "message": "Check this trace",
+                    "conversation_id": str(conversation.pk),
+                    # Client context is not transport authority, even for the same user.
+                    "context": {
+                        "auth_scope": {"token_id": str(ctx.auth_scope.token_id)}
+                    },
+                }
+            )
             frame = await socket.receive_json_from(timeout=5)
             assert frame["type"] == "error" and frame["data"]["error"] == "test stop"
         finally:

@@ -52,7 +52,9 @@ def tool_chunk(index, name, params):
         "id": f"call-{index}",
         "function": {"name": name, "arguments": json.dumps(params)},
     }
-    return {"choices": [{"delta": {"tool_calls": [call]}, "finish_reason": "tool_calls"}]}
+    return {
+        "choices": [{"delta": {"tool_calls": [call]}, "finish_reason": "tool_calls"}]
+    }
 
 
 def scripted_tool_stream(*tool_calls, fail_after_tool=False, finish="stop"):
@@ -68,7 +70,9 @@ def scripted_tool_stream(*tool_calls, fail_after_tool=False, finish="stop"):
             raise httpx.RemoteProtocolError("Interrupted after scoring")
         else:
             yield {
-                "choices": [{"delta": {"content": "Finished."}, "finish_reason": finish}]
+                "choices": [
+                    {"delta": {"content": "Finished."}, "finish_reason": finish}
+                ]
             }
 
     return stream

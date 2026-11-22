@@ -539,7 +539,8 @@ class AgentLoop:
                 # Never fall through to the global registry for a restricted run.
                 tool = (
                     next((t for t in tools_override if t.name == tool_name), None)
-                    if tools_override is not None else tool_registry.get(tool_name)
+                    if tools_override is not None
+                    else tool_registry.get(tool_name)
                 )
                 # Fall back to agent's own tool list (for MCP tools not in registry)
                 if not tool:

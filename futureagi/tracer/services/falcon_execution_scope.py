@@ -37,7 +37,9 @@ def capture_background_execution_scope(
     if foreground.organization is None or foreground.workspace is None:
         raise BackgroundScopeDenied("Background analysis requires an active workspace.")
     if not isinstance(foreground.auth_scope, SamlCredential):
-        raise BackgroundScopeDenied("A revalidatable initiating credential is required.")
+        raise BackgroundScopeDenied(
+            "A revalidatable initiating credential is required."
+        )
     if (
         foreground.background_execution_scope is not None
         or foreground.workspace.organization_id != foreground.organization_id
@@ -74,9 +76,13 @@ def _require_live_credential(scope: BackgroundExecutionScope) -> None:
         or credential.org_id != scope.org_id
         or credential.user_id != scope.initiating_user_id
     ):
-        raise BackgroundScopeDenied("Initiating credential does not match the assignment.")
+        raise BackgroundScopeDenied(
+            "Initiating credential does not match the assignment."
+        )
     row = (
-        AuthToken.objects.filter(pk=credential.token_id, auth_origin=AuthTokenOrigin.SAML)
+        AuthToken.objects.filter(
+            pk=credential.token_id, auth_origin=AuthTokenOrigin.SAML
+        )
         .values()
         .first()
     )
@@ -88,7 +94,9 @@ def _require_live_credential(scope: BackgroundExecutionScope) -> None:
             transport="falcon_background",
         )
     except SamlCredentialInvalid as exc:
-        raise BackgroundScopeDenied("Initiating credential is no longer valid.") from exc
+        raise BackgroundScopeDenied(
+            "Initiating credential is no longer valid."
+        ) from exc
     # A new validation instant is expected; no other credential binding may change.
     if replace(live, validated_at=credential.validated_at) != credential:
         raise BackgroundScopeDenied("Initiating credential binding changed.")
@@ -106,8 +114,13 @@ def revalidate_background_execution_scope(
     Accept only an in-process trusted capture. Even a valid result does not
     satisfy readiness, prove an active claim, or authorize a provider call.
     """
-    if not isinstance(scope, BackgroundExecutionScope) or scope.initiating_user_id is None:
-        raise BackgroundScopeDenied("Background analysis requires an initiating user and scope.")
+    if (
+        not isinstance(scope, BackgroundExecutionScope)
+        or scope.initiating_user_id is None
+    ):
+        raise BackgroundScopeDenied(
+            "Background analysis requires an initiating user and scope."
+        )
     if (
         analysis_attempt_id is None
         or analysis_attempt_id != scope.analysis_attempt_id

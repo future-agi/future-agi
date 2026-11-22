@@ -130,7 +130,11 @@ class SubmitTraceFindingTool(BaseTool):
 
         with transaction.atomic():
             analysis = select_analysis_for_write(
-                context, project, params.trace_id, params.analysis_id, reuse_latest=False
+                context,
+                project,
+                params.trace_id,
+                params.analysis_id,
+                reuse_latest=False,
             )
             if isinstance(analysis, ToolResult):
                 return analysis

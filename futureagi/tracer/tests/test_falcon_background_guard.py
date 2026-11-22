@@ -39,7 +39,9 @@ def test_unready_background_analysis_fails_before_spend_or_dispatch(
         "tracer.queries.error_analysis.TraceErrorAnalysisDB.ingest_trace_error_embeddings",
         "tracer.tasks.error_analysis.cluster_project_errors.delay",
     ):
-        call = Mock(name=target, side_effect=AssertionError(f"Unexpected call to {target}"))
+        call = Mock(
+            name=target, side_effect=AssertionError(f"Unexpected call to {target}")
+        )
         monkeypatch.setattr(target, call)
         sentinels.append(call)
 
@@ -73,4 +75,6 @@ def test_unready_background_analysis_fails_before_spend_or_dispatch(
         assert "without an initiating user" in message
     for call in sentinels:
         call.assert_not_called()
-    assert not TraceErrorAnalysis.objects.filter(trace_id=trace_id, project=project).exists()
+    assert not TraceErrorAnalysis.objects.filter(
+        trace_id=trace_id, project=project
+    ).exists()

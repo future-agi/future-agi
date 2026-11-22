@@ -118,7 +118,9 @@ class ExploreTraceTool(BaseTool):
         # Run Chauffeur (Haiku) for sub-flow identification
         chauffeur_report = self._run_chauffeur(execution_summary)
 
-        if context.assigned_trace_id is not None and not chauffeur_report.get("sub_flows"):
+        if context.assigned_trace_id is not None and not chauffeur_report.get(
+            "sub_flows"
+        ):
             # An outline alone does not tell the worker what happened in the spans.
             return ToolResult.error(
                 f"Trace summary unavailable. Use read_trace_span with a span ID from:\n{outline}"

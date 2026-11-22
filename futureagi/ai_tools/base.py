@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, ClassVar, Optional, Type
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -146,7 +146,7 @@ class BaseTool(ABC):
     name: str
     description: str
     category: str
-    input_model: ClassVar[Type[PydanticBaseModel]] = EmptyInput
+    input_model: ClassVar[type[PydanticBaseModel]] = EmptyInput
 
     @abstractmethod
     def execute(self, params: PydanticBaseModel, context: ToolContext) -> ToolResult:

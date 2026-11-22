@@ -98,7 +98,9 @@ def test_held_worker_does_not_score_an_accessible_colliding_root(
     )
     # Keep this resolver stub out of the imports that the worker probes observe.
     with monkeypatch.context() as resolver_patch:
-        reader = install_reader(resolver_patch, project, trace_id, foreign=other_project)
+        reader = install_reader(
+            resolver_patch, project, trace_id, foreign=other_project
+        )
         assert get_trace_project(trace_id, ctx) == project
         reader.root_ids_by_trace_ids.assert_called_once_with(
             [trace_id], project_ids=[str(project.id)]
@@ -420,7 +422,14 @@ def assert_queued_pair_refused(project_id, pair):
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize(
-    "case", ["text_only", "missing_span", "incomplete_stream", "summary_unavailable", "explored"]
+    "case",
+    [
+        "text_only",
+        "missing_span",
+        "incomplete_stream",
+        "summary_unavailable",
+        "explored",
+    ],
 )
 def test_held_activity_never_publishes_an_inspection(project, queued_trace_pair, case):
     from tracer.models.trace_error_analysis import ErrorClusterTraces
@@ -431,7 +440,9 @@ def test_held_activity_never_publishes_an_inspection(project, queued_trace_pair,
     group = make_feed_group(project, "inspection")
     ErrorClusterTraces.objects.create(cluster=group, trace_id=assigned)
     summary = MagicMock()
-    summary.return_value.choices[0].message.content = (
+    summary.return_value.choices[
+        0
+    ].message.content = (
         '{"sub_flows":[{"name":"answer","summary":"Inspected the root"}]}'
     )
     if case == "summary_unavailable":
@@ -448,9 +459,13 @@ def test_held_activity_never_publishes_an_inspection(project, queued_trace_pair,
     with no_background_work(assigned, other, stream=stream, summary=summary):
         assert_queued_pair_refused(str(project.id), queued_trace_pair)
     summary.assert_not_called()
-    status = feed.get_deep_analysis(group.cluster_id, assigned, [str(project.id)]).status
+    status = feed.get_deep_analysis(
+        group.cluster_id, assigned, [str(project.id)]
+    ).status
     assert status == "idle"
-    assert not TraceErrorAnalysis.objects.filter(project=project, trace_id=assigned).exists()
+    assert not TraceErrorAnalysis.objects.filter(
+        project=project, trace_id=assigned
+    ).exists()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -486,6 +501,8 @@ def test_held_activity_leaves_sibling_trace_and_claim_untouched(
     assert list(analyses.filter(trace_id=other).values()) == [before]
     assert not TraceErrorDetail.objects.filter(analysis=existing).exists()
     assert deep_analysis_state.is_running(other, project_id=str(project.id))
-    state = deep_analysis_state.status(assigned, project_id=str(project.id), has_analysis=False)
+    state = deep_analysis_state.status(
+        assigned, project_id=str(project.id), has_analysis=False
+    )
     assert state == "idle"
     summary.assert_not_called()

@@ -24,7 +24,10 @@ from tracer.tests._falcon_analysis import (
     scripted_tool_stream,
 )
 from tracer.tests._falcon_hold import HOLD_CODE, no_background_work
-from tracer.tests.test_falcon_execution_scope import make_credentialed_attempt, revalidate
+from tracer.tests.test_falcon_execution_scope import (
+    make_credentialed_attempt,
+    revalidate,
+)
 
 pytestmark = [pytest.mark.requires_ee, pytest.mark.django_db]
 
@@ -37,7 +40,10 @@ def bound_pair(observe_project, user, monkeypatch):
         project=project, trace_id=uuid4(), insights="Keep this analysis"
     )
     TraceErrorDetail.objects.create(
-        analysis=sibling, error_id="E001", category="Evidence", description="Keep this finding"
+        analysis=sibling,
+        error_id="E001",
+        category="Evidence",
+        description="Keep this finding",
     )
     trace_ids = [str(attempt.trace_id), str(sibling.trace_id)]
     roots = {tid: (f"root-{tid}", str(project.pk)) for tid in trace_ids}
@@ -61,7 +67,9 @@ def bound_pair(observe_project, user, monkeypatch):
         )
         # A missing sibling would give a false positive for a trace or span rejection.
         with v2.get_reader() as reader:
-            found = reader.root_ids_by_trace_ids(trace_ids, project_ids=[str(project.pk)])
+            found = reader.root_ids_by_trace_ids(
+                trace_ids, project_ids=[str(project.pk)]
+            )
             assert found == roots
         scope = capture_background_execution_scope(foreground, attempt=attempt)
         yield revalidate(scope, attempt), sibling
@@ -84,7 +92,9 @@ def test_restricted_loop_respects_tool_list(bound_pair, monkeypatch, include_rea
     invoked = Mock(side_effect=AssertionError("Unlisted registry tool invoked"))
     monkeypatch.setattr(forbidden, "run", invoked)
     monkeypatch.setattr(forbidden, "execute", invoked)
-    agent = AgentLoop(bound, SimpleNamespace(title="Restricted tools", context_summary=""))
+    agent = AgentLoop(
+        bound, SimpleNamespace(title="Restricted tools", context_summary="")
+    )
     provider = Mock(
         side_effect=scripted_tool_stream(
             read_call(trace_id, f"root-{trace_id}"),
@@ -112,16 +122,22 @@ def test_restricted_loop_respects_tool_list(bound_pair, monkeypatch, include_rea
     read, denied = result["tool_calls"]
     assert read["tool_name"] == allowed.name
     if include_reader:
-        assert read["status"] == "completed" and f"root-{trace_id}" in read["result_full"]
+        assert (
+            read["status"] == "completed" and f"root-{trace_id}" in read["result_full"]
+        )
     else:
-        assert read["status"] == "error" and f"Tool '{allowed.name}' not found" in read["result_full"]
+        assert (
+            read["status"] == "error"
+            and f"Tool '{allowed.name}' not found" in read["result_full"]
+        )
     assert (denied["tool_name"], denied["status"]) == (forbidden.name, "error")
     reason = f"Tool '{forbidden.name}' not found"
     assert reason in denied["result_full"]
     final_messages = provider.call_args.args[0]
     assert any(
         msg.get("tool_call_id") == "call-1" and reason in msg["content"]
-        for msg in final_messages if msg["role"] == "tool"
+        for msg in final_messages
+        if msg["role"] == "tool"
     )
     invoked.assert_not_called()
     load_external_tools.assert_not_awaited()
@@ -144,7 +160,8 @@ def test_bound_tool_rejects_sibling_trace_before_reader(bound_pair, monkeypatch,
     params = {
         "read_trace_span": read_call(trace_id, span_id)[1],
         "submit_trace_scores": score_params(trace_id),
-        "submit_trace_finding": finding_params(trace_id) | {"location_spans": [span_id]},
+        "submit_trace_finding": finding_params(trace_id)
+        | {"location_spans": [span_id]},
     }.get(name, {"trace_id": trace_id})
     if name == "explore_trace":
         # The worker aliases the scoped explorer; the global short name is a different tool.
@@ -165,8 +182,10 @@ def test_bound_tool_rejects_sibling_trace_before_reader(bound_pair, monkeypatch,
 def test_bound_write_rejects_sibling_analysis_handle(bound_pair, name):
     bound, sibling = bound_pair
     trace_id = bound.assigned_trace_id
-    params = score_params(trace_id) if name == "submit_trace_scores" else (
-        finding_params(trace_id) | {"location_spans": [f"root-{trace_id}"]}
+    params = (
+        score_params(trace_id)
+        if name == "submit_trace_scores"
+        else (finding_params(trace_id) | {"location_spans": [f"root-{trace_id}"]})
     )
     denied = registry.get(name).run(params | {"analysis_id": str(sibling.pk)}, bound)
     assert denied.is_error and denied.error_code == "NOT_FOUND" and denied.data is None
@@ -182,7 +201,9 @@ def test_bound_tool_rejects_sibling_span_on_assigned_trace(bound_pair, name):
         params = read_call(trace_id, span_id)[1]
         code, reason = "NOT_FOUND", f"Span `{span_id}` not found in trace `{trace_id}`"
     else:
-        params = finding_params(trace_id) | {"location_spans": [f"root-{trace_id}", span_id]}
+        params = finding_params(trace_id) | {
+            "location_spans": [f"root-{trace_id}", span_id]
+        }
         code, reason = "VALIDATION_ERROR", "span outside the assigned trace"
     denied = registry.get(name).run(params, bound)
     assert denied.is_error and denied.error_code == code and denied.data is None
@@ -191,7 +212,9 @@ def test_bound_tool_rejects_sibling_span_on_assigned_trace(bound_pair, name):
 
 def test_held_empty_list_refuses_before_project_trace_discovery(observe_project):
     project = observe_project
-    ctx = ToolContext(project.workspace.created_by, project.organization, project.workspace)
+    ctx = ToolContext(
+        project.workspace.created_by, project.organization, project.workspace
+    )
     tool = registry.get("analyze_project_traces")
     with no_background_work(), CaptureQueriesContext(connection) as queries:
         denied = tool.run({"project_id": str(project.pk), "trace_ids": []}, ctx)

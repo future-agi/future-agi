@@ -162,7 +162,9 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         if error_count > 0 and ingest_embeddings:
             error_analysis_db = TraceErrorAnalysisDB()
             error_analysis_db.ingest_trace_error_embeddings(
-                trace_id, project_id=str(project.id), organization_id=str(organization.id)
+                trace_id,
+                project_id=str(project.id),
+                organization_id=str(organization.id),
             )
 
         # Mark the API call as successful
@@ -472,7 +474,8 @@ def _falcon_analyze_single_trace(
             "error_code": exc.code,
             "error": (
                 f"{exc} {_NO_FALCON_INITIATOR}"
-                if background_execution_scope is None else str(exc)
+                if background_execution_scope is None
+                else str(exc)
             ),
         }
 
@@ -530,7 +533,12 @@ def _falcon_analyze_single_trace(
     }
 
     try:
-        user, org, workspace, project = ctx.user, ctx.organization, ctx.workspace, ctx.project
+        user, org, workspace, project = (
+            ctx.user,
+            ctx.organization,
+            ctx.workspace,
+            ctx.project,
+        )
         set_workspace_context(workspace=workspace, organization=org, user=user)
 
         # The seeded builtin is visible to every workspace, but the ordinary
@@ -562,8 +570,11 @@ def _falcon_analyze_single_trace(
         explorer = ExploreTraceTool()
         explorer.name = "explore_trace"  # Name used by the analysis skill.
         analysis_tools = [
-            explorer, ExploreTraceTool(), ReadTraceSpanTool(),
-            SubmitTraceFindingTool(), SubmitTraceScoresTool(),
+            explorer,
+            ExploreTraceTool(),
+            ReadTraceSpanTool(),
+            SubmitTraceFindingTool(),
+            SubmitTraceScoresTool(),
         ]
         agent = AgentLoop(tool_context=ctx, conversation=conversation)
 
@@ -677,7 +688,9 @@ def _falcon_analyze_single_trace(
         if analysis is not None and not submitted:
             # A prior attempt may have left a partial row. A read-only turn
             # cannot attest to those scores or finalize them on a retry.
-            raise RuntimeError("Falcon did not submit an update to the existing analysis")
+            raise RuntimeError(
+                "Falcon did not submit an update to the existing analysis"
+            )
 
         if analysis is None:
             if submitted:
