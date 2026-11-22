@@ -39,6 +39,7 @@ ENVIRONMENTS_PER_ROW = 5
 
 _OBSERVE_LINKED = Q(
     observability_provider__enabled=True,
+    observability_provider__deleted=False,
     observability_provider__project__deleted=False,
 )
 _ENVIRONMENT_CONDITIONS = {
@@ -140,6 +141,12 @@ def annotate_agent_rows(
             output_field=CharField(),
         ),
         _observed=Case(
+            When(
+                _agent_kind="source",
+                production_project__deleted=False,
+                then=Value(True),
+            ),
+            When(_agent_kind="source", then=Value(False)),
             When(_OBSERVE_LINKED, then=Value(True)),
             default=Value(False),
             output_field=BooleanField(),

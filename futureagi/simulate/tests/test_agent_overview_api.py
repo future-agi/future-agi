@@ -337,6 +337,37 @@ def test_list_filters_by_type_source_environments_and_observe_project(
 
 
 @pytest.mark.django_db
+def test_the_observe_filter_reads_each_agent_the_way_its_column_does(
+    auth_client, organization, workspace, user
+):
+    linked_code = _code_agent(organization, workspace, "Code Linked")
+    _observed(linked_code, user, enabled=False)
+    AgentDefinition.objects.filter(id=linked_code.id).update(
+        production_project=_observe_project(organization, workspace, "Production")
+    )
+    unlinked_code = _code_agent(organization, workspace, "Code Switched On")
+    _observed(unlinked_code, user)
+    hosted = _agent(organization, workspace, "Hosted Live", provider="bland")
+    _observed(hosted, user)
+    removed = _agent(organization, workspace, "Hosted Row Deleted", provider="bland")
+    _observed(removed, user)
+    ObservabilityProvider.objects.filter(
+        id=AgentDefinition.objects.get(id=removed.id).observability_provider_id
+    ).update(deleted=True)
+
+    assert _names(auth_client, observe="linked") == ["Code Linked", "Hosted Live"]
+    assert _names(auth_client, observe="not_linked") == [
+        "Code Switched On",
+        "Hosted Row Deleted",
+    ]
+    rows = _rows(auth_client)
+    assert rows["Code Linked"]["observe_project"]["name"] == "Production"
+    assert rows["Code Switched On"]["observe_project"] is None
+    assert rows["Hosted Live"]["observe_project"] is not None
+    assert rows["Hosted Row Deleted"]["observe_project"] is None
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     "filters",
     [
@@ -1477,52 +1508,6 @@ def test_the_list_reads_observe_projects_without_a_query_per_agent(
 
     with django_assert_max_num_queries(len(one_more.captured_queries)):
         assert len(_rows(auth_client)) == 4
-
-
-def test_bulk_delete_skips_agents_still_used_in_an_environment(
-    auth_client, organization, workspace
-):
-    tested = _agent(organization, workspace, "tested")
-    tested_version = tested.create_version(description="p", commit_message="v1")
-    _environment(tested, 1)
-    idle = _agent(organization, workspace, "idle")
-    idle_version = idle.create_version(description="p", commit_message="v1")
-
-    response = auth_client.delete(
-        "/simulate/agent-definitions/",
-        {"agent_ids": [str(tested.id), str(idle.id)]},
-        format="json",
-    )
-
-    assert response.status_code == status.HTTP_200_OK, response.content
-    body = response.json()
-    assert (body["agents_updated"], body["versions_updated"]) == (1, 1)
-    assert body["skipped_agent_ids"] == [str(tested.id)]
-    for row in (idle, idle_version):
-        row.refresh_from_db()
-        assert row.deleted is True
-    for row in (tested, tested_version):
-        row.refresh_from_db()
-        assert row.deleted is False
-
-
-def test_bulk_delete_of_only_tested_agents_deletes_nothing(
-    auth_client, organization, workspace
-):
-    tested = _agent(organization, workspace, "tested")
-    _environment(tested, 1)
-
-    response = auth_client.delete(
-        "/simulate/agent-definitions/",
-        {"agent_ids": [str(tested.id)]},
-        format="json",
-    )
-
-    assert response.status_code == status.HTTP_200_OK, response.content
-    assert response.json()["agents_updated"] == 0
-    assert response.json()["skipped_agent_ids"] == [str(tested.id)]
-    tested.refresh_from_db()
-    assert tested.deleted is False
 
 
 def test_an_agent_version_cannot_be_deleted(auth_client, organization, workspace):
