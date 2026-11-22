@@ -200,6 +200,7 @@ export default function ConnectedAgentsView({ onConnect }) {
 
   const [picked, setPicked] = useState([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmed, setConfirmed] = useState({ deletable: [], inUse: [] });
   const deleteAgents = useDeleteConnectedAgents();
   const deleting = useRef(false);
   const latest = useRef({ page, pageSize, total });
@@ -245,20 +246,27 @@ export default function ConnectedAgentsView({ onConnect }) {
     setFilters(null);
     setPage(0);
   };
+  const openConfirm = () => {
+    setConfirmed({ deletable, inUse });
+    setConfirmDelete(true);
+  };
   const closeConfirm = () => {
     if (!deleting.current) setConfirmDelete(false);
   };
 
   const handleDelete = () => {
-    if (deleting.current || !canDelete) return;
+    if (deleting.current || !canDelete || !confirmed.deletable.length) return;
     deleting.current = true;
     deleteAgents.mutate(
-      selected.map((agent) => agent.id),
+      confirmed.deletable.map((agent) => agent.id),
       {
         onSuccess: ({ data: result }) => {
           const deleted = result.agents_updated ?? 0;
           const skippedIds = new Set(result.skipped_agent_ids ?? []);
-          const skipped = selected.filter((agent) => skippedIds.has(agent.id));
+          const skipped = [
+            ...confirmed.inUse,
+            ...confirmed.deletable.filter((agent) => skippedIds.has(agent.id)),
+          ];
           const now = latest.current;
           const lastPage = Math.max(
             0,
@@ -349,7 +357,7 @@ export default function ConnectedAgentsView({ onConnect }) {
               {
                 label: "Delete",
                 icon: "solar:trash-bin-trash-linear",
-                onClick: () => setConfirmDelete(true),
+                onClick: openConfirm,
                 disabled: Boolean(deleteBlocked) || refreshing,
                 tooltip: deleteBlocked,
               },
@@ -410,18 +418,18 @@ export default function ConnectedAgentsView({ onConnect }) {
         onClose={closeConfirm}
         closeDisabled={deleteAgents.isPending}
         title={
-          deletable.length === 1
-            ? `Delete ${deletable[0].name}?`
-            : `Delete ${deletable.length} agents?`
+          confirmed.deletable.length === 1
+            ? `Delete ${confirmed.deletable[0].name}?`
+            : `Delete ${confirmed.deletable.length} agents?`
         }
-        content={deleteConfirmText(deletable, inUse)}
+        content={deleteConfirmText(confirmed.deletable, confirmed.inUse)}
         action={
           <LoadingButton
             variant="contained"
             color="error"
             size="small"
             loading={deleteAgents.isPending}
-            disabled={Boolean(deleteBlocked)}
+            disabled={!canDelete || !confirmed.deletable.length}
             onClick={handleDelete}
           >
             Delete

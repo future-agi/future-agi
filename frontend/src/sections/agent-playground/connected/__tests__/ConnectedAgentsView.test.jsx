@@ -340,15 +340,12 @@ describe("ConnectedAgentsView", () => {
   });
 
   it("deletes the idle agents of a mixed selection and says which were kept", async () => {
-    const busy = CONNECTED_AGENTS_FIXTURE.find(
-      (agent) => agent.agent_name === "Customer support line",
-    );
     axios.delete.mockResolvedValue({
       data: {
         message: "ok",
         agents_updated: 1,
         versions_updated: 1,
-        skipped_agent_ids: [busy.id],
+        skipped_agent_ids: [],
       },
     });
     renderView();
@@ -376,7 +373,54 @@ describe("ConnectedAgentsView", () => {
       ),
     );
     expect(axios.delete).toHaveBeenCalledWith("/simulate/agent-definitions/", {
-      data: { agent_ids: expect.arrayContaining([busy.id, "ca-03"]) },
+      data: { agent_ids: ["ca-03"] },
+    });
+  });
+
+  it("deletes only what the dialog listed, even after a refetch frees a kept agent", async () => {
+    const busy = CONNECTED_AGENTS_FIXTURE.find(
+      (agent) => agent.agent_name === "Customer support line",
+    );
+    axios.delete.mockResolvedValue({
+      data: {
+        message: "ok",
+        agents_updated: 1,
+        versions_updated: 1,
+        skipped_agent_ids: [],
+      },
+    });
+    const queryClient = renderView();
+    await screen.findByText("Customer support line");
+    tickRow("Customer support line");
+    tickRow("Clinic receptionist");
+    fireEvent.click(deleteButton());
+    const dialog = screen.getByRole("dialog");
+
+    axios.get.mockImplementation((_, { params }) => {
+      const page = connectedAgentsPage(params);
+      return Promise.resolve({
+        data: {
+          ...page,
+          results: page.results.map((agent) =>
+            agent.id === busy.id ? { ...agent, environment_count: 0 } : agent,
+          ),
+        },
+      });
+    });
+    const calls = axios.get.mock.calls.length;
+    await queryClient.refetchQueries({ queryKey: ["agents", "connected"] });
+    await waitFor(() =>
+      expect(axios.get.mock.calls.length).toBeGreaterThan(calls),
+    );
+
+    expect(
+      within(dialog).getByText("Delete Clinic receptionist?"),
+    ).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(axios.delete).toHaveBeenCalledTimes(1));
+    expect(axios.delete).toHaveBeenCalledWith("/simulate/agent-definitions/", {
+      data: { agent_ids: ["ca-03"] },
     });
   });
 
