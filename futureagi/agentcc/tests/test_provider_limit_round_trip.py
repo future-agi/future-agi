@@ -3,6 +3,7 @@
 from unittest.mock import patch
 
 import pytest
+from rest_framework import serializers
 
 from accounts.models.organization import Organization
 from agentcc.models import AgentccProviderCredential
@@ -191,6 +192,84 @@ def test_negative_config_with_invalid_name(
         "name": [message],
         **details("gateway", "max_concurrent"),
     }
+
+
+NAME_SAMPLES = [
+    None,
+    True,
+    False,
+    [],
+    {},
+    [[]],
+    {"nested": []},
+    7,
+    1.5,
+    0,
+    -1,
+    "sample",
+]
+
+
+class ReferenceRequest(serializers.Serializer):
+    """The original gateway name field, with a valid config to isolate its result."""
+
+    name = serializers.CharField()
+    config = serializers.DictField()
+
+
+@pytest.mark.parametrize("name", NAME_SAMPLES)
+@pytest.mark.parametrize("pool", [100, -1])
+def test_gateway_name_field_contract(auth_client, organization, pushes, name, pool):
+    reference = ReferenceRequest(data={"name": name, "config": {"conn_pool_size": 100}})
+    accepted = reference.is_valid()
+    rows = AgentccProviderCredential._base_manager.filter(organization=organization)
+    before = list(rows.order_by("pk").values())
+    response = auth_client.post(
+        UPDATE,
+        {"name": name, "config": {"conn_pool_size": pool, "api_key": "fixture"}},
+        format="json",
+    )
+    if accepted and pool >= 0:
+        assert response.status_code == 200
+        saved = rows.get(provider_name=reference.validated_data["name"])
+        assert saved.conn_pool_size == pool
+        pushes["gateway"].assert_called_once()
+    else:
+        assert response.status_code == 400
+        assert list(rows.order_by("pk").values()) == before
+        pushes["gateway"].assert_not_called()
+        expected = dict(reference.errors)
+        if pool < 0:
+            expected.update(details("gateway", "conn_pool_size"))
+        assert response.data["details"] == expected
+
+
+@pytest.mark.parametrize("name", NAME_SAMPLES)
+@pytest.mark.parametrize("method", ["post", "put", "patch"])
+def test_direct_negative_limit_name_controls(
+    auth_client, organization, make_row, pushes, name, method
+):
+    row = make_row(organization, conn_pool_size=100)
+    rows = AgentccProviderCredential._base_manager.filter(
+        organization=organization
+    ).order_by("pk")
+    before = list(rows.values())
+    payload = {"provider_name": name, "conn_pool_size": -1}
+    expected = details(method, "conn_pool_size")
+    if method == "post":
+        reference = ReferenceRequest(data={"name": name, "config": {}})
+        if not reference.is_valid():
+            expected["provider_name"] = reference.errors["name"]
+        payload["credentials"] = {"api_key": "fixture"}
+        url = CREDENTIALS
+    else:
+        # Edits identify the provider by its URL, not the name in the body.
+        url = f"{CREDENTIALS}{row.pk}/"
+    response = getattr(auth_client, method)(url, payload, format="json")
+    assert response.status_code == 400
+    assert list(rows.values()) == before
+    pushes[method].assert_not_called()
+    assert response.data["details"] == expected
 
 
 @pytest.mark.parametrize(

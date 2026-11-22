@@ -364,10 +364,12 @@ class GatewayProviderUpdateRequestSerializer(serializers.Serializer):
     config = serializers.DictField(child=JsonValueField())
 
     def validate_config(self, config):
-        # A missing or blank name cannot identify a row whose limit may be echoed.
-        # Validate both fields here so DRF reports their errors in one response.
-        name = self.initial_data.get("name", "")
-        if isinstance(name, str) and not name.strip():
+        # If the name field rejects its input, there can be no stored row to
+        # compare against. Report the config error alongside the name error.
+        name_field = self.fields["name"]
+        try:
+            name_field.run_validation(name_field.get_value(self.initial_data))
+        except serializers.ValidationError:
             if errors := self.limit_errors(config, None):
                 raise serializers.ValidationError(errors["config"])
         return config
