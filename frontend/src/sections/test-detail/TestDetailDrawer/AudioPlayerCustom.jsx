@@ -228,12 +228,13 @@ StereoMultiTrackPlayer.propTypes = {
 
 LegacyStereoMultiTrackPlayer.propTypes = StereoMultiTrackPlayer.propTypes;
 
-const AudioPlayerCustom = ({ data, onInstance }) => {
+const AudioPlayerCustom = ({ data, onInstance, recordingVariant }) => {
   // An explicit new-tier projection must never fall back to legacy URLs,
   // including null, malformed, pending, policy-hidden and deleted projections.
   if (data && Object.hasOwn(data, "recording_attachment")) {
     return (
       <RecordingAttachmentPlayer
+        variant={recordingVariant}
         projectId={data.project_id}
         attachment={data.recording_attachment}
         onInstance={onInstance}
@@ -366,12 +367,14 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
 AudioPlayerCustom.propTypes = {
   data: PropTypes.object,
   onInstance: PropTypes.func,
+  recordingVariant: PropTypes.oneOf(["voice", "trace"]),
 };
 
 const areRecordingPropsEqual = (prev, next) => {
   // Never skip re-render when a caller uses the onInstance callback — that
   // prop is the audio-sync bridge and must always propagate down.
   if (prev.onInstance !== next.onInstance) return false;
+  if (prev.recordingVariant !== next.recordingVariant) return false;
   const p = prev.data;
   const n = next.data;
   return (

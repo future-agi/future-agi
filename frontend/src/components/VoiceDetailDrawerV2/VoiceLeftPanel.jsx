@@ -43,6 +43,7 @@ const VoiceLeftPanel = ({
   embedded = false,
   hidePathTabs = false,
   extraTabs = NO_EXTRA_TABS,
+  recordingVariant,
 }) => {
   const isSimulate = data?.module === "simulate";
   const [currentTab, setCurrentTab] = useState(TABS.TRANSCRIPT);
@@ -183,7 +184,10 @@ const VoiceLeftPanel = ({
                       Recording
                     </Typography>
                   </ShowComponent>
-                  <VoiceAudioBridge data={data} />
+                  <VoiceAudioBridge
+                    data={data}
+                    recordingVariant={recordingVariant}
+                  />
                 </Box>
                 <ShowComponent condition={!!filteredTranscript?.length}>
                   <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
@@ -223,6 +227,8 @@ VoiceLeftPanel.propTypes = {
   embedded: PropTypes.bool,
   hidePathTabs: PropTypes.bool,
   extraTabs: PropTypes.arrayOf(LEFT_PANEL_TAB_SHAPE),
+  // Player for an attachment recording; Voice Observability keeps its default.
+  recordingVariant: PropTypes.oneOf(["voice", "trace"]),
 };
 
 export default VoiceLeftPanel;

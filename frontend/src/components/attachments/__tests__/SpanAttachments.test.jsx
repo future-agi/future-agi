@@ -7,7 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import SpanAttachments from "../SpanAttachments";
+import SpanAttachments, { SpanAttachmentsProvider } from "../SpanAttachments";
 import ScreenshotFilmstrip from "../ScreenshotFilmstrip";
 import { resolveAttachments } from "../client";
 import { collectScreenshots } from "../attachmentPlacement";
@@ -214,6 +214,37 @@ describe("video, audio and file attachments (U04)", () => {
       purpose: "document",
     },
   });
+
+  it.each([
+    [false, 1],
+    [true, 0],
+  ])(
+    "lists a call recording unless the drawer plays it in its Conversation view (%s)",
+    (callRecording, count) => {
+      const call = spanImage(5, {
+        reference: {
+          modality: "audio",
+          mime_type: "audio/ogg",
+          purpose: "conversation_recording",
+        },
+      });
+      const value = span([call]);
+      render(
+        <SpanAttachmentsProvider
+          projectId={projectId}
+          span={value}
+          traceMedia
+          callRecording={callRecording}
+        >
+          <SpanAttachments projectId={projectId} span={value} allSpans={[]} />
+        </SpanAttachmentsProvider>,
+      );
+      expect(screen.queryAllByRole("button", { name: /Load audio/ })).toHaveLength(
+        count,
+      );
+      expect(resolveAttachments).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not resolve or fetch media until the viewer asks, then streams from the gateway", async () => {
     const { container } = render(

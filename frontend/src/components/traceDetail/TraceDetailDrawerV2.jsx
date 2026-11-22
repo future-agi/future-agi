@@ -40,6 +40,9 @@ import { useAuthContext } from "src/auth/hooks";
 import SpanTreeTimeline from "./SpanTreeTimeline";
 import SpanDetailPane from "./SpanDetailPane";
 import LeftPanelSplit from "./TraceLeftPanel";
+import TraceCallPanel from "./TraceCallPanel";
+import { isAttachmentCall } from "./attachmentCall";
+import { uuid } from "../attachments/contract";
 import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 import FalconAISidebar from "src/sections/falcon-ai/FalconAISidebar";
 import {
@@ -128,6 +131,15 @@ const ACTION_ITEMS = [
     icon: "solar:list-plus-linear",
   },
 ];
+
+// A call recorded as an attachment (LiveKit, Pipecat) also opens as the Voice
+// Observability left panel. Pinned next to Trace; never a saved view.
+const CALL_TAB = {
+  id: "conversation",
+  label: "Conversation",
+  icon: "solar:chat-round-line-linear",
+  isDefault: true,
+};
 
 function getSpan(entry) {
   return entry?.observation_span || {};
@@ -273,6 +285,12 @@ const TraceDetailDrawerV2 = ({
 
   const [activeDrawerTab, setActiveDrawerTab] = useState("trace");
   const [deleteTabId, setDeleteTabId] = useState(null);
+  // The Conversation view sits on top of the Trace tab: saved views, their
+  // auto-save and defaults keep seeing "trace" while it is shown.
+  const [callView, setCallView] = useState(false);
+  useEffect(() => {
+    if (activeDrawerTab !== "trace") setCallView(false);
+  }, [activeDrawerTab]);
 
   const drawerTabs = useMemo(() => {
     const tabs = [
@@ -558,6 +576,36 @@ const TraceDetailDrawerV2 = ({
   const rawSpans = data?.observation_spans;
   const summary = data?.summary;
   const graph = data?.graph;
+
+  const hasCall = useMemo(
+    () =>
+      open &&
+      !readOnly &&
+      !sharedToken &&
+      uuid.safeParse(projectId).success &&
+      isAttachmentCall(rawSpans),
+    [open, readOnly, sharedToken, projectId, rawSpans],
+  );
+  const inCall = callView && hasCall && activeDrawerTab === "trace";
+  const toolbarTabs = useMemo(
+    () =>
+      hasCall ? [drawerTabs[0], CALL_TAB, ...drawerTabs.slice(1)] : drawerTabs,
+    [hasCall, drawerTabs],
+  );
+  const handleToolbarTabChange = useCallback(
+    (tabId) => {
+      if (tabId === CALL_TAB.id) {
+        if (activeDrawerTab !== "trace") handleTabChange("trace");
+        setCallView(true);
+        return;
+      }
+      setCallView(false);
+      // Back to Trace from the Conversation view: keep the trace view as it was.
+      if (inCall && tabId === "trace") return;
+      handleTabChange(tabId);
+    },
+    [activeDrawerTab, handleTabChange, inCall],
+  );
 
   // Apply span type filter + span filters to the tree
   // A caller that pins the span it opened (an evaluation's source span)
@@ -995,10 +1043,10 @@ const TraceDetailDrawerV2 = ({
 
         {/* Toolbar — tab bar + filter/display/save buttons */}
         <DrawerToolbar
-          tabs={drawerTabs}
-          activeTabId={activeDrawerTab}
+          tabs={toolbarTabs}
+          activeTabId={inCall ? CALL_TAB.id : activeDrawerTab}
           readOnly={readOnly}
-          onTabChange={handleTabChange}
+          onTabChange={handleToolbarTabChange}
           onCloseTab={handleCloseTab}
           onCreateTab={handleCreateView}
           onCreateImagineTab={handleCreateImagineTab}
@@ -1023,7 +1071,8 @@ const TraceDetailDrawerV2 = ({
           onFilterOpen={(e) => setFilterAnchorEl(e?.currentTarget || e)}
           onDisplayOpen={(el) => setDisplayAnchorEl(el)}
           hasActiveFilter={spanFilters.length > 0}
-          hideFilter={readOnly}
+          hideFilter={readOnly || inCall}
+          hideDisplay={inCall}
         />
 
         {/* Display options popover — hidden on Imagine tab */}
@@ -1064,7 +1113,7 @@ const TraceDetailDrawerV2 = ({
         )}
 
         {/* Active filter chips row — hidden on Imagine tab */}
-        {!isImagineActive && spanFilters.length > 0 && (
+        {!isImagineActive && !inCall && spanFilters.length > 0 && (
           <Box
             sx={{
               display: "flex",
@@ -1214,7 +1263,7 @@ const TraceDetailDrawerV2 = ({
             display: "flex",
             flexDirection: isImagineActive
               ? "column"
-              : viewMode === "timeline"
+              : !inCall && viewMode === "timeline"
                 ? "column"
                 : "row",
             overflow: "hidden",
@@ -1285,7 +1334,7 @@ const TraceDetailDrawerV2 = ({
             >
               <ContentSkeleton variant="panel" />
             </Box>
-          ) : viewMode === "timeline" ? (
+          ) : !inCall && viewMode === "timeline" ? (
             /* ── Timeline layout: full-width timeline on top, detail panel on bottom ── */
             <>
               {/* Top: Timeline (full width) */}
@@ -1317,6 +1366,7 @@ const TraceDetailDrawerV2 = ({
                 >
                   <SpanDetailPane
                     conversationTree={data?.observation_spans}
+                    callRecording={hasCall}
                     entry={selectedSpanData}
                     allSpans={spans}
                     traceStartTime={
@@ -1338,18 +1388,38 @@ const TraceDetailDrawerV2 = ({
           ) : (
             /* ── Tree layout: left/right split ── */
             <>
-              {/* Left Panel: Tree + Agent Graph with resizable split */}
-              <LeftPanelSplit
-                leftPanelWidth={leftPanelWidth}
-                viewMode={viewMode}
-                spans={spans}
-                selectedSpanId={selectedSpanId}
-                onSelectSpan={handleSelectSpan}
-                visibleMetrics={visibleMetrics}
-                setVisibleMetrics={setVisibleMetrics}
-                showAgentGraph={showAgentGraph}
-                onRefresh={handleRefresh}
-              />
+              {/* Left Panel: Tree + Agent Graph with resizable split, or the
+                  Voice Observability panel for a call in the Conversation view */}
+              {inCall ? (
+                <Box
+                  component="section"
+                  aria-label="Conversation"
+                  sx={{
+                    width: `${leftPanelWidth}%`,
+                    minWidth: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    borderRight: "1px solid",
+                    borderColor: "divider",
+                    flexShrink: 0,
+                  }}
+                >
+                  <TraceCallPanel traceId={traceId} projectId={projectId} />
+                </Box>
+              ) : (
+                <LeftPanelSplit
+                  leftPanelWidth={leftPanelWidth}
+                  viewMode={viewMode}
+                  spans={spans}
+                  selectedSpanId={selectedSpanId}
+                  onSelectSpan={handleSelectSpan}
+                  visibleMetrics={visibleMetrics}
+                  setVisibleMetrics={setVisibleMetrics}
+                  showAgentGraph={showAgentGraph}
+                  onRefresh={handleRefresh}
+                />
+              )}
 
               {/* Resizable divider with visual handle */}
               <Box
@@ -1403,6 +1473,7 @@ const TraceDetailDrawerV2 = ({
                 {selectedSpanData ? (
                   <SpanDetailPane
                     conversationTree={data?.observation_spans}
+                    callRecording={hasCall}
                     entry={selectedSpanData}
                     allSpans={spans}
                     traceStartTime={

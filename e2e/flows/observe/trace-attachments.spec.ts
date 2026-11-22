@@ -353,12 +353,14 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       await sendOtlpExport(api, cfg, { resourceSpans: [{ resource: resource(voiceName), scopeSpans: [{
         scope: { name: 'livekit-agents' }, spans: [
           // No fi.span.kind: the LiveKit SDK marks no root; the collector maps it.
-          span(livekitTrace, livekitRoot, LIVEKIT_ROOT, [str(LIVEKIT_JOB_ID, jobId), str('session.id', livekitSessionName)]),
+          // Voice detail reads the call transcript from the conversation root (start times in call seconds).
+          span(livekitTrace, livekitRoot, LIVEKIT_ROOT, [str(LIVEKIT_JOB_ID, jobId), str('session.id', livekitSessionName),
+            str('fi.conversation.transcript', JSON.stringify([
+              {role:'user',content:'Is my order on its way?',start_time_seconds:0},
+              {role:'assistant',speaker_name:'Fulfillment',content:'It shipped today.',start_time_seconds:0.1},
+            ]))]),
           span(livekitTrace, livekitSession, LIVEKIT_SESSION,
-            [str('session.id', livekitSessionName), str('fi.conversation.transcript', JSON.stringify([
-              {role:'user',content:'Is my order on its way?',start_ms:0},
-              {role:'assistant',speaker_name:'Fulfillment',content:'It shipped today.',start_ms:100},
-            ])), ...carriers(livekit.session, [livekitRecording])], livekitRoot),
+            [str('session.id', livekitSessionName), ...carriers(livekit.session, [livekitRecording])], livekitRoot),
           { ...span(livekitTrace, hex(8), 'lookup_order', [str('fi.span.kind', 'tool'),
             str('session.id', livekitSessionName)], livekitSession),
             startTimeUnixNano: String(start + 50_000_000n), endTimeUnixNano: String(start + 85_000_000n) },
@@ -474,22 +476,21 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
       const fallbackRoute = F01.resolve(voiceProject);
       if(!live) await page.route(`**${fallbackRoute}`,route=>route.request().postDataJSON()?.items?.every((i:{representation:string})=>i.representation==='peaks') ? route.abort() : route.continue());
       const resolved = page.waitForResponse(exactResolve(voiceProject,item,traceKey,'playable'), { timeout: UI_READY });
-      const tab=drawer.getByRole('tab',{name:'Conversation',exact:true});
-      await tab.click();
+      await drawer.getByRole('button',{name:'Conversation',exact:true}).click();
       const response = await resolved;
       const grants = await response.json() as { items: Grant[] };
       expect(grants.items.map(g => [g.occurrence_id, g.status])).toStrictEqual([[item.occurrenceId, 'ready']]);
-      const panel=drawer.getByRole('tabpanel',{name:'Conversation',exact:true});
+      const panel=drawer.getByRole('region',{name:'Conversation',exact:true});
       const play=panel.getByRole('button',{name:'Play recording',exact:true});
       const player=panel.locator('audio');
       await expect(player).toHaveCount(1);
       const slider=panel.getByRole('slider',{name:'Recording position'});
       if(live){
-        await expect(panel.getByText('lookup_order',{exact:true})).toBeVisible();
-        await panel.getByRole('button',{name:'Seek to 0:00.1, Fulfillment, It shipped today.'}).click();
+        // Clicking a transcript turn seeks the recording to that turn, as in Voice Observability.
+        await panel.getByText('It shipped today.',{exact:true}).click();
         await expect(slider).toHaveValue('0.1');
         await expect(play).toBeVisible();
-        await panel.getByRole('button',{name:'Seek to 0:00, User, Is my order on its way?'}).click();
+        await panel.getByText('Is my order on its way?',{exact:true}).click();
         await expect(slider).toHaveValue('0');
         await snapshot('conversation');
       } else {await expect(panel.getByTestId('recording-waveform')).toHaveCount(0); await snapshot('seek-bar');}
@@ -576,12 +577,12 @@ test('OBS-E2E-066: a recorded voice call and a traced image play and render on t
         await expect.poll(()=>probe.pg<{state:string}>(`SELECT d.state FROM tracer_attachmentrecordingderivative d JOIN tracer_attachment a ON a.id=d.attachment_id WHERE a.client_id=$1 AND d.representation='peaks'`,[item.attachmentId]),POLL.ASYNC_JOB).toEqual([{state:'ready'}]);
         const {drawer}=await openTrace(voiceProject,traceKey);
         await drawer.getByText(LIVEKIT_SESSION,{exact:true}).first().click();
-        const panel=drawer.getByRole('tabpanel',{name:'Conversation',exact:true});
+        const panel=drawer.getByRole('region',{name:'Conversation',exact:true});
         const slider=panel.getByRole('slider',{name:'Recording position'}), player=panel.locator('audio');
         const play=panel.getByRole('button',{name:'Play recording',exact:true});
         const peakGrant=page.waitForResponse(exactResolve(voiceProject,item,traceKey,'peaks'));
         const peakBytes=page.waitForResponse(r=>new URL(r.url()).pathname.includes(`/${item.occurrenceId}/`) && r.headers()['content-type']==='application/octet-stream');
-        await drawer.getByRole('tab',{name:'Conversation',exact:true}).click();
+        await drawer.getByRole('button',{name:'Conversation',exact:true}).click();
         const [peak]=((await (await peakGrant).json()) as {items:Grant[]}).items;
         const bytes=await peakBytes;
         expect(new URL(bytes.url()).pathname).toBe(peak.gateway_path);

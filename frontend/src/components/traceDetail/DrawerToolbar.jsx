@@ -74,7 +74,17 @@ const TabPill = ({
 }) => {
   const pill = (
     <Box
+      role="button"
+      tabIndex={0}
+      aria-pressed={!!isActive}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick?.();
+        }
+      }}
       sx={{
         display: "inline-flex",
         alignItems: "center",

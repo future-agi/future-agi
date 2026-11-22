@@ -42,8 +42,6 @@ import { enqueueSnackbar } from "notistack";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
-import ConversationTab from "./ConversationTab";
-import { discoverRecordings } from "./conversationTimeline";
 import {
   mediaContextGeneration,
   subscribeMediaContext,
@@ -1693,6 +1691,7 @@ EventCard.propTypes = { event: PropTypes.object };
 const SpanDetailPane = ({
   entry,
   conversationTree,
+  callRecording = false,
   allSpans,
   traceStartTime,
   isRootSpan,
@@ -1813,32 +1812,12 @@ const SpanDetailPane = ({
       !window.location.pathname.startsWith("/shared/") &&
       captureMediaContext(),
   );
-  const recordings = useMemo(
-    () =>
-      traceMedia ? discoverRecordings(conversationTree, span, isRootSpan) : [],
-    [traceMedia, conversationTree, span, isRootSpan],
-  );
-  const eligible = recordings.length > 0;
   const selectionKey = `${mediaGeneration}/${projectId}/${span.trace}/${span.id}`;
-  const [conversationKey, setConversationKey] = useState(null);
-  const showConversation = eligible && selectionKey === conversationKey;
-  const visibleTab =
-    activeTab === "conversation" && !showConversation ? "preview" : activeTab;
-  useEffect(() => {
-    if (activeTab === "conversation" && !showConversation)
-      setActiveTab("preview");
-  }, [activeTab, showConversation]);
   const hasLogView = allSpans?.length > 0;
   const TAB_CONFIG = useMemo(() => {
     const tabs = [
       { key: "preview", label: "Preview", icon: "solar:document-text-linear" },
     ];
-    if (eligible)
-      tabs.push({
-        key: "conversation",
-        label: "Conversation",
-        icon: "solar:chat-round-line-linear",
-      });
     if (hasLogView) {
       tabs.push({
         key: "log",
@@ -1860,7 +1839,7 @@ const SpanDetailPane = ({
       { key: "events", label: "Events", icon: "solar:bell-linear" },
     );
     return tabs.filter(Boolean);
-  }, [eligible, hasLogView, readOnly]);
+  }, [hasLogView, readOnly]);
 
   if (!span) return null;
 
@@ -1964,11 +1943,8 @@ const SpanDetailPane = ({
 
       {/* ── Tab Bar ────────────────────────────────── */}
       <Tabs
-        value={visibleTab}
-        onChange={(_, v) => {
-          if (v === "conversation") setConversationKey(selectionKey);
-          setActiveTab(v);
-        }}
+        value={activeTab}
+        onChange={(_, v) => setActiveTab(v)}
         variant="scrollable"
         scrollButtons="auto"
         allowScrollButtonsMobile
@@ -2007,7 +1983,7 @@ const SpanDetailPane = ({
       <Box
         role="tabpanel"
         id={`${tabId}-panel`}
-        aria-labelledby={`${tabId}-${visibleTab}`}
+        aria-labelledby={`${tabId}-${activeTab}`}
         sx={{
           flex: 1,
           overflow: "auto",
@@ -2018,14 +1994,7 @@ const SpanDetailPane = ({
         }}
       >
         {/* Preview Tab */}
-        {visibleTab === "conversation" && (
-          <ConversationTab
-            key={selectionKey}
-            projectId={projectId}
-            recordings={recordings}
-          />
-        )}
-        {visibleTab === "preview" && (
+        {activeTab === "preview" && (
           <Box sx={{ px: 2, py: 1.5 }}>
             {/* Search + Format toggle — pinned to the top of the scroll
                 container so find-in-page controls stay reachable while
@@ -2150,6 +2119,7 @@ const SpanDetailPane = ({
               span={span}
               key={selectionKey}
               traceMedia={traceMedia}
+              callRecording={callRecording}
               enabled={
                 !readOnly && drawerOpen && (!conversationTree || traceMedia)
               }
@@ -2903,6 +2873,7 @@ AttributesCard.propTypes = {
 
 SpanDetailPane.propTypes = {
   conversationTree: PropTypes.array,
+  callRecording: PropTypes.bool,
   entry: PropTypes.shape({
     observation_span: PropTypes.object,
     observationSpan: PropTypes.object,

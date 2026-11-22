@@ -18,7 +18,7 @@ import useVoiceAudioStore from "./voiceAudioStore";
  * currentTime field; we poll multitrack.getCurrentTime() / isPlaying() via
  * our own rAF loop.
  */
-const VoiceAudioBridge = ({ data }) => {
+const VoiceAudioBridge = ({ data, recordingVariant }) => {
   const rafRef = useRef(null);
   const multitrackRef = useRef(null);
   const containerRef = useRef(null);
@@ -160,13 +160,18 @@ const VoiceAudioBridge = ({ data }) => {
 
   return (
     <Box ref={containerRef} sx={{ width: "100%", minWidth: 0 }}>
-      <AudioPlayerCustom data={data} onInstance={handleInstance} />
+      <AudioPlayerCustom
+        data={data}
+        onInstance={handleInstance}
+        recordingVariant={recordingVariant}
+      />
     </Box>
   );
 };
 
 VoiceAudioBridge.propTypes = {
   data: PropTypes.object,
+  recordingVariant: PropTypes.oneOf(["voice", "trace"]),
 };
 
 export default VoiceAudioBridge;

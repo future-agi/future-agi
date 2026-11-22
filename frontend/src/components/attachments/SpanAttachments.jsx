@@ -57,6 +57,7 @@ export function SpanAttachmentsProvider({
   span,
   enabled = true,
   traceMedia = false,
+  callRecording = false,
   children,
 }) {
   const active = enabled && uuid.safeParse(projectId).success;
@@ -140,6 +141,7 @@ export function SpanAttachmentsProvider({
       parent: traceId && spanId ? { trace_id: traceId, span_id: spanId } : null,
       items,
       clips,
+      callRecording,
       clipId,
       setClipId,
       images,
@@ -154,6 +156,7 @@ export function SpanAttachmentsProvider({
       spanId,
       items,
       clips,
+      callRecording,
       clipId,
       setClipId,
       images,
@@ -173,6 +176,8 @@ SpanAttachmentsProvider.propTypes = {
   span: PropTypes.object,
   enabled: PropTypes.bool,
   traceMedia: PropTypes.bool,
+  // The trace drawer plays this trace's call recording in its Conversation tab.
+  callRecording: PropTypes.bool,
   children: PropTypes.node,
 };
 
@@ -308,7 +313,8 @@ function SpanAttachmentsBody({
   traceStartTime,
   onSelectSpan,
 }) {
-  const { active, projectId, parent, items, placed, clips } = context;
+  const { active, projectId, parent, items, placed, clips, callRecording } =
+    context;
   const frames = useMemo(
     () => (active ? collectScreenshots(allSpans) : []),
     [allSpans, active],
@@ -321,14 +327,14 @@ function SpanAttachmentsBody({
             attachmentKind(item.reference) !== "screenshot" &&
             !placed.has(item.reference.occurrence_id) &&
             !(
-              clips &&
-              ((item.reference.modality === "audio" &&
-                item.reference.purpose === "conversation_recording") ||
-                clips.placed.has(item.reference.occurrence_id))
-            ),
+              callRecording &&
+              item.reference.modality === "audio" &&
+              item.reference.purpose === "conversation_recording"
+            ) &&
+            !clips?.placed.has(item.reference.occurrence_id),
         ),
       ),
-    [items, placed, clips],
+    [items, placed, clips, callRecording],
   );
 
   const spanFrame = frames.findIndex(
