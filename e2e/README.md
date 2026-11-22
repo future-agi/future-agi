@@ -599,10 +599,11 @@ minute; they are skipped only when the stack never booted.
 
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
-label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. Adding the label
-starts a new run with both legs; any other label starts a run with no jobs and no `E2E Tests Pass`
-check, like a title or body edit. A re-run keeps the labels of the run it repeats. The Standalone leg builds the four component images with the layer cache,
-assembles the app image with `bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
+label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
+only if the PR has it when a run starts, so add it, then push or close and reopen the PR: a re-run
+keeps the labels of the run it repeats. Adding a label starts no run, on purpose (see below). The
+Standalone leg builds the four component images with the layer cache, assembles the app image with
+`bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
 The `upgrade` job in `.github/workflows/standalone-ci.yml` runs weekly, on demand, and on a pull
 request labelled `upgrade-check` (the same rule: add the label, then push). It installs v1.41.1
 with its own `./bin/install` and sends a trace. Then it re-runs `./bin/install` at the head commit
@@ -688,6 +689,18 @@ all of them passed, so they cannot be skipped on every shard unseen. A manual ru
 
 `E2E Tests Pass` passes in two cases only: every shard and the `report` job succeeded, or the
 `changes` job found nothing that needs the suite. A skipped `report` job does not pass.
+
+**Why edits and labels start no run.** Backend CI, Python lint and E2E CI start only on `opened`,
+`synchronize` and `reopened`. A run for any other activity type becomes the workflow's newest
+suite for the head commit. GitHub then ignores the required check of the older, real suite, so the
+merge queue refuses the PR, although the real run is green. Blacksmith edits every new PR's body
+about 4 s after it opens, which is how #4332 (green run 45070958943, then skipped run 45070969031)
+and #4001 were refused. This is not documented by GitHub, and `gh pr checks --required` cannot
+show it, because it still lists the older green runs. A retarget therefore starts no run of these
+workflows either: the merge queue re-tests every merge into dev, and the non-required
+"CI ran on this base" check (`.github/workflows/ci-base-gate.yml`) turns red on a PR moved onto
+main until a push or reopen runs CI against main. Update CI is not required and still starts on
+edits and labels (`update-rehearsal` starts the Real rehearsals).
 
 To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
 artifact of a green run and regenerate the recorded times:

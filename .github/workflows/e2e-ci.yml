@@ -2,15 +2,21 @@ name: E2E CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, labeled]
+    # Only these three activity types. A run started by any other one (a body
+    # or title edit, a label) becomes this workflow's newest suite for the
+    # head commit, and GitHub then ignores the older suite's required check,
+    # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
+    # the merge queue re-tests every dev merge, and the CI base gate
+    # (ci-base-gate.yml) flags a PR moved onto main without a new run.
+    types: [opened, synchronize, reopened]
     # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
   merge_group:
   # The Standalone leg (E2E_STACK=standalone): nightly, on demand, and next to
-  # the Distributed leg on a PR that carries the e2e-standalone label. Adding
-  # that label starts both legs; any other label starts a run with no jobs and
-  # no "E2E Tests Pass" check, like a title or body edit.
+  # the Distributed leg on a PR that carries the e2e-standalone label. Adding a
+  # label starts no run (see `types` above), so add e2e-standalone, then push or
+  # close and reopen the PR.
   schedule:
     - cron: "37 2 * * *"
   workflow_dispatch:
@@ -35,7 +41,7 @@ permissions:
 concurrency:
   # Every landing needs its own verdict, even if several arrive while one runs.
   # Only the independent cache publisher coalesces pending pushes.
-  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ ((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'e2e-standalone')) && github.run_id || 'candidate' }}
+  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-candidate
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -53,7 +59,6 @@ env:
 
 jobs:
   changes:
-    if: ${{ !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'e2e-standalone')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -142,8 +147,8 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           DISPATCHED: ${{ inputs.stack }}
-          # The labels the PR had when this run started: a re-run keeps them,
-          # so add the label, then push.
+          # The labels the PR had when this run started; a re-run keeps them.
+          # Adding a label starts no run, so add the label, then push or reopen.
           STANDALONE_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}
         run: |
           case "$EVENT" in
@@ -851,9 +856,9 @@ jobs:
           if-no-files-found: warn
 
   e2e-tests:
-    name: ${{ ((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'e2e-standalone')) && 'E2E metadata edit' || 'E2E Tests Pass' }}
+    name: E2E Tests Pass
     needs: [changes, e2e, report]
-    if: ${{ always() && !((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'e2e-standalone')) }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

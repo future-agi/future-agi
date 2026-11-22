@@ -2,7 +2,13 @@ name: Backend CI
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    # Only these three activity types. A run started by any other one (a body
+    # or title edit, a label) becomes this workflow's newest suite for the
+    # head commit, and GitHub then ignores the older suite's required check,
+    # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
+    # the merge queue re-tests every dev merge, and the CI base gate
+    # (ci-base-gate.yml) flags a PR moved onto main without a new run.
+    types: [opened, synchronize, reopened]
     # Every base branch, so stacked PRs into feature branches get CI too.
   push:
     branches: [dev, main]
@@ -34,7 +40,7 @@ concurrency:
   # per PR even across forks, whereas a fork branch also named "dev" would share
   # a head_ref group with internal dev runs and cancel them.
   # Manual profiles can be dispatched together without replacing a pending trial.
-  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
+  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-candidate
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -56,7 +62,6 @@ env:
 jobs:
   policy-self-test:
     name: Scope policy fixtures
-    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -67,9 +72,10 @@ jobs:
           persist-credentials: false
       - name: Exercise the candidate policy against Git fixtures
         run: python3 -I .github/scripts/test_ci_scope.py
+      - name: CI base gate verdicts on recorded API payloads
+        run: python3 -I .github/scripts/test_ci_base_gate.py
 
   changes:
-    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -959,7 +965,7 @@ jobs:
           if-no-files-found: ${{ steps.qualification.outcome == 'success' && 'error' || 'ignore' }}
 
   backend-tests:
-    name: ${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && 'Backend metadata edit' || 'Backend Tests Pass' }} # the ONLY required status check
+    name: Backend Tests Pass # the ONLY required status check
     needs:
       [
         changes,
@@ -975,7 +981,7 @@ jobs:
         slim-smoke,
         code-executor-base-pin,
       ]
-    if: ${{ always() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
