@@ -4,6 +4,7 @@
 import json
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from inspect import signature
 from time import perf_counter
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -540,6 +541,154 @@ def test_sketch_buckets_merge_real_states_and_empty_is_not_zero(
     assert row["value"] is None and row["status"] == "no_data"
 
 
+@contextmanager
+def _m10_failure_report(days, deltas):
+    samples = []  # Three modes x twelve service calls; no fixture or cache-drop SQL.
+    try:
+        yield samples
+    except Exception:
+        print(
+            "M10_SERVICE_DIAGNOSTICS "
+            + json.dumps(
+                {
+                    "days": days,
+                    "deltas": deltas,
+                    "phase_basis": (
+                        "Exclusive wall seconds, not CPU, PG lock wait or CH server "
+                        "time. Pin entry excludes visibility; exit combines validation "
+                        "and deletion. On failed entry, inline cleanup stays in entry. "
+                        "Finality includes non-CH ORM work. Point shaping is measured; "
+                        "inline assembly/sorting and policy calls remain in other. "
+                        "Query times detail the CH phases; do not add them again."
+                    ),
+                    "query_ids": (
+                        "Test UUIDs passed to native execute attempts; null if the "
+                        "adapter lacks query_id or an existing ID was left untouched."
+                    ),
+                    "samples": samples,
+                },
+                separators=(",", ":"),
+            )
+        )
+        raise
+
+
+@contextmanager
+def _m10_sample(store, mode, index, diagnostics):
+    sample = {
+        "mode": mode,
+        "index_0based": index,
+        "cache": "cold" if index < 2 else "warm",
+    }
+    phases, queries = {}, []
+    active = "other"
+
+    # These calls are synchronous on the fixture's own client. Attribute each
+    # interval to exactly one phase, including on exceptions and nested calls.
+    def switch(label):
+        nonlocal active, since
+        now = perf_counter()
+        phases[active] = phases.get(active, 0.0) + (now - since)
+        previous, active, since = active, label, now
+        return previous
+
+    def timed(label, fn):
+        def call(*args, **kwargs):
+            previous = switch(label)
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                switch(previous)
+
+        return call
+
+    pinned_read = reads.pinned_read
+
+    @contextmanager
+    def pin(*args, **kwargs):
+        previous = switch("pg_pin_entry")
+        try:
+            with pinned_read(*args, **kwargs) as pinned:
+                switch(previous)  # Never charge the yielded service body to the pin.
+                try:
+                    yield pinned
+                finally:
+                    switch("pg_pin_validate_cleanup")
+        finally:
+            switch(previous)
+
+    real_rows = reads._rows
+    aggregate_rows = timed("aggregate_rows_python", real_rows)
+
+    def rows(*args, **kwargs):
+        # Both the finality probe and the aggregate construct MetricReadStore
+        # around the same fixture client. Keep finality's own label in _rows.
+        fn = real_rows if active == "finality" else aggregate_rows
+        return fn(*args, **kwargs)
+
+    execute = store.client.execute
+    accepts_id = "query_id" in signature(execute).parameters
+    ch_phases = {
+        "visibility": "ch_visibility",
+        "finality": "ch_finality",
+        "aggregate_rows_python": "ch_aggregate",
+    }
+    omitted = 0
+
+    def query(*args, **kwargs):
+        nonlocal omitted
+        query_id = None
+        if accepts_id and len(args) <= 2 and "query_id" not in kwargs:
+            query_id = kwargs["query_id"] = str(uuid4())
+        label = ch_phases.get(active, "ch_other")
+        previous = switch(label)
+        start = since
+        try:
+            return execute(*args, **kwargs)
+        finally:
+            switch(previous)
+            if len(queries) < 8:
+                queries.append(
+                    {
+                        "phase": label,
+                        "start_monotonic_s": start,
+                        "s": since - start,
+                        "id": query_id,
+                    }
+                )
+            else:
+                omitted += 1
+
+    with (
+        patch.object(reads, "pinned_read", pin),
+        patch.object(
+            store, "assert_visible", timed("visibility", store.assert_visible)
+        ),
+        patch.object(reads, "read_finality", timed("finality", reads.read_finality)),
+        patch.object(reads, "_rows", rows),
+        patch.object(reads, "point", timed("python_point_shaping", reads.point)),
+        patch.object(store.client, "execute", query),
+    ):
+        utc_start = datetime.now(UTC)
+        start = since = perf_counter()
+        try:
+            yield sample
+        finally:
+            switch("finished")
+            utc_end = datetime.now(UTC)
+            sample.update(
+                start_utc=utc_start.isoformat(),
+                end_utc=utc_end.isoformat(),
+                start_monotonic_s=start,
+                end_monotonic_s=since,
+                elapsed_s=since - start,
+                exclusive_phase_s=phases,
+                ch_queries=queries,
+                omitted_ch_queries=omitted,
+            )
+            diagnostics.append(sample)
+
+
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.parametrize(
     ("days", "deltas"), [(1, 4), (7, 4), (30, 4), (90, 4), (90, 19)]
@@ -710,6 +859,15 @@ def test_m10_complete_service_budget_with_source_retained_parts(
     metric = DerivedMetric.objects.select_related("project", "active_version").get(
         pk=metric.id
     )
+    with _m10_failure_report(days, deltas) as diagnostics:
+        _assert_m10_service_budget(
+            writer, metric, current_head, days, deltas, size, diagnostics
+        )
+
+
+def _assert_m10_service_budget(
+    writer, metric, current_head, days, deltas, size, diagnostics
+):
     window = {**WINDOW, "window_end": AT + timedelta(days=days)}
     measurements = {}
     for mode in ["kpi", "trend", "dimension_trend"]:
@@ -718,20 +876,20 @@ def test_m10_complete_service_budget_with_source_retained_parts(
             if index < 2:
                 writer.store.execute("SYSTEM DROP MARK CACHE")
                 writer.store.execute("SYSTEM DROP UNCOMPRESSED CACHE")
-            began = perf_counter()
-            if mode == "kpi":
-                result = reads.read_kpi(metric, window, store=writer.store)
-            else:
-                result = reads.read_trend(
-                    metric,
-                    {
-                        **window,
-                        "points": min(days, 90),
-                        "group_by": "region" if mode == "dimension_trend" else "",
-                    },
-                    store=writer.store,
-                )
-            samples.append(perf_counter() - began)
+            with _m10_sample(writer.store, mode, index, diagnostics) as sample:
+                if mode == "kpi":
+                    result = reads.read_kpi(metric, window, store=writer.store)
+                else:
+                    result = reads.read_trend(
+                        metric,
+                        {
+                            **window,
+                            "points": min(days, 90),
+                            "group_by": "region" if mode == "dimension_trend" else "",
+                        },
+                        store=writer.store,
+                    )
+            samples.append(sample["elapsed_s"])
             assert result["provenance"]["manifest_id"] == current_head.id
             if mode == "kpi":
                 for period in ("current", "previous"):

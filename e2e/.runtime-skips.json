@@ -1,0 +1,34 @@
+[
+  {
+    "id": "OBS-E2E-031",
+    "stack": "distributed",
+    "issue": "TH-10597",
+    "reason": "The churn guard measures 0 DOM mutations in CI (it needs 10), so the test skips itself and its body never runs.",
+    "owner": "observe flows",
+    "expires": "2027-01-06"
+  },
+  {
+    "id": "OBS-E2E-032",
+    "stack": "distributed",
+    "issue": "TH-10597",
+    "reason": "The churn guard measures 0 DOM mutations in CI (it needs 10), so the test skips itself and its body never runs.",
+    "owner": "observe flows",
+    "expires": "2027-01-06"
+  },
+  {
+    "id": "OBS-E2E-031",
+    "stack": "standalone",
+    "issue": "TH-10597",
+    "reason": "The churn guard measures 0 DOM mutations in CI (it needs 10), so the test skips itself and its body never runs.",
+    "owner": "observe flows",
+    "expires": "2027-01-06"
+  },
+  {
+    "id": "OBS-E2E-032",
+    "stack": "standalone",
+    "issue": "TH-10597",
+    "reason": "The churn guard measures 0 DOM mutations in CI (it needs 10), so the test skips itself and its body never runs.",
+    "owner": "observe flows",
+    "expires": "2027-01-06"
+  }
+]
