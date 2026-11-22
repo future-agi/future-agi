@@ -62,6 +62,17 @@ from tracer.models.derived_metric import (
 )
 
 _lock_budget = ContextVar("metric_lifecycle_lock_budget", default=None)
+# PostgreSQL rejects a lock_timeout above INT_MAX milliseconds (about 24.8 days).
+_PG_MAX_LOCK_TIMEOUT_MS = 2_147_483_647
+
+
+def bounded_lock_timeout_ms(milliseconds: int) -> int:
+    """A lock_timeout PostgreSQL accepts: at least 1 ms (0 would disable the
+    timeout) and at most INT_MAX ms. Real leases stay far below the cap; a
+    lease read on another clock must not turn every guarded statement into an
+    invalid-parameter error.
+    """
+    return min(_PG_MAX_LOCK_TIMEOUT_MS, max(1, milliseconds))
 
 
 @contextmanager
@@ -89,7 +100,7 @@ def _budgeted_row_lock(execute, sql, params, many, context):
         or (statement.startswith("SELECT ") and "FOR UPDATE" in statement)
     ):
         return execute(sql, params, many, context)
-    milliseconds = max(1, int(lease.remaining_seconds() * 1000))
+    milliseconds = bounded_lock_timeout_ms(int(lease.remaining_seconds() * 1000))
     db = context["connection"]
     try:
         with transaction.atomic(using=db.alias):
