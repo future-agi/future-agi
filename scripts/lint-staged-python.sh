@@ -38,7 +38,8 @@ elif command -v ruff >/dev/null 2>&1; then
   echo "lint-staged-python: ruff ${RUFF_VERSION} unavailable; using $(ruff --version). CI may disagree." >&2
   ruff_cmd=(ruff)
 else
-  ruff_cmd=(uvx "ruff@${RUFF_VERSION}")
+  echo "lint-staged-python: cannot run Ruff. Install uv with access to ruff==${RUFF_VERSION}, or put Ruff ${RUFF_VERSION} on PATH, then retry the commit." >&2
+  exit 1
 fi
 
 "${ruff_cmd[@]}" check --fix -- "${files[@]}"

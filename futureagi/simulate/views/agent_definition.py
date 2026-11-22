@@ -9,7 +9,7 @@ from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import APIException, NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -40,8 +40,11 @@ from simulate.serializers.response.agent_definition import (
 from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
+from simulate.services.agent_connect import found_check_required
 from simulate.services.agent_definition import (
     CredentialsNeedReentry,
+    delete_agent,
+    delete_agents,
     is_masked,
     merge_websocket_secrets,
     resolve_api_key_for_version,
@@ -52,7 +55,19 @@ from simulate.services.agent_overview import (
     annotate_agent_rows,
     environment_refs,
     observability_on,
+    observe_project,
     recent_agent_runs,
+    version_list_context,
+)
+from simulate.services.harness_agent_changes import poll_interval_seconds
+from simulate.services.harness_agent_versions import (
+    connected_agent,
+    environment_owned,
+)
+from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.production_project import (
+    ProductionProjectError,
+    link_production_project,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
@@ -63,6 +78,7 @@ except ImportError:
     VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -84,6 +100,18 @@ from tracer.utils.otel import ResourceLimitError
 from tracer.utils.replay_session import link_agent_to_replay_session
 
 logger = structlog.get_logger(__name__)
+
+
+class AgentInUse(APIException):
+    status_code = status.HTTP_409_CONFLICT
+    default_code = "agent_in_use"
+
+
+def _conflict(exc: HostedHarnessError) -> Response:
+    return Response(
+        build_error_envelope(exc.message, status_code=exc.status_code, code=exc.code),
+        status=exc.status_code,
+    )
 
 
 def soft_delete_agent_definition_and_versions(agent):
@@ -148,13 +176,17 @@ class AgentDefinitionView(APIView):
                 .values("id")[:1]
             )
 
-            agents = annotate_agent_rows(
-                AgentDefinition.objects.filter(
-                    organization=user_organization,
+            agents = (
+                annotate_agent_rows(
+                    AgentDefinition.objects.filter(
+                        organization=user_organization,
+                    )
                 )
-            ).annotate(
-                _latest_version=Subquery(latest_version_subquery),
-                _latest_version_id=Subquery(latest_version_id_subquery),
+                .annotate(
+                    _latest_version=Subquery(latest_version_subquery),
+                    _latest_version_id=Subquery(latest_version_id_subquery),
+                )
+                .select_related("observability_provider__project", "production_project")
             )
 
             if agent_type is not None:
@@ -226,23 +258,16 @@ class AgentDefinitionView(APIView):
         try:
             agent_ids = request.validated_data["agent_ids"]
 
-            with transaction.atomic():
-                updated_agents = AgentDefinition.objects.filter(
-                    id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
-
-                updated_versions = AgentVersion.objects.filter(
-                    agent_definition_id__in=agent_ids,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).update(deleted=True, deleted_at=timezone.now())
+            updated_agents, updated_versions, skipped = delete_agents(
+                getattr(request, "organization", None) or request.user.organization,
+                agent_ids,
+            )
 
             response_data = {
                 "message": "Agents deleted successfully",
                 "agents_updated": updated_agents,
                 "versions_updated": updated_versions,
+                "skipped_agent_ids": skipped,
             }
             return Response(
                 AgentDefinitionBulkDeleteResponseSerializer(response_data).data,
@@ -417,7 +442,7 @@ class AgentDefinitionDetailView(APIView):
         try:
             agent = (
                 annotate_agent_rows(AgentDefinition.objects.all())
-                .select_related("observability_provider__project")
+                .select_related("observability_provider__project", "production_project")
                 .get(
                     id=agent_id,
                     organization=getattr(request, "organization", None)
@@ -429,27 +454,52 @@ class AgentDefinitionDetailView(APIView):
             agent_data = AgentDefinitionResponseSerializer(agent).data
 
             # Get version information
-            versions = agent.get_version_history()
-            versions_data = AgentVersionListResponseSerializer(versions, many=True).data
-
-            # Get active version
+            versions = list(agent.get_version_history())
             active_version = agent.active_version
+            context = version_list_context(
+                versions
+                + (
+                    [active_version]
+                    if active_version is not None and active_version not in versions
+                    else []
+                )
+            )
+            versions_data = AgentVersionListResponseSerializer(
+                versions, many=True, context=context
+            ).data
             active_version_data = None
             if active_version:
                 active_version_data = AgentVersionListResponseSerializer(
-                    active_version
+                    active_version, context=context
                 ).data
 
+            agent_kind = getattr(agent, "_agent_kind", None)
+            source = getattr(agent, "_source", None)
             return Response(
                 {
                     **agent_data,
                     "versions": versions_data,
                     "active_version": active_version_data,
                     "version_count": agent.version_count,
-                    "agent_kind": agent._agent_kind,
-                    "source": agent._source,
+                    "agent_kind": agent_kind,
+                    "source": source,
                     "environment_count": agent._environment_count,
                     "observability_enabled": observability_on(agent),
+                    "observe_project": observe_project(agent, agent_kind),
+                    "connected": connected_agent(agent.id),
+                    "managed_by": (
+                        next(iter(environment_refs([agent]).get(agent.id) or []), None)
+                        if environment_owned(agent.id)
+                        else None
+                    ),
+                    "found_check": {
+                        "required": found_check_required(agent),
+                        "done_at": agent.found_checked_at,
+                    },
+                    "source_checked_at": agent.source_checked_at,
+                    "source_check_interval_seconds": (
+                        poll_interval_seconds() if source == "github" else None
+                    ),
                 },
                 status=status.HTTP_200_OK,
             )
@@ -557,6 +607,8 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
 
     @swagger_auto_schema(
         responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         }
@@ -565,7 +617,10 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def perform_destroy(self, instance):
-        soft_delete_agent_definition_and_versions(instance)
+        try:
+            delete_agent(instance.organization, instance.id)
+        except HostedHarnessError as exc:
+            raise AgentInUse(exc.message, code=exc.code) from exc
 
     @validated_request(
         request_serializer=FetchAssistantRequestSerializer,
@@ -812,6 +867,12 @@ class EditAgentDefinitionView(APIView):
                 )
                 if version:
                     sync_provider_credentials(version, creds_input)
+                if "production_project_id" in validated:
+                    link_production_project(
+                        agent_definition=agent,
+                        project_id=validated["production_project_id"],
+                        workspace=getattr(request, "workspace", None),
+                    )
                 if "observability_enabled" in validated:
                     set_agent_observability(
                         agent_definition=agent,
@@ -852,6 +913,8 @@ class EditAgentDefinitionView(APIView):
             return Response(refusal_body(error), status=status.HTTP_400_BAD_REQUEST)
         except CredentialsNeedReentry as error:
             return self._gm.bad_request(error.message)
+        except ProductionProjectError as error:
+            return self._gm.bad_request(str(error))
         except Exception as e:
             return self._gm.internal_server_error_response(
                 f"Failed to update agent definition: {str(e)}"
@@ -870,6 +933,8 @@ class DeleteAgentDefinitionView(APIView):
     @swagger_auto_schema(
         responses={
             200: AgentDefinitionDeleteResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
@@ -886,7 +951,7 @@ class DeleteAgentDefinitionView(APIView):
                 deleted=False,
             )
 
-            soft_delete_agent_definition_and_versions(agent)
+            delete_agent(agent.organization, agent.id)
 
             response_data = {"message": "Agent definition deleted successfully"}
             return Response(
@@ -894,6 +959,8 @@ class DeleteAgentDefinitionView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except HostedHarnessError as exc:
+            return _conflict(exc)
         except AgentDefinition.DoesNotExist:
             return self._gm.not_found("Agent definition not found")
         except Exception as e:

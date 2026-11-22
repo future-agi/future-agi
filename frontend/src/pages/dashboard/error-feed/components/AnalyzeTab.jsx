@@ -25,6 +25,11 @@ import { useFollowUpRunner } from "../useAnalyzeRunner";
 import { useSharedIssue } from "../sharedIssueContext";
 import { useStreamingText } from "../useStreamingText";
 import {
+  analysisRows,
+  hasStoredAnalysis,
+  missingAnalysisReason,
+} from "../issueAnalysis";
+import {
   CONF_META,
   MESSAGE_TYPE,
   RUN_STATE,
@@ -868,7 +873,7 @@ function SynthesisCard({ synthesis }) {
               bgcolor: "status.success.bg",
             }}
           >
-            Fix
+            In-depth suggestion
           </Typography>
           <Box sx={{ flex: 1 }}>
             <AnalyzeMarkdown
@@ -1345,8 +1350,105 @@ ComposeArea.propTypes = {
 const STARTER_SUGGESTIONS = [
   "Show me a failing trace",
   "What changed before this started?",
-  "How do I verify the fix?",
+  "How do I verify a change?",
 ];
+
+// ── Stored analysis ───────────────────────────────────────────────────────
+// What grouping stored for the issue, shown on open with no model call. The
+// in-depth analysis below it runs only from its button.
+
+function StoredAnalysis({ error, readOnly, showInDepth, onExplain }) {
+  return (
+    // The scroller around it is already the panel; a hairline separates an
+    // in-depth thread that follows.
+    <Box
+      sx={{
+        pb: 0.75,
+        flexShrink: 0,
+        ...(!showInDepth && {
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }),
+      }}
+    >
+      {!hasStoredAnalysis(error) && (
+        <Typography
+          typography="s1"
+          color="text.secondary"
+          sx={{ px: 1.5, py: 0.75 }}
+        >
+          {missingAnalysisReason(error)}
+        </Typography>
+      )}
+      {analysisRows(error).map(([label, text]) => (
+        <Box
+          key={label}
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "minmax(96px, 160px) 1fr",
+            columnGap: 2,
+            px: 1.5,
+            py: 0.75,
+          }}
+        >
+          <Typography typography="s1" color="text.secondary">
+            {label}
+          </Typography>
+          <Typography
+            typography="s1"
+            color="text.primary"
+            sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+          >
+            {text}
+          </Typography>
+        </Box>
+      ))}
+      {showInDepth && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          gap={2}
+          sx={{
+            mx: 1.5,
+            mt: 0.75,
+            pt: 1.5,
+            pb: 0.75,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography typography="s1" color="text.secondary" sx={{ flex: 1 }}>
+            {readOnly
+              ? "No in-depth analysis saved for this issue."
+              : "The in-depth analysis samples the failing traces, compares them with passing ones and writes the full explanation here."}
+          </Typography>
+          {!readOnly && (
+            <Tooltip title="Uses 1 credit" arrow describeChild>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={
+                  <Iconify icon="solar:stars-minimalistic-linear" width={16} />
+                }
+                onClick={onExplain}
+                sx={{ flexShrink: 0 }}
+              >
+                Explain in depth
+              </Button>
+            </Tooltip>
+          )}
+        </Stack>
+      )}
+    </Box>
+  );
+}
+
+StoredAnalysis.propTypes = {
+  error: PropTypes.object,
+  readOnly: PropTypes.bool,
+  showInDepth: PropTypes.bool,
+  onExplain: PropTypes.func,
+};
 
 // ── Main AnalyzeTab ───────────────────────────────────────────────────────
 
@@ -1527,70 +1629,13 @@ export default function AnalyzeTab({ error }) {
         }}
       >
         <Stack gap={1.25} sx={{ p: 1.5 }}>
-          {messages.length === 0 && !isStreaming ? (
-            <Stack
-              alignItems="center"
-              justifyContent="center"
-              gap={1.25}
-              sx={{
-                py: 6,
-                px: 2,
-                textAlign: "center",
-                maxWidth: 460,
-                mx: "auto",
-              }}
-            >
-              <Box
-                sx={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  bgcolor: "status.discovery.bg",
-                }}
-              >
-                <Iconify
-                  icon="solar:stars-minimalistic-linear"
-                  width={20}
-                  sx={{ color: "accent.brand" }}
-                />
-              </Box>
-              <Typography fontSize="12px" fontWeight={600} color="text.primary">
-                {readOnly
-                  ? "No analysis saved for this issue."
-                  : "No analysis yet"}
-              </Typography>
-              {!readOnly && (
-                <>
-                  <Typography
-                    fontSize="12px"
-                    color="text.secondary"
-                    sx={{ lineHeight: 1.55 }}
-                  >
-                    Kick off a cluster-level analysis. Sub-agents will sample
-                    representative calls, compare against a passing baseline,
-                    and synthesise the result here.
-                  </Typography>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={
-                      <Iconify
-                        icon="solar:stars-minimalistic-linear"
-                        width={14}
-                      />
-                    }
-                    onClick={onTriggerRun}
-                    sx={{ mt: 0.5 }}
-                  >
-                    Analyze this cluster
-                  </Button>
-                </>
-              )}
-            </Stack>
-          ) : messages.length === 0 && isStreaming ? (
+          <StoredAnalysis
+            error={error}
+            readOnly={readOnly}
+            showInDepth={messages.length === 0 && !isStreaming}
+            onExplain={onTriggerRun}
+          />
+          {messages.length === 0 && isStreaming ? (
             <Stack
               alignItems="center"
               justifyContent="center"
@@ -1672,9 +1717,7 @@ export default function AnalyzeTab({ error }) {
           suggestionsHeader={composeHeader}
           disabled={isFollowUpStreaming}
           placeholder={
-            isFollowUpStreaming
-              ? "Investigating…"
-              : "Ask a follow-up…"
+            isFollowUpStreaming ? "Investigating…" : "Ask a follow-up…"
           }
           onSubmit={runFollowUp}
         />

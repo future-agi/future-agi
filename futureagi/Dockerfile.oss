@@ -66,10 +66,10 @@
 
 # python:3.11-slim-bookworm (multi-arch index). Bump the digest to pick up
 # Debian security updates in the base layers.
-ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a36c24f9cbdf4fd0f52d67f0823eeac19c2028c637cecc392d97f980d4fec56b
-# Same uv as backend-ci.yml (astral-sh/setup-uv version "0.11.16") and
+ARG PYTHON_IMAGE=python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39
+# Same uv as backend-ci.yml (astral-sh/setup-uv version "0.11.33") and
 # model_serving/Dockerfile.oss. Shipped only with WITH_UV=true.
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.16@sha256:440fd6477af86a2f1b38080c539f1672cd22acb1b1a47e321dba5158ab08864d
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.33@sha256:77280f2f771df71f90786c314fe1bbc1e023feac652969bbf139c280babf2eb7
 # standard | slim; see the header and docker/image-variant.sh.
 ARG IMAGE_VARIANT=standard
 # Empty: the variant's flavor (the ffmpeg-standard/ffmpeg-slim stages below).
@@ -82,7 +82,7 @@ FROM ${PYTHON_IMAGE} AS ffmpeg-minimal
 ARG FFMPEG_VERSION=7.1.5
 ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential pkg-config nasm libmp3lame-dev zlib1g-dev \
+        build-essential pkg-config nasm libaom-dev=3.6.0-1+deb12u3 libmp3lame-dev zlib1g-dev \
         curl ca-certificates xz-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/ffmpeg
@@ -108,6 +108,7 @@ RUN sh /src/ffmpeg-tools/configure-minimal.sh /opt/ffmpeg \
         echo "Source: https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"; \
         echo "SHA-256: ${FFMPEG_SHA256}"; \
         echo "Build script: futureagi/docker/ffmpeg/configure-minimal.sh"; \
+        echo "Links Debian libaom3 dynamically; its license and notices are in /usr/share/doc/libaom3/copyright."; \
         echo "Links libmp3lame dynamically (Debian libmp3lame0, LGPL; /usr/share/doc/libmp3lame0/copyright)."; \
         echo; \
         /opt/ffmpeg/bin/ffmpeg -hide_banner -buildconf; \
@@ -245,8 +246,9 @@ ARG WITH_GIT=""
 RUN set -eux; \
     . /usr/local/lib/futureagi/image-variant.sh; \
     pkgs="libxml2 libxmlsec1 libxmlsec1-openssl xmlsec1 libcom-err2 libkrb5-3 libgssapi-krb5-2"; \
+    printf '%s\n' "$FFMPEG_FLAVOR" > /usr/local/lib/futureagi/ffmpeg-flavor; \
     case "$FFMPEG_FLAVOR" in \
-        minimal) pkgs="$pkgs libmp3lame0" ;; \
+        minimal) pkgs="$pkgs libaom3=3.6.0-1+deb12u3 libmp3lame0" ;; \
         debian)  pkgs="$pkgs ffmpeg" ;; \
         none)    ;; \
     esac; \
@@ -259,6 +261,12 @@ RUN set -eux; \
 COPY --from=ffmpeg /opt/ffmpeg/bin/ /usr/local/bin/
 COPY --from=ffmpeg /opt/ffmpeg/doc/ /usr/local/share/doc/ffmpeg/
 COPY --from=builder /usr/local/share/nltk_data /usr/local/share/nltk_data
+# The builder's site-packages replace the base image's. COPY merges into the
+# existing directory, so delete the base's setuptools first: otherwise its
+# older dist-info and vendored packages stay next to the builder's newer
+# setuptools (and importlib.metadata still reports the old version).
+RUN rm -rf /usr/local/lib/python3.11/site-packages/setuptools \
+        /usr/local/lib/python3.11/site-packages/setuptools-*.dist-info
 # Copy installed Python packages from builder
 COPY --from=builder /usr/local/lib/python3.11/site-packages \
                     /usr/local/lib/python3.11/site-packages

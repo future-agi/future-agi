@@ -24,13 +24,14 @@ export function countsLine(picked, protectedCount, limits) {
 }
 
 // With so few, too few cases can be held back to verify the fix, however well it
-// does: it ends with Limited validation, and a GitHub agent's pull request is a draft.
+// does: it ends with Limited validation at best, and a GitHub agent's pull request
+// is a draft.
 export function variationsNote(picked, limits, agentKind) {
   if (!needsVariations(picked, limits)) return null;
   const note = `An epoch needs ${limits.cases_min} failing cases. It first writes ${limits.variations_per_case} variations of each, then fixes the ones the current version also fails.`;
   if (picked >= limits.verified_cases_min) return note;
   const draft = agentKind === "github" ? " and opens a draft pull request" : "";
-  return `${note} With fewer than ${limits.verified_cases_min} failing cases it can only end with Limited validation${draft}.`;
+  return `${note} With fewer than ${limits.verified_cases_min} failing cases it can end with Limited validation at best${draft}.`;
 }
 
 // Whether Start is disabled only by the environment's unsaved scenario or setup

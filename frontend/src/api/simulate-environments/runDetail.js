@@ -48,8 +48,7 @@ import { fetchRunCalls, runSummaryKey } from "./runCalls";
  * @property {?number} completed    `kpis.completed_calls`, both modalities;
  *                                  null while the KPIs haven't loaded or the
  *                                  field is absent — never 0, never `total`.
- * @property {number} passRate      0–100; `performance-summary.pass_rate` when
- *                                  present, else derived `passed/total`.
+ * @property {?number} passRate     0–100 from the run's row; null when unscored.
  * @property {?number} durationS    Total wall-clock seconds (`total_duration`).
  * @property {?number} avgDurationMs Mean per-call duration in ms (derived).
  * @property {?number} avgScore     `kpis.avg_score` (0–100), null if absent.
@@ -100,11 +99,10 @@ export function buildRunIdentity(row, envName = null) {
  * summary payloads, falling back to the executions row for the call counts.
  * Pure.
  * @param {?Object} kpis The `test-executions/{id}/kpis/` payload.
- * @param {?Object} perf The `…/performance-summary/` payload.
  * @param {?Object} row  The mapped executions row (count fallback).
  * @returns {RunStats}
  */
-export function buildRunStats(kpis, perf, row) {
+export function buildRunStats(kpis, row) {
   const total = row?.hasOutcomes
     ? row.total
     : kpis?.total_calls ?? row?.total ?? 0;
@@ -112,14 +110,9 @@ export function buildRunStats(kpis, perf, row) {
     ? row.failed
     : kpis?.failed_calls ?? row?.failed ?? 0;
   const passed = row?.hasOutcomes ? row.passed : Math.max(total - failed, 0);
+  const measured = row?.hasOutcomes ? row.scored : total;
 
-  const perfRate = perf?.test_run_performance_metrics?.pass_rate;
-  const passRate =
-    row?.hasOutcomes || typeof perfRate !== "number"
-      ? total
-        ? Math.round((passed / total) * 100)
-        : 0
-      : Math.round(perfRate);
+  const passRate = row ? row.passRate : null;
 
   // `completed_calls` is its own KPI field for both modalities — not the chat
   // branch's `connected_calls` (voice's `connected_voice_calls` uses a
@@ -156,7 +149,7 @@ export function buildRunStats(kpis, perf, row) {
     tokens: null,
     cost: null,
     scores: { ...evalMetrics },
-    measured: row?.hasOutcomes ? passed + failed : total,
+    measured,
     unmeasured: row?.hasOutcomes ? Math.max(total - passed - failed, 0) : 0,
     flaky: 0,
     dropped: 0,
@@ -227,10 +220,13 @@ export function useRunDetail(
         ? execution.selected_scenario_keys
         : undefined,
       trials: execution.trials ?? 1,
+      seed: execution.seed ?? null,
       pinnedAgentVersion: execution.pinned_agent_version ?? null,
       environmentVersion: execution.environment_version ?? null,
       suiteVersion: execution.suite_version ?? null,
       agentDiffers: Boolean(execution.agent_differs),
+      // Said by the server when the run replayed a build without its environment's actors.
+      buildNotice: execution.build_notice ?? null,
       // A fix's check run: `{ id, label }` of the fix that started it, else null.
       fixRun: execution.fix_run ?? null,
       // How far an interrupted run got and whether it can resume; null when the
@@ -290,7 +286,7 @@ export function useRunDetail(
  * @property {string} scenario     Scenario / task name.
  * @property {Array<{ name: string, passed: ?boolean }>} subGoalResults
  * @property {?string} persona     Simulated-user persona label.
- * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"} status
+ * @property {"queued"|"in_progress"|"passed"|"failed"|"error"|"inconclusive"|"no_score"} status
  * @property {?string} harnessOutcomeStatus Authoritative sealed trial verdict.
  * @property {?string} executionStatus Transport lifecycle status; kept separate.
  * @property {boolean} critical    Whether the scenario is a release blocker.
@@ -403,25 +399,50 @@ function relativeTime(row, end = false) {
   return milliseconds == null ? null : milliseconds / 1000;
 }
 
+const ACTOR_OUTCOMES = {
+  committed: "Committed",
+  refused: "Refused",
+  faulted: "Failed",
+  duplicate: "Duplicate",
+  not_recorded: "Outcome not recorded",
+};
+// Null for the agent's own call.
+const worldAction = (call) =>
+  call.kind === "world_actor_action"
+    ? {
+        name: call.actor_name,
+        role: call.actor_role,
+        outcome: ACTOR_OUTCOMES[call.outcome] ?? ACTOR_OUTCOMES.not_recorded,
+      }
+    : null;
+
+/** @param {import("src/generated/api-contracts/api.schemas").SimulateRunV3FunctionCallApi[]} calls */
 export function functionCallTranscriptRows(calls = []) {
   return (Array.isArray(calls) ? calls : []).map((call, index) => {
     const duration = call.duration_ms ?? call.durationMs;
-    const heading = `Function call · ${call.name || call.function?.name || "tool"}${duration != null ? ` · ${duration}ms` : ""}`;
+    const name = call.name || call.function?.name || "tool";
+    const actor = worldAction(call);
+    const heading = actor
+      ? [actor.outcome, name].filter(Boolean).join(" · ")
+      : `Function call · ${name}${duration != null ? ` · ${duration}ms` : ""}`;
     const args = call.arguments ?? call.function?.arguments;
     const result = call.result ?? call.output;
     return {
       id: call.id || `function-call-${index}`,
-      speaker_role: "tool",
+      speaker_role: actor ? "world_actor" : "tool",
+      speaker_name: actor?.name,
+      actor_role: actor?.role,
       content: [
         heading,
         args != null ? `→ args: ${displayJson(args)}` : null,
         result != null ? `← result: ${displayJson(result)}` : null,
+        actor && call.error ? `× error: ${call.error}` : null,
       ]
         .filter(Boolean)
         .join("\n"),
       start_time_seconds: relativeTime(call),
       end_time_seconds: relativeTime(call, true),
-      tool_calls: [call],
+      tool_calls: actor ? null : [call],
     };
   });
 }
@@ -572,7 +593,11 @@ export function mapCallDetail(raw) {
 
   const isChat = raw.simulation_call_type === "text";
   const turns = callTranscript(raw).map((t) => ({
-    role: normalizeRole(t.speaker_role ?? t.role),
+    role: normalizeRole(t.speaker_role),
+    speakerName: t.speaker_name || "",
+    actorId: t.actor_id || "",
+    actorRole: t.actor_role || "",
+    channel: t.channel || "",
     text: messageText(t.content),
     at: t.start_time_seconds ?? null,
     toolCalls: t.tool_calls ?? null,
@@ -609,6 +634,14 @@ export function mapCallDetail(raw) {
     phone: raw.phone_number ?? null,
     provider: raw.provider ?? null,
     durationS: raw.duration ?? raw.duration_seconds ?? null,
+    persona: raw.persona ?? null,
+    // Absent without actors or faults.
+    trial_state: raw.trial_state ?? null,
+    // The World state view shows only when the call detail says actors are on.
+    actorsEnabled: raw.actors_enabled,
+    // Who took part in the call, as the server says, and whether a customer did.
+    participants: raw.participants,
+    hasCustomer: raw.has_customer,
     turns,
     stats: {
       turnCount: raw.turn_count ?? null,

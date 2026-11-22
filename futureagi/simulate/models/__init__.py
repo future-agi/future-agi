@@ -1,9 +1,10 @@
 from .agent_definition import AgentDefinition, ProviderCredentials
-from .agent_fix import AgentFixCandidate, AgentFixRun
+from .agent_fix import AgentFixCandidate, AgentFixIssueJob, AgentFixRun
 from .agent_optimiser import AgentOptimiser
 from .agent_optimiser_run import AgentOptimiserRun
 from .agent_prompt_optimiser_run import AgentPromptOptimiserRun
 from .agent_prompt_optimiser_run_step import AgentPromptOptimiserRunStep
+from .agent_scan import AgentScan
 from .agent_setup import (
     AgentBehaviourUnit,
     AgentTelephony,
@@ -14,6 +15,7 @@ from .agent_version import AgentVersion
 from .call_log_entry import CallLogEntry
 from .chat_message import ChatMessageModel
 from .chat_simulator import ChatSimulatorAssistant, ChatSimulatorSession
+from .code_archive import CodeArchive
 from .component_evaluation import ComponentEvaluation
 from .eval_config import SimulateEvalConfig
 from .evidence_import import EvidenceImport, EvidenceImportCase
@@ -60,12 +62,14 @@ from .test_execution import (
     CallExecution,
     CallExecutionSnapshot,
     CallTranscript,
+    CallTranscriptActor,
     TestExecution,
 )
 from .trial_item_result import TrialItemResult
 
 __all__ = [
     "AgentFixCandidate",
+    "AgentFixIssueJob",
     "AgentFixRun",
     "EvidenceImport",
     "EvidenceImportCase",
@@ -76,6 +80,7 @@ __all__ = [
     "AgentOptimiserRun",
     "AgentPromptOptimiserRun",
     "AgentPromptOptimiserRunStep",
+    "AgentScan",
     "AgentVersion",
     "AgentVersionSetup",
     "AgentBehaviourUnit",
@@ -98,8 +103,10 @@ __all__ = [
     "TestExecution",
     "CallExecution",
     "CallTranscript",
+    "CallTranscriptActor",
     "CallExecutionSnapshot",
     "CallLogEntry",
+    "CodeArchive",
     "ScenarioGraph",
     "NodeType",
     "SimulationPhoneNumber",

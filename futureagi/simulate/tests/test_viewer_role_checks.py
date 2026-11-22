@@ -12,8 +12,11 @@ from simulate.models import AgentDefinition, AgentVersion, RunTest
 from simulate.services.agent_definition import sync_provider_credentials
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 
-ID = uuid.uuid4()
-OTHER = uuid.uuid4()
+# Fixed, not uuid4(): these values are part of the pytest ids. Every CI shard
+# collects the tests in its own process, and pytest-split runs each case
+# exactly once only when all shards see the same ids.
+ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
+OTHER = uuid.UUID("00000000-0000-4000-8000-000000000002")
 ENVIRONMENT = f"/simulate/api/harness-environments/{ID}/"
 JOBS = "/simulate/api/harness-jobs/"
 AGENT = f"/simulate/agent-definitions/{ID}/"
@@ -40,6 +43,18 @@ VIEWER_REFUSALS = [
     ("put", f"{AGENT}edit/", "edit an agent"),
     ("post", f"{AGENT}versions/create/", "create an agent version"),
     ("post", f"{AGENT}versions/{OTHER}/activate/", "change the production version"),
+    ("post", f"{AGENT}versions/change/", "create an agent version"),
+    ("post", f"{AGENT}versions/{OTHER}/production/", "change the production version"),
+    ("post", f"{AGENT}versions/{OTHER}/retry/", "retry an agent version check"),
+    ("post", f"{AGENT}versions/{OTHER}/discard/", "discard an agent version"),
+    ("post", f"{AGENT}found-check/", "confirm what a reading found"),
+    ("post", "/simulate/agents/scan/", "scan a source for agents"),
+    ("post", "/simulate/agents/connect/", "connect an agent"),
+    (
+        "post",
+        f"{ENVIRONMENT}agent-policy/",
+        "change whether an environment follows production",
+    ),
 ]
 
 LABELS_WITHOUT_A_ROUTE_CASE = {
@@ -53,13 +68,10 @@ LABELS_WITHOUT_A_ROUTE_CASE = {
     "create a test run",
     "delete agents",
     "delete an agent",
-    "delete an agent version",
-    "discard an agent version",
     "discard environment drafts",
     "dismiss a rebuild prompt",
     "extend a build",
     "restore an agent version",
-    "retry an agent version check",
     "run evaluations",
     "save environment drafts",
     "upload agent code",

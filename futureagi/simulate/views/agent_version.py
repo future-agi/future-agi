@@ -19,7 +19,6 @@ from simulate.serializers.response.agent_definition import (
 from simulate.serializers.response.agent_version import (
     AgentVersionActivateResponseSerializer,
     AgentVersionCreateResponseSerializer,
-    AgentVersionDeleteResponseSerializer,
     AgentVersionListResponseSerializer,
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
@@ -38,6 +37,8 @@ from simulate.services.agent_definition import (
     resolve_server_url_for_version,
     sync_provider_credentials,
 )
+from simulate.services.agent_overview import version_list_context
+from simulate.services.harness_agent_versions import connected_agent
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.utils.eval_summary import (
     _build_template_statistics,
@@ -67,6 +68,19 @@ def _error_response(message, status_code):
     return Response(
         build_error_envelope(message, status_code=status_code),
         status=status_code,
+    )
+
+
+def _agents_page_only(agent):
+    if not connected_agent(agent.id):
+        return None
+    return Response(
+        build_error_envelope(
+            "This agent's versions are managed on its agent page",
+            status_code=status.HTTP_409_CONFLICT,
+            code="use_agents_page",
+        ),
+        status=status.HTTP_409_CONFLICT,
     )
 
 
@@ -101,7 +115,9 @@ class AgentVersionListView(APIView):
             paginator = ExtendedPageNumberPagination()
             result_page = paginator.paginate_queryset(versions, request)
 
-            serializer = AgentVersionListResponseSerializer(result_page, many=True)
+            serializer = AgentVersionListResponseSerializer(
+                result_page, many=True, context=version_list_context(result_page or [])
+            )
             return paginator.get_paginated_response(serializer.data)
 
         except AgentDefinition.DoesNotExist:
@@ -131,6 +147,7 @@ class CreateAgentVersionView(APIView):
             201: AgentVersionCreateResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -145,6 +162,9 @@ class CreateAgentVersionView(APIView):
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
             )
+            refused = _agents_page_only(agent)
+            if refused is not None:
+                return refused
 
             validated = request.validated_data
             commit_message = validated.get("commit_message", "")
@@ -265,9 +285,11 @@ class CreateAgentVersionView(APIView):
 
                 creds_input = ProviderCredentialsInput(
                     provider=validated.get("provider") or agent.provider or "",
-                    api_key=existing_api_key
-                    if preserve_existing_api_key
-                    else validated.get("api_key"),
+                    api_key=(
+                        existing_api_key
+                        if preserve_existing_api_key
+                        else validated.get("api_key")
+                    ),
                     assistant_id=validated.get("assistant_id"),
                     livekit_url=validated.get("livekit_url"),
                     livekit_api_key=(
@@ -405,7 +427,9 @@ class AgentVersionDetailView(APIView):
 
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
 
-            serializer = AgentVersionResponseSerializer(version)
+            serializer = AgentVersionResponseSerializer(
+                version, context=version_list_context([version])
+            )
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except AgentDefinition.DoesNotExist:
@@ -434,6 +458,7 @@ class ActivateAgentVersionView(APIView):
         responses={
             200: AgentVersionActivateResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
         reject_unknown_fields=True,
@@ -449,6 +474,9 @@ class ActivateAgentVersionView(APIView):
                 or request.user.organization,
                 deleted=False,
             )
+            refused = _agents_page_only(agent)
+            if refused is not None:
+                return refused
 
             version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
             version.activate()
@@ -468,68 +496,6 @@ class ActivateAgentVersionView(APIView):
         except Exception as e:
             return _error_response(
                 f"Failed to activate agent version: {str(e)}",
-                status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-
-class DeleteAgentVersionView(APIView):
-    """
-    API View to delete an agent version (soft delete).
-    """
-
-    permission_classes = [IsAuthenticated]
-
-    @viewer_denied("delete an agent version")
-    @swagger_auto_schema(
-        responses={
-            200: AgentVersionDeleteResponseSerializer,
-            400: ApiErrorWithDetailsResponseSerializer,
-            404: ApiErrorWithDetailsResponseSerializer,
-            500: ApiErrorWithDetailsResponseSerializer,
-        },
-    )
-    def delete(self, request, agent_id, version_id, *args, **kwargs):
-        """
-        Soft delete an agent version.
-        """
-        try:
-            agent = AgentDefinition.objects.get(
-                id=agent_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-            )
-
-            version = AgentVersion.objects.get(id=version_id, agent_definition=agent)
-
-            if version.is_active:
-                active_versions = AgentVersion.objects.filter(
-                    agent_definition=agent, status="active"
-                ).exclude(id=version_id)
-
-                if not active_versions.exists():
-                    return _error_response(
-                        "Cannot delete the only active version. Please activate another version first.",
-                        status.HTTP_400_BAD_REQUEST,
-                    )
-
-            version.delete()
-
-            response_data = {"message": "Agent version deleted successfully"}
-            return Response(
-                AgentVersionDeleteResponseSerializer(response_data).data,
-                status=status.HTTP_200_OK,
-            )
-
-        except AgentDefinition.DoesNotExist:
-            return _error_response(
-                "Agent definition not found", status.HTTP_404_NOT_FOUND
-            )
-        except AgentVersion.DoesNotExist:
-            return _error_response("Agent version not found", status.HTTP_404_NOT_FOUND)
-        except Exception as e:
-            return _error_response(
-                f"Failed to delete agent version: {str(e)}",
                 status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

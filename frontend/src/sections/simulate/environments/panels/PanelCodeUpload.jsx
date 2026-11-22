@@ -4,6 +4,7 @@ import { Box, Stack, Typography, Button, LinearProgress } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { fData } from "src/utils/format-number";
 import {
+  guessEntryFile,
   prepareSourceFolder,
   uploadErrorText,
   uploadSourceFolder,
@@ -24,6 +25,7 @@ import { WORKSPACE_COPY } from "../workspace/workspace.constants";
 import { CODE_UPLOAD_COPY } from "../codeUpload.constants";
 
 const initial = {
+  name: "",
   folderName: "",
   fileNames: [],
   entry: "",
@@ -50,7 +52,7 @@ function reducer(s, a) {
         ...s,
         folderName: a.folderName,
         fileNames: a.fileNames,
-        entry: s.entry || a.fileNames[0] || "",
+        entry: s.entry || guessEntryFile(a.fileNames),
         summary: null,
         archiveArtifactId: null,
         uploading: true,
@@ -76,7 +78,7 @@ function reducer(s, a) {
 
 // Hidden folder picker reused by both the empty drop zone and the Replace
 // button. webkitdirectory/directory are spread via Box (a raw <input> trips
-// react/no-unknown-property), matching the product's HarnessCreate.
+// react/no-unknown-property).
 export function FolderInput({ onPick }) {
   return (
     <Box
@@ -112,6 +114,7 @@ export default function PanelCodeUpload() {
   // a stale upload clobber the current selection.
   const uploadSeq = useRef(0);
   const {
+    name,
     folderName,
     fileNames,
     entry,
@@ -141,6 +144,7 @@ export default function PanelCodeUpload() {
 
   const buildSource = () => ({
     kind: "upload",
+    displayName: name.trim(),
     folderName,
     entry: entry.trim(),
     files: fileNames.map((name) => ({ name })),
@@ -272,6 +276,16 @@ export default function PanelCodeUpload() {
         <Typography sx={{ typography: "s3", color: "status.danger.fg" }}>
           {error}
         </Typography>
+      )}
+
+      {chosen && (
+        <Field
+          label="Name"
+          value={name}
+          onChange={set("name")}
+          placeholder={folderName}
+          helper={CODE_UPLOAD_COPY.nameHelper}
+        />
       )}
 
       {chosen && (

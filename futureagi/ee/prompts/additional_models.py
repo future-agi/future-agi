@@ -352,7 +352,11 @@ EE_ONLY_AVAILABLE_MODELS = [
         "use_case": ["enterprise agents", "code generation", "document analysis"],
         "cutoff": "06-2026",
         "latency": 350,
-        "pricing": {"input_per_1M_tokens": 0.75, "output_per_1M_tokens": 3.75},
+        "pricing": {
+            "input_per_1M_tokens": 0.75,
+            "cached_input_per_1M_tokens": 0.075,
+            "output_per_1M_tokens": 3.75,
+        },
         "notes": "Served from the global endpoint.",
     },
     {

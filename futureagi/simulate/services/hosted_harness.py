@@ -29,6 +29,11 @@ from simulate.models import (
     HostedHarnessScenario,
     TestExecution,
 )
+from simulate.models.hosted_harness import SEED_BITS
+from simulate.services.agent_contracts import (
+    seeded_from_reading,
+    store_build_contract,
+)
 from simulate.services.agent_setup import AgentStoreError, store_agent
 from simulate.services.alk_simulate_ingestion import (
     ALKSimulateIngestionError,
@@ -114,6 +119,12 @@ class HostedHarnessError(Exception):
             **(self.details or {}),
         }
 
+    def headers(self) -> dict[str, str]:
+        retry_after = (self.details or {}).get("retry_after")
+        if self.status_code == 429 and retry_after:
+            return {"Retry-After": str(int(retry_after))}
+        return {}
+
 
 @dataclass(frozen=True)
 class AttemptCapability:
@@ -177,9 +188,10 @@ def find_replayed_job(
     idempotency_key: str,
     workspace=None,
     lock: bool = False,
+    request_digest: str | None = None,
 ) -> HostedHarnessJob | None:
     """The job this idempotency key already made for the same request, if any."""
-    request_digest = canonical_digest(payload)
+    request_digest = request_digest or canonical_digest(payload)
     jobs = HostedHarnessJob.no_workspace_objects.filter(
         organization=organization,
         idempotency_key=idempotency_key,
@@ -213,6 +225,7 @@ def create_hosted_job(
     idempotency_key: str,
     workspace=None,
     on_create: Callable[[HostedHarnessJob], None] | None = None,
+    request_digest: str | None = None,
 ) -> tuple[HostedHarnessJob, bool]:
     """Create the job, or return the one this idempotency key already made.
 
@@ -220,7 +233,7 @@ def create_hosted_job(
     """
     from simulate.services.harness_agent_versions import advisory_xact_lock
 
-    request_digest = canonical_digest(payload)
+    request_digest = request_digest or canonical_digest(payload)
     with transaction.atomic():
         # Same-key creates take turns, so a concurrent one replays the first's job.
         advisory_xact_lock(idempotency_lock_name(organization, idempotency_key))
@@ -230,6 +243,7 @@ def create_hosted_job(
             idempotency_key=idempotency_key,
             workspace=workspace,
             lock=True,
+            request_digest=request_digest,
         )
         if existing is not None:
             return existing, False
@@ -237,7 +251,7 @@ def create_hosted_job(
         run_id = payload.get("run_id") or uuid.uuid4()
         seed = payload.get("seed")
         if seed is None:
-            seed = secrets.randbits(63)
+            seed = secrets.randbits(SEED_BITS)
         normalized = _json_value(payload)
         # Deployment policy must not change the submitted request's idempotency digest.
         artifacts = normalized["artifacts"]
@@ -414,7 +428,12 @@ def create_selected_harness_run(
         if resolved is not None:
             # A repeated request is answered before anything is written.
             replayed = _replayed_run(
-                environment, child_idempotency_key, resolved, scenario_keys, trials
+                environment,
+                child_idempotency_key,
+                resolved,
+                scenario_keys,
+                trials,
+                seed=seed,
             )
             if replayed is not None:
                 return replayed, False
@@ -472,6 +491,9 @@ def create_selected_harness_run(
             )
         if pins is not None and pins.assembles:
             _refuse_ungradable(pins, scenario_keys)
+        from simulate.services.harness_tool_reach import refuse_production_only
+
+        refuse_production_only(environment, pins, scenario_keys)
 
         manifest: list[dict[str, Any]] = []
         for scenario_key in scenario_keys:
@@ -1147,11 +1169,10 @@ def _replayed_run(
     resolved: ResolvedPins,
     scenario_keys: list[str],
     trials: int,
+    seed: int | None = None,
 ) -> HostedHarnessJob | None:
-    """The run an earlier request with this key created, when this one repeats it.
-
-    A key reused for other versions, scenarios or trials is refused.
-    """
+    """The run an earlier request with this key created, when this one repeats it; a key reused for other versions,
+    scenarios, trials or another seed is refused."""
     existing = HostedHarnessJob.no_workspace_objects.filter(
         organization_id=environment.organization_id, idempotency_key=idempotency_key
     ).first()
@@ -1178,6 +1199,7 @@ def _replayed_run(
         existing.workspace_id != environment.workspace_id
         or metadata.get("selected_scenario_keys") != scenario_keys
         or metadata.get("trials") != trials
+        or (seed is not None and existing.seed != seed)
     ):
         raise HostedHarnessError(
             "idempotency_conflict",
@@ -1829,6 +1851,93 @@ def _apply_parallelism_admission(
     return min(admitted, capacity.parallelism)
 
 
+BUILD_PIN_KEY = "build_agent_version_id"
+
+
+def _freeze_build_pin(job: HostedHarnessJob) -> None:
+    """Keep the agent version a build is tied to on its first attempt, so a retry and
+    the write-back land on it even when the environment's default moves meanwhile.
+    An environment without one is pinned here, before the build, never after it."""
+    if job.environment_id is not None or job.test_execution_id is not None:
+        return
+    from simulate.services.harness_agent_versions import fill_agent_pin
+
+    if job.agent_version_id is None:
+        fill_agent_pin(job)
+    pinned = job.agent_version_id
+    if pinned is None:
+        return
+    metadata = dict((job.payload or {}).get("metadata") or {})
+    metadata[BUILD_PIN_KEY] = str(pinned)
+    job.payload = {**(job.payload or {}), "metadata": metadata}
+
+
+def frozen_build_pin(job: HostedHarnessJob) -> AgentVersion | None:
+    """The version a build was frozen on, or None for a build made before pins."""
+    pinned = ((job.payload or {}).get("metadata") or {}).get(BUILD_PIN_KEY)
+    if not pinned:
+        return None
+    return AgentVersion._base_manager.filter(id=pinned).first()
+
+
+def platform_set_failure(attempt: HostedHarnessAttempt) -> dict[str, Any] | None:
+    """A failure the platform put on the attempt itself, which the guest's later
+    terminal event or exit code must not replace."""
+    failure = attempt.terminal_failure
+    if (
+        isinstance(failure, dict)
+        and (failure.get("details") or {}).get("set_by") == "platform"
+    ):
+        return failure
+    return None
+
+
+def _fail_attempt_from_platform(
+    attempt: HostedHarnessAttempt, *, stage: str, code: str, message: str
+) -> None:
+    attempt.terminal_stage = "failed"
+    attempt.terminal_failure = {
+        "domain": "infrastructure",
+        "stage": stage,
+        "code": code,
+        "message": message,
+        "retryable": False,
+        "details": {"set_by": "platform"},
+    }
+    attempt.save(update_fields=["terminal_stage", "terminal_failure", "updated_at"])
+
+
+def _check_subfolder_echo(
+    attempt: HostedHarnessAttempt, payload: dict[str, Any]
+) -> None:
+    """A build that named a folder must hear the harness used it; an older harness
+    that built the repository root instead is an infrastructure failure, not a result.
+    """
+    job = attempt.job
+    expected = str((job.payload.get("source") or {}).get("subfolder") or "")
+    sent = payload.get("agent")
+    if not expected or not isinstance(sent, dict):
+        return
+    extension = (sent.get("agent") or {}).get("extension") or {}
+    echoed = (extension.get("source") or {}).get("subfolder")
+    if echoed == expected:
+        return
+    _fail_attempt_from_platform(
+        attempt,
+        stage="understanding_agent",
+        code="subfolder_ignored",
+        message=(
+            f"the build asked for folder {expected!r} but the harness read "
+            + (f"{echoed!r}" if echoed else "the repository root")
+        ),
+    )
+    raise HostedHarnessError(
+        "subfolder_ignored",
+        "the harness did not build from the requested folder",
+        status_code=422,
+    )
+
+
 def register_attempt(
     job_id: uuid.UUID | str,
     *,
@@ -1881,6 +1990,8 @@ def register_attempt(
             snapshot_digest=snapshot_digest,
         )
         job.current_attempt_number = attempt_number
+        if attempt_number == 1:
+            _freeze_build_pin(job)
         job.state = HostedHarnessJob.State.PROVISIONING
         # A retry is a fresh active attempt. Do not keep presenting the previous
         # attempt's terminal state while Daytona is launching (or even running)
@@ -1898,6 +2009,8 @@ def register_attempt(
         job.save(
             update_fields=[
                 "current_attempt_number",
+                "agent_version",
+                "payload",
                 "state",
                 "current_stage",
                 "failure",
@@ -2171,6 +2284,8 @@ def provision_scenarios(
     attempt: HostedHarnessAttempt, payload: dict[str, Any]
 ) -> dict[str, Any]:
     job = attempt.job
+    # Before any transaction: the failure it records must survive the raise.
+    _check_subfolder_echo(attempt, payload)
     # Enforce exactly scenario_count unique personas.
     persona_keys = [p["scenario_key"] for p in payload["personas"]]
     if len(persona_keys) != len(set(persona_keys)):
@@ -2261,20 +2376,27 @@ def provision_scenarios(
         # Misclassifying a LiveKit run here makes completed voice calls render
         # through the chat schema and effectively disappear from call-details.
         modality = _resolve_scenario_modality(job, payload)
-        from simulate.services.harness_agent_versions import agent_definition_owner
+        from simulate.services.harness_agent_versions import (
+            CONNECTED_OWNER,
+            agent_definition_owner,
+        )
 
         bound_id = payload.get("agent_definition_id")
-        if agent_definition_owner(job) == "environment":
+        owner = agent_definition_owner(job)
+        if owner in ("environment", CONNECTED_OWNER):
             # Passed on, never put in the guest's request: it stays unbound there.
             guest_id = bound_id
-            bound_id, modality = _environment_definition_for(job, modality)
+            if owner == "environment":
+                bound_id, modality = _environment_definition_for(job, modality)
+            else:
+                definition = _bound_definition(job)
+                bound_id = str(definition.id) if definition is not None else None
             if guest_id and str(guest_id) != str(bound_id):
                 logger.info(
                     "harness_agent_not_bound",
                     job_id=str(job.id),
                     reason="guest_id_ignored",
                 )
-        # TODO: refuse a guest's id for a connected agent too (connected branch).
         # Defense: when the guest sends a bare UUID as the run name
         # (older guests use job.run_id), derive something readable.
         run_name = payload["name"]
@@ -2404,11 +2526,8 @@ def provision_scenarios(
     return _provision_response(locked, registrations)
 
 
-def _environment_definition_for(
-    job: HostedHarnessJob, modality: str
-) -> tuple[str | None, str]:
-    """The agent made with the environment, and the modality its connector runs: an
-    ``auto`` agent takes the authored modality, a known connector keeps its own."""
+def _bound_definition(job: HostedHarnessJob):
+    """The live agent of the environment's pinned version, in its own workspace."""
     from simulate.models import AgentDefinition, AgentVersion
 
     definition_id = (
@@ -2418,16 +2537,24 @@ def _environment_definition_for(
         if job.agent_version_id
         else None
     )
-    definition = (
-        AgentDefinition.no_workspace_objects.filter(
-            id=definition_id,
-            organization_id=job.organization_id,
-            workspace_id=job.workspace_id,
-            deleted=False,
-        ).first()
-        if definition_id
-        else None
-    )
+    if not definition_id:
+        return None
+    return AgentDefinition.no_workspace_objects.filter(
+        id=definition_id,
+        organization_id=job.organization_id,
+        workspace_id=job.workspace_id,
+        deleted=False,
+    ).first()
+
+
+def _environment_definition_for(
+    job: HostedHarnessJob, modality: str
+) -> tuple[str | None, str]:
+    """The agent made with the environment, and the modality its connector runs: an
+    ``auto`` agent takes the authored modality, a known connector keeps its own."""
+    from simulate.models import AgentDefinition
+
+    definition = _bound_definition(job)
     if definition is None:
         logger.info(
             "harness_agent_not_bound",
@@ -2519,8 +2646,6 @@ def _record_target_agent_facts(
 
     owner = agent_definition_owner(job)
     if owner == "connected":
-        # TODO: write nothing to a connected agent (connected branch, once P26/P26a
-        # merge).
         return
     if owner == "environment":
         _copy_target_facts(
@@ -2642,8 +2767,11 @@ def _store_authored_agent(
         with transaction.atomic():
             from simulate.services.harness_agent_versions import agent_pin_candidate
 
-            # An unpinned environment stores on the version it is about to be pinned to.
-            pinned = job.agent_version or agent_pin_candidate(job)
+            # The build's frozen pin; an unpinned environment made before pins stores
+            # on the version it is about to be pinned to.
+            pinned = (
+                frozen_build_pin(job) or job.agent_version or agent_pin_candidate(job)
+            )
             version = (
                 pinned
                 if pinned is not None
@@ -2673,14 +2801,35 @@ def _store_authored_agent(
                 agent_version_id=version.id,
                 agent=sent["agent"],
                 sdk_version=sent["sdk_version"],
+                replace_reading=seeded_from_reading(job),
             )
+        transaction.on_commit(
+            lambda: store_build_contract(job, agent_version_id=agent_version_id)
+        )
         return outcome, agent_version_id
+    except AgentStoreError as exc:
+        if exc.code == "setup_outcome_already_stored":
+            # The version keeps the document it was read into; a build that read
+            # the agent again says nothing new about the version.
+            logger.info(
+                "agent_document_kept",
+                job_id=str(job.id),
+                agent_version_id=str(agent_version_id) if agent_version_id else None,
+            )
+            return "kept", agent_version_id
+        logger.warning(
+            "harness_agent_not_stored",
+            job_id=str(job.id),
+            agent_version_id=str(agent_version_id) if agent_version_id else None,
+            code=exc.code,
+        )
+        return None, None
     except Exception as exc:
         logger.warning(
             "harness_agent_not_stored",
             job_id=str(job.id),
             agent_version_id=str(agent_version_id) if agent_version_id else None,
-            code=exc.code if isinstance(exc, AgentStoreError) else type(exc).__name__,
+            code=type(exc).__name__,
         )
         return None, None
 
@@ -2701,7 +2850,7 @@ def _turn_on_observability(
     failure: Exception | None = None
     if payload.get("agent_definition_id"):
         code = "bound"
-    elif stored[0] != "stored":
+    elif stored[0] not in ("stored", "replaced", "kept"):
         code = "agent_not_stored"
     else:
         # The try sits outside the savepoint so its rollback runs before the handler.
@@ -3110,16 +3259,27 @@ def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:
 
 def project_terminal_job_onto_run(job: HostedHarnessJob, now: datetime) -> None:
     """Move a terminal job's Run, and the calls it left open, to their end states."""
-    from simulate.selectors.held_back import coding_agent_failure_message
+    from simulate.selectors.held_back import (
+        coding_agent_failure_message,
+        has_plain_words,
+        person_failure_message,
+    )
 
     if not job.test_execution_id:
         return
-    message = (job.failure or {}).get("message")
-    if message and ((job.payload or {}).get("metadata") or {}).get(
-        "coding_agent_key_id"
-    ):
-        # A coding agent reads these; the stored message can end with guest output.
-        message = coding_agent_failure_message(job.failure)
+    failure = job.failure or {}
+    message = failure.get("message")
+    coding_agent_run = bool(
+        ((job.payload or {}).get("metadata") or {}).get("coding_agent_key_id")
+    )
+    if message and coding_agent_run:
+        # A coding agent reads only fixed text: the stored message can end with guest output,
+        # which can quote a held-back case. It stays on the job.
+        message = coding_agent_failure_message(failure)
+    elif message and has_plain_words(failure):
+        # A person's own run reads the plain words too, with what their agent printed after
+        # them. A coding agent's key reads only the runs it started.
+        message = person_failure_message(failure)
     calls = CallExecution.no_workspace_objects.filter(
         test_execution_id=job.test_execution_id
     )
