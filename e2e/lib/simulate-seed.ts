@@ -315,15 +315,6 @@ export function seedReviewDraft(opts: { environmentId: string; userEmail: string
   });
 }
 
-/**
- * Stands in for the pair validation job's success on the Environment's live candidate
- * set (the stack has no sandbox to run it): a ready bundle with a certified sealed
- * archive for that pairing.
- */
-export function certifyCandidates(opts: { environmentId: string }): { bundleId: string } {
-  return runReviewSeed<{ bundleId: string }>('certify_candidates', { SEED_ENVIRONMENT_ID: opts.environmentId });
-}
-
 /** The scenario `seedChatCase` adds to an Environment's suite draft. */
 export interface ChatCaseSeed {
   messageId: string;
@@ -343,8 +334,9 @@ export function seedChatCase(opts: { environmentId: string; userEmail: string })
 }
 
 /**
- * Stands in for the validation job's sandbox on the Environment's live candidate set: every case's proof
- * recorded as the gateway records a proofs file, then the pairing certified as `certifyCandidates` does.
+ * Stands in for the validation job's success on the Environment's live candidate set (the stack has no sandbox to
+ * run it): every case's proof recorded as the gateway records a proofs file, a ready bundle with a certified sealed
+ * archive for that pairing, then the job completed.
  */
 export function proveCandidates(opts: { environmentId: string }): { bundleId: string } {
   return runReviewSeed<{ bundleId: string }>('prove_candidates', { SEED_ENVIRONMENT_ID: opts.environmentId });

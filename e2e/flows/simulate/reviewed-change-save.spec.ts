@@ -1,6 +1,6 @@
 import { test, expect } from '../../lib/fixtures';
 import { flowAnnotation } from '../../lib/flow-meta';
-import { certifyCandidates, seedHarnessEnvironment, seedReviewDraft } from '../../lib/simulate-seed';
+import { proveCandidates, seedHarnessEnvironment, seedReviewDraft } from '../../lib/simulate-seed';
 
 // Routes and bodies pinned from futureagi/simulate/views/harness_environment.py and the serializers in
 // futureagi/simulate/serializers/harness_environment.py (HarnessReviewDecisionsSerializer,
@@ -35,7 +35,7 @@ test('SIM-E2E-038: a reviewed draft saves only the accepted change, and only thr
             'accept the rule and reject the actor',
             'try a plain Save, first with the decisions alone, then with the review digest too',
             'Validate',
-            'stand in for the validation job by certifying the candidate pairing (no sandbox in this harness)',
+            'stand in for the validation job: proofs recorded, the candidate pairing certified, the job completed (no sandbox in this harness)',
             'read the drafts until validation is ready, then Save the candidates with a name'],
     backendChecks: ['a plain Save of a draft with decisions recorded is refused 409 validation_required, with or without the review digest, and the default does not move',
                     'Validate answers 202 with candidates, which the drafts read returns in the same shape, while the default stays put',
@@ -103,7 +103,7 @@ test('SIM-E2E-038: a reviewed draft saves only the accepted change, and only thr
     expect(await defaultVersion()).toBe(environment.environmentVersionId);
   });
 
-  certifyCandidates({ environmentId: environment.environmentId });
+  proveCandidates({ environmentId: environment.environmentId });
   const polled = await actor.api.get<Drafts>(`${base}/drafts/`);
   await test.step('api: the drafts read reports the pairing ready, with the candidates as Save takes them', async () => {
     expect(polled.validation?.state).toBe('ready');

@@ -12,12 +12,9 @@ chosen by ``SEED_OPERATION``:
 ``chat_case``
     A builder-chat turn answering the person's message adds a scenario to the suite draft.
 ``prove_candidates``
-    The validation job's result for the live candidate set: its proofs recorded as the
-    gateway records a sandbox's proofs file, then ``certify_candidates``.
-``certify_candidates``
-    The pair validation job's success for the Environment's live candidate set: a ready
-    bundle for that pairing with a certified sealed archive. The stack has no sandbox to
-    run the job.
+    The validation job's success for the Environment's live candidate set, as the gateway
+    records it: the proofs, a ready bundle for that pairing with a certified sealed
+    archive, then the job completed. The stack has no sandbox to run the job.
 
 Prints one JSON line.
 """
@@ -115,8 +112,12 @@ def chat_case(environment, user, *, suffix):
 
 def prove_candidates(environment, *, suffix):
     """The validation job's result for the live candidate set: every case proved, recorded as the gateway records a
-    sandbox's proofs file (keyed by scenario folder), then the pairing certified."""
-    from simulate.models import HarnessEnvironmentVersion, HarnessSuiteVersion
+    sandbox's proofs file (keyed by scenario folder), the pairing certified, then the job completed."""
+    from simulate.models import (
+        HarnessEnvironmentVersion,
+        HarnessSuiteVersion,
+        HostedHarnessJob,
+    )
     from simulate.services.harness_versioning.candidate_sets import live_set
     from simulate.services.harness_versioning.versions import record_proofs, suite_cases
 
@@ -131,7 +132,11 @@ def prove_candidates(environment, *, suffix):
         {key.replace("-", "_"): proved for key, _, _ in suite_cases(suite)},
         None,
     )
-    return certify_candidates(environment, suffix=suffix)
+    seeded = certify_candidates(environment, suffix=suffix)
+    HostedHarnessJob.no_workspace_objects.filter(id=entry.get("job_id")).update(
+        state=HostedHarnessJob.State.COMPLETED
+    )
+    return seeded
 
 
 def certify_candidates(environment, *, suffix):
@@ -194,8 +199,6 @@ def main():
         seeded = chat_case(environment, user, suffix=suffix)
     elif operation == "prove_candidates":
         seeded = prove_candidates(environment, suffix=suffix)
-    elif operation == "certify_candidates":
-        seeded = certify_candidates(environment, suffix=suffix)
     else:
         raise ValueError(f"unknown SEED_OPERATION {operation!r}")
     sys.stdout.write(json.dumps(seeded) + "\n")
