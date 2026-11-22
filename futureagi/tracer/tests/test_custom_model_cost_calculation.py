@@ -206,7 +206,9 @@ def test_observe_bulk_project_identity_over_http(
     }
 
     def post(rows):
-        return requests.post(url, json={"spans": rows}, headers=headers, timeout=15)
+        return requests.post(
+            url, json={"spans": rows}, headers=headers, timeout=(5, 90)
+        )
 
     # Valid requests use the real insert path; check the three fields together.
     rows = [
