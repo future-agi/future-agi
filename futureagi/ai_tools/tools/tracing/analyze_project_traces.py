@@ -1,12 +1,4 @@
-"""
-analyze_project_traces — triggers background error analysis for traces in a project.
-
-This is the on-demand replacement for the beat task. Each trace is analyzed
-independently using the full TraceErrorAnalysisAgent pipeline (Chauffeur + Judge),
-same as the old beat task did. Results appear on the feed once clustering completes.
-
-The tool returns immediately — analysis runs in the background via Temporal.
-"""
+"""Request on-demand Falcon trace analysis. Reject before queueing if unavailable."""
 
 from uuid import UUID
 
@@ -41,11 +33,8 @@ class AnalyzeProjectTracesInput(PydanticBaseModel):
 class AnalyzeProjectTracesTool(BaseTool):
     name = "analyze_project_traces"
     description = (
-        "Triggers background error analysis for traces in a project. "
-        "Each trace is analyzed independently using the full analysis pipeline "
-        "(reads all spans, identifies errors, scores quality, clusters results). "
-        "Returns immediately — analysis runs in the background. "
-        "Results appear on the error feed once complete."
+        "Requests background error analysis for traces in a project. Currently "
+        "unavailable until background usage accounting covers all model calls."
     )
     category = "error_feed"
     input_model = AnalyzeProjectTracesInput
@@ -56,9 +45,10 @@ class AnalyzeProjectTracesTool(BaseTool):
         import structlog
 
         from ai_tools.tools.tracing.access import get_analysis_projects
-        from tracer.models.trace_error_analysis import TraceErrorAnalysis
-        from tracer.queries import deep_analysis_state
-        from tracer.services.clickhouse.v2 import get_reader
+        from tracer.services.falcon_background_analysis import (
+            BackgroundAnalysisUnavailable,
+            require_background_analysis_ready,
+        )
 
         logger = structlog.get_logger(__name__)
 
@@ -66,6 +56,16 @@ class AnalyzeProjectTracesTool(BaseTool):
         project = get_analysis_projects(context).filter(id=params.project_id).first()
         if project is None:
             return ToolResult.not_found("Project", str(params.project_id))
+
+        # Reject before discovery, claims or queueing; don't promise feed results.
+        try:
+            require_background_analysis_ready()
+        except BackgroundAnalysisUnavailable as exc:
+            return ToolResult.error(str(exc), error_code=exc.code)
+
+        from tracer.models.trace_error_analysis import TraceErrorAnalysis
+        from tracer.queries import deep_analysis_state
+        from tracer.services.clickhouse.v2 import get_reader
 
         # Determine which traces to analyze. Traces live only in CH post-cutover,
         # so listing/validating goes through the CH root spans.

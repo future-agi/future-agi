@@ -18,6 +18,10 @@ from django.utils import timezone
 
 from tfc.temporal import temporal_activity
 from tracer.models.trace_error_analysis import TraceErrorAnalysis
+from tracer.services.falcon_background_analysis import (
+    BackgroundAnalysisUnavailable,
+    require_background_analysis_ready,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -447,6 +451,16 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         }
 
     try:
+        require_background_analysis_ready()
+    except BackgroundAnalysisUnavailable as exc:
+        return {
+            "success": False,
+            "trace_id": trace_id,
+            "error_code": exc.code,
+            "error": str(exc),
+        }
+
+    try:
         from ee.falcon_ai.agent import AgentLoop
         from ee.falcon_ai.models import Conversation, Skill
     except ImportError:
@@ -470,7 +484,6 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
     )
     from tracer.models.project import Project
     from tracer.queries import deep_analysis_state
-    from tracer.queries.error_analysis import TraceErrorAnalysisDB
 
     close_old_connections()
     previous_context = {
@@ -713,12 +726,8 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         # Done is derived from the TraceErrorAnalysis row above; release marker.
         deep_analysis_state.clear(str(trace_id), project_id=str(project.id))
 
-        # Ingest embeddings for clustering if there are errors
-        if error_count > 0:
-            db = TraceErrorAnalysisDB()
-            db.ingest_trace_error_embeddings(
-                trace_id, project_id=str(project.id), organization_id=str(org.id)
-            )
+        # Do not produce embeddings here pending the centroid schema review.
+        # Other workers drain the shared embedding backlog independently.
 
         # Log complete results to ClickHouse
         try:
@@ -783,6 +792,15 @@ def analyze_traces_on_demand(project_id: str, trace_ids: list):
     Each trace is analyzed by a headless Falcon agent loop with the
     analyze-trace-errors skill. Runs in parallel via ThreadPoolExecutor.
     """
+    # Jobs already in the queue bypass the tool. Fail the activity itself,
+    # without fan-out or mutating claims (these messages have no owner token).
+    try:
+        require_background_analysis_ready()
+    except BackgroundAnalysisUnavailable as exc:
+        from temporalio.exceptions import ApplicationError
+
+        raise ApplicationError(str(exc), type=exc.code, non_retryable=True) from exc
+
     try:
         close_old_connections()
         successful = 0
@@ -813,8 +831,7 @@ def analyze_traces_on_demand(project_id: str, trace_ids: list):
             f"{total_errors} total errors found"
         )
 
-        if successful > 0:
-            cluster_project_errors.delay(project_id)
+        # This producer must not dispatch centroid writes before schema review.
 
     except Exception as e:
         logger.exception(
