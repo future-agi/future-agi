@@ -247,6 +247,7 @@ def test_observe_bulk_project_identity_over_http(
                 list(table._base_manager.order_by("pk").values_list("pk", flat=True))
                 for table in tables
             ],
+            sorted(redis.scan_iter(match="usage:*")),
             redis.xrange(STREAM_KEY),
             ch.query(
                 "SELECT project_id, trace_id, id FROM spans ORDER BY project_id, trace_id, id"
@@ -256,9 +257,13 @@ def test_observe_bulk_project_identity_over_http(
     with closing(_open_ch_test_http_client(database="test_tfc")) as ch:
         before = snapshot(ch)
         # Reject during validation: even attempting persistence is a failure.
-        with patch.object(
-            ObservationSpan.objects, "bulk_create", side_effect=AssertionError
-        ) as insert:
+        projects = type(project).objects
+        with (
+            patch.object(
+                ObservationSpan.objects, "bulk_create", side_effect=AssertionError
+            ) as insert,
+            patch.object(projects, "get", wraps=projects.get) as lookup,
+        ):
             conflict = {**span, "project_id": str(project.pk)}
             for batch in ([conflict], [span, conflict]):
                 response = post(batch)
@@ -267,6 +272,10 @@ def test_observe_bulk_project_identity_over_http(
                     "project_id must match project"
                 )
                 insert.assert_not_called()
+                assert [call.kwargs["id"] for call in lookup.call_args_list] == [
+                    str(observe_project.pk)
+                ] * len(batch)
+                lookup.reset_mock()
                 assert snapshot(ch) == before
 
 
