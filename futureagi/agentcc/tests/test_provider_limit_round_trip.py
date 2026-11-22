@@ -75,6 +75,10 @@ def write(client, method, row, source, limits):
     if method == "gateway":
         # Copy only editable fields, not the whole read representation into extra_config.
         config = {read_key(key): source[read_key(key)] for key in COLUMNS}
+        # Exercise the requested timeout spelling, not a second implicit echo.
+        # Tests for precedence explicitly supply both aliases themselves.
+        if "default_timeout_seconds" in limits:
+            config.pop("default_timeout")
         config.update(models=[*source["models"], "additional"], **limits)
         return client.post(UPDATE, {"name": NAME, "config": config}, format="json")
     return getattr(client, method)(
