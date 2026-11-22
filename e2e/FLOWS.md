@@ -932,7 +932,7 @@
 
 **Goal:** Save a custom-formula conversation metric, read its settled value on the Overview, freeze it as a snapshot, and see that snapshot render on a dashboard and record a threshold alert. The Add to dashboard and Create alert menu items are disabled in the product, so the widget and monitor are created through the API the product used.
 
-**Spec:** `flows/dashboards/derived-metric.spec.ts:92`
+**Spec:** `flows/dashboards/derived-metric.spec.ts:99`
 
 **Tags:** —
 
@@ -950,7 +950,7 @@
 
 - The exact four seeded spans, their typed outcomes and two distinct conversations belong to the minted project in the actor organization/default workspace.
 - Validate accepts the formula, and the saved metric is version 1 of a custom conversation recipe in PG and in the metric API, with the same definition hash.
-- While the conversations are open the KPI API reports the Custom window as partial; it reports a final value no earlier than the last arrival plus the settle time: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.
+- While the conversations are open the KPI API reports the Custom window as partial; the test first observes a final value no earlier than the last arrival plus the settle time, less 5 seconds of clock tolerance: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.
 - The snapshot run completes; it froze exactly the two seeded conversations, its committed overall result is numerator 1, denominator 2, value 0.5, and its commit row names that result.
 - The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.
 - The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.
