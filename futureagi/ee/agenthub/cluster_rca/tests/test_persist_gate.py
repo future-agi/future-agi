@@ -1,21 +1,21 @@
-"""A run that never finished must not become a stored, published diagnosis.
+"""The deterministic last-resort text must never become a stored diagnosis.
 
-The cluster-RCA agent always ends with a synthesis: when the loop dies on the
-turn budget, the cost ceiling or an LLM error, ``_force_synthesis`` /
-``_fallback_synthesis`` produce a LOW-confidence writeup from whatever was
-gathered so the Analyse tab is never dead-air. That salvage is the correct close
-for the *stream*. Persisting it is a different act, and the bridge used to do it
-whenever ``result.synthesis is not None`` — so a failed run overwrote an earlier
-completed diagnosis and posted its restatement to the linked Linear issue as a
-finished result.
+The cluster-RCA agent always ends with a synthesis so the Analyse tab is never
+dead-air. Two very different texts can be the last one:
 
-These tests pin the gate on the real bridge entry point, against a real
-``TraceErrorGroup`` row, for the two cases the maintainer asked to see:
+  - a synthesis the *model* wrote — normally through ``submit_synthesis``, or
+    through ``_force_synthesis``'s forced call after a budget or cost exit.
+    It carries the model's own text, confidence and evidence: that is a
+    conclusion, and a diagnosis even when the run was pushed to close.
+  - ``_fallback_synthesis``'s deterministic text, written when the model
+    produced nothing at all. It restates the gathered evidence without
+    concluding it.
 
-  - an incomplete run (forced fallback) never writes the row and never notifies,
-    even when a good diagnosis is already stored;
-  - a completed run that merely came out low-confidence still writes and
-    notifies — confidence is not the gate, completion is.
+The bridge used to persist whatever was non-null, so a run that never concluded
+overwrote an earlier completed diagnosis and posted its restatement to the
+linked Linear issue as a finished result. These tests pin that only the second
+kind is refused, against a real ``TraceErrorGroup`` row, and drive the real
+persist step the worker thread calls — not just the gate helper.
 """
 
 import uuid
@@ -37,26 +37,6 @@ from model_hub.models.ai_model import AIModel
 from tracer.models.project import Project
 from tracer.models.trace_error_analysis import ClusterSource, TraceErrorGroup
 
-
-def _bare_agent() -> ClusterAnalysisAgent:
-    """An agent wired past ``__init__`` (DB lookup + gateway client) with the
-    loop state a run reads. Mirrors ``test_round1_regressions._bare_agent``."""
-    agent = ClusterAnalysisAgent.__new__(ClusterAnalysisAgent)
-    agent.project_id = "proj-1"
-    agent.cluster_uuid = "cluster-uuid-1"
-    agent.cluster_label = "E-CLUSTER1"
-    agent.cluster_id = "E-CLUSTER1"
-    agent._alias_to_uuid = {}
-    agent._uuid_to_alias = {}
-    agent._cluster_session_uuids_cache = {}
-    agent._cluster_trace_uuids_cache = {}
-    agent.findings = []
-    agent.synthesis = None
-    agent._investigation_complete = False
-    agent.on_event = lambda *a, **k: None
-    return agent
-
-
 GOOD = ClusterSynthesis(
     synthesis="Auth retries exhaust the shared pool; the 30s client timeout "
     "fires before the second attempt can acquire a connection.",
@@ -66,13 +46,23 @@ GOOD = ClusterSynthesis(
     evidence_trace_ids=["7f4d2a18-0000-4000-8000-000000000001"],
 )
 
-# What _fallback_synthesis produces when a run dies mid-investigation.
+# What _fallback_synthesis produces when the model concluded nothing at all.
 SALVAGED = ClusterSynthesis(
     synthesis="A recurring failure pattern was observed across the cluster. The "
     "investigation reached its turn budget before a single root cause was "
     "confirmed; this is the strongest pattern observed across the cluster.",
     fix="Inspect the cited traces directly to confirm the pattern before acting.",
     confidence=Confidence.LOW,
+)
+
+# What _force_synthesis yields when the model *does* answer the forced call:
+# its own text and its own confidence, which the prompt never forces to LOW.
+FORCED_BY_MODEL = ClusterSynthesis(
+    synthesis="Auth retries exhaust the shared pool; the second attempt cannot "
+    "acquire a connection before the client timeout fires.",
+    fix="Raise the pool size above peak concurrency.",
+    confidence=Confidence.MEDIUM,
+    evidence_trace_ids=["7f4d2a18-0000-4000-8000-000000000003"],
 )
 
 
@@ -117,46 +107,60 @@ def cluster(db):
         rca_evidence_trace_ids=GOOD.evidence_trace_ids,
         rca_at=now - timedelta(hours=1),
         rca_failures_at_run=10,
+        rca_trace=[{"type": "synthesis", "synthesis": GOOD.synthesis}],
     )
 
 
-def _result(synthesis, *, terminated_reason, investigation_complete):
+def _result(synthesis, *, terminated_reason, last_resort, complete=False):
     return ClusterAnalysisResult(
         cluster_id="E-test",
         synthesis=synthesis,
         terminated_reason=terminated_reason,
         cost_usd=0.02,
-        investigation_complete=investigation_complete,
+        investigation_complete=complete,
+        synthesis_is_last_resort=last_resort,
     )
 
 
-class TestIncompleteRunIsNotADiagnosis:
-    """The forced fallback after an incomplete run must not be persisted."""
+class TestLastResortTextIsNotADiagnosis:
+    """The deterministic fallback must not be stored, whatever the exit reason."""
 
     @pytest.mark.parametrize(
         "terminated_reason",
-        ["synthesis_forced", "max_turns", "cost_ceiling", "error", "converged"],
+        # Every reason an incomplete run can actually carry once a synthesis
+        # exists: a resource exit with the model-authored forced attempt
+        # succeeding leaves "synthesis_forced"; an exception leaves "error".
+        ["synthesis_forced", "error"],
     )
-    def test_forced_fallback_does_not_touch_the_stored_diagnosis(
+    def test_last_resort_leaves_every_stored_column_alone(
         self, cluster, terminated_reason
     ):
-        result = _result(
-            SALVAGED, terminated_reason=terminated_reason, investigation_complete=False
-        )
+        before = {
+            "rca_synthesis": cluster.rca_synthesis,
+            "rca_fix": cluster.rca_fix,
+            "rca_confidence": cluster.rca_confidence,
+            "rca_at": cluster.rca_at,
+            "rca_failures_at_run": cluster.rca_failures_at_run,
+            "rca_trace": cluster.rca_trace,
+        }
 
         persisted = falcon_bridge.persist_result_if_diagnosis(
-            str(cluster.id), result, error_count_at_run=12, trace=[{"type": "x"}]
+            str(cluster.id),
+            _result(SALVAGED, terminated_reason=terminated_reason, last_resort=True),
+            error_count_at_run=12,
+            trace=[{"type": "x"}],
         )
 
         assert persisted is False
         cluster.refresh_from_db()
-        assert cluster.rca_synthesis == GOOD.synthesis
-        assert cluster.rca_fix == GOOD.fix
-        assert cluster.rca_confidence == "H"
+        assert cluster.rca_synthesis == before["rca_synthesis"]
+        assert cluster.rca_fix == before["rca_fix"]
+        assert cluster.rca_confidence == before["rca_confidence"]
+        assert cluster.rca_at == before["rca_at"], "the staleness signal was reset"
+        assert cluster.rca_failures_at_run == before["rca_failures_at_run"]
+        assert cluster.rca_trace == before["rca_trace"], "the replay trail was replaced"
 
-    def test_forced_fallback_is_not_posted_to_the_linked_issue(
-        self, cluster, monkeypatch
-    ):
+    def test_last_resort_is_not_posted_to_the_linked_issue(self, cluster, monkeypatch):
         cluster.external_issue_id = "TH-3102"
         cluster.save(update_fields=["external_issue_id"])
 
@@ -166,24 +170,24 @@ class TestIncompleteRunIsNotADiagnosis:
             lambda cluster_pk: posted.append(cluster_pk) or True,
         )
 
-        result = _result(
-            SALVAGED, terminated_reason="synthesis_forced", investigation_complete=False
-        )
         falcon_bridge.persist_result_if_diagnosis(
-            str(cluster.id), result, error_count_at_run=12, trace=None
+            str(cluster.id),
+            _result(SALVAGED, terminated_reason="synthesis_forced", last_resort=True),
+            error_count_at_run=12,
+            trace=None,
         )
 
         assert posted == [], "a degraded fallback reached the linked ticket"
 
     def test_first_run_on_an_unanalysed_cluster_stays_unanalysed(self, db):
-        """No prior diagnosis: a failed first run must not land a fake one."""
-        _, _, cluster = _fresh_cluster_without_diagnosis(db)
+        """No prior diagnosis: a last-resort-only run must not land a fake one."""
+        cluster = _fresh_cluster_without_diagnosis(db)
 
-        result = _result(
-            SALVAGED, terminated_reason="max_turns", investigation_complete=False
-        )
         falcon_bridge.persist_result_if_diagnosis(
-            str(cluster.id), result, error_count_at_run=3, trace=None
+            str(cluster.id),
+            _result(SALVAGED, terminated_reason="synthesis_forced", last_resort=True),
+            error_count_at_run=3,
+            trace=None,
         )
 
         cluster.refresh_from_db()
@@ -191,34 +195,29 @@ class TestIncompleteRunIsNotADiagnosis:
         assert cluster.rca_at is None
 
 
-class TestCompletedLowConfidenceRunStillPublishes:
-    """Low confidence is not the gate — a finished run persists as it always did."""
+class TestModelAuthoredConclusionsStillPublish:
+    """A synthesis the model wrote is a diagnosis — even after a budget exit."""
 
-    def test_low_confidence_completed_case_replaces_the_stored_diagnosis(self, cluster):
-        completed_low = ClusterSynthesis(
-            synthesis="Two of the sampled traces time out on auth, but the third "
-            "returns a provider 429, so the cluster may mix two causes.",
-            fix="Split the cluster before concluding, then re-run the analysis.",
-            confidence=Confidence.LOW,
-            evidence_trace_ids=["7f4d2a18-0000-4000-8000-000000000002"],
-        )
-        result = _result(
-            completed_low,
-            terminated_reason="synthesis_submitted",
-            investigation_complete=True,
-        )
-
+    def test_forced_but_model_authored_synthesis_is_stored(self, cluster):
         persisted = falcon_bridge.persist_result_if_diagnosis(
-            str(cluster.id), result, error_count_at_run=12, trace=[{"type": "x"}]
+            str(cluster.id),
+            _result(
+                FORCED_BY_MODEL,
+                terminated_reason="synthesis_forced",
+                last_resort=False,
+            ),
+            error_count_at_run=12,
+            trace=[{"type": "x"}],
         )
 
         assert persisted is True
         cluster.refresh_from_db()
-        assert cluster.rca_synthesis == completed_low.synthesis
-        assert cluster.rca_confidence == "L"
+        assert cluster.rca_synthesis == FORCED_BY_MODEL.synthesis
+        assert cluster.rca_confidence == "M"
         assert cluster.rca_failures_at_run == 12
+        assert cluster.rca_trace == [{"type": "x"}]
 
-    def test_low_confidence_completed_case_notifies_the_linked_issue(
+    def test_forced_but_model_authored_synthesis_notifies_the_linked_issue(
         self, cluster, monkeypatch
     ):
         cluster.external_issue_id = "TH-3102"
@@ -230,17 +229,12 @@ class TestCompletedLowConfidenceRunStillPublishes:
             lambda cluster_pk: posted.append(cluster_pk) or True,
         )
 
-        completed_low = ClusterSynthesis(
-            synthesis="Cause is only partly isolated.",
-            fix="Narrow the cluster first.",
-            confidence=Confidence.LOW,
-        )
         falcon_bridge.persist_result_if_diagnosis(
             str(cluster.id),
             _result(
-                completed_low,
-                terminated_reason="synthesis_submitted",
-                investigation_complete=True,
+                FORCED_BY_MODEL,
+                terminated_reason="synthesis_forced",
+                last_resort=False,
             ),
             error_count_at_run=12,
             trace=None,
@@ -248,33 +242,100 @@ class TestCompletedLowConfidenceRunStillPublishes:
 
         assert posted == [str(cluster.id)]
 
+    def test_completed_low_confidence_run_still_persists(self, cluster):
+        """Confidence is not the gate — the maintainer's stated carve-out."""
+        low = ClusterSynthesis(
+            synthesis="Two of the sampled traces time out on auth, but the third "
+            "returns a provider 429, so the cluster may mix two causes.",
+            fix="Split the cluster before concluding, then re-run the analysis.",
+            confidence=Confidence.LOW,
+            evidence_trace_ids=["7f4d2a18-0000-4000-8000-000000000002"],
+        )
+
+        persisted = falcon_bridge.persist_result_if_diagnosis(
+            str(cluster.id),
+            _result(
+                low,
+                terminated_reason="synthesis_submitted",
+                last_resort=False,
+                complete=True,
+            ),
+            error_count_at_run=12,
+            trace=[{"type": "x"}],
+        )
+
+        assert persisted is True
+        cluster.refresh_from_db()
+        assert cluster.rca_synthesis == low.synthesis
+        assert cluster.rca_confidence == "L"
+
 
 class TestNoSynthesisIsANoop:
     def test_none_synthesis_never_persists(self, cluster):
-        result = _result(
-            None, terminated_reason="stopped", investigation_complete=False
-        )
-        assert (
-            falcon_bridge.persist_result_if_diagnosis(
-                str(cluster.id), result, error_count_at_run=12, trace=None
-            )
-            is False
+        falcon_bridge.persist_result_if_diagnosis(
+            str(cluster.id),
+            _result(None, terminated_reason="stopped", last_resort=False),
+            error_count_at_run=12,
+            trace=None,
         )
         cluster.refresh_from_db()
         assert cluster.rca_synthesis == GOOD.synthesis
 
 
-class TestResultFlagsTheRun:
-    """The bridge gate reads this field, so the agent must set it honestly.
+class TestPersistRunResultIsTheCallSite:
+    """The worker thread calls ``persist_run_result``; drive that, not the gate.
 
-    ``_fallback_synthesis`` sets ``_investigation_complete`` for its own reasons
-    (the loop must stop looping), so that flag cannot be the gate — completion
-    has to come from the run's own termination path.
+    Reverting ``run_agent``'s call site back to ``_persist_synthesis`` is the
+    exact production bug. A test that only calls ``persist_result_if_diagnosis``
+    cannot see it, so these go through the function ``run_agent`` actually calls.
     """
+
+    def test_last_resort_run_is_not_persisted_through_the_call_site(self, cluster):
+        persisted = falcon_bridge.persist_run_result(
+            str(cluster.id),
+            _result(SALVAGED, terminated_reason="synthesis_forced", last_resort=True),
+            12,
+            [{"type": "x"}],
+        )
+        assert persisted is False
+        cluster.refresh_from_db()
+        assert cluster.rca_synthesis == GOOD.synthesis
+
+    def test_authored_run_is_persisted_through_the_call_site(self, cluster):
+        persisted = falcon_bridge.persist_run_result(
+            str(cluster.id),
+            _result(
+                FORCED_BY_MODEL,
+                terminated_reason="synthesis_forced",
+                last_resort=False,
+            ),
+            12,
+            [{"type": "x"}],
+        )
+        assert persisted is True
+        cluster.refresh_from_db()
+        assert cluster.rca_synthesis == FORCED_BY_MODEL.synthesis
+
+
+class TestAgentFlagsTheTextItProduced:
+    """The gate reads the flags, so the agent must set them honestly."""
 
     @staticmethod
     def _loop_agent():
-        agent = _bare_agent()
+        agent = ClusterAnalysisAgent.__new__(ClusterAnalysisAgent)
+        agent.project_id = "proj-1"
+        agent.cluster_uuid = "cluster-uuid-1"
+        agent.cluster_label = "E-CLUSTER1"
+        agent.cluster_id = "E-CLUSTER1"
+        agent._alias_to_uuid = {}
+        agent._uuid_to_alias = {}
+        agent._cluster_session_uuids_cache = {}
+        agent._cluster_trace_uuids_cache = {}
+        agent.findings = []
+        agent.synthesis = None
+        agent._investigation_complete = False
+        agent._synthesis_is_last_resort = False
+        agent.on_event = lambda *a, **k: None
         agent.max_turns = 1
         agent.question = None
         agent.total_cost_usd = 0.0
@@ -308,7 +369,7 @@ class TestResultFlagsTheRun:
             cost_usd=0.0,
         )
 
-    def test_model_submitted_run_is_complete(self):
+    def test_model_submitted_run_is_complete_and_not_last_resort(self):
         agent = self._loop_agent()
         submitted = []
 
@@ -336,10 +397,10 @@ class TestResultFlagsTheRun:
         assert submitted == ["submit_synthesis"]
         assert result.terminated_reason == "synthesis_submitted"
         assert result.investigation_complete is True
+        assert result.synthesis_is_last_resort is False
 
-    def test_forced_fallback_is_not_complete(self):
+    def test_deterministic_fallback_is_last_resort(self):
         agent = self._loop_agent()
-        agent._stop_event = None
         agent._force_synthesis = lambda messages, turn: agent._fallback_synthesis()
 
         with patch(
@@ -350,10 +411,43 @@ class TestResultFlagsTheRun:
 
         assert result.synthesis is not None, "the stream still needs an answer"
         assert result.terminated_reason == "synthesis_forced"
+        assert result.synthesis_is_last_resort is True, (
+            "the deterministic text is the thing the gate must refuse"
+        )
         assert result.investigation_complete is False
 
-    def test_stopped_run_is_not_complete(self):
-        """An explicit Stop never reaches the backstop and is not a diagnosis."""
+    def test_model_authored_forced_synthesis_is_not_last_resort(self):
+        """The model answering the forced call is a conclusion, not a fallback."""
+        agent = self._loop_agent()
+        agent._execute_tool = lambda name, args: agent._tool_submit_synthesis(**args)
+        forced_call = SimpleNamespace(
+            id="call-forced",
+            function=SimpleNamespace(
+                name="submit_synthesis",
+                arguments=(
+                    '{"synthesis": "Auth pool exhaustion causes the timeout.", '
+                    '"fix": "Enlarge the pool.", "confidence": "M"}'
+                ),
+            ),
+        )
+        replies = [
+            self._reply(finish="stop"),
+            self._reply(tool_calls=[forced_call]),
+        ]
+
+        def _fake(_client, **kwargs):
+            return replies.pop(0)
+
+        with patch("ee.agenthub.cluster_rca.agent.call_llm_raw", side_effect=_fake):
+            result = agent.run()
+
+        assert result.synthesis is not None
+        assert result.synthesis.confidence == Confidence.MEDIUM
+        assert result.synthesis_is_last_resort is False, (
+            "a model-authored synthesis must persist even after a budget exit"
+        )
+
+    def test_stopped_run_carries_no_synthesis(self):
         agent = self._loop_agent()
         agent._stop_event = _AlreadySet()
 
@@ -361,7 +455,7 @@ class TestResultFlagsTheRun:
 
         assert result.synthesis is None
         assert result.terminated_reason == "stopped"
-        assert result.investigation_complete is False
+        assert result.synthesis_is_last_resort is False
 
 
 class _AlreadySet:
@@ -393,7 +487,7 @@ def _fresh_cluster_without_diagnosis(db):
         trace_type="observe",
     )
     now = timezone.now()
-    cluster = TraceErrorGroup.objects.create(
+    return TraceErrorGroup.objects.create(
         project=project,
         cluster_id=f"E-{uuid.uuid4().hex[:8]}",
         error_type="blank-cluster",
@@ -404,4 +498,3 @@ def _fresh_cluster_without_diagnosis(db):
         error_count=3,
         unique_traces=3,
     )
-    return user, project, cluster

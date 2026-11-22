@@ -64,16 +64,22 @@ class ClusterAnalysisResult:
     findings: list[ClusterFinding] = field(default_factory=list)
     turn_count: int = 0
     terminated_reason: str = (
-        ""  # "synthesis_submitted" | "max_turns" | "error" | "stop"
+        ""  # the loop's own exit: "synthesis_submitted" | "stopped" |
+        # "error" | "max_turns" | "cost_ceiling" | "converged" (the first two
+        # are the model's own conclusion; the rest are resource exits)
     )
     error: Optional[str] = None
     cost_usd: float = 0.0
     # True only when the investigation itself ended on the model's own
-    # submit_synthesis. A synthesis salvaged by the forced-close backstop
-    # (turn budget, cost ceiling, LLM error) leaves this False: it restates
-    # what was gathered, it is not a finished diagnosis, so it must not
-    # replace a stored one or be posted to a linked issue.
+    # submit_synthesis. A synthesis salvaged after a resource exit leaves
+    # this False, because the run did not get to finish on its own terms.
     investigation_complete: bool = False
+    # True only when the synthesis is the deterministic last-resort text from
+    # ``_fallback_synthesis`` — the text that restates the evidence without
+    # concluding it. This, not ``investigation_complete``, is what the
+    # persist gate refuses: a model-authored synthesis is a conclusion even
+    # when a budget pushed the model to write it.
+    synthesis_is_last_resort: bool = False
 
 
 # --- WebSocket event contract --------------------------------------------------
