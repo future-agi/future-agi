@@ -104,12 +104,14 @@ def build_project_schema_context(
                     "# Omega v20.9 Grounded Causal Attributions (preloaded for this cluster)"
                 )
                 for a in attributions:
-                    orig = a.get("origin") or {}
-                    symp = a.get("symptom") or {}
+                    orig = a.get("origin")
+                    symp = a.get("symptom")
+                    orig_span = orig.get("span_id") if isinstance(orig, dict) else None
+                    symp_span = symp.get("span_id") if isinstance(symp, dict) else None
                     lines.append(
                         f"  - trace={a.get('trace_id')} [{a.get('kind')}] "
-                        f"origin={orig.get('span_id') or 'unknown'} -> "
-                        f"symptom={symp.get('span_id') or 'unknown'}: {a.get('statement')}"
+                        f"origin={orig_span or 'unknown'} -> "
+                        f"symptom={symp_span or 'unknown'}: {a.get('statement')}"
                     )
                 lines.append("")
         except (DatabaseError, LookupError, ValueError, TypeError) as exc:

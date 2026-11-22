@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
 from django.db.models import Q
@@ -18,7 +19,7 @@ from tracer.queries.feed import priority_to_severity
 _SEVERITY_ORDER = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
 
-def _parse_uuids(values: list[str] | set[str]) -> list[uuid.UUID]:
+def _parse_uuids(values: Iterable[str | uuid.UUID]) -> list[uuid.UUID]:
     parsed: list[uuid.UUID] = []
     seen: set[uuid.UUID] = set()
     for raw in values:

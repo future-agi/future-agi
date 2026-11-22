@@ -3838,6 +3838,18 @@
             "type": "string",
             "format": "uuid",
             "description": "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read."
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "description": "Optional Error Feed issue cluster ID to focus causal key-path annotations when a trace has multiple linked issues."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -3861,7 +3873,8 @@
           "query": [
             "test_execution_id",
             "call_execution_id",
-            "project_id"
+            "project_id",
+            "cluster_id"
           ],
           "body": []
         }
