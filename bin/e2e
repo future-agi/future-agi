@@ -51,7 +51,66 @@ ch_password() { printf '%s' "${CH_PASSWORD:-$(grep '^CH_PASSWORD=' "$ENV_FILE" |
 frontend_port() { grep '^FRONTEND_PORT=' "$ENV_FILE" | cut -d= -f2; }
 standalone_tag() { grep '^FUTURE_AGI_VERSION=' "$ROOT/e2e/stack/standalone-e2e.env" | cut -d= -f2; }
 
+# The OSS bootstraps create no Metrics ClickHouse schema (docs/derived-metrics.rst
+# leaves 028-038 to the deployer). Distributed applies it in the
+# metrics-schema-bootstrap job (e2e/stack/docker-compose.e2e.yml); Standalone runs
+# the same packaged runner over the same files in its app container. Without it,
+# every metric refresh fails and DASH-E2E-017 never sees a published value.
+# e2e/scripts/metrics-schema-bootstrap.test.mjs keeps the two lists equal.
+METRICS_SCHEMA_FILES=(
+  009_per_eval_rollup.sql 011_eval_logger_v2.sql
+  028_derived_metrics.sql 029_derived_metric_uncertainty.sql 030_derived_metric_view_refresh.sql
+  031_metric_field_values.sql 032_metric_bucket_totals.sql 033_metric_unit_state.sql
+  034_metric_source_dependencies.sql 035_metric_bucket_retired_parts.sql
+  036_list_current_root_facts.sql 037_list_current_user_activity.sql 038_metric_snapshot_sketches.sql
+)
+
+# Timestamp only completed observations. With profiling off the local command and
+# its deadlines, HTTP probes, storage queries and fixture writes stay unchanged.
+phase() { if [[ -n ${E2E_PHASE_LOG:-} ]]; then printf '%s\t%s\n' "$(date -u +%s)" "$1" >> "$E2E_PHASE_LOG"; fi; }
+
+# Config IDs are the local immutable identities (unlike a mutable tag). Snapshot
+# every expected image before Compose runs, including Standalone's parents.
+image_plan() {
+  local tag=$1 image record
+  local images=(future-agi frontend fi-collector agentcc-gateway code-executor)
+  if [[ ${E2E_STACK:-distributed} == standalone ]]; then images+=(standalone); fi
+  for image in "${images[@]}"; do
+    image="futureagi/$image:$tag"
+    record=$(docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' "$image")
+    [[ $record =~ ^sha256:[0-9a-f]{64}\ linux/amd64$ ]] || die "Invalid cloud build identity for $image"
+    printf '%s %s\n' "$image" "$record"
+  done
+}
+
+verify_images() {
+  local plan=$1 tag=$2 service image expected id running
+  local services=(code-executor mock-google)
+  if [[ ${E2E_STACK:-distributed} == standalone ]]; then
+    services+=(app)
+  else
+    services+=(backend worker worker-exact-aggregation worker-sql-workbench frontend fi-collector fi-property-catalog-consumer agentcc-gateway)
+  fi
+  for service in "${services[@]}"; do
+    case $service in
+      mock-google|backend|worker*) image=future-agi ;;
+      fi-property-catalog-consumer) image=fi-collector ;;
+      app) image=standalone ;;
+      *) image=$service ;;
+    esac
+    image="futureagi/$image:$tag"
+    expected=$(awk -v image="$image" '$1 == image && $3 == "linux/amd64" { print $2 }' "$plan")
+    [[ $expected =~ ^sha256:[0-9a-f]{64}$ ]] || die "No unique build identity for $image"
+    id=$("${COMPOSE[@]}" ps --status running --quiet "$service")
+    [[ $id =~ ^[0-9a-f]+$ ]] || die "Expected one running $service container"
+    running=$(docker inspect --format '{{.Config.Image}} {{.Image}}' "$id")
+    [[ $running == "$image $expected" ]] || die "$service did not run the planned $image config ID"
+    printf '%s %s\n' "$service" "$running"
+  done
+}
+
 wait_ready() {
+  phase compose-healthy
   # Measured cold boot 2026-08-25: first-run migrations take ~6.5 min before
   # /health/ answers; 300s was not enough.
   local deadline=$((SECONDS + 600))
@@ -62,27 +121,40 @@ wait_ready() {
   done
   # The bootstrap graph has already qualified schema. Keep an independent
   # storage witness here; HTTP health by itself is not catalog readiness.
+  phase backend-http
   echo "Checking ClickHouse schema ..."
   curl -fsS -G "http://localhost:$(ch_port)/" -u "default:$(ch_password)" \
     --data-urlencode "query=SELECT count() FROM spans LIMIT 0" >/dev/null \
     || { echo "CH spans table missing — check clickhouse-native-bootstrap logs"; exit 1; }
+  phase clickhouse-spans
   echo "Checking observed attribute indexes ..."
   curl -fsS -G "http://localhost:$(ch_port)/" -u "default:$(ch_password)" --data-urlencode \
     "query=SELECT throwIf(count() != 2, 'observed indexes missing') FROM system.tables WHERE database={database:String} AND name IN ('observed_attribute_keys', 'observed_attribute_values')" \
     --data-urlencode "param_database=${PROPERTY_CATALOG_DATABASE:-property_catalog}" >/dev/null \
     || { echo "Observed attribute indexes missing"; exit 1; }
+  phase observed-attribute-indexes
   if [[ "${E2E_STACK:-distributed}" == standalone ]]; then
     # App health follows migrations; the probes above witness ClickHouse schema.
     # Reuse the guarded distributed fixture without changing the shipped image.
     echo "Provisioning read-only SQL fixture account ..."
     "${COMPOSE[@]}" exec -T -w /app/backend -e FUTURE_AGI_E2E_FIXTURE=sql-workbench \
       app python - < "$ROOT/e2e/stack/backend/bootstrap_sql.py"
+    # After the app's bootstrap created the base schema (028 alters 011's table),
+    # before any test creates a metric. The password stays in the app's environment.
+    echo "Applying the Metrics ClickHouse schema ..."
+    "${COMPOSE[@]}" exec -T -w /app/backend -e FI_MIGRATION_USER=e2e-metrics-schema-bootstrap \
+      -e FUTURE_AGI_TELEMETRY_DISABLED=true -e FUTURE_AGI_TELEMETRY_URL=http://127.0.0.1:9 app \
+      sh -c 'exec python -m tracer.services.clickhouse.v2.apply_schema --ch-host="$CH_HOST" \
+        --ch-http-port="$CH_HTTP_PORT" --ch-user="$CH_USERNAME" --ch-database="$CH25_DATABASE" --files "$@"' \
+      metrics-schema "${METRICS_SCHEMA_FILES[@]}"
+    phase metrics-schema
   fi
   echo "Waiting for frontend ..."
   until curl -fsS "http://localhost:$(frontend_port)/" >/dev/null 2>&1; do
     ((SECONDS < deadline)) || { echo "frontend not up in 600s"; exit 1; }
     sleep 2
   done
+  phase frontend-http
   echo "E2E stack ready: app http://localhost:$(frontend_port)  api http://localhost:$(backend_port)"
 }
 
@@ -154,6 +226,8 @@ case "$cmd" in
   # PG migrations and initial snapshots precede backend readiness. No hidden
   # force-recreate/retry loop: failed or uncertain setup must be inspected.
   up)      "${COMPOSE[@]}" up -d --wait --wait-timeout 1200 "${SERVICES[@]}"; wait_ready ;;
+  image-plan) image_plan "${1:?tag required}" ;;
+  verify-images) verify_images "${1:?image plan required}" "${2:?tag required}" ;;
   down)    "${COMPOSE[@]}" down "$@" ;;
   build)   build_target "${1:?usage: bin/e2e build $BUILD_TARGETS}" ;;
   test)    (cd "$ROOT/e2e" && yarn playwright test "$@") ;;

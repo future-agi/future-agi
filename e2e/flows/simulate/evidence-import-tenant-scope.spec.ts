@@ -27,9 +27,9 @@ const imports = (env: string) => `/simulate/api/harness-environments/${env}/evid
 const NO_ENVIRONMENT = 'Environment not found';
 const NO_PROJECT = "Project not found in this environment's workspace";
 const NO_IMPORT = 'Evidence import not found';
-// The workspace write check every write passes first, pinned from accounts/authentication.py
-// (a role outside RolePermissions.WRITE_ACCESS_ROLES).
-const NO_WRITE = 'Write access denied to this workspace';
+// The workspace write check every write passes first: on simulation routes a Viewer gets
+// VIEWER_READ_ONLY from tfc/utils/error_codes.py (accounts/authentication.py).
+const NO_WRITE = "Viewers can't make changes in this workspace. Ask a workspace admin for the Member role.";
 
 type Side = 'a' | 'b';
 // Every refusal carries its reason as `detail`, in the plain body and in the error envelope.
@@ -59,7 +59,7 @@ test(
         "the import answers 201 and lands on the review; simulate_evidence_import has one row for A's organisation, A's environment and A's project, with one pending case for the seeded session",
         "the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project",
         "B reading A's import answers 404, through A's environment and through B's own",
-        "a viewer of A's workspace is refused the import and the draft with 403 (Write access denied to this workspace): A's organisation keeps its one import, still undrafted, with its case pending",
+        "a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending",
       ],
     }),
   },

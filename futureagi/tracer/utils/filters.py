@@ -390,7 +390,15 @@ class FilterEngine:
             tuple: (column_id, filter_config)
         """
         normalized = normalize_filter_item(filter_item)
-        return normalized["column_id"], normalized["filter_config"]
+        config = normalized["filter_config"]
+        if config.get("col_type") in {"METRIC_FIELD", "metric"} or str(
+            normalized["column_id"] or ""
+        ).startswith("metric_field:"):
+            raise ValueError(
+                "METRIC_FIELD filters require the committed ClickHouse list planner; "
+                "the Python FilterEngine does not support metric fields."
+            )
+        return normalized["column_id"], config
 
     def apply_filters(self, filters):
         filtered_objects = self.objects

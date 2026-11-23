@@ -12,8 +12,11 @@ from rest_framework.serializers import UUIDField
 
 from tfc.constants.levels import Level
 from tfc.permissions.utils import (
+    VIEWER_READ_ONLY_CODE,
     get_effective_workspace_level,
     get_org_membership,
+    is_read_only_user,
+    viewer_denied_message,
 )
 
 
@@ -25,6 +28,18 @@ class IsOrganizationMember(BasePermission):
     def has_permission(self, request, view):
         membership = get_org_membership(request.user)
         return membership is not None
+
+
+class IsNotViewer(BasePermission):
+    code = VIEWER_READ_ONLY_CODE
+
+    def has_permission(self, request, view):
+        if not is_read_only_user(request.user, getattr(request, "workspace", None)):
+            return True
+        self.message = viewer_denied_message(
+            getattr(view, "viewer_denied_action", None)
+        )
+        return False
 
 
 class IsOrganizationAdmin(BasePermission):

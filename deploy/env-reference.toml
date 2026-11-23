@@ -733,6 +733,30 @@ the default backend ([Backend variants](/docs/self-hosting/images#backend-varian
     text = "`true` tells an environment when its agent or environment version changed and offers a rebuild. Turn it on together with `HARNESS_BUNDLE_CERTIFY_ENABLED`, after `HARNESS_VERSIONING_ENABLED`, once the sandbox template carries an agent-learning-kit release that supports versioning."
 
     [[part.section.row]]
+    keys = ["HARNESS_SOURCE_SUBFOLDER_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` lets a GitHub build name the folder of the agent inside the repository (`source.subfolder`). Turn it on only once the sandbox template carries an agent-learning-kit release that reads `subfolder`; before that a build would silently use the repository root, so the field is refused."
+
+    [[part.section.row]]
+    keys = ["HARNESS_AGENT_READING_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` reads every new code version of an Agents-page agent in the sandbox before its check, and turns on Find agents and Connect for GitHub and uploads. `false` keeps today's check, and a version's tools, prompt and model arrive with its first build. Turn it on only once the sandbox template carries an agent-learning-kit release with the read-only reading mode, and before `HARNESS_SEED_CONTRACT_ENABLED`."
+
+    [[part.section.row]]
+    keys = ["HARNESS_SEED_CONTRACT_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "`true` starts a build from the reading stored on its agent version instead of reading the agent again. Turn it on after `HARNESS_AGENT_READING_ENABLED`, once the sandbox template carries an agent-learning-kit release that takes `--seed-contract`; a version with no stored reading is still read in the build."
+
+    [[part.section.row]]
+    keys = ["ALK_HOSTED_READING_TIMEOUT"]
+    default = "`2400`"
+    setups = ["S", "D", "H"]
+    text = "Seconds one reading of an agent, or one scan for the agents in a source, may run before it is stopped and marked failed with Try again."
+
+    [[part.section.row]]
     keys = ["HARNESS_BUNDLE_CERTIFY_ENABLED"]
     default = "`false`"
     setups = ["S", "D", "H"]
@@ -1080,6 +1104,12 @@ a Mixpanel token.
     default = "`1000000`"
     setups = ["S", "D", "H"]
     text = "Most entries kept on `usage:events` (about 160 bytes each) while its consumer is behind or stopped. A positive integer in plain digits; blank means the default. The app and fi-collector refuse to start on zero, a negative number or text."
+
+    [[part.section.row]]
+    keys = ["HARNESS_AGENT_READING_CHARGE_ENABLED"]
+    default = "`false`"
+    setups = ["S", "D", "H"]
+    text = "Only has an effect on Future AGI Cloud. A self-hosted install records no charge either way: `USAGE_EVENTS_ENABLED` is off there, and an install with no enterprise licence records none. On Future AGI Cloud, `true` charges the organization for the model use of each reading of an agent and each scan for agents in a source; `false` charges none and logs one line per reading, `agent_reading_not_charged`, with what it would have cost."
 
     [[part.section.row]]
     keys = ["RESTRICT_SIMULATE_TO_ENVIRONMENTS_CUTOFF"]
