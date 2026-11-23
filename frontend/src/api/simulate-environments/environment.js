@@ -226,6 +226,7 @@ export function harnessJobToEnvironment(item) {
     status: jobStatusFor(status),
     buildStatus: buildStatusFor(status.stage),
     awaitingApproval: status.stage === AWAITING_APPROVAL_STAGE,
+    designApproved: job.metadata?.design_review?.status === "approved",
     // The "whose fault" line for a failed build ({domain, stage, code, message},
     // see §7). Null unless the job stage is terminal-failed.
     buildError: status.failure || null,

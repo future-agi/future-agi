@@ -127,3 +127,17 @@ export const REVIEW_COPY = {
       .join(" "),
   removeAnyway: "Remove anyway",
 };
+
+export const BUILD_COPY = {
+  title: "Building v1 from the approved design",
+  done: "Built from the approved design",
+  step: {
+    start: () => "Starting from the approved design",
+    world: ({ tables, tools, rules }) =>
+      `Writing the world · ${plural(tables, "table")}, ${plural(tools, "tool")}, ${plural(rules, "rule")}`,
+    scenarios: ({ scenarios }) =>
+      `Writing and checking ${plural(scenarios, "scenario")}`,
+    release: () => "Running the release checks",
+  },
+  stateLabel: { done: "Done", running: "In progress", pending: "Not started" },
+};

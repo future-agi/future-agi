@@ -140,6 +140,11 @@ export const WORLD_COPY = {
     data: "Data",
     dataValue: "No tables or stores are seeded for this environment.",
   },
+  writing: {
+    title: "Writing the world",
+    description:
+      "The tables and their seeded rows show here once the build writes them.",
+  },
   empty: {
     title: "No tools or data yet",
     description:
@@ -159,9 +164,12 @@ export function effectLabel(effect) {
   return TOOLS_CARD_COPY.effect[effect] || TOOLS_CARD_COPY.effect.unknown;
 }
 
+export const isWritingWorld = (env) => env?.buildStatus === "building";
+
 export function hasNoWorld(env) {
   return (
     Boolean(env?.detailReady) &&
+    !isWritingWorld(env) &&
     !(env?.worldTables?.length > 0) &&
     !(env?.stores?.length > 0)
   );

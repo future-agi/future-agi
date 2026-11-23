@@ -10,6 +10,7 @@ import {
   useEnvironment,
   canRunHeader,
   stageOutputsToWorld,
+  harnessEnvironmentKey,
   harnessEnvironmentQuery,
   harnessJobQuery,
 } from "src/api/simulate-environments/environment";
@@ -38,6 +39,11 @@ import { subscribeScenarioSelection } from "../buildEnvironment/console/scenario
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import DesignReviewStage from "./designReview/DesignReviewStage";
+import BuildStrip from "./designReview/BuildStrip";
+import {
+  BUILD_STEP_TAB,
+  approvedBuildSteps,
+} from "./designReview/designReview.utils";
 import { REVIEW_COPY } from "./designReview/designReview.constants";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
@@ -253,6 +259,26 @@ export default function EnvironmentWorkspace() {
   const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
   const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
+  const buildStage = jobQuery.data?.status?.stage;
+  const approvedBuild = building && Boolean(env?.designApproved);
+  const lastFollowed = useRef(null);
+  const followTab = approvedBuild
+    ? BUILD_STEP_TAB[
+        approvedBuildSteps(buildStage).find((step) => step.state === "running")
+          ?.kind
+      ]
+    : null;
+  useEffect(() => {
+    if (!followTab || followTab === lastFollowed.current) return;
+    lastFollowed.current = followTab;
+    if (followTab !== tab) setTab(followTab);
+  }, [followTab, tab, setTab]);
+  useEffect(() => {
+    if (approvedBuild && buildStage)
+      queryClient.invalidateQueries({
+        queryKey: harnessEnvironmentKey(envId),
+      });
+  }, [approvedBuild, buildStage, envId, queryClient]);
   const usageLimit = jobQuery.data?.usage_limit;
   const hadRemoteUsageLimit = useRef(false);
   useEffect(() => {
@@ -402,7 +428,7 @@ export default function EnvironmentWorkspace() {
   // hero animation freezes and the header reads "Failed" (LivePill), rather than
   // a dead-end error page. Run is gated off and Fork is hidden (locked) until it
   // goes Live, at which point buildStatus flips and the branch below takes over.
-  if (building || buildFailed) {
+  if ((building && !approvedBuild) || buildFailed) {
     return (
       <Box
         sx={{
@@ -642,9 +668,12 @@ export default function EnvironmentWorkspace() {
       <WorkspaceHeader
         env={displayEnv}
         envState={envState}
-        canRun={runnable && !runMutation.isPending && !detailBlock}
+        canRun={
+          !approvedBuild && runnable && !runMutation.isPending && !detailBlock
+        }
         runBlockedReason={runReason(
-          detailBlock ||
+          (approvedBuild && WORKSPACE_COPY.buildingTooltip) ||
+            detailBlock ||
             blockedReason(
               envState,
               env,
@@ -662,6 +691,7 @@ export default function EnvironmentWorkspace() {
       />
       {creditBanner}
       {refusalLine}
+      {approvedBuild && <BuildStrip envId={env.id} stage={buildStage} />}
 
       <SystemBanners env={env} />
       {!detailLoading && !detailFailed && (

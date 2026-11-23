@@ -11,6 +11,7 @@ import {
   MONO,
   WORLD_COPY,
   hasNoWorld,
+  isWritingWorld,
   repoOriginOf,
   toolNamesOf,
   withToolEvidence,
@@ -96,6 +97,15 @@ export default function WorldPanel({ env, envState, graphData }) {
       </Stack>
 
       {noWorld && <ConnectOnlyWorld env={env} sx={{ mb: 2 }} />}
+
+      {isWritingWorld(env) && !tables.length && (
+        <EmptyState
+          icon="solar:global-linear"
+          title={WORLD_COPY.writing.title}
+          description={WORLD_COPY.writing.description}
+          sx={{ mb: 2 }}
+        />
+      )}
 
       {showGraph && (
         <Box sx={{ mb: 2 }}>
