@@ -809,6 +809,107 @@ def test_a_case_held_for_two_reasons_is_counted_once():
     assert set(reasons) == set(by)
 
 
+def test_each_listed_held_case_names_the_row_it_is_counted_under():
+    """The run plan's list says which case is held for which reason, the same row its counts use; a dropped case
+    reads dropped, and a case past the list's cap is counted but not listed."""
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        DROPPED_ROW,
+        LIST_LIMIT,
+        NOT_VALIDATED_ROW,
+        TOOL_MISSING_ROW,
+        _held_back,
+        _held_list,
+        _held_rows,
+    )
+
+    def held(key, by):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key, name=key),
+            bucket="blocked",
+            by=by,
+            lifecycle_reason=None,
+            hold=SimpleNamespace(held=False, reason=None),
+        )
+
+    unproved = [held(f"case-{n:03d}", [NOT_VALIDATED_ROW]) for n in range(LIST_LIMIT)]
+    placement = SimpleNamespace(
+        placed=[held("refund", ["tool_discovery", TOOL_MISSING_ROW]), *unproved],
+        dropped=[{"key": "gone", "code": "scenario_dropped"}],
+    )
+
+    keys, by, _ = _held_back(placement, [], [])
+    listed = _held_list(keys, {}, _held_rows(placement))
+
+    assert listed["truncated"] is True and len(listed["keys"]) == LIST_LIMIT
+    assert set(listed["by_key"]) == set(listed["keys"])
+    assert listed["by_key"]["refund"] == TOOL_MISSING_ROW
+    assert listed["by_key"]["case-000"] == NOT_VALIDATED_ROW
+    assert "gone" not in listed["by_key"]
+    assert _held_rows(placement)["gone"] == DROPPED_ROW
+    assert dict(by) == {
+        TOOL_MISSING_ROW: 1,
+        NOT_VALIDATED_ROW: LIST_LIMIT,
+        DROPPED_ROW: 1,
+    }
+
+
+@pytest.mark.parametrize(
+    ("placed_by", "expected"),
+    [
+        # Two holding rows: the case's own lifecycle row wins, as in the counts.
+        (["tool_discovery", "not_validated"], "not_validated"),
+        # Two pairing rows and no lifecycle row: the first holding row.
+        (["tool_routing", "tool_discovery"], "tool_routing"),
+        # A worker holds it: its worker key.
+        (["worker:researcher"], "worker:researcher"),
+    ],
+)
+def test_a_held_case_s_row_is_the_one_it_is_counted_under(placed_by, expected):
+    from collections import Counter
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import _held_back, _held_rows
+
+    placement = SimpleNamespace(
+        placed=[
+            SimpleNamespace(
+                case=SimpleNamespace(key="refund / late #1", name=""),
+                bucket="blocked",
+                by=placed_by,
+                lifecycle_reason=None,
+                hold=SimpleNamespace(held=False, reason=None),
+            ),
+            SimpleNamespace(
+                case=SimpleNamespace(key="runs", name=""),
+                bucket="stale",
+                by=["tool_routing"],
+                lifecycle_reason=None,
+                hold=SimpleNamespace(held=False, reason=None),
+            ),
+        ],
+        dropped=[],
+    )
+
+    keys, by, _ = _held_back(placement, [], [])
+    rows = _held_rows(placement)
+
+    assert keys == ["refund / late #1"]
+    assert rows == {"refund / late #1": expected}
+    assert Counter(rows.values()) == by
+
+
+def test_nothing_held_lists_no_rows():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import _held_list, _held_rows
+
+    placement = SimpleNamespace(placed=[], dropped=[])
+
+    assert _held_list([], {}, _held_rows(placement))["by_key"] == {}
+
+
 def test_held_back_cases_are_listed_with_their_current_names():
     from types import SimpleNamespace
 
@@ -845,6 +946,7 @@ class TestHoldBack:
             "truncated": False,
             "names": {key: key for key in REFUND_KEYS},
             "by": {"tool_routing": 4},
+            "by_key": dict.fromkeys(REFUND_KEYS, "tool_routing"),
         }
         assert "issue_refund reaches production" in chosen["reasons"]["tool_routing"]
         sent = [entry["scenario_key"] for entry in metadata["execution_manifest"]]

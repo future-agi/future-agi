@@ -767,7 +767,9 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
         # Only a new agent or environment version changes the documents compared.
         return {
             "type": code,
-            "category": "agent_version" if code in _AGENT_VERSION_FIXES else "tool_routing",
+            "category": "agent_version"
+            if code in _AGENT_VERSION_FIXES
+            else "tool_routing",
             "target": names[0] if names else None,
             "action": action.format(target=", ".join(names)),
             "would": would.format(target=", ".join(names)),

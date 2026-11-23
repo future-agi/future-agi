@@ -274,6 +274,8 @@ def test_the_preview_says_cases_run_unvalidated_and_the_run_sends_them(
 
     chosen = run.payload["metadata"]["readiness_selection"]
     assert (chosen["running"], chosen["validation"]) == (len(KEYS), "not_enforced")
+    # Released cases are no longer held: none is listed, and none keeps a holding row.
+    assert (chosen["held_back"]["keys"], chosen["held_back"]["by_key"]) == ([], {})
     assert _proving_jobs(environment) == before
 
 

@@ -1633,11 +1633,15 @@ def test_the_prove_again_warning_lists_every_scenario_beyond_the_five_it_names(
 
     [warning] = [
         one
-        for one in warnings_module.run_warnings(environment, resolve_run_pins(environment))
+        for one in warnings_module.run_warnings(
+            environment, resolve_run_pins(environment)
+        )
         if one["code"] == "scenarios_need_revalidation"
     ]
 
-    assert warning["message"].endswith("prove case-1, case-2, case-3, case-4, case-5, 2 more again")
+    assert warning["message"].endswith(
+        "prove case-1, case-2, case-3, case-4, case-5, 2 more again"
+    )
     assert warning["scenario_keys"] == keys
 
 

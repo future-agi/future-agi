@@ -954,6 +954,11 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
             "unreadable for a case whose cited seed records could not be read just now)."
         ),
     )
+    by_key = serializers.DictField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+    )
 
 
 class HarnessRunReadinessSelectionSerializer(HarnessCapabilityScopeSerializer):

@@ -41,7 +41,9 @@ Status = Literal["supported", "partial", "blocked", "unavailable", "untested", "
 EvidenceSource = Literal["pair_certificate", "build_certificate", "none"]
 Finding = Literal["passed", "failed", "limited", "not_applicable", "not_run"]
 # The four kinds of repair a blocker sends the user to.
-FixCategory = Literal["startup", "message_mapping", "tool_routing", "evidence", "agent_version"]
+FixCategory = Literal[
+    "startup", "message_mapping", "tool_routing", "evidence", "agent_version"
+]
 # An area, and the answer, read as their worst row.
 WORST_FIRST: tuple[Status, ...] = (
     "blocked",

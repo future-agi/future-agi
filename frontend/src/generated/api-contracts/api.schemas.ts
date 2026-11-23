@@ -21433,6 +21433,11 @@ export type HarnessRunHeldBackApiNames = { [key: string]: string };
  */
 export type HarnessRunHeldBackApiBy = { [key: string]: number };
 
+/**
+ * The row each listed case is counted under in `by`, by its key; its words are in `reasons`.
+ */
+export type HarnessRunHeldBackApiByKey = { [key: string]: string };
+
 export interface HarnessRunHeldBackApi {
   /** @minimum 0 */
   count: number;
@@ -21442,6 +21447,8 @@ export interface HarnessRunHeldBackApi {
   names: HarnessRunHeldBackApiNames;
   /** Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now). */
   by: HarnessRunHeldBackApiBy;
+  /** The row each listed case is counted under in `by`, by its key; its words are in `reasons`. */
+  by_key?: HarnessRunHeldBackApiByKey;
 }
 
 /**
