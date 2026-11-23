@@ -52,7 +52,33 @@ describe("RlContractPanel", () => {
       screen.getByText("Only refund verified callers."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/sub-goal/)).toBeNull();
-    expect(screen.queryByText("Not tested")).toBeNull();
+    expect(screen.getAllByText("Not tested")).toHaveLength(2);
+  });
+
+  it("shows how many scenarios cover a rule through its sub-goal and links to them", async () => {
+    const user = userEvent.setup();
+    const onGo = vi.fn();
+    renderPanel({
+      env: {
+        ...env,
+        ruleDetails: [
+          {
+            text: "Only refund verified callers.",
+            sub_goal: "identity_checked",
+          },
+        ],
+      },
+      scenarios: [
+        { subTasks: [{ id: "identity_checked" }] },
+        { subTasks: [{ id: "refund_issued" }] },
+        { subTasks: [{ id: "refund_issued" }, { id: "identity_checked" }] },
+      ],
+      onGo,
+    });
+
+    expect(screen.getAllByText("Not tested")).toHaveLength(1);
+    await user.click(screen.getByText("1 sub-goal · 2 scenarios"));
+    expect(onGo).toHaveBeenCalledWith("scenarios");
   });
 
   it("lists the use cases", () => {
@@ -81,9 +107,14 @@ describe("RlContractPanel", () => {
     expect(screen.getByText("It ends")).toBeInTheDocument();
     expect(screen.getByText("customer-ended-call")).toBeInTheDocument();
     expect(screen.getByText("It's cut off")).toBeInTheDocument();
-    expect(screen.getByText("10 turns")).toBeInTheDocument();
+    expect(screen.getByText("10 agent turns")).toBeInTheDocument();
     expect(screen.getByText("60 minutes")).toBeInTheDocument();
-    expect(screen.getByText("Time · real-time")).toBeInTheDocument();
+    expect(screen.getByText("Time · Real time")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Pauses and slow replies are part of the test, so time runs as it would on a real call.",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Same starting data every time")).toBeNull();
   });
 
@@ -108,9 +139,8 @@ describe("RlContractPanel", () => {
   it("offers no actions without a builder chat to send them through", () => {
     renderPanel();
     expect(screen.queryByRole("button", { name: /Add rule/ })).toBeNull();
-    expect(
-      screen.queryByRole("button", { name: "Actions for rule 1" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit rule R1" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Remove rule R1" })).toBeNull();
   });
 
   it("offers no actions on a locked template", () => {
@@ -123,12 +153,9 @@ describe("RlContractPanel", () => {
     const chat = liveChat();
     renderPanel({ chat });
 
-    await user.click(
-      screen.getByRole("button", { name: "Actions for rule 2" }),
-    );
-    await user.click(screen.getByRole("menuitem", { name: /Edit/ }));
+    await user.click(screen.getByRole("button", { name: "Edit rule R2" }));
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Edit rule 2")).toBeInTheDocument();
+    expect(within(dialog).getByText("Edit rule R2")).toBeInTheDocument();
     expect(
       within(dialog).getByText(
         /lands as a draft that you save as a new environment version/,
@@ -176,11 +203,10 @@ describe("RlContractPanel", () => {
     renderPanel({ chat });
 
     await user.click(
-      screen.getByRole("button", { name: "Actions for use case 1" }),
+      screen.getByRole("button", { name: "Remove use case U1" }),
     );
-    await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Remove use case 1")).toBeInTheDocument();
+    expect(within(dialog).getByText("Remove use case U1")).toBeInTheDocument();
     await user.click(
       within(dialog).getByRole("button", { name: "Remove use case" }),
     );
@@ -205,8 +231,9 @@ describe("RlContractPanel", () => {
     });
     renderPanel({ chat: liveChat() });
     expect(screen.getByRole("button", { name: /Add rule/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit rule R1" })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Actions for rule 1" }),
+      screen.getByRole("button", { name: "Remove rule R1" }),
     ).toBeDisabled();
   });
 

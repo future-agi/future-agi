@@ -84,7 +84,7 @@ describe("OverviewPanel", () => {
     // Empty §6 arrays render honest empty states, not fixture rows. The stores
     // read-out went with SourceToSandboxMap, whose origins and sandbox targets
     // were derived by position and keyword rather than reported by ALK.
-    expect(screen.getByText(/No amendments/)).toBeInTheDocument();
+    expect(screen.queryByText("Amendments")).toBeNull();
     expect(screen.queryByText(/No stores seeded/)).toBeNull();
     // "What it depends on" populates from real contract.dependencies.
     expect(screen.getByText("postgres")).toBeInTheDocument();
@@ -95,28 +95,35 @@ describe("OverviewPanel", () => {
 
   const BACKED_WORLD = { stores: [], amendments: [], dependencies: [] };
 
-  it("shows where each use case was read from", async () => {
+  it("shows each amendment with its reason beside the use cases", () => {
     renderPanel({
-      env: {
-        ...MOCK_WORLD,
-        useCases: ["Book a guest ride"],
-        useCaseDetails: [
-          {
-            text: "Book a guest ride",
-            origin: { kind: "provider_tool_list", field: "book_ride" },
-          },
+      backedWorld: {
+        ...BACKED_WORLD,
+        amendments: [
+          { subject: "refund_window", note: "The prompt says 30 days" },
         ],
       },
+    });
+
+    expect(screen.getByText("Amendments")).toBeInTheDocument();
+    expect(screen.getByText("refund_window")).toBeInTheDocument();
+    expect(screen.getByText("The prompt says 30 days")).toBeInTheDocument();
+  });
+
+  it("lists six use cases and keeps the rest behind a more link", async () => {
+    const useCases = Array.from({ length: 8 }, (_, i) => `Use case ${i + 1}`);
+    renderPanel({
+      env: { ...MOCK_WORLD, useCases },
       backedWorld: BACKED_WORLD,
     });
 
-    expect(screen.getByText("Book a guest ride")).toBeInTheDocument();
-    expect(screen.getByText("Tool list")).toBeInTheDocument();
-    expect(screen.getByText("book_ride")).toBeInTheDocument();
-    await userEvent.hover(screen.getByText("Tool list"));
-    expect(
-      await screen.findByText("from provider tool list"),
-    ).toBeInTheDocument();
+    useCases
+      .slice(0, 6)
+      .forEach((u) => expect(screen.getByText(u)).toBeInTheDocument());
+    expect(screen.queryByText("Use case 7")).toBeNull();
+    await userEvent.hover(screen.getByText("+2 more"));
+    expect(await screen.findByText("Use case 7")).toBeInTheDocument();
+    expect(screen.getByText("Use case 8")).toBeInTheDocument();
   });
 
   it("badges a hard rule only with the origin ALK reported for it", () => {
@@ -193,19 +200,29 @@ describe("OverviewPanel", () => {
       backedWorld: BACKED_WORLD,
     });
 
-    expect(screen.getByText("Starting data")).toBeInTheDocument();
+    expect(screen.getAllByText("Seeded data")).toHaveLength(2);
     expect(screen.getByText("patients")).toBeInTheDocument();
-    expect(screen.getByText("2 records")).toBeInTheDocument();
+    expect(
+      screen.getByText("2 rows, rebuilt fresh for every task."),
+    ).toBeInTheDocument();
     expect(screen.queryByText("notes")).toBeNull();
+    expect(screen.queryByText("base_environment")).toBeNull();
     await user.click(
       screen.getByRole("button", { name: "Show the starting data" }),
     );
-    expect(await screen.findByText(/"id": "p1"/)).toBeInTheDocument();
+    expect(await screen.findByText("base_environment")).toBeInTheDocument();
+    expect(screen.getByText(/"id": "p1"/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Hide the starting data" }),
+    ).toHaveAttribute("aria-expanded", "true");
   });
 
   it("shows no starting data for an environment that has none", () => {
     renderPanel({ backedWorld: BACKED_WORLD });
-    expect(screen.queryByText("Starting data")).toBeNull();
+    expect(screen.getAllByText("Seeded data")).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "Show the starting data" }),
+    ).toBeNull();
   });
 
   it("adds the real domain, direction, source and mode to the facts of a backed voice env", () => {
@@ -272,11 +289,13 @@ describe("OverviewPanel", () => {
     expect(screen.getByText("fares")).toBeInTheDocument();
     expect(screen.getByText("900")).toBeInTheDocument();
     // The total counts only the rows the API reported.
-    expect(screen.getByText(/^900 rows fill/)).toBeInTheDocument();
+    expect(
+      screen.getByText("900 rows, rebuilt fresh for every task."),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/NaN/)).toBeNull();
   });
 
-  it("leaves the harness's own tables out of Seeded data, and the card with them", () => {
+  it("leaves the harness's own tables out of Seeded data and says no rows are seeded", () => {
     renderPanel({
       env: {
         ...MOCK_WORLD,
@@ -289,7 +308,13 @@ describe("OverviewPanel", () => {
       },
       backedWorld: BACKED_WORLD,
     });
-    expect(screen.queryByText("Seeded data")).toBeNull();
+    expect(screen.getByText("Seeded data")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "No rows are seeded, so the world starts with no records.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("_alk_tool_trace")).toBeNull();
     expect(screen.queryByText("harness_seed_sentinel")).toBeNull();
   });
 
@@ -346,10 +371,11 @@ describe("OverviewPanel", () => {
     expect(screen.queryByText("No world to reset")).toBeNull();
   });
 
-  it("names an agent-definition provider the way the Agents pages do", () => {
+  it("says which version runs by default for a pinned agent", () => {
     renderPanel({
       env: {
         ...MOCK_WORLD,
+        agentPolicy: "pinned",
         testSubject: {
           id: "a",
           name: "Ride bot",
@@ -360,11 +386,40 @@ describe("OverviewPanel", () => {
       },
       backedWorld: BACKED_WORLD,
     });
-    expect(screen.getByText("LiveKit · 1 version")).toBeInTheDocument();
+    expect(
+      screen.getByText("· LiveKit · Simulated · default v1"),
+    ).toBeInTheDocument();
   });
 
-  it("names the agent's provider and versions, with a link to the agent", () => {
+  it("names a code agent by where it was read from, with its commit", () => {
     renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        source: {
+          kind: "github",
+          repository: "acme/ride-agent",
+          ref: "main",
+          commit_sha: "abcdef1234567",
+        },
+        testSubject: { id: "a", name: "Ride bot", active_version: "v3" },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(
+      screen.getByText("Ride bot v3 · main @ abcdef1"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("· GitHub · Simulated · default: production"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Connector")).toBeNull();
+  });
+
+  it("names the agent's platform and version, with a link to the agent", () => {
+    renderPanel({
+      envState: {
+        ...connectedState,
+        agent: { ...connectedState.agent, typeId: "retell" },
+      },
       env: {
         ...MOCK_WORLD,
         testSubject: {
@@ -378,7 +433,9 @@ describe("OverviewPanel", () => {
       backedWorld: BACKED_WORLD,
     });
     expect(screen.getByText("Single Prompt Agent v2")).toBeInTheDocument();
-    expect(screen.getByText("Retell · 2 versions")).toBeInTheDocument();
+    expect(
+      screen.getByText("· Retell · Simulated · default: production"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /View agent/ })).toHaveAttribute(
       "href",
       // The Connected agent page, which every org can open; the old Agent
@@ -393,14 +450,21 @@ describe("OverviewPanel", () => {
       id: "env-1",
       versioning: { enabled: true },
     };
+    const openMenu = () =>
+      userEvent.click(
+        screen.getByRole("button", { name: "More agent actions" }),
+      );
     const manage = () =>
-      screen.queryByRole("button", { name: "Manage versions" });
+      screen.queryByRole("menuitem", { name: "Manage versions" });
 
     it("opens the agent versions in a drawer while versioning is on", async () => {
       const user = userEvent.setup();
       renderPanel({ env: versioned });
       expect(screen.queryByTestId("agent-versions-panel")).toBeNull();
 
+      await user.click(
+        screen.getByRole("button", { name: "More agent actions" }),
+      );
       await user.click(manage());
       expect(screen.getByTestId("agent-versions-panel")).toHaveTextContent(
         "env-1",
@@ -422,13 +486,20 @@ describe("OverviewPanel", () => {
 
     it("offers nothing while versioning is off", () => {
       renderPanel({ env: { ...versioned, versioning: { enabled: false } } });
-      expect(manage()).toBeNull();
-      renderPanel();
-      expect(manage()).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: "More agent actions" }),
+      ).toBeNull();
     });
 
-    it("offers nothing on a locked template", () => {
-      renderPanel({ env: versioned, locked: true });
+    it("keeps the prompt but not Manage versions on a locked template", async () => {
+      renderPanel({
+        env: { ...versioned, systemPrompt: "Be kind." },
+        locked: true,
+      });
+      await openMenu();
+      expect(
+        await screen.findByRole("menuitem", { name: "View prompt" }),
+      ).toBeInTheDocument();
       expect(manage()).toBeNull();
     });
   });

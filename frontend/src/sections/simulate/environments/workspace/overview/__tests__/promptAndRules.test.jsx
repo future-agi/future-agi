@@ -17,10 +17,22 @@ vi.mock("notistack", async (importOriginal) => ({
 const PROMPT =
   "You are the support agent.\nCheck identity first.\nNever invent orders.";
 
+const openPrompt = async () => {
+  await userEvent.click(
+    screen.getByRole("button", { name: "More agent actions" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("menuitem", { name: "View prompt" }),
+  );
+};
+
 describe("AgentSummarySection prompt", () => {
   it("offers no prompt when the API sent none", () => {
     render(<AgentSummarySection subject={{ name: "Support" }} />);
 
+    expect(
+      screen.queryByRole("button", { name: "More agent actions" }),
+    ).toBeNull();
     expect(screen.queryByText("View prompt")).toBeNull();
   });
 
@@ -33,7 +45,7 @@ describe("AgentSummarySection prompt", () => {
       />,
     );
 
-    await userEvent.click(screen.getByText("View prompt"));
+    await openPrompt();
 
     expect(await screen.findByText("Support · prompt")).toBeInTheDocument();
     expect(screen.getByText("3 lines")).toBeInTheDocument();
@@ -50,7 +62,7 @@ describe("AgentSummarySection prompt", () => {
       />,
     );
 
-    await userEvent.click(screen.getByText("View prompt"));
+    await openPrompt();
 
     expect(await screen.findByText("Provider field")).toBeInTheDocument();
   });
@@ -66,7 +78,7 @@ describe("PromptDrawer copy", () => {
         systemPrompt={PROMPT}
       />,
     );
-    await userEvent.click(screen.getByText("View prompt"));
+    await openPrompt();
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
       configurable: true,

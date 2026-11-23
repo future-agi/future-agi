@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "src/utils/test-utils";
 import useSimulationAccess from "../../../hooks/useSimulationAccess";
-import { ActorsCard } from "../ContractFactsCards";
 import RlContractPanel from "../RlContractPanel";
 
 vi.mock("../../../hooks/useSimulationAccess", () => ({ default: vi.fn() }));
@@ -43,7 +42,12 @@ describe("RlContractPanel contract facts", () => {
     expect(ends.queryByText("cancelled")).toBeNull();
     expect(cut.getByText("cancelled")).toBeInTheDocument();
     expect(cut.getByText("max-duration-reached")).toBeInTheDocument();
-    expect(cut.getByText("12 turns")).toBeInTheDocument();
+    expect(cut.getByText("12 agent turns")).toBeInTheDocument();
+    expect(
+      cut.getByText(
+        "The most turns across the suite. Each scenario can carry its own limit.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("falls back to the ended reasons when the split is not reported", () => {
@@ -63,70 +67,37 @@ describe("RlContractPanel contract facts", () => {
       ),
     });
     expect(
-      screen.getByText("World seed · 8537093545867607782"),
+      screen.getByText("Same starting data every time"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/^Controls how the world's records are set up/),
-    ).toHaveTextContent(
-      "It does not make conversations or results repeat exactly.",
-    );
+      screen.getByText(
+        "Every conversation starts from the same data (seed 8537093545867607782). The caller's turns and the agent's replies can still differ between runs.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("does not infer seed scope for an unknown runtime", () => {
     renderPanel({
       endConditions: { seed: { value: "0", controls: ["unknown_rng"] } },
     });
-    expect(screen.getByText("World seed · 0")).toBeInTheDocument();
     expect(
-      screen.getByText(/^What this seed controls was not reported\./),
+      screen.getByText("Same starting data every time"),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/^Controls how the world/)).toBeNull();
+    expect(
+      screen.getByText(
+        "Every conversation starts from the same seed (0). What else it controls was not reported, so results may still differ between runs.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/starts from the same data/)).toBeNull();
   });
 
   it("shows no seed when none is reported", () => {
     renderPanel({ endConditions: { ended_reasons: [], clock: "stepped" } });
-    expect(screen.queryByText(/^World seed ·/)).toBeNull();
+    expect(screen.getByText("Time · Turn by turn")).toBeInTheDocument();
+    expect(screen.queryByText("Same starting data every time")).toBeNull();
   });
 
-  it("names a rule by its short label, with the full rule, what enforces it and its check", () => {
-    const text =
-      "Use simple, everyday words. Avoid fan slang and technical terms.";
-    renderPanel({
-      rules: [text, "Be polite"],
-      ruleDetails: [
-        {
-          text,
-          short: "simple_words_explain_terms",
-          enforced_by: ["prompt"],
-          sub_goal: "identity_checked",
-          origin: { kind: "system_prompt", field: "general_prompt" },
-        },
-        { text: "Be polite" },
-      ],
-    });
-
-    expect(screen.getByText("simple_words_explain_terms")).toBeInTheDocument();
-    expect(screen.getByText(text)).toBeInTheDocument();
-    expect(
-      screen.getByText("Enforced by prompt · Checked by identity_checked"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("System prompt")).toBeInTheDocument();
-    expect(screen.getAllByText(/^Enforced by/)).toHaveLength(1);
-  });
-
-  it("shows where a use case was read from", () => {
-    renderPanel({
-      useCaseDetails: [
-        {
-          text: "Refund a late order",
-          origin: { kind: "provider_tool_list", field: "issue_refund" },
-        },
-      ],
-    });
-    expect(screen.getByText("Tool list")).toBeInTheDocument();
-  });
-
-  it("lists the sub-goals with their kind, output and overlay", () => {
+  it("no longer shows a sub-goals card, even when the contract carries sub-goals", () => {
     renderPanel({
       subGoals: [
         {
@@ -134,46 +105,10 @@ describe("RlContractPanel contract facts", () => {
           what: "Identity was checked",
           kind: "judge",
           output: "pass_fail",
-          overlay: "authentication",
         },
       ],
     });
-
-    expect(screen.getByText("Sub-goals (1)")).toBeInTheDocument();
-    expect(screen.getByText("identity_checked")).toBeInTheDocument();
-    expect(screen.getByText("judge")).toBeInTheDocument();
-    expect(screen.getByText("pass/fail")).toBeInTheDocument();
-    expect(screen.getByText("authentication")).toBeInTheDocument();
-  });
-
-  it("shows no sub-goals card when the contract carries none", () => {
-    renderPanel();
     expect(screen.queryByText(/^Sub-goals/)).toBeNull();
-  });
-});
-
-describe("ActorsCard", () => {
-  it("lists the actors with their role and origin", () => {
-    render(
-      <ActorsCard
-        actors={[
-          {
-            name: "supervisor",
-            role: "approves refunds over $200",
-            origin: { kind: "system_prompt", field: "general_prompt" },
-          },
-        ]}
-      />,
-    );
-
-    expect(screen.getByText("Actors (1)")).toBeInTheDocument();
-    expect(screen.getByText("supervisor")).toBeInTheDocument();
-    expect(screen.getByText("approves refunds over $200")).toBeInTheDocument();
-    expect(screen.getByText("System prompt")).toBeInTheDocument();
-  });
-
-  it("renders nothing without actors", () => {
-    const { container } = render(<ActorsCard actors={[]} />);
-    expect(container.firstChild).toBeNull();
+    expect(screen.queryByText("Identity was checked")).toBeNull();
   });
 });

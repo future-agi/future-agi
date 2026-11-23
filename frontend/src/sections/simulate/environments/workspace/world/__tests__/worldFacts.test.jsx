@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { render, screen } from "src/utils/test-utils";
+import { render, screen, within } from "src/utils/test-utils";
 import WorldPanel from "../WorldPanel";
 
 const status = (tool, extra = {}) => ({
@@ -50,73 +50,12 @@ const renderPanel = (env = {}) =>
     />,
   );
 
-const openTool = (user, name) =>
+const openTool = (user, description) =>
   user.click(
-    screen.getByRole("button", { name: `Show the contract of ${name}` }),
+    screen.getByRole("button", { name: `${description} · reads this table` }),
   );
 
 describe("WorldPanel contract evidence", () => {
-  it("marks each tool with its reported effect and check, and shows why", async () => {
-    const user = userEvent.setup();
-    renderPanel({
-      tools: [
-        {
-          name: "lookup_order",
-          desc: "Reads one order.",
-          effectKind: "read",
-          effectEvidence: {
-            origin: { kind: "file", path: "tools.py", line: 3 },
-            excerpt: "SELECT * FROM orders",
-          },
-          certification: {
-            availability: "runtime_only",
-            probe_mode: "runtime_only",
-          },
-        },
-        {
-          name: "issue_refund",
-          desc: "Refunds a charge.",
-          effectKind: "write",
-        },
-      ],
-    });
-
-    expect(screen.getByText("Runtime only")).toBeInTheDocument();
-    await openTool(user, "lookup_order");
-    expect(screen.getByText("Reads data")).toBeInTheDocument();
-    expect(screen.getByText("Why: reads data")).toBeInTheDocument();
-    expect(screen.getByText("SELECT * FROM orders")).toBeInTheDocument();
-    expect(screen.getByText("tools.py")).toBeInTheDocument();
-  });
-
-  it("shows no reported effect or check for a tool the build did not classify", async () => {
-    const user = userEvent.setup();
-    renderPanel();
-
-    expect(screen.queryByText("Runtime only")).toBeNull();
-    await openTool(user, "lookup_order");
-    expect(screen.queryByText("Reported effect")).toBeNull();
-    expect(screen.queryByText("Checked")).toBeNull();
-  });
-
-  it("shows where each tool was declared", () => {
-    renderPanel({
-      tools: [
-        {
-          name: "lookup_order",
-          origin: { kind: "code", path: "support/tools.py", line: 18 },
-        },
-        {
-          name: "issue_refund",
-          origin: { kind: "provider_tool_list", field: "issue_refund" },
-        },
-      ],
-    });
-
-    expect(screen.getByText("Code")).toBeInTheDocument();
-    expect(screen.getByText("Tool list")).toBeInTheDocument();
-  });
-
   it("shows the exact tool source when the build supplied it", async () => {
     const user = userEvent.setup();
     renderPanel({
@@ -135,35 +74,25 @@ describe("WorldPanel contract evidence", () => {
       ],
     });
 
-    await openTool(user, "issue_refund");
-    expect(screen.getByText("Source")).toBeInTheDocument();
+    await openTool(user, "Refunds a charge.");
     expect(screen.getByText("billing.py:8-9")).toBeInTheDocument();
     expect(screen.getByText(/ledger\.refund/)).toBeInTheDocument();
   });
 
-  it("shows a provider function's address and parameters", async () => {
+  it("shows no source for a tool the build supplied none for", async () => {
     const user = userEvent.setup();
     renderPanel({
       toolEntrypoints: [
         {
-          tool: "lookup_order",
-          provider_function: {
-            url: "https://tools.example.test/orders",
-            parameters: {
-              type: "object",
-              properties: { order_id: { type: "string" } },
-            },
-          },
+          tool: "issue_refund",
+          source: { path: "billing.py", line_start: 8, line_end: 9, code: "x" },
         },
       ],
     });
 
-    await openTool(user, "lookup_order");
-    expect(screen.getByText("Provider function")).toBeInTheDocument();
-    expect(
-      screen.getByText("https://tools.example.test/orders"),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/"order_id"/)).toBeInTheDocument();
+    await openTool(user, "Reads one order.");
+    expect(screen.queryByText("billing.py:8-9")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Copy code" })).toBeNull();
   });
 
   it("types each column from the source schema", async () => {
@@ -177,14 +106,38 @@ describe("WorldPanel contract evidence", () => {
       },
     });
 
-    await user.click(
-      screen.getByRole("button", { name: "Show the columns of orders" }),
-    );
-    expect(screen.getByText("UUID · PK · NOT NULL")).toBeInTheDocument();
-    expect(
-      screen.getByText("TEXT · references customers.id"),
-    ).toBeInTheDocument();
+    const orders = screen.getByText("orders").closest('[role="button"]');
+    expect(within(orders).getByText("2")).toBeInTheDocument();
+    await user.click(orders);
+    expect(screen.getByText("event_id")).toBeInTheDocument();
+    expect(screen.getByText("UUID")).toBeInTheDocument();
+    expect(screen.getByText("TEXT")).toBeInTheDocument();
+    expect(screen.getAllByLabelText("Primary key")).toHaveLength(1);
     expect(screen.queryByText("str")).toBeNull();
+  });
+
+  it("builds the tables from the source schema when the world lists none", () => {
+    renderPanel({
+      worldTables: [],
+      worldTotalRows: undefined,
+      dataSchemaColumns: {
+        orders: [{ name: "id", type: "UUID", pk: true }],
+        customers: [{ name: "id", type: "UUID" }],
+        broken: "not a column list",
+      },
+      baseEnvironment: { orders: [{ id: 1 }, { id: 2 }] },
+    });
+
+    expect(screen.getByText("World · 2 tables · 2 tools")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "2 rows. Each table with the tools that use it; a tool opens its details.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("customers")).toBeInTheDocument();
+    expect(screen.queryByText("broken")).toBeNull();
+    const orders = screen.getByText("orders").closest('[role="button"]');
+    expect(within(orders).getByText("2")).toBeInTheDocument();
   });
 
   it("shows the data store, the refusal and the runtime", async () => {

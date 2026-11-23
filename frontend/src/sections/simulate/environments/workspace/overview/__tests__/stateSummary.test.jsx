@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { screen } from "@testing-library/react";
 
-import { render } from "src/utils/test-utils";
+import { render, userEvent } from "src/utils/test-utils";
 import StateSummary from "../StateSummary";
 
 describe("StateSummary", () => {
@@ -33,35 +33,48 @@ describe("StateSummary", () => {
     expect(screen.getByText("3")).toBeInTheDocument();
   });
 
-  const finished = {
-    id: "ex-14",
-    label: "Run 14",
-    agentVersion: "v1",
-    status: "passed",
-    total: 4,
-    passed: 3,
-  };
+  it("jumps to the tab each count summarises", async () => {
+    const onGo = vi.fn();
+    render(
+      <StateSummary
+        env={{ rules: ["a"] }}
+        envState={{ runs: [] }}
+        counts={{ scenarios: 2, evaluations: 1, runs: 14 }}
+        onGo={onGo}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "2 scenarios" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "1 evaluation" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1 rule" })).toBeInTheDocument();
 
-  it("shows the newest run from the runs list, by name and agent version only", () => {
+    await userEvent.click(screen.getByRole("button", { name: "14 runs" }));
+    await userEvent.click(screen.getByRole("button", { name: "1 rule" }));
+    await userEvent.click(screen.getByRole("button", { name: "2 scenarios" }));
+    await userEvent.click(screen.getByRole("button", { name: "1 evaluation" }));
+    expect(onGo.mock.calls).toEqual([
+      ["runs"],
+      ["contract"],
+      ["scenarios"],
+      ["evals"],
+    ]);
+  });
+
+  it("does not link to runs before the first run", async () => {
+    const onGo = vi.fn();
     render(
       <StateSummary
         env={{ rules: [] }}
         envState={{ runs: [] }}
-        counts={{ runs: 14 }}
-        latestRun={finished}
-        onGo={vi.fn()}
+        counts={{ runs: 0 }}
+        onGo={onGo}
       />,
     );
-    expect(screen.getByText("Latest run")).toBeInTheDocument();
-    expect(screen.getByText("Run 14 · v1")).toBeInTheDocument();
-    expect(screen.queryByText("75%")).toBeNull();
-    expect(screen.queryByText("pass rate")).toBeNull();
-  });
-
-  it("has no latest-run card before the first run", () => {
-    render(
-      <StateSummary env={{ rules: [] }} envState={{ runs: [] }} counts={{ runs: 0 }} onGo={vi.fn()} />,
-    );
-    expect(screen.queryByText("Latest run")).toBeNull();
+    expect(screen.queryByRole("button", { name: "0 runs" })).toBeNull();
+    await userEvent.click(screen.getByText(/runs$/));
+    expect(onGo).not.toHaveBeenCalled();
   });
 });

@@ -1,26 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { fireEvent, render, screen, within } from "src/utils/test-utils";
 import ToolsCard from "../ToolsCard";
-import { argumentFacts } from "../world.constants";
-
-describe("argumentFacts", () => {
-  it("says required, allowed values and limits in one line", () => {
-    expect(
-      argumentFacts({
-        name: "size",
-        required: true,
-        values: ["s", "m"],
-        min: 1,
-        max: 10,
-      }),
-    ).toBe("Required · Allowed: s, m · Lowest 1 · Highest 10");
-  });
-
-  it("says optional only when the reading recorded it", () => {
-    expect(argumentFacts({ name: "note", required: false })).toBe("Optional");
-    expect(argumentFacts({ name: "note", required: null })).toBe("");
-  });
-});
 
 const NOT_RECORDED =
   "Which tables it reads and changes is not recorded for this environment version";
@@ -78,7 +58,7 @@ const tools = [
 
 describe("ToolsCard", () => {
   it("never names ALK in the card's words", () => {
-    render(<ToolsCard tools={tools} />);
+    render(<ToolsCard tools={tools} onOpenTool={vi.fn()} />);
     expect(
       screen.getByText("The tools the agent declares, and where each one runs"),
     ).toBeInTheDocument();
@@ -91,34 +71,35 @@ describe("ToolsCard", () => {
         tools={[
           status("mystery", "unknown"),
           status("charge_card", "unsupported"),
+          status("no_status", undefined),
           ...tools,
         ]}
+        onOpenTool={vi.fn()}
       />,
     );
-    expect(screen.getByText("Tools · 4")).toBeInTheDocument();
-    const headings = [
+    expect(screen.getByText("Tools · 5")).toBeInTheDocument();
+    const groups = screen.getAllByRole("group");
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
       "Simulated",
       "Runs inside the agent",
       "Unsupported",
-      "Where it runs is not known",
-    ].map((label) => screen.getByText(label));
-    headings.reduce((previous, current) => {
-      expect(
-        previous.compareDocumentPosition(current) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      return current;
-    });
+      "Not known",
+    ]);
     expect(
       screen.getByText(
-        "These reach a system the test world has no copy of, so a test never calls them. 1 tool.",
+        "Reaches a system the world has no copy of, so a run never calls it. · 1 tool",
       ),
     ).toBeInTheDocument();
     expect(
-      within(screen.getByRole("group", { name: "Unsupported" })).getByText(
-        "charge_card",
-      ),
+      screen.getByText("The contract doesn't say where these run. · 2 tools"),
     ).toBeInTheDocument();
+    const unsupported = within(
+      screen.getByRole("group", { name: "Unsupported" }),
+    );
+    expect(unsupported.getByText("charge_card")).toBeInTheDocument();
+    const unknown = within(screen.getByRole("group", { name: "Not known" }));
+    expect(unknown.getByText("mystery")).toBeInTheDocument();
+    expect(unknown.getByText("no_status")).toBeInTheDocument();
     expect(
       within(screen.getByRole("group", { name: "Simulated" })).queryByText(
         "charge_card",
@@ -126,56 +107,22 @@ describe("ToolsCard", () => {
     ).toBeNull();
   });
 
-  it("shows a tool's arguments with units, what it changes and its reset", () => {
-    render(<ToolsCard tools={tools} />);
-    expect(screen.getByText("orders POST /orders/refund")).toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "Show the contract of issue_refund" }),
-    );
-    const detail = within(toolOf("issue_refund"));
-    expect(detail.getByText("Arguments")).toBeInTheDocument();
-    expect(
-      screen.getByText("refund_amount: number, cents, USD"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("order_id: string")).toBeInTheDocument();
-    expect(screen.getByText("refund_id: string")).toBeInTheDocument();
-    expect(screen.getByText("amount: integer, cents, USD")).toBeInTheDocument();
-    expect(detail.getByText("Changes")).toBeInTheDocument();
-    expect(screen.getByText("Can change records")).toBeInTheDocument();
-    expect(
-      screen.getByText("Reads orders; changes refunds, orders"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("adds a refund row and marks the order refunded"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("the order is older than 30 days"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("lookup_order")).toBeInTheDocument();
-    expect(detail.getByText("Reset")).toBeInTheDocument();
-    expect(
-      screen.getByText("Reset to the seeded records before each trial"),
-    ).toBeInTheDocument();
+  it("shows each tool's description on its row", () => {
+    render(<ToolsCard tools={tools} onOpenTool={vi.fn()} />);
+    const row = screen.getByRole("button", {
+      name: "Show the contract of issue_refund",
+    });
+    expect(within(row).getByText("issue_refund")).toBeInTheDocument();
+    expect(within(row).getByText("Refunds a charge.")).toBeInTheDocument();
   });
 
-  it("says an in-process tool is not reset, as the contract states", () => {
-    render(<ToolsCard tools={tools} />);
+  it("hands the clicked tool to the drawer opener", () => {
+    const onOpenTool = vi.fn();
+    render(<ToolsCard tools={tools} onOpenTool={onOpenTool} />);
     fireEvent.click(
       screen.getByRole("button", { name: "Show the contract of summarise" }),
     );
-    expect(screen.getByText("Not reset by the test world")).toBeInTheDocument();
-    expect(
-      screen.getAllByText("Not recorded for this environment version").length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByText("Not declared")).toBeInTheDocument();
-    expect(screen.getByText(NOT_RECORDED)).toBeInTheDocument();
-  });
-
-  it("leaves the reset line out when the contract doesn't say", () => {
-    render(<ToolsCard tools={[status("mystery", "unknown")]} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: "Show the contract of mystery" }),
-    );
-    expect(within(toolOf("mystery")).queryByText("Reset")).toBeNull();
+    expect(onOpenTool).toHaveBeenCalledTimes(1);
+    expect(onOpenTool).toHaveBeenCalledWith(tools[1]);
   });
 });
