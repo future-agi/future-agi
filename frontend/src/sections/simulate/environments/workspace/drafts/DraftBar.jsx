@@ -150,16 +150,7 @@ export default function DraftBar({
           {latest.updatedAt &&
             ` — ${COPY.lastEdited(latest.lastEditedBy, relativeTime(latest.updatedAt))}`}
         </Typography>
-        {onReview ? (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            onClick={onReview}
-          >
-            {REVIEW_COPY.reviewAndSave}
-          </Button>
-        ) : (
+        {!onReview && (
           <Button
             size="small"
             color="inherit"
@@ -178,7 +169,19 @@ export default function DraftBar({
         >
           {flow.discardPending ? COPY.discarding : COPY.discard}
         </Button>
-        {canSaveValidated && !validating && (
+        {/* With the review drawer, saving happens there: accept, validate, name, save. The bar only opens it. */}
+        {onReview && (
+          <Button
+            size="small"
+            variant="contained"
+            disabled={saveReasons.length > 0 || pending}
+            aria-describedby={saveReasons.join(" ") || undefined}
+            onClick={onReview}
+          >
+            {REVIEW_COPY.reviewAndSave}
+          </Button>
+        )}
+        {!onReview && canSaveValidated && !validating && (
           <TextField
             size="small"
             value={versionName}
@@ -188,7 +191,7 @@ export default function DraftBar({
             sx={{ width: 200 }}
           />
         )}
-        {primary}
+        {!onReview && primary}
       </Stack>
       {validationNote && (
         <Typography

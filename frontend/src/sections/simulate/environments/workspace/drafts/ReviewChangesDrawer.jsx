@@ -74,6 +74,8 @@ export default function ReviewChangesDrawer({
   open,
   env,
   canEdit = true,
+  busy = false,
+  rebuilding = false,
   onClose,
   onSaved,
   onOpenTab,
@@ -152,8 +154,15 @@ export default function ReviewChangesDrawer({
     sendDecisions([{ remaining: true, decision: "accepted" }]);
   };
 
+  // The builder working or a rebuild running holds Validate, Save and Discard, as the bar does.
+  const hold = busy
+    ? DRAFTS_COPY.busy
+    : rebuilding
+      ? DRAFTS_COPY.errors.rebuild_running
+      : null;
   let heldReason = null;
-  if (counts.undecided) heldReason = COPY.saveWaiting(counts.undecided);
+  if (hold) heldReason = hold;
+  else if (counts.undecided) heldReason = COPY.saveWaiting(counts.undecided);
   else if (!counts.accepted) heldReason = COPY.saveAllRejected;
   else if (flow.stale) heldReason = flow.stale;
   else if (ready && nameTooLong) heldReason = COPY.nameTooLong(NAME_LIMIT);
@@ -372,7 +381,7 @@ export default function ReviewChangesDrawer({
               <Button
                 size="small"
                 color="inherit"
-                disabled={flow.pending}
+                disabled={flow.pending || Boolean(hold)}
                 onClick={() => setDiscarding(true)}
               >
                 {COPY.discardAll}
@@ -422,6 +431,10 @@ ReviewChangesDrawer.propTypes = {
     versioning: PropTypes.shape({ enabled: PropTypes.bool }),
   }),
   canEdit: PropTypes.bool,
+  // The builder is working or still saving its last turn; holds Validate, Save and Discard.
+  busy: PropTypes.bool,
+  // A queued or running rebuild holds them too.
+  rebuilding: PropTypes.bool,
   onClose: PropTypes.func,
   // ({ name }): the accepted changes were saved as a version.
   onSaved: PropTypes.func,

@@ -57,7 +57,7 @@ const setFlow = (changes, overrides = {}) => {
   });
 };
 
-const renderDrawer = () => {
+const renderDrawer = (props = {}) => {
   const onSaved = vi.fn();
   const onClose = vi.fn();
   render(
@@ -66,6 +66,7 @@ const renderDrawer = () => {
       env={{ id: "env-1", versioning: { enabled: true } }}
       onClose={onClose}
       onSaved={onSaved}
+      {...props}
     />,
   );
   return { onSaved, onClose };
@@ -209,5 +210,15 @@ describe("ReviewChangesDrawer", () => {
     const [needed, free] = screen.getAllByRole("button", { name: /^Reject/ });
     expect(needed).toHaveAttribute("aria-disabled", "true");
     expect(free).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("holds Validate and Discard while the builder is working", () => {
+    setFlow([change({ decision: "accepted" })]);
+    renderDrawer({ busy: true });
+    expect(screen.getByRole("button", { name: /^Validate/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Discard all" })).toBeDisabled();
   });
 });

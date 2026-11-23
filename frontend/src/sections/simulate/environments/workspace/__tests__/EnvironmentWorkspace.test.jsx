@@ -975,7 +975,9 @@ describe("EnvironmentWorkspace unsaved changes", () => {
         Object.assign(new Error("Not found"), { statusCode: 404 }),
       );
     });
-  const saveButton = () => screen.findByRole("button", { name: "Save" });
+  // Saving starts from the bar's Review and save, which the holds grey out.
+  const saveButton = () =>
+    screen.findByRole("button", { name: "Review and save" });
 
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();

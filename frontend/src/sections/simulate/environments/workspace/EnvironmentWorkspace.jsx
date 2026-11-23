@@ -693,6 +693,8 @@ export default function EnvironmentWorkspace() {
         open={reviewOpen}
         env={env}
         canEdit={!locked}
+        busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
+        rebuilding={chat.rebuildHold}
         onClose={() => setReviewOpen(false)}
         onOpenTab={setTab}
       />
