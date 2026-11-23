@@ -9,6 +9,7 @@ import {
   useMediaQuery,
 } from "@mui/material";
 
+import { useReadinessCases } from "src/api/simulate-environments/readiness";
 import { RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 
 const boxSx = {
@@ -18,19 +19,43 @@ const boxSx = {
   p: 1.5,
 };
 
-// The scenarios a run holds back, from the readiness selection: each reason in plain words with how many it
-// holds, the held scenarios by name, and the readiness lines behind them one click away. Held ones are never sent.
-// The selection counts per reason but doesn't say which scenario has which reason, so names are listed together.
-export default function HeldBackBox({ selection }) {
+// The scenarios a run holds back, from the readiness report: each reason in plain words with how many it holds,
+// and, one click away, each held scenario with what holds it. Held ones are never sent.
+export default function HeldBackBox({
+  envId,
+  picks,
+  keys,
+  report,
+  shownRows = [],
+  selection,
+}) {
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [showNames, setShowNames] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
   const held = selection?.held_back;
+  const cases = useReadinessCases(envId, {
+    picks,
+    keys,
+    report,
+    enabled: showNames && Boolean(held?.count),
+  });
   if (!held?.count) return null;
-  const reasons = Object.entries(held.by ?? {}).filter(([, n]) => n > 0);
-  const names = held.keys.map((key) => held.names?.[key] || key);
-  const lines = (selection.held_by ?? []).filter((one) => one.text);
-  const timeout = reduceMotion ? 0 : undefined;
+  // A reason Ready to run already shows as a line isn't said twice.
+  const reasons = Object.entries(held.by ?? {}).filter(
+    ([reason, n]) => n > 0 && !shownRows.includes(reason),
+  );
+  const rowName = Object.fromEntries(
+    (selection.held_by ?? []).map((one) => [one.id, one.name]),
+  );
+  // Each held scenario with its reasons once the cases page lands; the names alone until then.
+  const items = cases.data
+    ? cases.data
+        .filter((one) => one.by?.length)
+        .map((one) => ({
+          key: one.key,
+          text: `${one.name || one.key} · ${one.by.map((id) => rowName[id] || id).join(", ")}`,
+        }))
+    : held.keys.map((key) => ({ key, text: held.names?.[key] || key }));
+  const more = held.truncated || held.count > items.length;
   return (
     <Box sx={boxSx} data-testid="run-held-back">
       <Typography
@@ -48,55 +73,45 @@ export default function HeldBackBox({ selection }) {
           </Typography>
         ))}
       </Stack>
-      <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-        {names.length > 0 && (
-          <Button
-            size="small"
-            color="inherit"
-            onClick={() => setShowNames((open) => !open)}
-          >
-            {showNames ? COPY.hideWhich : COPY.showWhich}
-          </Button>
-        )}
-        {lines.length > 0 && (
-          <Button
-            size="small"
-            color="inherit"
-            onClick={() => setShowDetails((open) => !open)}
-          >
-            {showDetails ? COPY.hideDetails : COPY.checkDetails}
-          </Button>
-        )}
-      </Stack>
-      <Collapse in={showNames} timeout={timeout} unmountOnExit>
+      {items.length > 0 && (
+        <Button
+          size="small"
+          color="inherit"
+          sx={{ mt: 0.5 }}
+          onClick={() => setShowNames((open) => !open)}
+        >
+          {showNames ? COPY.hideWhich : COPY.showWhich}
+        </Button>
+      )}
+      <Collapse
+        in={showNames}
+        timeout={reduceMotion ? 0 : undefined}
+        unmountOnExit
+      >
         <Box
           component="ul"
           sx={{ m: 0, pl: 2, typography: "s3", color: "text.secondary" }}
         >
-          {names.map((name) => (
-            <li key={name}>{name}</li>
+          {items.map((one) => (
+            <li key={one.key}>{one.text}</li>
           ))}
-          {held.truncated && <li>…</li>}
+          {more && <li>…</li>}
         </Box>
-      </Collapse>
-      <Collapse in={showDetails} timeout={timeout} unmountOnExit>
-        <Stack spacing={0.25} sx={{ mt: 0.5 }}>
-          {lines.map((one) => (
-            <Typography
-              key={one.id}
-              sx={{ typography: "s3", color: "text.secondary" }}
-            >
-              {`${one.name}: ${one.text}`}
-            </Typography>
-          ))}
-        </Stack>
       </Collapse>
     </Box>
   );
 }
 
 HeldBackBox.propTypes = {
-  // The readiness selection for the picked versions and scenarios.
+  envId: PropTypes.string,
+  picks: PropTypes.object,
+  // The scenarios the run would send; null is the whole suite.
+  keys: PropTypes.arrayOf(PropTypes.string),
+  // When the report was worked out, so the names match its counts.
+  report: PropTypes.string,
+  // The readiness rows Ready to run shows as lines.
+  shownRows: PropTypes.arrayOf(PropTypes.string),
+  // The report's selection for the picked versions and scenarios.
   selection: PropTypes.shape({
     held_back: PropTypes.shape({
       count: PropTypes.number,

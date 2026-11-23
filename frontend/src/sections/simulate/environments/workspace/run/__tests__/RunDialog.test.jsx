@@ -55,7 +55,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     useDrafts: vi.fn((envId, { enabled } = {}) => ({
       data: enabled && state.drafts ? actual.toDrafts(state.drafts) : undefined,
     })),
-    useRunSelection: vi.fn(() => ({ data: state.selection })),
+    useRetryAgentVersion: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
     useSuiteMembers: vi.fn((envId, id) => ({
       data: state.members[id],
       isLoading: !state.members[id],
@@ -63,6 +63,21 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     })),
   };
 });
+
+// The readiness report is `state.report`, else a report holding only `state.selection`.
+vi.mock("src/api/simulate-environments/readiness", () => ({
+  useReadiness: vi.fn(() => ({
+    data:
+      state.report ??
+      (state.selection ? { selection: state.selection } : undefined),
+    isLoading: false,
+    isError: false,
+  })),
+  useReadinessCases: vi.fn((envId, { enabled } = {}) => ({
+    data: enabled ? state.cases : undefined,
+  })),
+  useRecheck: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+}));
 
 vi.mock(
   "src/api/simulate-environments/scenariosHooks",
@@ -1004,7 +1019,7 @@ describe("RunDialog", () => {
         truncated: false,
       },
       reasons: { not_proved: "Not proved on these versions yet" },
-      held_by: [],
+      held_by: [{ id: "not_proved", name: "Not proved here" }],
       ...overrides,
     });
     beforeEach(() => {
@@ -1012,6 +1027,8 @@ describe("RunDialog", () => {
       state.plans = {};
       state.members = { s3: members("k1", "k2", "k3") };
       state.selection = undefined;
+      state.report = undefined;
+      state.cases = undefined;
       state.running = undefined;
     });
 
@@ -1024,8 +1041,15 @@ describe("RunDialog", () => {
       expect(
         screen.getByText("Not proved on these versions yet · 1"),
       ).toBeInTheDocument();
+      state.cases = [
+        { key: "k1", name: "Refund once", by: [] },
+        { key: "k2", name: "Refund twice", by: ["not_proved"] },
+      ];
       await user.click(screen.getByRole("button", { name: "Show which" }));
-      expect(screen.getByText("Refund twice")).toBeInTheDocument();
+      expect(
+        screen.getByText("Refund twice · Not proved here"),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Refund once/)).toBeNull();
       expect(runButton()).toHaveTextContent("Run 1 scenario");
     });
 
@@ -1076,6 +1100,75 @@ describe("RunDialog", () => {
       expect(
         screen.getByText(
           "Every picked scenario is held back, so nothing would run.",
+        ),
+      ).toBeInTheDocument();
+      expect(runButton()).toBeDisabled();
+    });
+
+    // Shaped like a real report: a production-only tool holds every scenario back.
+    const report = (validation = { state: "ready" }) => ({
+      validation,
+      answer: { kind: "blocked" },
+      pairing: { evidence: "pair_certificate", agent_version: { id: "a1" } },
+      computed_at: "2026-11-23T14:00:00Z",
+      areas: [
+        { id: "tool_binding", rows: ["tool_routing"] },
+        { id: "cancellation", rows: ["cancel"] },
+      ],
+      rows: [
+        {
+          id: "tool_routing",
+          area: "tool_binding",
+          status: "blocked",
+          measured: true,
+          reason: "lookup_order reaches production",
+          affected: { count: 2 },
+          fix: {
+            type: "production_only",
+            category: "agent_version",
+            action: "Upload a new agent version that serves lookup_order",
+            would: "lookup_order runs in the test world",
+            recheck: null,
+          },
+        },
+        {
+          id: "cancel",
+          area: "cancellation",
+          status: "supported",
+          measured: true,
+        },
+      ],
+      selection: selection(),
+    });
+
+    it("shows what holds the pair back and opens the agent's versions for a fix on the agent", async () => {
+      const user = userEvent.setup();
+      const onOpenAgentVersions = vi.fn();
+      state.report = report();
+      renderDialog({ onOpenAgentVersions });
+      const section = within(screen.getByTestId("ready-to-run"));
+      expect(section.getByText(/1 blocker to fix/)).toBeInTheDocument();
+      expect(section.getByText("2 blocked")).toBeInTheDocument();
+      expect(
+        section.getByText("Also ready: Run can be stopped"),
+      ).toBeInTheDocument();
+      await user.click(
+        section.getByRole("button", {
+          name: "Details for Tools wired to the test world",
+        }),
+      );
+      await user.click(
+        section.getByRole("button", { name: "Open agent versions" }),
+      );
+      expect(onOpenAgentVersions).toHaveBeenCalledTimes(1);
+    });
+
+    it("holds the run while the pair is checked, as the server would refuse it", () => {
+      state.report = report({ state: "validating" });
+      renderDialog();
+      expect(
+        screen.getByText(
+          "Checking these versions · runs wait until it finishes",
         ),
       ).toBeInTheDocument();
       expect(runButton()).toBeDisabled();

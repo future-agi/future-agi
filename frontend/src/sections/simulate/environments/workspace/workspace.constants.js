@@ -497,7 +497,6 @@ export const RUN_DIALOG_COPY = {
   heldReason: (text, n) => `${text} · ${n}`,
   showWhich: "Show which",
   hideWhich: "Hide",
-  checkDetails: "Check details",
   changedTitle: "Changed since proved",
   changedHint: "Validate them before relying on the results.",
   validating: "A validation is running. Runs are blocked until it finishes.",

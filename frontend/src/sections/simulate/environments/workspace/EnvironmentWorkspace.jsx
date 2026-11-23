@@ -45,7 +45,9 @@ import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
 import { inlineRunError } from "./run/runErrors";
-import useWorkspaceTab from "./helpers/useWorkspaceTab";
+import useWorkspaceTab, {
+  AGENT_VERSIONS_PARAM,
+} from "./helpers/useWorkspaceTab";
 import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
@@ -221,6 +223,10 @@ export default function EnvironmentWorkspace() {
       initialPicks={runDialog.initialPicks}
       initialSeed={runDialog.seed}
       onClose={() => setRunDialog(null)}
+      onOpenAgentVersions={() => {
+        setRunDialog(null);
+        setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" });
+      }}
       onSubmit={(picks, ids, resolved, seed) =>
         runMutation.mutate({
           ids,

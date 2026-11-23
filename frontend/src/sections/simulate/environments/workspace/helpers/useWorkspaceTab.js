@@ -9,6 +9,9 @@ const DEFAULT_TAB = "overview";
 // so a deep link and a refresh land on the same panel. Clone of
 // hooks/useEnvironmentsTab over the workspace tabs; an unknown value falls
 // back to the overview.
+// Opens Overview's agent versions drawer, e.g. from a run's fix on the agent.
+export const AGENT_VERSIONS_PARAM = "agentVersions";
+
 export default function useWorkspaceTab() {
   const [params, setParams] = useSearchParams();
   const raw = params.get("tab");

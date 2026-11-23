@@ -19,16 +19,18 @@ import {
   useDrafts,
   useEnvironmentVersions,
   useRunPlan,
-  useRunSelection,
   useSuiteMembers,
 } from "src/api/simulate-environments/versions";
 import { useRunningScenarioValidation } from "src/api/simulate-environments/scenariosHooks";
+import { useReadiness } from "src/api/simulate-environments/readiness";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
 import RunSeedLine from "./RunSeedLine";
 import HeldBackBox from "./HeldBackBox";
 import ChangedSinceProvedBox from "./ChangedSinceProvedBox";
+import ReadyToRunSection from "./readiness/ReadyToRunSection";
+import { readinessView } from "./readiness/readinessView";
 
 // The run plan's warning that saved changes moved what some scenarios are graded on since they were proved.
 const CHANGED_SINCE_PROVED = "scenarios_need_revalidation";
@@ -58,6 +60,7 @@ export default function RunDialog({
   initialPicks,
   initialSeed = null,
   onClose,
+  onOpenAgentVersions,
   onSubmit,
   submitting = false,
   error = null,
@@ -144,10 +147,19 @@ export default function RunDialog({
   const versioned = Boolean(env?.versioning?.enabled);
   // What readiness holds back for these picks and scenarios, and how many run.
   const selectionKeys = runAll && !needsMembers ? null : runIds;
-  const { data: selection } = useRunSelection(env?.id, picks, selectionKeys, {
+  const readiness = useReadiness(env?.id, picks, {
+    keys: selectionKeys,
+    trials,
     enabled:
       open && versioned && Boolean(data) && !(needsMembers && !memberKeys),
   });
+  const selection = readiness.data?.selection;
+  const readyView = useMemo(
+    () => (readiness.data ? readinessView(readiness.data) : null),
+    [readiness.data],
+  );
+  // From a Re-check click until the server says it is checking, Run waits too.
+  const [sendingCheck, setSendingCheck] = useState(false);
   // Runs wait while a scenario validation runs on the environment.
   const { data: runningValidation } = useRunningScenarioValidation(
     open && versioned ? env?.id : null,
@@ -238,13 +250,16 @@ export default function RunDialog({
     !refusedPlan &&
     !blocked &&
     !seedError &&
+    // The server refuses a run while the pair is checked or after its check failed; the section says which.
+    !readyView?.holdsRun &&
+    !sendingCheck &&
     !(!runAll && members.isLoading) &&
     (!needsMembers || memberKeys?.length > 0);
 
   // With readiness, the button says how many run; held ones are never sent, so nothing reads "anyway".
   let runLabel = warnings.length ? COPY.runAnyway : COPY.run;
-  if (Number.isInteger(selection?.running))
-    runLabel = COPY.runCount(selection.running);
+  // Nothing to run keeps the plain label; the blocked line says why.
+  if (selection?.running > 0) runLabel = COPY.runCount(selection.running);
   if (submitting) runLabel = COPY.starting;
 
   const pick = (piece, id) => {
@@ -354,7 +369,25 @@ export default function RunDialog({
             {COPY.willRun(selection.running, selection.requested)}
           </Typography>
         )}
-        <HeldBackBox selection={selection} />
+        {versioned && (
+          <ReadyToRunSection
+            envId={env?.id}
+            picks={picks}
+            keys={selectionKeys}
+            readiness={readiness}
+            view={readyView}
+            onSendingChange={setSendingCheck}
+            onOpenAgentVersions={onOpenAgentVersions}
+          />
+        )}
+        <HeldBackBox
+          envId={env?.id}
+          picks={picks}
+          keys={selectionKeys}
+          report={readyView?.computedAt}
+          shownRows={readyView?.open.map((line) => line.rowId)}
+          selection={selection}
+        />
         <ChangedSinceProvedBox warnings={changed} />
         <RunSeedLine
           seed={seed}
@@ -481,6 +514,8 @@ RunDialog.propTypes = {
   initialPicks: PropTypes.objectOf(PropTypes.string),
   initialSeed: PropTypes.string,
   onClose: PropTypes.func,
+  // Opens the agent's versions for a fix made on the agent; absent where that can't open.
+  onOpenAgentVersions: PropTypes.func,
   // (picks, scenarioIds, resolved version ids, seed or null)
   onSubmit: PropTypes.func,
   submitting: PropTypes.bool,
