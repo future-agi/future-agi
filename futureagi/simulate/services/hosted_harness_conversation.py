@@ -34,14 +34,13 @@ from simulate.models import (
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
 from simulate.selectors.runs import user_environment_runs
+from simulate.services.harness_storage import open_private, put_private
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
     hash_secret,
 )
 from simulate.services.hosted_harness_validation import validate_jsonb_strings
-from tfc.settings.settings import UPLOAD_BUCKET_NAME
-from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 CONVERSATION_SCHEMA_VERSION = "futureagi.harness-conversation.v1"
 EVENT_SCHEMA_VERSION = "futureagi.harness-conversation-event.v1"
@@ -2467,15 +2466,7 @@ def store_workspace_archive(
     _validate_workspace_archive(body)
     scenario_count = _workspace_scenario_count(body)
     key = _workspace_object_key(conversation, actual)
-    client = get_storage_client()
-    ensure_bucket(client, UPLOAD_BUCKET_NAME)
-    client.put_object(
-        UPLOAD_BUCKET_NAME,
-        key,
-        io.BytesIO(body),
-        len(body),
-        content_type="application/gzip",
-    )
+    put_private(key, body, "application/gzip")
     HostedHarnessConversation.no_workspace_objects.filter(id=conversation.id).update(
         latest_workspace_digest=actual,
         latest_workspace_object_key=key,
@@ -2501,7 +2492,7 @@ def load_workspace_archive(conversation: HostedHarnessConversation) -> bytes | N
 
 def _read_object(object_key: str) -> bytes | None:
     try:
-        response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
+        response = open_private(object_key, legacy_archive=True)
     except S3Error as exc:
         if exc.code != "NoSuchKey":
             raise

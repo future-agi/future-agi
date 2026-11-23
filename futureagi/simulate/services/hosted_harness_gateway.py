@@ -51,6 +51,7 @@ from simulate.services.code_archives import (
     store_commit_archive,
     stored_commit_archive,
 )
+from simulate.services.harness_storage import open_private, put_private
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     activate_attempt_capability,
@@ -3067,7 +3068,9 @@ class HostedHarnessGateway:
             # The control processes (build and adaptation) otherwise wait ALK's own 55-minute
             # default, not the authoring budget this deployment sized the sandbox for.
             authoring_exports["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] = str(
-                int(getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600))
+                int(
+                    getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600)
+                )
             )
             if overlay is not None:
                 authoring_exports["PYTHONPATH"] = "/work/alk-src"
@@ -3153,7 +3156,9 @@ class HostedHarnessGateway:
                         else ""
                     )
                     if source_check:
-                        steps.append(SandboxCommandStep(source_check.removesuffix(" && ")))
+                        steps.append(
+                            SandboxCommandStep(source_check.removesuffix(" && "))
+                        )
                     steps.append(SandboxCommandStep(bundle_command))
                 steps.append(
                     SandboxCommandStep(
@@ -3486,8 +3491,7 @@ class HostedHarnessGateway:
                     conversation=conversation,
                     defaults={
                         "attempt": attempt,
-                        "control_only": attempt is not None
-                        and design_of(job) is None,
+                        "control_only": attempt is not None and design_of(job) is None,
                         "provider_ref": claim_ref,
                         "state": HostedHarnessConversationLease.State.STARTING,
                         "token_hash": claim_hash,
@@ -5412,7 +5416,7 @@ def _authoring_archive_for(job: HostedHarnessJob) -> bytes | None:
     if object_key:
         response = None
         try:
-            response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
+            response = open_private(object_key, legacy_archive=True)
             return response.read()
         except S3Error as exc:
             if exc.code != "NoSuchKey":
@@ -6700,10 +6704,9 @@ def rewrite_authoring_scenarios(
     object_key = str(metadata.get("authoring_object_key") or "").strip()
     if not object_key:
         return None
-    client = get_storage_client()
     response = None
     try:
-        response = client.get_object(UPLOAD_BUCKET_NAME, object_key)
+        response = open_private(object_key, legacy_archive=True)
         body = response.read()
     except Exception as exc:  # noqa: BLE001 - an archive we cannot read cannot take the edit
         logger.exception("could not read authoring archive for amend job=%s", job.id)
@@ -6779,13 +6782,12 @@ def rewrite_conversation_scenarios(job: HostedHarnessJob, suite: list[dict]) -> 
             latest_workspace_object_key__isnull=False,
         )
     )
-    client = get_storage_client()
     rewritten_count = 0
     for conversation in conversations:
         response = None
         try:
-            response = client.get_object(
-                UPLOAD_BUCKET_NAME, conversation.latest_workspace_object_key
+            response = open_private(
+                conversation.latest_workspace_object_key, legacy_archive=True
             )
             body = response.read()
             rewritten = _rewritten_authoring_archive(body, suite)
@@ -6831,15 +6833,7 @@ def replace_conversation_workspace(
         f"harness-conversations/{conversation.organization_id}/"
         f"{conversation.id}/{digest}.tar.gz"
     )
-    client = get_storage_client()
-    ensure_bucket(client, UPLOAD_BUCKET_NAME)
-    client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=key,
-        data=io.BytesIO(body),
-        length=len(body),
-        content_type="application/gzip",
-    )
+    put_private(key, body, "application/gzip")
     return HostedHarnessConversation.no_workspace_objects.filter(
         id=conversation.id,
         latest_workspace_object_key=expected_key,
@@ -7056,15 +7050,7 @@ def store_authoring_archive(
     """Persist fresh authoring output and attach its opaque key to the hosted job."""
     digest = hashlib.sha256(body).hexdigest()
     object_key = f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
-    client = get_storage_client()
-    ensure_bucket(client, UPLOAD_BUCKET_NAME)
-    client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=object_key,
-        data=io.BytesIO(body),
-        length=len(body),
-        content_type="application/gzip",
-    )
+    put_private(object_key, body, "application/gzip")
     stage_outputs = (
         authoring_stage_outputs_from_archive(body, scenario_limit=job.scenario_count)
         if advance_lifecycle

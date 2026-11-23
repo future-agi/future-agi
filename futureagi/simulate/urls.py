@@ -140,6 +140,7 @@ from .views.harness_release import (
     HarnessHostedAgentViewSet,
     HarnessReleaseViewSet,
 )
+from .views.harness_source_review import HarnessSourceReviewViewSet
 from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
     HostedHarnessIngressProxyView,
@@ -200,6 +201,11 @@ router.register(
 )
 router.register(
     r"harness-environment-designs", HarnessDesignViewSet, basename="harness-design"
+)
+router.register(
+    r"harness-source-reviews",
+    HarnessSourceReviewViewSet,
+    basename="harness-source-review",
 )
 router.register(
     r"harness/attempts",

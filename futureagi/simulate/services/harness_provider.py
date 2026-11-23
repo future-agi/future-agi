@@ -347,8 +347,28 @@ def _validate_known_hosted_egress(payload: dict[str, Any], callback_url: str) ->
         ) from exc
 
 
+def _public_metadata(value):
+    if isinstance(value, dict):
+        public = {
+            key: _public_metadata(item)
+            for key, item in value.items()
+            if key not in {"object_key", "source_review_basis", "source_review_receipt"}
+            and not key.endswith("_object_key")
+        }
+        basis = value.get("source_review_basis")
+        if isinstance(basis, dict) and isinstance(basis.get("revision"), int):
+            public["source_review_basis"] = {
+                "revision": basis["revision"],
+                "schema_digest": basis.get("schema_digest"),
+            }
+        return public
+    if isinstance(value, list):
+        return [_public_metadata(item) for item in value]
+    return value
+
+
 def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
-    metadata = job.payload.get("metadata", {})
+    metadata = _public_metadata(job.payload.get("metadata", {}))
     renamed = str(job.name or "").strip()
     if isinstance(metadata, dict) and renamed:
         # A name set through the rename endpoint wins, as on the environments list.
@@ -1577,6 +1597,7 @@ class HostedHarnessProvider:
                     else None
                 ),
                 document_ids=data.get("document_ids") or [],
+                workspace_id=getattr(request_workspace(request), "id", None),
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
@@ -1614,7 +1635,10 @@ class HostedHarnessProvider:
             serialize_document,
             store_design_document,
         )
+        from simulate.services.harness_source_reviews import require_source_scope
         from simulate.services.hosted_harness import HostedHarnessError
+
+        require_source_scope(request, write=True)
 
         # Refused on its declared length, before Django buffers the body.
         try:

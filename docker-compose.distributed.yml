@@ -72,6 +72,7 @@ x-backend-env: &backend-env
   ALK_RUNNER_API_URL: ${ALK_RUNNER_API_URL:-http://backend}
   ALK_HARNESS_SANDBOX_URL: ${ALK_HARNESS_SANDBOX_URL:-}
   ALK_HARNESS_SANDBOX_TOKEN: ${ALK_HARNESS_SANDBOX_TOKEN:-}
+  HARNESS_PRIVATE_BUCKET: ${HARNESS_PRIVATE_BUCKET:-}
 
   # Hosted harness provider. These values must reach both the API process that
   # authors/registers jobs and the simulation-runner worker that launches the

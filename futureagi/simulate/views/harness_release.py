@@ -14,6 +14,7 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.authentication import viewer_denied
 from simulate.serializers.harness_job import HarnessJobReadSerializer
 from simulate.serializers.harness_release import (
     HarnessDesignContinueRequestSerializer,
@@ -117,6 +118,7 @@ class HarnessDesignViewSet(viewsets.ViewSet):
 
     permission_classes = [IsAuthenticated]
 
+    @viewer_denied("create environment design")
     @validated_request(
         request_serializer=HarnessDesignRequestSerializer,
         responses={
@@ -129,6 +131,7 @@ class HarnessDesignViewSet(viewsets.ViewSet):
     def create(self, request):
         return HostedHarnessProvider().create_design(request)
 
+    @viewer_denied("continue environment design")
     @validated_request(
         request_serializer=HarnessDesignContinueRequestSerializer,
         responses={
@@ -143,6 +146,7 @@ class HarnessDesignViewSet(viewsets.ViewSet):
         """Continue a design that stopped at an unanswered question, as a new design job."""
         return HostedHarnessProvider().continue_design(request, pk)
 
+    @viewer_denied("upload environment design documents")
     @action(
         detail=False,
         methods=["post"],

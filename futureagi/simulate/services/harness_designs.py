@@ -45,9 +45,8 @@ from simulate.services.harness_releases import (
     design_world_outputs,
     register_release,
 )
+from simulate.services.harness_storage import put_private, read_private
 from simulate.services.hosted_harness import HostedHarnessError
-from tfc.settings.settings import UPLOAD_BUCKET_NAME
-from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 logger = logging.getLogger(__name__)
 
@@ -150,15 +149,7 @@ def store_design_document(
         size=len(body),
     )
     document.object_key = f"harness-design-documents/{organization.id}/{document.id}{Path(name).suffix.lower()}"
-    client = get_storage_client()
-    ensure_bucket(client, UPLOAD_BUCKET_NAME)
-    client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=document.object_key,
-        data=io.BytesIO(body),
-        length=len(body),
-        content_type=content_type,
-    )
+    put_private(document.object_key, body, content_type)
     document.save()
     return document
 
@@ -173,7 +164,9 @@ def serialize_document(document: HarnessDesignDocument) -> dict[str, Any]:
     }
 
 
-def _documents(organization, ids: list[Any]) -> list[HarnessDesignDocument]:
+def _documents(
+    organization, ids: list[Any], *, workspace_id=None, allow_duplicate_names=False
+) -> list[HarnessDesignDocument]:
     wanted = [str(one) for one in ids]
     if len(set(wanted)) != len(wanted):
         raise _error("design_invalid", "a document is listed twice")
@@ -184,7 +177,10 @@ def _documents(organization, ids: list[Any]) -> list[HarnessDesignDocument]:
     found = {
         str(one.id): one
         for one in HarnessDesignDocument.no_workspace_objects.filter(
-            organization=organization, id__in=wanted, deleted=False
+            organization=organization,
+            workspace_id=workspace_id,
+            id__in=wanted,
+            deleted=False,
         )
     }
     if missing := [one for one in wanted if one not in found]:
@@ -193,7 +189,9 @@ def _documents(organization, ids: list[Any]) -> list[HarnessDesignDocument]:
         )
     documents = [found[one] for one in wanted]
     names = [one.name for one in documents]
-    if repeated := sorted({name for name in names if names.count(name) > 1}):
+    if not allow_duplicate_names and (
+        repeated := sorted({name for name in names if names.count(name) > 1})
+    ):
         # The sandbox stages each document under its name, so one would replace the other.
         raise _error(
             "design_documents_duplicate_name",
@@ -230,6 +228,7 @@ def design_payload(
     modality: str,
     template_suite: HarnessSuiteRelease | None = None,
     document_ids: list[Any] | None = None,
+    workspace_id=None,
     resume_from: HostedHarnessJob | None = None,
 ) -> dict[str, Any]:
     """The validated hosted job payload of a design. A template must be a root release: a
@@ -258,7 +257,7 @@ def design_payload(
                 "object_key": template_suite.object_key,
             },
         }
-    documents = _documents(organization, document_ids or [])
+    documents = _documents(organization, document_ids or [], workspace_id=workspace_id)
     serializer = HarnessDesignCreateSerializer(
         data={
             "artifacts": {"level": "full"},
@@ -311,6 +310,7 @@ def continued_payload(organization, job: HostedHarnessJob) -> dict[str, Any]:
             else None
         ),
         document_ids=[one["id"] for one in design.get("documents") or []],
+        workspace_id=job.workspace_id,
         resume_from=job,
     )
 
@@ -324,12 +324,14 @@ class DesignLaunch:
     command: str
 
 
-def _documents_archive(organization, listed: list[dict[str, Any]]) -> bytes:
-    documents = _documents(organization, [one["id"] for one in listed])
+def _documents_archive(job: HostedHarnessJob, listed: list[dict[str, Any]]) -> bytes:
+    documents = _documents(
+        job.organization, [one["id"] for one in listed], workspace_id=job.workspace_id
+    )
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w:gz") as archive:
         for document in documents:
-            body = _download(document.object_key)
+            body = read_private(document.object_key)
             if hashlib.sha256(body).hexdigest() != document.sha256:
                 raise _error(
                     "document_changed",
@@ -378,7 +380,7 @@ def design_launch_for(job: HostedHarnessJob) -> DesignLaunch | None:
         uploads.append(
             (
                 DOCUMENTS_ARCHIVE,
-                _documents_archive(job.organization, design["documents"]),
+                _documents_archive(job, design["documents"]),
             )
         )
         prepare.append(
@@ -389,7 +391,9 @@ def design_launch_for(job: HostedHarnessJob) -> DesignLaunch | None:
         from simulate.services.hosted_harness_conversation import load_workspace_archive
 
         previous = HostedHarnessJob.no_workspace_objects.filter(
-            id=design["resume_from"], organization=job.organization
+            id=design["resume_from"],
+            organization=job.organization,
+            workspace_id=job.workspace_id,
         ).first()
         conversation = (
             HostedHarnessConversation.no_workspace_objects.filter(job=previous).first()

@@ -1,0 +1,661 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+from datetime import timedelta
+from uuid import UUID
+
+from django.db import transaction
+from django.utils import timezone
+from minio.error import S3Error
+from rest_framework.exceptions import PermissionDenied
+
+from simulate.models import HarnessSourceReview, HostedHarnessJob
+from simulate.services import harness_sources as sources
+from simulate.services.harness_provider import request_organization, request_workspace
+from simulate.services.harness_versioning import archives, drafts
+from simulate.services.hosted_harness import HostedHarnessError
+from tfc.constants.roles import RolePermissions
+
+Owner = HarnessSourceReview.Owner
+State = HarnessSourceReview.State
+_REVIEWABLE = {State.READY, State.NEEDS_REPAIR}
+
+
+def schema_digest(schema: dict) -> str:
+    body = json.dumps(
+        schema,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode()
+    return "sha256:" + hashlib.sha256(body).hexdigest()
+
+
+def _conflict(message: str = "The source review changed. Reload it and try again."):
+    return HostedHarnessError("source_review_stale", message, status_code=409)
+
+
+def _not_found():
+    return HostedHarnessError(
+        "source_review_not_found", "Source review not found.", status_code=404
+    )
+
+
+def require_source_scope(request, *, write: bool) -> dict:
+    organization = request_organization(request)
+    workspace = request_workspace(request)
+    if organization is None or (
+        workspace is not None and workspace.organization_id != organization.id
+    ):
+        raise _not_found()
+    if workspace is None:
+        roles = (
+            RolePermissions.WRITE_ACCESS_ROLES
+            if write
+            else RolePermissions.READ_ACCESS_ROLES
+        )
+        permitted = request.user.get_organization_role(organization) in roles
+    else:
+        permitted = (
+            request.user.can_write_to_workspace(workspace)
+            if write
+            else request.user.can_read_from_workspace(workspace)
+        )
+    if not permitted:
+        raise PermissionDenied("Access denied to this source review.")
+    return {
+        "organization_id": organization.id,
+        "workspace_id": getattr(workspace, "id", None),
+    }
+
+
+def _owner(query: dict, owner_id) -> HostedHarnessJob:
+    row = HostedHarnessJob.no_workspace_objects.filter(
+        **query, pk=owner_id, deleted=False, environment_id=None
+    ).first()
+    if row is None:
+        raise _not_found()
+    return row
+
+
+def _environment_basis(
+    owner: HostedHarnessJob, expected_draft: drafts.DraftRef, target_table=None
+) -> tuple[dict, dict | None]:
+    refs = drafts.draft_refs(owner)
+    if refs["environment"] != expected_draft:
+        raise _conflict(
+            "The Environment draft changed. Prepare the source review again."
+        )
+    schema, tables = _environment_schema(owner, target_table)
+    return {
+        "environment_version_id": str(owner.environment_version_id),
+        "draft": sources._ref_value(expected_draft),
+        "suite_version_id": str(owner.suite_version_id),
+        "suite_draft": sources._ref_value(refs["suite"]),
+        "target_table": target_table or (tables[0] if len(tables) == 1 else None),
+        "schema_digest": schema_digest(schema) if schema else None,
+        **({"destination_tables": tables} if schema is None else {}),
+    }, schema
+
+
+def _environment_schema(
+    owner: HostedHarnessJob, target_table
+) -> tuple[dict | None, list[str]]:
+    version = drafts.fresh_draft(owner, "environment") or owner.environment_version
+    schema = ((version.documents or {}).get("contract") or {}).get("data_schema") or {}
+    columns = (
+        [
+            (str(table), str(name), str(sql_type))
+            for table, fields in schema.items()
+            if isinstance(fields, dict)
+            for name, sql_type in fields.items()
+        ]
+        if isinstance(schema, dict)
+        else []
+    )
+    if not columns:
+        columns = _sql_columns(version.archive_object_key)
+    tables = sorted({table for table, _name, _kind in columns})
+    if target_table is not None and target_table not in tables:
+        raise _conflict(
+            "The selected destination table is unavailable in this Environment version."
+        )
+    if target_table is None and len(tables) > 1:
+        return None, tables
+    fields = [
+        {"name": name, "data_type": _data_type(sql_type), "required": False}
+        for table, name, sql_type in sorted(set(columns))
+        if target_table is None or table == target_table
+    ]
+    if not fields:
+        raise _conflict(
+            "The Environment version has no typed source destination schema."
+        )
+    return {"fields": fields}, tables
+
+
+def _sql_columns(archive_key: str) -> list[tuple[str, str, str]]:
+    from sqlglot import exp, parse
+    from sqlglot.errors import ParseError
+
+    files = archives.read_members(
+        archives.get_archive(archive_key),
+        {"schema.sql"},
+        max_size=256 * 1024,
+    )
+    try:
+        statements = parse(files.get("schema.sql", b"").decode(), dialect="postgres")
+    except (UnicodeDecodeError, ParseError):
+        return []
+    return [
+        (statement.this.this.name, column.name, column.kind.sql())
+        for statement in statements
+        if isinstance(statement, exp.Create)
+        and statement.kind == "TABLE"
+        and isinstance(statement.this, exp.Schema)
+        for column in statement.this.expressions
+        if isinstance(column, exp.ColumnDef) and column.kind is not None
+    ]
+
+
+def _data_type(sql_type: str) -> str:
+    words = sql_type.upper().split("(")[0].split()
+    name = words[0] if words else ""
+    if name in {"BOOLEAN", "BOOL"}:
+        return "boolean"
+    if name in {"SMALLINT", "INT", "INTEGER", "BIGINT", "SERIAL", "BIGSERIAL"}:
+        return "integer"
+    if name in {"DECIMAL", "NUMERIC", "REAL", "DOUBLE", "FLOAT"}:
+        return "number"
+    if name == "DATE":
+        return "date"
+    if name in {"TIMESTAMP", "TIMESTAMPTZ", "DATETIME"}:
+        return "datetime"
+    return "string"
+
+
+def _owner_basis(
+    owner: HostedHarnessJob, kind: str, scope: dict
+) -> tuple[dict, dict | None]:
+    metadata = (owner.payload or {}).get("metadata") or {}
+    if kind == Owner.ENVIRONMENT:
+        if (
+            metadata.get("design")
+            or metadata.get("adaptation")
+            or not owner.environment_version_id
+        ):
+            raise _not_found()
+        current = sources._require_import_basis(
+            owner, scope["environment_version_id"], scope["expected_draft"]
+        )
+        return _environment_basis(owner, current, scope.get("target_table"))
+    if bool(metadata.get("design")) != (kind == Owner.DESIGN) or metadata.get(
+        "adaptation"
+    ):
+        raise _not_found()
+    raw = metadata.get("source_review_basis")
+    if (
+        not isinstance(raw, dict)
+        or not isinstance(raw.get("destination_schema"), dict)
+        or not raw["destination_schema"].get("fields")
+        or not isinstance(raw.get("revision"), int)
+    ):
+        raise _conflict("The owner has not published a source review schema.")
+    destination_schema = raw["destination_schema"]
+    digest = schema_digest(destination_schema)
+    if (raw.get("revision"), raw.get("schema_digest")) != (
+        scope.get("revision", raw["revision"]),
+        digest,
+    ) or (scope.get("schema_digest", digest) != digest):
+        raise _conflict("The owner published a different source review schema.")
+    return {"revision": raw["revision"], "schema_digest": digest}, destination_schema
+
+
+def _required_basis(row: HarnessSourceReview, owner: HostedHarnessJob) -> None:
+    scope = dict(row.basis)
+    if row.owner_kind == Owner.ENVIRONMENT:
+        scope["expected_draft"] = scope["draft"]
+    current, _schema = _owner_basis(owner, row.owner_kind, scope)
+    if current != row.basis:
+        raise _conflict()
+
+
+def _staging_key(row: HarnessSourceReview) -> str:
+    return f"{sources.STAGING_PREFIX}/{row.organization_id}/{row.owner_id}/{row.staged_digest}.json"
+
+
+def _check_batch(captured) -> None:
+    if (
+        len(captured) > sources.MAX_SELECTION_FILES
+        or sum(len(item.original_content) for item in captured)
+        > sources.MAX_SELECTION_BYTES
+    ):
+        raise HostedHarnessError(
+            "source_limit_exceeded",
+            "Choose at most 100 files up to 200 MiB in total.",
+            status_code=413,
+        )
+
+
+def _stage(
+    row: HarnessSourceReview, capture, schema: dict | None
+) -> HarnessSourceReview:
+    if schema is None:
+        row.state = State.NEEDS_REPAIR
+        row.revision += 1
+        row.preview = {
+            "destination_tables": row.basis["destination_tables"],
+            "diagnostics": [
+                {"code": "source_schema_ambiguous", "severity": "blocking", "span": {}}
+            ],
+        }
+        row.save(update_fields=["state", "revision", "preview"])
+        return row
+    try:
+        captured = capture()
+        _check_batch(captured)
+        if not captured:
+            raise HostedHarnessError(
+                "source_selection_empty",
+                "Choose files or a Knowledge Base.",
+                status_code=422,
+            )
+        if len({item.source_id for item in captured}) != len(captured):
+            raise HostedHarnessError(
+                "source_duplicate", "An input is selected twice.", status_code=422
+            )
+        draft = sources.prepare_draft(captured, schema)
+        staged = {
+            "draft_payload": draft,
+            "origins": [item.origin for item in captured],
+            "originals": [
+                {
+                    "source_id": item.source_id,
+                    "content_base64": base64.b64encode(item.original_content).decode(),
+                }
+                for item in captured
+            ],
+            "review_id": str(row.id),
+        }
+        body = sources._canonical(staged)
+        row.staged_digest = hashlib.sha256(body).hexdigest()
+        key = _staging_key(row)
+        try:
+            sources._schedule_staging_expiry(key)
+            sources._put_private(key, body)
+        except Exception:
+            raise HostedHarnessError(
+                "source_processor_unavailable",
+                "Source storage is temporarily unavailable.",
+                status_code=503,
+                retryable=True,
+            ) from None
+        updated = HarnessSourceReview.objects.filter(
+            pk=row.id, state=State.READING, expires_at__gt=timezone.now()
+        ).update(
+            state=State.NEEDS_REPAIR
+            if any(
+                item.get("severity") == "blocking"
+                for item in draft.get("diagnostics", [])
+            )
+            else State.READY,
+            revision=row.revision + 1,
+            staged_digest=row.staged_digest,
+            draft_digest=draft["draft_digest"],
+            preview=sources.safe_source_preview(draft, staged["origins"]),
+        )
+        row.refresh_from_db()
+        if not updated:
+            raise _conflict()
+    except (HostedHarnessError, PermissionDenied):
+        HarnessSourceReview.objects.filter(pk=row.id, state=State.READING).update(
+            state=State.NEEDS_REPAIR, revision=row.revision + 1
+        )
+        raise
+    return row
+
+
+def _stage_review(
+    owner, kind, basis, schema, capture, idempotency_key=None, request_digest=""
+):
+    values = {
+        "organization_id": owner.organization_id,
+        "workspace_id": owner.workspace_id,
+        "basis": basis,
+        "expires_at": timezone.now()
+        + timedelta(seconds=sources.IMPORT_REF_MAX_AGE_SECONDS),
+        "request_digest": request_digest,
+    }
+    if idempotency_key:
+        row, created = HarnessSourceReview.objects.get_or_create(
+            owner=owner,
+            owner_kind=kind,
+            idempotency_key=idempotency_key,
+            defaults=values,
+        )
+        if not created:
+            if row.request_digest != request_digest or row.basis != basis:
+                raise _conflict(
+                    "The idempotency key already names a different source selection."
+                )
+            return _expire(row)
+    else:
+        row = HarnessSourceReview.objects.create(owner=owner, owner_kind=kind, **values)
+    return _stage(row, capture, schema)
+
+
+def prepare_environment_review(owner, captured, expected_draft) -> dict:
+    basis, schema = _environment_basis(owner, expected_draft)
+    row = _stage_review(owner, Owner.ENVIRONMENT, basis, schema, lambda: captured)
+    return {
+        "import_ref": str(row.id),
+        "revision": row.revision,
+        "state": row.state,
+        "draft_digest": row.draft_digest,
+        "draft": row.preview,
+        "suggested_purposes": {item.source_id: item.role for item in captured},
+        "capabilities": sources.source_capabilities(owner),
+    }
+
+
+def create_review(
+    request,
+    *,
+    scope,
+    document_ids,
+    knowledge_base,
+    idempotency_key,
+    document_purposes=None,
+) -> dict:
+    owner = _owner(require_source_scope(request, write=True), scope["id"])
+    kind = scope["kind"]
+    basis, schema = _owner_basis(owner, kind, scope)
+    if not document_ids and not knowledge_base:
+        raise HostedHarnessError(
+            "source_selection_empty",
+            "Choose files or a Knowledge Base.",
+            status_code=422,
+        )
+    web_ids = [str(item) for item in document_ids]
+    selected = json.dumps(knowledge_base, default=str)
+    digest = hashlib.sha256(
+        sources._canonical(
+            {
+                "documents": web_ids,
+                "document_purposes": document_purposes or {},
+                "knowledge_base": json.loads(selected),
+            }
+        )
+    ).hexdigest()
+
+    def capture():
+        captured = list(
+            sources.capture_documents(owner, document_ids, document_purposes)
+        )
+        for selection in knowledge_base:
+            captured.extend(sources.capture_kb(request, selection))
+            _check_batch(captured)
+        return tuple(captured)
+
+    return public_review(
+        _stage_review(owner, kind, basis, schema, capture, idempotency_key, digest)
+    )
+
+
+def _find(review_id, scope: dict, *, lock=False) -> HarnessSourceReview:
+    try:
+        review_id = UUID(str(review_id))
+    except (ValueError, TypeError):
+        raise _not_found() from None
+    queryset = (
+        HarnessSourceReview.objects.select_for_update()
+        if lock
+        else HarnessSourceReview.objects
+    )
+    row = queryset.filter(pk=review_id, owner__deleted=False, **scope).first()
+    if row is None:
+        raise _not_found()
+    return row
+
+
+def _expire(row: HarnessSourceReview) -> HarnessSourceReview:
+    if row.expires_at <= timezone.now() and row.state in {State.READING, *_REVIEWABLE}:
+        HarnessSourceReview.objects.filter(pk=row.id, revision=row.revision).update(
+            state=State.EXPIRED, revision=row.revision + 1, preview={}
+        )
+        row.refresh_from_db()
+    return row
+
+
+def public_review(row: HarnessSourceReview) -> dict:
+    return {
+        "id": str(row.id),
+        "state": row.state,
+        "revision": row.revision,
+        "scope": {"kind": row.owner_kind, "id": str(row.owner_id), **row.basis},
+        "draft_digest": row.draft_digest or None,
+        "preview": row.preview,
+        "receipt": row.receipt,
+        "expires_at": row.expires_at,
+    }
+
+
+def get_review(request, review_id) -> dict:
+    return public_review(
+        _expire(_find(review_id, require_source_scope(request, write=False)))
+    )
+
+
+def cancel_review(
+    request, review_id, *, expected_revision, expected_draft_digest
+) -> dict:
+    with transaction.atomic():
+        row = _expire(
+            _find(review_id, require_source_scope(request, write=True), lock=True)
+        )
+        if row.state == State.CANCELLED:
+            return public_review(row)
+        if row.state not in {State.READING, *_REVIEWABLE} or (
+            expected_revision,
+            expected_draft_digest or "",
+        ) != (row.revision, row.draft_digest):
+            raise _conflict()
+        row.state = State.CANCELLED
+        row.revision += 1
+        row.preview = {}
+        row.save(update_fields=["state", "revision", "preview"])
+        return public_review(row)
+
+
+def _read_staging(row: HarnessSourceReview) -> dict:
+    try:
+        body = sources._get_private(_staging_key(row))
+    except S3Error:
+        raise _conflict("The prepared sources are no longer available.") from None
+    if hashlib.sha256(body).hexdigest() != row.staged_digest:
+        raise _conflict()
+    return json.loads(body)
+
+
+def _accept(
+    request,
+    row,
+    *,
+    expected_revision,
+    expected_draft_digest,
+    decisions,
+    idempotency_key,
+):
+    digest = hashlib.sha256(
+        sources._canonical(
+            {
+                "review": decisions,
+                "revision": expected_revision,
+                "draft_digest": expected_draft_digest,
+            }
+        )
+    ).hexdigest()
+    if row.state == State.ACCEPTED:
+        if row.acceptance_key == idempotency_key and row.acceptance_digest == digest:
+            return row
+        raise _conflict("This source review has already been accepted.")
+    if (
+        row.state not in _REVIEWABLE
+        or not row.staged_digest
+        or (row.revision, row.draft_digest)
+        != (expected_revision, expected_draft_digest)
+    ):
+        raise _conflict()
+    owner = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+        pk=row.owner_id,
+        organization_id=row.organization_id,
+        workspace_id=row.workspace_id,
+        deleted=False,
+    )
+    _required_basis(row, owner)
+    if (
+        row.owner_kind != Owner.ENVIRONMENT
+        and HarnessSourceReview.objects.filter(
+            owner=owner,
+            owner_kind=row.owner_kind,
+            basis=row.basis,
+            state=State.ACCEPTED,
+        ).exists()
+    ):
+        raise _conflict("A source review was already accepted for this checkpoint.")
+    staged = _read_staging(row)
+    if row.owner_kind == Owner.ENVIRONMENT:
+        result, artifact_digest = sources.apply_environment_review(
+            request, owner, staged, row.basis, decisions
+        )
+    else:
+        result, artifact_digest = sources.accept_checkpoint_review(
+            request, owner, staged, decisions
+        )
+    row.receipt = {
+        **result,
+        "review_id": str(row.id),
+        "accepted_revision": row.revision,
+    }
+    row.snapshot_digest = result["snapshot_digest"]
+    row.acceptance_key = idempotency_key
+    row.acceptance_digest = digest
+    row.accepted_artifact_digest = artifact_digest
+    row.state = State.ACCEPTED
+    row.revision += 1
+    row.save(
+        update_fields=[
+            "receipt",
+            "snapshot_digest",
+            "acceptance_key",
+            "acceptance_digest",
+            "accepted_artifact_digest",
+            "state",
+            "revision",
+        ]
+    )
+    return row
+
+
+def accept_review(
+    request,
+    review_id,
+    *,
+    expected_revision,
+    expected_draft_digest,
+    expected_schema_digest,
+    decisions,
+    idempotency_key,
+) -> dict:
+    scope = require_source_scope(request, write=True)
+    _expire(_find(review_id, scope))
+    with transaction.atomic():
+        row = _find(review_id, scope, lock=True)
+        if row.basis["schema_digest"] != expected_schema_digest:
+            raise _conflict("The reviewed destination schema changed.")
+        return public_review(
+            _accept(
+                request,
+                row,
+                expected_revision=expected_revision,
+                expected_draft_digest=expected_draft_digest,
+                decisions=decisions,
+                idempotency_key=idempotency_key,
+            )
+        )
+
+
+def accept_environment_review(
+    request,
+    owner,
+    review_id,
+    *,
+    version_id,
+    draft,
+    draft_digest,
+    decisions,
+    revision=None,
+    idempotency_key=None,
+) -> dict:
+    scope = {
+        "owner_id": owner.id,
+        "organization_id": owner.organization_id,
+        "workspace_id": owner.workspace_id,
+    }
+    request_scope = require_source_scope(request, write=True)
+    if any(
+        request_scope[key] != scope[key] for key in ("organization_id", "workspace_id")
+    ):
+        raise _not_found()
+    _expire(_find(review_id, scope))
+    with transaction.atomic():
+        row = _find(review_id, scope, lock=True)
+        if row.owner_kind != Owner.ENVIRONMENT or (
+            row.basis["environment_version_id"],
+            row.basis["draft"],
+        ) != (
+            str(version_id),
+            {
+                "id": str(draft["id"]) if draft["id"] else None,
+                "revision": draft["revision"],
+            },
+        ):
+            raise _conflict()
+        expected_revision = (
+            revision
+            if revision is not None
+            else row.revision - (row.state == State.ACCEPTED)
+        )
+        return _accept(
+            request,
+            row,
+            expected_revision=expected_revision,
+            expected_draft_digest=draft_digest,
+            decisions=decisions,
+            idempotency_key=idempotency_key or str(review_id),
+        ).receipt
+
+
+def accepted_source_snapshot(
+    review_id, *, owner: HostedHarnessJob, owner_kind: str
+) -> tuple[bytes, dict]:
+    """Read a scoped immutable ALK envelope for the sandbox, never for browser serialization."""
+    row = _find(
+        review_id,
+        {
+            "owner_id": owner.id,
+            "organization_id": owner.organization_id,
+            "workspace_id": owner.workspace_id,
+            "owner_kind": owner_kind,
+            "state": State.ACCEPTED,
+        },
+    )
+    snapshot, receipt = sources.read_accepted_snapshot(
+        owner, row.accepted_artifact_digest
+    )
+    if receipt["review_id"] != str(row.id):
+        raise _conflict()
+    return snapshot, receipt

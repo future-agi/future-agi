@@ -83,6 +83,7 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
                     "digest": "sha256:envelope",
                     "data": {
                         "snapshot_digest": "sha256:" + "a" * 64,
+                        "snapshot_id": "snapshot-kb",
                         "sources": [{"pin": pin}],
                         "diagnostics": [],
                     },
@@ -189,6 +190,7 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
     run = SimpleNamespace(
         environment_id=environment.id,
         organization_id=environment.organization_id,
+        workspace_id=workspace.id,
         environment_version=source_draft,
     )
     resolved = harness_sources.resolve_evaluator_sources(run)
@@ -421,35 +423,20 @@ def test_evaluator_resolution_deduplicates_a_batch_snapshot(monkeypatch):
 
 
 def test_participant_visibility_fails_closed(user, workspace, request, monkeypatch):
-    storage = request.getfixturevalue("_storage_fixture")
+    request.getfixturevalue("_storage_fixture")
     environment = _built(user, workspace, "source-participant")
-    staged = {
-        "version": 1,
-        "environment_id": str(environment.id),
-        "environment_version_id": str(environment.environment_version_id),
-        "draft": {"id": None, "revision": 0},
-        "draft_payload": {"draft_digest": "sha256:prepared"},
-        "origins": [],
-        "originals": [],
-        "captured_at": "2026-01-01T00:00:00Z",
-    }
-    body = harness_sources._canonical(staged)
-    digest = hashlib.sha256(body).hexdigest()
-    key = f"environment-source-imports/{environment.organization_id}/{environment.id}/{digest}.json"
-    storage.objects[key] = body
-    import_ref = harness_sources.signing.dumps(
-        {
-            "v": 1,
-            "organization_id": str(environment.organization_id),
-            "workspace_id": str(environment.workspace_id),
-            "environment_id": str(environment.id),
-            "environment_version_id": str(environment.environment_version_id),
-            "draft": staged["draft"],
-            "key": key,
-            "digest": digest,
-        },
-        key=harness_sources.settings.SECRET_KEY,
-        salt=harness_sources.IMPORT_REF_SALT,
+    monkeypatch.setattr(
+        harness_sources,
+        "prepare_draft",
+        lambda *args: {"draft_digest": "sha256:prepared"},
+    )
+    basis = {"id": None, "revision": 0}
+    prepared = harness_sources.prepare_upload_import(
+        environment,
+        [SimpleUploadedFile("guide.txt", b"private")],
+        purpose=None,
+        expected_environment_version_id=environment.environment_version_id,
+        expected_draft=basis,
     )
     request = SimpleNamespace(
         user=user, organization=user.organization, workspace=workspace
@@ -458,9 +445,9 @@ def test_participant_visibility_fails_closed(user, workspace, request, monkeypat
         harness_sources.accept_source_import(
             request,
             environment,
-            import_ref=import_ref,
+            import_ref=prepared["import_ref"],
             expected_environment_version_id=str(environment.environment_version_id),
-            expected_draft={"id": None, "revision": 0},
+            expected_draft=basis,
             expected_draft_digest="sha256:prepared",
             review={
                 "record_reviews": [],

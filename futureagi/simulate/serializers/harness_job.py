@@ -213,7 +213,15 @@ class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
 
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(
-        choices=("livekit", "vapi", "retell", "retell_chat", "phone", "auto", HOSTED_AGENT)
+        choices=(
+            "livekit",
+            "vapi",
+            "retell",
+            "retell_chat",
+            "phone",
+            "auto",
+            HOSTED_AGENT,
+        )
     )
     mode = serializers.ChoiceField(
         choices=("connect_only", "environment_backed", "provider_import"),
@@ -445,14 +453,18 @@ class HarnessAgentSerializer(serializers.Serializer):
         config = attrs.get("config") or {}
         if attrs.get("mode") or attrs.get("secret_refs") or attrs.get("call_direction"):
             raise serializers.ValidationError(
-                {"agent": "our hosted agent takes no mode, credentials or call direction"}
+                {
+                    "agent": "our hosted agent takes no mode, credentials or call direction"
+                }
             )
         if set(config) != set(HOSTED_AGENT_CONFIG) or not all(
             isinstance(config[name], str) and config[name].strip()
             for name in HOSTED_AGENT_CONFIG
         ):
             raise serializers.ValidationError(
-                {"config": f"a hosted agent's config is exactly {', '.join(HOSTED_AGENT_CONFIG)}"}
+                {
+                    "config": f"a hosted agent's config is exactly {', '.join(HOSTED_AGENT_CONFIG)}"
+                }
             )
         if config["model"] not in HOSTED_AGENT_MODELS:
             raise serializers.ValidationError(
@@ -622,6 +634,9 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             "design_result",
             "release_composition",
             "run_manifest",
+            "source_review_basis",
+            "accepted_source_review",
+            "source_review_receipt",
         }
         if reserved.intersection(value):
             raise serializers.ValidationError(
@@ -644,10 +659,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
         ) in {"connect_only", "provider_import"}
         no_source = PROVIDER_TARGET_CONNECTORS | {HOSTED_AGENT}
         if source is None:
-            if (
-                agent["connector"] not in no_source
-                or not provider_target_mode
-            ):
+            if agent["connector"] not in no_source or not provider_target_mode:
                 raise serializers.ValidationError(
                     {
                         "source": "required unless a hosted agent ID or phone number is connected"
@@ -655,8 +667,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
                 )
             attrs["source"] = {"kind": "provider", "visibility": "public"}
         elif source["kind"] == "provider" and (
-            agent["connector"] not in no_source
-            or not provider_target_mode
+            agent["connector"] not in no_source or not provider_target_mode
         ):
             raise serializers.ValidationError(
                 {
@@ -865,7 +876,6 @@ def missing_provider_credentials(agent, detected_connectors=()):
     ]
 
 
-
 class HarnessDesignCreateSerializer(HarnessJobCreateSerializer):
     """A design job's payload (contract §7.9): no agent and no source, because the harness designs
     the environment rather than testing an agent. `metadata.design` is written by the design
@@ -881,6 +891,7 @@ class HarnessDesignCreateSerializer(HarnessJobCreateSerializer):
         attrs["runtime"]["parallelism"] = 1
         self._apply_sandbox_runtime_limits(attrs["runtime"])
         return attrs
+
 
 class HarnessJobActionSerializer(serializers.Serializer):
     reason = serializers.ChoiceField(

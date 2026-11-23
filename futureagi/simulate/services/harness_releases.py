@@ -43,6 +43,7 @@ from simulate.models import (
     HostedHarnessJob,
     HostedHarnessScenario,
 )
+from simulate.services.harness_storage import open_private, put_private
 from simulate.services.hosted_harness import (
     HostedHarnessError,
     canonical_digest,
@@ -182,6 +183,9 @@ def _archive(directory: Path) -> bytes:
 
 
 def _upload(object_key: str, body: bytes) -> None:
+    if not object_key.startswith("harness-releases/system/"):
+        put_private(object_key, body, "application/gzip")
+        return
     client = get_storage_client()
     ensure_bucket(client, UPLOAD_BUCKET_NAME)
     client.put_object(
@@ -196,13 +200,17 @@ def _upload(object_key: str, body: bytes) -> None:
 def _download(object_key: str) -> bytes:
     response = None
     try:
-        response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
+        response = (
+            get_storage_client().get_object(UPLOAD_BUCKET_NAME, object_key)
+            if object_key.startswith("harness-releases/system/")
+            else open_private(object_key, legacy_archive=True)
+        )
         return response.read()
     except S3Error as exc:
         if exc.code != "NoSuchKey":
             raise
         raise _error(
-            "release_archive_missing", f"release archive {object_key} is missing", 422
+            "release_archive_missing", "The release archive is missing.", 422
         ) from exc
     finally:
         if response is not None:

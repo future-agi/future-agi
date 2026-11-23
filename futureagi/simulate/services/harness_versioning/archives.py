@@ -20,9 +20,12 @@ from pathlib import PurePosixPath
 
 from minio.error import S3Error
 
+from simulate.services.harness_storage import (
+    put_private,
+    read_private,
+    stat_customer_archive,
+)
 from simulate.services.hosted_harness import HostedHarnessError
-from tfc.settings.settings import UPLOAD_BUCKET_NAME
-from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
 Files = Mapping[str, bytes]
 
@@ -251,15 +254,7 @@ def pair_key(organization_id: object, job_id: object, body: bytes) -> str:
 
 def put_archive(key: str, body: bytes) -> None:
     """Store an archive under its content-addressed key; identical bytes rewrite nothing new."""
-    client = get_storage_client()
-    ensure_bucket(client, UPLOAD_BUCKET_NAME)
-    client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=key,
-        data=io.BytesIO(body),
-        length=len(body),
-        content_type="application/gzip",
-    )
+    put_private(key, body, "application/gzip")
 
 
 def archive_exists(key: str) -> bool:
@@ -269,7 +264,7 @@ def archive_exists(key: str) -> bool:
 def archive_size(key: str) -> int | None:
     """A stored archive's compressed size; ``None`` when it is gone."""
     try:
-        stat = get_storage_client().stat_object(UPLOAD_BUCKET_NAME, key)
+        stat = stat_customer_archive(key)
     except S3Error as exc:
         if exc.code in {"NoSuchKey", "NoSuchBucket"}:
             return None
@@ -315,9 +310,4 @@ def read_members(body: bytes, paths: set[str], max_size: int) -> dict[str, bytes
 
 
 def get_archive(key: str) -> bytes:
-    response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
-    try:
-        return response.read()
-    finally:
-        response.close()
-        response.release_conn()
+    return read_private(key, legacy_archive=True)

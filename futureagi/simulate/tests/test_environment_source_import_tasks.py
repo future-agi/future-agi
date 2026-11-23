@@ -1,4 +1,4 @@
-from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -12,20 +12,15 @@ def test_expiry_removes_only_staging_objects(monkeypatch):
     removed = []
     monkeypatch.setattr(
         environment_source_imports,
-        "get_storage_client",
-        lambda: SimpleNamespace(
-            remove_object=lambda bucket, key: removed.append((bucket, key))
-        ),
+        "remove_private",
+        removed.append,
     )
-    key = f"environment-source-imports/org/env/{'a' * 64}.json"
+    key = f"environment-source-imports/{uuid4()}/{uuid4()}/{'a' * 64}.json"
 
-    expire = environment_source_imports.expire_environment_source_import
-    assert expire(key) == {"object_key": key}
-    assert expire(key) == {"object_key": key}
-    assert removed == [
-        (environment_source_imports.UPLOAD_BUCKET_NAME, key),
-        (environment_source_imports.UPLOAD_BUCKET_NAME, key),
-    ]
+    expire = environment_source_imports.expire_environment_source_import._original_func
+    assert expire(key) == {"expired": True}
+    assert expire(key) == {"expired": True}
+    assert removed == [key, key]
 
 
 @pytest.mark.parametrize(
@@ -38,11 +33,10 @@ def test_expiry_removes_only_staging_objects(monkeypatch):
     ],
 )
 def test_expiry_rejects_keys_outside_its_staging_boundary(monkeypatch, key):
-    client = SimpleNamespace(
-        remove_object=lambda bucket, object_key: pytest.fail("deleted an unsafe key")
-    )
     monkeypatch.setattr(
-        environment_source_imports, "get_storage_client", lambda: client
+        environment_source_imports,
+        "remove_private",
+        lambda _: pytest.fail("deleted an unsafe key"),
     )
 
     with pytest.raises(ValueError, match="invalid environment source import key"):

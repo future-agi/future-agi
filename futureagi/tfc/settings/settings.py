@@ -1407,6 +1407,10 @@ MINIO_URL = os.getenv(
 UPLOAD_BUCKET_NAME = os.getenv(
     "UPLOAD_BUCKET_NAME", "fi-content-dev" if _is_local else "fi-content"
 )
+HARNESS_PRIVATE_BUCKET = (
+    os.getenv("HARNESS_PRIVATE_BUCKET", "").strip()
+    or f"{UPLOAD_BUCKET_NAME}-harness-private"
+)
 
 # Storage backend: "s3" (default/US), "gcs" (EU via S3-interop HMAC keys),
 # or "minio" (self-hosted OSS local stack)

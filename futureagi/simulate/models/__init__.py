@@ -31,6 +31,7 @@ from .harness_release import (
     HarnessSuiteRelease,
     HostedAgentSpec,
 )
+from .harness_source_review import HarnessSourceReview
 from .harness_versioning import (
     HarnessAgentVersionRuntime,
     HarnessAssembledBundle,
@@ -101,6 +102,7 @@ __all__ = [
     "HarnessDesignDocument",
     "HarnessEnvironmentRelease",
     "HarnessRunManifest",
+    "HarnessSourceReview",
     "HarnessSuiteRelease",
     "HostedAgentSpec",
     "HarnessAgentVersionRuntime",

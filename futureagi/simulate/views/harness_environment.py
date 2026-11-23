@@ -977,6 +977,8 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 expected_environment_version_id=body["expected_environment_version_id"],
                 expected_draft=body["expected_draft"],
                 expected_draft_digest=body["expected_draft_digest"],
+                expected_revision=body.get("expected_revision"),
+                idempotency_key=body.get("idempotency_key"),
             )
         )
 

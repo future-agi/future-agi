@@ -1228,6 +1228,8 @@ class HarnessSourceAcceptSerializer(StrictInputSerializer):
     expected_environment_version_id = serializers.UUIDField()
     expected_draft = HarnessSourceDraftRefSerializer()
     expected_draft_digest = serializers.CharField(max_length=128)
+    expected_revision = serializers.IntegerField(min_value=1, required=False)
+    idempotency_key = serializers.CharField(max_length=128, required=False)
     review = serializers.JSONField()
 
 
@@ -1249,13 +1251,17 @@ class HarnessSourceSummarySerializer(serializers.Serializer):
 
 class HarnessSourcePrepareResponseSerializer(serializers.Serializer):
     import_ref = serializers.CharField()
-    draft_digest = serializers.CharField()
+    revision = serializers.IntegerField()
+    state = serializers.CharField()
+    draft_digest = serializers.CharField(allow_blank=True)
     draft = serializers.JSONField()
     suggested_purposes = serializers.JSONField()
     capabilities = HarnessSourceCapabilitiesSerializer()
 
 
 class HarnessSourceAcceptResponseSerializer(serializers.Serializer):
+    review_id = serializers.UUIDField()
+    accepted_revision = serializers.IntegerField()
     draft = serializers.JSONField(allow_null=True)
     snapshot_digest = serializers.CharField()
     sources = serializers.JSONField()

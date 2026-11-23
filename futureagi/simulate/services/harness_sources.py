@@ -5,16 +5,16 @@ import csv
 import hashlib
 import io
 import json
+import re
 from datetime import timedelta
 from pathlib import PurePath
 from typing import Any
+from uuid import uuid4
 
-from django.conf import settings
-from django.core import signing
-from django.utils import timezone
 from minio.error import S3Error
 from temporalio.common import WorkflowIDConflictPolicy
 
+from model_hub.services.document_text import DocumentTextError, extract_document_text
 from model_hub.services.kb_snapshot import (
     MAX_SELECTION_BYTES,
     MAX_SELECTION_FILES,
@@ -24,12 +24,10 @@ from model_hub.services.kb_snapshot import (
 )
 from model_hub.utils.kb_download import authorized_knowledge_base_file
 from simulate.services.alk_source_bridge import execute_source_request
+from simulate.services.harness_storage import put_private, read_private
 from simulate.services.harness_versioning import archives, drafts, versions
 from simulate.services.hosted_harness import HostedHarnessError
-from tfc.settings.settings import UPLOAD_BUCKET_NAME
-from tfc.utils.storage_client import ensure_bucket, get_storage_client
 
-IMPORT_REF_SALT = "simulate.environment-source-import.v1"
 IMPORT_REF_MAX_AGE_SECONDS = 30 * 60
 REQUEST_VERSION = "environment-sources.request.v1"
 STAGING_PREFIX = "environment-source-imports"
@@ -107,24 +105,11 @@ def _scenario_validation(suite_files: dict[str, bytes]) -> dict[str, Any]:
 
 
 def _put_private(key: str, body: bytes) -> None:
-    client = get_storage_client()
-    ensure_bucket(client, UPLOAD_BUCKET_NAME)
-    client.put_object(
-        bucket_name=UPLOAD_BUCKET_NAME,
-        object_name=key,
-        data=io.BytesIO(body),
-        length=len(body),
-        content_type="application/json",
-    )
+    put_private(key, body, "application/json")
 
 
 def _get_private(key: str) -> bytes:
-    response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
-    try:
-        return response.read()
-    finally:
-        response.close()
-        response.release_conn()
+    return read_private(key)
 
 
 def _schedule_staging_expiry(key: str) -> None:
@@ -152,6 +137,7 @@ def resolve_evaluator_sources(run) -> dict[str, Any]:
         or not getattr(run, "environment_id", None)
         or version.job_id != run.environment_id
         or version.organization_id != run.organization_id
+        or getattr(version, "workspace_id", None) != getattr(run, "workspace_id", None)
     ):
         raise HostedHarnessError(
             "source_snapshot_unavailable",
@@ -162,10 +148,7 @@ def resolve_evaluator_sources(run) -> dict[str, Any]:
     try:
         manifest = json.loads(files["sources/manifest.json"])
         aggregate_digest = manifest["snapshot_digest"]
-        aggregate_key = (
-            f"{SNAPSHOT_PREFIX}/{run.organization_id}/"
-            f"{aggregate_digest.removeprefix('sha256:')}.json"
-        )
+        aggregate_key = _snapshot_key(run, aggregate_digest.removeprefix("sha256:"))
         aggregate = json.loads(_get_private(aggregate_key))
         aggregate_payload = {
             "schema_version": aggregate["schema_version"],
@@ -184,10 +167,7 @@ def resolve_evaluator_sources(run) -> dict[str, Any]:
             raise ValueError("source map mismatch")
         resolved = []
         for digest in sorted(set(source_digests.values())):
-            key = (
-                f"{SNAPSHOT_PREFIX}/{run.organization_id}/"
-                f"{digest.removeprefix('sha256:')}.json"
-            )
+            key = _snapshot_key(run, digest.removeprefix("sha256:"))
             body = _get_private(key)
             if "sha256:" + hashlib.sha256(body).hexdigest() != digest:
                 raise ValueError("leaf digest mismatch")
@@ -237,9 +217,9 @@ def _alk_result(response: dict) -> dict:
     }.get(code, 422)
     raise HostedHarnessError(
         code,
-        str(error.get("message") or "The Environment source request is invalid"),
+        "The source processor could not use these inputs or decisions.",
         status_code=status_code,
-        details={"diagnostics": error.get("diagnostics") or []},
+        details={"diagnostics": _safe_diagnostics(error.get("diagnostics") or [])},
     )
 
 
@@ -254,8 +234,13 @@ def prepare_source_import(
     current_ref = _require_import_basis(
         environment, expected_environment_version_id, expected_draft
     )
+    captured = capture_kb(request, selection)
+    return _prepare_captured(environment, captured, current_ref)
+
+
+def capture_kb(request, selection: dict) -> tuple[CapturedKnowledgeBaseSource, ...]:
     try:
-        captured = capture_knowledge_base_selection(
+        return capture_knowledge_base_selection(
             request,
             kb_id=selection["kb_id"],
             file_ids=selection.get("file_ids"),
@@ -265,7 +250,6 @@ def prepare_source_import(
         raise HostedHarnessError(
             exc.code, str(exc), status_code=exc.status_code
         ) from exc
-    return _prepare_captured(environment, captured, current_ref)
 
 
 def prepare_upload_import(
@@ -279,6 +263,14 @@ def prepare_upload_import(
     current_ref = _require_import_basis(
         environment, expected_environment_version_id, expected_draft
     )
+    return _prepare_captured(
+        environment, capture_uploads(uploaded, purpose), current_ref
+    )
+
+
+def capture_uploads(
+    uploaded, purpose: str | None
+) -> tuple[CapturedKnowledgeBaseSource, ...]:
     uploads = tuple(uploaded) if isinstance(uploaded, (list, tuple)) else (uploaded,)
     if len(uploads) > MAX_SELECTION_FILES:
         raise HostedHarnessError(
@@ -331,10 +323,8 @@ def prepare_upload_import(
                 status_code=422,
             )
         digest = "sha256:" + hashlib.sha256(original).hexdigest()
-        source_id = (
-            "src_"
-            + hashlib.sha256(f"upload:{item.name}:{digest}".encode()).hexdigest()[:24]
-        )
+        document_id = uuid4()
+        source_id = f"src_{document_id.hex}"
         captured.append(
             CapturedKnowledgeBaseSource(
                 source_id=source_id,
@@ -346,6 +336,7 @@ def prepare_upload_import(
                 origin={
                     "source_id": source_id,
                     "kind": "upload",
+                    "document_id": str(document_id),
                     "upload_id": digest,
                     "original_name": item.name,
                     "original_sha256": digest,
@@ -354,7 +345,105 @@ def prepare_upload_import(
                 },
             )
         )
-    return _prepare_captured(environment, tuple(captured), current_ref)
+    return tuple(captured)
+
+
+def capture_documents(
+    owner, ids, purposes=None
+) -> tuple[CapturedKnowledgeBaseSource, ...]:
+    from simulate.services.harness_designs import _documents
+
+    staged = _documents(
+        owner.organization,
+        ids,
+        workspace_id=owner.workspace_id,
+        allow_duplicate_names=True,
+    )
+    purposes = purposes or {}
+    captured = []
+    for document in staged:
+        try:
+            original = raw = read_private(document.object_key)
+            if (
+                len(raw) != document.size
+                or hashlib.sha256(raw).hexdigest() != document.sha256
+            ):
+                raise ValueError("Uploaded source digest mismatch")
+            name = document.name
+            suffix = PurePath(name).suffix.lower()
+            if suffix in {".docx", ".rtf", ".md"}:
+                raw = (
+                    extract_document_text(raw, name).encode()
+                    if suffix != ".md"
+                    else raw
+                )
+                suffix = ".txt"
+            elif suffix == ".tsv":
+                input_rows = csv.reader(
+                    io.StringIO(raw.decode("utf-8-sig")), delimiter="\t"
+                )
+                output = io.StringIO()
+                csv.writer(output).writerows(input_rows)
+                raw, suffix = output.getvalue().encode(), ".csv"
+            elif suffix == ".jsonl":
+                raw = _canonical(
+                    [
+                        json.loads(line)
+                        for line in raw.decode("utf-8-sig").splitlines()
+                        if line.strip()
+                    ]
+                )
+                suffix = ".json"
+            elif suffix == ".xlsx":
+                raw, suffix = _spreadsheet_as_csv(raw), ".csv"
+            normalized = io.BytesIO(raw)
+            normalized.name = f"document{suffix}"
+            parsed = capture_uploads(normalized, purposes.get(str(document.id)))[0]
+            captured.append(
+                CapturedKnowledgeBaseSource(
+                    source_id=f"src_{document.id.hex}",
+                    filename=parsed.filename,
+                    media_type=parsed.media_type,
+                    role=parsed.role,
+                    content=parsed.content,
+                    original_content=original,
+                    origin={
+                        **parsed.origin,
+                        "source_id": f"src_{document.id.hex}",
+                        "document_id": str(document.id),
+                        "original_name": name,
+                        "original_sha256": f"sha256:{document.sha256}",
+                    },
+                )
+            )
+        except (DocumentTextError, UnicodeDecodeError, ValueError, S3Error):
+            raise HostedHarnessError(
+                "source_content_unavailable",
+                "An uploaded document could not be prepared.",
+                status_code=422,
+            ) from None
+    return tuple(captured)
+
+
+def _spreadsheet_as_csv(raw: bytes) -> bytes:
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(
+        io.BytesIO(raw), read_only=True, data_only=True, keep_links=False
+    )
+    try:
+        if len(workbook.worksheets) != 1:
+            raise ValueError("A record workbook must contain one sheet")
+        output = io.StringIO()
+        rows = workbook.active.iter_rows(values_only=True)
+        output_rows = csv.writer(output)
+        for row in rows:
+            output_rows.writerow(row)
+            if output.tell() > 25 * 1024 * 1024:
+                raise ValueError("Workbook output limit")
+        return output.getvalue().encode()
+    finally:
+        workbook.close()
 
 
 def _require_import_basis(
@@ -380,24 +469,15 @@ def _prepare_captured(
     captured: tuple[CapturedKnowledgeBaseSource, ...],
     current_ref: drafts.DraftRef,
 ) -> dict:
-    fields = []
-    for source in captured:
-        if source.role != "seed_records":
-            continue
-        try:
-            if source.filename.endswith(".csv"):
-                headers = next(
-                    csv.reader(io.StringIO(source.content.decode("utf-8-sig")))
-                )
-            else:
-                rows = json.loads(source.content)
-                headers = [key for row in rows if isinstance(row, dict) for key in row]
-        except (StopIteration, UnicodeDecodeError, ValueError, TypeError):
-            headers = []
-        for header in headers:
-            if isinstance(header, str) and header.strip() and header not in fields:
-                fields.append(header)
-    destination_fields = fields or ["id"]
+    from simulate.services.harness_source_reviews import prepare_environment_review
+
+    return prepare_environment_review(environment, captured, current_ref)
+
+
+def prepare_draft(
+    captured: tuple[CapturedKnowledgeBaseSource, ...],
+    destination_schema: dict,
+) -> dict:
     prepare_request = {
         "version": REQUEST_VERSION,
         "operation": "prepare",
@@ -411,149 +491,105 @@ def _prepare_captured(
             }
             for source in captured
         ],
-        "destination_schema": {
-            "fields": [
-                {"name": name, "data_type": "string", "required": False}
-                for name in destination_fields
-            ]
-        },
+        "destination_schema": destination_schema,
     }
-    result = _alk_result(execute_source_request(prepare_request))
-    latest = environment.__class__.no_workspace_objects.only(
-        "environment_version_id"
-    ).get(id=environment.id)
-    refs = drafts.draft_refs(environment)
-    if (
-        latest.environment_version_id != environment.environment_version_id
-        or _ref_value(refs["environment"]) != _ref_value(current_ref)
-    ):
-        raise HostedHarnessError(
-            "environment_draft_conflict",
-            "The Environment changed while sources were being prepared.",
-            status_code=409,
-        )
-    staged = {
-        "version": 1,
-        "environment_id": str(environment.id),
-        "environment_version_id": str(environment.environment_version_id),
-        "draft": _ref_value(refs["environment"]),
-        "draft_payload": result["draft"],
-        "origins": [source.origin for source in captured],
-        "originals": [
-            {
-                "source_id": source.source_id,
-                "content_base64": base64.b64encode(source.original_content).decode(),
-            }
-            for source in captured
-        ],
-        "captured_at": timezone.now().isoformat(),
-    }
-    staged_body = _canonical(staged)
-    digest = hashlib.sha256(staged_body).hexdigest()
-    key = (
-        f"{STAGING_PREFIX}/{environment.organization_id}/{environment.id}/{digest}.json"
-    )
-    try:
-        _schedule_staging_expiry(key)
-    except Exception as exc:
-        raise HostedHarnessError(
-            "source_processor_unavailable",
-            "Environment source processing is temporarily unavailable",
-            status_code=503,
-            retryable=True,
-        ) from exc
-    _put_private(key, staged_body)
-    workspace_id = getattr(environment, "workspace_id", None)
-    import_ref = signing.dumps(
+    return _alk_result(execute_source_request(prepare_request))["draft"]
+
+
+def _safe_diagnostics(items: list[dict]) -> list[dict]:
+    return [
         {
-            "v": 1,
-            "organization_id": str(environment.organization_id),
-            "workspace_id": str(workspace_id) if workspace_id else None,
-            "environment_id": str(environment.id),
-            "environment_version_id": str(environment.environment_version_id),
-            "draft": staged["draft"],
-            "key": key,
-            "digest": digest,
-        },
-        key=settings.SECRET_KEY,
-        salt=IMPORT_REF_SALT,
-        compress=True,
-    )
+            "code": item["code"],
+            "severity": item["severity"],
+            "span": {
+                key: span[key] for key in ("source_id", "page", "row") if key in span
+            },
+        }
+        for item in items
+        if isinstance(item, dict)
+        and re.fullmatch(r"[a-z_]{1,100}", str(item.get("code") or ""))
+        and item.get("severity") in {"warning", "blocking"}
+        and isinstance(span := item.get("span") or {}, dict)
+    ]
+
+
+def safe_source_preview(draft: dict, origins: list[dict]) -> dict:
+    identity = {
+        item["source_id"]: {
+            key: item[key]
+            for key in ("kind", "document_id", "kb_id", "file_id")
+            if key in item
+        }
+        for item in origins
+    }
+    display = []
+    for item in draft.get("sources", []):
+        pin = item["pin"]
+        display.append(
+            {
+                "pin": {
+                    key: pin[key]
+                    for key in ("source_id", "source_sha256", "parser_revision", "role")
+                    if key in pin
+                },
+                "filename": item.get("filename"),
+                "origin": identity.get(pin["source_id"]),
+                "parse_state": item.get("parse_state"),
+                "row_count": len(item.get("rows", [])),
+                "fields": [
+                    {
+                        key: field[key]
+                        for key in (
+                            "source_field",
+                            "inferred_type",
+                            "null_count",
+                            "unique_count",
+                            "suggested_target_field",
+                            "suggested_stable_id",
+                            "personal_data_suspected",
+                        )
+                        if key in field
+                    }
+                    for field in item.get("fields", [])
+                ],
+                "statements": [
+                    {
+                        "statement_id": statement["statement_id"],
+                        "page": (statement.get("span") or {}).get("page"),
+                    }
+                    for statement in item.get("statements", [])
+                ],
+            }
+        )
+    proposals = draft.get("proposals") or {}
     return {
-        "import_ref": import_ref,
-        "draft_digest": result["draft"]["draft_digest"],
-        "draft": result["draft"],
-        "suggested_purposes": {source.source_id: source.role for source in captured},
-        "capabilities": source_capabilities(environment),
+        "draft_digest": draft["draft_digest"],
+        "sources": display,
+        "destination_schema": draft.get("destination_schema"),
+        "diagnostics": _safe_diagnostics(draft.get("diagnostics", [])),
+        "proposals": {
+            "field_mappings": proposals.get("field_mappings", []),
+            "relationships": [
+                {"relationship": item["relationship"], "confidence": item["confidence"]}
+                for item in proposals.get("relationships", [])
+            ],
+            "policy_rules": [
+                {
+                    key: item[key]
+                    for key in (
+                        "rule_id",
+                        "statement_id",
+                        "kind",
+                        "check_type",
+                        "conflict_group",
+                        "status",
+                    )
+                    if key in item
+                }
+                for item in proposals.get("policy_rules", [])
+            ],
+        },
     }
-
-
-def _load_staged(import_ref: str, environment) -> dict:
-    try:
-        token = signing.loads(
-            import_ref,
-            key=settings.SECRET_KEY,
-            salt=IMPORT_REF_SALT,
-            max_age=IMPORT_REF_MAX_AGE_SECONDS,
-        )
-    except signing.SignatureExpired as exc:
-        raise HostedHarnessError(
-            "source_review_stale",
-            "The source review expired. Prepare it again.",
-            status_code=409,
-        ) from exc
-    except (signing.BadSignature, TypeError, ValueError) as exc:
-        raise HostedHarnessError(
-            "source_request_invalid",
-            "The source import reference is invalid.",
-            status_code=422,
-        ) from exc
-    expected = {
-        "v": 1,
-        "organization_id": str(environment.organization_id),
-        "workspace_id": str(environment.workspace_id)
-        if environment.workspace_id
-        else None,
-        "environment_id": str(environment.id),
-        "environment_version_id": str(environment.environment_version_id),
-    }
-    if not isinstance(token, dict) or any(
-        token.get(k) != v for k, v in expected.items() if k != "environment_version_id"
-    ):
-        raise HostedHarnessError(
-            "source_access_denied",
-            "The source import does not belong to this Environment.",
-            status_code=404,
-        )
-    try:
-        body = _get_private(str(token.get("key") or ""))
-    except S3Error as exc:
-        raise HostedHarnessError(
-            "source_review_stale",
-            "The source review expired. Prepare it again.",
-            status_code=409,
-        ) from exc
-    if hashlib.sha256(body).hexdigest() != token.get("digest"):
-        raise HostedHarnessError(
-            "source_revision_changed",
-            "The captured source revision changed.",
-            status_code=409,
-        )
-    try:
-        staged = json.loads(body)
-    except (UnicodeDecodeError, ValueError, TypeError) as exc:
-        raise HostedHarnessError(
-            "source_request_invalid",
-            "The source import reference is invalid.",
-            status_code=422,
-        ) from exc
-    if staged.get("draft") != token.get("draft"):
-        raise HostedHarnessError(
-            "source_request_invalid",
-            "The source import reference is invalid.",
-            status_code=422,
-        )
-    return staged
 
 
 def accept_source_import(
@@ -565,45 +601,102 @@ def accept_source_import(
     expected_environment_version_id: str,
     expected_draft: dict,
     expected_draft_digest: str,
+    expected_revision: int | None = None,
+    idempotency_key: str | None = None,
 ) -> dict:
-    staged = _load_staged(import_ref, environment)
-    request_ref = {
-        "id": str(expected_draft["id"]) if expected_draft["id"] else None,
-        "revision": expected_draft["revision"],
-    }
-    if (
-        str(expected_environment_version_id) != staged["environment_version_id"]
-        or request_ref != staged["draft"]
-        or expected_draft_digest != staged["draft_payload"]["draft_digest"]
-    ):
-        raise HostedHarnessError(
-            "source_review_stale",
-            "The source review no longer matches its prepared draft.",
-            status_code=409,
-        )
+    from simulate.services.harness_source_reviews import accept_environment_review
+
+    return accept_environment_review(
+        request,
+        environment,
+        import_ref,
+        version_id=expected_environment_version_id,
+        draft=expected_draft,
+        draft_digest=expected_draft_digest,
+        decisions=review,
+        revision=expected_revision,
+        idempotency_key=idempotency_key,
+    )
+
+
+def _checked_review(request, staged: dict, review: dict) -> dict:
     for origin in staged["origins"]:
         if origin["kind"] == "knowledge_base":
-            authorized_knowledge_base_file(request, origin["kb_id"], origin["file_id"])
-    for decision in (
-        *review.get("record_reviews", []),
-        *review.get("policy_reviews", []),
-        *review.get("reference_reviews", []),
-    ):
-        if (decision.get("audience") or {}).get("participant_ids"):
+            kb, _file = authorized_knowledge_base_file(
+                request, origin["kb_id"], origin["file_id"]
+            )
+            if kb.workspace_id != getattr(request.workspace, "id", None):
+                raise HostedHarnessError(
+                    "source_access_denied", "Source not found.", status_code=404
+                )
+    checked = dict(review)
+    proposals = {
+        item["rule_id"]: item
+        for item in staged["draft_payload"].get("proposals", {}).get("policy_rules", [])
+    }
+    for key in ("record_reviews", "policy_reviews", "reference_reviews"):
+        decisions = review.get(key, [])
+        if not isinstance(decisions, list) or len(decisions) > MAX_SELECTION_FILES:
             raise HostedHarnessError(
-                "participant_isolation_unavailable",
-                "Participant-specific source visibility is unavailable in this runtime.",
+                "source_request_invalid",
+                "The review contains invalid source decisions.",
                 status_code=422,
             )
-    head = environment.__class__.no_workspace_objects.select_related(
-        "environment_version", "suite_version"
-    ).get(id=environment.id)
-    if str(head.environment_version_id) != staged["environment_version_id"]:
+        for decision in decisions:
+            if not isinstance(decision, dict) or (
+                decision.get("audience") is not None
+                and not isinstance(decision["audience"], dict)
+            ):
+                raise HostedHarnessError(
+                    "source_request_invalid",
+                    "The review contains invalid source decisions.",
+                    status_code=422,
+                )
+            if (decision.get("audience") or {}).get("participant_ids"):
+                raise HostedHarnessError(
+                    "participant_isolation_unavailable",
+                    "Participant-specific source visibility is unavailable in this runtime.",
+                    status_code=422,
+                )
+        if key == "policy_reviews":
+            checked[key] = [
+                _policy_decision(decision, proposals) for decision in decisions
+            ]
+    checked["expected_draft_digest"] = staged["draft_payload"]["draft_digest"]
+    checked.setdefault("record_reviews", [])
+    checked.setdefault("policy_reviews", [])
+    return checked
+
+
+def _policy_decision(decision: dict, proposals: dict) -> dict:
+    rules = decision.get("rules", [])
+    if not isinstance(rules, list) or any(not isinstance(item, dict) for item in rules):
         raise HostedHarnessError(
-            "source_review_stale",
-            "The source review no longer matches the current Environment version.",
-            status_code=409,
+            "source_request_invalid",
+            "The review contains invalid policy decisions.",
+            status_code=422,
         )
+    checked = []
+    for item in rules:
+        proposal = item.get("proposal") or {}
+        rule_id = item.get("rule_id") or (
+            proposal.get("rule_id") if isinstance(proposal, dict) else None
+        )
+        if not isinstance(rule_id, str) or rule_id not in proposals:
+            raise HostedHarnessError(
+                "source_request_invalid",
+                "The review contains an unknown policy rule.",
+                status_code=422,
+            )
+        checked.append(
+            {"proposal": proposals[rule_id], "decision": item.get("decision")}
+        )
+    return {**decision, "rules": checked}
+
+
+def apply_environment_review(
+    request, head, staged: dict, basis: dict, review: dict
+) -> tuple[dict, str]:
     environment_version = (
         drafts.fresh_draft(head, "environment") or head.environment_version
     )
@@ -623,54 +716,13 @@ def accept_source_import(
         existing_projection = []
     if not isinstance(existing_projection, list):
         existing_projection = []
-    result = _alk_result(
-        execute_source_request(
-            {
-                "version": REQUEST_VERSION,
-                "operation": "accept",
-                "draft": staged["draft_payload"],
-                "review": review,
-                "reviewer_id": str(request.user.id),
-                "existing_environments": existing_projection,
-            }
-        )
+    result, snapshot, pins, private_object_digest = _accept_captured(
+        request, head, staged, review, existing_projection
     )
-    snapshot = result["snapshot"]
-    snapshot_digest = snapshot["data"]["snapshot_digest"]
-    pins = {
-        item["pin"]["source_id"]: item["pin"] for item in snapshot["data"]["sources"]
-    }
-    if set(pins) != {origin["source_id"] for origin in staged["origins"]}:
-        raise HostedHarnessError(
-            "source_snapshot_invalid",
-            "The accepted source snapshot is incomplete.",
-            status_code=409,
-        )
-    origins = []
-    for origin in staged["origins"]:
-        if pins[origin["source_id"]]["source_sha256"] != origin["parsed_sha256"]:
-            raise HostedHarnessError(
-                "source_snapshot_invalid",
-                "The accepted source revision does not match capture.",
-                status_code=409,
-            )
-        origins.append(origin)
-    private = _canonical(
-        {
-            "schema_version": 1,
-            "snapshot_digest": snapshot_digest,
-            "snapshot": snapshot,
-            "origins": origins,
-            "originals": staged["originals"],
-            "compiled": result["compiled"],
-        }
-    )
-    private_object_digest = "sha256:" + hashlib.sha256(private).hexdigest()
-    private_key = f"{SNAPSHOT_PREFIX}/{environment.organization_id}/{private_object_digest.removeprefix('sha256:')}.json"
-    _put_private(private_key, private)
-
+    environment = head
     compiled = result["compiled"]
     agent_projection = compiled["agent_environments"]
+    private_object_digest = "sha256:" + private_object_digest
     source_snapshot_digests = (
         dict(existing_manifest.get("source_snapshot_digests") or {})
         if isinstance(existing_manifest, dict)
@@ -686,15 +738,10 @@ def accept_source_import(
     aggregate_digest = (
         "sha256:" + hashlib.sha256(_canonical(aggregate_payload)).hexdigest()
     )
-    aggregate_key = f"{SNAPSHOT_PREFIX}/{environment.organization_id}/{aggregate_digest.removeprefix('sha256:')}.json"
+    aggregate_key = _snapshot_key(environment, aggregate_digest.removeprefix("sha256:"))
     _put_private(
         aggregate_key,
-        _canonical(
-            {
-                **aggregate_payload,
-                "snapshot_digest": aggregate_digest,
-            }
-        ),
+        _canonical({**aggregate_payload, "snapshot_digest": aggregate_digest}),
     )
     safe_sources = {
         item["source_id"]: item
@@ -724,32 +771,19 @@ def accept_source_import(
     }
     environment_files["sources/manifest.json"] = _canonical(manifest)
     environment_files["sources/tested-agent.json"] = _canonical(agent_projection)
-    if (
-        isinstance(existing_manifest, dict)
-        and private_object_digest
-        in (existing_manifest.get("private_snapshot_digests") or [])
-        and environment_version.status == "draft"
-    ):
-        return {
-            "draft": {
-                "id": str(environment_version.id),
-                "revision": environment_version.revision,
-            },
-            "snapshot_digest": aggregate_digest,
-            "sources": manifest["sources"],
-            "diagnostics": snapshot["data"].get("diagnostics", []),
-            "validation": validation,
-        }
     body = archives.pack_archive(archives.compose(environment_files, suite_files))
-    expected = {"environment": _ref_from(staged["draft"])}
     try:
         write = drafts.record_draft(
             head,
             body,
             origin="manual",
             user=request.user,
-            expected=expected,
+            expected={
+                "environment": _ref_from(basis["draft"]),
+                "suite": _ref_from(basis["suite_draft"]),
+            },
             pieces={"environment"},
+            checked={"suite"},
         )
     except HostedHarnessError as exc:
         if exc.code == "draft_changed":
@@ -761,13 +795,124 @@ def accept_source_import(
         raise
     draft = write.environment if write is not None else None
     return {
-        "draft": (
-            {"id": str(draft.id), "revision": draft.revision}
-            if draft is not None
-            else None
-        ),
+        "draft": {"id": str(draft.id), "revision": draft.revision}
+        if draft is not None
+        else None,
         "snapshot_digest": aggregate_digest,
         "sources": manifest["sources"],
-        "diagnostics": snapshot["data"].get("diagnostics", []),
+        "diagnostics": _safe_diagnostics(snapshot["data"].get("diagnostics", [])),
         "validation": validation,
-    }
+    }, private_object_digest.removeprefix("sha256:")
+
+
+def _accept_captured(request, owner, staged, review, existing_projection):
+    result = _alk_result(
+        execute_source_request(
+            {
+                "version": REQUEST_VERSION,
+                "operation": "accept",
+                "draft": staged["draft_payload"],
+                "review": _checked_review(request, staged, review),
+                "reviewer_id": str(request.user.id),
+                "existing_environments": existing_projection,
+            }
+        )
+    )
+    snapshot = result["snapshot"]
+    snapshot_digest = snapshot["data"]["snapshot_digest"]
+    reviewed = snapshot["data"]["sources"]
+    pins = {item["pin"]["source_id"]: item["pin"] for item in reviewed}
+    if len(pins) != len(reviewed) or set(pins) != {
+        origin["source_id"] for origin in staged["origins"]
+    }:
+        raise HostedHarnessError(
+            "source_snapshot_invalid",
+            "The accepted source snapshot is incomplete.",
+            status_code=409,
+        )
+    origins = []
+    bindings = []
+    for origin in staged["origins"]:
+        pin = pins[origin["source_id"]]
+        if pin["source_sha256"] != origin["parsed_sha256"]:
+            raise HostedHarnessError(
+                "source_snapshot_invalid",
+                "The accepted source revision does not match capture.",
+                status_code=409,
+            )
+        origins.append(origin)
+        identity = (
+            {"document_id": origin["document_id"]}
+            if origin["kind"] == "upload"
+            else {"kb_id": origin["kb_id"], "file_id": origin["file_id"]}
+        )
+        bindings.append(
+            {
+                **{
+                    key: pin[key]
+                    for key in ("source_id", "source_sha256", "parser_revision", "role")
+                },
+                "origin": {
+                    "kind": origin["kind"],
+                    **identity,
+                    "original_sha256": origin["original_sha256"],
+                },
+            }
+        )
+    private = _canonical(
+        {
+            "schema_version": 1,
+            "snapshot_digest": snapshot_digest,
+            "snapshot": snapshot,
+            "origins": origins,
+            "originals": staged["originals"],
+            "compiled": result["compiled"],
+            "launch_receipt": {
+                "review_id": staged["review_id"],
+                "snapshot_id": snapshot["data"]["snapshot_id"],
+                "snapshot_digest": snapshot_digest,
+                "bindings": sorted(bindings, key=lambda item: item["source_id"]),
+            },
+        }
+    )
+    digest = hashlib.sha256(private).hexdigest()
+    _put_private(_snapshot_key(owner, digest), private)
+    return result, snapshot, pins, digest
+
+
+def _snapshot_key(owner, digest: str) -> str:
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise ValueError("Invalid snapshot digest.")
+    workspace = getattr(owner, "workspace_id", None) or "unscoped"
+    return f"{SNAPSHOT_PREFIX}/{owner.organization_id}/{workspace}/{digest}.json"
+
+
+def accept_checkpoint_review(
+    request, owner, staged: dict, review: dict
+) -> tuple[dict, str]:
+    _, snapshot, pins, digest = _accept_captured(request, owner, staged, review, [])
+    return {
+        "draft": None,
+        "snapshot_digest": snapshot["data"]["snapshot_digest"],
+        "sources": [
+            {"source_id": key, "purpose": pin["role"]}
+            for key, pin in sorted(pins.items())
+        ],
+        "diagnostics": _safe_diagnostics(snapshot["data"].get("diagnostics", [])),
+        "validation": {"status": "accepted"},
+    }, digest
+
+
+def read_accepted_snapshot(owner, digest: str) -> tuple[bytes, dict]:
+    try:
+        raw = _get_private(_snapshot_key(owner, digest))
+        if hashlib.sha256(raw).hexdigest() != digest:
+            raise ValueError("Accepted snapshot digest mismatch")
+        artifact = json.loads(raw)
+        return _canonical(artifact["snapshot"]), artifact["launch_receipt"]
+    except (S3Error, ValueError, KeyError):
+        raise HostedHarnessError(
+            "source_snapshot_invalid",
+            "The accepted source snapshot could not be verified.",
+            status_code=409,
+        ) from None
