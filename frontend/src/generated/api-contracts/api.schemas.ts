@@ -24980,6 +24980,48 @@ export type HarnessSourceReviewReadApiPreview = { [key: string]: unknown };
 
 export type HarnessSourceReviewReadApiReceipt = { [key: string]: unknown };
 
+export type HarnessSourceScenarioGenerationApiState =
+  (typeof HarnessSourceScenarioGenerationApiState)[keyof typeof HarnessSourceScenarioGenerationApiState];
+
+export const HarnessSourceScenarioGenerationApiState = {
+  queued: "queued",
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+  stale: "stale",
+} as const;
+
+export interface HarnessSourceScenarioCitationApi {
+  /** @minLength 1 */
+  source_id: string;
+  page?: number;
+  row?: number;
+}
+
+export interface HarnessSourceGeneratedScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  /** @minLength 1 */
+  name: string;
+  citations: HarnessSourceScenarioCitationApi[];
+}
+
+export type HarnessSourceScenarioGenerationApiSuiteDraft = {
+  [key: string]: unknown;
+};
+
+export interface HarnessSourceScenarioGenerationApi {
+  id: string;
+  review_id: string;
+  state: HarnessSourceScenarioGenerationApiState;
+  /** @minLength 1 */
+  source_digest: string;
+  generated_scenarios: HarnessSourceGeneratedScenarioApi[];
+  suite_draft: HarnessSourceScenarioGenerationApiSuiteDraft;
+  /** @minLength 1 */
+  error: string;
+}
+
 export interface HarnessSourceReviewReadApi {
   id: string;
   state: HarnessSourceReviewReadApiState;
@@ -24990,6 +25032,7 @@ export interface HarnessSourceReviewReadApi {
   preview: HarnessSourceReviewReadApiPreview;
   receipt: HarnessSourceReviewReadApiReceipt;
   expires_at: string;
+  scenario_generation?: HarnessSourceScenarioGenerationApi;
 }
 
 export type HarnessSourceReviewAcceptApiDecisions = { [key: string]: unknown };

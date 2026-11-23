@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SourcesPanel from "../SourcesPanel";
 import DraftBar from "../../drafts/DraftBar";
+import { validateContractedResponse } from "src/api/contracts/openapi-contract";
 
 const api = vi.hoisted(() => ({
   get: vi.fn(),
@@ -150,6 +151,51 @@ const pickFiles = (files) =>
   fireEvent.change(screen.getByTestId("build-files"), { target: { files } });
 
 describe("SourcesPanel", () => {
+  it("validates the scenario generation envelope and its citation array", () => {
+    const reviewId = "3646e7d3-b8fe-46f4-aab9-fd666246f879";
+    const generation = {
+      id: "c5fc6a4c-5cb0-479b-8c4e-ca734315ea2b",
+      review_id: reviewId,
+      source_digest: "sha256:snapshot",
+      error: null,
+    };
+    const expectValid = (data) => {
+      const validation = validateContractedResponse({
+        config: {
+          method: "get",
+          url: `${indexPath}${reviewId}/scenario-generation/`,
+        },
+        status: 200,
+        data,
+      });
+      expect(
+        validation,
+        JSON.stringify(validation.error?.details),
+      ).toMatchObject({
+        ok: true,
+      });
+      expect(validation.skipped).toBeUndefined();
+    };
+    expectValid({
+      ...generation,
+      state: "queued",
+      generated_scenarios: [],
+      suite_draft: null,
+    });
+    expectValid({
+      ...generation,
+      state: "completed",
+      generated_scenarios: [
+        {
+          scenario_key: "refund-window",
+          name: "Refund review",
+          citations: [{ source_id: "approved-source", page: 2 }],
+        },
+      ],
+      suite_draft: { id: "47afcb70-ec98-4f5e-9be6-aa36dcc2cb50", revision: 1 },
+    });
+  });
+
   it("stages uploads and KB in one review and keeps the same request on a transport retry", async () => {
     api.upload.mockImplementation(async (file, { onProgress }) => {
       onProgress(42);

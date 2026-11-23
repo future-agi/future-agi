@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1221,
+  endpointCount: 1222,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -31180,6 +31180,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           403: {
             $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/scenario-generation/": {
+      get: {
+        operationId: "simulate_api_harness-source-reviews_scenario_generation",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceScenarioGeneration",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -74718,6 +74735,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
         },
+        scenario_generation: {
+          $ref: "#/definitions/HarnessSourceScenarioGeneration",
+        },
       },
     },
     HarnessSourceReviewReprepare: {
@@ -74748,6 +74768,58 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    },
+    HarnessSourceScenarioGeneration: {
+      required: [
+        "id",
+        "review_id",
+        "state",
+        "source_digest",
+        "generated_scenarios",
+        "suite_draft",
+        "error",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        review_id: {
+          title: "Review id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["queued", "running", "completed", "failed", "stale"],
+        },
+        source_digest: {
+          title: "Source digest",
+          type: "string",
+          minLength: 1,
+        },
+        generated_scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSourceGeneratedScenario",
+          },
+        },
+        suite_draft: {
+          title: "Suite draft",
+          type: "object",
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessSourceSummary: {
       required: ["draft", "snapshot_digest", "sources", "validation_status"],
@@ -116918,6 +116990,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessSourceGeneratedScenario: {
+      required: ["scenario_key", "name", "citations"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        citations: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSourceScenarioCitation",
+          },
+        },
+      },
+    },
     HarnessRowsUnavailable: {
       description: "Why the world's rows can't be read, or null when they can.",
       required: ["code", "reason"],
@@ -139543,6 +139637,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Call execution id",
           type: "string",
           format: "uuid",
+        },
+      },
+    },
+    HarnessSourceScenarioCitation: {
+      required: ["source_id"],
+      type: "object",
+      properties: {
+        source_id: {
+          title: "Source id",
+          type: "string",
+          minLength: 1,
+        },
+        page: {
+          title: "Page",
+          type: "integer",
+          "x-nullable": true,
+        },
+        row: {
+          title: "Row",
+          type: "integer",
+          "x-nullable": true,
         },
       },
     },

@@ -54807,6 +54807,29 @@ export const SimulateApiHarnessSourceReviewsReadResponse = zod.object({
   preview: zod.object({}).passthrough(),
   receipt: zod.object({}).passthrough(),
   expires_at: zod.string().datetime({ offset: true }),
+  scenario_generation: zod
+    .object({
+      id: zod.string().uuid(),
+      review_id: zod.string().uuid(),
+      state: zod.enum(["queued", "running", "completed", "failed", "stale"]),
+      source_digest: zod.string().min(1),
+      generated_scenarios: zod.array(
+        zod.object({
+          scenario_key: zod.string().min(1),
+          name: zod.string().min(1),
+          citations: zod.array(
+            zod.object({
+              source_id: zod.string().min(1),
+              page: zod.number().optional(),
+              row: zod.number().optional(),
+            }),
+          ),
+        }),
+      ),
+      suite_draft: zod.object({}).passthrough(),
+      error: zod.string().min(1),
+    })
+    .optional(),
 });
 
 export const SimulateApiHarnessSourceReviewsAcceptParams = zod.object({
@@ -54853,6 +54876,29 @@ export const SimulateApiHarnessSourceReviewsAcceptResponse = zod.object({
   preview: zod.object({}).passthrough(),
   receipt: zod.object({}).passthrough(),
   expires_at: zod.string().datetime({ offset: true }),
+  scenario_generation: zod
+    .object({
+      id: zod.string().uuid(),
+      review_id: zod.string().uuid(),
+      state: zod.enum(["queued", "running", "completed", "failed", "stale"]),
+      source_digest: zod.string().min(1),
+      generated_scenarios: zod.array(
+        zod.object({
+          scenario_key: zod.string().min(1),
+          name: zod.string().min(1),
+          citations: zod.array(
+            zod.object({
+              source_id: zod.string().min(1),
+              page: zod.number().optional(),
+              row: zod.number().optional(),
+            }),
+          ),
+        }),
+      ),
+      suite_draft: zod.object({}).passthrough(),
+      error: zod.string().min(1),
+    })
+    .optional(),
 });
 
 export const SimulateApiHarnessSourceReviewsCancelParams = zod.object({
@@ -54886,6 +54932,29 @@ export const SimulateApiHarnessSourceReviewsCancelResponse = zod.object({
   preview: zod.object({}).passthrough(),
   receipt: zod.object({}).passthrough(),
   expires_at: zod.string().datetime({ offset: true }),
+  scenario_generation: zod
+    .object({
+      id: zod.string().uuid(),
+      review_id: zod.string().uuid(),
+      state: zod.enum(["queued", "running", "completed", "failed", "stale"]),
+      source_digest: zod.string().min(1),
+      generated_scenarios: zod.array(
+        zod.object({
+          scenario_key: zod.string().min(1),
+          name: zod.string().min(1),
+          citations: zod.array(
+            zod.object({
+              source_id: zod.string().min(1),
+              page: zod.number().optional(),
+              row: zod.number().optional(),
+            }),
+          ),
+        }),
+      ),
+      suite_draft: zod.object({}).passthrough(),
+      error: zod.string().min(1),
+    })
+    .optional(),
 });
 
 export const SimulateApiHarnessSourceReviewsReprepareParams = zod.object({
@@ -54975,7 +55044,58 @@ export const SimulateApiHarnessSourceReviewsReprepareResponse = zod.object({
   preview: zod.object({}).passthrough(),
   receipt: zod.object({}).passthrough(),
   expires_at: zod.string().datetime({ offset: true }),
+  scenario_generation: zod
+    .object({
+      id: zod.string().uuid(),
+      review_id: zod.string().uuid(),
+      state: zod.enum(["queued", "running", "completed", "failed", "stale"]),
+      source_digest: zod.string().min(1),
+      generated_scenarios: zod.array(
+        zod.object({
+          scenario_key: zod.string().min(1),
+          name: zod.string().min(1),
+          citations: zod.array(
+            zod.object({
+              source_id: zod.string().min(1),
+              page: zod.number().optional(),
+              row: zod.number().optional(),
+            }),
+          ),
+        }),
+      ),
+      suite_draft: zod.object({}).passthrough(),
+      error: zod.string().min(1),
+    })
+    .optional(),
 });
+
+export const SimulateApiHarnessSourceReviewsScenarioGenerationParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessSourceReviewsScenarioGenerationResponse =
+  zod.object({
+    id: zod.string().uuid(),
+    review_id: zod.string().uuid(),
+    state: zod.enum(["queued", "running", "completed", "failed", "stale"]),
+    source_digest: zod.string().min(1),
+    generated_scenarios: zod.array(
+      zod.object({
+        scenario_key: zod.string().min(1),
+        name: zod.string().min(1),
+        citations: zod.array(
+          zod.object({
+            source_id: zod.string().min(1),
+            page: zod.number().optional(),
+            row: zod.number().optional(),
+          }),
+        ),
+      }),
+    ),
+    suite_draft: zod.object({}).passthrough(),
+    error: zod.string().min(1),
+  });
 
 export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =
   zod.object({

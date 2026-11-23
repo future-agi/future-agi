@@ -56877,6 +56877,39 @@
                 }
             ]
         },
+        "/simulate/api/harness-source-reviews/{id}/scenario-generation/": {
+            "get": {
+                "operationId": "simulate_api_harness-source-reviews_scenario_generation",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceScenarioGeneration"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
             "post": {
                 "operationId": "simulate_api_harness_attempts_artifacts_artifact_manifest",
@@ -159527,6 +159560,113 @@
                 }
             }
         },
+        "HarnessSourceScenarioCitation": {
+            "required": [
+                "source_id"
+            ],
+            "type": "object",
+            "properties": {
+                "source_id": {
+                    "title": "Source id",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "page": {
+                    "title": "Page",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "row": {
+                    "title": "Row",
+                    "type": "integer",
+                    "x-nullable": true
+                }
+            }
+        },
+        "HarnessSourceGeneratedScenario": {
+            "required": [
+                "scenario_key",
+                "name",
+                "citations"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "citations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessSourceScenarioCitation"
+                    }
+                }
+            }
+        },
+        "HarnessSourceScenarioGeneration": {
+            "required": [
+                "id",
+                "review_id",
+                "state",
+                "source_digest",
+                "generated_scenarios",
+                "suite_draft",
+                "error"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "review_id": {
+                    "title": "Review id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "completed",
+                        "failed",
+                        "stale"
+                    ]
+                },
+                "source_digest": {
+                    "title": "Source digest",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "generated_scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessSourceGeneratedScenario"
+                    }
+                },
+                "suite_draft": {
+                    "title": "Suite draft",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "HarnessSourceReviewRead": {
             "required": [
                 "id",
@@ -159584,6 +159724,9 @@
                     "title": "Expires at",
                     "type": "string",
                     "format": "date-time"
+                },
+                "scenario_generation": {
+                    "$ref": "#/definitions/HarnessSourceScenarioGeneration"
                 }
             }
         },
