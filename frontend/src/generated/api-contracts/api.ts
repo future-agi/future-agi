@@ -63167,19 +63167,26 @@ export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 = {
   status: 200;
 };
 
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200>;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
 };
 
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSuccess =
   simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseError =
-  simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseError = (
+  | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse403
+  | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type simulateApiHarnessEnvironmentsDraftsSaveDraftsResponse =
   | simulateApiHarnessEnvironmentsDraftsSaveDraftsResponseSuccess
