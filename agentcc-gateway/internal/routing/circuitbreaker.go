@@ -177,7 +177,21 @@ func (cb *CircuitBreaker) State() CircuitState {
 // the circuit is open the router skips the provider, so no request would otherwise reach Allow
 // to move the circuit to half-open; Allow and the half-open probes decide from there.
 func (cb *CircuitBreaker) readmitAfterCooldown() {
-	time.AfterFunc(cb.cfg.Cooldown, func() { cb.onStateChange(cb.providerID, true) })
+	time.AfterFunc(cb.cfg.Cooldown, cb.readmit)
+}
+
+// readmit follows the latest failure, including calls that were already in flight
+// when the circuit opened. Keep the check and callback under the same lock so a
+// late failure cannot move the cooldown between checking and returning to routing.
+func (cb *CircuitBreaker) readmit() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+
+	if wait := cb.cfg.Cooldown - time.Since(cb.lastFailure); cb.state == StateOpen && wait > 0 {
+		time.AfterFunc(wait, cb.readmit)
+		return
+	}
+	cb.onStateChange(cb.providerID, true)
 }
 
 // isFailure checks if an error counts as a circuit breaker failure.

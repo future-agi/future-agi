@@ -14,6 +14,16 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Reruns use a separate slot so diagnosing an old SHA cannot cancel newer work.
+  group: >-
+    migrations-callout-check-${{ github.event_name }}-${{
+    github.event_name == 'pull_request' && github.run_attempt == '1' &&
+    (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened') &&
+    format('pr-{0}', github.event.pull_request.number) ||
+    format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.run_attempt == '1' }}
+
 jobs:
   self-test:
     if: github.event_name == 'pull_request'
