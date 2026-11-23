@@ -36,7 +36,7 @@ const renderButton = (props = {}) =>
   );
 
 const openMenu = () =>
-  fireEvent.click(screen.getByRole("button", { name: /create agents/i }));
+  fireEvent.click(screen.getByRole("button", { name: /new agent/i }));
 
 describe("CreateAgentsButton", () => {
   beforeEach(() => {
