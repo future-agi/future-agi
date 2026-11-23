@@ -381,10 +381,6 @@ export default function RunDialog({
           />
         )}
         <HeldBackBox
-          envId={env?.id}
-          picks={picks}
-          keys={selectionKeys}
-          report={readyView?.computedAt}
           shownRows={readyView?.open.map((line) => line.rowId)}
           selection={selection}
         />

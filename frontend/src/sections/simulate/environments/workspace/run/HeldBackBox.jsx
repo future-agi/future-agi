@@ -9,7 +9,6 @@ import {
   useMediaQuery,
 } from "@mui/material";
 
-import { useReadinessCases } from "src/api/simulate-environments/readiness";
 import { RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 
 const boxSx = {
@@ -21,23 +20,10 @@ const boxSx = {
 
 // The scenarios a run holds back, from the readiness report: each reason in plain words with how many it holds,
 // and, one click away, each held scenario with what holds it. Held ones are never sent.
-export default function HeldBackBox({
-  envId,
-  picks,
-  keys,
-  report,
-  shownRows = [],
-  selection,
-}) {
+export default function HeldBackBox({ shownRows = [], selection }) {
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [showNames, setShowNames] = useState(false);
   const held = selection?.held_back;
-  const cases = useReadinessCases(envId, {
-    picks,
-    keys,
-    report,
-    enabled: showNames && Boolean(held?.count),
-  });
   if (!held?.count) return null;
   // A reason Ready to run already shows as a line isn't said twice.
   const reasons = Object.entries(held.by ?? {}).filter(
@@ -46,16 +32,12 @@ export default function HeldBackBox({
   const rowName = Object.fromEntries(
     (selection.held_by ?? []).map((one) => [one.id, one.name]),
   );
-  // Each held scenario with its reasons once the cases page lands; the names alone until then.
-  const items = cases.data
-    ? cases.data
-        .filter((one) => one.by?.length)
-        .map((one) => ({
-          key: one.key,
-          text: `${one.name || one.key} · ${one.by.map((id) => rowName[id] || id).join(", ")}`,
-        }))
-    : held.keys.map((key) => ({ key, text: held.names?.[key] || key }));
-  const more = held.truncated || held.count > items.length;
+  // Each held scenario by name, with the row it is held under (`by_key`) when the report says.
+  const items = held.keys.map((key) => {
+    const name = held.names?.[key] || key;
+    const row = held.by_key?.[key];
+    return { key, text: row ? `${name} · ${rowName[row] || row}` : name };
+  });
   return (
     <Box sx={boxSx} data-testid="run-held-back">
       <Typography
@@ -95,7 +77,7 @@ export default function HeldBackBox({
           {items.map((one) => (
             <li key={one.key}>{one.text}</li>
           ))}
-          {more && <li>…</li>}
+          {held.truncated && <li>…</li>}
         </Box>
       </Collapse>
     </Box>
@@ -103,12 +85,6 @@ export default function HeldBackBox({
 }
 
 HeldBackBox.propTypes = {
-  envId: PropTypes.string,
-  picks: PropTypes.object,
-  // The scenarios the run would send; null is the whole suite.
-  keys: PropTypes.arrayOf(PropTypes.string),
-  // When the report was worked out, so the names match its counts.
-  report: PropTypes.string,
   // The readiness rows Ready to run shows as lines.
   shownRows: PropTypes.arrayOf(PropTypes.string),
   // The report's selection for the picked versions and scenarios.
@@ -118,6 +94,8 @@ HeldBackBox.propTypes = {
       keys: PropTypes.arrayOf(PropTypes.string),
       names: PropTypes.object,
       by: PropTypes.object,
+      // The row each listed scenario is held under, by key.
+      by_key: PropTypes.objectOf(PropTypes.string),
       truncated: PropTypes.bool,
     }),
     reasons: PropTypes.object,

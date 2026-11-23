@@ -1016,6 +1016,7 @@ describe("RunDialog", () => {
         keys: ["k2"],
         names: { k2: "Refund twice" },
         by: { not_proved: 1 },
+        by_key: { k2: "not_proved" },
         truncated: false,
       },
       reasons: { not_proved: "Not proved on these versions yet" },
@@ -1041,15 +1042,10 @@ describe("RunDialog", () => {
       expect(
         screen.getByText("Not proved on these versions yet · 1"),
       ).toBeInTheDocument();
-      state.cases = [
-        { key: "k1", name: "Refund once", by: [] },
-        { key: "k2", name: "Refund twice", by: ["not_proved"] },
-      ];
       await user.click(screen.getByRole("button", { name: "Show which" }));
       expect(
         screen.getByText("Refund twice · Not proved here"),
       ).toBeInTheDocument();
-      expect(screen.queryByText(/Refund once/)).toBeNull();
       expect(runButton()).toHaveTextContent("Run 1 scenario");
     });
 
