@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
 // The hooks are stubbed; tests set the drafts and each mutation's state.
-const state = { drafts: undefined, save: {}, discard: {} };
+const state = { drafts: undefined, save: {}, discard: {}, generation: null };
 const saveMutate = vi.fn();
 const discardMutate = vi.fn();
 const saveReset = vi.fn();
@@ -35,9 +35,11 @@ vi.mock("src/api/simulate-environments/versions", async () => {
 });
 vi.mock("src/api/simulate-environments/sourceImports", async (original) => ({
   ...(await original()),
-  useActiveEnvironmentSourceReview: () => ({ reviewId: null }),
-  useEnvironmentSourceReview: () => ({ data: null }),
-  useEnvironmentSourceGeneration: () => ({ data: null }),
+  useActiveEnvironmentSourceReview: () => ({ reviewId: "review-1" }),
+  useEnvironmentSourceReview: () => ({
+    data: { id: "review-1", receipt: { draft: { id: "ed" } } },
+  }),
+  useEnvironmentSourceGeneration: () => ({ data: state.generation }),
 }));
 
 const { default: DraftBar } = await import("../DraftBar");
@@ -82,6 +84,7 @@ beforeEach(() => {
   state.drafts = both();
   state.save = {};
   state.discard = {};
+  state.generation = null;
   saveMutate.mockReset();
   discardMutate.mockReset();
   saveReset.mockReset();
@@ -148,6 +151,38 @@ describe("DraftBar", () => {
     expect(saveButton()).toHaveAccessibleDescription(reason);
     expect(discardButton()).toHaveAccessibleDescription(reason);
     expect(screen.getByRole("button", { name: "View changes" })).toBeEnabled();
+  });
+
+  it.each([
+    ["queued", DRAFTS_COPY.errors.source_generation_in_progress],
+    ["running", DRAFTS_COPY.errors.source_generation_in_progress],
+    ["failed", DRAFTS_COPY.errors.source_generation_not_ready],
+    ["stale", DRAFTS_COPY.errors.source_generation_not_ready],
+  ])("blocks Save during %s source generation", (status, reason) => {
+    state.generation = { state: status };
+    render(<DraftBar env={ENV} />);
+    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAccessibleDescription(reason);
+    expect(discardButton()).toBeEnabled();
+  });
+
+  it("allows Save once the generated suite revision is loaded", () => {
+    state.generation = { state: "completed", suite_draft: { id: "sd", revision: 2 } };
+    const { rerender } = render(<DraftBar env={ENV} />);
+    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAccessibleDescription(
+      DRAFTS_COPY.refreshingGeneratedScenarios,
+    );
+    state.drafts = both({ suite: { revision: 2 } });
+    rerender(<DraftBar env={ENV} />);
+    expect(saveButton()).toBeEnabled();
+  });
+
+  it("ignores failed generation for a discarded draft", () => {
+    state.generation = { state: "failed" };
+    state.drafts = both({ environment: { id: "replacement" } });
+    render(<DraftBar env={ENV} />);
+    expect(saveButton()).toBeEnabled();
   });
 
   it("shows the save in progress and blocks a second action", () => {

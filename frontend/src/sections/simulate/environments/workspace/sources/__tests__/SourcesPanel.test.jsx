@@ -403,6 +403,7 @@ describe("SourcesPanel", () => {
     serverReview = {
       ...ready,
       state: "accepted",
+      receipt: { draft: { id: "draft-1", revision: 1 } },
       scenario_generation: generation,
     };
     const fallback = api.get.getMockImplementation();
@@ -413,7 +414,10 @@ describe("SourcesPanel", () => {
         return {
           data: {
             environment: { id: "draft-1", parent_id: "env-v1", revision: 1 },
-            suite: null,
+            suite:
+              generation.state === "completed"
+                ? { id: "suite-1", parent_id: "suite-v1", revision: 1 }
+                : null,
           },
         };
       }
@@ -429,6 +433,7 @@ describe("SourcesPanel", () => {
     generation = {
       ...generation,
       state: "completed",
+      suite_draft: { id: "suite-1", revision: 1 },
       generated_scenarios: [
         {
           scenario_key: "refund-window",
@@ -445,7 +450,7 @@ describe("SourcesPanel", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("policy.pdf · Page 2")).toBeInTheDocument();
-    expect(save).toBeEnabled();
+    await waitFor(() => expect(save).toBeEnabled());
     expect(api.post).not.toHaveBeenCalled();
   });
 });

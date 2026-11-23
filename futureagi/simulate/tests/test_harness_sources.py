@@ -9,15 +9,22 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Files, KnowledgeBaseFile
+from simulate.models import HostedHarnessJob
 from simulate.services import harness_source_generation, harness_sources
 from simulate.services import harness_source_reviews as reviews
-from simulate.services.harness_versioning import archives, drafts, versions
+from simulate.services.harness_versioning import archives, assembly, drafts, versions
+from simulate.services.harness_versioning.versions import record_authoring
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.tests.test_harness_unpinned_runs import _held
+from simulate.tests.test_harness_versioning_backfill import (
+    _agent_version,
+    _definition,
+)
 from simulate.tests.test_harness_versioning_backfill import (
     storage as _storage_fixture,  # noqa: F401
 )
-from simulate.tests.test_harness_versioning_record import _save_drafts
-from simulate.tests.test_harness_versioning_rollback import _built
+from simulate.tests.test_harness_versioning_record import _authoring, _environment
+from simulate.tests.test_harness_versioning_rollback import _built, _rows
 
 pytestmark = pytest.mark.django_db
 
@@ -35,10 +42,51 @@ def staging_expiry_scheduled(monkeypatch):
 
 
 def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
-    user, workspace, request, monkeypatch
+    user, workspace, request, monkeypatch, auth_client
 ):
     storage = request.getfixturevalue("_storage_fixture")
-    environment = _built(user, workspace, "source-import")
+    environment = _environment(user, workspace, "source-import")
+    agent = _agent_version(_definition(user, workspace))
+    _held(agent)
+    environment.agent_version = agent
+    environment.save(update_fields=["agent_version", "updated_at"])
+    agent_source = "b" * 64
+    old_seal = "sha256:" + "c" * 64
+    new_seal = "sha256:" + "d" * 64
+    previous_pin = {
+        "id": "previous-source",
+        "digest": "sha256:" + "e" * 64,
+        "schema_digest": "sha256:" + "f" * 64,
+    }
+    pin_path = "reviewed-source.json"
+    bundled_pin_path = f"environment-bundle/{pin_path}"
+
+    def certifies(digest):
+        return json.dumps(
+            {"compiler": {"bundle_digest": digest}, "source": {"digest": agent_source}}
+        )
+
+    record_authoring(
+        environment,
+        _authoring(
+            **{
+                assembly.SEALED_MANIFEST: json.dumps(
+                    {
+                        "digest": old_seal,
+                        "provenance": {"source_digest": agent_source},
+                        "metadata": {"reviewed_source": previous_pin},
+                    }
+                ),
+                assembly.CERTIFICATE: certifies(old_seal),
+                pin_path: harness_sources._canonical(previous_pin).decode(),
+                bundled_pin_path: harness_sources._canonical(previous_pin).decode(),
+            }
+        ),
+        origin="authoring",
+    )
+    environment.refresh_from_db()
+    _rows(environment)
+    default_authoring = drafts._default_authoring(environment)
     kb = KnowledgeBaseFile.no_workspace_objects.create(
         name="Support docs",
         organization=user.organization,
@@ -62,6 +110,64 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
     trusted_scenarios = []
 
     def alk(payload):
+        if payload["operation"] == "reseal_scenarios":
+            assert generation.__class__.objects.get(pk=generation.id).state == "running"
+            assert payload["mode"] == "existing_environment"
+            assert payload["generated_scenario_keys"] == [
+                case["native"]["scenario_key"] for case in trusted_scenarios
+            ]
+            assert payload["schema_digest"] == generation.review.basis["schema_digest"]
+            tree = archives.read_archive(
+                base64.b64decode(payload["authoring_archive_base64"])
+            )
+            assert (
+                tree["contract.json"] == default_authoring.environment["contract.json"]
+            )
+            assert assembly.manifest_facts(tree) == (old_seal, agent_source)
+            snapshot = payload["snapshot"]["data"]
+            pin = {
+                "id": snapshot["snapshot_id"],
+                "digest": snapshot["snapshot_digest"],
+                "schema_digest": payload["schema_digest"],
+            }
+            assert snapshot["snapshot_id"] == "snapshot-kb"
+            assert tree[pin_path] == harness_sources._canonical(pin)
+            assert json.loads(tree[bundled_pin_path]) == previous_pin
+            for key in payload["generated_scenario_keys"]:
+                tree[f"scenarios/{key}/setup.py"] = b"def setup(world): pass\n"
+                tree[f"scenarios/{key}/ready.py"] = b"def ready(world): return True\n"
+            sealed = {
+                assembly.SEALED_MANIFEST: json.dumps(
+                    {
+                        "digest": new_seal,
+                        "provenance": {"source_digest": agent_source},
+                        "metadata": {
+                            "sealed_from": drafts.sealed_from(tree),
+                            "reviewed_source": pin,
+                        },
+                    }
+                ).encode(),
+                assembly.CERTIFICATE: certifies(new_seal).encode(),
+                bundled_pin_path: harness_sources._canonical(pin),
+            }
+            for case in trusted_scenarios:
+                folder = f"scenarios/{case['native']['scenario_key']}"
+                for name in ("scenario.json", "setup.py", "ready.py"):
+                    path = f"{folder}/{name}"
+                    sealed[f"environment-bundle/{path}"] = tree[path]
+            updated = archives.split_authoring(tree)
+            return {
+                "ok": True,
+                "result": {
+                    "authoring_archive_base64": base64.b64encode(
+                        archives.pack_archive(
+                            archives.compose(updated.environment, updated.suite, sealed)
+                        )
+                    ).decode(),
+                    "bundle_digest": new_seal,
+                    "reviewed_source": pin,
+                },
+            }
         if payload["operation"] == "prepare":
             assert "destination_schema" not in payload
             content = base64.b64decode(payload["sources"][0]["content_base64"])
@@ -179,6 +285,38 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
         == "queued"
     )
     original_suite_id = environment.suite_version_id
+    original_environment_id = environment.environment_version_id
+    drafts_path = f"/simulate/api/harness-environments/{environment.id}/drafts/"
+    source_draft = drafts.fresh_draft(environment, "environment")
+    source_only = [
+        {
+            "piece": "environment",
+            "expected_parent_id": str(source_draft.parent_id),
+            "expected_revision": source_draft.revision,
+        }
+    ]
+
+    def save(pieces):
+        return auth_client.post(
+            drafts_path + "save/",
+            {"drafts": pieces, "idempotency_key": "save-reviewed-sources"},
+            format="json",
+        )
+
+    for status, error in (
+        ("queued", "source_generation_in_progress"),
+        ("failed", "source_generation_not_ready"),
+        ("stale", "source_generation_not_ready"),
+        ("running", "source_generation_in_progress"),
+    ):
+        generation.state = status
+        generation.save(update_fields=["state"])
+        response = save(source_only)
+        assert response.status_code == 409
+        assert response.json()["error"] == error
+    environment.refresh_from_db()
+    assert environment.environment_version_id == original_environment_id
+    assert environment.suite_version_id == original_suite_id
     templates = versions.suite_documents(drafts.edit_sides(environment)["suite"])
     source_id = prepared_draft["sources"][0]["pin"]["source_id"]
     for number, template in enumerate(templates, start=1):
@@ -204,15 +342,63 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
     assert environment.suite_version_id == original_suite_id
     suite_draft = drafts.fresh_draft(environment, "suite")
     assert len((suite_draft.documents or {})["scenarios"]) == len(templates) * 2
-    suite_draft.delete()
-    source_draft = drafts.fresh_draft(environment, "environment")
+    bundle = suite_draft.documents["workspace_sealed"]
+    assert bundle["resealed"] is True
+    assert bundle["environment_hash"] == source_draft.hash
+    assert bundle["suite_hash"] == suite_draft.hash
+    sealed = archives.read_archive(archives.get_archive(bundle["key"]))
+    assert assembly.certifies_bundle(sealed)
+    assert assembly.manifest_facts(sealed) == (new_seal, agent_source)
+    accepted_pin = {
+        "id": "snapshot-kb",
+        "digest": "sha256:" + "a" * 64,
+        "schema_digest": generation.review.basis["schema_digest"],
+    }
+    assert (
+        json.loads(sealed[assembly.SEALED_MANIFEST])["metadata"]["reviewed_source"]
+        == accepted_pin
+    )
+    assert json.loads(sealed[bundled_pin_path]) == accepted_pin
     files = archives.read_archive(archives.get_archive(source_draft.archive_object_key))
+    assert json.loads(files[pin_path]) == accepted_pin
+    assert json.loads(default_authoring.environment[pin_path]) == previous_pin
     assert b"REFERENCE_SENTINEL" in files["sources/tested-agent.json"]
     assert b"REFERENCE_SENTINEL" not in files["sources/manifest.json"]
-    saved = _save_drafts(environment, user=user)
+    stale_response = save(source_only)
+    assert stale_response.status_code == 409
+    assert stale_response.json()["error"] == "draft_changed"
+    refreshed = auth_client.get(drafts_path).json()
+    paired = [
+        {
+            "piece": piece,
+            "expected_parent_id": refreshed[piece]["parent_id"],
+            "expected_revision": refreshed[piece]["revision"],
+        }
+        for piece in ("environment", "suite")
+    ]
+    mismatched = [
+        paired[0],
+        {**paired[1], "expected_revision": suite_draft.revision + 1},
+    ]
+    assert save(mismatched).status_code == 409
+    other = _agent_version(_definition(user, workspace, name="Different fixture agent"))
+    owner = HostedHarnessJob.no_workspace_objects.filter(pk=environment.id)
+    owner.update(agent_version=other)
+    assert save(paired).status_code == 409
+    owner.update(agent_version=agent)
+    saved_response = save(paired)
+    assert saved_response.status_code == 200, saved_response.json()
+    saved = saved_response.json()
+    environment.refresh_from_db()
     assert saved["saved"]["environment"]["id"] == str(
         environment.environment_version_id
     )
+    assert saved["saved"]["suite"]["id"] == str(environment.suite_version_id)
+    assert environment.suite_version_id != original_suite_id
+    assert environment.payload["metadata"]["default_pair_sealed"] is True
+    assert not HostedHarnessJob.no_workspace_objects.filter(
+        environment=environment
+    ).exists()
     assert drafts.fresh_draft(environment, "environment") is None
     private_keys = [
         key

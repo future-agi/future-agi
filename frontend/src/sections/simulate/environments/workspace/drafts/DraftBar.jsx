@@ -1,10 +1,12 @@
 import PropTypes from "prop-types";
 import { useEffect, useId, useRef, useState } from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { relativeTime } from "src/utils/format-time";
 import {
+  draftsKey,
   useDiscardDraft,
   useDrafts,
   useSaveDrafts,
@@ -59,6 +61,7 @@ export default function DraftBar({
   onViewChanges,
 }) {
   const enabled = Boolean(env?.versioning?.enabled);
+  const queryClient = useQueryClient();
   const { data: drafts } = useDrafts(env?.id, { enabled });
   const { reviewId } = useActiveEnvironmentSourceReview(env?.id);
   const { data: review } = useEnvironmentSourceReview(
@@ -76,7 +79,28 @@ export default function DraftBar({
   const busyId = useId();
   const holdId = useId();
   const generationId = useId();
-  const generatingScenarios = sourceGenerationPending(sourceGeneration);
+  const affectedDraft = review?.receipt?.draft?.id === drafts?.environment?.id;
+  const sealedSuite = sourceGeneration?.suite_draft;
+  const awaitingSuite =
+    affectedDraft &&
+    sourceGeneration?.state === "completed" &&
+    (drafts?.suite?.id !== sealedSuite?.id ||
+      drafts?.suite?.revision < sealedSuite?.revision);
+  const generationBlocked =
+    affectedDraft &&
+    sourceGeneration &&
+    (sourceGeneration.state !== "completed" || awaitingSuite);
+  let generationReason = COPY.errors.source_generation_not_ready;
+  if (sourceGenerationPending(sourceGeneration)) {
+    generationReason = COPY.errors.source_generation_in_progress;
+  } else if (awaitingSuite) {
+    generationReason = COPY.refreshingGeneratedScenarios;
+  }
+  useEffect(() => {
+    if (awaitingSuite) {
+      queryClient.invalidateQueries({ queryKey: draftsKey(env.id) });
+    }
+  }, [awaitingSuite, env?.id, queryClient]);
 
   // A refusal is about the drafts it was sent for, so it goes when they
   // change. draft_changed stays: it asks to review the drafts it refetched.
@@ -106,7 +130,7 @@ export default function DraftBar({
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
   const saveReasons = [
     staleReason && staleId,
-    generatingScenarios && generationId,
+    generationBlocked && generationId,
     ...holdReasons,
   ].filter(Boolean);
 
@@ -209,12 +233,12 @@ export default function DraftBar({
           {COPY.busy}
         </Typography>
       )}
-      {generatingScenarios && (
+      {generationBlocked && (
         <Typography
           id={generationId}
           sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
         >
-          Save becomes available when source scenario generation finishes.
+          {generationReason}
         </Typography>
       )}
       {rebuilding && (

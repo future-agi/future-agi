@@ -55,6 +55,11 @@ def test_sealed_from_digests_only_the_reseal_inputs():
 
     assert drafts.sealed_from(files) == GOLDEN_SEALED_FROM
 
+    files["reviewed-source.json"] = b'{"digest":"approved"}'
+    assert drafts.sealed_from(files) == (
+        "sha256:ef37ce48f2038c124628f5120568eb817d3747523a7031677568ebec7cbbc8fc"
+    )
+
 
 def test_a_bundle_stamped_for_this_tree_is_resealed(head):
     tree = {**BUILT, "world.sqlite": b"edited"}

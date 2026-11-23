@@ -27,6 +27,7 @@ from urllib3.exceptions import HTTPError
 from simulate.models import (
     HarnessEnvironmentVersion,
     HarnessNudge,
+    HarnessSourceScenarioGeneration,
     HarnessSuiteMember,
     HarnessSuiteVersion,
     HostedHarnessConversation,
@@ -361,9 +362,19 @@ def _sealed_files(key: str) -> dict[str, bytes] | None:
 
 # What a chat reseal carries from the authoring tree into its bundle; ALK stamps their
 # digest into the manifest as ``metadata.sealed_from``.
-RESEAL_INPUTS = frozenset({"contract.json", "sub_goals.json", "world.sqlite"})
+RESEAL_INPUTS = frozenset(
+    {"contract.json", "sub_goals.json", "world.sqlite", "reviewed-source.json"}
+)
 # The authoring world's own bookkeeping, which no v2 bundle carries.
-UNBUNDLED = frozenset({"manifest.json", "world.py", "state.json"})
+UNBUNDLED = frozenset(
+    {
+        "manifest.json",
+        "world.py",
+        "state.json",
+        "sources/manifest.json",
+        "sources/tested-agent.json",
+    }
+)
 
 
 def sealed_from(files: Mapping[str, bytes]) -> str:
@@ -1351,6 +1362,65 @@ def _saved_body(locked: HostedHarnessJob, saved: Mapping[str, Any]) -> dict[str,
     }
 
 
+def _require_source_scenario_pair(
+    locked: HostedHarnessJob, requests: Mapping[str, SaveRequest]
+) -> None:
+    # The generation worker takes this same owner lock when recording the suite draft.
+    environment_draft = open_draft(locked, "environment")
+    if environment_draft is None:
+        return
+    state = HarnessSourceScenarioGeneration.State
+    generations = HarnessSourceScenarioGeneration.objects.filter(
+        review__owner=locked,
+        basis__environment__id=str(environment_draft.id),
+    )
+    if generations.filter(state__in=(state.QUEUED, state.RUNNING)).exists():
+        raise _error(
+            "source_generation_in_progress",
+            "Wait for scenario generation to finish before saving.",
+            409,
+            piece="suite",
+        )
+    latest = (
+        generations.order_by("-basis__environment__revision")
+        .values("state", "basis", "result")
+        .first()
+    )
+    if latest is None:
+        return
+    if latest["state"] != state.COMPLETED:
+        raise _error(
+            "source_generation_not_ready",
+            "Prepare the sources again or discard the draft before saving.",
+            409,
+            piece="suite",
+        )
+    generated_draft = latest["result"]["suite_draft"]
+    generated_basis = latest["basis"]
+    agent = str(locked.agent_version_id) if locked.agent_version_id else None
+    authoring_key = ((locked.payload or {}).get("metadata") or {}).get(
+        "authoring_object_key"
+    )
+    suite = open_draft(locked, "suite")
+    suite_request = requests.get("suite")
+    if (
+        "environment" not in requests
+        or suite_request is None
+        or suite is None
+        or generated_basis.get("agent_version_id") != agent
+        or generated_basis.get("authoring_key") != authoring_key
+        or str(suite.id) != generated_draft["id"]
+        or suite.revision < generated_draft["revision"]
+        or suite_request.expected_revision != suite.revision
+    ):
+        raise _error(
+            "draft_changed",
+            "Review and save the Environment and its generated scenarios together.",
+            409,
+            piece="suite",
+        )
+
+
 def save_drafts(
     environment: HostedHarnessJob,
     requests: Mapping[str, SaveRequest],
@@ -1376,6 +1446,7 @@ def save_drafts(
                     status_code=409,
                 )
             return _saved_body(locked, _replayed(locked, earlier["pieces"]))
+        _require_source_scenario_pair(locked, requests)
         for piece in DRAFT_PIECES:
             if piece not in pieces:
                 continue

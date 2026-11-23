@@ -661,6 +661,7 @@ export const DRAFTS_COPY = {
   stale: (piece, from, now) =>
     `These unsaved changes started from ${piece} ${from || "an earlier version"}; it is now ${now || "a newer version"}. Discard them, or ask chat to make them again on the current version.`,
   busy: "Chat is working; save when it finishes",
+  refreshingGeneratedScenarios: "Refreshing the generated scenarios…",
   saveError: "Couldn't save the changes. Try again in a moment.",
   discardError: "Couldn't discard the changes. Try again in a moment.",
   errors: {
@@ -672,6 +673,10 @@ export const DRAFTS_COPY = {
     environment_busy:
       "The environment is being built or updated; try again when it finishes",
     draft_not_found: "These changes were already saved or discarded.",
+    source_generation_in_progress:
+      "Save becomes available when source scenario generation finishes.",
+    source_generation_not_ready:
+      "Prepare the sources again or discard the draft before saving.",
     idempotency_key_reused:
       "These changes moved while saving; press Save again.",
   },

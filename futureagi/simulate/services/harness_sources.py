@@ -855,6 +855,13 @@ def apply_environment_review(
     }
     environment_files["sources/manifest.json"] = _canonical(manifest)
     environment_files["sources/tested-agent.json"] = _canonical(agent_projection)
+    environment_files["reviewed-source.json"] = _canonical(
+        {
+            "id": snapshot["data"]["snapshot_id"],
+            "digest": snapshot["data"]["snapshot_digest"],
+            "schema_digest": basis["schema_digest"],
+        }
+    )
     body = archives.pack_archive(archives.compose(environment_files, suite_files))
     try:
         write = drafts.record_draft(
