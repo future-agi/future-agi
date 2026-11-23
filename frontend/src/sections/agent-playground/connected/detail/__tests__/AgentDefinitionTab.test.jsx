@@ -131,21 +131,22 @@ describe("AgentDefinitionTab", () => {
   it("shows a hosted agent's configuration for the active version", async () => {
     serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
     renderAt(HOSTED_AGENT_DETAIL);
-    expect(await screen.findByText("Configuration")).toBeInTheDocument();
     expect(await screen.findByText("v2")).toBeInTheDocument();
     expect(screen.getByText("Read-only · read from Vapi")).toBeInTheDocument();
     expect(await screen.findByText("sk-a...9f2c")).toBeInTheDocument();
     expect(screen.getByText("gpt-4o")).toBeInTheDocument();
   });
 
-  it("lays out Identity, Source and Reach from the version", async () => {
+  it("lays out the prompt, then every other field in one table", async () => {
     serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
     renderAt(HOSTED_AGENT_DETAIL);
     await screen.findByText("sk-a...9f2c");
-    ["Identity", "Source", "Reach", "Configuration", "Links"].forEach((t) =>
+    // Source, identity, reach and links sit in one table, beside the configuration.
+    ["Lives in", "Observe project", "Environments"].forEach((t) =>
       expect(screen.getByText(t)).toBeInTheDocument(),
     );
-    expect(screen.getByText("Northwind Pharmacy")).toBeInTheDocument();
+    // The name is the page title, so the tab doesn't repeat it.
+    expect(screen.queryByText("Northwind Pharmacy")).toBeNull();
     // The type under Identity, and the Voice row under Reach.
     expect(screen.getAllByText("Voice")).toHaveLength(2);
     expect(screen.getByText("es")).toBeInTheDocument();
@@ -344,7 +345,7 @@ describe("AgentDefinitionTab", () => {
   it("shows no Files card for a hosted agent", async () => {
     serve(HOSTED_AGENT_DETAIL, { "v2-id": HOSTED_VERSION_DETAIL });
     renderAt(HOSTED_AGENT_DETAIL);
-    await screen.findByText("Configuration");
+    await screen.findByText("sk-a...9f2c");
     expect(screen.queryByTestId("code-card")).toBeNull();
   });
 
@@ -355,10 +356,10 @@ describe("AgentDefinitionTab", () => {
         : Promise.resolve({ data: HOSTED_AGENT_DETAIL }),
     );
     renderAt(HOSTED_AGENT_DETAIL);
-    // Once the agent is in, Identity, Source and Reach still wait for the
-    // version, two rows each, beside Configuration's four.
+    // Once the agent is in, the whole definition still waits for the
+    // version: one set of four skeleton rows.
     await waitFor(() =>
-      expect(screen.getAllByTestId("definition-row-skeleton")).toHaveLength(10),
+      expect(screen.getAllByTestId("definition-row-skeleton")).toHaveLength(4),
     );
     expect(screen.queryByText("Northwind Pharmacy")).toBeNull();
   });
@@ -372,7 +373,7 @@ describe("AgentDefinitionTab", () => {
     renderAt(HOSTED_AGENT_DETAIL);
     expect(
       (await screen.findAllByText("Couldn't load this version")).length,
-    ).toBeGreaterThanOrEqual(3);
+    ).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText("+14155550100")).toBeNull();
   });
 

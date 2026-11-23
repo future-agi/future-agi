@@ -157,11 +157,9 @@ describe("AgentNextSteps", () => {
     expect(screen.getByText("Next steps")).toBeInTheDocument();
     expect(traces()).toHaveTextContent("From real calls");
     expect(traces()).toHaveTextContent("Get its traces");
+    // One line per way: what to do, and what it gives.
     expect(traces()).toHaveTextContent(
-      "Choose the Observe project its production calls land in.",
-    );
-    expect(traces()).toHaveTextContent(
-      "Error Feed finds issues in real calls, and Fix can repair them.",
+      "Link its Observe project so Error Feed finds issues in real calls and Fix can repair them.",
     );
     expect(environment()).toHaveTextContent("In simulation");
     expect(environment()).toHaveTextContent("Build an environment");
@@ -319,7 +317,7 @@ describe("AgentNextSteps", () => {
     axios.put.mockResolvedValue({ data: { message: "ok" } });
     renderCard(hostedAgent());
     expect(traces()).toHaveTextContent("Enable observability");
-    expect(traces()).toHaveTextContent("Its Vapi calls are pulled into");
+    expect(traces()).toHaveTextContent("Pull its Vapi calls into Observe");
     expect(screen.queryByText("Connect traces")).toBeNull();
     fireEvent.click(
       within(traces()).getByRole("button", { name: "Turn on observability" }),
@@ -351,7 +349,7 @@ describe("AgentNextSteps", () => {
 
   it("offers nothing to turn on for a hosted agent with no provider", () => {
     renderCard(hostedAgent({ source: null, provider: null }));
-    expect(traces()).toHaveTextContent("Add a provider to this agent first");
+    expect(traces()).toHaveTextContent("Add a provider first");
     expect(traces()).not.toHaveTextContent("Its — calls");
     expect(
       within(traces()).queryByRole("button", { name: "Turn on observability" }),
