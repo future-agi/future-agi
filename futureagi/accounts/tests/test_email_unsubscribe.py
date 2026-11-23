@@ -374,6 +374,8 @@ class TestReviewRound2Storage:
         self._switch_org(session, user)
 
         assert eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+        # Clearing the cached session doesn't sign the person out.
+        assert session.get("/accounts/organizations/current/").status_code == 200
 
     def test_org_switch_in_a_signed_in_session_keeps_a_resubscribe(
         self, api_client, user, django_capture_on_commit_callbacks

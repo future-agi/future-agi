@@ -21,6 +21,7 @@ from datetime import timedelta
 from typing import NamedTuple
 from urllib.parse import quote
 
+import structlog
 from django.conf import settings
 from django.core import signing
 from django.core.exceptions import ValidationError
@@ -46,6 +47,7 @@ CATEGORY_LABELS = {
 USER_CONFIG_KEY = "email_optouts"
 PAGE_PATH = "/accounts/notifications/email/unsubscribe/"
 _SALT = "email-notification-unsubscribe"
+logger = structlog.get_logger(__name__)
 # How long a link works after the email is sent. US law (CAN-SPAM) requires
 # at least 30 days; the older digest links used the same limit.
 LINK_MAX_AGE = timedelta(days=30)
@@ -310,13 +312,26 @@ def set_subscribed(link: Link, subscribed: bool) -> str:
 def _forget_cached_sessions(user_id) -> None:
     """Drop the user objects the auth cache holds for this account.
 
-    Every authenticated request reuses a user object cached at login, and an
-    org or workspace switch saves that object's whole ``config``. A copy
-    cached before this opt-out change would write the old opt-outs back; with
-    the cache cleared the next request loads the account fresh."""
-    from accounts.views.workspace_management import clear_user_redis_cache
+    Every authenticated request reuses a user object cached with its access
+    token, and an org or workspace switch saves that object's whole
+    ``config``. A copy cached before this opt-out change would write the old
+    opt-outs back; with the entries gone the next request loads the account
+    fresh. The tokens stay active: the person stays signed in."""
+    from django.core.cache import cache
 
-    clear_user_redis_cache(user_id)
+    from accounts.models.auth_token import AuthToken, AuthTokenType
+
+    try:
+        token_ids = AuthToken.objects.filter(
+            user_id=user_id, is_active=True, auth_type=AuthTokenType.ACCESS.value
+        ).values_list("id", flat=True)
+        cache.delete_many([f"access_token_{token_id}" for token_id in token_ids])
+    except Exception:
+        # Best effort: the opt-out is already saved, and a cache outage must
+        # not turn a successful unsubscribe into an error page.
+        logger.exception(
+            "email_optout_session_cache_clear_failed", user_id=str(user_id)
+        )
 
 
 def _remove_monitor_recipient(link: Link) -> str:
