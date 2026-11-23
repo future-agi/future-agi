@@ -955,7 +955,15 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
-        job = add_edit(job, request.validated_data, user=request.user)
+        body = request.validated_data
+        job = add_edit(
+            job,
+            op=body["op"],
+            kind=body["kind"],
+            item_id=body["id"],
+            text=body.get("text"),
+            user=request.user,
+        )
         return Response(design_document(job))
 
     @viewer_denied("change the environment's design")

@@ -117,13 +117,19 @@ def contract_bytes(contract: dict[str, Any]) -> bytes:
     )
 
 
-def stored_version_contract(agent_version_id: UUID) -> dict[str, Any] | None:
-    """The raw contract stored for a version, or None when it has none."""
-    key = (
+def version_contract_key(agent_version_id: UUID) -> str:
+    """The object key of the contract stored for a version, or "" when it has none.
+    A new contract is always written under a new key, so a changed key is a changed contract."""
+    return (
         AgentVersionSetup.no_workspace_objects.filter(agent_version_id=agent_version_id)
         .values_list("contract_object_key", flat=True)
         .first()
+        or ""
     )
+
+
+def read_contract(key: str) -> dict[str, Any] | None:
+    """The contract stored under ``key``, or None when it cannot be read."""
     if not key:
         return None
     response = None
@@ -131,20 +137,55 @@ def stored_version_contract(agent_version_id: UUID) -> dict[str, Any] | None:
         response = get_storage_client().get_object(UPLOAD_BUCKET_NAME, key)
         contract = json.loads(response.read())
     except _STORAGE_ERRORS:
-        logger.warning(
-            "agent_contract_unreadable",
-            agent_version_id=str(agent_version_id),
-            exc_info=True,
-        )
+        logger.warning("agent_contract_unreadable", object_key=key, exc_info=True)
         return None
     except ValueError:
-        logger.warning("agent_contract_invalid", agent_version_id=str(agent_version_id))
+        logger.warning("agent_contract_invalid", object_key=key)
         return None
     finally:
         if response is not None:
             response.close()
             response.release_conn()
     return contract if isinstance(contract, dict) else None
+
+
+def stored_version_contract(agent_version_id: UUID) -> dict[str, Any] | None:
+    """The raw contract stored for a version, or None when it has none."""
+    return read_contract(version_contract_key(agent_version_id))
+
+
+def store_environment_contract(
+    *, organization_id: UUID, environment_id: UUID, contract: dict[str, Any]
+) -> str | None:
+    """Keep the contract one environment was approved with, apart from its agent
+    version's, and return its key; None when it could not be stored."""
+    key = (
+        f"environment-contracts/{organization_id}/{environment_id}/{uuid.uuid4()}.json"
+    )
+    body = contract_bytes(contract)
+    client = get_storage_client()
+    try:
+        ensure_bucket(client, UPLOAD_BUCKET_NAME)
+        client.put_object(
+            bucket_name=UPLOAD_BUCKET_NAME,
+            object_name=key,
+            data=io.BytesIO(body),
+            length=len(body),
+            content_type="application/json",
+        )
+    except _STORAGE_ERRORS:
+        logger.warning(
+            "environment_contract_not_stored",
+            environment_id=str(environment_id),
+            exc_info=True,
+        )
+        return None
+    return key
+
+
+def remove_contract(key: str) -> None:
+    """Remove a stored contract nothing points at any more."""
+    _remove_object(get_storage_client(), key)
 
 
 def _remove_object(client, key: str) -> None:
@@ -164,6 +205,14 @@ def seed_was_used(contract: dict[str, Any] | None) -> bool:
     """Whether a build's contract is the seed it was handed: the seed's bytes carry
     the record of what the reading was made from, and a contract read again has none."""
     return isinstance((contract or {}).get(_READING_INPUTS_KEY), dict)
+
+
+def approved_with_changes(job) -> bool:
+    """Whether the build seeds from a design someone changed before approving, so its
+    contract belongs to that environment and not to the agent version."""
+    from simulate.services.harness_design_review import approved_contract_key
+
+    return bool(approved_contract_key(job))
 
 
 def store_build_contract(
@@ -195,7 +244,9 @@ def store_build_contract(
             organization_id=job.organization_id,
             agent_version_id=agent_version_id,
             contract=contract,
-            replace=seeded_from_reading(job) and seed_was_used(contract),
+            replace=seeded_from_reading(job)
+            and seed_was_used(contract)
+            and not approved_with_changes(job),
         )
     except DatabaseError:
         logger.warning(

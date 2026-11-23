@@ -2698,6 +2698,13 @@ class HostedHarnessGateway:
             and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
             else None
         )
+        if seed_contract is None:
+            from simulate.services.harness_design_review import approved_contract_key
+
+            if approved_contract_key(job):
+                structlog_logger.warning(
+                    "hosted_build_approved_design_not_seeded", job_id=str(job.id)
+                )
         if seed_contract is not None:
             payload["metadata"] = {
                 **(payload.get("metadata") or {}),
@@ -5176,19 +5183,28 @@ def _seed_contract_for(job: HostedHarnessJob) -> bytes | None:
     from simulate.services.agent_contracts import (
         SEED_MAX_BYTES,
         contract_bytes,
+        read_contract,
         stored_version_contract,
     )
-    from simulate.services.harness_design_review import approved_contract
+    from simulate.services.harness_design_review import approved_contract_key
     from simulate.services.hosted_harness import frozen_build_pin
 
     pinned = frozen_build_pin(job)
     version_id = pinned.id if pinned is not None else job.agent_version_id
-    if version_id is None:
-        return None
-    contract = stored_version_contract(version_id)
-    if not contract:
-        return None
-    contract = approved_contract(job, contract)
+    approved_key = approved_contract_key(job)
+    if approved_key:
+        contract = read_contract(approved_key)
+        if not contract:
+            structlog_logger.warning(
+                "hosted_build_approved_design_unreadable", job_id=str(job.id)
+            )
+            return None
+    else:
+        if version_id is None:
+            return None
+        contract = stored_version_contract(version_id)
+        if not contract:
+            return None
     body = contract_bytes(contract)
     if len(body) > SEED_MAX_BYTES:
         structlog_logger.info(

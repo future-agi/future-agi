@@ -243,7 +243,7 @@ class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
     name = serializers.CharField(
         max_length=255, allow_blank=False, trim_whitespace=True
     )
-    required = serializers.BooleanField(required=False)
+    required = serializers.BooleanField(required=False)  # type: ignore[assignment]  # the API field is named required, as Field's own
     pass_threshold = serializers.FloatField(min_value=0, max_value=1, required=False)
 
 
@@ -511,7 +511,7 @@ class HarnessToolArgumentSerializer(serializers.Serializer):
         allow_null=True,
         help_text="The values it is allowed to take, where the agent limits them.",
     )
-    required = serializers.BooleanField(
+    required = serializers.BooleanField(  # type: ignore[assignment]  # the API field is named required, as Field's own
         allow_null=True,
         help_text="Whether a call needs it; null when the reading did not record it.",
     )
@@ -997,7 +997,7 @@ class HarnessEnvironmentSelectedEvalSerializer(HarnessEnvironmentOfferedEvalSeri
     id = serializers.UUIDField()
     runnable = serializers.BooleanField()
     editable = serializers.BooleanField()
-    required = serializers.BooleanField()
+    required = serializers.BooleanField()  # type: ignore[assignment]  # the API field is named required, as Field's own
     pass_threshold = serializers.FloatField(min_value=0, max_value=1)
 
 
@@ -1006,7 +1006,7 @@ class HarnessEnvironmentSuggestedEvalSerializer(
 ):
     """An eval the build suggests but nobody has added yet; it scores nothing until added."""
 
-    required = serializers.BooleanField()
+    required = serializers.BooleanField()  # type: ignore[assignment]  # the API field is named required, as Field's own
     pass_threshold = serializers.FloatField(min_value=0, max_value=1)
 
 
@@ -1015,7 +1015,7 @@ class HarnessEnvironmentEvalRequirementSerializer(serializers.Serializer):
 
     Either may be left out; a body with neither is refused."""
 
-    required = serializers.BooleanField(required=False)
+    required = serializers.BooleanField(required=False)  # type: ignore[assignment]  # the API field is named required, as Field's own
     pass_threshold = serializers.FloatField(min_value=0, max_value=1, required=False)
 
     def validate(self, attrs):
@@ -1869,7 +1869,7 @@ class HarnessNudgeAnswerSerializer(serializers.Serializer):
 
 
 class HarnessEnvironmentStoreConfigurationSerializer(serializers.Serializer):
-    source = serializers.ChoiceField(
+    source = serializers.ChoiceField(  # type: ignore[assignment]  # the API field is named source, as Field's own
         choices=("environment", "file", "provider_field", "system_prompt")
     )
     ref = serializers.CharField()

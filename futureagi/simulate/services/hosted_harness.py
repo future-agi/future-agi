@@ -2112,8 +2112,11 @@ _TERMINAL_STATES = frozenset(
 DELETE_CANCEL_REASON = "environment_deleted"
 
 
-def delete_environment(job: HostedHarnessJob) -> None:
-    """Hide an environment and request cleanup for every live hosted sandbox."""
+def delete_environment(
+    job: HostedHarnessJob, *, reason: str = DELETE_CANCEL_REASON
+) -> None:
+    """Hide an environment and request cleanup for every live hosted sandbox. One still
+    waiting for its design to be approved never started, so it is closed in place."""
     from simulate.temporal.client import cancel_hosted_harness_gateway_workflow
 
     jobs_to_cancel = []
@@ -2150,8 +2153,10 @@ def delete_environment(job: HostedHarnessJob) -> None:
 
         if locked.state in _TERMINAL_STATES:
             _soft_delete(locked)
+        elif _never_started(locked):
+            _close_unstarted(locked, reason)
         else:
-            locked = request_cancellation(locked, DELETE_CANCEL_REASON)
+            locked = request_cancellation(locked, reason)
             if locked.state in _TERMINAL_STATES:
                 _soft_delete(locked)
             else:
@@ -2176,6 +2181,40 @@ def delete_environment(job: HostedHarnessJob) -> None:
                 )
                 if job_id == parent_cancel_id:
                     _soft_delete(HostedHarnessJob.no_workspace_objects.get(id=job_id))
+
+
+def _never_started(job: HostedHarnessJob) -> bool:
+    from simulate.services.harness_design_review import awaiting_design_approval
+
+    return job.state == HostedHarnessJob.State.RECEIVED and awaiting_design_approval(
+        job
+    )
+
+
+def _close_unstarted(job: HostedHarnessJob, reason: str) -> None:
+    from simulate.services.harness_design_review import close_open_review
+
+    validate_cancellation_reason(reason)
+    close_open_review(job)
+    now = timezone.now()
+    job.state = HostedHarnessJob.State.CANCELED
+    job.cancel_requested_at = now
+    job.cancel_reason = reason
+    job.terminal_at = now
+    job.deleted = True
+    job.deleted_at = now
+    job.save(
+        update_fields=[
+            "payload",
+            "state",
+            "cancel_requested_at",
+            "cancel_reason",
+            "terminal_at",
+            "deleted",
+            "deleted_at",
+            "updated_at",
+        ]
+    )
 
 
 def _soft_delete(job: HostedHarnessJob) -> None:
@@ -2204,6 +2243,7 @@ def validate_cancellation_reason(reason: str) -> None:
         "ttl_exceeded",
         DELETE_CANCEL_REASON,
         "fix_ended",
+        "design_discarded",
     }:
         raise HostedHarnessError(
             "invalid_cancellation_reason",
@@ -2224,6 +2264,9 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
             HostedHarnessJob.State.CANCELED,
         }:
             return locked
+        from simulate.services.harness_design_review import close_open_review
+
+        closed_review = close_open_review(locked)
         locked.cancel_requested_at = timezone.now()
         locked.cancel_reason = reason
         locked.state = HostedHarnessJob.State.CLEANING_UP
@@ -2238,6 +2281,7 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
                 "state",
                 "current_stage",
                 "updated_at",
+                *(["payload"] if closed_review else []),
             ]
         )
         return locked

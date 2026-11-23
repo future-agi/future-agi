@@ -1,17 +1,16 @@
 from rest_framework import serializers
 
-from simulate.services.harness_design_review import KINDS, OPS, STATUSES
+from simulate.services.harness_design_contract import KINDS
+from simulate.services.harness_design_review import OPS, STATUSES
 
 
 class DesignEditRequestSerializer(serializers.Serializer):
     op = serializers.ChoiceField(choices=OPS)
     kind = serializers.ChoiceField(choices=KINDS)
-    id = serializers.CharField(required=False, max_length=255)
+    id = serializers.CharField(max_length=255)
     text = serializers.CharField(required=False, max_length=2000)
 
     def validate(self, attrs):
-        if not attrs.get("id"):
-            raise serializers.ValidationError({"id": "Name the item to change"})
         if attrs["op"] == "edit" and not attrs.get("text", "").strip():
             raise serializers.ValidationError({"text": "The rule needs some text"})
         return attrs
@@ -26,7 +25,7 @@ class DesignTableSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
     columns = serializers.ListField(child=serializers.CharField())
-    source = serializers.CharField()
+    source = serializers.CharField()  # type: ignore[assignment]  # the API field is named source, as Field's own
     removed = serializers.BooleanField()
 
 
@@ -51,14 +50,14 @@ class DesignToolSerializer(serializers.Serializer):
     status = serializers.ChoiceField(
         choices=("simulated", "in_process", "unsupported", "unknown"), required=False
     )
-    source = serializers.CharField()
+    source = serializers.CharField()  # type: ignore[assignment]  # the API field is named source, as Field's own
     removed = serializers.BooleanField()
 
 
 class DesignRuleSerializer(serializers.Serializer):
     id = serializers.CharField()
     text = serializers.CharField()
-    source = serializers.CharField()
+    source = serializers.CharField()  # type: ignore[assignment]  # the API field is named source, as Field's own
     removed = serializers.BooleanField()
     edited = serializers.BooleanField()
     original_text = serializers.CharField(allow_null=True)
@@ -67,7 +66,7 @@ class DesignRuleSerializer(serializers.Serializer):
 class DesignUseCaseSerializer(serializers.Serializer):
     id = serializers.CharField()
     text = serializers.CharField()
-    source = serializers.CharField()
+    source = serializers.CharField()  # type: ignore[assignment]  # the API field is named source, as Field's own
     removed = serializers.BooleanField()
     planned_scenarios = serializers.IntegerField(min_value=0)
 

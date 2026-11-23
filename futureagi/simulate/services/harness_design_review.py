@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.conf import settings
@@ -12,7 +10,14 @@ from django.db import transaction
 from django.utils import timezone
 
 from simulate.models import HarnessAgentVersionRuntime, HostedHarnessJob
+from simulate.services.harness_design_contract import (
+    apply_edits_to_contract,
+    build_proposal,
+)
 from simulate.services.hosted_harness import HostedHarnessError
+
+if TYPE_CHECKING:
+    from accounts.models.user import User
 
 logger = structlog.get_logger(__name__)
 
@@ -24,22 +29,26 @@ STATUSES = (AWAITING_APPROVAL, APPROVED, DISCARDED)
 AWAITING_STAGE = "awaiting_approval"
 DISCARD_REASON = "design_discarded"
 
-KINDS = ("table", "tool", "rule", "use_case")
 OPS = ("remove", "edit")
+COLLECTIONS = {
+    "table": "tables",
+    "tool": "tools",
+    "rule": "rules",
+    "use_case": "use_cases",
+}
 _REVIEWABLE_SOURCES = (
     HarnessAgentVersionRuntime.SourceKind.GITHUB,
     HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
 )
 
 
-def contract_hash(contract: dict[str, Any]) -> str:
-    body = json.dumps(contract, sort_keys=True, separators=(",", ":"), default=str)
-    return f"sha256:{hashlib.sha256(body.encode()).hexdigest()}"
-
-
 def review_applies(runtime: HarnessAgentVersionRuntime | None) -> bool:
+    """A design is reviewed only where the build can start from it, so an approved
+    change always reaches the sandbox."""
     return bool(
         getattr(settings, "HARNESS_DESIGN_REVIEW_ENABLED", False)
+        and getattr(settings, "HARNESS_SEED_CONTRACT_ENABLED", False)
+        and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
         and runtime is not None
         and runtime.source_kind in _REVIEWABLE_SOURCES
     )
@@ -55,121 +64,6 @@ def review_contract_for(
     return stored_version_contract(runtime.agent_version_id)
 
 
-def _columns(schema: Any) -> list[str]:
-    if not isinstance(schema, dict):
-        return []
-    properties = schema.get("properties")
-    if isinstance(properties, dict):
-        return sorted(str(name) for name in properties)
-    items = schema.get("items")
-    if isinstance(items, dict) and isinstance(items.get("properties"), dict):
-        return sorted(str(name) for name in items["properties"])
-    if schema and all(isinstance(kind, str) for kind in schema.values()):
-        return [str(name) for name in schema]
-    return []
-
-
-def _tool(spec: dict[str, Any], status: str) -> dict[str, Any]:
-    arg_types = spec.get("arg_types") or {}
-    return {
-        "id": str(spec.get("name") or ""),
-        "name": str(spec.get("name") or ""),
-        "description": str(spec.get("description") or ""),
-        "args": [
-            {"name": str(name), "type": str(arg_types.get(name) or "")}
-            for name in spec.get("args") or []
-        ],
-        "requires": [str(name) for name in spec.get("requires") or []],
-        "inputs_from": {
-            str(arg): str(origin)
-            for arg, origin in (spec.get("inputs_from") or {}).items()
-        },
-        "effects": str(spec.get("effects") or ""),
-        "refuses": str(spec.get("refuses") or ""),
-        "tables_read": _texts(spec.get("tables_read")),
-        "tables_changed": _texts(spec.get("tables_changed")),
-        "status": status,
-        "source": "agent_code",
-    }
-
-
-def _texts(value: Any) -> list[str]:
-    return (
-        [str(one) for one in value if str(one).strip()]
-        if isinstance(value, list)
-        else []
-    )
-
-
-def _actors(contract: dict[str, Any]) -> list[dict[str, str]]:
-    actors = contract.get("actors")
-    return [
-        {
-            "id": str(one.get("id") or one["name"]),
-            "name": str(one["name"]),
-            "role": str(one.get("role") or ""),
-        }
-        for one in (actors if isinstance(actors, list) else [])
-        if isinstance(one, dict) and one.get("name")
-    ]
-
-
-def _unsupported(contract: dict[str, Any]) -> list[dict[str, Any]]:
-    from simulate.services.harness_tool_reach import tool_status
-
-    reaches: dict[str, list[str]] = {}
-    for dependency in contract.get("dependencies") or []:
-        if not isinstance(dependency, dict) or not dependency.get("name"):
-            continue
-        for tool in dependency.get("used_by") or []:
-            reaches.setdefault(str(tool), []).append(str(dependency["name"]))
-    return [
-        {"tool": row["tool"], "reaches": reaches.get(row["tool"], [])}
-        for row in tool_status(contract)
-        if row["status"] == "unsupported"
-    ]
-
-
-def build_proposal(contract: dict[str, Any], scenario_count: int) -> dict[str, Any]:
-    from simulate.services.harness_tool_reach import tool_status
-
-    schema = contract.get("data_schema") or {}
-    statuses = {row["tool"]: row["status"] for row in tool_status(contract)}
-    return {
-        "scenario_count": max(int(scenario_count or 0), 0),
-        "brief": {
-            "description": str(contract.get("one_liner") or ""),
-            "channel": "voice" if contract.get("modality") == "voice" else "chat",
-        },
-        "actors": _actors(contract),
-        "unsupported": _unsupported(contract),
-        "tables": [
-            {
-                "id": str(name),
-                "name": str(name),
-                "columns": _columns(body),
-                "source": "agent_reading",
-            }
-            for name, body in (schema.items() if isinstance(schema, dict) else [])
-        ],
-        "tools": [
-            _tool(spec, statuses.get(str(spec["name"]), "unknown"))
-            for spec in contract.get("tools") or []
-            if isinstance(spec, dict) and spec.get("name")
-        ],
-        "rules": [
-            {"id": f"rule-{index}", "text": str(text), "source": "agent_prompt"}
-            for index, text in enumerate(contract.get("hard_constraints") or [], 1)
-            if str(text).strip()
-        ],
-        "use_cases": [
-            {"id": f"use-case-{index}", "text": str(text), "source": "agent_reading"}
-            for index, text in enumerate(contract.get("real_use_cases") or [], 1)
-            if str(text).strip()
-        ],
-    }
-
-
 def stored_review(job: HostedHarnessJob) -> dict[str, Any] | None:
     review = ((job.payload or {}).get("metadata") or {}).get(REVIEW_KEY)
     return review if isinstance(review, dict) else None
@@ -180,10 +74,28 @@ def awaiting_design_approval(job: HostedHarnessJob) -> bool:
     return review is not None and review.get("status") == AWAITING_APPROVAL
 
 
+def approved_contract_key(job: HostedHarnessJob) -> str:
+    """The stored contract an approved, changed design builds from, or ""."""
+    review = stored_review(job)
+    if review is None or review.get("status") != APPROVED:
+        return ""
+    return str(review.get("approved_contract_key") or "")
+
+
 def _write(job: HostedHarnessJob, review: dict[str, Any]) -> None:
     payload = dict(job.payload or {})
     payload["metadata"] = {**(payload.get("metadata") or {}), REVIEW_KEY: review}
     job.payload = payload
+
+
+def close_open_review(job: HostedHarnessJob) -> bool:
+    """Mark a design still waiting for approval as discarded on ``job``, unsaved;
+    whether it was open."""
+    review = stored_review(job)
+    if review is None or review.get("status") != AWAITING_APPROVAL:
+        return False
+    _write(job, {**review, "status": DISCARDED})
+    return True
 
 
 def create_design_review(
@@ -191,6 +103,8 @@ def create_design_review(
     runtime: HarnessAgentVersionRuntime,
     contract: dict[str, Any],
 ) -> None:
+    from simulate.services.agent_contracts import version_contract_key
+
     _write(
         job,
         {
@@ -198,12 +112,17 @@ def create_design_review(
             "agent_version_id": (
                 str(runtime.agent_version_id) if runtime.agent_version_id else None
             ),
-            "source_contract_hash": contract_hash(contract),
+            "source_contract_key": (
+                version_contract_key(runtime.agent_version_id)
+                if runtime.agent_version_id
+                else ""
+            ),
             "proposal": build_proposal(contract, job.scenario_count),
             "edits": [],
             "created_at": timezone.now().isoformat(),
             "approved_by": None,
             "approved_at": None,
+            "approved_contract_key": "",
         },
     )
     job.current_stage = AWAITING_STAGE
@@ -226,12 +145,7 @@ def _effective(proposal: dict[str, Any], edits: list[dict[str, Any]]) -> dict[st
         rule.update(removed=False, edited=False, original_text=None)
     by_id = {
         (kind, item["id"]): item
-        for kind, key in (
-            ("table", "tables"),
-            ("tool", "tools"),
-            ("rule", "rules"),
-            ("use_case", "use_cases"),
-        )
+        for kind, key in COLLECTIONS.items()
         for item in view.get(key) or []
     }
     for edit in edits:
@@ -254,13 +168,14 @@ def _effective(proposal: dict[str, Any], edits: list[dict[str, Any]]) -> dict[st
 
 
 def agent_changed(review: dict[str, Any]) -> bool:
-    if not review.get("agent_version_id"):
+    """Whether the agent version's stored contract is no longer the one this design
+    was read from; compared by object key, since every new contract gets a new key."""
+    if not review.get("agent_version_id") or not review.get("source_contract_key"):
         return False
-    from simulate.services.agent_contracts import stored_version_contract
+    from simulate.services.agent_contracts import version_contract_key
 
-    current = stored_version_contract(review["agent_version_id"])
-    return current is not None and contract_hash(current) != review.get(
-        "source_contract_hash"
+    return version_contract_key(review["agent_version_id"]) != review.get(
+        "source_contract_key"
     )
 
 
@@ -348,18 +263,13 @@ def _validate(view: dict[str, Any], edit: dict[str, Any]) -> None:
             "Only rules can be reworded; other changes go through the builder",
             status_code=422,
         )
-    if op == "edit" and not str(edit.get("text") or "").strip():
-        raise HostedHarnessError(
-            "design_edit_invalid", "The rule needs some text", status_code=422
-        )
-    key = {
-        "table": "tables",
-        "tool": "tools",
-        "rule": "rules",
-        "use_case": "use_cases",
-    }[kind]
     item = next(
-        (one for one in view.get(key) or [] if one["id"] == edit.get("id")), None
+        (
+            one
+            for one in view.get(COLLECTIONS[kind]) or []
+            if one["id"] == edit.get("id")
+        ),
+        None,
     )
     if item is None:
         raise HostedHarnessError(
@@ -383,30 +293,42 @@ def _validate(view: dict[str, Any], edit: dict[str, Any]) -> None:
             )
 
 
+def _same_rewording(one: dict[str, Any], other: dict[str, Any]) -> bool:
+    return (
+        one["op"] == other["op"] == "edit"
+        and one["kind"] == other["kind"]
+        and one.get("id") == other.get("id")
+    )
+
+
 def add_edit(
-    job: HostedHarnessJob, edit: dict[str, Any], *, user: Any
+    job: HostedHarnessJob,
+    *,
+    op: str,
+    kind: str,
+    item_id: str,
+    text: str | None,
+    user: User,
 ) -> HostedHarnessJob:
+    """Record one change to the design; a rule reworded again replaces its earlier
+    wording, so the list never holds more changes than the design has items."""
     with transaction.atomic():
         locked, review = _locked(job)
         _require_open(review)
-        record = {
-            "op": edit["op"],
-            "kind": edit["kind"],
-            "id": str(edit.get("id") or ""),
-        }
-        if edit["op"] == "edit":
-            record["text"] = str(edit.get("text") or "").strip()
-        edits = list(review.get("edits") or [])
+        record: dict[str, Any] = {"op": op, "kind": kind, "id": str(item_id)}
+        if op == "edit":
+            record["text"] = str(text or "").strip()
+        edits = [
+            one for one in review.get("edits") or [] if not _same_rewording(one, record)
+        ]
         _validate(_effective(review.get("proposal") or {}, edits), record)
-        record.update(
-            by=str(getattr(user, "id", "") or ""), at=timezone.now().isoformat()
-        )
+        record.update(by=str(user.pk or ""), at=timezone.now().isoformat())
         _write(locked, {**review, "edits": [*edits, record]})
         locked.save(update_fields=["payload", "updated_at"])
     return locked
 
 
-def undo_edit(job: HostedHarnessJob, index: int, *, user: Any) -> HostedHarnessJob:
+def undo_edit(job: HostedHarnessJob, index: int, *, user: User) -> HostedHarnessJob:
     with transaction.atomic():
         locked, review = _locked(job)
         _require_open(review)
@@ -421,7 +343,7 @@ def undo_edit(job: HostedHarnessJob, index: int, *, user: Any) -> HostedHarnessJ
     logger.info(
         "design_review_edit_undone",
         environment_id=str(job.id),
-        user_id=str(getattr(user, "id", "") or ""),
+        user_id=str(user.pk or ""),
         op=undone["op"],
         kind=undone["kind"],
     )
@@ -439,37 +361,50 @@ def _feeds_from(origin: str, name: str) -> bool:
     return origin == name or origin.startswith(f"{name}.")
 
 
+def _tools_needing(tools: list[dict[str, Any]], item_id: str) -> dict[str, str]:
+    affected: dict[str, str] = {}
+    frontier = [item_id]
+    while frontier:
+        name = frontier.pop()
+        for tool in tools:
+            if tool["name"] == item_id or tool["name"] in affected:
+                continue
+            if name in tool["requires"]:
+                affected[tool["name"]] = f"needs {name} to run first"
+            elif any(
+                _feeds_from(origin, name) for origin in tool["inputs_from"].values()
+            ):
+                affected[tool["name"]] = f"takes its input from {name}"
+            else:
+                continue
+            frontier.append(tool["name"])
+    return affected
+
+
+def _tools_using(tools: list[dict[str, Any]], table: str) -> dict[str, str]:
+    affected: dict[str, str] = {}
+    for tool in tools:
+        text = " ".join((tool["description"], tool["effects"], tool["refuses"]))
+        if table in (tool.get("tables_changed") or []):
+            affected[tool["name"]] = f"changes {table}"
+        elif table in (tool.get("tables_read") or []):
+            affected[tool["name"]] = f"reads {table}"
+        elif _mentions(text, table):
+            affected[tool["name"]] = f"reads or changes {table}"
+    return affected
+
+
 def impact(job: HostedHarnessJob, kind: str, item_id: str) -> dict[str, Any]:
     review = review_for(job)
     view = _effective(review.get("proposal") or {}, review.get("edits") or [])
     tools = [tool for tool in view.get("tools") or [] if not tool["removed"]]
     rules = [rule for rule in view.get("rules") or [] if not rule["removed"]]
-    affected: dict[str, str] = {}
     if kind == "tool":
-        frontier = [item_id]
-        while frontier:
-            name = frontier.pop()
-            for tool in tools:
-                if tool["name"] == item_id or tool["name"] in affected:
-                    continue
-                if name in tool["requires"]:
-                    affected[tool["name"]] = f"needs {name} to run first"
-                elif any(
-                    _feeds_from(origin, name) for origin in tool["inputs_from"].values()
-                ):
-                    affected[tool["name"]] = f"takes its input from {name}"
-                else:
-                    continue
-                frontier.append(tool["name"])
+        affected = _tools_needing(tools, item_id)
     elif kind == "table":
-        for tool in tools:
-            text = " ".join((tool["description"], tool["effects"], tool["refuses"]))
-            if item_id in (tool.get("tables_changed") or []):
-                affected[tool["name"]] = f"changes {item_id}"
-            elif item_id in (tool.get("tables_read") or []):
-                affected[tool["name"]] = f"reads {item_id}"
-            elif _mentions(text, item_id):
-                affected[tool["name"]] = f"reads or changes {item_id}"
+        affected = _tools_using(tools, item_id)
+    else:
+        affected = {}
     named = [item_id, *affected] if kind in ("tool", "table") else []
     return {
         "kind": kind,
@@ -483,37 +418,106 @@ def impact(job: HostedHarnessJob, kind: str, item_id: str) -> dict[str, Any]:
     }
 
 
-def _approver(user: Any) -> dict[str, str] | None:
-    if not getattr(user, "pk", None):
+def _approver(user: User) -> dict[str, str] | None:
+    if not user.pk:
         return None
     name = getattr(user, "name", "") or getattr(user, "email", "")
     return {"id": str(user.pk), "name": str(name or "")}
 
 
-def approve(job: HostedHarnessJob, *, user: Any, base_url: str) -> HostedHarnessJob:
+def _agent_changed_refusal() -> HostedHarnessError:
+    return HostedHarnessError(
+        "design_agent_changed",
+        "The agent changed after this design was read; discard it and build again",
+        status_code=409,
+    )
+
+
+def _store_approved_contract(job: HostedHarnessJob, review: dict[str, Any]) -> str:
+    from simulate.services.agent_contracts import (
+        SEED_MAX_BYTES,
+        contract_bytes,
+        read_contract,
+        store_environment_contract,
+    )
+
+    if agent_changed(review):
+        raise _agent_changed_refusal()
+    source = read_contract(str(review.get("source_contract_key") or ""))
+    if source is None:
+        raise HostedHarnessError(
+            "design_contract_unreadable",
+            "The agent's design could not be read; try approving again",
+            status_code=503,
+        )
+    edited = apply_edits_to_contract(source, review.get("edits") or [])
+    if len(contract_bytes(edited)) > SEED_MAX_BYTES:
+        raise HostedHarnessError(
+            "design_too_large",
+            "This design is too large to build with your changes",
+            status_code=422,
+        )
+    key = store_environment_contract(
+        organization_id=job.organization_id, environment_id=job.id, contract=edited
+    )
+    if key is None:
+        raise HostedHarnessError(
+            "design_contract_not_stored",
+            "Your changes could not be saved; try approving again",
+            status_code=503,
+        )
+    return key
+
+
+def approve(job: HostedHarnessJob, *, user: User, base_url: str) -> HostedHarnessJob:
+    """Start the build from the design as changed. A changed design is stored on the
+    environment first, so the build seeds from exactly what was approved. Refused
+    with 409 when the design is closed, the job is not waiting, or the agent changed,
+    and with 503 when the build could not be started."""
+    from simulate.services.agent_contracts import remove_contract
     from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
-    with transaction.atomic():
-        locked, review = _locked(job)
-        _require_open(review)
-        if locked.state != HostedHarnessJob.State.RECEIVED:
-            raise HostedHarnessError(
-                "design_review_not_waiting",
-                "This environment is not waiting for approval",
-                status_code=409,
+    first = review_for(job)
+    _require_open(first)
+    edits = first.get("edits") or []
+    contract_key = _store_approved_contract(job, first) if edits else ""
+    try:
+        with transaction.atomic():
+            locked, review = _locked(job)
+            _require_open(review)
+            if locked.state != HostedHarnessJob.State.RECEIVED:
+                raise HostedHarnessError(
+                    "design_review_not_waiting",
+                    "This environment is not waiting for approval",
+                    status_code=409,
+                )
+            if (review.get("edits") or []) != edits:
+                raise HostedHarnessError(
+                    "design_review_changed",
+                    "The design changed while it was being approved; approve again",
+                    status_code=409,
+                )
+            if agent_changed(review):
+                raise _agent_changed_refusal()
+            _write(
+                locked,
+                {
+                    **review,
+                    "status": APPROVED,
+                    "approved_by": _approver(user),
+                    "approved_at": timezone.now().isoformat(),
+                    "approved_contract_key": contract_key,
+                },
             )
-        _write(
-            locked,
-            {
-                **review,
-                "status": APPROVED,
-                "approved_by": _approver(user),
-                "approved_at": timezone.now().isoformat(),
-            },
-        )
-        locked.state = HostedHarnessJob.State.QUEUED
-        locked.current_stage = "queued"
-        locked.save(update_fields=["payload", "state", "current_stage", "updated_at"])
+            locked.state = HostedHarnessJob.State.QUEUED
+            locked.current_stage = "queued"
+            locked.save(
+                update_fields=["payload", "state", "current_stage", "updated_at"]
+            )
+    except HostedHarnessError:
+        if contract_key:
+            remove_contract(contract_key)
+        raise
     retry = locked.payload["retry"]
     try:
         start_hosted_harness_gateway_workflow(
@@ -533,6 +537,7 @@ def approve(job: HostedHarnessJob, *, user: Any, base_url: str) -> HostedHarness
                     "status": AWAITING_APPROVAL,
                     "approved_by": None,
                     "approved_at": None,
+                    "approved_contract_key": "",
                 },
             )
             reverted.state = HostedHarnessJob.State.RECEIVED
@@ -540,10 +545,12 @@ def approve(job: HostedHarnessJob, *, user: Any, base_url: str) -> HostedHarness
             reverted.save(
                 update_fields=["payload", "state", "current_stage", "updated_at"]
             )
+        if contract_key:
+            remove_contract(contract_key)
         logger.warning(
             "design_review_build_not_started",
             environment_id=str(locked.id),
-            error=type(exc).__name__,
+            exc_info=True,
         )
         raise HostedHarnessError(
             "scheduler_unavailable",
@@ -553,92 +560,23 @@ def approve(job: HostedHarnessJob, *, user: Any, base_url: str) -> HostedHarness
     logger.info(
         "design_review_approved",
         environment_id=str(locked.id),
-        user_id=str(getattr(user, "id", "") or ""),
-        edits=len(review.get("edits") or []),
+        user_id=str(user.pk or ""),
+        edits=len(edits),
     )
     return locked
 
 
-def discard(job: HostedHarnessJob, *, user: Any) -> HostedHarnessJob:
-    now = timezone.now()
+def discard(job: HostedHarnessJob, *, user: User) -> HostedHarnessJob:
+    """Drop the design and the environment with it, through the one delete path."""
+    from simulate.services.hosted_harness import delete_environment
+
     with transaction.atomic():
         locked, review = _locked(job)
         _require_open(review)
-        _write(locked, {**review, "status": DISCARDED})
-        locked.state = HostedHarnessJob.State.CANCELED
-        locked.cancel_requested_at = now
-        locked.cancel_reason = DISCARD_REASON
-        locked.deleted = True
-        locked.deleted_at = now
-        locked.save(
-            update_fields=[
-                "payload",
-                "state",
-                "cancel_requested_at",
-                "cancel_reason",
-                "deleted",
-                "deleted_at",
-                "updated_at",
-            ]
-        )
+        delete_environment(locked, reason=DISCARD_REASON)
     logger.info(
         "design_review_discarded",
-        environment_id=str(locked.id),
-        user_id=str(getattr(user, "id", "") or ""),
+        environment_id=str(job.id),
+        user_id=str(user.pk or ""),
     )
-    return locked
-
-
-def apply_edits_to_contract(
-    contract: dict[str, Any], edits: list[dict[str, Any]]
-) -> dict[str, Any]:
-    edited = copy.deepcopy(contract)
-    rules = [
-        {"id": f"rule-{index}", "text": str(text)}
-        for index, text in enumerate(edited.get("hard_constraints") or [], 1)
-    ]
-    cases = [
-        {"id": f"use-case-{index}", "text": str(text)}
-        for index, text in enumerate(edited.get("real_use_cases") or [], 1)
-    ]
-    removed: dict[str, set[str]] = {kind: set() for kind in KINDS}
-    for edit in edits:
-        op, kind, item_id = edit["op"], edit["kind"], edit.get("id")
-        if op == "remove":
-            removed[kind].add(str(item_id))
-        elif op == "edit" and kind == "rule":
-            for rule in rules:
-                if rule["id"] == item_id:
-                    rule["text"] = edit["text"]
-    edited["hard_constraints"] = [
-        rule["text"] for rule in rules if rule["id"] not in removed["rule"]
-    ]
-    edited["real_use_cases"] = [
-        case["text"] for case in cases if case["id"] not in removed["use_case"]
-    ]
-    edited["tools"] = [
-        tool
-        for tool in edited.get("tools") or []
-        if not (isinstance(tool, dict) and tool.get("name") in removed["tool"])
-    ]
-    if isinstance(edited.get("tool_entrypoints"), list):
-        edited["tool_entrypoints"] = [
-            entry
-            for entry in edited["tool_entrypoints"]
-            if not (isinstance(entry, dict) and entry.get("tool") in removed["tool"])
-        ]
-    schema = edited.get("data_schema")
-    if isinstance(schema, dict):
-        edited["data_schema"] = {
-            name: body for name, body in schema.items() if name not in removed["table"]
-        }
-    return edited
-
-
-def approved_contract(
-    job: HostedHarnessJob, contract: dict[str, Any]
-) -> dict[str, Any]:
-    review = stored_review(job)
-    if review is None or review.get("status") != APPROVED or not review.get("edits"):
-        return contract
-    return apply_edits_to_contract(contract, review["edits"])
+    return HostedHarnessJob.all_objects.get(id=job.id)

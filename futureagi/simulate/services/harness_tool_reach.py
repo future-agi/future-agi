@@ -451,7 +451,7 @@ STATUS_LABELS: dict[ToolState, str] = {
 }
 
 
-def _arguments(spec: Mapping[str, Any]) -> list[ToolArgument]:
+def tool_arguments(spec: Mapping[str, Any]) -> list[ToolArgument]:
     """A tool's arguments with their type and unit as the contract writes them: by name in `arg_types` and
     `arg_units`, or on an argument written as an object (`{name, type, unit}`)."""
     types, units = _words(spec.get("arg_types")), _words(spec.get("arg_units"))
@@ -524,7 +524,7 @@ def tool_status(contract: object) -> list[ToolStatus]:
                 "runs_at": _runs_at(entries.get(name)),
                 "writes": _writes(entries.get(name)),
                 "description": str(spec.get("description") or ""),
-                "arguments": _arguments(spec),
+                "arguments": tool_arguments(spec),
                 "returns": [
                     {"name": field, "kind": kind}
                     for field, kind in _words(spec.get("returns")).items()
