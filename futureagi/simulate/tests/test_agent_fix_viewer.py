@@ -9,7 +9,6 @@ from rest_framework import status
 from accounts.models import Workspace
 from accounts.models.workspace import WorkspaceMembership
 from accounts.tests.test_rbac_regressions import (
-    WORKSPACE_WRITE_DENIED,
     _jwt_client,
     _make_workspace_user,
     _member_client,
@@ -90,7 +89,7 @@ def test_a_viewer_cannot_change_a_fix(organization, workspace, fix):
         response = viewer.post(url, {}, format="json")
 
         assert response.status_code == status.HTTP_403_FORBIDDEN, (url, response.data)
-        assert WORKSPACE_WRITE_DENIED in str(response.data), url
+        assert response.data["code"] == "viewer_read_only", url
 
     assert AgentFixRun.no_workspace_objects.count() == fixes
     fix[0].refresh_from_db()

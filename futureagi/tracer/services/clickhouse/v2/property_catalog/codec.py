@@ -28,10 +28,11 @@ _PROPERTY_ID_KINDS = frozenset(
         "eval_config",
         "annotation",
         "dataset_column",
+        "metric_field",
     }
 )
 _UUID_PROPERTY_ID_KINDS = frozenset(
-    {"eval_template", "eval_config", "annotation", "dataset_column"}
+    {"eval_template", "eval_config", "annotation", "dataset_column", "metric_field"}
 )
 
 
@@ -194,7 +195,7 @@ def combine_search_text(*components: str, source_tokens: Sequence[str] = ()) -> 
 
 
 def _validate_json_value(value: Any, *, path: str, seen: set[int]) -> None:
-    if value is None or isinstance(value, (str, bool, int)):
+    if value is None or isinstance(value, str | bool | int):
         if isinstance(value, str):
             try:
                 value.encode("utf-8")
@@ -218,7 +219,7 @@ def _validate_json_value(value: Any, *, path: str, seen: set[int]) -> None:
             _validate_json_value(member, path=f"{path}.{key}", seen=seen)
         seen.remove(identity)
         return
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         identity = id(value)
         if identity in seen:
             raise CatalogCodecError(f"{path} contains a cycle")
@@ -253,7 +254,7 @@ def _encode_json_value(value: Any) -> str:
             )
             + "}"
         )
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return "[" + ",".join(_encode_json_value(member) for member in value) + "]"
     raise CatalogCodecError(f"unsupported canonical JSON value {type(value).__name__}")
 

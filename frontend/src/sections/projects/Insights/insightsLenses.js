@@ -10,14 +10,14 @@ export const LENSES = [
     title: "Usage",
     question: "What are people asking for?",
     description: "Topics and intents: what people come to get done.",
-    icon: "mdi:message-text-outline",
+    icon: "solar:chat-round-line-linear",
   },
   {
     key: "failures",
     title: "Failures",
     question: "Where is the agent failing?",
     description: "Mistakes, broken flows and requests the agent couldn't meet.",
-    icon: "mdi:alert-octagon-outline",
+    icon: "solar:danger-circle-linear",
     excludes: "units with no failure",
   },
   {
@@ -25,14 +25,14 @@ export const LENSES = [
     title: "Experience",
     question: "How do conversations end?",
     description: "Outcomes, friction and how people feel by the end.",
-    icon: "mdi:emoticon-neutral-outline",
+    icon: "solar:expressionless-circle-linear",
   },
   {
     key: "personas",
     title: "Personas",
     question: "Who are our users?",
     description: "Kinds of users, what they want and what sets them apart.",
-    icon: "mdi:account-group-outline",
+    icon: "solar:users-group-rounded-linear",
     unit: "users",
   },
   {
@@ -40,7 +40,7 @@ export const LENSES = [
     title: "Your question",
     question: "",
     description: "Ask anything about your traffic in your own words.",
-    icon: "mdi:help-circle-outline",
+    icon: "solar:question-circle-linear",
   },
 ];
 

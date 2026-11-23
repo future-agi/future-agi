@@ -46,5 +46,7 @@ class CapabilitiesResponseSerializer(serializers.Serializer):
         choices=[state.value for state in LicenseState],
     )
     features = serializers.DictField(child=CapabilityFeatureSerializer())
+    # Rollout availability, not a paid-plan entitlement.
+    metrics_enabled = serializers.BooleanField(default=False)
     license = LicenseDetailsSerializer(required=False, allow_null=True)
     instance_id = serializers.UUIDField(required=False, allow_null=True)
