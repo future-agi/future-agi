@@ -656,3 +656,51 @@ describe("groupKeyOf fallbacks", () => {
     });
   });
 });
+
+describe("ScenariosStep lifecycle", () => {
+  const COUNTS = {
+    draft: 4,
+    validated: 0,
+    active: 6,
+    kept_as_written: 0,
+    archived: 0,
+    proved: 6,
+    not_proved: 4,
+    legacy_without_control: 0,
+  };
+
+  it("shows the counts line and asks the list for one state, empty when none match", async () => {
+    listScenarios.mockImplementation((jobId, params) => {
+      if (params.lifecycle === "source_changed") {
+        return {
+          ...queryScenarioFixture(
+            { ...params, search: "no-such-scenario" },
+            SERVER_ROWS,
+          ),
+          lifecycle_counts: COUNTS,
+        };
+      }
+      return {
+        ...queryScenarioFixture(params, SERVER_ROWS),
+        lifecycle_counts: COUNTS,
+      };
+    });
+    renderStep();
+    expect(
+      await screen.findByText("6 proved · 0 kept as written · 4 not proved"),
+    ).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "State" }));
+    fireEvent.click(screen.getByRole("option", { name: "Source changed" }));
+
+    await waitFor(() =>
+      expect(listScenarios).toHaveBeenLastCalledWith(
+        "job-test",
+        expect.objectContaining({ lifecycle: "source_changed" }),
+      ),
+    );
+    expect(
+      await screen.findByText("No scenarios match your filters."),
+    ).toBeInTheDocument();
+  });
+});

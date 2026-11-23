@@ -34,7 +34,15 @@ export default function useScenarioPage({
   page = 0,
   pageSize = PAGE_SIZE,
 } = {}) {
-  const query = useHarnessScenarios({ jobId, page, pageSize, search, groupBy, ordering, filters });
+  const query = useHarnessScenarios({
+    jobId,
+    page,
+    pageSize,
+    search,
+    groupBy,
+    ordering,
+    filters,
+  });
   const data = query.data;
 
   const rows = useMemo(() => data?.rows ?? [], [data]);
@@ -64,9 +72,18 @@ export default function useScenarioPage({
       const name = row.group ?? "";
       const last = out[out.length - 1];
       if (last && last.name === name) last.rows.push(row);
-      else out.push({ id: `${appliedGroupBy}:${name}`, name, label: levelLabels[name] ?? name, rows: [row] });
+      else
+        out.push({
+          id: `${appliedGroupBy}:${name}`,
+          name,
+          label: levelLabels[name] ?? name,
+          rows: [row],
+        });
     }
-    return out.map((g) => ({ ...g, totalInGroup: groupCounts[g.name] ?? g.rows.length }));
+    return out.map((g) => ({
+      ...g,
+      totalInGroup: groupCounts[g.name] ?? g.rows.length,
+    }));
   }, [rows, appliedGroupBy, groupCounts, levelLabels]);
 
   // Rows only the unsaved changes add can't be selected, so the page's
@@ -90,5 +107,7 @@ export default function useScenarioPage({
     groupBy: appliedGroupBy,
     scenarioEditing,
     levelLabels,
+    // Lifecycle counts over the whole suite; null on an environment that is not versioned.
+    proofCounts: data?.proofCounts ?? null,
   };
 }

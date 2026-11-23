@@ -48,9 +48,11 @@ export const SCENARIOS_COPY = {
 
 // A scenario's state on the versions in view. Active and Validated get no mark: Active is the
 // normal case and Validated only lasts until Save.
+const DRAFT_LABEL = "Not proved";
+
 export const LIFECYCLE_COPY = {
   states: {
-    draft: "Not proved",
+    draft: DRAFT_LABEL,
     kept_as_written: "Kept as written",
     archived: "Archived",
     runs_unvalidated: "Not validated here",
@@ -63,6 +65,16 @@ export const LIFECYCLE_COPY = {
     not_proved: notProved = 0,
   }) => `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
   countsLegacy: (n) => ` · ${n} without a wrong-way example`,
+  filterLabel: "State",
+  // The list's `lifecycle` query values; archived rows show only when asked for.
+  filters: [
+    { value: "", label: "All states" },
+    { value: "active", label: "Active" },
+    { value: "draft", label: DRAFT_LABEL },
+    { value: "kept_as_written", label: "Kept as written" },
+    { value: "archived", label: "Archived" },
+    { value: "source_changed", label: "Source changed" },
+  ],
   wrongWay: {
     title: "Wrong-way examples",
     caught: "Caught",

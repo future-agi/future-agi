@@ -34,6 +34,7 @@ import {
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { SCENARIOS_COPY } from "./scenarios.constants";
+import { countsLine } from "./lifecycleView";
 import { DRAFTS_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
@@ -148,6 +149,12 @@ export default function ScenariosStep({
   const [trials, setTrials] = useState(1);
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({});
+  // The State filter rides with the filters as the list's `lifecycle` param.
+  const [stateFilter, setStateFilter] = useState("");
+  const listFilters = useMemo(
+    () => (stateFilter ? { ...filters, lifecycle: stateFilter } : filters),
+    [filters, stateFilter],
+  );
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null);
   // The row opened in full from the table (the scenario drawer).
@@ -200,7 +207,7 @@ export default function ScenariosStep({
   const pageData = useScenarioPage({
     jobId: env?.id,
     search: debouncedQuery,
-    filters,
+    filters: listFilters,
     groupBy,
     page,
     pageSize,
@@ -297,11 +304,19 @@ export default function ScenariosStep({
     }
   };
 
+  // Only versioned environments carry lifecycle counts; unversioned ones show no line and no State filter.
+  const countsText = countsLine(pageData.proofCounts);
   const hiddenCount = hiddenGroupIds.length;
-  const hasSearchOrFilters = query.length > 0 || filterCount > 0;
+  const hasSearchOrFilters =
+    query.length > 0 || filterCount > 0 || Boolean(stateFilter);
+  const changeStateFilter = (next) => {
+    setStateFilter(next);
+    resetView();
+  };
   const clearFilters = () => {
     setQuery("");
     setFilters({});
+    setStateFilter("");
     setHiddenGroupIds([]);
     resetView();
   };
@@ -337,7 +352,7 @@ export default function ScenariosStep({
   const resolveSelection = (pick) =>
     resolveScenarioSelection(env?.id, {
       search: debouncedQuery,
-      filters,
+      filters: listFilters,
       mode: sel.mode,
       marked: sel.idList,
       pick,
@@ -566,6 +581,10 @@ export default function ScenariosStep({
                   filters={filters}
                   onApplyFilters={applyFilters}
                   filterCount={filterCount}
+                  stateFilter={stateFilter}
+                  onStateFilterChange={
+                    pageData.proofCounts ? changeStateFilter : undefined
+                  }
                   actions={
                     <>
                       <CoverageMatrix
@@ -625,6 +644,20 @@ export default function ScenariosStep({
               )}
             </Box>
 
+            {countsText && (
+              <Typography
+                data-testid="lifecycle-counts"
+                sx={{
+                  typography: "s3",
+                  color: "text.secondary",
+                  fontVariantNumeric: "tabular-nums",
+                  pb: 1,
+                }}
+              >
+                {countsText}
+              </Typography>
+            )}
+
             {/* The table's own bordered box, its edges on the toolbar's. */}
             <Box
               sx={{
@@ -654,7 +687,7 @@ export default function ScenariosStep({
                 page={page}
                 onPageChange={setPage}
                 query={query}
-                filters={filters}
+                filters={listFilters}
                 groupBy={activeGroupBy}
                 locked={locked}
                 rowHeight={rowHeight}

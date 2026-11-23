@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { Box, Stack, Tooltip, Typography } from "@mui/material";
 
 import StatusBadge from "src/components/status-badge/StatusBadge";
+import Iconify from "src/components/iconify";
 
 import { DRAFTS_COPY } from "../workspace.constants";
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
@@ -11,6 +12,42 @@ import {
   isUnsavedAddition,
   unsavedReasonId,
 } from "./scenarios.constants";
+import { lifecycleChip } from "./lifecycleView";
+
+const LIFECYCLE_ICONS = {
+  draft: "solar:shield-warning-linear",
+  kept_as_written: "solar:document-text-linear",
+  archived: "solar:archive-linear",
+  runs_unvalidated: "solar:info-circle-linear",
+};
+const LIFECYCLE_ICON_COLORS = {
+  warning: "status.warning.fg",
+  neutral: "text.secondary",
+};
+
+// A row's state as one small mark, its name and reason on hover. Active rows get none.
+export function LifecycleMark({ lifecycle }) {
+  const chip = lifecycleChip(lifecycle);
+  if (!chip) return null;
+  const title = chip.hover ? `${chip.label}: ${chip.hover}` : chip.label;
+  return (
+    <Tooltip arrow title={title}>
+      <Box
+        role="img"
+        aria-label={chip.label}
+        data-testid="lifecycle-mark"
+        sx={{
+          display: "flex",
+          flexShrink: 0,
+          color: LIFECYCLE_ICON_COLORS[chip.tone],
+        }}
+      >
+        <Iconify icon={LIFECYCLE_ICONS[chip.key]} width={14} />
+      </Box>
+    </Tooltip>
+  );
+}
+LifecycleMark.propTypes = { lifecycle: PropTypes.object };
 
 // "Unsaved" on a row the unsaved changes add or change; an added row also says
 // why it can't be selected.
@@ -55,7 +92,14 @@ export function TruncTooltip({ title, children }) {
       arrow
       enterDelay={300}
       title={
-        <Box sx={{ typography: "s3", whiteSpace: "pre-wrap", wordBreak: "break-word", maxWidth: 460 }}>
+        <Box
+          sx={{
+            typography: "s3",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxWidth: 460,
+          }}
+        >
           {title}
         </Box>
       }
@@ -98,14 +142,23 @@ ClampCell.propTypes = { text: PropTypes.string, lines: PropTypes.number };
 export function SubTasksCell({ subTasks, limit = 3 }) {
   const list = normaliseSubTasks(subTasks);
   if (!list.length) {
-    return <Typography sx={{ typography: "s1", color: "text.subtitle" }}>-</Typography>;
+    return (
+      <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
+        -
+      </Typography>
+    );
   }
   const fullList = list.map((st, i) => `${i + 1}. ${st.label}`).join("\n");
   return (
     <TruncTooltip title={fullList}>
       <Stack spacing={0.375}>
         {list.slice(0, limit).map((st, i) => (
-          <Stack key={st.id} direction="row" spacing={0.75} alignItems="flex-start">
+          <Stack
+            key={st.id}
+            direction="row"
+            spacing={0.75}
+            alignItems="flex-start"
+          >
             <Typography
               sx={{
                 typography: "s1",
@@ -116,13 +169,18 @@ export function SubTasksCell({ subTasks, limit = 3 }) {
             >
               {i + 1}.
             </Typography>
-            <Typography noWrap sx={{ typography: "s1", color: "text.secondary", minWidth: 0 }}>
+            <Typography
+              noWrap
+              sx={{ typography: "s1", color: "text.secondary", minWidth: 0 }}
+            >
               {st.label}
             </Typography>
           </Stack>
         ))}
         {list.length > limit && (
-          <Typography sx={{ typography: "s3", color: "text.subtitle", pl: 1.75 }}>
+          <Typography
+            sx={{ typography: "s3", color: "text.subtitle", pl: 1.75 }}
+          >
             + {list.length - limit} more
           </Typography>
         )}
@@ -130,4 +188,7 @@ export function SubTasksCell({ subTasks, limit = 3 }) {
     </TruncTooltip>
   );
 }
-SubTasksCell.propTypes = { subTasks: PropTypes.arrayOf(SUB_TASK_SHAPE), limit: PropTypes.number };
+SubTasksCell.propTypes = {
+  subTasks: PropTypes.arrayOf(SUB_TASK_SHAPE),
+  limit: PropTypes.number,
+};

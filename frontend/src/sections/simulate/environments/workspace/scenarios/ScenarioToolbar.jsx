@@ -1,10 +1,14 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Button, TextField } from "@mui/material";
+import { Box, Stack, Button, MenuItem, TextField } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { FilterPanel } from "src/components/filter-panel";
-import { SCENARIOS_COPY, scenarioToolbarButtonSx } from "./scenarios.constants";
+import {
+  LIFECYCLE_COPY,
+  SCENARIOS_COPY,
+  scenarioToolbarButtonSx,
+} from "./scenarios.constants";
 import DisplayPanel from "./DisplayPanel";
 
 // One row holds everything until the search would shrink below ~200px; under
@@ -19,11 +23,21 @@ const SEARCH_OWN_ROW = "@container (max-width: 599px)";
 // read the same filtered, grouped rows. The "N of M · Clear" readout sits with
 // the results, in the list's footer, not here.
 export default function ScenarioToolbar({
-  query, onQueryChange,
-  view, onViewChange,
-  groupBy, onGroupByChange, groupings = [],
-  filterFields, filters, onApplyFilters, filterCount,
-  rowHeight = "Short", onRowHeightChange,
+  query,
+  onQueryChange,
+  view,
+  onViewChange,
+  groupBy,
+  onGroupByChange,
+  groupings = [],
+  filterFields,
+  filters,
+  onApplyFilters,
+  filterCount,
+  rowHeight = "Short",
+  onRowHeightChange,
+  stateFilter = "",
+  onStateFilterChange,
   actions,
 }) {
   const [filterAnchor, setFilterAnchor] = useState(null);
@@ -36,8 +50,13 @@ export default function ScenarioToolbar({
           and the controls wrap beneath it, the actions staying right-aligned. */}
       <Box sx={{ containerType: "inline-size" }}>
         <Stack
-          role="toolbar" aria-label="Scenarios"
-          direction="row" alignItems="center" columnGap={0.5} rowGap={1} flexWrap="wrap"
+          role="toolbar"
+          aria-label="Scenarios"
+          direction="row"
+          alignItems="center"
+          columnGap={0.5}
+          rowGap={1}
+          flexWrap="wrap"
           sx={{ pb: 1.5 }}
         >
           <TextField
@@ -47,15 +66,27 @@ export default function ScenarioToolbar({
             placeholder={SCENARIOS_COPY.searchPlaceholder}
             InputProps={{
               startAdornment: (
-                <Box sx={{ pr: 0.75, pl: 0.25, display: "flex", color: "text.subtitle" }}>
+                <Box
+                  sx={{
+                    pr: 0.75,
+                    pl: 0.25,
+                    display: "flex",
+                    color: "text.subtitle",
+                  }}
+                >
                   <Iconify icon="solar:magnifer-linear" width={14} />
                 </Box>
               ),
             }}
             sx={{
-              flex: 1, minWidth: 200, maxWidth: 420, mr: 0.5,
+              flex: 1,
+              minWidth: 200,
+              maxWidth: 420,
+              mr: 0.5,
               [SEARCH_OWN_ROW]: {
-                flexBasis: "100%", maxWidth: "none", mr: 0,
+                flexBasis: "100%",
+                maxWidth: "none",
+                mr: 0,
               },
             }}
           />
@@ -67,8 +98,37 @@ export default function ScenarioToolbar({
             startIcon={<Iconify icon="solar:filter-linear" width={16} />}
             sx={scenarioToolbarButtonSx}
           >
-            {SCENARIOS_COPY.filterLabel}{filterCount ? ` (${filterCount})` : ""}
+            {SCENARIOS_COPY.filterLabel}
+            {filterCount ? ` (${filterCount})` : ""}
           </Button>
+          {onStateFilterChange && (
+            <TextField
+              select
+              size="small"
+              value={stateFilter}
+              onChange={(e) => onStateFilterChange(e.target.value)}
+              SelectProps={{
+                displayEmpty: true,
+                SelectDisplayProps: {
+                  "aria-label": LIFECYCLE_COPY.filterLabel,
+                },
+              }}
+              sx={{
+                minWidth: 140,
+                "& .MuiSelect-select": { typography: "s1" },
+              }}
+            >
+              {LIFECYCLE_COPY.filters.map((one) => (
+                <MenuItem
+                  key={one.value}
+                  value={one.value}
+                  sx={{ typography: "s1" }}
+                >
+                  {one.label}
+                </MenuItem>
+              ))}
+            </TextField>
+          )}
           <Button
             size="small"
             variant="outlined"
@@ -92,7 +152,12 @@ export default function ScenarioToolbar({
             rowHeight={rowHeight}
             onRowHeightChange={onRowHeightChange}
           />
-          <Stack direction="row" alignItems="center" spacing={1} sx={{ ml: "auto" }}>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ ml: "auto" }}
+          >
             {actions}
           </Stack>
         </Stack>
@@ -130,5 +195,7 @@ ScenarioToolbar.propTypes = {
   filterCount: PropTypes.number,
   rowHeight: PropTypes.string,
   onRowHeightChange: PropTypes.func,
+  stateFilter: PropTypes.string,
+  onStateFilterChange: PropTypes.func,
   actions: PropTypes.node,
 };

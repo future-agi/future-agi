@@ -30,6 +30,7 @@ import {
   SubTasksCell,
   TruncTooltip,
   UnsavedMark,
+  LifecycleMark,
 } from "./ScenarioTableCells";
 import {
   ROW_HEIGHTS,
@@ -535,6 +536,7 @@ export default function ScenarioTable({
                         </Tooltip>
                       )}
                       <UnsavedMark row={row} />
+                      <LifecycleMark lifecycle={row.lifecycle} />
                     </Stack>
                     <TruncTooltip title={row.summary || row.title}>
                       <Typography
