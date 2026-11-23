@@ -21317,6 +21317,57 @@ export interface HarnessEnvironmentSelectedEvalApi {
   id: string;
   runnable: boolean;
   editable: boolean;
+  required: boolean;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  pass_threshold: number;
+}
+
+export type HarnessEnvironmentSuggestedEvalApiSource =
+  (typeof HarnessEnvironmentSuggestedEvalApiSource)[keyof typeof HarnessEnvironmentSuggestedEvalApiSource];
+
+export const HarnessEnvironmentSuggestedEvalApiSource = {
+  system: "system",
+  custom: "custom",
+} as const;
+
+export type HarnessEnvironmentSuggestedEvalApiAgentType =
+  (typeof HarnessEnvironmentSuggestedEvalApiAgentType)[keyof typeof HarnessEnvironmentSuggestedEvalApiAgentType];
+
+export const HarnessEnvironmentSuggestedEvalApiAgentType = {
+  voice: "voice",
+  chat: "chat",
+} as const;
+
+export type HarnessEnvironmentSuggestedEvalApiModality =
+  (typeof HarnessEnvironmentSuggestedEvalApiModality)[keyof typeof HarnessEnvironmentSuggestedEvalApiModality];
+
+export const HarnessEnvironmentSuggestedEvalApiModality = {
+  voice: "voice",
+  text: "text",
+  any: "any",
+} as const;
+
+export interface HarnessEnvironmentSuggestedEvalApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  source: HarnessEnvironmentSuggestedEvalApiSource;
+  tags: string[];
+  required_keys: string[];
+  agent_type: HarnessEnvironmentSuggestedEvalApiAgentType;
+  modality: HarnessEnvironmentSuggestedEvalApiModality;
+  credits_per_run: number;
+  charges_judge_tokens: boolean;
+  inputs: HarnessEnvironmentEvalInputApi[];
+  required: boolean;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  pass_threshold: number;
 }
 
 export type HarnessEnvironmentResultApiEvaluationsItem = {
@@ -21337,6 +21388,7 @@ export interface HarnessEnvironmentResultApi {
 
 export interface HarnessEnvironmentEvaluationsApi {
   selected: HarnessEnvironmentSelectedEvalApi[];
+  suggested?: HarnessEnvironmentSuggestedEvalApi[];
   results: HarnessEnvironmentResultApi[];
 }
 
@@ -22920,6 +22972,12 @@ export interface HarnessEnvironmentAddEvaluationApi {
    * @maxLength 255
    */
   name: string;
+  required?: boolean;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  pass_threshold?: number;
 }
 
 export type HarnessEnvironmentOfferedEvalApiSource =
@@ -23099,6 +23157,15 @@ export interface SimulateEvalConfigResponseApi {
   readonly eval_type?: string;
   readonly regradable?: boolean;
   readonly editable?: boolean;
+}
+
+export interface HarnessEnvironmentEvalRequirementApi {
+  required: boolean;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  pass_threshold: number;
 }
 
 export type EvidenceImportListItemApiSourceKind =

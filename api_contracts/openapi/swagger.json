@@ -54500,6 +54500,61 @@
                 }
             ]
         },
+        "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/requirement/": {
+            "patch": {
+                "operationId": "simulate_api_harness-environments_evaluations_eval_requirement",
+                "description": "Set whether one added eval must pass, and the score it must reach. A failing required eval is flagged beside the task result; it does not change the sub-goals' verdict.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentEvalRequirement"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentDetail"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "eval_config_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/evidence-imports/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_list_evidence_imports",
@@ -150193,7 +150248,9 @@
                 "inputs",
                 "id",
                 "runnable",
-                "editable"
+                "editable",
+                "required",
+                "pass_threshold"
             ],
             "type": "object",
             "properties": {
@@ -150271,6 +150328,107 @@
                 "editable": {
                     "title": "Editable",
                     "type": "boolean"
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean"
+                },
+                "pass_threshold": {
+                    "title": "Pass threshold",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 0
+                }
+            }
+        },
+        "HarnessEnvironmentSuggestedEval": {
+            "required": [
+                "name",
+                "description",
+                "source",
+                "tags",
+                "required_keys",
+                "agent_type",
+                "modality",
+                "credits_per_run",
+                "charges_judge_tokens",
+                "inputs",
+                "required",
+                "pass_threshold"
+            ],
+            "type": "object",
+            "properties": {
+                "name": {
+                    "title": "Name",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "description": {
+                    "title": "Description",
+                    "type": "string"
+                },
+                "source": {
+                    "title": "Source",
+                    "type": "string",
+                    "enum": [
+                        "system",
+                        "custom"
+                    ]
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "required_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "agent_type": {
+                    "title": "Agent type",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "chat"
+                    ]
+                },
+                "modality": {
+                    "title": "Modality",
+                    "type": "string",
+                    "enum": [
+                        "voice",
+                        "text",
+                        "any"
+                    ]
+                },
+                "credits_per_run": {
+                    "title": "Credits per run",
+                    "type": "number"
+                },
+                "charges_judge_tokens": {
+                    "title": "Charges judge tokens",
+                    "type": "boolean"
+                },
+                "inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentEvalInput"
+                    }
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean"
+                },
+                "pass_threshold": {
+                    "title": "Pass threshold",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 0
                 }
             }
         },
@@ -150325,6 +150483,12 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/HarnessEnvironmentSelectedEval"
+                    }
+                },
+                "suggested": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessEnvironmentSuggestedEval"
                     }
                 },
                 "results": {
@@ -154645,6 +154809,16 @@
                     "type": "string",
                     "maxLength": 255,
                     "minLength": 1
+                },
+                "required": {
+                    "title": "Required",
+                    "type": "boolean"
+                },
+                "pass_threshold": {
+                    "title": "Pass threshold",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 0
                 }
             }
         },
@@ -155021,6 +155195,25 @@
                     "title": "Editable",
                     "type": "boolean",
                     "readOnly": true
+                }
+            }
+        },
+        "HarnessEnvironmentEvalRequirement": {
+            "required": [
+                "required",
+                "pass_threshold"
+            ],
+            "type": "object",
+            "properties": {
+                "required": {
+                    "title": "Required",
+                    "type": "boolean"
+                },
+                "pass_threshold": {
+                    "title": "Pass threshold",
+                    "type": "integer",
+                    "maximum": 100,
+                    "minimum": 0
                 }
             }
         },

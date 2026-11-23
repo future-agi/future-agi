@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1210,
+  endpointCount: 1211,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -30104,6 +30104,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/requirement/":
+      {
+        patch: {
+          operationId:
+            "simulate_api_harness-environments_evaluations_eval_requirement",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessEnvironmentEvalRequirement",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessEnvironmentDetail",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-environments/{id}/evidence-imports/": {
       get: {
         operationId: "simulate_api_harness-environments_list_evidence_imports",
@@ -72408,6 +72432,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 255,
           minLength: 1,
         },
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        pass_threshold: {
+          title: "Pass threshold",
+          type: "integer",
+          maximum: 100,
+          minimum: 0,
+        },
       },
     },
     HarnessEnvironmentAvailableEvals: {
@@ -72588,6 +72622,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           description: "Updated name for the evaluation configuration.",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    HarnessEnvironmentEvalRequirement: {
+      required: ["required", "pass_threshold"],
+      type: "object",
+      properties: {
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        pass_threshold: {
+          title: "Pass threshold",
+          type: "integer",
+          maximum: 100,
+          minimum: 0,
         },
       },
     },
@@ -113894,6 +113944,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/HarnessEnvironmentSelectedEval",
           },
         },
+        suggested: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentSuggestedEval",
+          },
+        },
         results: {
           type: "array",
           items: {
@@ -137849,6 +137905,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "id",
         "runnable",
         "editable",
+        "required",
+        "pass_threshold",
       ],
       type: "object",
       properties: {
@@ -137916,6 +137974,97 @@ export const OPENAPI_CONTRACT = Object.freeze({
         editable: {
           title: "Editable",
           type: "boolean",
+        },
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        pass_threshold: {
+          title: "Pass threshold",
+          type: "integer",
+          maximum: 100,
+          minimum: 0,
+        },
+      },
+    },
+    HarnessEnvironmentSuggestedEval: {
+      required: [
+        "name",
+        "description",
+        "source",
+        "tags",
+        "required_keys",
+        "agent_type",
+        "modality",
+        "credits_per_run",
+        "charges_judge_tokens",
+        "inputs",
+        "required",
+        "pass_threshold",
+      ],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["system", "custom"],
+        },
+        tags: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        required_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        agent_type: {
+          title: "Agent type",
+          type: "string",
+          enum: ["voice", "chat"],
+        },
+        modality: {
+          title: "Modality",
+          type: "string",
+          enum: ["voice", "text", "any"],
+        },
+        credits_per_run: {
+          title: "Credits per run",
+          type: "number",
+        },
+        charges_judge_tokens: {
+          title: "Charges judge tokens",
+          type: "boolean",
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentEvalInput",
+          },
+        },
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        pass_threshold: {
+          title: "Pass threshold",
+          type: "integer",
+          maximum: 100,
+          minimum: 0,
         },
       },
     },

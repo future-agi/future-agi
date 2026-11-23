@@ -682,6 +682,7 @@ import type {
   HarnessEnvironmentAvailableEvalsApi,
   HarnessEnvironmentDetailApi,
   HarnessEnvironmentEvalEditApi,
+  HarnessEnvironmentEvalRequirementApi,
   HarnessEnvironmentFileUploadedApi,
   HarnessEnvironmentListResponseApi,
   HarnessEnvironmentRenameApi,
@@ -63527,6 +63528,70 @@ export const simulateApiHarnessEnvironmentsRemoveEvaluation = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponse200 =
+  {
+    data: HarnessEnvironmentDetailApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseSuccess =
+  simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseError =
+  (
+    | simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponse403
+    | simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseDefault
+  ) & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponse =
+  | simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseSuccess
+  | simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseError;
+
+export const getSimulateApiHarnessEnvironmentsEvaluationsEvalRequirementUrl = (
+  id: string,
+  evalConfigId: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/evaluations/${evalConfigId}/requirement/`;
+};
+
+/**
+ * Set whether one added eval must pass, and the score it must reach. A failing required eval is flagged beside the task result; it does not change the sub-goals' verdict.
+ */
+export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirement = async (
+  id: string,
+  evalConfigId: string,
+  harnessEnvironmentEvalRequirementApi: HarnessEnvironmentEvalRequirementApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponse>(
+    getSimulateApiHarnessEnvironmentsEvaluationsEvalRequirementUrl(
+      id,
+      evalConfigId,
+    ),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessEnvironmentEvalRequirementApi),
     },
   );
 };
