@@ -3,53 +3,8 @@ export const MONO = "ui-monospace, Menlo, monospace";
 export const TOOLS_CARD_COPY = {
   title: (n) => `Tools · ${n}`,
   subtitle: "The tools the agent declares, and where each one runs",
-  arguments: "Arguments",
-  noInputs: "Takes no inputs",
-  required: "Required",
-  optional: "Optional",
-  allowed: (values) => `Allowed: ${values.map(String).join(", ")}`,
-  lowest: (limit) => `Lowest ${limit}`,
-  highest: (limit) => `Highest ${limit}`,
-  returns: "Returns",
-  returnsNotDeclared: "Not recorded for this environment version",
-  changes: "Changes",
-  effect: {
-    read: "Reads only",
-    write: "Can change records",
-    unknown: "Not declared",
-  },
-  refusesWhen: "Refuses when",
-  needsFirst: "Needs first",
-  resetLabel: "Reset",
-  reset: "Reset to the seeded records before each trial",
-  notReset: "Not reset by the test world",
   groupCount: (n) => (n === 1 ? "1 tool" : `${n} tools`),
   expand: (name) => `Show the contract of ${name}`,
-  reportedEffect: "Reported effect",
-  effectKind: {
-    read: "Reads data",
-    write: "Changes data",
-    external: "Calls an outside service",
-    control: "Steers the conversation",
-  },
-  effectWhy: "Why",
-  checked: "Checked",
-  availability: {
-    certified: "Certified",
-    runtime_only: "Runtime only",
-    rejected: "Rejected",
-  },
-  availabilityTip: (probeMode, reason) =>
-    [probeMode && `Probed as ${probeMode.replaceAll("_", " ")}`, reason]
-      .filter(Boolean)
-      .join(". "),
-  source: "Source",
-  sourceFile: (source) =>
-    source.line_start
-      ? `${source.path}:${source.line_start}-${source.line_end}`
-      : source.path,
-  providerFunction: "Provider function",
-  providerParameters: "Parameters",
 };
 
 export const CODE_BLOCK_COPY = {
@@ -111,24 +66,7 @@ export const WORLD_COPY = {
     ref
       ? `Read from ${repo} at ${ref}. A commit there that changes the world makes a new environment version.`
       : `Read from ${repo}.`,
-  map: {
-    title: (tables, tools) =>
-      tools
-        ? `World · ${tables} ${tables === 1 ? "table" : "tables"} · ${tools} ${tools === 1 ? "tool" : "tools"}`
-        : `World · ${tables} ${tables === 1 ? "table" : "tables"}`,
-    subtitle: (rows, withTools) =>
-      withTools
-        ? `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"}. Each table with the tools that use it.`
-        : `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"} seeded before each run.`,
-    table: "Table",
-    rows: "Rows",
-    columns: "Columns",
-    usedBy: "Tools that use it",
-    noTool: "No tool uses it",
-    reads: "Reads this table",
-    changes: "Changes this table",
-    expand: (name) => `Show the columns of ${name}`,
-  },
+
   noWorld: {
     title: "No world to reset",
     subtitle:
@@ -152,18 +90,6 @@ export const WORLD_COPY = {
   },
 };
 
-export function inputLine(name, type, unit) {
-  return [`${name}: ${type || "any"}`, unit].filter(Boolean).join(", ");
-}
-
-export function returnLine(name, kind) {
-  return kind ? `${name}: ${kind}` : name;
-}
-
-export function effectLabel(effect) {
-  return TOOLS_CARD_COPY.effect[effect] || TOOLS_CARD_COPY.effect.unknown;
-}
-
 export const isWritingWorld = (env) => env?.buildStatus === "building";
 
 export function hasNoWorld(env) {
@@ -182,19 +108,6 @@ export function groupToolsByStatus(tools = []) {
     note: TOOL_STATUS_GROUP[status].note,
     tools: tools.filter((t) => (t.status || "unknown") === status),
   })).filter((group) => group.tools.length > 0);
-}
-
-export function toolsUsingTable(tools = [], table) {
-  return tools
-    .filter((t) => t.tables?.recorded)
-    .map((t) => {
-      if (t.tables.changed?.includes(table))
-        return { tool: t.tool, changes: true };
-      if (t.tables.read?.includes(table))
-        return { tool: t.tool, changes: false };
-      return null;
-    })
-    .filter(Boolean);
 }
 
 export function repoOriginOf(env) {
@@ -254,17 +167,6 @@ export function withToolEvidence(toolStatus = [], env) {
   }));
 }
 
-export function columnType(column) {
-  return [
-    column.type,
-    column.pk ? "PK" : null,
-    column.nullable === false ? "NOT NULL" : null,
-    column.references ? `references ${column.references}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 export function withTypedColumns(tables = [], columns) {
   if (!columns || typeof columns !== "object") return tables;
   return tables.map((table) => {
@@ -281,19 +183,6 @@ export function withTypedColumns(tables = [], columns) {
       : table;
   });
 }
-
-export const argumentFacts = (argument) =>
-  [
-    argument.required === true && TOOLS_CARD_COPY.required,
-    argument.required === false && TOOLS_CARD_COPY.optional,
-    Array.isArray(argument.values) &&
-      argument.values.length > 0 &&
-      TOOLS_CARD_COPY.allowed(argument.values),
-    typeof argument.min === "number" && TOOLS_CARD_COPY.lowest(argument.min),
-    typeof argument.max === "number" && TOOLS_CARD_COPY.highest(argument.max),
-  ]
-    .filter(Boolean)
-    .join(" · ");
 
 const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -347,7 +236,6 @@ export const WORLD_CARD_COPY = {
 };
 
 export const TOOL_DRAWER_COPY = {
-  close: "Close",
   remove: "Remove from the world",
   removeTitle: (name) => `Remove ${name}?`,
   removeContent:

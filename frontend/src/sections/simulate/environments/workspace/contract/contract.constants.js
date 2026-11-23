@@ -151,7 +151,6 @@ export const CONTRACT_LISTS_COPY = {
     noun: "use case",
     field: "Use case",
   },
-  rowActions: (noun, n) => `Actions for ${noun} ${n}`,
   coverage: (subGoals, scenarios) =>
     `${subGoals} ${subGoals === 1 ? "sub-goal" : "sub-goals"} · ${scenarios} ${scenarios === 1 ? "scenario" : "scenarios"}`,
   notTested: "Not tested",
@@ -172,20 +171,4 @@ export const CONTRACT_EDIT_COPY = {
   submit: "Ask the builder",
   removeAction: (noun) => `Remove ${noun}`,
   sent: "The builder is updating the contract. The change shows as a draft for you to save.",
-};
-
-export const RULE_DETAIL_COPY = {
-  enforcedBy: (by) => `Enforced by ${by.join(", ")}`,
-  checkedBy: (goal) => `Checked by ${goal}`,
-};
-
-export const SUB_GOALS_COPY = {
-  title: (n) => `Sub-goals (${n})`,
-  subtitle: "What a run is checked on, and how each check reports",
-  output: (output) => output.replaceAll("_", "/"),
-};
-
-export const ACTORS_COPY = {
-  title: (n) => `Actors (${n})`,
-  subtitle: "Other parties the agent's instructions name",
 };

@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Button, IconButton, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import ViewerLock from "../../components/ViewerLock";
@@ -60,7 +60,8 @@ export default function ToolDrawer({ tool, onClose, onRemove, blockedReason }) {
             alignItems="flex-start"
             spacing={1.5}
             sx={{
-              px: 2.5,
+              pl: 2.5,
+              pr: 6,
               py: 2,
               borderBottom: "1px solid",
               borderColor: "divider",
@@ -78,14 +79,6 @@ export default function ToolDrawer({ tool, onClose, onRemove, blockedReason }) {
                 </Typography>
               )}
             </Box>
-            <IconButton
-              size="small"
-              aria-label={T.close}
-              onClick={onClose}
-              sx={{ mt: -0.25 }}
-            >
-              <Iconify icon="solar:close-linear" width={18} />
-            </IconButton>
           </Stack>
 
           <Box
