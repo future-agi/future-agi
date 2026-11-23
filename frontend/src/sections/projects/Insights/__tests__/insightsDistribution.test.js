@@ -64,16 +64,23 @@ describe("buildColorOrder", () => {
     expect(colorFor("x", order, "dark")).toBe(CATEGORY_PALETTE.dark[0]);
   });
 
-  it("uses the brand set, each mode's own step, in slot order", () => {
-    const light = dsPalette("light").dataBrand;
-    const dark = dsPalette("dark").dataBrand;
-    // The org design guide's purple, green, red and amber.
+  it("uses the category hues, each mode's own step, in slot order", () => {
+    const light = [1, 2, 4, 6].map((i) => dsPalette("light").data[i]);
+    const dark = [1, 2, 4, 6].map((i) => dsPalette("dark").data[i]);
+    // Blue, teal, pink and lime: no red beside the high-severity mark.
     expect(CATEGORY_PALETTE.light).toEqual([
-      "#7857FC",
-      "#22C55E",
-      "#EF4444",
-      "#F59E0B",
+      "#2563EB",
+      "#0D9488",
+      "#DB2777",
+      "#65A30D",
     ]);
+    expect(CATEGORY_PALETTE.light).not.toContain(
+      dsPalette("light").status.danger.solid,
+    );
+    // The guide's red, which dataBrand still carries.
+    expect(CATEGORY_PALETTE.light).not.toContain(
+      dsPalette("light").dataBrand[2],
+    );
     expect(CATEGORY_PALETTE.dark).toEqual(dark);
     const order = ["a", "b", "c", "d"];
     order.forEach((id, slot) => {
@@ -90,7 +97,7 @@ describe("buildColorOrder", () => {
     expect(segment.color).toBe(dark[0]);
   });
 
-  it("does not cycle hues beyond the four brand slots", () => {
+  it("does not cycle hues beyond the four category slots", () => {
     const order = Array.from({ length: 9 }, (_, i) => `c${i}`);
     expect(CATEGORY_PALETTE.light).toHaveLength(4);
     expect(CATEGORY_PALETTE.dark).toHaveLength(4);

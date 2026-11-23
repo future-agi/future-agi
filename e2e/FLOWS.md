@@ -3031,20 +3031,23 @@
 
 1. send 4 traces to a new Observe project
 2. save the org TypeSafe key through the endpoint AI Providers uses
-3. open the project's Traces view, its Evaluate menu, and choose Ask a question
+3. open the project's Traces view, its Evaluate menu, and choose Ask a question, with the count held back
 4. type a question and add two example questions from Try one
-5. click Ask Jev and read the confirm for 4 traces
-6. click Start
+5. click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back
+6. click Ask Jev again and click Start
 
 **Backend state verified:**
 
 - POST /tracer/instant-eval/estimate/ answers rows_to_read 4 and needs_confirm true for the project's traces
+- no POST /tracer/instant-eval/start/ is sent from Enter on the confirm's focused Back
 - POST /tracer/instant-eval/start/ is sent confirmed for 4 rows and returns a task_id, and PG holds its tracer_eval_task and tracer_instant_eval_run for the actor org with rows_requested 4
 
 **Browser observations:**
 
+- Question 1 stays at the same height on the page while the count is held back and after the size cards land
 - the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it
-- Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button and has focus
+- Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button, and Back has focus
+- Enter on the focused Back closes the confirm and gives Ask Jev focus again
 
 ### OBS-E2E-065 — Ask Jev reads every trace and shows each answer
 

@@ -713,7 +713,7 @@ describe("the composer's layout", () => {
     ).toBeTruthy();
   });
 
-  it("moves focus to Start when a confirm takes Ask Jev's place, and back from Back", async () => {
+  it("moves focus to Back when a confirm takes Ask Jev's place, and back from Back", async () => {
     fakes.estimate.mockResolvedValue({
       ...ESTIMATE,
       population: 20000,
@@ -740,10 +740,14 @@ describe("the composer's layout", () => {
     });
     ask.focus();
     fireEvent.click(ask);
-    expect(screen.getByRole("button", { name: "Start" })).toHaveFocus();
+    // Back, not Start: a second Enter (or a held one) must not start the run.
     const back = screen.getByRole("button", { name: "Back" });
-    back.focus();
-    fireEvent.click(back);
+    expect(back).toHaveFocus();
+    fireEvent.click(document.activeElement);
+    expect(fakes.startAskRun).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("button", { name: "Start" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Ask Jev about 20,000 sessions" }),
     ).toHaveFocus();
@@ -1802,7 +1806,7 @@ describe("a run whose workflow went before it picked its rows", () => {
     );
     expect(
       screen.getByText(
-        "This run stopped before it picked the 1,000 sessions to read",
+        "This run was interrupted before it picked the 1,000 sessions to read",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Picking the/)).toBeNull();
@@ -1814,7 +1818,7 @@ describe("a run whose workflow went before it picked its rows", () => {
   });
 });
 
-describe("a run that stopped before finishing", () => {
+describe("a run that was interrupted before finishing", () => {
   it("says how far it got and resumes", async () => {
     fakes.askRuns["task-sessions"] = runOf({
       status: "stalled",
@@ -1827,7 +1831,7 @@ describe("a run that stopped before finishing", () => {
     );
     expect(
       screen.getByText(
-        "This run stopped before finishing: 1,200 of 3,000 answered",
+        "This run was interrupted before finishing: 1,200 of 3,000 answered",
       ),
     ).toBeInTheDocument();
     await act(async () => {
@@ -1987,7 +1991,7 @@ describe("a cancelled run, and controls the server refuses", () => {
     });
     renderAt(OPEN);
     expect(
-      screen.getByText("Cancelled · 340 of 1,000 answered"),
+      screen.getByText("Stopped · 340 of 1,000 answered"),
     ).toBeInTheDocument();
     for (const name of [
       /^Resume$/,
@@ -2783,24 +2787,27 @@ describe("a sample size typed in", () => {
       ).toBeNull();
     });
 
-    // The block the size choices take: the skeleton while counting, the same
-    // space after a failed or empty count.
-    const reserved = () =>
-      screen.queryByTestId("scope-choices-loading") ||
-      screen.queryByTestId("scope-choices-space");
-    const footprint = (block) => ({
-      marginTop: getComputedStyle(block).marginTop,
-      heights: [...block.children].map(
-        (child) => getComputedStyle(child).height,
-      ),
-    });
+    // The block the size choices take holds a hidden row of the counted
+    // cards' tallest usual shapes (a size menu; a one-line note) in the same
+    // grid cell as what shows, whatever the count did: jsdom lays nothing out,
+    // so this pins the structure and the E2E composer flow pins the pixels.
+    const holdsCountedHeight = (shown) => {
+      const block = screen.getByTestId("scope-choices");
+      const reserve = within(block).getByTestId("scope-choices-reserve");
+      expect(getComputedStyle(block).display).toBe("grid");
+      expect(reserve).toHaveAttribute("aria-hidden", "true");
+      expect(getComputedStyle(reserve).visibility).toBe("hidden");
+      const [sampleCard, allCard] = reserve.children;
+      expect(sampleCard.querySelector(".MuiInput-root")).not.toBeNull();
+      expect(allCard.querySelectorAll("p")).toHaveLength(2);
+      expect(block).toContainElement(shown);
+      expect(reserve).not.toContainElement(shown);
+    };
 
-    it("keeps the size choices' place when the count fails or is zero", async () => {
+    it("keeps the counted cards' place while counting, after a failed or zero count, and once counted", async () => {
       fakes.estimate.mockImplementation(() => new Promise(() => {}));
       const loading = renderAt(askLink(PROJECT, { unit: "sessions" }));
-      await screen.findByTestId("scope-choices-loading");
-      const counting = footprint(reserved());
-      expect(counting.heights).toEqual(["64px", "64px"]);
+      holdsCountedHeight(await screen.findByTestId("scope-choices-loading"));
       loading.unmount();
 
       // The count is retried once before it fails.
@@ -2809,19 +2816,27 @@ describe("a sample size typed in", () => {
       expect(
         await screen.findByText(/couldn't be counted/, {}, { timeout: 4000 }),
       ).toBeInTheDocument();
-      expect(screen.getByTestId("scope-choices-space")).toBeInTheDocument();
-      expect(footprint(reserved())).toEqual(counting);
+      holdsCountedHeight(screen.getByTestId("scope-choices-space"));
       failed.unmount();
 
       fakes.estimate.mockImplementation(costed(smallEstimate(0)));
-      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      const zero = renderAt(askLink(PROJECT, { unit: "sessions" }));
       await waitFor(() =>
         expect(screen.getByTestId("scope-choices-space")).toBeInTheDocument(),
       );
       expect(
         screen.queryByRole("radiogroup", { name: "How many to read" }),
       ).toBeNull();
-      expect(footprint(reserved())).toEqual(counting);
+      holdsCountedHeight(screen.getByTestId("scope-choices-space"));
+      zero.unmount();
+
+      fakes.estimate.mockImplementation(costed(smallEstimate(42)));
+      renderAt(askLink(PROJECT, { unit: "sessions" }));
+      holdsCountedHeight(
+        await screen.findByRole("radiogroup", { name: "How many to read" }),
+      );
+      // The reserve is hidden from the radios a user can pick.
+      expect(screen.getAllByRole("radio")).toHaveLength(1);
     });
 
     it("offers a sample from inside the every-row card, adding no row", async () => {
@@ -3174,7 +3189,7 @@ describe("running a question again past the confirm size", () => {
     await held(null);
     const confirm = screen.getByText(/Read 6,000 sessions again\?/);
     expect(confirm).toHaveTextContent(
-      "Read 6,000 sessions again? You can pause or cancel it while it runs.",
+      "Read 6,000 sessions again? You can pause or stop it while it runs.",
     );
     expect(confirm).not.toHaveTextContent(/credit/);
     fireEvent.click(screen.getByRole("button", { name: "Back" }));

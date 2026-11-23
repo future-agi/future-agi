@@ -14,6 +14,7 @@ import {
   createTheme,
   getContrastRatio,
 } from "@mui/material/styles";
+import type { Theme, ThemeOptions } from "@mui/material/styles";
 import { palette } from "src/theme/palette";
 import { typography } from "src/theme/typography";
 import { AskHeatmap, AskPatterns, AskTimeline } from "../index";
@@ -22,7 +23,7 @@ import { QUESTIONS, RESOLVED, syntheticRun } from "./fixtures/syntheticRun";
 
 // Count the contrast checks the charts make, still working them out.
 vi.mock("@mui/material/styles", async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = await importOriginal<typeof import("@mui/material/styles")>();
   return { ...actual, getContrastRatio: vi.fn(actual.getContrastRatio) };
 });
 vi.mock("src/components/iconify", () => ({ default: () => null }));
@@ -34,10 +35,19 @@ beforeAll(() => {
 afterAll(() => vi.useRealTimers());
 afterEach(() => vi.restoreAllMocks());
 
-const theme = createTheme({ palette: palette("light"), typography });
+// The theme's own roles and type sizes beyond MUI's, as the charts read them.
+type AppTheme = Theme & {
+  palette: Theme["palette"] & { border: { selected: string } };
+  typography: Theme["typography"] & { s2: { fontSize: string } };
+};
+const theme = createTheme({
+  palette: palette("light"),
+  typography,
+} as ThemeOptions) as AppTheme;
+const contrastRatio = vi.mocked(getContrastRatio);
 const run = syntheticRun();
 
-function renderViz(Component, props = {}) {
+function renderViz(Component: React.ElementType, props = {}) {
   return render(
     <ThemeProvider theme={theme}>
       <Component
@@ -56,10 +66,14 @@ function renderViz(Component, props = {}) {
 }
 
 // Lay the charts out at `width` instead of jsdom's 640px fallback.
-const atWidth = (width) =>
-  vi
-    .spyOn(Element.prototype, "getBoundingClientRect")
-    .mockReturnValue({ width, height: 0, top: 0, left: 0, right: 0 });
+const atWidth = (width: number) =>
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue({
+    width,
+    height: 0,
+    top: 0,
+    left: 0,
+    right: 0,
+  } as DOMRect);
 
 it("keeps the ink helpers out of the chart component module", () => {
   expect(vizParts).not.toHaveProperty("inkOn");
@@ -68,7 +82,7 @@ it("keeps the ink helpers out of the chart component module", () => {
 
 describe("heatmap cell text", () => {
   it("works out no ink when the cells are too small for numbers", () => {
-    getContrastRatio.mockClear();
+    contrastRatio.mockClear();
     const { container } = renderViz(AskHeatmap);
     expect(
       screen.getByRole("img", { name: /^Share of “No” by day and hour/ }),
@@ -76,14 +90,14 @@ describe("heatmap cell text", () => {
     // 640px leaves 15px cells: no counts, no totals, only the labels.
     const numbers = [
       ...container.querySelectorAll("svg[role='img'] text"),
-    ].filter((text) => /^\d+$/.test(text.textContent));
+    ].filter((text) => /^\d+$/.test(text.textContent ?? ""));
     expect(numbers).toHaveLength(0);
-    expect(getContrastRatio).not.toHaveBeenCalled();
+    expect(contrastRatio).not.toHaveBeenCalled();
   });
 
   it("works out one ink per ramp step for the cells and totals that show a number", () => {
     atWidth(1200);
-    getContrastRatio.mockClear();
+    contrastRatio.mockClear();
     const { container } = renderViz(AskHeatmap);
     const svg = screen.getByRole("img", {
       name: /^Share of “No” by day and hour/,
@@ -93,13 +107,13 @@ describe("heatmap cell text", () => {
       theme.palette.background.paper,
     ]);
     const numbers = [...container.querySelectorAll("svg[role='img'] text")]
-      .filter((text) => /^\d+$/.test(text.textContent))
-      .filter((text) => inks.has(text.getAttribute("fill")));
+      .filter((text) => /^\d+$/.test(text.textContent ?? ""))
+      .filter((text) => inks.has(text.getAttribute("fill") ?? ""));
     // Counts in the cells and shares in the totals row, far more than five.
     expect(numbers.length).toBeGreaterThan(50);
     expect(svg).toHaveAccessibleName(/by day and hour/);
     // Two ratios per fill, five fills in the ramp, however many cells.
-    expect(getContrastRatio.mock.calls.length).toBeLessThanOrEqual(2 * 5);
+    expect(contrastRatio.mock.calls.length).toBeLessThanOrEqual(2 * 5);
   });
 });
 
@@ -114,13 +128,14 @@ describe("timeline", () => {
   it("counts a cut column's hidden rows in 11px figures, centred in the badge", () => {
     const { container } = renderViz(AskTimeline, { records: burst });
     const badge = [...container.querySelectorAll("svg[role='img'] text")].find(
-      (text) => /^\+\d+$/.test(text.textContent),
+      (text) => /^\+\d+$/.test(text.textContent ?? ""),
     );
-    expect(badge).toBeDefined();
+    if (!badge) throw new Error("no +N badge on the cut column");
     expect(badge.getAttribute("font-size")).toBe(
       String(theme.typography.s2.fontSize),
     );
     const pill = badge.previousElementSibling;
+    if (!pill) throw new Error("no pill behind the +N badge");
     const top = Number(pill.getAttribute("y"));
     const height = Number(pill.getAttribute("height"));
     // Room for 11px glyphs, with the text on the pill's middle.
@@ -169,7 +184,7 @@ describe("the patterns' answer switch", () => {
 });
 
 // A colour as jsdom reports it in a computed style.
-function getComputedStyleOf(color) {
+function getComputedStyleOf(color: string) {
   const probe = document.createElement("span");
   probe.style.color = color;
   document.body.appendChild(probe);

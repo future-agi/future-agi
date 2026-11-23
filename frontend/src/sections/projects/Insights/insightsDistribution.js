@@ -1,12 +1,15 @@
 import { dsPalette } from "src/theme/ds-tokens";
+import { CATEGORY_SLOTS } from "src/sections/projects/LLMTracing/InstantEval/results/answerColors";
 
 // Category identities keep their slot across sorting, filters and run paging.
-// The four slots are the brand set (dataBrand): purple, then the org design
-// guide's green, red and amber, each mode with its own documented step. Hue
+// The four slots are Instant eval's category hues (blue, teal, pink and lime
+// from the data set, each mode with its own step), never a status hue: red
+// would read as the high-severity mark beside it. Hue
 // and identity bounds are independent: the original eight named series remain
 // selectable; slots five through eight use neutral marks. Only the original
 // identity overflow and unmatched items fold into labelled Other.
-const categorySteps = (mode) => dsPalette(mode).dataBrand;
+const categorySteps = (mode) =>
+  CATEGORY_SLOTS.map((i) => dsPalette(mode).data[i]);
 export const CATEGORY_PALETTE = {
   light: categorySteps("light"),
   dark: categorySteps("dark"),

@@ -7,9 +7,17 @@ import React, {
 } from "react";
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
-import { alpha, darken, lighten, useTheme } from "@mui/material/styles";
+import {
+  alpha,
+  darken,
+  getContrastRatio,
+  lighten,
+  useTheme,
+} from "@mui/material/styles";
+import { dsPalette } from "src/theme/ds-tokens";
 import { UNITS } from "src/sections/projects/observePopulation";
 import { answerColor } from "../../results/answerColors";
+import { shownOn } from "./chartInk";
 import { formatCount, isYesNo } from "./askAnswers";
 import {
   SQUARES_MAX,
@@ -241,18 +249,49 @@ export function useAnswerColor() {
  * enough in light mode that text on it reads at 4.5:1 or more.
  */
 export const deepColor = (hue, mode = "light") =>
-  mode === "dark" ? lighten(hue, 0.3) : darken(hue, 0.4);
+  mode === "dark" ? lighten(hue, 0.3) : darken(hue, 0.5);
+
+// The middle tint's opacity: the first, nearest the mode's usual step, whose
+// better ink still reads at 4.5:1. A bright hue (lime, amber) crosses the
+// midpoint between the two inks at a different opacity from the others.
+// Worked out once per hue and mode, and up front for the palette's answer
+// hues, so a chart draws no contrast checks for its fills.
+const MID_TINTS = { light: [0.65, 0.6, 0.7], dark: [0.55, 0.6, 0.5] };
+const midTints = new Map();
+const midTint = (hue, mode) => {
+  const key = `${mode} ${hue}`;
+  if (!midTints.has(key)) midTints.set(key, findMidTint(hue, mode));
+  return midTints.get(key);
+};
+const findMidTint = (hue, mode) => {
+  const { background, text } = dsPalette(mode);
+  const reads = (opacity) => {
+    const shown = shownOn(alpha(hue, opacity), background.paper);
+    return (
+      Math.max(
+        getContrastRatio(shown, text.primary),
+        getContrastRatio(shown, background.paper),
+      ) >= 4.5
+    );
+  };
+  const tints = MID_TINTS[mode] ?? MID_TINTS.light;
+  return alpha(hue, tints.find(reads) ?? tints[0]);
+};
+["light", "dark"].forEach((mode) => {
+  const { data, dataBrand, text } = dsPalette(mode);
+  [...dataBrand, ...data, text.disabled].forEach((hue) => midTint(hue, mode));
+});
 
 /**
  * An answer's hue in five steps for a share from 0% to the top of a scale:
  * three tints, the hue itself, then its strong end. Every step carries text
  * at 4.5:1 or more with one of the two theme inks; a tint near the midpoint
- * between them (0.65 on the dark page) would top out near 4.2:1.
+ * between them would top out near 4.2:1, so the middle tint steps around it.
  */
 export const answerRamp = (hue, mode = "light") => [
   alpha(hue, mode === "dark" ? 0.16 : 0.12),
   alpha(hue, 0.35),
-  alpha(hue, mode === "dark" ? 0.55 : 0.65),
+  midTint(hue, mode),
   hue,
   deepColor(hue, mode),
 ];

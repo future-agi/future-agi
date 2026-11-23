@@ -36,7 +36,7 @@ const ASK_A_QUESTION = /Ask a question/;
 // page/AskComposer.jsx: the composer's own confirm, for a run past confirm_rows
 // with no credits billed (self-hosted).
 const CONFIRM_TEXT = new RegExp(
-  `^Read ${TRACES} traces for 3 questions\\? It takes about .+\\. You can pause or cancel it while it runs\\.$`);
+  `^Read ${TRACES} traces for 3 questions\\? It takes about .+\\. You can pause or stop it while it runs\\.$`);
 
 interface Estimate { result: { population: number; rows_to_read: number; needs_confirm: boolean; confirm_rows: number } }
 interface Started { result: { task_id: string; rows_requested: number; population: number } }
@@ -87,18 +87,21 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     steps: [
       'send 4 traces to a new Observe project',
       'save the org TypeSafe key through the endpoint AI Providers uses',
-      'open the project\'s Traces view, its Evaluate menu, and choose Ask a question',
+      'open the project\'s Traces view, its Evaluate menu, and choose Ask a question, with the count held back',
       'type a question and add two example questions from Try one',
-      'click Ask Jev and read the confirm for 4 traces',
-      'click Start',
+      'click Ask Jev, read the confirm for 4 traces, and press Enter on the focused Back',
+      'click Ask Jev again and click Start',
     ],
     backendChecks: [
       'POST /tracer/instant-eval/estimate/ answers rows_to_read 4 and needs_confirm true for the project\'s traces',
+      'no POST /tracer/instant-eval/start/ is sent from Enter on the confirm\'s focused Back',
       'POST /tracer/instant-eval/start/ is sent confirmed for 4 rows and returns a task_id, and PG holds its tracer_eval_task and tracer_instant_eval_run for the actor org with rows_requested 4',
     ],
     browserChecks: [
+      'Question 1 stays at the same height on the page while the count is held back and after the size cards land',
       'the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it',
-      'Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button and has focus',
+      'Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button, and Back has focus',
+      'Enter on the focused Back closes the confirm and gives Ask Jev focus again',
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
@@ -138,14 +141,31 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
 
   await test.step('seed: the org TypeSafe key', () => ensureTypesafeKey(actor));
 
-  await test.step('UI + API: Ask a question counts the 4 traces, past the confirm size', async () => {
+  await test.step('UI + API: Ask a question counts the 4 traces, past the confirm size, without moving Question 1', async () => {
     await page.goto(`/dashboard/observe/${projectId}/llm-tracing?tab=traces&selectedTab=trace`,
       { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'Evaluate', exact: true }).click();
+    // Hold the count back until Question 1's place while counting is read.
+    let release = () => {};
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route(url => url.pathname === ESTIMATE, async route => {
+      await held;
+      await route.continue();
+    });
     const estimated = page.waitForResponse(r => new URL(r.url()).pathname === ESTIMATE
       && r.request().method() === 'POST', { timeout: UI_READY });
     await page.getByRole('menu').getByRole('menuitem').filter({ hasText: ASK_A_QUESTION }).click();
+    const question1 = page.getByRole('textbox', { name: 'Question 1' });
+    await ui(page.getByTestId('scope-choices-loading')).toBeVisible();
+    const counting = (await question1.boundingBox())?.y;
+    release();
     const response = await estimated;
+    await page.unroute(url => url.pathname === ESTIMATE);
+    await ui(page.getByRole('radiogroup', { name: 'How many to read' })).toBeVisible();
+    const counted = (await question1.boundingBox())?.y;
+    await testInfo.attach('question-1-y', { contentType: 'application/json', body: JSON.stringify({ counting, counted }) });
+    expect(counting).toBeDefined();
+    expect(counted).toBe(counting);
     expect(response.request().postDataJSON()).toMatchObject({ project_id: projectId, unit: 'traces' });
     const estimate = (await response.json() as Estimate).result;
     await testInfo.attach('estimate', { contentType: 'application/json', body: JSON.stringify(estimate) });
@@ -174,17 +194,30 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     await testInfo.attach('composer', { body: await page.screenshot(), contentType: 'image/png' });
   });
 
-  await test.step('UI: Ask Jev restates the read, with Start the only primary action', async () => {
+  await test.step('UI + API: Ask Jev restates the read with Start the only primary action, and a second Enter goes Back', async () => {
+    const starts: string[] = [];
+    const onRequest = (r: { url(): string; method(): string }) => {
+      if (new URL(r.url()).pathname === START && r.method() === 'POST') starts.push(r.url());
+    };
+    page.on('request', onRequest);
     await askJev.click();
     // The alert also holds Back and Start; its message is the confirm.
     await ui(actions.getByRole('alert').getByText(CONFIRM_TEXT)).toBeVisible();
-    const start = actions.getByRole('button', { name: 'Start', exact: true });
-    await ui(start).toBeFocused();
+    // Focus on Back, not Start: a second Enter must not spend the run.
+    const back = actions.getByRole('button', { name: 'Back', exact: true });
+    await ui(back).toBeFocused();
     await ui(askJev).toHaveCount(0);
     // MUI marks a variant="contained" color="primary" button with this class;
     // AskPage.test.jsx primaryButtons() reads the same marker.
     await ui(page.locator('button.MuiButton-containedPrimary')).toHaveText(['Start']);
     await testInfo.attach('confirm', { body: await page.screenshot(), contentType: 'image/png' });
+    await page.keyboard.press('Enter');
+    await ui(askJev).toBeFocused();
+    await ui(actions.getByRole('alert')).toHaveCount(0);
+    page.off('request', onRequest);
+    expect(starts).toEqual([]);
+    await askJev.click();
+    await ui(actions.getByRole('alert').getByText(CONFIRM_TEXT)).toBeVisible();
   });
 
   const taskId = await test.step('UI + API: Start launches the confirmed run', async () => {

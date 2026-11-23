@@ -115,15 +115,16 @@ function cardState(listed, progress, now) {
     : "live";
 }
 
-// Each card state through the one status map: a live run pulses, a stopped
-// one is a warning, a quiet one is neutral.
+// Each card state through the one status map: a live run pulses, one the
+// system interrupted (it can resume) is a warning, a quiet one is neutral.
+// "Interrupted", not "Stopped": Stop is the user's own action.
 const STATE_MARKS = {
   live: { status: "running", label: "Running", title: "Still being answered" },
   stalled: {
     status: "stalled",
     role: "warning",
-    label: "Stopped",
-    title: "Stopped before finishing",
+    label: "Interrupted",
+    title: "Interrupted before finishing",
   },
   quiet: {
     status: "idle",

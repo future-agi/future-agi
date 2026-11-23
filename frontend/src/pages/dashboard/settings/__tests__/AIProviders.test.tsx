@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HelmetProvider } from "react-helmet-async";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
+import type { ThemeOptions } from "@mui/material/styles";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useNavigate } from "react-router-dom";
 import { palette } from "src/theme/palette";
@@ -24,11 +25,15 @@ vi.mock("src/components/svg-color", () => ({ default: () => null }));
 vi.mock("src/components/iconify", () => ({ default: () => null }));
 vi.mock("src/sections/develop-detail/Common/ConfigureKeys/KeyCard", () => ({
   // eslint-disable-next-line react/prop-types -- a stand-in card; its props are the real component's
-  default: ({ data }) => <div data-testid="provider">{data?.display_name}</div>,
+  default: ({ data }: { data?: { display_name?: string } }) => (
+    <div data-testid="provider">{data?.display_name}</div>
+  ),
 }));
 vi.mock("src/components/custom-model-dropdown/CloudProviderCard", () => ({
   // eslint-disable-next-line react/prop-types -- a stand-in card; its props are the real component's
-  default: ({ data }) => <div data-testid="provider">{data?.display_name}</div>,
+  default: ({ data }: { data?: { display_name?: string } }) => (
+    <div data-testid="provider">{data?.display_name}</div>
+  ),
 }));
 vi.mock("src/components/custom-model-dropdown/CustomModalKeyCard", () => ({
   default: () => null,
@@ -65,14 +70,16 @@ function GoTo() {
   );
 }
 
-function renderAt(url) {
+function renderAt(url: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <HelmetProvider>
       <QueryClientProvider client={client}>
-        <ThemeProvider theme={createTheme({ palette: palette("light") })}>
+        <ThemeProvider
+          theme={createTheme({ palette: palette("light") } as ThemeOptions)}
+        >
           <MemoryRouter initialEntries={[url]}>
             <AIProviders />
             <GoTo />
@@ -88,7 +95,7 @@ const listed = () =>
   screen.queryAllByTestId("provider").map((card) => card.textContent);
 
 beforeEach(() => {
-  mocks.get.mockImplementation((url) =>
+  mocks.get.mockImplementation((url: string) =>
     Promise.resolve(
       url === "/api-keys/status/"
         ? { data: { result: { providers: PROVIDERS } } }
@@ -177,7 +184,7 @@ describe("AI Providers empty and filter states", () => {
   });
 
   it("keeps the first-run state for an account with nothing added", async () => {
-    mocks.get.mockImplementation((url) =>
+    mocks.get.mockImplementation((url: string) =>
       Promise.resolve(
         url === "/api-keys/status/"
           ? { data: { result: { providers: [] } } }
@@ -192,7 +199,7 @@ describe("AI Providers empty and filter states", () => {
   });
 
   it("shows the selected category as neutral, not purple", async () => {
-    const theme = createTheme({ palette: palette("light") });
+    const theme = createTheme({ palette: palette("light") } as ThemeOptions);
     renderAt("/providers");
     await waitFor(() => expect(listed()).toHaveLength(PROVIDERS.length));
     const all = screen.getByRole("button", { name: /^All \(/ });

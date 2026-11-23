@@ -283,10 +283,10 @@ describe("where a run that isn't done stands", () => {
     });
     const open = card("Resolved?");
     // The state is a status badge; the line beside it says how far it got.
-    expect(within(open).getByText("Stopped")).toBeInTheDocument();
+    expect(within(open).getByText("Interrupted")).toBeInTheDocument();
     expect(within(open).getByText(/8 of 49 answered/)).toBeInTheDocument();
     expect(
-      within(open).getByTitle("Stopped before finishing"),
+      within(open).getByTitle("Interrupted before finishing"),
     ).toBeInTheDocument();
     expect(within(open).queryByTitle("Still being answered")).toBeNull();
   });

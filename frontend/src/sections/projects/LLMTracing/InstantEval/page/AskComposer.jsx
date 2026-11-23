@@ -61,9 +61,10 @@ import { scopeWords } from "./askFormat";
 const asDraft = (entry) => draftsFromQuestions([entry])[0];
 
 const ALL = "all";
-// A size choice's height (padding, title row and its one-line cost), held
-// while the view is counted.
+// The least a size choice's skeleton fills (padding, title row and its
+// one-line cost); the hidden reserve row sets the real height.
 const CHOICE_CARD_HEIGHT = 64;
+const noop = () => {};
 // A sample size typed in rather than picked from the menu.
 const CUSTOM = "custom";
 
@@ -463,169 +464,201 @@ function ScopeCard({
           )}
         </Box>
       </Stack>
-      {!(estimate && count > 0) && (
-        // Holds the size choices' place while the view is counted, and keeps
-        // it when the count fails or comes back empty, so the question box
-        // and suggestions below never jump.
+      {/* The size choices' place. A hidden row of the counted cards' tallest
+          usual shapes (a sample with its size menu, every row with its
+          one-line note) shares one grid cell with what shows: the skeleton
+          while counting, nothing after a failed or empty count, the real
+          cards once counted. The cell is never shorter than a counted row,
+          so the question box and suggestions below never jump. */}
+      <Box
+        data-testid="scope-choices"
+        sx={{ display: "grid", mt: 1.75, "& > *": { gridArea: "1 / 1" } }}
+      >
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1.25}
           aria-hidden
-          data-testid={
-            population.isLoading && !estimate
-              ? "scope-choices-loading"
-              : "scope-choices-space"
-          }
-          sx={{ mt: 1.75 }}
+          data-testid="scope-choices-reserve"
+          sx={{ visibility: "hidden" }}
         >
-          {[0, 1].map((key) =>
-            population.isLoading && !estimate ? (
-              <Skeleton
-                key={key}
-                variant="rounded"
-                height={CHOICE_CARD_HEIGHT}
-                sx={{
-                  flex: { xs: "none", sm: 1 },
-                  minWidth: 240,
-                  borderRadius: "8px",
-                }}
-              />
-            ) : (
-              <Box
-                key={key}
-                sx={{
-                  flex: { xs: "none", sm: 1 },
-                  minWidth: 240,
-                  height: CHOICE_CARD_HEIGHT,
-                }}
-              />
-            ),
-          )}
+          <ChoiceCard
+            selected={false}
+            onSelect={noop}
+            title={"\u00a0"}
+            detail={"\u00a0"}
+          >
+            <TextField
+              select
+              size="small"
+              variant="standard"
+              value=""
+              tabIndex={-1}
+              SelectProps={{ displayEmpty: true, renderValue: () => "\u00a0" }}
+              sx={{ minWidth: 64, "& .MuiInput-input": { typography: "s1" } }}
+            />
+          </ChoiceCard>
+          <ChoiceCard
+            selected={false}
+            onSelect={noop}
+            title={"\u00a0"}
+            detail={"\u00a0"}
+            note={"\u00a0"}
+          />
         </Stack>
-      )}
-      {estimate && count > 0 && (
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={1.25}
-          role="radiogroup"
-          aria-label="How many to read"
-          sx={{ mt: 1.75 }}
-        >
-          {sizes.length > 0 && (
+        {!(estimate && count > 0) && (
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1.25}
+            aria-hidden
+            data-testid={
+              population.isLoading && !estimate
+                ? "scope-choices-loading"
+                : "scope-choices-space"
+            }
+          >
+            {population.isLoading &&
+              !estimate &&
+              [0, 1].map((key) => (
+                <Skeleton
+                  key={key}
+                  variant="rounded"
+                  height="100%"
+                  sx={{
+                    flex: { xs: "none", sm: 1 },
+                    minWidth: 240,
+                    minHeight: CHOICE_CARD_HEIGHT,
+                    borderRadius: "8px",
+                  }}
+                />
+              ))}
+          </Stack>
+        )}
+        {estimate && count > 0 && (
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1.25}
+            role="radiogroup"
+            aria-label="How many to read"
+          >
+            {sizes.length > 0 && (
+              <ChoiceCard
+                selected={sampled}
+                onSelect={() => onChoose(typed ? CUSTOM : shownSize)}
+                title={
+                  typed ? (
+                    <SampleSizeBox custom={custom} plural={meta.plural} />
+                  ) : (
+                    <>
+                      A sample of{" "}
+                      <Box
+                        component="span"
+                        sx={{ fontVariantNumeric: "tabular-nums" }}
+                      >
+                        {shownSize.toLocaleString()}
+                      </Box>
+                    </>
+                  )
+                }
+                detail={
+                  sampleCost
+                    ? `${costLine(sampleCost, unit, typed ? custom.estimate : estimate)}. Picked at random; the same rows each time.`
+                    : null
+                }
+                noteIsReason={Boolean(
+                  (typed && custom.problem) || sampleCost?.creditLimited,
+                )}
+                note={
+                  typed && custom.problem ? (
+                    <SizeProblem
+                      problem={custom.problem}
+                      onUse={custom.onText}
+                    />
+                  ) : sampleCost?.creditLimited &&
+                    noteHere(sampleCost, sampled) ? (
+                    <CreditNote
+                      cost={sampleCost}
+                      estimate={estimate}
+                      unit={unit}
+                      onChoose={onChoose}
+                    />
+                  ) : null
+                }
+              >
+                <TextField
+                  select
+                  size="small"
+                  variant="standard"
+                  value={typed ? CUSTOM : shownSize}
+                  onClick={(event) => event.stopPropagation()}
+                  onChange={(event) =>
+                    onChoose(
+                      event.target.value === CUSTOM
+                        ? CUSTOM
+                        : Number(event.target.value),
+                    )
+                  }
+                  SelectProps={{
+                    renderValue: () => "Change",
+                    inputProps: { "aria-label": "Sample size" },
+                  }}
+                  sx={{
+                    minWidth: 64,
+                    "& .MuiInput-input": { typography: "s1" },
+                  }}
+                >
+                  {sizes.map((size) => (
+                    <MenuItem key={size} value={size}>
+                      {size.toLocaleString()} {meta.plural}
+                    </MenuItem>
+                  ))}
+                  <MenuItem value={CUSTOM}>Custom…</MenuItem>
+                </TextField>
+              </ChoiceCard>
+            )}
             <ChoiceCard
-              selected={sampled}
-              onSelect={() => onChoose(typed ? CUSTOM : shownSize)}
-              title={
-                typed ? (
-                  <SampleSizeBox custom={custom} plural={meta.plural} />
-                ) : (
-                  <>
-                    A sample of{" "}
-                    <Box
-                      component="span"
-                      sx={{ fontVariantNumeric: "tabular-nums" }}
-                    >
-                      {shownSize.toLocaleString()}
-                    </Box>
-                  </>
-                )
-              }
-              detail={
-                sampleCost
-                  ? `${costLine(sampleCost, unit, typed ? custom.estimate : estimate)}. Picked at random; the same rows each time.`
-                  : null
-              }
-              noteIsReason={Boolean(
-                (typed && custom.problem) || sampleCost?.creditLimited,
-              )}
+              selected={!sampled}
+              onSelect={() => onChoose(ALL)}
+              disabled={!allCost?.allowed}
+              title={`${sizes.length ? "All " : "Every one of the "}${count.toLocaleString()}`}
+              detail={costLine(allCost, unit, estimate)}
+              noteIsReason={!allCost?.allowed}
               note={
-                typed && custom.problem ? (
-                  <SizeProblem problem={custom.problem} onUse={custom.onText} />
-                ) : sampleCost?.creditLimited &&
-                  noteHere(sampleCost, sampled) ? (
+                allCost?.creditLimited && noteHere(allCost, !sampled) ? (
                   <CreditNote
-                    cost={sampleCost}
+                    cost={allCost}
                     estimate={estimate}
                     unit={unit}
                     onChoose={onChoose}
                   />
+                ) : allCost?.creditLimited ? null : !allCost?.allowed ? (
+                  `Over the ${estimate.max_rows.toLocaleString()}-row limit for one run. Read a sample, or narrow the filters.`
+                ) : allCost.needsConfirm ? (
+                  allCost.credits != null ? (
+                    "You confirm the credits before it starts."
+                  ) : (
+                    "You confirm before it starts."
+                  )
                 ) : null
               }
-            >
-              <TextField
-                select
-                size="small"
-                variant="standard"
-                value={typed ? CUSTOM : shownSize}
-                onClick={(event) => event.stopPropagation()}
-                onChange={(event) =>
-                  onChoose(
-                    event.target.value === CUSTOM
-                      ? CUSTOM
-                      : Number(event.target.value),
-                  )
-                }
-                SelectProps={{
-                  renderValue: () => "Change",
-                  inputProps: { "aria-label": "Sample size" },
-                }}
-                sx={{
-                  minWidth: 64,
-                  "& .MuiInput-input": { typography: "s1" },
-                }}
-              >
-                {sizes.map((size) => (
-                  <MenuItem key={size} value={size}>
-                    {size.toLocaleString()} {meta.plural}
-                  </MenuItem>
-                ))}
-                <MenuItem value={CUSTOM}>Custom…</MenuItem>
-              </TextField>
-            </ChoiceCard>
-          )}
-          <ChoiceCard
-            selected={!sampled}
-            onSelect={() => onChoose(ALL)}
-            disabled={!allCost?.allowed}
-            title={`${sizes.length ? "All " : "Every one of the "}${count.toLocaleString()}`}
-            detail={costLine(allCost, unit, estimate)}
-            noteIsReason={!allCost?.allowed}
-            note={
-              allCost?.creditLimited && noteHere(allCost, !sampled) ? (
-                <CreditNote
-                  cost={allCost}
-                  estimate={estimate}
-                  unit={unit}
-                  onChoose={onChoose}
-                />
-              ) : allCost?.creditLimited ? null : !allCost?.allowed ? (
-                `Over the ${estimate.max_rows.toLocaleString()}-row limit for one run. Read a sample, or narrow the filters.`
-              ) : allCost.needsConfirm ? (
-                allCost.credits != null ? (
-                  "You confirm the credits before it starts."
-                ) : (
-                  "You confirm before it starts."
-                )
-              ) : null
-            }
-            aside={
-              count > 1 && custom.small && !custom.shown ? (
-                // On a view too small for the fixed sizes, the way to a
-                // typed sample sits in the card, so it adds no row once
-                // counted.
-                <Link
-                  component="button"
-                  type="button"
-                  variant="caption"
-                  onClick={custom.onOpen}
-                >
-                  Read a sample instead
-                </Link>
-              ) : null
-            }
-          />
-        </Stack>
-      )}
+              aside={
+                count > 1 && custom.small && !custom.shown ? (
+                  // On a view too small for the fixed sizes, the way to a
+                  // typed sample sits in the card, so it adds no row once
+                  // counted.
+                  <Link
+                    component="button"
+                    type="button"
+                    variant="caption"
+                    onClick={custom.onOpen}
+                  >
+                    Read a sample instead
+                  </Link>
+                ) : null
+              }
+            />
+          </Stack>
+        )}
+      </Box>
       {estimate && count > 1 && custom.small && custom.shown && (
         <Box sx={{ mt: 1.25, pl: 0.5 }}>
           <Stack
@@ -1029,18 +1062,19 @@ export default function AskComposer({
     />
   );
 
-  // A confirm takes Ask Jev's place: focus moves to its Start, and back to
+  // A confirm takes Ask Jev's place: focus moves to its Back, and back to
   // Ask Jev from Back, rather than being dropped with the button pressed.
+  // Back, not Start: a second Enter, or a held one, must not spend the run.
   const confirmShown = Boolean((confirming && cost) || serverConfirm);
   const confirmWasShown = useRef(confirmShown);
   const askRef = useRef(null);
-  const startRef = useRef(null);
+  const backRef = useRef(null);
   useEffect(() => {
     if (confirmShown === confirmWasShown.current) return;
     confirmWasShown.current = confirmShown;
     const active = document.activeElement;
     if (active && active !== document.body) return;
-    (confirmShown ? startRef : askRef).current?.focus();
+    (confirmShown ? backRef : askRef).current?.focus();
   }, [confirmShown]);
 
   return (
@@ -1257,6 +1291,7 @@ export default function AskComposer({
                   size="small"
                   variant="outlined"
                   color="inherit"
+                  ref={backRef}
                   onClick={() => setConfirming(false)}
                 >
                   Back
@@ -1265,7 +1300,6 @@ export default function AskComposer({
                   size="small"
                   variant="contained"
                   color="primary"
-                  ref={startRef}
                   disabled={starting}
                   onClick={() => ask(true)}
                 >
@@ -1277,7 +1311,7 @@ export default function AskComposer({
             {cost.credits != null
               ? `Read ${rowWords}? That is ${creditWords(cost.credits)} for ${questionWords}, and takes ${durationWords(cost.seconds)}.`
               : `Read ${rowWords} for ${questionWords}? It takes ${durationWords(cost.seconds)}.`}{" "}
-            You can pause or cancel it while it runs.
+            You can pause or stop it while it runs.
           </Alert>
         )}
 
@@ -1291,6 +1325,7 @@ export default function AskComposer({
                   size="small"
                   variant="outlined"
                   color="inherit"
+                  ref={backRef}
                   onClick={onServerConfirmCancel}
                 >
                   Back
@@ -1299,7 +1334,6 @@ export default function AskComposer({
                   size="small"
                   variant="contained"
                   color="primary"
-                  ref={startRef}
                   disabled={starting}
                   onClick={onServerConfirm}
                 >
