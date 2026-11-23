@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
 import {
   Box,
   Button,
@@ -11,17 +11,9 @@ import {
 
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { relativeTime } from "src/utils/format-time";
-import {
-  useDiscardDraft,
-  useDraftReview,
-  useDrafts,
-  useSaveCandidates,
-  useSaveDrafts,
-  useValidateDrafts,
-} from "src/api/simulate-environments/versions";
-import { refusalText } from "../evals/refusalText";
 import { DRAFTS_COPY as COPY } from "../workspace.constants";
 import { changeCount } from "./changeCount";
+import useDraftSaveFlow from "./useDraftSaveFlow";
 
 const pieceLine = (piece, draft) =>
   `${COPY.pieces[piece]} · ${
@@ -29,25 +21,6 @@ const pieceLine = (piece, draft) =>
       ? COPY.suiteChanges(draft.changes)
       : COPY.environmentChanges(changeCount(draft.changes))
   }`;
-
-// The piece a stale refusal names, else the first stale one.
-const staleText = (drafts, piece) => {
-  const stalePiece =
-    (piece && drafts[piece] && piece) ||
-    drafts.pieces.find((one) => drafts[one].stale) ||
-    drafts.pieces[0];
-  const draft = drafts[stalePiece];
-  return COPY.stale(
-    COPY.pieces[stalePiece],
-    draft.parentLabel,
-    draft.defaultLabel,
-  );
-};
-
-const errorText = (error, drafts, fallback) => {
-  if (error?.error === "draft_stale") return staleText(drafts, error.piece);
-  return COPY.errors[error?.error] || refusalText(error, fallback);
-};
 
 /**
  * The environment's unsaved changes, under the version bar: what they change,
@@ -60,15 +33,7 @@ export default function DraftBar({
   rebuilding = false,
   onViewChanges,
 }) {
-  const enabled = Boolean(env?.versioning?.enabled);
-  const { data: drafts } = useDrafts(env?.id, { enabled });
-  const save = useSaveDrafts(env?.id);
-  const discard = useDiscardDraft(env?.id);
-  const validate = useValidateDrafts(env?.id);
-  const saveValidated = useSaveCandidates(env?.id);
-  const { data: review } = useDraftReview(env?.id, {
-    enabled: enabled && Boolean(drafts?.any),
-  });
+  const flow = useDraftSaveFlow(env);
   const [confirming, setConfirming] = useState(false);
   // A validated save makes a new version, and the server asks for its name.
   const [versionName, setVersionName] = useState("");
@@ -76,106 +41,33 @@ export default function DraftBar({
   const busyId = useId();
   const holdId = useId();
 
-  // A refusal is about the drafts it was sent for, so it goes when they
-  // change. draft_changed stays: it asks to review the drafts it refetched.
-  const signature = drafts?.any
-    ? drafts.pieces.map((p) => `${drafts[p].id}:${drafts[p].revision}`).join()
-    : "";
-  const failed = useRef({});
-  failed.current = {
-    save: save.isError && save.error?.error !== "draft_changed",
-    discard: discard.isError,
-  };
-  const { reset: resetSave } = save;
-  const { reset: resetDiscard } = discard;
-  useEffect(() => {
-    if (failed.current.save) resetSave();
-    if (failed.current.discard) resetDiscard();
-  }, [signature, resetSave, resetDiscard]);
+  if (!flow.open) return null;
 
-  if (!enabled || !drafts?.any) return null;
-
+  const {
+    drafts,
+    needsValidate,
+    validating,
+    canSaveValidated,
+    pending,
+    error,
+    validationNote,
+    failedScenarios,
+  } = flow;
   const open = drafts.pieces.map((piece) => drafts[piece]);
   const latest = open.reduce((a, b) =>
     new Date(b.updatedAt || 0) > new Date(a.updatedAt || 0) ? b : a,
   );
-  // A change accepted or rejected in review makes a new version: it is
-  // validated before it can be saved.
-  const decided =
-    (review?.counts?.accepted ?? 0) + (review?.counts?.rejected ?? 0) > 0;
-  const validation = drafts.validation;
-  const needsValidate =
-    decided ||
-    save.error?.error === "validation_required" ||
-    Boolean(validation);
-  const validationState = validation?.state ?? null;
-  const validating = validationState === "validating" || validate.isPending;
-  const canSaveValidated =
-    ["ready", "check_unavailable"].includes(validationState) &&
-    Boolean(drafts.candidates);
-  const pending =
-    save.isPending ||
-    discard.isPending ||
-    saveValidated.isPending ||
-    validating;
-  const staleReason = drafts.stale ? staleText(drafts) : null;
+  const staleReason = flow.stale;
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
   const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
 
-  const onValidate = () => {
-    discard.reset();
-    save.reset();
-    validate.mutate({
-      expectedRevisions: Object.fromEntries(
-        drafts.pieces.map((piece) => [piece, drafts[piece].revision]),
-      ),
-      expectedReviewDigest: review?.review_digest,
-    });
-  };
-  const onSaveValidated = () => {
-    discard.reset();
-    saveValidated.mutate({
-      candidates: drafts.candidates,
-      expectedReviewDigest: review?.review_digest,
-      name: versionName.trim(),
-    });
-  };
-  const onSave = () => {
-    discard.reset();
-    save.mutate(
-      drafts.pieces.map((piece) => ({
-        piece,
-        parentId: drafts[piece].parentId,
-        revision: drafts[piece].revision,
-      })),
-    );
-  };
+  const onValidate = flow.onValidate;
+  const onSaveValidated = () => flow.onSaveValidated(versionName);
+  const onSave = flow.onSave;
   const onDiscard = () => {
     setConfirming(false);
-    save.reset();
-    discard.mutate(drafts.pieces);
+    flow.onDiscard();
   };
-
-  let error = null;
-  if (saveValidated.error) {
-    error = errorText(saveValidated.error, drafts, COPY.saveError);
-  } else if (validate.error) {
-    error = errorText(validate.error, drafts, COPY.validateError);
-  } else if (save.error && !needsValidate) {
-    error = errorText(save.error, drafts, COPY.saveError);
-  } else if (discard.error) {
-    error = errorText(discard.error, drafts, COPY.discardError);
-  }
-  const failedScenarios =
-    validationState === "failed" ? validation.affectedScenarios : [];
-  let validationNote = null;
-  if (needsValidate && !validationState && !error) {
-    validationNote = COPY.errors.validation_required;
-  } else if (validationState === "failed") {
-    validationNote = COPY.validation.failed(failedScenarios.length);
-  } else if (COPY.validation[validationState]) {
-    validationNote = COPY.validation[validationState];
-  }
 
   let primary;
   if (!needsValidate) {
@@ -187,7 +79,7 @@ export default function DraftBar({
         aria-describedby={saveReasons.join(" ") || undefined}
         onClick={onSave}
       >
-        {save.isPending ? COPY.saving : COPY.save}
+        {flow.savePending ? COPY.saving : COPY.save}
       </Button>
     );
   } else if (validating) {
@@ -210,7 +102,7 @@ export default function DraftBar({
         aria-describedby={saveReasons.join(" ") || undefined}
         onClick={onSaveValidated}
       >
-        {saveValidated.isPending ? COPY.saving : COPY.save}
+        {flow.savePending ? COPY.saving : COPY.save}
       </Button>
     );
   } else {
@@ -272,7 +164,7 @@ export default function DraftBar({
           aria-describedby={holdReasons.join(" ") || undefined}
           onClick={() => setConfirming(true)}
         >
-          {discard.isPending ? COPY.discarding : COPY.discard}
+          {flow.discardPending ? COPY.discarding : COPY.discard}
         </Button>
         {canSaveValidated && !validating && (
           <TextField

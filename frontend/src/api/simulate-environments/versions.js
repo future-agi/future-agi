@@ -81,6 +81,10 @@ const draftReviewPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/drafts/review/", {
     id: envId,
   });
+const reviewDecisionsPath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/drafts/review/decisions/", {
+    id: envId,
+  });
 const validateDraftsPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/drafts/validate/", {
     id: envId,
@@ -228,6 +232,19 @@ export const saveDrafts = async (envId, { drafts, idempotencyKey }) =>
 
 export const getDraftReview = async (envId) =>
   (await axios.get(draftReviewPath(envId))).data;
+
+// Decide changes in the review: [{ id | kind | remaining, decision: "accepted" | "rejected" }], sent with the
+// revisions the person saw. Answers the whole review again, with a new digest.
+export const decideReviewChanges = async (
+  envId,
+  { expectedRevisions, decisions },
+) =>
+  (
+    await axios.post(reviewDecisionsPath(envId), {
+      expected_revisions: expectedRevisions,
+      decisions,
+    })
+  ).data;
 
 // Build candidate versions from the reviewed drafts and start validating them.
 export const validateDrafts = async (
@@ -878,6 +895,22 @@ export function useDraftReview(envId, { enabled = true } = {}) {
     enabled: Boolean(envId) && enabled,
     retry: retryUnlessNotFound,
     meta: { errorHandled: true },
+  });
+}
+
+// Accept or reject changes, one by `id`, a whole `kind`, or every undecided one with `remaining`.
+// One at a time, so a slower answer can't overwrite a newer decision; the answer is the whole review.
+export function useDecideChanges(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    scope: { id: `draft-review-${envId}` },
+    meta: { errorHandled: true },
+    mutationFn: (vars) => decideReviewChanges(envId, vars),
+    onSuccess: (review) => {
+      queryClient.setQueryData(draftReviewKey(envId), review);
+      // A decision outdates any validation of the earlier set.
+      queryClient.invalidateQueries({ queryKey: draftsKey(envId) });
+    },
   });
 }
 
