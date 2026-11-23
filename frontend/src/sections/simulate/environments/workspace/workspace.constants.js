@@ -111,6 +111,23 @@ export const WORKSPACE_COPY = {
     body: "Something went wrong rendering this page. Reload to try again, or go back to your environments.",
     reload: "Reload",
   },
+  viewer: {
+    run: "You don't have permission to start runs.",
+    edit: "You don't have permission to edit this environment.",
+    rename: "You don't have permission to rename environments.",
+    delete: "You don't have permission to delete environments.",
+    create: "You don't have permission to create environments.",
+    cancel: "You don't have permission to cancel builds.",
+    chat: "You don't have permission to send messages to the builder.",
+    secrets: "You don't have permission to change secrets.",
+    agentVersion: "You don't have permission to create agent versions.",
+    versions: "You don't have permission to change versions.",
+    rebuild: "You don't have permission to answer rebuild prompts.",
+    drafts: "You don't have permission to save or discard drafts.",
+    scenarios: "You don't have permission to change scenarios.",
+    evals: "You don't have permission to change evaluations.",
+    runEvals: "You don't have permission to run evaluations.",
+  },
   runBlocked: {
     agent: "No agent is connected to this environment yet",
     scenarios: "Add scenarios on the Scenarios tab",
@@ -312,6 +329,11 @@ export const AGENT_VERSIONS_COPY = {
     environment_gone: "Not made default: the environment was deleted",
     not_requested:
       "Not made default: its credentials were changed for another environment",
+    offered: "Offered to this environment: rebuild from its card to use it",
+    pinned: "Not made default: this environment is pinned to its version",
+    unmeasured: "Offered: the change couldn't be judged yet, so nothing moved",
+    major_change:
+      "Offered: tools or rules changed, so this environment was not moved",
     not_bound: "Not made default: this environment can't use this version",
     rerun_only: "Made for a single rerun; not used as the default",
     failed: "Not made default: something went wrong; make it default by hand",
@@ -391,7 +413,6 @@ export const AGENT_VERSIONS_COPY = {
       `Built from ${repository} @ ${ref || "the default branch"}`,
     watchHint:
       "New commits become new agent versions automatically; they're checked before becoming the default.",
-    privateNotWatched: "Private repositories aren't watched for new commits.",
     checkRunning: "Another change is still being checked",
     upload: "Upload new source",
     uploading: (progress) => `Uploading… ${progress}%`,

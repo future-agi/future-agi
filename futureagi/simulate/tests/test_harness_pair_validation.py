@@ -2037,10 +2037,17 @@ class TestAgentReading:
         _launch(gateway, job)
 
         assert _job_metadata(job)["agent_reading"] == "before_certify"
-        command = gateway.client.sandbox.process.session_request.command
-        assert _without_deadline(command) == (
-            assembly.agent_reading_command() + assembly.certify_command(prove=True)
+        steps = gateway.client.sandbox.process.session_request.steps
+        # The reading runs first, as the sandbox user like the bundle author, and never fails the certify after it.
+        assert _without_deadline(" && ".join(one.command for one in steps)) == (
+            " && ".join(
+                [
+                    assembly.agent_reading_command().removesuffix("; "),
+                    *(one.command for one in assembly.certify_steps(prove=True)),
+                ]
+            )
         )
+        assert not steps[0].harness
 
     @pytest.mark.parametrize("purpose", ["agent_move", "save"])
     def test_a_check_that_brings_in_an_unread_version_reads_it_before_certifying(
@@ -2062,10 +2069,16 @@ class TestAgentReading:
         _launch(gateway, job)
 
         assert _job_metadata(job)["agent_reading"] == "before_certify"
-        command = gateway.client.sandbox.process.session_request.command
-        assert _without_deadline(command) == (
-            assembly.agent_reading_command() + assembly.certify_command(prove=True)
+        steps = gateway.client.sandbox.process.session_request.steps
+        assert _without_deadline(" && ".join(one.command for one in steps)) == (
+            " && ".join(
+                [
+                    assembly.agent_reading_command().removesuffix("; "),
+                    *(one.command for one in assembly.certify_steps(prove=True)),
+                ]
+            )
         )
+        assert not steps[0].harness
 
     def test_proving_a_certified_unread_pairing_reads_the_version_first(
         self, user, workspace, storage, gateway
@@ -2080,9 +2093,12 @@ class TestAgentReading:
 
         assert _job_metadata(job)["agent_reading"] == "before_proving"
         assert validation.reads_agent(job)
-        command = gateway.client.sandbox.process.session_request.command
-        assert command.startswith(assembly.agent_reading_command())
-        assert "--prove-only" in command
+        steps = gateway.client.sandbox.process.session_request.steps
+        # The reading first, as the sandbox user; then proving, a harness step: it starts the customer's runtime.
+        assert steps[0].command == assembly.agent_reading_command().removesuffix("; ")
+        assert not steps[0].harness
+        assert [one.harness for one in steps[1:]] == [True]
+        assert "--prove-only" in steps[1].command
 
     def test_a_stored_reading_is_laid_where_proving_reads_it(
         self, user, workspace, storage, gateway
@@ -2125,8 +2141,11 @@ class TestAgentReading:
         assert started.state == "validating"
         assert _job_metadata(started.job)["agent_reading"] == "only"
         assert attempt.terminal_stage != "completed"
-        command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.agent_reading_command() + "true"
+        steps = gateway.client.sandbox.process.session_request.steps
+        # A reading-only check reads the version and certifies nothing.
+        assert [one.command for one in steps] == [
+            assembly.agent_reading_command().removesuffix("; ")
+        ]
 
     def test_the_read_document_is_stored_and_the_check_settles(
         self,
@@ -2476,7 +2495,10 @@ class TestScenarioProving:
             validation.check_deadline(attempt.job).timestamp()
             - assembly.ALK_DEADLINE_MARGIN_SECONDS
         )
-        assert assembly.prove_suite_command(deadline_at=deadline) + "true" in command
+        steps = gateway.client.sandbox.process.session_request.steps
+        assert [one.command for one in steps if one.harness] == [
+            assembly.prove_suite_command(deadline_at=deadline).removesuffix("; ")
+        ]
         # ALK's live prover on the sealed runtime, the way a build proves: never the offline-only module.
         assert (
             "python -m fi.alk.harness.hosted_authoring_entrypoint /work/job.json "

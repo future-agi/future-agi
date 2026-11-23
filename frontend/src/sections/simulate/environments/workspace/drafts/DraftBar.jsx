@@ -11,7 +11,13 @@ import {
 
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { relativeTime } from "src/utils/format-time";
-import { DRAFTS_COPY as COPY, REVIEW_COPY } from "../workspace.constants";
+import {
+  DRAFTS_COPY as COPY,
+  REVIEW_COPY,
+  WORKSPACE_COPY,
+} from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { changeCount } from "./changeCount";
 import useDraftSaveFlow from "./useDraftSaveFlow";
 
@@ -35,6 +41,7 @@ export default function DraftBar({
   onReview,
 }) {
   const flow = useDraftSaveFlow(env);
+  const { canEdit } = useSimulationAccess();
   const [confirming, setConfirming] = useState(false);
   // A validated save makes a new version, and the server asks for its name.
   const [versionName, setVersionName] = useState("");
@@ -76,7 +83,7 @@ export default function DraftBar({
       <Button
         size="small"
         variant="contained"
-        disabled={saveReasons.length > 0 || pending}
+        disabled={!canEdit || saveReasons.length > 0 || pending}
         aria-describedby={saveReasons.join(" ") || undefined}
         onClick={onSave}
       >
@@ -99,7 +106,9 @@ export default function DraftBar({
       <Button
         size="small"
         variant="contained"
-        disabled={saveReasons.length > 0 || pending || !versionName.trim()}
+        disabled={
+          !canEdit || saveReasons.length > 0 || pending || !versionName.trim()
+        }
         aria-describedby={saveReasons.join(" ") || undefined}
         onClick={onSaveValidated}
       >
@@ -111,7 +120,7 @@ export default function DraftBar({
       <Button
         size="small"
         variant="contained"
-        disabled={saveReasons.length > 0 || pending}
+        disabled={!canEdit || saveReasons.length > 0 || pending}
         aria-describedby={saveReasons.join(" ") || undefined}
         onClick={onValidate}
       >
@@ -159,17 +168,20 @@ export default function DraftBar({
             {COPY.viewChanges}
           </Button>
         )}
-        <Button
-          size="small"
-          variant="outlined"
-          color="inherit"
-          disabled={holdReasons.length > 0 || pending}
-          aria-describedby={holdReasons.join(" ") || undefined}
-          onClick={() => setConfirming(true)}
-        >
-          {flow.discardPending ? COPY.discarding : COPY.discard}
-        </Button>
-        {/* With the review drawer, saving happens there: accept, validate, name, save. The bar only opens it. */}
+        <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            disabled={!canEdit || holdReasons.length > 0 || pending}
+            aria-describedby={holdReasons.join(" ") || undefined}
+            onClick={() => setConfirming(true)}
+          >
+            {flow.discardPending ? COPY.discarding : COPY.discard}
+          </Button>
+        </ViewerLock>
+        {/* With the review drawer, saving happens there: accept, validate, name, save. The bar only opens it;
+            someone who can't edit still opens it to read the changes. */}
         {onReview && (
           <Button
             size="small"
@@ -187,11 +199,16 @@ export default function DraftBar({
             value={versionName}
             onChange={(event) => setVersionName(event.target.value)}
             placeholder={COPY.versionName}
+            disabled={!canEdit}
             inputProps={{ "aria-label": COPY.versionName, maxLength: 80 }}
             sx={{ width: 200 }}
           />
         )}
-        {!onReview && primary}
+        {!onReview && (
+          <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
+            {primary}
+          </ViewerLock>
+        )}
       </Stack>
       {validationNote && (
         <Typography

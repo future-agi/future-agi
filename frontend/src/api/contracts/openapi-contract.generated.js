@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1171,
+  endpointCount: 1221,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -9800,6 +9800,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
               default: 20,
             },
           },
+          platform: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "langfuse",
+                "datadog",
+                "posthog",
+                "pagerduty",
+                "mixpanel",
+                "cloud_storage",
+                "message_queue",
+                "linear",
+                "slack",
+                "github",
+              ],
+            },
+          },
         },
         responses: {
           200: {
@@ -9874,6 +9892,89 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/integrations/connections/{connection_id}/repositories/": {
+      get: {
+        operationId: "integrations_connections_repositories_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          q: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 100,
+              default: "",
+            },
+          },
+          page: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 200,
+              default: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/SourceRepositoriesResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          502: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/connections/{connection_id}/repositories/{repository_id}/branches/":
+      {
+        get: {
+          operationId: "integrations_connections_repositories_branches_list",
+          runtimeRequestValidation: false,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/SourceBranchesResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            403: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            502: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/integrations/connections/{connection_id}/slack/channels/": {
       get: {
         operationId: "integrations_connections_slack_channels_list",
@@ -10078,6 +10179,59 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           500: {
             $ref: "#/definitions/IntegrationErrorResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/github/install/": {
+      post: {
+        operationId: "integrations_github_install_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/IntegrationEmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GitHubInstallResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/integrations/github/install/complete/": {
+      post: {
+        operationId: "integrations_github_install_complete_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/GitHubInstallComplete",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/GitHubInstallCompleteResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -27155,8 +27309,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
           agent_type: {
             required: false,
             schema: {
-              type: "string",
-              enum: ["voice", "text"],
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["voice", "text"],
+              },
+            },
+          },
+          source: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: [
+                  "github",
+                  "archive",
+                  "livekit",
+                  "vapi",
+                  "retell",
+                  "bland",
+                  "eleven_labs",
+                  "phone",
+                ],
+              },
+            },
+          },
+          environments: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["with", "without"],
+              },
+            },
+          },
+          observe: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["linked", "not_linked"],
+              },
             },
           },
           agent_definition_id: {
@@ -27218,6 +27414,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           500: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
@@ -27242,6 +27441,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
@@ -27278,6 +27480,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/agent-definitions/{agent_id}/build-preflight/": {
+      get: {
+        operationId: "simulate_agent-definitions_build-preflight_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          version_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentBuildPreflightResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/agent-definitions/{agent_id}/delete/": {
       delete: {
         operationId: "simulate_agent-definitions_delete_delete",
@@ -27289,7 +27522,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/AgentDefinitionDeleteResponse",
           },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -27317,10 +27559,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/found-check/": {
+      post: {
+        operationId: "simulate_agent-definitions_found-check_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFoundCheckResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
@@ -27385,6 +27658,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/agent-definitions/{agent_id}/versions/change/": {
+      post: {
+        operationId: "simulate_agent-definitions_versions_change_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentVersionChangeRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentVersionChangeResponse",
+          },
+          202: {
+            $ref: "#/definitions/AgentVersionChangeResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
     "/simulate/agent-definitions/{agent_id}/versions/create/": {
       post: {
         operationId: "simulate_agent-definitions_versions_create_create",
@@ -27401,7 +27711,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -27449,7 +27765,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/AgentVersionActivateResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -27512,6 +27834,220 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/changes/":
+      {
+        get: {
+          operationId: "simulate_agent-definitions_versions_code_changes_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentCodeChangesResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/":
+      {
+        get: {
+          operationId: "simulate_agent-definitions_versions_code_compare_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentCodeCompareResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            422: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/compare/patches/":
+      {
+        get: {
+          operationId:
+            "simulate_agent-definitions_versions_code_compare_patches_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            against: {
+              required: false,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+            path: {
+              required: true,
+              schema: {
+                type: "array",
+                items: {
+                  type: "string",
+                  maxLength: 4096,
+                  minLength: 1,
+                },
+                minItems: 1,
+                maxItems: 25,
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentCodePatchesResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            422: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            503: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/file/": {
+      get: {
+        operationId: "simulate_agent-definitions_versions_code_file_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          path: {
+            required: true,
+            schema: {
+              type: "string",
+              maxLength: 4096,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentCodeFileResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/code/tree/": {
+      get: {
+        operationId: "simulate_agent-definitions_versions_code_tree_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentCodeTreeResponse",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/compatibility/":
+      {
+        get: {
+          operationId: "simulate_agent-definitions_versions_compatibility_list",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: null,
+          queryParameters: {
+            environment_id: {
+              required: true,
+              schema: {
+                type: "string",
+                format: "uuid",
+              },
+            },
+          },
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentVersionCompatibilityResponse",
+            },
+            400: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/agent-definitions/{agent_id}/versions/{version_id}/delete/": {
       delete: {
         operationId: "simulate_agent-definitions_versions_delete_delete",
@@ -27520,16 +28056,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
-          200: {
-            $ref: "#/definitions/AgentVersionDeleteResponse",
-          },
-          400: {
+          404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          410: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/discard/": {
+      post: {
+        operationId: "simulate_agent-definitions_versions_discard_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentVersionActionResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
-          500: {
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
@@ -27562,6 +28120,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/production/":
+      {
+        post: {
+          operationId: "simulate_agent-definitions_versions_production_create",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/EmptyRequest",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/AgentVersionProductionResponse",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
+            404: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            409: {
+              $ref: "#/definitions/ApiErrorWithDetailsResponse",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/agent-definitions/{agent_id}/versions/{version_id}/restore/": {
       post: {
         operationId: "simulate_agent-definitions_versions_restore_create",
@@ -27578,10 +28165,137 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agent-definitions/{agent_id}/versions/{version_id}/retry/": {
+      post: {
+        operationId: "simulate_agent-definitions_versions_retry_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/AgentVersionActionResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agents/connect/": {
+      post: {
+        operationId: "simulate_agents_connect_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentConnectRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentConnectResponse",
+          },
+          201: {
+            $ref: "#/definitions/AgentConnectResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agents/connect/availability/": {
+      get: {
+        operationId: "simulate_agents_connect_availability_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentConnectAvailabilityResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agents/scan/": {
+      post: {
+        operationId: "simulate_agents_scan_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentSourceRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/AgentScanStartedResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          422: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/agents/scan/{scan_id}/": {
+      get: {
+        operationId: "simulate_agents_scan_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentScanResponse",
+          },
+          404: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
@@ -27782,7 +28496,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
           404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
             $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           500: {
@@ -27902,6 +28622,150 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-issues/": {
+      get: {
+        operationId: "simulate_api_agent-fix-issues_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          cluster_ids: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixIssueStatusList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "simulate_api_agent-fix-issues_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixIssueCreate",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/AgentFixIssueJobDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-issues/plan/": {
+      get: {
+        operationId: "simulate_api_agent-fix-issues_plan",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          cluster_id: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 20,
+            },
+          },
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          environment_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixIssuePlan",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-issues/{id}/": {
+      get: {
+        operationId: "simulate_api_agent-fix-issues_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixIssueJobDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-issues/{id}/run/": {
+      post: {
+        operationId: "simulate_api_agent-fix-issues_run",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/AgentFixIssueRun",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/AgentFixIssueJobDetail",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/agent-fix-issues/{id}/stop/": {
+      post: {
+        operationId: "simulate_api_agent-fix-issues_stop",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/AgentFixIssueJobDetail",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -28710,6 +29574,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessEnvironmentDetail",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -28722,6 +29589,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -28878,6 +29748,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessActorList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/agent-policy/": {
+      post: {
+        operationId: "simulate_api_harness-environments_agent_policy",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessAgentPolicy",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessAgentPolicyResponse",
+          },
+          400: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          404: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          409: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          502: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
+          },
+          503: {
+            $ref: "#/definitions/ApiErrorWithDetailsResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29204,6 +30111,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessDraftSaveResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29240,6 +30150,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29258,6 +30171,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessEnvironmentDetail",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29297,6 +30213,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessEnvironmentDetail",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29316,6 +30235,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/SimulateEvalConfigResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29328,6 +30250,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29520,6 +30445,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessNudge",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29538,6 +30466,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessNudge",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29603,6 +30534,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessRunCreateResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29624,6 +30558,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             202: {
               $ref: "#/definitions/HarnessEnvironmentRunEvaluationQueued",
             },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
             },
@@ -29644,6 +30581,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessEnvironmentRunEvaluationsQueued",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -29900,6 +30840,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessAgentCredentialsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -29921,6 +30864,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             200: {
               $ref: "#/definitions/HarnessVersions",
             },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
             },
@@ -29941,6 +30887,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           responses: {
             202: {
               $ref: "#/definitions/HarnessVersions",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
             },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30006,6 +30955,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             202: {
               $ref: "#/definitions/HarnessDefaultMoveValidating",
             },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
             default: {
               $ref: "#/definitions/ManagementAPIErrorResponse",
             },
@@ -30070,6 +31022,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessJobRead",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -30103,6 +31058,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           200: {
             $ref: "#/definitions/HarnessPreflightResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -30119,6 +31077,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessSecretFileUploadResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30139,6 +31100,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessAgentCredentialsResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -30155,6 +31119,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessSourceUploadResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30192,6 +31159,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           201: {
             $ref: "#/definitions/HarnessJobAdjustment",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -30210,6 +31180,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessJobRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30230,6 +31203,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           202: {
             $ref: "#/definitions/HarnessConversationRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           409: {
             $ref: "#/definitions/ApiTextErrorResponse",
@@ -30253,6 +31229,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           201: {
             $ref: "#/definitions/HarnessJobExtend",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -30271,6 +31250,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           202: {
             $ref: "#/definitions/HarnessRunCreateResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -30307,6 +31289,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessScenarioAmendResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -32253,6 +33238,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           400: {
             $ref: "#/definitions/RunTestErrorResponse",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
             $ref: "#/definitions/RunTestErrorResponse",
           },
@@ -32700,6 +33688,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/RunTestErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/RunTestErrorResponse",
@@ -33439,6 +34430,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           400: {
             $ref: "#/definitions/ErrorResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/ErrorResponse",
@@ -34859,8 +35853,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "annotation_metric",
                 "custom_attribute",
                 "custom_column",
+                "derived_metric",
+                "metric",
               ],
               default: "",
+            },
+          },
+          context: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: [
+                "sessions",
+                "spans",
+                "traces",
+                "users",
+                "task_sessions",
+                "task_spans",
+                "task_traces",
+                "task",
+                "tasks",
+              ],
+            },
+          },
+          level: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["span", "trace", "conversation", "user"],
             },
           },
           role: {
@@ -35496,6 +36516,863 @@ export const OPENAPI_CONTRACT = Object.freeze({
         requestBody: null,
         queryParameters: {},
         responses: {
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metric-runs/{id}/": {
+      get: {
+        operationId: "tracer_derived-metric-runs_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metric-runs/{id}/contributors/": {
+      get: {
+        operationId: "tracer_derived-metric-runs_contributors",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          rollup: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["overall", "session", "user", "cohort", "day"],
+              default: "overall",
+            },
+          },
+          group_key: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 2048,
+              default: "",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 20,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricContributorPage",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metric-runs/{id}/recompute/": {
+      post: {
+        operationId: "tracer_derived-metric-runs_recompute",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricRecompute",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/DerivedMetricRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metric-runs/{id}/results/": {
+      get: {
+        operationId: "tracer_derived-metric-runs_results",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          rollup: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["overall", "session", "user", "cohort", "day"],
+              default: "overall",
+            },
+          },
+          after: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 4096,
+              default: "",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 50,
+            },
+          },
+          include_uncertainty: {
+            required: false,
+            schema: {
+              type: "boolean",
+              default: false,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricCommittedResultPage",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/": {
+      get: {
+        operationId: "tracer_derived-metrics_list",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 30,
+            },
+          },
+          before: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricList",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_derived-metrics_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricWrite",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/DerivedMetric",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/capabilities/": {
+      get: {
+        operationId: "tracer_derived-metrics_capabilities",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricCapabilities",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/evaluators/": {
+      get: {
+        operationId: "tracer_derived-metrics_evaluators",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          search: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 100,
+              default: "",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 50,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricEvaluatorPage",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/preview/": {
+      post: {
+        operationId: "tracer_derived-metrics_preview_draft",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/MetricDraftPreviewRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricPreview",
+          },
+          409: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/preview/cancel/": {
+      post: {
+        operationId: "tracer_derived-metrics_preview_cancel_draft_preview",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/MetricDraftPreviewCancel",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricPreviewCancelled",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/validate/": {
+      post: {
+        operationId: "tracer_derived-metrics_validate_formula",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricWrite",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricValidation",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/": {
+      get: {
+        operationId: "tracer_derived-metrics_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetric",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      put: {
+        operationId: "tracer_derived-metrics_update",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricWrite",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetric",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/activate/": {
+      post: {
+        operationId: "tracer_derived-metrics_activate",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/MetricActivationRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetric",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/drivers/": {
+      get: {
+        operationId: "tracer_derived-metrics_drivers",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          window_start: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          window_end: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          after: {
+            required: false,
+            schema: {
+              type: "string",
+              maxLength: 4096,
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 20,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricDrivers",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/fields/": {
+      get: {
+        operationId: "tracer_derived-metrics_fields",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          context: {
+            required: false,
+            schema: {
+              type: "string",
+              enum: ["sessions", "users", "spans", "traces"],
+              default: "sessions",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricFields",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/history/": {
+      get: {
+        operationId: "tracer_derived-metrics_history",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 30,
+            },
+          },
+          before: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricHistory",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/kpi/": {
+      get: {
+        operationId: "tracer_derived-metrics_kpi",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          window_start: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          window_end: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricKpi",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/preview/": {
+      post: {
+        operationId: "tracer_derived-metrics_preview",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/MetricPreviewRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricPreview",
+          },
+          409: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/preview/cancel/": {
+      post: {
+        operationId: "tracer_derived-metrics_preview_cancel_preview",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/MetricPreviewCancel",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricPreviewCancelled",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/refresh/": {
+      post: {
+        operationId: "tracer_derived-metrics_refresh_now",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/MetricRefreshRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/MetricRefresh",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/runs/": {
+      get: {
+        operationId: "tracer_derived-metrics_runs_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 30,
+            },
+          },
+          before: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricRuns",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_derived-metrics_runs_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DerivedMetricRunRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/DerivedMetricRun",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/snapshots/": {
+      get: {
+        operationId: "tracer_derived-metrics_snapshots_read",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          project_id: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+          limit: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
+              default: 30,
+            },
+          },
+          before: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DerivedMetricRuns",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_derived-metrics_snapshots_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/MetricSnapshotRequest",
+        },
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/DerivedMetricRun",
+          },
+          400: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/snapshots/{snapshot_id}/": {
+      delete: {
+        operationId: "tracer_derived-metrics_delete_snapshot",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          202: {
+            $ref: "#/definitions/MetricSnapshotDelete",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/trend/": {
+      get: {
+        operationId: "tracer_derived-metrics_trend",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          window_start: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          window_end: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          points: {
+            required: false,
+            schema: {
+              type: "integer",
+              minimum: 1,
+              maximum: 90,
+              default: 30,
+            },
+          },
+          group_by: {
+            required: false,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 160,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricTrend",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/tracer/derived-metrics/{id}/unit-values/": {
+      get: {
+        operationId: "tracer_derived-metrics_unit-values",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          window_start: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          window_end: {
+            required: true,
+            schema: {
+              type: "string",
+              format: "date-time",
+            },
+          },
+          unit_ids: {
+            required: true,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                maxLength: 512,
+                minLength: 1,
+              },
+              minItems: 1,
+              maxItems: 100,
+            },
+          },
+          context: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["sessions", "users", "spans", "traces"],
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricDrivers",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+      post: {
+        operationId: "tracer_derived-metrics_unit-values_create",
+        readQueryPost: true,
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/MetricUnitValuesRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/MetricDrivers",
+          },
+          503: {
+            $ref: "#/definitions/MetricUnavailable",
+          },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
           },
@@ -44192,14 +46069,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
       post: {
         operationId: "tracer_user-alerts_create",
         runtimeRequestValidation: true,
-        runtimeResponseValidation: false,
+        runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/UserAlertMonitor",
         },
         queryParameters: {},
         responses: {
-          201: {
-            $ref: "#/definitions/UserAlertMonitor",
+          200: {
+            $ref: "#/definitions/UserAlertMonitorCreateResponse",
+          },
+          402: {
+            $ref: "#/definitions/UserAlertMonitorEntitlementResponse",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -50591,6 +52471,307 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentBuildPreflightResponse: {
+      type: "object",
+      properties: {
+        ok: {
+          title: "Ok",
+          type: "boolean",
+          readOnly: true,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        checks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentBuildPreflightCheck",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeChangesResponse: {
+      type: "object",
+      properties: {
+        against: {
+          title: "Against",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeChange",
+          },
+          readOnly: true,
+        },
+        unavailable: {
+          title: "Unavailable",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
+    AgentCodeCompareResponse: {
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        against: {
+          title: "Against",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        unavailable: {
+          title: "Unavailable",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        same_code: {
+          title: "Same code",
+          type: "boolean",
+          readOnly: true,
+        },
+        env_changed: {
+          title: "Env changed",
+          type: "boolean",
+          readOnly: true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeCompareFile",
+          },
+          readOnly: true,
+        },
+        total_files: {
+          title: "Total files",
+          type: "integer",
+          readOnly: true,
+        },
+        additions: {
+          title: "Additions",
+          type: "integer",
+          readOnly: true,
+        },
+        deletions: {
+          title: "Deletions",
+          type: "integer",
+          readOnly: true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeFileResponse: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          type: "integer",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+        },
+        language: {
+          title: "Language",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        content: {
+          title: "Content",
+          type: "string",
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodePatchesResponse: {
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        against: {
+          title: "Against",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodePatch",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeTreeResponse: {
+      type: "object",
+      properties: {
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          readOnly: true,
+        },
+        files: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeEntry",
+          },
+          readOnly: true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentConnectAvailabilityResponse: {
+      type: "object",
+      properties: {
+        reading_enabled: {
+          title: "Reading enabled",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentConnectRequest: {
+      required: ["kind", "name"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["github", "archive"],
+        },
+        repository: {
+          title: "Repository",
+          type: "string",
+          pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          minLength: 1,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          pattern: "^[A-Za-z0-9._/-]+$",
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["public", "private"],
+          default: "public",
+        },
+        installation_id: {
+          title: "Installation id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        repository_id: {
+          title: "Repository id",
+          type: "integer",
+          minimum: 1,
+        },
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        commit_sha: {
+          title: "Commit sha",
+          type: "string",
+          pattern: "^[0-9a-fA-F]{40}$",
+          minLength: 1,
+        },
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          pattern:
+            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+          maxLength: 512,
+        },
+        entry: {
+          title: "Entry",
+          type: "string",
+          pattern:
+            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+          maxLength: 512,
+        },
+        env_values: {
+          title: "Env values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentConnectResponse: {
+      type: "object",
+      properties: {
+        agent_id: {
+          title: "Agent id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        exists: {
+          title: "Exists",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
     AgentDefinition: {
       required: ["agent_name", "inbound", "description"],
       type: "object",
@@ -50858,6 +53039,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         versions_updated: {
           title: "Versions updated",
           type: "integer",
+          readOnly: true,
+        },
+        skipped_agent_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
           readOnly: true,
         },
       },
@@ -51338,6 +53527,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           readOnly: true,
         },
+        observe_project: {
+          $ref: "#/definitions/ObserveProjectRef",
+        },
+        connected: {
+          title: "Connected",
+          type: "boolean",
+          readOnly: true,
+        },
+        managed_by: {
+          $ref: "#/definitions/RunEnvironmentRef",
+        },
+        found_check: {
+          $ref: "#/definitions/AgentFoundCheck",
+        },
+        source_checked_at: {
+          title: "Source checked at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        source_check_interval_seconds: {
+          title: "Source check interval seconds",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
       },
     },
     AgentDefinitionEditRequest: {
@@ -51346,6 +53562,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         observability_enabled: {
           title: "Observability enabled",
           type: "boolean",
+        },
+        production_project_id: {
+          title: "Production project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
         agent_name: {
           title: "Agent name",
@@ -51739,6 +53961,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/RunEnvironmentRef",
           },
           readOnly: true,
+        },
+        observe_project: {
+          $ref: "#/definitions/ObserveProjectRef",
         },
       },
     },
@@ -52161,6 +54386,229 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentFixIssueCreate: {
+      required: ["cluster_id", "project_id", "environment_id", "member_ids"],
+      type: "object",
+      properties: {
+        cluster_id: {
+          title: "Cluster id",
+          type: "string",
+          maxLength: 20,
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        member_ids: {
+          description:
+            "The plan's picks after any swap: each pick's member_id.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+            minLength: 1,
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+      },
+    },
+    AgentFixIssueJobDetail: {
+      required: [
+        "id",
+        "phase",
+        "issue",
+        "environment",
+        "sample",
+        "ending",
+        "baseline",
+        "epoch",
+        "created_at",
+        "evidence_import",
+        "defaults",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        phase: {
+          title: "Phase",
+          type: "string",
+          enum: [
+            "drafting",
+            "review",
+            "blocked",
+            "measuring",
+            "launched",
+            "ended",
+          ],
+        },
+        issue: {
+          $ref: "#/definitions/AgentFixIssue",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixIssueEnvironment",
+        },
+        sample: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueSamplePick",
+          },
+        },
+        ending: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        baseline: {
+          $ref: "#/definitions/AgentFixIssueBaseline",
+        },
+        epoch: {
+          $ref: "#/definitions/AgentFixIssueEpoch",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        evidence_import: {
+          $ref: "#/definitions/EvidenceImport",
+        },
+        defaults: {
+          $ref: "#/definitions/AgentFixIssueDefaults",
+        },
+      },
+    },
+    AgentFixIssuePlan: {
+      required: [
+        "issue",
+        "environment",
+        "blocked",
+        "sample",
+        "open_job_id",
+        "issue_scenarios",
+        "defaults",
+      ],
+      type: "object",
+      properties: {
+        issue: {
+          $ref: "#/definitions/AgentFixIssue",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixIssueEnvironment",
+        },
+        blocked: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        sample: {
+          $ref: "#/definitions/AgentFixIssueSample",
+        },
+        open_job_id: {
+          title: "Open job id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        issue_scenarios: {
+          $ref: "#/definitions/AgentFixIssueScenarios",
+        },
+        defaults: {
+          $ref: "#/definitions/AgentFixIssueDefaults",
+        },
+      },
+    },
+    AgentFixIssueRun: {
+      required: ["surfaces", "budget_credits", "case_ids"],
+      type: "object",
+      properties: {
+        surfaces: {
+          type: "array",
+          items: {
+            type: "string",
+            enum: ["prompt", "tools", "settings", "code"],
+          },
+          minItems: 1,
+        },
+        locked_paths: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 512,
+            minLength: 1,
+          },
+          default: [],
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+          maximum: 50000,
+          minimum: 1,
+        },
+        max_minutes: {
+          title: "Max minutes",
+          type: "integer",
+          maximum: 1440,
+          minimum: 1,
+        },
+        allowed_models: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 200,
+            minLength: 1,
+          },
+          maxItems: 50,
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+          maximum: 1000,
+          minimum: 0,
+        },
+        cost_limit_usd: {
+          title: "Cost limit usd",
+          type: "number",
+          "x-nullable": true,
+        },
+        case_ids: {
+          description:
+            "The import's cases to keep: drafted ones, and repeats of scenarios the suite already holds.",
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          maxItems: 20,
+          minItems: 1,
+        },
+      },
+    },
+    AgentFixIssueStatusList: {
+      required: ["results"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueStatus",
+          },
+        },
+      },
+    },
     AgentFixLaunch: {
       required: [
         "source_run_id",
@@ -52453,6 +54901,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           readOnly: true,
         },
+        issue: {
+          $ref: "#/definitions/AgentFixEpochIssue",
+        },
         check_runs: {
           description: "The base version's runs; each candidate lists its own.",
           type: "array",
@@ -52612,6 +55063,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           readOnly: true,
         },
+        issue: {
+          $ref: "#/definitions/AgentFixEpochIssue",
+        },
         check_runs: {
           description: "The base version's runs; each candidate lists its own.",
           type: "array",
@@ -52710,6 +55164,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           default: "",
           maxLength: 2000,
+        },
+      },
+    },
+    AgentFoundCheckResponse: {
+      type: "object",
+      properties: {
+        found_checked_at: {
+          title: "Found checked at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
         },
       },
     },
@@ -53089,6 +55554,141 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentScanResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["pending", "running", "found", "none", "error", "failed"],
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        repository: {
+          title: "Repository",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        commit_sha: {
+          title: "Commit sha",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        agents: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/FoundAgent",
+          },
+          readOnly: true,
+        },
+        truncated: {
+          title: "Truncated",
+          type: "boolean",
+          readOnly: true,
+        },
+        error: {
+          $ref: "#/definitions/AgentScanError",
+        },
+        failure: {
+          $ref: "#/definitions/AgentScanFailure",
+        },
+      },
+    },
+    AgentScanStartedResponse: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
+    AgentSourceRequest: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["github", "archive"],
+        },
+        repository: {
+          title: "Repository",
+          type: "string",
+          pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          minLength: 1,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          pattern: "^[A-Za-z0-9._/-]+$",
+          minLength: 1,
+        },
+        visibility: {
+          title: "Visibility",
+          type: "string",
+          enum: ["public", "private"],
+          default: "public",
+        },
+        installation_id: {
+          title: "Installation id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        repository_id: {
+          title: "Repository id",
+          type: "integer",
+          minimum: 1,
+        },
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    AgentVersionActionResponse: {
+      type: "object",
+      properties: {
+        message: {
+          title: "Message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
     AgentVersionActivateResponse: {
       type: "object",
       properties: {
@@ -53100,6 +55700,153 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         version: {
           $ref: "#/definitions/AgentVersionResponse",
+        },
+      },
+    },
+    AgentVersionChangeRequest: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["sync", "upload", "credentials", "manual"],
+        },
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          type: "string",
+          format: "uuid",
+        },
+        prompt: {
+          title: "Prompt",
+          type: "string",
+          maxLength: 65536,
+        },
+        settings: {
+          $ref: "#/definitions/HarnessAgentConfigChange",
+        },
+        secret_values: {
+          title: "Secret values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+        },
+      },
+    },
+    AgentVersionChangeResponse: {
+      type: "object",
+      properties: {
+        version: {
+          $ref: "#/definitions/AgentVersionResponse",
+        },
+        created: {
+          title: "Created",
+          type: "boolean",
+          readOnly: true,
+        },
+        up_to_date: {
+          title: "Up to date",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentVersionCompatibilityResponse: {
+      type: "object",
+      properties: {
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "clean",
+            "new_tool",
+            "tool_removed_or_changed",
+            "new_rule",
+            "unmeasured",
+          ],
+          readOnly: true,
+        },
+        base: {
+          title: "Base",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        same_version: {
+          title: "Same version",
+          type: "boolean",
+          readOnly: true,
+        },
+        tools_added: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        tools_removed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        tools_changed: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentVersionToolChange",
+          },
+          readOnly: true,
+        },
+        services_added: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        rules_added: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        prompt_changed: {
+          title: "Prompt changed",
+          type: "boolean",
+          readOnly: true,
+        },
+        model_changed: {
+          title: "Model changed",
+          type: "boolean",
+          readOnly: true,
         },
       },
     },
@@ -53242,17 +55989,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
-    AgentVersionDeleteResponse: {
-      type: "object",
-      properties: {
-        message: {
-          title: "Message",
-          type: "string",
-          readOnly: true,
-          minLength: 1,
-        },
-      },
-    },
     AgentVersionDetailResponse: {
       type: "object",
       properties: {
@@ -53383,6 +56119,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        source: {
+          $ref: "#/definitions/AgentVersionSource",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        check_step: {
+          title: "Check step",
+          description:
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+          type: "string",
+          enum: ["snapshot", "reading", "check"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        check_failure: {
+          $ref: "#/definitions/AgentVersionCheckFailure",
+        },
+        check_started_at: {
+          title: "Check started at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        environments_count: {
+          title: "Environments count",
+          type: "integer",
+          readOnly: true,
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -53492,10 +56269,72 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        in_production: {
+          title: "In production",
+          type: "boolean",
+          readOnly: true,
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        check_step: {
+          title: "Check step",
+          description:
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+          type: "string",
+          enum: ["snapshot", "reading", "check"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        check_failure: {
+          $ref: "#/definitions/AgentVersionCheckFailure",
+        },
+        check_started_at: {
+          title: "Check started at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        environments_count: {
+          title: "Environments count",
+          type: "integer",
+          readOnly: true,
+        },
+        source: {
+          $ref: "#/definitions/AgentVersionSource",
+        },
         created_at: {
           title: "Created at",
           type: "string",
           format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    AgentVersionProductionResponse: {
+      type: "object",
+      properties: {
+        version: {
+          $ref: "#/definitions/AgentVersionResponse",
+        },
+        moved_environment_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
           readOnly: true,
         },
       },
@@ -58541,6 +61380,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/CapabilityFeature",
           },
         },
+        metrics_enabled: {
+          title: "Metrics enabled",
+          type: "boolean",
+          default: false,
+        },
         license: {
           $ref: "#/definitions/LicenseDetails",
         },
@@ -60971,8 +63815,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "annotation_metric",
             "custom_attribute",
             "custom_column",
+            "derived_metric",
+            "metric",
           ],
           default: "",
+        },
+        context: {
+          title: "Context",
+          description:
+            "Unified cursor catalog context. Native user metrics require explicit users; source=users alone does not admit them. Trace fields stay disabled.",
+          type: "string",
+          enum: [
+            "sessions",
+            "spans",
+            "traces",
+            "users",
+            "task_sessions",
+            "task_spans",
+            "task_traces",
+            "task",
+            "tasks",
+          ],
+        },
+        level: {
+          title: "Level",
+          description:
+            "Filter by the active definition's source grain, before projection.",
+          type: "string",
+          enum: ["span", "trace", "conversation", "user"],
         },
         role: {
           title: "Role",
@@ -61094,7 +63964,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -61135,7 +64006,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -61918,7 +64789,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -61959,7 +64831,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -62558,6 +65430,612 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DerivedMetric: {
+      required: ["name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          readOnly: true,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 160,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        current_version: {
+          title: "Current version",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        active_version: {
+          title: "Active version",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        draft_definition: {
+          $ref: "#/definitions/DerivedMetricVersion",
+        },
+        snapshot_supported: {
+          title: "Snapshot supported",
+          type: "boolean",
+          readOnly: true,
+        },
+        snapshot_unsupported_reason: {
+          title: "Snapshot unsupported reason",
+          type: "string",
+          readOnly: true,
+        },
+        value_mode: {
+          title: "Value mode",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        calculation_paused: {
+          $ref: "#/definitions/MetricCalculationPaused",
+        },
+        definition: {
+          $ref: "#/definitions/DerivedMetricVersion",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    DerivedMetricCommittedResultPage: {
+      required: ["results", "next_cursor", "result_id"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricResult",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          "x-nullable": true,
+        },
+        result_id: {
+          title: "Result id",
+          description:
+            "Committed result identity used to read every row and the next cursor.",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    DerivedMetricContributorPage: {
+      required: [
+        "result_id",
+        "rollup",
+        "group_key",
+        "kind",
+        "selection_unit",
+        "status",
+        "value",
+        "numerator",
+        "denominator",
+        "results",
+        "truncated",
+        "diagnostics",
+      ],
+      type: "object",
+      properties: {
+        result_id: {
+          title: "Result id",
+          description:
+            "Committed result identity used for the value and contributor diagnostics.",
+          type: "string",
+          format: "uuid",
+        },
+        rollup: {
+          title: "Rollup",
+          type: "string",
+          minLength: 1,
+        },
+        group_key: {
+          title: "Group key",
+          type: "string",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["ratio", "mean", "sum", "count_if"],
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          enum: ["span", "session", "user"],
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        numerator: {
+          title: "Numerator",
+          type: "number",
+          "x-nullable": true,
+        },
+        denominator: {
+          title: "Denominator",
+          type: "number",
+          "x-nullable": true,
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricContributor",
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          description: "More valid units exist than were returned.",
+          type: "boolean",
+        },
+        diagnostics: {
+          $ref: "#/definitions/DerivedMetricContributorDiagnostics",
+        },
+      },
+    },
+    DerivedMetricEvaluatorPage: {
+      required: ["results", "truncated"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricEvaluator",
+          },
+        },
+        truncated: {
+          title: "Truncated",
+          description:
+            "True when more evaluators matched than were returned; narrow the search.",
+          type: "boolean",
+        },
+      },
+    },
+    DerivedMetricList: {
+      required: ["results", "next_cursor"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetric",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricRecompute: {
+      type: "object",
+      properties: {
+        confirm: {
+          title: "Confirm",
+          type: "boolean",
+          default: true,
+        },
+      },
+    },
+    DerivedMetricRun: {
+      required: [
+        "metric_id",
+        "metric_version",
+        "window_start",
+        "window_end",
+        "as_of",
+        "filters",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        metric_id: {
+          title: "Metric id",
+          type: "string",
+          format: "uuid",
+        },
+        metric_version: {
+          title: "Metric version",
+          type: "integer",
+        },
+        definition: {
+          $ref: "#/definitions/DerivedMetricVersion",
+        },
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        as_of: {
+          title: "As of",
+          type: "string",
+          format: "date-time",
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          maxLength: 255,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+        },
+        snapshot_id: {
+          title: "Snapshot id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        result_id: {
+          title: "Result id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        lease_expires_at: {
+          title: "Lease expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        source_manifest: {
+          $ref: "#/definitions/DerivedMetricManifest",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["run", "snapshot"],
+        },
+        pinned_manifest: {
+          title: "Pinned manifest",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        pinned_generation: {
+          title: "Pinned generation",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: -9223372036854776000,
+          "x-nullable": true,
+        },
+        captured_at: {
+          title: "Captured at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        supported_grain: {
+          title: "Supported grain",
+          type: "string",
+          maxLength: 16,
+        },
+        changed_at: {
+          title: "Changed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        change_reason: {
+          title: "Change reason",
+          type: "string",
+          maxLength: 64,
+        },
+        removed_unit_count: {
+          title: "Removed unit count",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: 0,
+        },
+        deleted_at: {
+          title: "Deleted at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        cleanup_status: {
+          title: "Cleanup status",
+          type: "string",
+          enum: ["", "pending", "running", "done", "failed"],
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["queued", "running", "complete", "failed"],
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          maxLength: 300,
+        },
+        row_count: {
+          title: "Row count",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: 0,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricRunRequest: {
+      required: ["window_start", "window_end", "idempotency_key"],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        source_run_id: {
+          title: "Source run id",
+          description:
+            "Persisted evaluation-task ID (the source eval_task_id), not an execution ID; snapshot and sampling_scope pin the observed evidence.",
+          type: "string",
+          format: "uuid",
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+          default: [],
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 100,
+          minLength: 1,
+        },
+      },
+    },
+    DerivedMetricRuns: {
+      required: ["results", "next_cursor"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricRun",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricValidation: {
+      required: ["valid", "kind", "required_inputs", "semantics"],
+      type: "object",
+      properties: {
+        valid: {
+          title: "Valid",
+          type: "boolean",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        required_inputs: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        semantics: {
+          title: "Semantics",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    DerivedMetricWrite: {
+      required: ["project_id", "name"],
+      type: "object",
+      properties: {
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          maxLength: 160,
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+          default: "",
+          maxLength: 2000,
+        },
+        formula: {
+          title: "Formula",
+          type: "string",
+          default: "",
+          maxLength: 2048,
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricInput",
+          },
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          enum: ["span", "session", "user"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "share",
+            "average",
+            "total",
+            "count",
+            "unique_count",
+            "percentile",
+            "custom",
+          ],
+          default: "custom",
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          enum: ["span", "trace", "conversation", "user"],
+        },
+        user_rule: {
+          title: "User rule",
+          type: "string",
+          enum: ["", "any", "every", "average", "total"],
+        },
+        field_spec: {
+          $ref: "#/definitions/MetricFieldSpec",
+        },
+        group_dims: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 160,
+            minLength: 1,
+          },
+          maxItems: 2,
+        },
+        value_type: {
+          title: "Value type",
+          type: "string",
+          enum: ["boolean", "number", "text"],
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          maxLength: 32,
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+          enum: ["", "number", "percent", "currency", "duration"],
+        },
+        value_labels: {
+          title: "Value labels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 80,
+            minLength: 1,
+          },
+        },
+        sampling: {
+          title: "Sampling",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        weighting: {
+          title: "Weighting",
+          type: "string",
+          enum: ["none", "inverse_probability"],
+          default: "none",
+        },
+        cohort_key: {
+          title: "Cohort key",
+          type: "string",
+          default: "",
+          maxLength: 160,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+          default: [],
+        },
+        expected_version: {
+          title: "Expected version",
+          type: "integer",
+          minimum: 1,
+        },
+      },
+    },
     DerivedVariableDetailResponse: {
       required: ["status", "result"],
       type: "object",
@@ -63134,7 +66612,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -63175,7 +66654,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -63531,7 +67010,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -63572,7 +67052,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -63979,7 +67459,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 properties: {
                   column_id: {
                     type: "string",
-                    description: "Column or attribute id to filter on.",
+                    description:
+                      "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
                   },
                   property_id: {
                     type: "string",
@@ -64020,7 +67501,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -64048,7 +67529,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 properties: {
                   column_id: {
                     type: "string",
-                    description: "Column or attribute id to filter on.",
+                    description:
+                      "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
                   },
                   property_id: {
                     type: "string",
@@ -64089,7 +67571,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -64357,7 +67839,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 properties: {
                   column_id: {
                     type: "string",
-                    description: "Column or attribute id to filter on.",
+                    description:
+                      "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
                   },
                   property_id: {
                     type: "string",
@@ -64398,7 +67881,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -64426,7 +67909,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 properties: {
                   column_id: {
                     type: "string",
-                    description: "Column or attribute id to filter on.",
+                    description:
+                      "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
                   },
                   property_id: {
                     type: "string",
@@ -64467,7 +67951,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -65195,7 +68679,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call", "transcript", "dataset"],
+          enum: ["session", "call", "trace", "transcript", "dataset"],
         },
         created_at: {
           title: "Created at",
@@ -65277,17 +68761,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call", "transcript", "dataset"],
+          enum: ["session", "call", "trace", "transcript", "dataset"],
         },
         project_id: {
           title: "Project id",
-          description: "Session and call imports: the Observe project.",
+          description: "Session, call and trace imports: the Observe project.",
           type: "string",
           format: "uuid",
         },
         ids: {
           description:
-            "Session, call and dataset imports: session ids, the trace ids of calls, or row ids, in the order picked.",
+            "Session, call, trace and dataset imports: session ids, the trace ids of calls or traces, or row ids, in the order picked.",
           type: "array",
           items: {
             type: "string",
@@ -65371,7 +68855,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         source_kind: {
           title: "Source kind",
           type: "string",
-          enum: ["session", "call", "transcript", "dataset"],
+          enum: ["session", "call", "trace", "transcript", "dataset"],
         },
         source_name: {
           title: "Source name",
@@ -67729,6 +71213,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GitHubInstallComplete: {
+      required: ["state"],
+      type: "object",
+      properties: {
+        state: {
+          title: "State",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        setup_action: {
+          title: "Setup action",
+          type: "string",
+          default: "",
+          maxLength: 32,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          default: "",
+          maxLength: 255,
+        },
+        installation_id: {
+          title: "Installation id",
+          type: "string",
+          default: "",
+          maxLength: 32,
+        },
+      },
+    },
+    GitHubInstallCompleteResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GitHubInstallCompleteResult",
+        },
+      },
+    },
+    GitHubInstallResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/GitHubInstallResult",
+        },
+      },
+    },
     GraphCreate: {
       required: ["name"],
       type: "object",
@@ -68562,6 +72102,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["agent_version"],
       type: "object",
       properties: {
+        agent_version: {
+          $ref: "#/definitions/HarnessVersion",
+        },
+      },
+    },
+    HarnessAgentPolicy: {
+      required: ["policy"],
+      type: "object",
+      properties: {
+        policy: {
+          title: "Policy",
+          type: "string",
+          enum: ["follow", "pinned"],
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    HarnessAgentPolicyResponse: {
+      type: "object",
+      properties: {
+        policy: {
+          title: "Policy",
+          type: "string",
+          enum: ["follow", "pinned"],
+          readOnly: true,
+        },
         agent_version: {
           $ref: "#/definitions/HarnessVersion",
         },
@@ -69705,7 +73275,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -69746,7 +73317,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -71767,7 +75338,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessSuiteMember: {
-      required: ["scenario_key", "number", "name", "use_case"],
+      required: [
+        "scenario_key",
+        "number",
+        "name",
+        "use_case",
+        "issue_cluster_id",
+        "issue_project_id",
+      ],
       type: "object",
       properties: {
         scenario_key: {
@@ -71786,6 +75364,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         use_case: {
           title: "Use case",
           type: "string",
+        },
+        issue_cluster_id: {
+          title: "Issue cluster id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        issue_project_id: {
+          title: "Issue project id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
         },
       },
     },
@@ -75063,7 +78653,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -75104,7 +78695,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -75524,7 +79115,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -75565,7 +79157,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -75694,6 +79286,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         host_url: {
@@ -75813,6 +79406,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         display_name: {
@@ -78271,6 +81865,505 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    MetricActivationRequest: {
+      required: ["version", "expected_active_id"],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        expected_active_id: {
+          title: "Expected active id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+      },
+    },
+    MetricCapabilities: {
+      required: [
+        "sources",
+        "levels",
+        "kinds",
+        "user_rules",
+        "max_group_dims",
+        "preview_max_days",
+        "preview_budget_seconds",
+      ],
+      type: "object",
+      properties: {
+        sources: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/MetricSourceCapability",
+          },
+        },
+        levels: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        kinds: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        user_rules: {
+          title: "User rules",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        max_group_dims: {
+          title: "Max group dims",
+          type: "integer",
+        },
+        preview_max_days: {
+          title: "Preview max days",
+          type: "integer",
+        },
+        preview_budget_seconds: {
+          title: "Preview budget seconds",
+          type: "integer",
+        },
+      },
+    },
+    MetricDraftPreviewCancel: {
+      required: ["request_id", "project_id"],
+      type: "object",
+      properties: {
+        request_id: {
+          title: "Request id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    MetricDraftPreviewRequest: {
+      required: ["window_start", "window_end", "project_id", "definition"],
+      type: "object",
+      properties: {
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+          default: [],
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          format: "uuid",
+        },
+        request_id: {
+          title: "Request id",
+          type: "string",
+          format: "uuid",
+        },
+        include_samples: {
+          title: "Include samples",
+          type: "boolean",
+          default: true,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 100,
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        definition: {
+          $ref: "#/definitions/MetricDraftDefinition",
+        },
+      },
+    },
+    MetricDrivers: {
+      required: ["provenance", "effective_window", "results", "next_cursor"],
+      type: "object",
+      properties: {
+        provenance: {
+          $ref: "#/definitions/MetricReadProvenance",
+        },
+        effective_window: {
+          $ref: "#/definitions/MetricEffectiveWindow",
+        },
+        complete_through: {
+          title: "Complete through",
+          description:
+            "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        partial: {
+          title: "Partial",
+          description: "true when any bucket of the window is not final",
+          type: "boolean",
+        },
+        nonfinal_buckets: {
+          title: "Nonfinal buckets",
+          description: "15-minute buckets of the window left out of the value",
+          type: "integer",
+          minimum: 0,
+        },
+        open_units: {
+          title: "Open units",
+          description: "units in the window refresh still keeps open",
+          type: "integer",
+          minimum: 0,
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/MetricUnitValue",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    MetricFields: {
+      required: ["results"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/MetricFieldMetadata",
+          },
+        },
+      },
+    },
+    MetricHistory: {
+      required: ["results", "next_cursor"],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/MetricHistoryEntry",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    MetricKpi: {
+      required: [
+        "provenance",
+        "effective_window",
+        "current",
+        "previous",
+        "delta",
+        "delta_uncertainty",
+      ],
+      type: "object",
+      properties: {
+        provenance: {
+          $ref: "#/definitions/MetricReadProvenance",
+        },
+        effective_window: {
+          $ref: "#/definitions/MetricEffectiveWindow",
+        },
+        complete_through: {
+          title: "Complete through",
+          description:
+            "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        partial: {
+          title: "Partial",
+          description: "true when any bucket of the window is not final",
+          type: "boolean",
+        },
+        nonfinal_buckets: {
+          title: "Nonfinal buckets",
+          description: "15-minute buckets of the window left out of the value",
+          type: "integer",
+          minimum: 0,
+        },
+        open_units: {
+          title: "Open units",
+          description: "units in the window refresh still keeps open",
+          type: "integer",
+          minimum: 0,
+        },
+        current: {
+          $ref: "#/definitions/MetricPoint",
+        },
+        previous: {
+          $ref: "#/definitions/MetricKpiPreviousPoint",
+        },
+        delta: {
+          title: "Delta",
+          type: "number",
+          "x-nullable": true,
+        },
+        delta_uncertainty: {
+          $ref: "#/definitions/DerivedMetricDeltaUncertainty",
+        },
+      },
+    },
+    MetricPreview: {
+      required: [
+        "results",
+        "next_cursor",
+        "rate_eligible",
+        "weighted",
+        "unit",
+        "value_format",
+        "unit_noun",
+        "value_mode",
+        "point_status",
+        "summary",
+      ],
+      type: "object",
+      properties: {
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricResult",
+          },
+        },
+        next_cursor: {
+          title: "Next cursor",
+          type: "string",
+          "x-nullable": true,
+        },
+        rate_eligible: {
+          title: "Rate eligible",
+          type: "boolean",
+        },
+        weighted: {
+          title: "Weighted",
+          type: "boolean",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+        },
+        unit_noun: {
+          title: "Unit noun",
+          type: "string",
+          minLength: 1,
+        },
+        value_mode: {
+          title: "Value mode",
+          type: "string",
+          enum: ["materialized", "on_demand"],
+        },
+        counted_users: {
+          title: "Counted users",
+          type: "integer",
+          minimum: 0,
+        },
+        eligible_users: {
+          title: "Eligible users",
+          type: "integer",
+          minimum: 0,
+        },
+        no_value_users: {
+          title: "No value users",
+          type: "integer",
+          minimum: 0,
+        },
+        conversations_without_user: {
+          title: "Conversations without user",
+          type: "integer",
+          minimum: 0,
+        },
+        point_status: {
+          title: "Point status",
+          type: "string",
+          minLength: 1,
+        },
+        summary: {
+          title: "Summary",
+          type: "string",
+          minLength: 1,
+        },
+        sample_users: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/MetricUnitValue",
+          },
+        },
+        sample_units: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/MetricPreviewSample",
+          },
+        },
+      },
+    },
+    MetricPreviewCancel: {
+      required: ["request_id"],
+      type: "object",
+      properties: {
+        request_id: {
+          title: "Request id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+    },
+    MetricPreviewCancelled: {
+      required: ["cancelled"],
+      type: "object",
+      properties: {
+        cancelled: {
+          title: "Cancelled",
+          type: "boolean",
+        },
+      },
+    },
+    MetricPreviewRequest: {
+      required: ["window_start", "window_end"],
+      type: "object",
+      properties: {
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+          default: [],
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          format: "uuid",
+        },
+        request_id: {
+          title: "Request id",
+          type: "string",
+          format: "uuid",
+        },
+        include_samples: {
+          title: "Include samples",
+          type: "boolean",
+          default: false,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 100,
+          minLength: 1,
+        },
+      },
+    },
+    MetricRefresh: {
+      required: ["status"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["queued", "already_queued"],
+        },
+      },
+    },
+    MetricRefreshRequest: {
+      type: "object",
+      properties: {
+        confirm: {
+          title: "Confirm",
+          type: "boolean",
+          default: true,
+        },
+      },
+    },
+    MetricSnapshotDelete: {
+      required: ["status"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["cleanup_pending", "deleted"],
+        },
+      },
+    },
+    MetricSnapshotRequest: {
+      required: ["window_start", "window_end", "idempotency_key"],
+      type: "object",
+      properties: {
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 100,
+          minLength: 1,
+        },
+      },
+    },
     MetricTagOption: {
       required: ["label", "value"],
       type: "object",
@@ -78284,6 +82377,117 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Value",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    MetricTrend: {
+      required: ["provenance", "effective_window", "results"],
+      type: "object",
+      properties: {
+        provenance: {
+          $ref: "#/definitions/MetricReadProvenance",
+        },
+        effective_window: {
+          $ref: "#/definitions/MetricEffectiveWindow",
+        },
+        complete_through: {
+          title: "Complete through",
+          description:
+            "End of the window's contiguous final prefix in both history and forward modes. Values are computed over the window's final buckets only (calculated, past the settle interval, holding no open unit)",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        nonfinal_buckets: {
+          title: "Nonfinal buckets",
+          type: "integer",
+          minimum: 0,
+        },
+        open_units: {
+          title: "Open units",
+          type: "integer",
+          minimum: 0,
+        },
+        partial: {
+          title: "Partial",
+          description: "true when any point is not_calculated or settling",
+          type: "boolean",
+        },
+        results: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/MetricTrendPoint",
+          },
+        },
+      },
+    },
+    MetricUnavailable: {
+      required: ["code", "message", "retryable"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+        },
+        value_mode: {
+          title: "Value mode",
+          type: "string",
+          enum: ["on_demand"],
+        },
+        calculated_through: {
+          title: "Calculated through",
+          description:
+            "window_not_calculated_yet: the read cut; values are final only before it",
+          type: "string",
+          format: "date-time",
+        },
+        reason: {
+          title: "Reason",
+          description:
+            "window_not_calculated_yet: not_calculated (past the calculated bound), settling (calculated, but holding open units), too_large (stored row limit), or too_busy (the pending work cannot complete within a pass)",
+          type: "string",
+          enum: ["not_calculated", "settling", "too_large", "too_busy"],
+        },
+      },
+    },
+    MetricUnitValuesRequest: {
+      required: ["window_start", "window_end", "unit_ids", "context"],
+      type: "object",
+      properties: {
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        unit_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 512,
+            minLength: 1,
+          },
+          maxItems: 100,
+          minItems: 1,
+        },
+        context: {
+          title: "Context",
+          type: "string",
+          enum: ["sessions", "users", "spans", "traces"],
         },
       },
     },
@@ -79328,7 +83532,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -79369,7 +83574,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -82240,7 +86445,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -82281,7 +86487,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -82346,7 +86552,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -82387,7 +86594,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -82433,7 +86640,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -82474,7 +86682,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -86705,7 +90913,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 properties: {
                   column_id: {
                     type: "string",
-                    description: "Column or attribute id to filter on.",
+                    description:
+                      "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
                   },
                   property_id: {
                     type: "string",
@@ -86746,7 +90955,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -86774,7 +90983,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 properties: {
                   column_id: {
                     type: "string",
-                    description: "Column or attribute id to filter on.",
+                    description:
+                      "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
                   },
                   property_id: {
                     type: "string",
@@ -86815,7 +91025,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -88393,7 +92603,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -88434,7 +92645,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -88984,6 +93195,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SourceBranchesResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SourceBranchesResult",
+        },
+      },
+    },
+    SourceRepositoriesResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+        },
+        result: {
+          $ref: "#/definitions/SourceRepositoriesResult",
+        },
+      },
+    },
     SpanAttributeDetailResponse: {
       required: [
         "key",
@@ -89489,7 +93726,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     StoredAgentResponse: {
-      required: ["agent", "sdk_version", "stored_at", "setup_stale"],
+      required: ["agent", "sdk_version", "stored_at", "setup_stale", "origin"],
       type: "object",
       properties: {
         agent: {
@@ -89508,6 +93745,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         setup_stale: {
           title: "Setup stale",
           type: "boolean",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          enum: ["build", "reading"],
         },
       },
     },
@@ -91303,7 +95545,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -91344,7 +95587,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -91770,7 +96013,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -91811,7 +96055,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -93647,6 +97891,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        notification_emails: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "email",
+            minLength: 1,
+          },
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -93686,6 +97938,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "daily_tokens_spent",
             "monthly_tokens_spent",
             "evaluation_metrics",
+            "derived_metric",
           ],
         },
         metric: {
@@ -93694,6 +97947,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 2556,
           "x-nullable": true,
+        },
+        alert_when: {
+          title: "Alert when",
+          type: "string",
+          enum: ["point", "confident"],
         },
         threshold_operator: {
           title: "Threshold operator",
@@ -93750,15 +98008,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
-        notification_emails: {
-          type: "array",
-          items: {
-            title: "Notification emails",
-            type: "string",
-            format: "email",
-            maxLength: 254,
-            minLength: 1,
-          },
+        last_derived_run_id: {
+          title: "Last derived run id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
         },
         slack_webhook_url: {
           title: "Slack webhook url",
@@ -93847,6 +98102,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    UserAlertMonitorCreateResponse: {
+      required: ["status", "result"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          enum: [true],
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
     UserAlertMonitorDuplicate: {
       required: ["id", "name"],
       type: "object",
@@ -93875,6 +98146,86 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         result: {
           $ref: "#/definitions/UserAlertMonitorDuplicateResult",
+        },
+      },
+    },
+    UserAlertMonitorEntitlementResponse: {
+      required: ["error", "upgrade_required"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+          "x-nullable": true,
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        error: {
+          $ref: "#/definitions/ApiErrorObject",
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        upgrade_required: {
+          title: "Upgrade required",
+          type: "boolean",
+        },
+        upgrade_cta: {
+          title: "Upgrade cta",
+          type: "object",
+          "x-json-value": true,
+          description: "Any valid JSON value.",
         },
       },
     },
@@ -94279,6 +98630,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           readOnly: true,
         },
+        notification_emails: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "email",
+            minLength: 1,
+          },
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -94318,6 +98677,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "daily_tokens_spent",
             "monthly_tokens_spent",
             "evaluation_metrics",
+            "derived_metric",
           ],
         },
         metric: {
@@ -94326,6 +98686,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 2556,
           "x-nullable": true,
+        },
+        alert_when: {
+          title: "Alert when",
+          type: "string",
+          enum: ["point", "confident"],
         },
         threshold_operator: {
           title: "Threshold operator",
@@ -94382,15 +98747,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
           "x-nullable": true,
         },
-        notification_emails: {
-          type: "array",
-          items: {
-            title: "Notification emails",
-            type: "string",
-            format: "email",
-            maxLength: 254,
-            minLength: 1,
-          },
+        last_derived_run_id: {
+          title: "Last derived run id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
         },
         slack_webhook_url: {
           title: "Slack webhook url",
@@ -95115,6 +99477,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         host_url: {
@@ -95329,6 +99692,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Result",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    ViewerReadOnlyError: {
+      required: ["detail"],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "boolean",
+          default: false,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+          enum: [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error",
+          ],
+          "x-nullable": true,
+        },
+        code: {
+          title: "Code",
+          type: "string",
+          enum: ["viewer_read_only"],
+        },
+        detail: {
+          title: "Detail",
+          type: "string",
+        },
+        result: {
+          title: "Result",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          "x-nullable": true,
+        },
+        attr: {
+          title: "Attr",
+          type: "string",
+          "x-nullable": true,
+        },
+        details: {
+          title: "Details",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              type: "string",
+              minLength: 1,
+            },
+          },
+        },
+        action: {
+          title: "Action",
+          type: "string",
         },
       },
     },
@@ -96388,7 +100828,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -96429,7 +100870,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -96627,7 +101068,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -96668,7 +101110,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -97096,6 +101538,178 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentBuildPreflightCheck: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "blocked"],
+          readOnly: true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+    },
+    AgentCodeChange: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["added", "removed", "modified"],
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeCompareFile: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        previous_path: {
+          title: "Previous path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["added", "removed", "modified", "renamed"],
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+        },
+        additions: {
+          title: "Additions",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        deletions: {
+          title: "Deletions",
+          type: "integer",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        collapsed: {
+          title: "Collapsed",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodePatch: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        unchanged: {
+          title: "Unchanged",
+          type: "boolean",
+          readOnly: true,
+        },
+        hunks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentCodeHunk",
+          },
+          readOnly: true,
+        },
+      },
+    },
+    AgentCodeEntry: {
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        size: {
+          title: "Size",
+          type: "integer",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["text", "binary", "too_large"],
+          readOnly: true,
+        },
+      },
+    },
+    AgentFoundCheck: {
+      required: ["required", "done_at"],
+      type: "object",
+      properties: {
+        required: {
+          title: "Required",
+          type: "boolean",
+        },
+        done_at: {
+          title: "Done at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
+    ObserveProjectRef: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
     RunEnvironmentRef: {
       required: ["id", "name"],
       type: "object",
@@ -97249,6 +101863,289 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
+    AgentFixFailure: {
+      required: ["code", "message"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssue: {
+      required: ["cluster_id", "project_id", "title"],
+      type: "object",
+      properties: {
+        cluster_id: {
+          title: "Cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        title: {
+          title: "Title",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssueBaseline: {
+      required: [
+        "run_id",
+        "state",
+        "scenarios",
+        "completed_count",
+        "failed_count",
+      ],
+      type: "object",
+      properties: {
+        run_id: {
+          title: "Run id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        scenarios: {
+          title: "Scenarios",
+          type: "integer",
+        },
+        completed_count: {
+          title: "Completed count",
+          type: "integer",
+        },
+        failed_count: {
+          title: "Failed count",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssueDefaults: {
+      required: [
+        "surfaces",
+        "budget_credits",
+        "budget_credits_max",
+        "max_minutes_max",
+        "reply_latency_margin_pct",
+        "cost_margin_pct",
+      ],
+      type: "object",
+      properties: {
+        surfaces: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixLaunchSurface",
+          },
+        },
+        budget_credits: {
+          title: "Budget credits",
+          type: "integer",
+        },
+        budget_credits_max: {
+          title: "Budget credits max",
+          type: "integer",
+        },
+        max_minutes_max: {
+          title: "Max minutes max",
+          type: "integer",
+        },
+        reply_latency_margin_pct: {
+          title: "Reply latency margin pct",
+          type: "integer",
+        },
+        cost_margin_pct: {
+          title: "Cost margin pct",
+          type: "integer",
+        },
+      },
+    },
+    AgentFixIssueEnvironment: {
+      required: ["id", "name"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    AgentFixIssueEpoch: {
+      required: [
+        "id",
+        "number",
+        "environment_id",
+        "state",
+        "step",
+        "failure_code",
+        "retryable",
+        "limited_validation",
+        "pull_request_url",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        number: {
+          title: "Number",
+          type: "integer",
+          "x-nullable": true,
+        },
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        step: {
+          title: "Step",
+          type: "string",
+          enum: ["variations", "reproduce", "search", "verify", "done"],
+          "x-nullable": true,
+        },
+        failure_code: {
+          title: "Failure code",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+        },
+        limited_validation: {
+          title: "Limited validation",
+          type: "boolean",
+        },
+        pull_request_url: {
+          title: "Pull request url",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssueSamplePick: {
+      required: ["member_id", "unit", "source_id", "reason", "started_at"],
+      type: "object",
+      properties: {
+        member_id: {
+          title: "Member id",
+          type: "string",
+          minLength: 1,
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["call", "session", "trace"],
+        },
+        source_id: {
+          title: "Source id",
+          type: "string",
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: ["example", "cited", "recent"],
+        },
+        started_at: {
+          title: "Started at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentFixIssueSample: {
+      required: ["unit", "picks", "alternates"],
+      type: "object",
+      properties: {
+        unit: {
+          title: "Unit",
+          type: "string",
+          enum: ["call", "session", "trace"],
+          "x-nullable": true,
+        },
+        picks: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueSamplePick",
+          },
+        },
+        alternates: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueSamplePick",
+          },
+        },
+      },
+    },
+    AgentFixIssueScenarios: {
+      required: ["held", "limit"],
+      type: "object",
+      properties: {
+        held: {
+          title: "Held",
+          type: "integer",
+        },
+        limit: {
+          title: "Limit",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixIssueStatus: {
+      required: ["cluster_id", "project_id", "job"],
+      type: "object",
+      properties: {
+        cluster_id: {
+          title: "Cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        job: {
+          $ref: "#/definitions/AgentFixIssueJob",
+        },
+      },
+    },
     AgentFixAgent: {
       required: ["name", "kind", "version_id", "version_number", "ref"],
       type: "object",
@@ -97280,23 +102177,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
-    },
-    AgentFixFailure: {
-      required: ["code", "message"],
-      type: "object",
-      properties: {
-        code: {
-          title: "Code",
-          type: "string",
-          minLength: 1,
-        },
-        message: {
-          title: "Message",
-          type: "string",
-          minLength: 1,
-        },
-      },
-      "x-nullable": true,
     },
     AgentFixLaunchDefaults: {
       required: [
@@ -97530,7 +102410,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     AgentFixCandidate: {
-      required: ["attempt", "agent_version_id", "version_number", "verdict"],
+      required: [
+        "attempt",
+        "agent_version_id",
+        "version_number",
+        "verdict",
+        "pull_request_url",
+      ],
       type: "object",
       properties: {
         id: {
@@ -97579,8 +102465,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         pull_request_url: {
           title: "Pull request url",
           type: "string",
-          format: "uri",
-          maxLength: 512,
         },
         created_at: {
           title: "Created at",
@@ -97639,6 +102523,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
       },
+    },
+    AgentFixEpochIssue: {
+      required: ["job_id", "cluster_id", "project_id"],
+      type: "object",
+      properties: {
+        job_id: {
+          title: "Job id",
+          type: "string",
+          format: "uuid",
+        },
+        cluster_id: {
+          title: "Cluster id",
+          type: "string",
+          minLength: 1,
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+      },
+      "x-nullable": true,
     },
     AgentFixReport: {
       required: ["ending", "summary", "winner_candidate_id"],
@@ -97777,6 +102683,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         meters_agent_cost: {
           title: "Meters agent cost",
+          type: "boolean",
+          default: false,
+        },
+        measured_automatically: {
+          title: "Measured automatically",
           type: "boolean",
           default: false,
         },
@@ -98213,6 +103124,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "status",
         "environment",
         "agent_version",
+        "environment_version",
+        "partial",
         "outcome_passed",
         "outcome_failed",
         "outcome_errored",
@@ -98292,6 +103205,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent_version: {
           $ref: "#/definitions/AgentVersionRef",
         },
+        environment_version: {
+          $ref: "#/definitions/EnvironmentVersionRef",
+        },
+        partial: {
+          title: "Partial",
+          type: "boolean",
+          "x-nullable": true,
+        },
         outcome_passed: {
           title: "Outcome passed",
           description: "Passed receipts; null for a run without receipts.",
@@ -98361,6 +103282,97 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "date-time",
           "x-nullable": true,
+        },
+      },
+    },
+    AgentScanError: {
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentScanFailure: {
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+          readOnly: true,
+        },
+      },
+      "x-nullable": true,
+    },
+    FoundAgent: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          readOnly: true,
+        },
+        entry: {
+          title: "Entry",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        framework: {
+          $ref: "#/definitions/FoundAgentFramework",
+        },
+        confidence: {
+          title: "Confidence",
+          type: "string",
+          enum: ["high", "medium", "low"],
+          readOnly: true,
+        },
+        evidence: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        env_names: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        estimates: {
+          $ref: "#/definitions/FoundAgentEstimates",
         },
       },
     },
@@ -98494,6 +103506,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        source: {
+          $ref: "#/definitions/AgentVersionSource",
+        },
+        origin: {
+          title: "Origin",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preflight_status: {
+          title: "Preflight status",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        check_step: {
+          title: "Check step",
+          description:
+            "Where a pending check stands: storing the code, reading the agent, or checking its credentials.",
+          type: "string",
+          enum: ["snapshot", "reading", "check"],
+          readOnly: true,
+          "x-nullable": true,
+        },
+        check_failure: {
+          $ref: "#/definitions/AgentVersionCheckFailure",
+        },
+        check_started_at: {
+          title: "Check started at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        environments_count: {
+          title: "Environments count",
+          type: "integer",
+          readOnly: true,
+        },
         created_at: {
           title: "Created at",
           type: "string",
@@ -98507,6 +103560,110 @@ export const OPENAPI_CONTRACT = Object.freeze({
           readOnly: true,
         },
       },
+    },
+    HarnessAgentConfigChange: {
+      type: "object",
+      properties: {
+        phone_number: {
+          title: "Phone number",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        agent_name: {
+          title: "Agent name",
+          type: "string",
+          maxLength: 512,
+          minLength: 1,
+        },
+        target_speaks_first: {
+          title: "Target speaks first",
+          type: "boolean",
+        },
+      },
+    },
+    AgentVersionToolChange: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        before: {
+          $ref: "#/definitions/AgentToolSignature",
+        },
+        after: {
+          $ref: "#/definitions/AgentToolSignature",
+        },
+      },
+    },
+    AgentVersionCheckFailure: {
+      description:
+        "Why a failed check failed, when the version carries a reason.",
+      required: ["code", "message", "retryable"],
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          minLength: 1,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+        },
+        retryable: {
+          title: "Retryable",
+          type: "boolean",
+        },
+        missing: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentVersionSource: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        repository: {
+          title: "Repository",
+          type: "string",
+          minLength: 1,
+        },
+        ref: {
+          title: "Ref",
+          type: "string",
+          minLength: 1,
+        },
+        commit_sha: {
+          title: "Commit sha",
+          type: "string",
+          minLength: 1,
+        },
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          minLength: 1,
+        },
+        archive_artifact_id: {
+          title: "Archive artifact id",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessEnvironmentWorker: {
       required: [
@@ -99167,7 +104324,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -99208,7 +104366,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -102557,13 +107715,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "annotation_metric",
             "custom_attribute",
             "custom_column",
+            "derived_metric",
           ],
           default: "system_metric",
         },
         source: {
           title: "Source",
           type: "string",
-          enum: ["traces", "datasets", "simulation", "both", "all"],
+          enum: [
+            "traces",
+            "datasets",
+            "simulation",
+            "both",
+            "all",
+            "derived_metrics",
+          ],
           default: "traces",
         },
         output_type: {
@@ -102654,12 +107820,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "annotation_metric",
             "custom_attribute",
             "custom_column",
+            "derived_metric",
           ],
         },
         source: {
           title: "Source",
           type: "string",
-          enum: ["traces", "datasets", "simulation", "both", "all"],
+          enum: [
+            "traces",
+            "datasets",
+            "simulation",
+            "both",
+            "all",
+            "derived_metrics",
+          ],
           default: "traces",
         },
         aggregation: {
@@ -102702,6 +107876,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         config_id: {
           title: "Config id",
           type: "string",
+        },
+        derived_run_id: {
+          title: "Derived run id",
+          type: "string",
+          format: "uuid",
         },
         label_id: {
           title: "Label id",
@@ -102751,7 +107930,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
             properties: {
               column_id: {
                 type: "string",
-                description: "Column or attribute id to filter on.",
+                description:
+                  "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
               },
               property_id: {
                 type: "string",
@@ -102792,7 +107972,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                   col_type: {
                     type: "string",
                     description:
-                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                      "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                   },
                   attribute_value_types: {
                     type: "array",
@@ -103715,6 +108895,644 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 253,
           minLength: 1,
+        },
+      },
+    },
+    DerivedMetricVersion: {
+      required: [
+        "version",
+        "formula",
+        "inputs",
+        "selection_unit",
+        "weighting",
+        "filters",
+        "definition_hash",
+      ],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        formula: {
+          title: "Formula",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricInput",
+          },
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          maxLength: 16,
+          minLength: 1,
+        },
+        weighting: {
+          title: "Weighting",
+          type: "string",
+          maxLength: 32,
+          minLength: 1,
+        },
+        cohort_key: {
+          title: "Cohort key",
+          type: "string",
+          maxLength: 160,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+        },
+        definition_hash: {
+          title: "Definition hash",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "share",
+            "average",
+            "total",
+            "count",
+            "unique_count",
+            "percentile",
+            "custom",
+          ],
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          enum: ["span", "trace", "conversation", "user"],
+        },
+        user_rule: {
+          title: "User rule",
+          type: "string",
+          enum: ["", "any", "every", "average", "total"],
+        },
+        field_spec: {
+          $ref: "#/definitions/MetricFieldSpec",
+        },
+        group_dims: {
+          type: "array",
+          items: {
+            title: "Group dims",
+            type: "string",
+            maxLength: 160,
+            minLength: 1,
+          },
+        },
+        value_type: {
+          title: "Value type",
+          type: "string",
+          enum: ["boolean", "number", "text"],
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          maxLength: 32,
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+          maxLength: 32,
+        },
+        value_labels: {
+          title: "Value labels",
+          type: "object",
+        },
+        sampling: {
+          title: "Sampling",
+          type: "object",
+        },
+        backfill_status: {
+          title: "Backfill status",
+          type: "string",
+          enum: ["pending", "running", "complete", "failed"],
+        },
+        backfill_days_done: {
+          title: "Backfill days done",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        backfill_days_total: {
+          title: "Backfill days total",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        history_mode: {
+          title: "History mode",
+          type: "string",
+          enum: ["history", "forward"],
+          "x-nullable": true,
+        },
+        coverage_start: {
+          title: "Coverage start",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        activated_at: {
+          title: "Activated at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        needs_rebuild: {
+          title: "Needs rebuild",
+          type: "boolean",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+    },
+    MetricCalculationPaused: {
+      description: "Why the project's metrics stopped calculating, or null.",
+      required: ["reason", "since", "rows", "limit"],
+      type: "object",
+      properties: {
+        reason: {
+          title: "Reason",
+          description:
+            "too_large: stored row limit; too_busy: work cannot finish in a pass",
+          type: "string",
+          enum: ["too_large", "too_busy"],
+        },
+        since: {
+          title: "Since",
+          type: "string",
+          format: "date-time",
+        },
+        rows: {
+          title: "Rows",
+          description: "Stored metric rows measured when it paused",
+          type: "integer",
+          minimum: 0,
+          "x-nullable": true,
+        },
+        limit: {
+          title: "Limit",
+          description: "METRICS_MAX_CHECKPOINT_ROWS; raising it resumes",
+          type: "integer",
+          minimum: 1,
+        },
+        work: {
+          title: "Work",
+          description:
+            "Non-identifying busy-slot counts: owners, definitions, captures and capacity",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
+        },
+      },
+      "x-nullable": true,
+    },
+    DerivedMetricResult: {
+      required: [
+        "group_key",
+        "value",
+        "numerator",
+        "denominator",
+        "status",
+        "unit_count",
+        "valid_count",
+        "missing_count",
+        "invalid_probability_count",
+      ],
+      type: "object",
+      properties: {
+        group_key: {
+          title: "Group key",
+          type: "string",
+        },
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        numerator: {
+          title: "Numerator",
+          type: "number",
+          "x-nullable": true,
+        },
+        denominator: {
+          title: "Denominator",
+          type: "number",
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: [
+            "ok",
+            "no_data",
+            "missing_inputs",
+            "invalid_probability",
+            "zero_denominator",
+            "non_finite",
+          ],
+        },
+        unit_count: {
+          title: "Unit count",
+          type: "integer",
+          minimum: 0,
+        },
+        valid_count: {
+          title: "Valid count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_count: {
+          title: "Missing count",
+          type: "integer",
+          minimum: 0,
+        },
+        invalid_probability_count: {
+          title: "Invalid probability count",
+          type: "integer",
+          minimum: 0,
+        },
+        uncertainty: {
+          $ref: "#/definitions/DerivedMetricUncertainty",
+        },
+      },
+    },
+    DerivedMetricContributor: {
+      required: [
+        "unit_id",
+        "trace_id",
+        "session_id",
+        "user_id",
+        "cohort",
+        "day",
+        "probability",
+        "weight",
+        "numerator",
+        "denominator",
+        "weighted_numerator",
+        "weighted_denominator",
+        "influence",
+      ],
+      type: "object",
+      properties: {
+        unit_id: {
+          title: "Unit id",
+          description:
+            'Selection unit id; span units are ["trace_id","span_id"].',
+          type: "string",
+          minLength: 1,
+        },
+        trace_id: {
+          title: "Trace id",
+          description: "Span units only: the unit's trace.",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        session_id: {
+          title: "Session id",
+          type: "string",
+        },
+        user_id: {
+          title: "User id",
+          type: "string",
+        },
+        cohort: {
+          title: "Cohort",
+          type: "string",
+        },
+        day: {
+          title: "Day",
+          type: "string",
+          minLength: 1,
+        },
+        probability: {
+          title: "Probability",
+          type: "number",
+        },
+        weight: {
+          title: "Weight",
+          description: "1 / inclusion probability.",
+          type: "number",
+        },
+        numerator: {
+          title: "Numerator",
+          type: "number",
+        },
+        denominator: {
+          title: "Denominator",
+          type: "number",
+          "x-nullable": true,
+        },
+        weighted_numerator: {
+          title: "Weighted numerator",
+          type: "number",
+        },
+        weighted_denominator: {
+          title: "Weighted denominator",
+          type: "number",
+          "x-nullable": true,
+        },
+        influence: {
+          title: "Influence",
+          description:
+            "Exact leave-one-out change: the persisted value minus the group's value without this unit (a total's weighted contribution). Null when removing the unit leaves no denominator or the group has no value.",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricContributorDiagnostics: {
+      required: [
+        "unit_count",
+        "valid_count",
+        "missing_count",
+        "invalid_probability_count",
+        "outside_denominator_count",
+        "undefined_arithmetic_count",
+        "missing_by_input",
+        "missing_examples",
+        "invalid_probability_examples",
+      ],
+      type: "object",
+      properties: {
+        unit_count: {
+          title: "Unit count",
+          type: "integer",
+          minimum: 0,
+        },
+        valid_count: {
+          title: "Valid count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_count: {
+          title: "Missing count",
+          type: "integer",
+          minimum: 0,
+        },
+        invalid_probability_count: {
+          title: "Invalid probability count",
+          type: "integer",
+          minimum: 0,
+        },
+        outside_denominator_count: {
+          title: "Outside denominator count",
+          description: "Valid units whose denominator is 0 (ratios only).",
+          type: "integer",
+          minimum: 0,
+        },
+        undefined_arithmetic_count: {
+          title: "Undefined arithmetic count",
+          description:
+            "Units with every input present whose row arithmetic is undefined.",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_by_input: {
+          title: "Missing by input",
+          type: "object",
+          additionalProperties: {
+            type: "integer",
+            minimum: 0,
+          },
+        },
+        missing_examples: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        invalid_probability_examples: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    DerivedMetricEvaluator: {
+      required: ["id", "name", "config_hash"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          description: "Evaluator config ID to bind (config_id).",
+          type: "string",
+          format: "uuid",
+        },
+        name: {
+          title: "Name",
+          type: "string",
+        },
+        config_hash: {
+          title: "Config hash",
+          description:
+            "Hash of the evaluator's CURRENT resolved definition: the config_hash that new evaluation results are stored under. Results produced under an earlier definition carry a different hash.",
+          type: "string",
+          pattern: "^[a-f0-9]{64}$",
+          minLength: 1,
+        },
+      },
+    },
+    DerivedMetricFilter: {
+      required: ["field", "value"],
+      type: "object",
+      properties: {
+        field: {
+          title: "Field",
+          type: "string",
+          enum: ["model", "provider", "status", "name", "service_name"],
+        },
+        value: {
+          title: "Value",
+          type: "string",
+          maxLength: 255,
+        },
+      },
+    },
+    DerivedMetricManifest: {
+      required: [
+        "sampling_scope",
+        "schema_version",
+        "compiler_version",
+        "evaluator_table",
+        "definition_hash",
+        "captured_at",
+        "semantics",
+      ],
+      type: "object",
+      properties: {
+        sampling_scope: {
+          title: "Sampling scope",
+          type: "string",
+        },
+        schema_version: {
+          title: "Schema version",
+          type: "integer",
+        },
+        compiler_version: {
+          title: "Compiler version",
+          type: "integer",
+        },
+        evaluator_table: {
+          title: "Evaluator table",
+          type: "string",
+          minLength: 1,
+        },
+        definition_hash: {
+          title: "Definition hash",
+          type: "string",
+          minLength: 1,
+        },
+        captured_at: {
+          title: "Captured at",
+          type: "string",
+          format: "date-time",
+        },
+        semantics: {
+          title: "Semantics",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
+    },
+    DerivedMetricInput: {
+      required: ["alias", "source"],
+      type: "object",
+      properties: {
+        alias: {
+          title: "Alias",
+          type: "string",
+          pattern: "^[a-z][a-z0-9_]{0,39}$",
+          minLength: 1,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          enum: ["eval", "span"],
+        },
+        config_id: {
+          title: "Config id",
+          type: "string",
+          format: "uuid",
+        },
+        config_hash: {
+          title: "Config hash",
+          type: "string",
+          pattern: "^(?:[a-f0-9]{64})?$",
+          default: "",
+        },
+        field: {
+          title: "Field",
+          type: "string",
+          enum: [
+            "latency_ms",
+            "cost",
+            "total_tokens",
+            "prompt_tokens",
+            "completion_tokens",
+            "attribute_number",
+            "attribute_bool",
+            "attribute_text",
+          ],
+        },
+        attribute_key: {
+          title: "Attribute key",
+          type: "string",
+          default: "",
+          maxLength: 160,
+        },
+        value_type: {
+          title: "Value type",
+          type: "string",
+          enum: ["number", "boolean", "text"],
+        },
+        reducer: {
+          title: "Reducer",
+          type: "string",
+          enum: [
+            "first",
+            "latest",
+            "mean",
+            "min",
+            "max",
+            "sum",
+            "count",
+            "any",
+            "all",
+          ],
+          default: "latest",
+        },
+        ordering: {
+          title: "Ordering",
+          type: "string",
+          enum: ["sentence", "legacy"],
+        },
+        condition_stage: {
+          title: "Condition stage",
+          type: "string",
+          enum: ["after_reduction", "observation"],
+        },
+        condition: {
+          $ref: "#/definitions/MetricObservationCondition",
+        },
+      },
+    },
+    MetricFieldSpec: {
+      type: "object",
+      properties: {
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricInput",
+          },
+        },
+        conditions: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/MetricCondition",
+          },
+        },
+        value_alias: {
+          title: "Value alias",
+          type: "string",
+          pattern: "^[a-z][a-z0-9_]{0,39}$",
+          minLength: 1,
+        },
+        percentile: {
+          title: "Percentile",
+          type: "number",
+          maximum: 1,
+          minimum: 0,
         },
       },
     },
@@ -104645,7 +110463,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 properties: {
                   column_id: {
                     type: "string",
-                    description: "Column or attribute id to filter on.",
+                    description:
+                      "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
                   },
                   property_id: {
                     type: "string",
@@ -104686,7 +110505,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -104714,7 +110533,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 properties: {
                   column_id: {
                     type: "string",
-                    description: "Column or attribute id to filter on.",
+                    description:
+                      "Column or attribute id to filter on. Metric fields retain their stable metric_field:<uuid> identity in both column_id and optional property_id.",
                   },
                   property_id: {
                     type: "string",
@@ -104755,7 +110575,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
                       col_type: {
                         type: "string",
                         description:
-                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.",
+                          "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, METRIC_FIELD, ANNOTATION, or NORMAL. METRIC_FIELD uses the active version and requires an authorized native-list context.",
                       },
                       attribute_value_types: {
                         type: "array",
@@ -107142,6 +112962,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    GitHubInstallCompleteResult: {
+      required: ["outcome"],
+      type: "object",
+      properties: {
+        outcome: {
+          title: "Outcome",
+          type: "string",
+          enum: ["connected", "requested", "already_connected"],
+        },
+      },
+    },
+    GitHubInstallResult: {
+      required: ["install_url"],
+      type: "object",
+      properties: {
+        install_url: {
+          title: "Install url",
+          type: "string",
+          format: "uri",
+          minLength: 1,
+        },
+      },
+    },
     GraphExecutionDetailResult: {
       type: "object",
       properties: {
@@ -108733,6 +114576,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
         },
       },
+      "x-nullable": true,
     },
     HarnessAgentPayloadChange: {
       required: ["config"],
@@ -110723,6 +116567,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "sub_goals_count",
         "tools_count",
         "runs_count",
+        "agent_version",
+        "agent_policy",
         "last_updated",
         "created_at",
         "flows_count",
@@ -110793,6 +116639,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runs_count: {
           title: "Runs count",
           type: "integer",
+        },
+        agent_version: {
+          $ref: "#/definitions/AgentVersionRef",
+        },
+        agent_policy: {
+          title: "Agent policy",
+          type: "string",
+          enum: ["follow", "pinned"],
         },
         last_updated: {
           title: "Last updated",
@@ -111093,6 +116947,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "sub_goals_count",
         "tools_count",
         "runs_count",
+        "agent_version",
+        "agent_policy",
         "last_updated",
         "created_at",
         "last_run",
@@ -111158,6 +117014,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runs_count: {
           title: "Runs count",
           type: "integer",
+        },
+        agent_version: {
+          $ref: "#/definitions/AgentVersionRef",
+        },
+        agent_policy: {
+          title: "Agent policy",
+          type: "string",
+          enum: ["follow", "pinned"],
         },
         last_updated: {
           title: "Last updated",
@@ -111536,6 +117400,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 255,
           minLength: 1,
+          "x-nullable": true,
+        },
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+          pattern:
+            "^(?!/)(?!.*(^|/)\\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$",
+          maxLength: 512,
           "x-nullable": true,
         },
         archive_artifact_id: {
@@ -112249,6 +118121,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "infrastructure",
             "grading",
             "platform_sync",
+            "artifact",
           ],
         },
         stage: {
@@ -115809,6 +121682,921 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         feedback: {
           title: "Feedback",
+          type: "string",
+        },
+      },
+    },
+    MetricSourceCapability: {
+      required: [
+        "value_type",
+        "reducers",
+        "operators",
+        "observation_reducers",
+        "ordering",
+      ],
+      type: "object",
+      properties: {
+        value_type: {
+          title: "Value type",
+          type: "string",
+          minLength: 1,
+        },
+        reducers: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        operators: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        observation_reducers: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        ordering: {
+          title: "Ordering",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    MetricDraftDefinition: {
+      type: "object",
+      properties: {
+        formula: {
+          title: "Formula",
+          type: "string",
+          default: "",
+          maxLength: 2048,
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricInput",
+          },
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          enum: ["span", "session", "user"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "share",
+            "average",
+            "total",
+            "count",
+            "unique_count",
+            "percentile",
+            "custom",
+          ],
+          default: "custom",
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          enum: ["span", "trace", "conversation", "user"],
+        },
+        user_rule: {
+          title: "User rule",
+          type: "string",
+          enum: ["", "any", "every", "average", "total"],
+        },
+        field_spec: {
+          $ref: "#/definitions/MetricFieldSpec",
+        },
+        group_dims: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 160,
+            minLength: 1,
+          },
+          maxItems: 2,
+        },
+        value_type: {
+          title: "Value type",
+          type: "string",
+          enum: ["boolean", "number", "text"],
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          maxLength: 32,
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+          enum: ["", "number", "percent", "currency", "duration"],
+        },
+        value_labels: {
+          title: "Value labels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 80,
+            minLength: 1,
+          },
+        },
+        sampling: {
+          title: "Sampling",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        weighting: {
+          title: "Weighting",
+          type: "string",
+          enum: ["none", "inverse_probability"],
+          default: "none",
+        },
+        cohort_key: {
+          title: "Cohort key",
+          type: "string",
+          default: "",
+          maxLength: 160,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+          default: [],
+        },
+      },
+    },
+    MetricEffectiveWindow: {
+      required: ["window_start", "window_end", "rounding"],
+      type: "object",
+      properties: {
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        rounding: {
+          title: "Rounding",
+          description: "Rounded to 15 minutes",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    MetricReadProvenance: {
+      required: [
+        "manifest_id",
+        "generation",
+        "version_id",
+        "version",
+        "definition_hash",
+        "updated_at",
+        "backfill_days_done",
+        "backfill_days_total",
+      ],
+      type: "object",
+      properties: {
+        manifest_id: {
+          title: "Manifest id",
+          type: "string",
+          format: "uuid",
+        },
+        generation: {
+          title: "Generation",
+          type: "integer",
+          minimum: 0,
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        definition_hash: {
+          title: "Definition hash",
+          type: "string",
+          minLength: 1,
+        },
+        updated_at: {
+          title: "Updated at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        backfill_days_done: {
+          title: "Backfill days done",
+          type: "integer",
+          minimum: 0,
+        },
+        backfill_days_total: {
+          title: "Backfill days total",
+          type: "integer",
+          minimum: 0,
+        },
+        history_mode: {
+          title: "History mode",
+          description:
+            "forward: started with no history; values exist from coverage_start",
+          type: "string",
+          enum: ["history", "forward"],
+          "x-nullable": true,
+        },
+        coverage_start: {
+          title: "Coverage start",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        retention_floor: {
+          title: "Retention floor",
+          description:
+            "Permanent floor of the published retained-only state; current source policy can be stricter.",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        retention_policy: {
+          title: "Retention policy",
+          type: "string",
+          enum: ["follow_source"],
+        },
+        calculated_through: {
+          title: "Calculated through",
+          description:
+            "Nothing starting at or after this 15-minute boundary is calculated yet (the consumed source cut, or a pending burst sweep's floor)",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+    },
+    MetricUnitValue: {
+      required: [
+        "unit_id",
+        "status",
+        "no_value_reason",
+        "value_number",
+        "value_bool",
+        "value_text",
+        "inputs",
+        "inputs_bool",
+        "inputs_text",
+        "eligible_count",
+        "evaluated_count",
+        "missing_count",
+        "influence",
+      ],
+      type: "object",
+      properties: {
+        unit_id: {
+          title: "Unit id",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["value", "in_progress", "not_calculated", "no_value"],
+        },
+        no_value_reason: {
+          title: "No value reason",
+          type: "string",
+        },
+        value_number: {
+          title: "Value number",
+          type: "number",
+          "x-nullable": true,
+        },
+        value_bool: {
+          title: "Value bool",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        value_text: {
+          title: "Value text",
+          type: "string",
+          "x-nullable": true,
+        },
+        inputs: {
+          title: "Inputs",
+          type: "object",
+          additionalProperties: {
+            type: "number",
+            "x-nullable": true,
+          },
+        },
+        inputs_bool: {
+          title: "Inputs bool",
+          type: "object",
+          additionalProperties: {
+            type: "boolean",
+            "x-nullable": true,
+          },
+        },
+        inputs_text: {
+          title: "Inputs text",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+        eligible_count: {
+          title: "Eligible count",
+          type: "integer",
+          minimum: 0,
+        },
+        evaluated_count: {
+          title: "Evaluated count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_count: {
+          title: "Missing count",
+          type: "integer",
+          minimum: 0,
+        },
+        influence: {
+          title: "Influence",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+    },
+    MetricFieldMetadata: {
+      required: [
+        "id",
+        "level",
+        "kind",
+        "value_type",
+        "value_format",
+        "unit",
+        "value_labels",
+        "operators",
+        "projection",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        value_type: {
+          title: "Value type",
+          type: "string",
+          enum: ["boolean", "number", "text"],
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+        },
+        value_labels: {
+          title: "Value labels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        operators: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        projection: {
+          title: "Projection",
+          type: "boolean",
+        },
+      },
+    },
+    MetricHistoryEntry: {
+      required: ["kind", "created_at", "definition", "snapshot", "status"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["version", "recalculation", "snapshot"],
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+        definition: {
+          $ref: "#/definitions/MetricHistoryDefinition",
+        },
+        snapshot: {
+          $ref: "#/definitions/MetricHistorySnapshot",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    DerivedMetricDeltaUncertainty: {
+      required: [
+        "status",
+        "reason",
+        "method",
+        "std_error",
+        "ci_low",
+        "ci_high",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["ok", "not_estimable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+        },
+        method: {
+          title: "Method",
+          type: "string",
+        },
+        std_error: {
+          title: "Std error",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_low: {
+          title: "Ci low",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_high: {
+          title: "Ci high",
+          type: "number",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    MetricKpiPreviousPoint: {
+      required: [
+        "value",
+        "point_status",
+        "rate_eligible",
+        "weighted",
+        "unit",
+        "value_format",
+        "unit_noun",
+        "value_mode",
+        "eligible_count",
+        "evaluated_count",
+        "missing_count",
+        "uncertainty",
+      ],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        point_status: {
+          title: "Point status",
+          type: "string",
+          enum: [
+            "ok",
+            "unavailable",
+            "no_data",
+            "missing_inputs",
+            "invalid_probability",
+            "zero_denominator",
+            "non_finite",
+            "retention_expired",
+            "sampled_inputs_not_supported",
+            "not_calculated",
+            "settling",
+          ],
+        },
+        rate_eligible: {
+          title: "Rate eligible",
+          type: "boolean",
+        },
+        weighted: {
+          title: "Weighted",
+          type: "boolean",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+        },
+        unit_noun: {
+          title: "Unit noun",
+          type: "string",
+          minLength: 1,
+        },
+        value_mode: {
+          title: "Value mode",
+          type: "string",
+          enum: ["materialized", "on_demand"],
+        },
+        eligible_count: {
+          title: "Eligible count",
+          type: "integer",
+          minimum: 0,
+        },
+        evaluated_count: {
+          title: "Evaluated count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_count: {
+          title: "Missing count",
+          type: "integer",
+          minimum: 0,
+        },
+        counted_users: {
+          title: "Counted users",
+          type: "integer",
+          minimum: 0,
+        },
+        eligible_users: {
+          title: "Eligible users",
+          type: "integer",
+          minimum: 0,
+        },
+        no_value_users: {
+          title: "No value users",
+          type: "integer",
+          minimum: 0,
+        },
+        conversations_without_user: {
+          title: "Conversations without user",
+          type: "integer",
+          minimum: 0,
+        },
+        history_available_from: {
+          title: "History available from",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        uncertainty: {
+          $ref: "#/definitions/DerivedMetricUncertainty",
+        },
+      },
+      "x-nullable": true,
+    },
+    MetricPoint: {
+      required: [
+        "value",
+        "point_status",
+        "rate_eligible",
+        "weighted",
+        "unit",
+        "value_format",
+        "unit_noun",
+        "value_mode",
+        "eligible_count",
+        "evaluated_count",
+        "missing_count",
+        "uncertainty",
+      ],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        point_status: {
+          title: "Point status",
+          type: "string",
+          enum: [
+            "ok",
+            "unavailable",
+            "no_data",
+            "missing_inputs",
+            "invalid_probability",
+            "zero_denominator",
+            "non_finite",
+            "retention_expired",
+            "sampled_inputs_not_supported",
+            "not_calculated",
+            "settling",
+          ],
+        },
+        rate_eligible: {
+          title: "Rate eligible",
+          type: "boolean",
+        },
+        weighted: {
+          title: "Weighted",
+          type: "boolean",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+        },
+        unit_noun: {
+          title: "Unit noun",
+          type: "string",
+          minLength: 1,
+        },
+        value_mode: {
+          title: "Value mode",
+          type: "string",
+          enum: ["materialized", "on_demand"],
+        },
+        eligible_count: {
+          title: "Eligible count",
+          type: "integer",
+          minimum: 0,
+        },
+        evaluated_count: {
+          title: "Evaluated count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_count: {
+          title: "Missing count",
+          type: "integer",
+          minimum: 0,
+        },
+        counted_users: {
+          title: "Counted users",
+          type: "integer",
+          minimum: 0,
+        },
+        eligible_users: {
+          title: "Eligible users",
+          type: "integer",
+          minimum: 0,
+        },
+        no_value_users: {
+          title: "No value users",
+          type: "integer",
+          minimum: 0,
+        },
+        conversations_without_user: {
+          title: "Conversations without user",
+          type: "integer",
+          minimum: 0,
+        },
+        history_available_from: {
+          title: "History available from",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        uncertainty: {
+          $ref: "#/definitions/DerivedMetricUncertainty",
+        },
+      },
+    },
+    MetricPreviewSample: {
+      required: [
+        "unit_id",
+        "status",
+        "no_value_reason",
+        "value_number",
+        "value_bool",
+        "value_text",
+        "value_label",
+        "inputs",
+        "inputs_bool",
+        "inputs_text",
+      ],
+      type: "object",
+      properties: {
+        unit_id: {
+          title: "Unit id",
+          type: "string",
+          minLength: 1,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["value", "no_value"],
+        },
+        no_value_reason: {
+          title: "No value reason",
+          type: "string",
+        },
+        value_number: {
+          title: "Value number",
+          type: "number",
+          "x-nullable": true,
+        },
+        value_bool: {
+          title: "Value bool",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        value_text: {
+          title: "Value text",
+          type: "string",
+          "x-nullable": true,
+        },
+        value_label: {
+          title: "Value label",
+          type: "string",
+        },
+        inputs: {
+          title: "Inputs",
+          type: "object",
+          additionalProperties: {
+            type: "number",
+            "x-nullable": true,
+          },
+        },
+        inputs_bool: {
+          title: "Inputs bool",
+          type: "object",
+          additionalProperties: {
+            type: "boolean",
+            "x-nullable": true,
+          },
+        },
+        inputs_text: {
+          title: "Inputs text",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            "x-nullable": true,
+          },
+        },
+      },
+    },
+    MetricTrendPoint: {
+      required: [
+        "value",
+        "point_status",
+        "rate_eligible",
+        "weighted",
+        "unit",
+        "value_format",
+        "unit_noun",
+        "value_mode",
+        "eligible_count",
+        "evaluated_count",
+        "missing_count",
+        "uncertainty",
+        "window_start",
+        "window_end",
+        "group_key",
+      ],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          type: "number",
+          "x-nullable": true,
+        },
+        point_status: {
+          title: "Point status",
+          type: "string",
+          enum: [
+            "ok",
+            "unavailable",
+            "no_data",
+            "missing_inputs",
+            "invalid_probability",
+            "zero_denominator",
+            "non_finite",
+            "retention_expired",
+            "sampled_inputs_not_supported",
+            "not_calculated",
+            "settling",
+          ],
+        },
+        rate_eligible: {
+          title: "Rate eligible",
+          type: "boolean",
+        },
+        weighted: {
+          title: "Weighted",
+          type: "boolean",
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+        },
+        unit_noun: {
+          title: "Unit noun",
+          type: "string",
+          minLength: 1,
+        },
+        value_mode: {
+          title: "Value mode",
+          type: "string",
+          enum: ["materialized", "on_demand"],
+        },
+        eligible_count: {
+          title: "Eligible count",
+          type: "integer",
+          minimum: 0,
+        },
+        evaluated_count: {
+          title: "Evaluated count",
+          type: "integer",
+          minimum: 0,
+        },
+        missing_count: {
+          title: "Missing count",
+          type: "integer",
+          minimum: 0,
+        },
+        counted_users: {
+          title: "Counted users",
+          type: "integer",
+          minimum: 0,
+        },
+        eligible_users: {
+          title: "Eligible users",
+          type: "integer",
+          minimum: 0,
+        },
+        no_value_users: {
+          title: "No value users",
+          type: "integer",
+          minimum: 0,
+        },
+        conversations_without_user: {
+          title: "Conversations without user",
+          type: "integer",
+          minimum: 0,
+        },
+        history_available_from: {
+          title: "History available from",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        uncertainty: {
+          $ref: "#/definitions/DerivedMetricUncertainty",
+        },
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        group_key: {
+          title: "Group key",
           type: "string",
         },
       },
@@ -120633,6 +127421,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "infrastructure",
             "grading",
             "platform_sync",
+            "artifact",
           ],
           "x-nullable": true,
         },
@@ -123226,6 +130015,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SourceBranchesResult: {
+      required: ["branches"],
+      type: "object",
+      properties: {
+        branches: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceBranch",
+          },
+        },
+      },
+    },
+    SourceRepositoriesResult: {
+      required: ["repositories", "next_page"],
+      type: "object",
+      properties: {
+        repositories: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceRepository",
+          },
+        },
+        next_page: {
+          title: "Next page",
+          type: "integer",
+          "x-nullable": true,
+        },
+      },
+    },
     SpanAttributeNumericStats: {
       type: "object",
       properties: {
@@ -123450,6 +130268,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "gaps",
         "instrumentation",
         "setup_hash",
+        "extension",
       ],
       type: "object",
       properties: {
@@ -123529,6 +130348,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Setup hash",
           type: "string",
           minLength: 1,
+        },
+        extension: {
+          $ref: "#/definitions/StoredExtension",
         },
       },
     },
@@ -126077,6 +132899,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    ApiErrorObject: {
+      type: "object",
+      properties: {
+        code: {
+          title: "Code",
+          type: "string",
+          "x-nullable": true,
+        },
+        message: {
+          title: "Message",
+          type: "string",
+          "x-nullable": true,
+        },
+        detail: {
+          title: "Detail",
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            "x-json-value": true,
+            description: "Any valid JSON value.",
+          },
+        },
+      },
+    },
     UserAlertMonitorListResult: {
       required: ["column_config", "table", "metadata"],
       type: "object",
@@ -126952,6 +133798,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    AgentCodeHunk: {
+      type: "object",
+      properties: {
+        old_start: {
+          title: "Old start",
+          type: "integer",
+          readOnly: true,
+        },
+        old_lines: {
+          title: "Old lines",
+          type: "integer",
+          readOnly: true,
+        },
+        new_start: {
+          title: "New start",
+          type: "integer",
+          readOnly: true,
+        },
+        new_lines: {
+          title: "New lines",
+          type: "integer",
+          readOnly: true,
+        },
+        lines: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          readOnly: true,
+        },
+      },
+    },
     AgentFixVerdict: {
       required: ["accepted", "reason", "must_pass_regressions"],
       type: "object",
@@ -127003,6 +133881,65 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    AgentFixIssueJob: {
+      required: [
+        "id",
+        "phase",
+        "issue",
+        "environment",
+        "sample",
+        "ending",
+        "baseline",
+        "epoch",
+        "created_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        phase: {
+          title: "Phase",
+          type: "string",
+          enum: [
+            "drafting",
+            "review",
+            "blocked",
+            "measuring",
+            "launched",
+            "ended",
+          ],
+        },
+        issue: {
+          $ref: "#/definitions/AgentFixIssue",
+        },
+        environment: {
+          $ref: "#/definitions/AgentFixIssueEnvironment",
+        },
+        sample: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/AgentFixIssueSamplePick",
+          },
+        },
+        ending: {
+          $ref: "#/definitions/AgentFixFailure",
+        },
+        baseline: {
+          $ref: "#/definitions/AgentFixIssueBaseline",
+        },
+        epoch: {
+          $ref: "#/definitions/AgentFixIssueEpoch",
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+      },
     },
     AgentFixOverride: {
       required: ["allowed", "regressions", "reason", "by", "at"],
@@ -127270,6 +134207,90 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
       "x-nullable": true,
+    },
+    EnvironmentVersionRef: {
+      required: ["id", "version_number"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        version_number: {
+          title: "Version number",
+          type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    FoundAgentEstimates: {
+      type: "object",
+      properties: {
+        tools: {
+          title: "Tools",
+          type: "integer",
+          readOnly: true,
+        },
+        prompt_files: {
+          title: "Prompt files",
+          type: "integer",
+          readOnly: true,
+        },
+      },
+    },
+    FoundAgentFramework: {
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    AgentToolSignature: {
+      type: "object",
+      properties: {
+        arguments: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        required: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          readOnly: true,
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
     },
     AlertOption: {
       required: ["value", "label"],
@@ -128835,6 +135856,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "eval_template",
             "annotation",
             "dataset_column",
+            "metric_field",
           ],
         },
         display_name: {
@@ -128916,6 +135938,95 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Attribute types exact",
           type: "boolean",
         },
+        column_id: {
+          title: "Column id",
+          type: "string",
+          minLength: 1,
+        },
+        metric_id: {
+          title: "Metric id",
+          type: "string",
+          format: "uuid",
+        },
+        project_id: {
+          title: "Project id",
+          type: "string",
+          format: "uuid",
+        },
+        version_id: {
+          title: "Version id",
+          type: "string",
+          format: "uuid",
+        },
+        version: {
+          title: "Version",
+          type: "integer",
+          minimum: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "share",
+            "average",
+            "total",
+            "count",
+            "unique_count",
+            "percentile",
+            "custom",
+          ],
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          enum: ["span", "trace", "conversation", "user"],
+        },
+        source_level: {
+          title: "Source level",
+          type: "string",
+          enum: ["span", "trace", "conversation", "user"],
+        },
+        projection: {
+          title: "Projection",
+          type: "string",
+          enum: ["", "per_user", "user_metric"],
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+        },
+        value_labels: {
+          title: "Value labels",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        definition_hash: {
+          title: "Definition hash",
+          type: "string",
+          pattern: "^[0-9a-f]{64}$",
+          minLength: 1,
+        },
+        group_dims: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        operators: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        filterable: {
+          title: "Filterable",
+          type: "boolean",
+        },
       },
     },
     DashboardQueryMetricResult: {
@@ -128963,6 +136074,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/DashboardQuerySeries",
           },
+        },
+        derived_context: {
+          $ref: "#/definitions/DerivedMetricDashboardContext",
         },
         series_total: {
           title: "Series total",
@@ -129816,6 +136930,148 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Description",
           type: "string",
           minLength: 1,
+        },
+      },
+    },
+    DerivedMetricUncertainty: {
+      description:
+        "Present on previews, and on persisted results when include_uncertainty=true.",
+      required: [
+        "confidence_level",
+        "status",
+        "reason",
+        "method",
+        "interval",
+        "std_error",
+        "ci_low",
+        "ci_high",
+        "effective_n",
+        "degrees_of_freedom",
+      ],
+      type: "object",
+      properties: {
+        confidence_level: {
+          title: "Confidence level",
+          description: "Always 0.95 (two-sided).",
+          type: "number",
+        },
+        status: {
+          title: "Status",
+          description:
+            "`not_estimable` means no interval exists; `reason` says why. Never a guess.",
+          type: "string",
+          enum: ["ok", "not_estimable"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          enum: [
+            "",
+            "no_value",
+            "design_not_captured",
+            "mixed_design",
+            "unweighted_total",
+            "fewer_than_two_units",
+            "population_size_missing",
+            "inconsistent_stratum_design",
+            "single_unit_stratum",
+            "no_degrees_of_freedom",
+            "non_finite",
+            "unstable_variance",
+            "not_computed",
+          ],
+        },
+        method: {
+          title: "Method",
+          description:
+            "stratified_wor_fpc: closed sampling cohorts (stratified, without replacement, finite-population corrected). poisson: live sampling policies. iid_units: unweighted ratios and means, a model-based interval treating units as independent draws. Covers sampling error only, not evaluator error.",
+          type: "string",
+          enum: ["", "stratified_wor_fpc", "poisson", "iid_units"],
+        },
+        interval: {
+          title: "Interval",
+          description:
+            "wilson: rates (a 0/1 numerator within a 0/1 denominator), Wilson score interval at the design-effective sample size. wald_t: value +/- t * SE.",
+          type: "string",
+          enum: ["", "wilson", "wald_t"],
+        },
+        std_error: {
+          title: "Std error",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_low: {
+          title: "Ci low",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_high: {
+          title: "Ci high",
+          type: "number",
+          "x-nullable": true,
+        },
+        effective_n: {
+          title: "Effective n",
+          description: "Kish effective sample size of the valid units.",
+          type: "number",
+          "x-nullable": true,
+        },
+        degrees_of_freedom: {
+          title: "Degrees of freedom",
+          type: "integer",
+          minimum: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    MetricObservationCondition: {
+      required: ["operator", "value"],
+      type: "object",
+      properties: {
+        operator: {
+          title: "Operator",
+          type: "string",
+          enum: ["eq", "ne", "lt", "lte", "gt", "gte"],
+        },
+        value: {
+          title: "Value",
+          type: "object",
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+      },
+    },
+    MetricCondition: {
+      required: ["alias", "operator"],
+      type: "object",
+      properties: {
+        alias: {
+          title: "Alias",
+          type: "string",
+          pattern: "^[a-z][a-z0-9_]{0,39}$",
+          minLength: 1,
+        },
+        operator: {
+          title: "Operator",
+          type: "string",
+          enum: ["eq", "ne", "lt", "lte", "gt", "gte"],
+        },
+        value: {
+          title: "Value",
+          type: "object",
+          "x-json-value": true,
+          description: "Any valid JSON value.",
+        },
+        right_alias: {
+          title: "Right alias",
+          type: "string",
+          pattern: "^[a-z][a-z0-9_]{0,39}$",
+          minLength: 1,
+        },
+        condition_stage: {
+          title: "Condition stage",
+          type: "string",
+          enum: ["after_reduction"],
         },
       },
     },
@@ -133365,27 +140621,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
-    HarnessAgentConfigChange: {
-      type: "object",
-      properties: {
-        phone_number: {
-          title: "Phone number",
-          type: "string",
-          maxLength: 512,
-          minLength: 1,
-        },
-        agent_name: {
-          title: "Agent name",
-          type: "string",
-          maxLength: 512,
-          minLength: 1,
-        },
-        target_speaks_first: {
-          title: "Target speaks first",
-          type: "boolean",
-        },
-      },
-    },
     HarnessCapabilityAgentTools: {
       required: ["read", "count"],
       type: "object",
@@ -136025,6 +143260,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "message_queue",
             "linear",
             "slack",
+            "github",
           ],
         },
         display_name: {
@@ -136500,6 +143736,342 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    MetricHistoryDefinition: {
+      required: [
+        "version",
+        "formula",
+        "inputs",
+        "selection_unit",
+        "weighting",
+        "filters",
+        "definition_hash",
+      ],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        formula: {
+          title: "Formula",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricInput",
+          },
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          maxLength: 16,
+          minLength: 1,
+        },
+        weighting: {
+          title: "Weighting",
+          type: "string",
+          maxLength: 32,
+          minLength: 1,
+        },
+        cohort_key: {
+          title: "Cohort key",
+          type: "string",
+          maxLength: 160,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+        },
+        definition_hash: {
+          title: "Definition hash",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: [
+            "share",
+            "average",
+            "total",
+            "count",
+            "unique_count",
+            "percentile",
+            "custom",
+          ],
+        },
+        level: {
+          title: "Level",
+          type: "string",
+          enum: ["span", "trace", "conversation", "user"],
+        },
+        user_rule: {
+          title: "User rule",
+          type: "string",
+          enum: ["", "any", "every", "average", "total"],
+        },
+        field_spec: {
+          $ref: "#/definitions/MetricFieldSpec",
+        },
+        group_dims: {
+          type: "array",
+          items: {
+            title: "Group dims",
+            type: "string",
+            maxLength: 160,
+            minLength: 1,
+          },
+        },
+        value_type: {
+          title: "Value type",
+          type: "string",
+          enum: ["boolean", "number", "text"],
+        },
+        unit: {
+          title: "Unit",
+          type: "string",
+          maxLength: 32,
+        },
+        value_format: {
+          title: "Value format",
+          type: "string",
+          maxLength: 32,
+        },
+        value_labels: {
+          title: "Value labels",
+          type: "object",
+        },
+        sampling: {
+          title: "Sampling",
+          type: "object",
+        },
+        backfill_status: {
+          title: "Backfill status",
+          type: "string",
+          enum: ["pending", "running", "complete", "failed"],
+        },
+        backfill_days_done: {
+          title: "Backfill days done",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        backfill_days_total: {
+          title: "Backfill days total",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        history_mode: {
+          title: "History mode",
+          type: "string",
+          enum: ["history", "forward"],
+          "x-nullable": true,
+        },
+        coverage_start: {
+          title: "Coverage start",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        activated_at: {
+          title: "Activated at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        needs_rebuild: {
+          title: "Needs rebuild",
+          type: "boolean",
+          readOnly: true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+      },
+      "x-nullable": true,
+    },
+    MetricHistorySnapshot: {
+      required: [
+        "metric_id",
+        "metric_version",
+        "window_start",
+        "window_end",
+        "as_of",
+        "filters",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        metric_id: {
+          title: "Metric id",
+          type: "string",
+          format: "uuid",
+        },
+        metric_version: {
+          title: "Metric version",
+          type: "integer",
+        },
+        definition: {
+          $ref: "#/definitions/DerivedMetricVersion",
+        },
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+        },
+        as_of: {
+          title: "As of",
+          type: "string",
+          format: "date-time",
+        },
+        source_run_id: {
+          title: "Source run id",
+          type: "string",
+          maxLength: 255,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+        },
+        snapshot_id: {
+          title: "Snapshot id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        result_id: {
+          title: "Result id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        lease_expires_at: {
+          title: "Lease expires at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        source_manifest: {
+          $ref: "#/definitions/DerivedMetricManifest",
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["run", "snapshot"],
+        },
+        pinned_manifest: {
+          title: "Pinned manifest",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        pinned_generation: {
+          title: "Pinned generation",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: -9223372036854776000,
+          "x-nullable": true,
+        },
+        captured_at: {
+          title: "Captured at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        supported_grain: {
+          title: "Supported grain",
+          type: "string",
+          maxLength: 16,
+        },
+        changed_at: {
+          title: "Changed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        change_reason: {
+          title: "Change reason",
+          type: "string",
+          maxLength: 64,
+        },
+        removed_unit_count: {
+          title: "Removed unit count",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: 0,
+        },
+        deleted_at: {
+          title: "Deleted at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        cleanup_status: {
+          title: "Cleanup status",
+          type: "string",
+          enum: ["", "pending", "running", "done", "failed"],
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["queued", "running", "complete", "failed"],
+        },
+        error: {
+          title: "Error",
+          type: "string",
+          maxLength: 300,
+        },
+        row_count: {
+          title: "Row count",
+          type: "integer",
+          maximum: 9223372036854776000,
+          minimum: 0,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        completed_at: {
+          title: "Completed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     EvalConfig: {
       required: [
@@ -140396,6 +147968,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    SourceBranch: {
+      required: ["name", "is_default"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        is_default: {
+          title: "Is default",
+          type: "boolean",
+        },
+      },
+    },
+    SourceRepository: {
+      required: ["id", "full_name", "default_branch", "private"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "integer",
+        },
+        full_name: {
+          title: "Full name",
+          type: "string",
+          minLength: 1,
+        },
+        default_branch: {
+          title: "Default branch",
+          type: "string",
+        },
+        private: {
+          title: "Private",
+          type: "boolean",
+        },
+      },
+    },
     SpanListColumnConfig: {
       required: ["id", "name", "is_visible"],
       type: "object",
@@ -140672,6 +148282,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+      },
+    },
+    StoredExtension: {
+      required: ["framework", "source"],
+      type: "object",
+      properties: {
+        framework: {
+          $ref: "#/definitions/StoredFramework",
+        },
+        source: {
+          $ref: "#/definitions/StoredSourceEcho",
         },
       },
     },
@@ -143713,6 +151335,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DerivedMetricDashboardContext: {
+      type: "object",
+      properties: {
+        run: {
+          $ref: "#/definitions/DerivedMetricSavedRunContext",
+        },
+        result: {
+          $ref: "#/definitions/DerivedMetricResult",
+        },
+      },
+    },
     DatasetCellInnerMetadata: {
       type: "object",
       properties: {
@@ -145619,6 +153252,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    StoredFramework: {
+      required: ["name", "version"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        label: {
+          title: "Label",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    StoredSourceEcho: {
+      type: "object",
+      properties: {
+        subfolder: {
+          title: "Subfolder",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
     StoredToolEndpoint: {
       required: ["url"],
       type: "object",
@@ -145925,6 +153592,71 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Value",
           type: "number",
           "x-nullable": true,
+        },
+        ci_low: {
+          title: "Ci low",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_high: {
+          title: "Ci high",
+          type: "number",
+          "x-nullable": true,
+        },
+        ci_reason: {
+          title: "Ci reason",
+          type: "string",
+        },
+      },
+    },
+    DerivedMetricSavedRunContext: {
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+        },
+        metric_version: {
+          title: "Metric version",
+          type: "integer",
+          readOnly: true,
+        },
+        definition: {
+          $ref: "#/definitions/DerivedMetricFrozenRecipe",
+        },
+        window_start: {
+          title: "Window start",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        window_end: {
+          title: "Window end",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+          readOnly: true,
+        },
+        result_id: {
+          title: "Result id",
+          type: "string",
+          format: "uuid",
+          readOnly: true,
+          "x-nullable": true,
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["queued", "running", "complete", "failed"],
+          readOnly: true,
         },
       },
     },
@@ -146297,6 +154029,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Reason",
           type: "string",
           "x-nullable": true,
+        },
+      },
+    },
+    DerivedMetricFrozenRecipe: {
+      required: [
+        "version",
+        "formula",
+        "inputs",
+        "selection_unit",
+        "weighting",
+        "filters",
+        "definition_hash",
+      ],
+      type: "object",
+      properties: {
+        version: {
+          title: "Version",
+          type: "integer",
+          maximum: 2147483647,
+          minimum: 0,
+        },
+        formula: {
+          title: "Formula",
+          type: "string",
+          maxLength: 2048,
+          minLength: 1,
+        },
+        inputs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricInput",
+          },
+        },
+        selection_unit: {
+          title: "Selection unit",
+          type: "string",
+          maxLength: 16,
+          minLength: 1,
+        },
+        weighting: {
+          title: "Weighting",
+          type: "string",
+          maxLength: 32,
+          minLength: 1,
+        },
+        cohort_key: {
+          title: "Cohort key",
+          type: "string",
+          maxLength: 160,
+        },
+        filters: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DerivedMetricFilter",
+          },
+        },
+        definition_hash: {
+          title: "Definition hash",
+          type: "string",
+          maxLength: 64,
+          minLength: 1,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          readOnly: true,
         },
       },
     },

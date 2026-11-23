@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import PageHeader from "src/components/page-header";
 import { Helmet } from "react-helmet-async";
+import { useSearchParams } from "react-router-dom";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 
 import { Box, Button, Typography, useTheme } from "@mui/material";
@@ -23,6 +24,7 @@ import {
   emptyStateContent,
 } from "src/components/custom-model-dropdown/KeysHelper";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
+import EmptyState from "src/components/empty-state";
 import { ConfirmDialog } from "../../../components/custom-dialog";
 import { LoadingButton } from "@mui/lab";
 import {
@@ -60,11 +62,32 @@ const normalizeCustomModel = (model = {}) => {
   };
 };
 
+// What a search on each category looks through, for "No … match".
+const NO_MATCH_NOUN = {
+  all: "AI providers",
+  default_model: "model providers",
+  cloud: "cloud providers",
+  custom: "custom models",
+};
+
 const ConfigureProviders = () => {
   const { role } = useAuthContext();
   const theme = useTheme();
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
+  // `?provider=typesafe` (a link from a feature that needs that key) opens
+  // the list already searched to that provider. A new or removed provider
+  // in the URL searches again; what the user types stands until then.
+  const [searchParams] = useSearchParams();
+  const provider = searchParams.get("provider") || "";
+  const [searchQuery, setSearchQuery] = useState(provider);
+  const [searchedProvider, setSearchedProvider] = useState(provider);
+  const [selectedFilter, setSelectedFilter] = useState("all");
+  if (provider !== searchedProvider) {
+    setSearchedProvider(provider);
+    setSearchQuery(provider);
+    // A linked provider shows its card whichever category was picked.
+    if (provider) setSelectedFilter("all");
+  }
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["api-key-status"],
     queryFn: () => axios.get(endpoints.develop.apiKey.status),
@@ -72,7 +95,6 @@ const ConfigureProviders = () => {
       (d.data?.result?.providers || []).map(normalizeProviderStatus),
   });
 
-  const [selectedFilter, setSelectedFilter] = useState("all");
   const searchDebounce = useDebounce(searchQuery.trim(), 300);
   const { data: customModalsData } = useQuery({
     queryKey: ["customModals"],
@@ -296,8 +318,24 @@ const ConfigureProviders = () => {
             </Box>
           </Box>
 
-          {/* Unified Empty State */}
-          <ShowComponent condition={isEmpty}>
+          {/* A search that matched nothing, else nothing added yet */}
+          {/* Gone as soon as the search is cleared, not after the debounce. */}
+          <ShowComponent
+            condition={
+              isEmpty && searchDebounce !== "" && searchQuery.trim() !== ""
+            }
+          >
+            <EmptyState
+              variant="no-results"
+              icon="solar:magnifer-linear"
+              title={`No ${NO_MATCH_NOUN[selectedFilter] ?? NO_MATCH_NOUN.all} match “${searchDebounce}”`}
+              onClearFilters={() => {
+                setSearchQuery("");
+                setSelectedFilter("all");
+              }}
+            />
+          </ShowComponent>
+          <ShowComponent condition={isEmpty && searchDebounce === ""}>
             <Box
               sx={{
                 gridColumn: "1 / -1",
@@ -311,11 +349,7 @@ const ConfigureProviders = () => {
               <EmptyLayout
                 icon="/assets/icons/navbar/hugeicons.svg"
                 title={emptyStateContent[selectedFilter]?.title}
-                description={
-                  searchDebounce !== ""
-                    ? `No relevant search results were found for '${searchDebounce}'`
-                    : emptyStateContent[selectedFilter]?.description
-                }
+                description={emptyStateContent[selectedFilter]?.description}
                 action={null}
               />
             </Box>

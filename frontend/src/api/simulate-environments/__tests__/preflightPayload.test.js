@@ -6,6 +6,7 @@ import {
   PROVIDER_TO_CONNECTOR,
   environmentNameFor,
   draftToPreflightPayload,
+  isValidSubfolder,
 } from "../preflightPayload";
 
 const repoDraft = (over = {}) => ({
@@ -102,6 +103,25 @@ describe("draftToPreflightPayload — repo", () => {
       repoDraft({ visibility: "public", installationId: "123" }),
     ).payload;
     expect("installation_id" in pub.source).toBe(false);
+  });
+
+  it("sends the agent folder as source.subfolder, trimmed of ./ and trailing slashes", () => {
+    const { payload } = draftToPreflightPayload(repoDraft({ subfolder: " ./agents/support/ " }));
+    expect(payload.source.subfolder).toBe("agents/support");
+    expect("subfolder" in draftToPreflightPayload(repoDraft({ subfolder: "  " })).payload.source).toBe(false);
+  });
+
+  it.each([
+    ["", true],
+    ["agents/support", true],
+    ["agents/support/", true],
+    ["/agents", false],
+    ["agents/../secrets", false],
+    ["agents/./support", false],
+    ["agents//support", false],
+    ["agents/sup port", false],
+  ])("accepts %j as an agent folder: %s", (value, valid) => {
+    expect(isValidSubfolder(value)).toBe(valid);
   });
 
   it("adds security only when egress yields at least one public domain", () => {

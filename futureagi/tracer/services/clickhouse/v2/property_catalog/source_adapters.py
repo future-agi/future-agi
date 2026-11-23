@@ -8,6 +8,8 @@ from uuid import UUID
 
 from tracer.constants.dashboard import TEXT_ANNOTATION_AGGREGATIONS
 from tracer.services.configured_value_options import configured_value_options
+from tracer.services.derived_metrics import list_filter_capabilities
+from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
 from tracer.utils.property_registry import canonical_system_attribute_name
 
 from .codec import combine_search_text
@@ -683,6 +685,109 @@ def _dataset_column_definition(row: Mapping[str, Any]) -> PropertyDefinition:
     )
 
 
+_METRIC_CONTEXT_LEVELS = {
+    "sessions": ("conversation",),
+    "spans": ("span",),
+    # Trace fields stay off until their measured gate is satisfied.
+    "traces": (),
+    "users": ("conversation", "user"),
+    "task_sessions": ("conversation",),
+    "task_spans": ("span",),
+    "task_traces": (),
+    "task": (),
+    "tasks": (),
+}
+_METRIC_VERSION_FIELDS = (
+    "id",
+    "version",
+    "kind",
+    "level",
+    "user_rule",
+    "value_type",
+    "unit",
+    "value_format",
+    "value_labels",
+    "definition_hash",
+    "group_dims",
+)
+
+
+def _metric_context(query):
+    return query.get("context") or query.get("source", "")
+
+
+def _metric_definition(row: Mapping[str, Any], *, context: str) -> PropertyDefinition:
+    """Project one active version, never the latest (possibly draft) version."""
+    version = {
+        field: row[f"active_version__{field}"] for field in _METRIC_VERSION_FIELDS
+    }
+    level, kind = version["level"], version["kind"]
+    value_type = version["value_type"]
+    unit, value_format = version["unit"], version["value_format"]
+    projection = ""
+    display_level = level
+    filterable = True
+    if context == "users":
+        display_level = "user"
+        if level == "conversation":
+            projection, value_type = "per_user", "number"
+            if kind == "share":
+                unit, value_format = "%", "percent"
+            elif kind == "count":
+                unit, value_format = "", "number"
+        elif level == "user":
+            projection = "user_metric"
+            value_type = "boolean" if kind in {"share", "count"} else "number"
+            filterable = list_filter_capabilities.USER_LEVEL_METRIC_FILTER_ON_USERS
+    labels = (
+        {
+            "match": version["value_labels"].get("match", "Counts"),
+            "other": version["value_labels"].get("other", "Doesn't count"),
+        }
+        if value_type == "boolean"
+        else {}
+    )
+    primary = (
+        "users"
+        if context == "users"
+        else {"conversation": "sessions", "span": "spans"}[level]
+    )
+    return PropertyDefinition(
+        property_kind=PropertyKind.METRIC_FIELD,
+        source_key=str(row["id"]),
+        category=PropertyCategory.METRIC,
+        # Append a family; never reorder existing identities/keysets.
+        category_rank=5,
+        source_rank=0,
+        definition_source="derived_metric",
+        primary_source=primary,
+        source_tokens=("metric", primary),
+        value_adapter="metric_field",
+        name=str(row["id"]),
+        display_name=_relational_display_name(row, fallback_prefix="Metric"),
+        value_type=value_type,
+        output_type=value_type,
+        role=PropertyRole.METRIC,
+        details={
+            "metric_id": str(row["id"]),
+            "project_id": str(row["project_id"]),
+            "version_id": str(version["id"]),
+            "version": version["version"],
+            "kind": kind,
+            "level": display_level,
+            "source_level": level,
+            "projection": projection,
+            "unit": unit,
+            "value_format": value_format,
+            "value_labels": labels,
+            "definition_hash": version["definition_hash"],
+            "group_dims": version["group_dims"],
+            "operators": sorted(FILTER_TYPE_ALLOWED_OPS[value_type]),
+            "filterable": filterable,
+        },
+    )
+
+
 def _dataset_type_contract(data_type: str) -> tuple[str, PropertyRole]:
     if data_type in {"float", "integer"}:
         return "number", PropertyRole.METRIC
@@ -767,6 +872,9 @@ def definition_metric(definition):
         output_type=definition.output_type,
         role=str(definition.role),
     )
+    if definition.property_kind is PropertyKind.METRIC_FIELD:
+        # METRIC_FIELD uses the full namespaced id, not the bare metric UUID.
+        metric["column_id"] = definition.property_id
     return metric
 
 
@@ -783,7 +891,11 @@ def source_matches(source, primary_source, tokens):
 
 def definition_matches(definition, query):
     return (
-        (not query.get("category") or query["category"] == definition.category)
+        (
+            not query.get("level")
+            or query["level"] == definition.details.get("source_level")
+        )
+        and (not query.get("category") or query["category"] == definition.category)
         and (
             not query.get("property_kind")
             or query["property_kind"] == definition.property_kind
@@ -825,6 +937,79 @@ class CurrentDefinitionSource:
             statement_timeout_ms=lambda: self.deadline.remaining_ms(floor_ms=1),
         ):
             return read()
+
+    def _metric_families(self, scope, query):
+        from django.db.models import F
+
+        from tracer.models.derived_metric import DerivedMetric
+
+        # A dataset/agent picker must not acquire unrelated project fields.
+        if (
+            scope.get("dataset_id")
+            or scope.get("agent_definition_id")
+            or query.get("source", "")
+            not in {"", "all", "both", "sessions", "spans", "traces", "users"}
+        ):
+            return
+        context = _metric_context(query)
+        levels = _METRIC_CONTEXT_LEVELS.get(context, ())
+        if context in {"", "all", "both"}:
+            levels = ("conversation", "span")
+        # User fields require an explicit Users context. A transport/source
+        # alias alone cannot opt a task or Sessions picker into user grain.
+        if query.get("context") != "users":
+            levels = tuple(level for level in levels if level != "user")
+        if query.get("level"):
+            levels = tuple(level for level in levels if level == query["level"])
+        if not levels:
+            return
+        org, workspace = scope["organization_id"], scope["workspace_id"]
+        metrics = DerivedMetric.no_workspace_objects.filter(
+            organization_id=org,
+            workspace_id=workspace,
+            project_id__in=scope["project_ids"],
+            project__organization_id=org,
+            project__workspace_id=workspace,
+            project__deleted=False,
+            active_version__metric_id=F("id"),
+            active_version__level__in=levels,
+        )
+        # One SQL join reads the pointer and all its semantics atomically.
+        fields = (
+            "id",
+            "name",
+            "project_id",
+            *(f"active_version__{field}" for field in _METRIC_VERSION_FIELDS),
+        )
+        for primary, level in (
+            ("sessions", "conversation"),
+            ("spans", "span"),
+            ("users", "user"),
+        ):
+            if context == "users":
+                # One Users family holds both projections and native user rules.
+                yield (
+                    5,
+                    0,
+                    "users",
+                    "metric",
+                    "metric_field",
+                    metrics,
+                    fields,
+                    lambda row: _metric_definition(row, context=context),
+                )
+                break
+            if level in levels:
+                yield (
+                    5,
+                    0,
+                    primary,
+                    "metric",
+                    "metric_field",
+                    metrics.filter(active_version__level=level),
+                    fields,
+                    lambda row: _metric_definition(row, context=context),
+                )
 
     def _families(self, scope, query):
         from django.db.models import Exists, OuterRef, Q
@@ -1038,6 +1223,7 @@ class CurrentDefinitionSource:
             ("id", "name", "data_type"),
             _dataset_column_definition,
         )
+        yield from self._metric_families(scope, query)
 
     def _matching_families(self, scope, query):
         """Share scope, search and role predicates between pages and counts."""
@@ -1055,7 +1241,11 @@ class CurrentDefinitionSource:
             if (
                 (query.get("category") and query["category"] != category)
                 or (query.get("property_kind") and query["property_kind"] != kind)
-                or not source_matches(query.get("source", ""), primary, ())
+                or (query.get("level") and kind != "metric_field")
+                or (
+                    kind != "metric_field"
+                    and not source_matches(query.get("source", ""), primary, ())
+                )
             ):
                 continue
             role = query.get("role")
@@ -1123,10 +1313,17 @@ class CurrentDefinitionSource:
             definitions.extend(convert(row) for row in rows)
         return tuple(sorted(definitions, key=definition_order)[:limit])
 
-    def resolve(self, *, scope, property_id, source=""):
+    def resolve(self, *, scope, property_id, source="", context=""):
+        from tracer.services.derived_metrics.predicates import decode_metric_field_id
         from tracer.utils.property_registry import parse_property_registry_id
 
-        decoded = parse_property_registry_id(property_id)
+        if property_id.startswith("metric_field:"):
+            decoded = {
+                "property_kind": "metric_field",
+                "metric_name": decode_metric_field_id(property_id),
+            }
+        else:
+            decoded = parse_property_registry_id(property_id)
         if decoded["property_kind"] == "system_attribute":
             return next(
                 (
@@ -1140,12 +1337,13 @@ class CurrentDefinitionSource:
             "property_kind": decoded["property_kind"],
             "source": source,
             "per_eval_config": decoded["property_kind"] == "eval_config",
+            "context": context,
         }
         for _, _, primary, _, kind, queryset, fields, convert in self._families(
             scope, query
         ):
-            if kind != decoded["property_kind"] or not source_matches(
-                source, primary, ()
+            if kind != decoded["property_kind"] or (
+                kind != "metric_field" and not source_matches(source, primary, ())
             ):
                 continue
             row = self._read(

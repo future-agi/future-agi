@@ -144,6 +144,7 @@ export default function ScenarioTable({
   pageIds,
   onTogglePage,
   locked = false,
+  lockTooltip = LOCK_TOOLTIP,
   rowHeight = "Short",
   isValidating,
 }) {
@@ -605,7 +606,7 @@ export default function ScenarioTable({
                   >
                     <Tooltip
                       arrow
-                      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.editLabel}
+                      title={locked ? lockTooltip : SCENARIOS_COPY.editLabel}
                     >
                       <Box component="span" sx={{ display: "inline-flex" }}>
                         <IconButton
@@ -624,7 +625,7 @@ export default function ScenarioTable({
                     </Tooltip>
                     <Tooltip
                       arrow
-                      title={locked ? LOCK_TOOLTIP : SCENARIOS_COPY.removeLabel}
+                      title={locked ? lockTooltip : SCENARIOS_COPY.removeLabel}
                     >
                       <Box component="span" sx={{ display: "inline-flex" }}>
                         <IconButton
@@ -668,6 +669,7 @@ ScenarioTable.propTypes = {
   pageIds: PropTypes.arrayOf(PropTypes.string),
   onTogglePage: PropTypes.func,
   locked: PropTypes.bool,
+  lockTooltip: PropTypes.string,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
   // (row) => whether a running validation is proving it.
   isValidating: PropTypes.func,

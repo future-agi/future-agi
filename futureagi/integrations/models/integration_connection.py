@@ -20,6 +20,7 @@ class IntegrationPlatform(models.TextChoices):
     MESSAGE_QUEUE = "message_queue", "Message Queue"
     LINEAR = "linear", "Linear"
     SLACK = "slack", "Slack"
+    GITHUB = "github", "GitHub"
 
 
 class IntegrationCategory(models.TextChoices):
@@ -49,6 +50,7 @@ PLATFORM_CATEGORY: dict[str, IntegrationCategory] = {
     IntegrationPlatform.MESSAGE_QUEUE.value: IntegrationCategory.DATA_SYNC,
     IntegrationPlatform.LINEAR.value: IntegrationCategory.ACTION_ONLY,
     IntegrationPlatform.SLACK.value: IntegrationCategory.ACTION_ONLY,
+    IntegrationPlatform.GITHUB.value: IntegrationCategory.ACTION_ONLY,
 }
 
 ACTION_ONLY_PLATFORMS: frozenset[str] = frozenset(

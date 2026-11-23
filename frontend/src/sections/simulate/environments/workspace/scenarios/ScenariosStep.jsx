@@ -19,6 +19,7 @@ import {
 } from "src/api/simulate-environments/scenarioSelection";
 import { useAmendScenarios } from "src/api/simulate-environments/scenariosHooks";
 import EmptyState from "../../components/EmptyState";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ScenarioToolbar from "./ScenarioToolbar";
 import SelectionBar from "./SelectionBar";
 import CoverageMatrix from "./CoverageMatrix";
@@ -37,7 +38,7 @@ import {
 import { LIFECYCLE_COPY, SCENARIOS_COPY } from "./scenarios.constants";
 import { countsLine, isBeingValidated } from "./lifecycleView";
 import ValidateScenariosButton from "./ValidateScenariosButton";
-import { DRAFTS_COPY } from "../workspace.constants";
+import { DRAFTS_COPY, WORKSPACE_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
 import useScenarioPage, { PAGE_SIZE } from "./useScenarioPage";
@@ -146,6 +147,11 @@ export default function ScenariosStep({
   };
   const { enqueueSnackbar } = useSnackbar();
   const amend = useAmendScenarios(env?.id);
+  const { canEdit } = useSimulationAccess();
+  const rowsLocked = locked || !canEdit;
+  const rowsLockTooltip = locked
+    ? LOCK_TOOLTIP
+    : WORKSPACE_COPY.viewer.scenarios;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -581,7 +587,9 @@ export default function ScenariosStep({
                 "& > *": { gridArea: "1 / 1", minWidth: 0 },
               }}
             >
-              <Box aria-hidden={!locked && sel.count > 0 ? true : undefined}>
+              <Box
+                aria-hidden={!rowsLocked && sel.count > 0 ? true : undefined}
+              >
                 <ScenarioToolbar
                   query={query}
                   onQueryChange={handleQueryChange}
@@ -624,7 +632,7 @@ export default function ScenariosStep({
                   }
                 />
               </Box>
-              {!locked && sel.count > 0 && (
+              {!rowsLocked && sel.count > 0 && (
                 <Box
                   sx={{
                     // No padding here: SelectionBar carries the toolbar's own
@@ -679,7 +687,7 @@ export default function ScenariosStep({
                 >
                   {countsText}
                 </Typography>
-                {!locked && env?.id && (
+                {!rowsLocked && env?.id && (
                   <Stack
                     direction="row"
                     alignItems="center"
@@ -731,7 +739,8 @@ export default function ScenariosStep({
                 filters={listFilters}
                 isValidating={(row) => isBeingValidated(row, runningValidation)}
                 groupBy={activeGroupBy}
-                locked={locked}
+                locked={rowsLocked}
+                lockTooltip={rowsLockTooltip}
                 rowHeight={rowHeight}
                 readout={
                   hasSearchOrFilters || hiddenCount > 0
@@ -778,7 +787,7 @@ export default function ScenariosStep({
           setOpenRow(null);
           setEditing(row);
         }}
-        locked={locked}
+        locked={rowsLocked}
         testConditions={
           !!pageData.scenarioEditing?.editable_fields?.includes("faults")
         }
