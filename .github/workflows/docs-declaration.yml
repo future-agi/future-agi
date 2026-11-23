@@ -2,46 +2,86 @@
 # raised with the code instead of drifting behind it. The PR body must carry
 # exactly one `Docs:` line: a future-agi/docs PR, or `none (<reason>)`
 # (`none needed (<reason>)` is accepted too).
-# Skips drafts, release-please PRs, and dev<->main release/back-merge PRs.
+#
+# On top of that line (.github/scripts/docs-declaration.mjs):
+#   • the docs PR named must exist and be open or merged
+#   • every linked TH ticket must carry a type label
+#   • qualifying tickets get a Linear comment / Docs sub-issue
+#   • the dev→main release PR lists shipped features whose docs PR hasn't merged
+# The line rules always fail. The newer rules warn until vars.DOCS_GATE_MODE == 'enforce';
+# then add "Docs declaration" as a required check in the dev merge-queue ruleset.
+#
+# Skips drafts, release-please PRs, and dev<->main release/back-merge PRs (the release job
+# handles dev→main).
 name: docs-declaration
 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened, ready_for_review]
     branches: [dev, main]
+  merge_group:
 
-permissions: {}
+permissions:
+  contents: read
+  pull-requests: write
 
 concurrency:
-  # Reruns use a separate slot so diagnosing an old SHA cannot cancel newer work.
+  # Every first-attempt PR event (opened, edited, synchronize, ...) shares one slot per PR, so two
+  # runs never post the same comment or create the same Linear sub-issue at once. Only a new push
+  # cancels; an edit waits its turn. Reruns use a separate slot so diagnosing an old SHA cannot
+  # cancel newer work.
   group: >-
     docs-declaration-${{ github.event_name }}-${{
     github.event_name == 'pull_request' && github.run_attempt == '1' &&
-    (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened') &&
     format('pr-{0}', github.event.pull_request.number) ||
     format('run-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action == 'synchronize' && github.run_attempt == '1' }}
 
 jobs:
   check:
+    name: Docs declaration
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     if: >-
+      github.event_name == 'merge_group' || (
       !github.event.pull_request.draft &&
       !startsWith(github.head_ref, 'release-please--') &&
-      github.head_ref != 'dev' && github.head_ref != 'main'
+      github.head_ref != 'dev' && github.head_ref != 'main')
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/checkout@v4
         with:
-          script: |
-            const usage = 'Add one line to the PR body:\n' +
-              '  Docs: future-agi/docs#<n>   (or the full https://github.com/future-agi/docs/pull/<n> URL)\n' +
-              '  Docs: none (<why no docs change is needed>)';
-            const body = (context.payload.pull_request.body || '').replace(/<!--[\s\S]*?-->/g, '');
-            // Case-sensitive: a lowercase `docs:` line is a commit subject, not the declaration.
-            const values = [...body.matchAll(/^[^\S\r\n]*Docs:[^\S\r\n]*(.*)$/gm)].map(m => m[1].trim());
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Self-test
+        run: node --test .github/scripts/docs-declaration.test.mjs
+      - name: Check the Docs line
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Empty on fork PRs: the GitHub-side check still runs, Linear is skipped.
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          DOCS_GATE_MODE: ${{ vars.DOCS_GATE_MODE }}
+        run: node .github/scripts/docs-declaration.mjs pr
 
-            if (values.length > 1) return core.setFailed(`More than one Docs: line. Keep one.\n${usage}`);
-            const value = values[0] || '';
-            if (/(https:\/\/github\.com\/future-agi\/docs\/pull\/\d+|future-agi\/docs#\d+)/i.test(value)) return core.info(`Docs PR: ${value}`);
-            if (/^none(\s+needed)?\s*\(\s*[^)\s][^)]*\)/i.test(value)) return core.info(`No docs change: ${value}`);
-            core.setFailed(value ? `Docs: "${value}" is not a docs PR link or none (<reason>).\n${usage}` : `Docs: line is missing or empty.\n${usage}`);
+  release:
+    name: Docs ready for release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request' && github.head_ref == 'dev' && github.base_ref == 'main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: List shipped features whose docs PR hasn't merged
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DOCS_GATE_MODE: ${{ vars.DOCS_GATE_MODE }}
+        run: node .github/scripts/docs-declaration.mjs release
