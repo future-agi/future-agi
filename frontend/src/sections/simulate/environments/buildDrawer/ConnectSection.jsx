@@ -23,11 +23,8 @@ import {
 } from "./drawerStyles";
 import { SectionHead } from "./starts/startBits";
 
-// One way in: a button that opens its setup. A UI-only one says so beside
-// Connect.
 function WayRow({ item, onPick, compact }) {
-  const live = !!item.setup;
-  const uiOnly = !!item.setup?.uiOnly;
+  const live = Boolean(item.setup && !item.setup.uiOnly);
   const body = (
     <>
       <LogoTile logo={item.logo} icon={item.icon} />
@@ -35,13 +32,12 @@ function WayRow({ item, onPick, compact }) {
         <Typography noWrap sx={{ ...T13, fontWeight: 500 }}>
           {item.name}
         </Typography>
-        {!compact && item.next && (
+        {!compact && live && item.next && (
           <Typography noWrap sx={{ ...T12, color: "text.secondary" }}>
             {item.next}
           </Typography>
         )}
       </Box>
-      {uiOnly && <UiOnlyFlag />}
       {live ? (
         <Box
           component="span"

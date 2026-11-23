@@ -87,6 +87,7 @@ describe("BuildEnvironmentDrawer catalog", () => {
       screen.getByRole("button", { name: "Connect GitHub" }),
     ).toBeInTheDocument();
     expect(within(row("GitHub")).queryByText("UI only")).toBeNull();
+    expect(within(row("GitLab")).queryByRole("button")).toBeNull();
   });
 
   it("searches across every tab and says when nothing matches", () => {
@@ -134,11 +135,14 @@ describe("BuildEnvironmentDrawer setup", () => {
 
   it("has a back arrow to the list, and an X that closes the whole drawer", () => {
     const onClose = render();
+    const github = screen.getByRole("button", { name: "Connect GitHub" });
     connect("GitHub");
+    expect(github.closest("[inert]")).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Back to build environment" }),
     );
     expect(row("GitHub")).toBeInTheDocument();
+    expect(github.closest("[inert]")).toBeNull();
     expect(onClose).not.toHaveBeenCalled();
     connect("GitHub");
     fireEvent.click(screen.getByRole("button", { name: "Close" }));

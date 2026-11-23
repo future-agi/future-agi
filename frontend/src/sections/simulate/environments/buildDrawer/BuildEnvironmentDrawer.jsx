@@ -328,6 +328,7 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
         >
           <Box
             aria-hidden={!!top || undefined}
+            inert={top ? "" : undefined}
             sx={{
               height: "100%",
               display: "flex",
@@ -349,6 +350,7 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
             >
               <Box
                 aria-hidden={layer !== top || undefined}
+                inert={layer !== top ? "" : undefined}
                 sx={{
                   position: "absolute",
                   inset: 0,
