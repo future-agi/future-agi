@@ -20734,6 +20734,8 @@ export const HarnessEnvironmentToolStatusApiStatus = {
   unknown: "unknown",
 } as const;
 
+export type HarnessToolArgumentApiValuesItem = { [key: string]: unknown };
+
 export interface HarnessToolArgumentApi {
   /** @minLength 1 */
   name: string;
@@ -20744,6 +20746,14 @@ export interface HarnessToolArgumentApi {
    * @minLength 1
    */
   unit: string;
+  /** The values it is allowed to take, where the agent limits them. */
+  values: HarnessToolArgumentApiValuesItem[];
+  /** Whether a call needs it; null when the reading did not record it. */
+  required: boolean;
+  /** The lowest value it accepts, where one is stated. */
+  min: number;
+  /** The highest value it accepts, where one is stated. */
+  max: number;
 }
 
 /**

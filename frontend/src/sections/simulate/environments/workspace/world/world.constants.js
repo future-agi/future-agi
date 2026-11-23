@@ -5,6 +5,11 @@ export const TOOLS_CARD_COPY = {
   subtitle: "The tools the agent declares, and where each one runs",
   arguments: "Arguments",
   noInputs: "Takes no inputs",
+  required: "Required",
+  optional: "Optional",
+  allowed: (values) => `Allowed: ${values.map(String).join(", ")}`,
+  lowest: (limit) => `Lowest ${limit}`,
+  highest: (limit) => `Highest ${limit}`,
   returns: "Returns",
   returnsNotDeclared: "Not recorded for this environment version",
   changes: "Changes",
@@ -261,3 +266,16 @@ export function withTypedColumns(tables = [], columns) {
       : table;
   });
 }
+
+export const argumentFacts = (argument) =>
+  [
+    argument.required === true && TOOLS_CARD_COPY.required,
+    argument.required === false && TOOLS_CARD_COPY.optional,
+    Array.isArray(argument.values) &&
+      argument.values.length > 0 &&
+      TOOLS_CARD_COPY.allowed(argument.values),
+    typeof argument.min === "number" && TOOLS_CARD_COPY.lowest(argument.min),
+    typeof argument.max === "number" && TOOLS_CARD_COPY.highest(argument.max),
+  ]
+    .filter(Boolean)
+    .join(" · ");

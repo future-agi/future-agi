@@ -10,6 +10,7 @@ import CodeBlock from "./CodeBlock";
 import {
   MONO,
   TOOLS_CARD_COPY as T,
+  argumentFacts,
   effectLabel,
   groupToolsByStatus,
   inputLine,
@@ -269,14 +270,23 @@ export function ToolDetail({ tool }) {
           T.arguments,
           args.length ? (
             <Stack spacing={0.25}>
-              {args.map((one) => (
-                <Typography
-                  key={one.name}
-                  sx={{ typography: "s1", fontFamily: MONO }}
-                >
-                  {inputLine(one.name, one.type, one.unit)}
-                </Typography>
-              ))}
+              {args.map((one) => {
+                const facts = argumentFacts(one);
+                return (
+                  <Box key={one.name}>
+                    <Typography sx={{ typography: "s1", fontFamily: MONO }}>
+                      {inputLine(one.name, one.type, one.unit)}
+                    </Typography>
+                    {facts && (
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        {facts}
+                      </Typography>
+                    )}
+                  </Box>
+                );
+              })}
             </Stack>
           ) : (
             text(T.noInputs)
@@ -360,6 +370,10 @@ const TOOL_SHAPE = PropTypes.shape({
       name: PropTypes.string,
       type: PropTypes.string,
       unit: PropTypes.string,
+      values: PropTypes.array,
+      required: PropTypes.bool,
+      min: PropTypes.number,
+      max: PropTypes.number,
     }),
   ),
   returns: PropTypes.arrayOf(

@@ -41755,6 +41755,22 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
               .describe(
                 "The unit or format it is written in, where the name does not say.",
               ),
+            values: zod
+              .array(zod.object({}).passthrough())
+              .describe(
+                "The values it is allowed to take, where the agent limits them.",
+              ),
+            required: zod
+              .boolean()
+              .describe(
+                "Whether a call needs it; null when the reading did not record it.",
+              ),
+            min: zod
+              .number()
+              .describe("The lowest value it accepts, where one is stated."),
+            max: zod
+              .number()
+              .describe("The highest value it accepts, where one is stated."),
           }),
         ),
         returns: zod
@@ -42505,6 +42521,22 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
               .describe(
                 "The unit or format it is written in, where the name does not say.",
               ),
+            values: zod
+              .array(zod.object({}).passthrough())
+              .describe(
+                "The values it is allowed to take, where the agent limits them.",
+              ),
+            required: zod
+              .boolean()
+              .describe(
+                "Whether a call needs it; null when the reading did not record it.",
+              ),
+            min: zod
+              .number()
+              .describe("The lowest value it accepts, where one is stated."),
+            max: zod
+              .number()
+              .describe("The highest value it accepts, where one is stated."),
           }),
         ),
         returns: zod
@@ -48994,6 +49026,22 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
                 .describe(
                   "The unit or format it is written in, where the name does not say.",
                 ),
+              values: zod
+                .array(zod.object({}).passthrough())
+                .describe(
+                  "The values it is allowed to take, where the agent limits them.",
+                ),
+              required: zod
+                .boolean()
+                .describe(
+                  "Whether a call needs it; null when the reading did not record it.",
+                ),
+              min: zod
+                .number()
+                .describe("The lowest value it accepts, where one is stated."),
+              max: zod
+                .number()
+                .describe("The highest value it accepts, where one is stated."),
             }),
           ),
           returns: zod

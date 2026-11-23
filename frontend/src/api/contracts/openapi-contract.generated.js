@@ -148031,7 +148031,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessToolArgument: {
-      required: ["name", "type", "unit"],
+      required: ["name", "type", "unit", "values", "required", "min", "max"],
       type: "object",
       properties: {
         name: {
@@ -148051,6 +148051,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "The unit or format it is written in, where the name does not say.",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+        values: {
+          description:
+            "The values it is allowed to take, where the agent limits them.",
+          type: "array",
+          items: {
+            type: "object",
+          },
+          "x-nullable": true,
+        },
+        required: {
+          title: "Required",
+          description:
+            "Whether a call needs it; null when the reading did not record it.",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        min: {
+          title: "Min",
+          description: "The lowest value it accepts, where one is stated.",
+          type: "number",
+          "x-nullable": true,
+        },
+        max: {
+          title: "Max",
+          description: "The highest value it accepts, where one is stated.",
+          type: "number",
           "x-nullable": true,
         },
       },

@@ -302,6 +302,10 @@ class ToolArgument(TypedDict):
     name: str
     type: str | None
     unit: str | None
+    values: list[Any] | None
+    required: bool | None
+    min: float | None
+    max: float | None
 
 
 class ToolReturn(TypedDict):
@@ -451,6 +455,10 @@ def _arguments(spec: Mapping[str, Any]) -> list[ToolArgument]:
     """A tool's arguments with their type and unit as the contract writes them: by name in `arg_types` and
     `arg_units`, or on an argument written as an object (`{name, type, unit}`)."""
     types, units = _words(spec.get("arg_types")), _words(spec.get("arg_units"))
+    values = spec.get("arg_values") if isinstance(spec.get("arg_values"), dict) else {}
+    bounds = spec.get("arg_bounds") if isinstance(spec.get("arg_bounds"), dict) else {}
+    required = spec.get("arg_required")
+    recorded = isinstance(required, list) and bool(required)
     arguments: list[ToolArgument] = []
     args = spec.get("args")
     for arg in args if isinstance(args, list) else []:
@@ -468,9 +476,24 @@ def _arguments(spec: Mapping[str, Any]) -> list[ToolArgument]:
                 "unit": (unit if isinstance(unit, str) and unit else None)
                 or units.get(name)
                 or None,
+                "values": values.get(name)
+                if isinstance(values.get(name), list)
+                else None,
+                "required": (name in required) if recorded else None,
+                "min": _bound(bounds.get(name), "min"),
+                "max": _bound(bounds.get(name), "max"),
             }
         )
     return arguments
+
+
+def _bound(bound: object, side: str) -> float | None:
+    if not isinstance(bound, dict):
+        return None
+    limit = bound.get(side)
+    if isinstance(limit, bool) or not isinstance(limit, (int, float)):
+        return None
+    return limit
 
 
 def tool_status(contract: object) -> list[ToolStatus]:

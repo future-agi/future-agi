@@ -503,6 +503,21 @@ class HarnessToolArgumentSerializer(serializers.Serializer):
         allow_null=True,
         help_text="The unit or format it is written in, where the name does not say.",
     )
+    values = serializers.ListField(
+        child=serializers.JSONField(),
+        allow_null=True,
+        help_text="The values it is allowed to take, where the agent limits them.",
+    )
+    required = serializers.BooleanField(
+        allow_null=True,
+        help_text="Whether a call needs it; null when the reading did not record it.",
+    )
+    min = serializers.FloatField(
+        allow_null=True, help_text="The lowest value it accepts, where one is stated."
+    )
+    max = serializers.FloatField(
+        allow_null=True, help_text="The highest value it accepts, where one is stated."
+    )
 
 
 class HarnessToolReturnSerializer(serializers.Serializer):

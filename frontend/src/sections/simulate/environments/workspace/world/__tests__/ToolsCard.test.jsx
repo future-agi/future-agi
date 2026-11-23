@@ -1,6 +1,26 @@
 import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen, within } from "src/utils/test-utils";
 import ToolsCard from "../ToolsCard";
+import { argumentFacts } from "../world.constants";
+
+describe("argumentFacts", () => {
+  it("says required, allowed values and limits in one line", () => {
+    expect(
+      argumentFacts({
+        name: "size",
+        required: true,
+        values: ["s", "m"],
+        min: 1,
+        max: 10,
+      }),
+    ).toBe("Required · Allowed: s, m · Lowest 1 · Highest 10");
+  });
+
+  it("says optional only when the reading recorded it", () => {
+    expect(argumentFacts({ name: "note", required: false })).toBe("Optional");
+    expect(argumentFacts({ name: "note", required: null })).toBe("");
+  });
+});
 
 const NOT_RECORDED =
   "Which tables it reads and changes is not recorded for this environment version";

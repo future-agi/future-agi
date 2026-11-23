@@ -238,11 +238,42 @@ def test_an_argument_s_unit_reaches_the_tools_card_as_the_contract_writes_it():
         ]
     }
 
+    unrecorded = {"values": None, "required": None, "min": None, "max": None}
     assert tool_status(contract)[0]["arguments"] == [
-        {"name": "amount", "type": "integer", "unit": "cents, USD"},
-        {"name": "currency", "type": "string", "unit": "ISO 4217 code"},
-        {"name": "reason", "type": None, "unit": None},
+        {"name": "amount", "type": "integer", "unit": "cents, USD", **unrecorded},
+        {
+            "name": "currency",
+            "type": "string",
+            "unit": "ISO 4217 code",
+            **unrecorded,
+        },
+        {"name": "reason", "type": None, "unit": None, **unrecorded},
     ]
+
+
+def test_an_argument_s_allowed_values_requirement_and_limits_reach_the_tools_card():
+    contract = {
+        "tools": [
+            {
+                "name": "order",
+                "args": ["item_id", "quantity", "size"],
+                "arg_values": {"size": ["s", "m", "l"]},
+                "arg_required": ["item_id"],
+                "arg_bounds": {
+                    "quantity": {"min": 1, "max": 10},
+                    "size": {"min": True},
+                },
+            }
+        ]
+    }
+
+    arguments = {one["name"]: one for one in tool_status(contract)[0]["arguments"]}
+
+    assert arguments["item_id"]["required"] is True
+    assert arguments["quantity"]["required"] is False
+    assert (arguments["quantity"]["min"], arguments["quantity"]["max"]) == (1, 10)
+    assert arguments["size"]["values"] == ["s", "m", "l"]
+    assert arguments["size"]["min"] is None
 
 
 def test_the_tables_a_tool_reads_and_changes_are_shown_when_the_contract_declares_them():
