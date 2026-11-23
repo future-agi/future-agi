@@ -133604,6 +133604,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minimum: 0,
           },
         },
+        by_key: {
+          title: "By key",
+          description:
+            "The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
       },
     },
     HarnessCapabilityAffected: {

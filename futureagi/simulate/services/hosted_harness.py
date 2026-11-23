@@ -1095,7 +1095,17 @@ def _released_view(
     released_view: RunSelection = {
         **view,
         "running": view["requested"] - count,
-        "held_back": {**view["held_back"], "count": count, "keys": still, "by": by},
+        "held_back": {
+            **view["held_back"],
+            "count": count,
+            "keys": still,
+            "by": by,
+            "by_key": {
+                key: row
+                for key, row in view["held_back"].get("by_key", {}).items()
+                if key not in freed
+            },
+        },
         "reasons": reasons,
         "validation": "not_enforced",
     }

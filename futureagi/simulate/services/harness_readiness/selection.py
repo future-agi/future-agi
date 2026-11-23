@@ -352,7 +352,7 @@ def selection_report(
             "next": _unproved_next(pairing, bundle, placement),
             "running": requested - len(by_bucket["blocked"]),
             "held_back": {
-                **_held_list(held_back, _case_names(placed)),
+                **_held_list(held_back, _case_names(placed), _held_rows(placement)),
                 "by": dict(held_counts),
             },
             "reasons": held_reasons,
@@ -470,6 +470,8 @@ class HeldBack(TypedDict):
     names: dict[str, str]
     # Held-back cases per row that held them.
     by: dict[str, int]
+    # The row each listed case is counted under in ``by``, by its key.
+    by_key: dict[str, str]
 
 
 class RunSelection(Scope):
@@ -494,15 +496,34 @@ class RunPlan:
     revision: str
 
 
-def _held_list(held: list[str], names: Mapping[str, str]) -> HeldBack:
-    """The held-back cases as the run dialog lists them, each with its current name."""
+def _held_list(
+    held: list[str], names: Mapping[str, str], rows: Mapping[str, str] | None = None
+) -> HeldBack:
+    """The held-back cases as the run dialog lists them, each with its current name and the row it is counted under."""
     listed = _capped(held)
     return {
         "count": len(held),
         **listed,
         "names": {key: names[key] for key in listed["keys"] if names.get(key)},
         "by": {},
+        "by_key": {
+            key: (rows or {})[key] for key in listed["keys"] if key in (rows or {})
+        },
     }
+
+
+def _held_rows(placement: Any) -> dict[str, str]:
+    """The row each held-back case counts under: its own lifecycle reason when it has one, else the first row holding
+    it; a case certifying the pair dropped counts as dropped."""
+    rows = {
+        one.case.key: next((row for row in one.by if row in _CASE_ROWS), one.by[0])
+        for one in placement.placed
+        if one.bucket == "blocked" and one.by
+    }
+    for one in placement.dropped:
+        if one["code"] == "scenario_dropped":
+            rows[one["key"]] = DROPPED_ROW
+    return rows
 
 
 # The rows that hold a case for its own lifecycle, not for the pairing: a held case is counted under one of these.
@@ -527,11 +548,7 @@ def _held_back(
     held = [one.case.key for one in placed if one.bucket == "blocked"] + dropped
     # Each case counts once, under its own lifecycle reason when it has one, else the first row holding it, so the
     # counts add up to the cases held back.
-    primary = {
-        one.case.key: next((row for row in one.by if row in _CASE_ROWS), one.by[0])
-        for one in placed
-        if one.bucket == "blocked" and one.by
-    }
+    primary = _held_rows(placement)
     by = Counter(primary.values())
     reasons = {
         row["id"]: row["reason"] or row["label"] for row in rows if row["id"] in by
@@ -608,7 +625,9 @@ def select_for_run(
             "requested": len(keys),
             "running": len(keys) - len(held),
             "held_back": {
-                **_held_list(held, _case_names(placement.placed)),
+                **_held_list(
+                    held, _case_names(placement.placed), _held_rows(placement)
+                ),
                 "by": dict(by),
             },
             "reasons": reasons,
