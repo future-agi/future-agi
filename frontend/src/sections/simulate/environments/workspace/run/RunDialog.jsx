@@ -2,7 +2,6 @@ import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
-  Box,
   Button,
   CircularProgress,
   Dialog,
@@ -29,6 +28,7 @@ import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
 import RunSeedLine from "./RunSeedLine";
 import HeldBackBox from "./HeldBackBox";
+import ChangedSinceProvedBox from "./ChangedSinceProvedBox";
 
 // The run plan's warning that saved changes moved what some scenarios are graded on since they were proved.
 const CHANGED_SINCE_PROVED = "scenarios_need_revalidation";
@@ -355,36 +355,7 @@ export default function RunDialog({
           </Typography>
         )}
         <HeldBackBox selection={selection} />
-        {changed.length > 0 && (
-          <Box
-            data-testid="run-changed-since-proved"
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 1,
-              p: 1.5,
-            }}
-          >
-            <Typography
-              sx={{ typography: "s1", fontWeight: "fontWeightMedium", mb: 0.5 }}
-            >
-              {COPY.changedTitle}
-            </Typography>
-            {changed.map((one) => (
-              <Typography
-                key={one.piece || one.code}
-                sx={{ typography: "s1", color: "text.secondary" }}
-              >
-                {one.message}
-              </Typography>
-            ))}
-            <Typography
-              sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
-            >
-              {COPY.changedHint}
-            </Typography>
-          </Box>
-        )}
+        <ChangedSinceProvedBox warnings={changed} />
         <RunSeedLine
           seed={seed}
           value={seedValue}

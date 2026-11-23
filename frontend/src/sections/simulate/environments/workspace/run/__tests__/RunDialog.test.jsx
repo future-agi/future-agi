@@ -1029,13 +1029,15 @@ describe("RunDialog", () => {
       expect(runButton()).toHaveTextContent("Run 1 scenario");
     });
 
-    it("puts the changed-since-proved warning in its own box, not among the warnings", () => {
+    it("puts the changed-since-proved warning in its own box with every key one click away", async () => {
+      const user = userEvent.setup();
       state.plans[JSON.stringify({})] = {
         warnings: [
           {
             code: "scenarios_need_revalidation",
             message: "Saved changes changed what 2 scenarios are graded on",
             piece: "suite",
+            scenario_keys: ["case-1", "case-6"],
           },
         ],
       };
@@ -1045,6 +1047,8 @@ describe("RunDialog", () => {
         within(box).getByText(/changed what 2 scenarios are graded on/),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("run-warning")).toBeNull();
+      await user.click(within(box).getByRole("button", { name: "Show which" }));
+      expect(within(box).getByText("case-6")).toBeInTheDocument();
     });
 
     it("holds the run while a scenario validation runs", () => {
