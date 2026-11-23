@@ -2,9 +2,14 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { Box, ButtonBase, Collapse, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { REVIEW_COPY } from "./designReview.constants";
 
-export default function ReviewSection({ label, count, source, children }) {
+export default function ReviewSection({
+  label,
+  count,
+  countText = null,
+  source = null,
+  children,
+}) {
   const [open, setOpen] = useState(true);
   return (
     <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
@@ -40,10 +45,13 @@ export default function ReviewSection({ label, count, source, children }) {
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {count}
+          {countText ?? count}
         </Typography>
         {source && (
-          <Typography sx={{ typography: "s3", color: "text.tertiary", ml: 1 }}>
+          <Typography
+            component="span"
+            sx={{ typography: "s3", color: "text.tertiary", ml: 1 }}
+          >
             {source}
           </Typography>
         )}
@@ -58,15 +66,7 @@ export default function ReviewSection({ label, count, source, children }) {
             "& > *:last-child": { borderBottom: 0 },
           }}
         >
-          {count ? (
-            children
-          ) : (
-            <Typography
-              sx={{ typography: "s1", color: "text.tertiary", px: 1.5, py: 1 }}
-            >
-              {REVIEW_COPY.none}
-            </Typography>
-          )}
+          {children}
         </Box>
       </Collapse>
     </Box>
@@ -75,7 +75,8 @@ export default function ReviewSection({ label, count, source, children }) {
 
 ReviewSection.propTypes = {
   label: PropTypes.string.isRequired,
-  count: PropTypes.number.isRequired,
+  count: PropTypes.number,
+  countText: PropTypes.string,
   source: PropTypes.string,
   children: PropTypes.node,
 };

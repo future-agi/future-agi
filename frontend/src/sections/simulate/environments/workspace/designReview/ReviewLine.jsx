@@ -1,16 +1,9 @@
 import PropTypes from "prop-types";
-import {
-  Box,
-  Button,
-  IconButton,
-  Stack,
-  Tooltip,
-  Typography,
-} from "@mui/material";
+import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { REVIEW_COPY } from "./designReview.constants";
 
-function LineAction({ icon, label, onClick, disabled }) {
+export function LineAction({ icon, label, onClick, disabled = false }) {
   return (
     <Tooltip arrow title={label}>
       <span>
@@ -20,12 +13,12 @@ function LineAction({ icon, label, onClick, disabled }) {
           onClick={onClick}
           disabled={disabled}
           sx={{
-            p: 0.5,
+            p: 0.375,
             color: "text.tertiary",
             "&:hover": { color: "text.primary" },
           }}
         >
-          <Iconify icon={icon} width={14} />
+          <Iconify icon={icon} width={12} />
         </IconButton>
       </span>
     </Tooltip>
@@ -35,111 +28,82 @@ function LineAction({ icon, label, onClick, disabled }) {
 LineAction.propTypes = {
   icon: PropTypes.string.isRequired,
   label: PropTypes.string.isRequired,
-  onClick: PropTypes.func,
+  onClick: PropTypes.func.isRequired,
   disabled: PropTypes.bool,
 };
 
 export default function ReviewLine({
-  primary,
-  secondary,
-  aside,
-  removed = false,
-  edited = false,
-  removeLabel,
-  onRemove,
+  children,
+  source = null,
+  empty = false,
   onEdit,
-  onUndo,
+  onRemove,
+  removeLabel = REVIEW_COPY.remove,
   disabled = false,
 }) {
-  const changed = removed || edited;
   return (
     <Stack
       direction="row"
       alignItems="center"
-      spacing={1}
-      sx={{
-        px: 1.5,
-        py: 0.75,
-        minHeight: 36,
-        "&:hover": { bgcolor: "action.hover" },
-      }}
+      spacing={0.5}
+      sx={{ px: 1.5, minHeight: 36, "&:hover": { bgcolor: "action.hover" } }}
     >
-      <Box sx={{ flex: 1, minWidth: 0 }}>
+      <Typography
+        component="div"
+        noWrap={!empty}
+        sx={{
+          typography: "s1",
+          color: empty ? "text.tertiary" : "text.primary",
+          flex: "0 1 auto",
+          minWidth: 0,
+        }}
+      >
+        {children}
+      </Typography>
+      {(onEdit || onRemove) && (
+        <Stack direction="row" sx={{ flexShrink: 0 }}>
+          {onEdit && (
+            <LineAction
+              icon="solar:pen-linear"
+              label={REVIEW_COPY.edit}
+              onClick={onEdit}
+              disabled={disabled}
+            />
+          )}
+          {onRemove && (
+            <LineAction
+              icon="solar:trash-bin-minimalistic-linear"
+              label={removeLabel}
+              onClick={onRemove}
+              disabled={disabled}
+            />
+          )}
+        </Stack>
+      )}
+      <Box sx={{ flex: 1 }} />
+      {source && (
         <Typography
           noWrap
-          sx={{
-            typography: "s1",
-            color: removed ? "text.tertiary" : "text.primary",
-            textDecoration: removed ? "line-through" : "none",
-          }}
-        >
-          {primary}
-        </Typography>
-        {secondary && (
-          <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-            {secondary}
-          </Typography>
-        )}
-      </Box>
-      {aside && !removed && (
-        <Typography
           sx={{
             typography: "s3",
             color: "text.tertiary",
             flexShrink: 0,
-            fontVariantNumeric: "tabular-nums",
+            pl: 1.5,
           }}
         >
-          {aside}
+          {source}
         </Typography>
-      )}
-      {changed && (
-        <Typography
-          sx={{ typography: "s3", color: "text.secondary", flexShrink: 0 }}
-        >
-          {removed ? REVIEW_COPY.removed : REVIEW_COPY.edited}
-        </Typography>
-      )}
-      {changed && onUndo && (
-        <Button
-          size="small"
-          variant="text"
-          onClick={onUndo}
-          disabled={disabled}
-          sx={{ color: "text.primary", flexShrink: 0 }}
-        >
-          {REVIEW_COPY.undo}
-        </Button>
-      )}
-      {!removed && onEdit && (
-        <LineAction
-          icon="solar:pen-2-linear"
-          label={REVIEW_COPY.edit}
-          onClick={onEdit}
-          disabled={disabled}
-        />
-      )}
-      {!removed && onRemove && (
-        <LineAction
-          icon="solar:trash-bin-minimalistic-linear"
-          label={removeLabel}
-          onClick={onRemove}
-          disabled={disabled}
-        />
       )}
     </Stack>
   );
 }
 
 ReviewLine.propTypes = {
-  primary: PropTypes.node.isRequired,
-  secondary: PropTypes.node,
-  aside: PropTypes.node,
-  removed: PropTypes.bool,
-  edited: PropTypes.bool,
-  removeLabel: PropTypes.string,
-  onRemove: PropTypes.func,
+  children: PropTypes.node,
+  source: PropTypes.string,
+  empty: PropTypes.bool,
   onEdit: PropTypes.func,
-  onUndo: PropTypes.func,
+  onRemove: PropTypes.func,
+  removeLabel: PropTypes.string,
   disabled: PropTypes.bool,
 };

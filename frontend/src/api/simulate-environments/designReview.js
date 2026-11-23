@@ -25,10 +25,6 @@ const approvePath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/design-review/approve/", {
     id: envId,
   });
-const discardPath = (envId) =>
-  apiPath("/simulate/api/harness-environments/{id}/design-review/discard/", {
-    id: envId,
-  });
 
 export const designReviewKey = (envId) => ["design-review", envId];
 
@@ -78,18 +74,6 @@ export function useApproveDesign(envId) {
       queryClient.setQueryData(designReviewKey(envId), review);
       queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(envId) });
-      queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() });
-    },
-  });
-}
-
-export function useDiscardDesign(envId) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    meta: { errorHandled: true },
-    mutationFn: async () => (await axios.post(discardPath(envId), {})).data,
-    onSuccess: () => {
-      queryClient.removeQueries({ queryKey: designReviewKey(envId) });
       queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() });
     },
   });

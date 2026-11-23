@@ -372,7 +372,25 @@ export default function EnvironmentWorkspace() {
         />
         {creditBanner}
         <Box sx={{ flex: 1, minHeight: 0 }}>
-          <DesignReviewStage envId={env.id} />
+          <ChatSplitPane
+            chat={({ collapse, open, collapseRef }) => (
+              <BuilderConsole
+                turns={chat.turns}
+                running={false}
+                onSend={chat.send}
+                onStop={chat.stop}
+                canStop={false}
+                frozen
+                frozenReason={REVIEW_COPY.chatBlocked}
+                answerWithOptions={chat.answerWithOptions}
+                onCollapse={collapse}
+                collapseRef={collapseRef}
+                active={open}
+              />
+            )}
+          >
+            <DesignReviewStage envId={env.id} />
+          </ChatSplitPane>
         </Box>
       </Box>
     );
