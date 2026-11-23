@@ -720,6 +720,12 @@ import type {
   HarnessScenarioOperationResponseApi,
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
+  HarnessSourceAcceptApi,
+  HarnessSourceAcceptResponseApi,
+  HarnessSourceCapabilitiesApi,
+  HarnessSourcePrepareApi,
+  HarnessSourcePrepareResponseApi,
+  HarnessSourceSummaryApi,
   HarnessSourceUploadResponseApi,
   HarnessStartingRecordReworkApi,
   HarnessStartingRecordReworkWriteApi,
@@ -1342,6 +1348,8 @@ import type {
   SimulateApiHarnessEnvironmentsNudgesParams,
   SimulateApiHarnessEnvironmentsRunPlanParams,
   SimulateApiHarnessEnvironmentsRunsRunReportParams,
+  SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyOne,
+  SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyTwo,
   SimulateApiHarnessEnvironmentsUploadFileBody,
   SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
@@ -64325,6 +64333,279 @@ export const simulateApiHarnessEnvironmentsReworkStartingRecord = async (
     },
   );
 };
+
+export type simulateApiHarnessEnvironmentsSourcesResponse200 = {
+  data: HarnessSourceSummaryApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsSourcesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsSourcesResponseSuccess =
+  simulateApiHarnessEnvironmentsSourcesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsSourcesResponseError =
+  simulateApiHarnessEnvironmentsSourcesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesResponse =
+  | simulateApiHarnessEnvironmentsSourcesResponseSuccess
+  | simulateApiHarnessEnvironmentsSourcesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsSourcesUrl = (id: string) => {
+  return `/simulate/api/harness-environments/${id}/sources/`;
+};
+
+/**
+ * The secret-safe source summary from the current draft or version.
+ */
+export const simulateApiHarnessEnvironmentsSources = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsSourcesResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsSourcesResponse>(
+    getSimulateApiHarnessEnvironmentsSourcesUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponse200 =
+  {
+    data: HarnessSourceCapabilitiesApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponseSuccess =
+  simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponseError =
+  simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponse =
+  | simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponseSuccess
+  | simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponseError;
+
+export const getSimulateApiHarnessEnvironmentsSourcesSourceCapabilitiesUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/sources/capabilities/`;
+};
+
+/**
+ * Formats, limits, and the draft basis for adding sources.
+ */
+export const simulateApiHarnessEnvironmentsSourcesSourceCapabilities = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponse>(
+    getSimulateApiHarnessEnvironmentsSourcesSourceCapabilitiesUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponse200 =
+  {
+    data: HarnessSourceAcceptResponseApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponseSuccess =
+  simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponseError =
+  (
+    | simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponse403
+    | simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponseDefault
+  ) & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponse =
+
+    | simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponseSuccess
+    | simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponseError;
+
+export const getSimulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/sources/imports/accept/`;
+  };
+
+/**
+ * Accept a prepared review into the existing Environment draft.
+ */
+export const simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImport =
+  async (
+    id: string,
+    harnessSourceAcceptApi: HarnessSourceAcceptApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponse>(
+      getSimulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportUrl(id),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessSourceAcceptApi),
+      },
+    );
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse200 =
+  {
+    data: HarnessSourcePrepareResponseApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponseSuccess =
+  simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponseError =
+  (
+    | simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse403
+    | simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponseDefault
+  ) & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse =
+
+    | simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponseSuccess
+    | simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponseError;
+
+export const getSimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/sources/imports/prepare/`;
+  };
+
+/**
+ * Capture authorized KB bytes and prepare a source review.
+ */
+export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImport =
+  async (
+    id: string,
+    harnessSourcePrepareApi: HarnessSourcePrepareApi,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse>(
+      getSimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportUrl(id),
+      {
+        ...options,
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...options?.headers },
+        body: JSON.stringify(harnessSourcePrepareApi),
+      },
+    );
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponse200 =
+  {
+    data: HarnessSourcePrepareResponseApi;
+    status: 200;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponse403 =
+  {
+    data: ViewerReadOnlyErrorApi;
+    status: 403;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200 | 403>;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponseSuccess =
+  simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponseError =
+  (
+    | simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponse403
+    | simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponseDefault
+  ) & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponse =
+
+    | simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponseSuccess
+    | simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponseError;
+
+export const getSimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadUrl =
+  (id: string) => {
+    return `/simulate/api/harness-environments/${id}/sources/uploads/prepare/`;
+  };
+
+/**
+ * Capture one direct upload and prepare the same source review.
+ */
+export const simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUpload =
+  async (
+    id: string,
+    simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBody?:
+      | SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyOne
+      | SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyTwo,
+    options?: RequestInit,
+  ): Promise<simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponse> => {
+    return apiMutator<simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponse>(
+      getSimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadUrl(id),
+      {
+        ...options,
+        method: "POST",
+        body: JSON.stringify(
+          simulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBody,
+        ),
+      },
+    );
+  };
 
 export type simulateApiHarnessEnvironmentsVerifyResponse202 = {
   data: HarnessVerifyCreateResponseApi;

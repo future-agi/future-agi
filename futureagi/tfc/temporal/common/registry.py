@@ -79,6 +79,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "simulate.services.test_executor",
     "simulate.tasks.chat_sim",
     "simulate.tasks.alk_sim",
+    "simulate.tasks.environment_source_imports",
     "simulate.tasks.hosted_harness_usage",
     "simulate.tasks.agent_scans",
     # voice tasks

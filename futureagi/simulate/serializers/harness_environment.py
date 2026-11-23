@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from drf_yasg import openapi
+from drf_yasg.inspectors import FieldInspector, NotHandled
 from rest_framework import serializers
 
 from model_hub.serializers.contracts import JsonObjectRequestField
@@ -1145,6 +1147,120 @@ class HarnessScenarioListResponseSerializer(serializers.Serializer):
         declared = super().get_fields()
         declared["fields"] = HarnessScenarioFieldSerializer(many=True)
         return declared
+
+
+class HarnessSourceSelectionSerializer(StrictInputSerializer):
+    kind = serializers.ChoiceField(choices=("knowledge_base",))
+    kb_id = serializers.UUIDField()
+    file_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False, allow_empty=False, max_length=100
+    )
+    whole_collection = serializers.BooleanField(required=False, default=False)
+
+    def validate(self, attrs):
+        if attrs.get("whole_collection") == ("file_ids" in attrs):
+            raise serializers.ValidationError(
+                "Choose either whole_collection or explicit file_ids."
+            )
+        if len(set(attrs.get("file_ids", []))) != len(attrs.get("file_ids", [])):
+            raise serializers.ValidationError("file_ids must be unique.")
+        return attrs
+
+
+class HarnessSourceDraftRefSerializer(StrictInputSerializer):
+    id = serializers.UUIDField(allow_null=True)
+    revision = serializers.IntegerField(min_value=0)
+
+
+class HarnessSourcePrepareSerializer(StrictInputSerializer):
+    expected_environment_version_id = serializers.UUIDField()
+    expected_draft = HarnessSourceDraftRefSerializer()
+    selection = HarnessSourceSelectionSerializer()
+
+
+class HarnessSourceFileListInspector(FieldInspector):
+    def field_to_swagger_object(
+        self, field, swagger_object_type, use_references, **kwargs
+    ):
+        if (
+            swagger_object_type is openapi.Parameter
+            and kwargs.get("in_") == openapi.IN_FORM
+            and isinstance(field, serializers.ListField)
+            and isinstance(field.child, serializers.FileField)
+        ):
+            # Swagger 2 only supports file as a form parameter, not an array item.
+            return openapi.Parameter(
+                kwargs["name"],
+                openapi.IN_FORM,
+                type=openapi.TYPE_FILE,
+                description="Repeat this multipart field for each file in the batch.",
+                required=field.required,
+            )
+        return NotHandled
+
+
+class HarnessSourceUploadPrepareSerializer(StrictInputSerializer):
+    expected_environment_version_id = serializers.UUIDField()
+    expected_draft_id = serializers.UUIDField(required=False, allow_null=True)
+    expected_draft_revision = serializers.IntegerField(min_value=0)
+    purpose = serializers.ChoiceField(
+        choices=("policy", "reference", "seed_records"), required=False
+    )
+    file = serializers.FileField(required=False)
+    files = serializers.ListField(
+        child=serializers.FileField(),
+        required=False,
+        allow_empty=False,
+        max_length=100,
+    )
+
+    def validate(self, attrs):
+        file = attrs.pop("file", None)
+        files = attrs.get("files")
+        if (file is None) == (files is None):
+            raise serializers.ValidationError("Upload one file or a files list.")
+        attrs["files"] = files or [file]
+        return attrs
+
+
+class HarnessSourceAcceptSerializer(StrictInputSerializer):
+    import_ref = serializers.CharField(max_length=16384)
+    expected_environment_version_id = serializers.UUIDField()
+    expected_draft = HarnessSourceDraftRefSerializer()
+    expected_draft_digest = serializers.CharField(max_length=128)
+    review = serializers.JSONField()
+
+
+class HarnessSourceCapabilitiesSerializer(serializers.Serializer):
+    upload = serializers.JSONField()
+    knowledge_base = serializers.JSONField()
+    environment_version_id = serializers.UUIDField()
+    draft = serializers.JSONField()
+    participant_visibility_enabled = serializers.BooleanField()
+    participant_visibility_reason = serializers.CharField()
+
+
+class HarnessSourceSummarySerializer(serializers.Serializer):
+    draft = serializers.BooleanField()
+    snapshot_digest = serializers.CharField(allow_null=True)
+    sources = serializers.JSONField()
+    validation_status = serializers.CharField(allow_null=True)
+
+
+class HarnessSourcePrepareResponseSerializer(serializers.Serializer):
+    import_ref = serializers.CharField()
+    draft_digest = serializers.CharField()
+    draft = serializers.JSONField()
+    suggested_purposes = serializers.JSONField()
+    capabilities = HarnessSourceCapabilitiesSerializer()
+
+
+class HarnessSourceAcceptResponseSerializer(serializers.Serializer):
+    draft = serializers.JSONField(allow_null=True)
+    snapshot_digest = serializers.CharField()
+    sources = serializers.JSONField()
+    diagnostics = serializers.JSONField()
+    validation = serializers.JSONField()
 
 
 class HarnessVersionPersonSerializer(serializers.Serializer):

@@ -330,6 +330,7 @@ _SENSITIVE_HARNESS_PATHS = [
         "harness-jobs/secret-files",
         "harness-jobs/secret-values",
         "harness-environment-designs/documents",
+        "harness-environments/example-environment/sources/uploads/prepare",
     )
     for suffix in ("/", ".json", ".json/")
 ]

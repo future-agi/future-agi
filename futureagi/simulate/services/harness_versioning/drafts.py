@@ -1162,6 +1162,27 @@ def _save_pair(
                 return pair
         current = str(metadata.get("authoring_object_key") or "")
         default_suite = locked.suite_version
+        default = _default_authoring(locked)
+        target_environment = _piece_files(locked, "environment", environment_version)
+        if (
+            default is not None
+            and default_suite is not None
+            and suite_version.id == default_suite.id
+            and all(
+                path.startswith("sources/")
+                for path in target_environment.keys() ^ default.environment.keys()
+                | {
+                    path
+                    for path in target_environment.keys() & default.environment.keys()
+                    if target_environment[path] != default.environment[path]
+                }
+            )
+        ):
+            pair = _composed_pair(
+                locked, environment_version, suite_version, default.sealed
+            )
+            if pair is not None:
+                return pair
         if (
             current
             and metadata.get("default_pair_sealed") is not False

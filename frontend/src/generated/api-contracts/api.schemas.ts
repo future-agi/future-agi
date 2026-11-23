@@ -23706,6 +23706,117 @@ export interface HarnessStartingRecordReworkWriteApi {
   key: string;
 }
 
+export type HarnessSourceSummaryApiSources = { [key: string]: unknown };
+
+export interface HarnessSourceSummaryApi {
+  draft: boolean;
+  /** @minLength 1 */
+  snapshot_digest: string;
+  sources: HarnessSourceSummaryApiSources;
+  /** @minLength 1 */
+  validation_status: string;
+}
+
+export type HarnessSourceCapabilitiesApiUpload = { [key: string]: unknown };
+
+export type HarnessSourceCapabilitiesApiKnowledgeBase = {
+  [key: string]: unknown;
+};
+
+export type HarnessSourceCapabilitiesApiDraft = { [key: string]: unknown };
+
+export interface HarnessSourceCapabilitiesApi {
+  upload: HarnessSourceCapabilitiesApiUpload;
+  knowledge_base: HarnessSourceCapabilitiesApiKnowledgeBase;
+  environment_version_id: string;
+  draft: HarnessSourceCapabilitiesApiDraft;
+  participant_visibility_enabled: boolean;
+  /** @minLength 1 */
+  participant_visibility_reason: string;
+}
+
+export type HarnessSourceAcceptApiReview = { [key: string]: unknown };
+
+export interface HarnessSourceDraftRefApi {
+  id: string;
+  /** @minimum 0 */
+  revision: number;
+}
+
+export interface HarnessSourceAcceptApi {
+  /**
+   * @minLength 1
+   * @maxLength 16384
+   */
+  import_ref: string;
+  expected_environment_version_id: string;
+  expected_draft: HarnessSourceDraftRefApi;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  expected_draft_digest: string;
+  review: HarnessSourceAcceptApiReview;
+}
+
+export type HarnessSourceAcceptResponseApiDraft = { [key: string]: unknown };
+
+export type HarnessSourceAcceptResponseApiSources = { [key: string]: unknown };
+
+export type HarnessSourceAcceptResponseApiDiagnostics = {
+  [key: string]: unknown;
+};
+
+export type HarnessSourceAcceptResponseApiValidation = {
+  [key: string]: unknown;
+};
+
+export interface HarnessSourceAcceptResponseApi {
+  draft: HarnessSourceAcceptResponseApiDraft;
+  /** @minLength 1 */
+  snapshot_digest: string;
+  sources: HarnessSourceAcceptResponseApiSources;
+  diagnostics: HarnessSourceAcceptResponseApiDiagnostics;
+  validation: HarnessSourceAcceptResponseApiValidation;
+}
+
+export type HarnessSourceSelectionApiKind =
+  (typeof HarnessSourceSelectionApiKind)[keyof typeof HarnessSourceSelectionApiKind];
+
+export const HarnessSourceSelectionApiKind = {
+  knowledge_base: "knowledge_base",
+} as const;
+
+export interface HarnessSourceSelectionApi {
+  kind: HarnessSourceSelectionApiKind;
+  kb_id: string;
+  /** @maxItems 100 */
+  file_ids?: string[];
+  whole_collection?: boolean;
+}
+
+export interface HarnessSourcePrepareApi {
+  expected_environment_version_id: string;
+  expected_draft: HarnessSourceDraftRefApi;
+  selection: HarnessSourceSelectionApi;
+}
+
+export type HarnessSourcePrepareResponseApiDraft = { [key: string]: unknown };
+
+export type HarnessSourcePrepareResponseApiSuggestedPurposes = {
+  [key: string]: unknown;
+};
+
+export interface HarnessSourcePrepareResponseApi {
+  /** @minLength 1 */
+  import_ref: string;
+  /** @minLength 1 */
+  draft_digest: string;
+  draft: HarnessSourcePrepareResponseApiDraft;
+  suggested_purposes: HarnessSourcePrepareResponseApiSuggestedPurposes;
+  capabilities: HarnessSourceCapabilitiesApi;
+}
+
 export interface HarnessVerifyCreateApi {
   /** The agent version to verify. Its completed verify is final; after one that failed or was canceled, a new one starts. */
   agent_version_id: string;
@@ -46628,6 +46739,28 @@ export type SimulateApiHarnessEnvironmentsRunPlanParams = {
 export type SimulateApiHarnessEnvironmentsRunsRunReportParams = {
   baseline?: string;
 };
+
+export type SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyOne =
+  {
+    expected_environment_version_id: string;
+    expected_draft_id?: string;
+    expected_draft_revision: number;
+    purpose?: string;
+    file?: Blob;
+    /** Repeat this multipart field for each file in the batch. */
+    files?: Blob;
+  };
+
+export type SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyTwo =
+  {
+    expected_environment_version_id: string;
+    expected_draft_id?: string;
+    expected_draft_revision: number;
+    purpose?: string;
+    file?: Blob;
+    /** Repeat this multipart field for each file in the batch. */
+    files?: Blob;
+  };
 
 export type SimulateApiHarnessEnvironmentsVersionsVersionDiffParams = {
   against?: string;

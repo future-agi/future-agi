@@ -51164,6 +51164,180 @@ export const SimulateApiHarnessEnvironmentsReworkStartingRecordBody =
   });
 
 /**
+ * The secret-safe source summary from the current draft or version.
+ */
+export const SimulateApiHarnessEnvironmentsSourcesParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsSourcesResponse = zod.object({
+  draft: zod.boolean(),
+  snapshot_digest: zod.string().min(1),
+  sources: zod.object({}).passthrough(),
+  validation_status: zod.string().min(1),
+});
+
+/**
+ * Formats, limits, and the draft basis for adding sources.
+ */
+export const SimulateApiHarnessEnvironmentsSourcesSourceCapabilitiesParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsSourcesSourceCapabilitiesResponse =
+  zod.object({
+    upload: zod.object({}).passthrough(),
+    knowledge_base: zod.object({}).passthrough(),
+    environment_version_id: zod.string().uuid(),
+    draft: zod.object({}).passthrough(),
+    participant_visibility_enabled: zod.boolean(),
+    participant_visibility_reason: zod.string().min(1),
+  });
+
+/**
+ * Accept a prepared review into the existing Environment draft.
+ */
+export const SimulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyImportRefMax = 16384;
+
+export const simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyExpectedDraftRevisionMin = 0;
+
+export const simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyExpectedDraftDigestMax = 128;
+
+export const SimulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBody =
+  zod.object({
+    import_ref: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyImportRefMax,
+      ),
+    expected_environment_version_id: zod.string().uuid(),
+    expected_draft: zod.object({
+      id: zod.string().uuid(),
+      revision: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyExpectedDraftRevisionMin,
+        ),
+    }),
+    expected_draft_digest: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyExpectedDraftDigestMax,
+      ),
+    review: zod.object({}).passthrough(),
+  });
+
+export const SimulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponse =
+  zod.object({
+    draft: zod.object({}).passthrough(),
+    snapshot_digest: zod.string().min(1),
+    sources: zod.object({}).passthrough(),
+    diagnostics: zod.object({}).passthrough(),
+    validation: zod.object({}).passthrough(),
+  });
+
+/**
+ * Capture authorized KB bytes and prepare a source review.
+ */
+export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyExpectedDraftRevisionMin = 0;
+
+export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodySelectionFileIdsMax = 100;
+
+export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodySelectionWholeCollectionDefault =
+  false;
+
+export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBody =
+  zod.object({
+    expected_environment_version_id: zod.string().uuid(),
+    expected_draft: zod.object({
+      id: zod.string().uuid(),
+      revision: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyExpectedDraftRevisionMin,
+        ),
+    }),
+    selection: zod.object({
+      kind: zod.enum(["knowledge_base"]),
+      kb_id: zod.string().uuid(),
+      file_ids: zod
+        .array(zod.string().uuid())
+        .max(
+          simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodySelectionFileIdsMax,
+        )
+        .optional(),
+      whole_collection: zod
+        .boolean()
+        .default(
+          simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodySelectionWholeCollectionDefault,
+        ),
+    }),
+  });
+
+export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse =
+  zod.object({
+    import_ref: zod.string().min(1),
+    draft_digest: zod.string().min(1),
+    draft: zod.object({}).passthrough(),
+    suggested_purposes: zod.object({}).passthrough(),
+    capabilities: zod.object({
+      upload: zod.object({}).passthrough(),
+      knowledge_base: zod.object({}).passthrough(),
+      environment_version_id: zod.string().uuid(),
+      draft: zod.object({}).passthrough(),
+      participant_visibility_enabled: zod.boolean(),
+      participant_visibility_reason: zod.string().min(1),
+    }),
+  });
+
+/**
+ * Capture one direct upload and prepare the same source review.
+ */
+export const SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBody =
+  zod.object({
+    expected_environment_version_id: zod.string().uuid(),
+    expected_draft_id: zod.string().uuid().optional(),
+    expected_draft_revision: zod.number(),
+    purpose: zod.string().optional(),
+    file: zod.instanceof(File).optional(),
+    files: zod.instanceof(File).optional(),
+  });
+
+export const SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponse =
+  zod.object({
+    import_ref: zod.string().min(1),
+    draft_digest: zod.string().min(1),
+    draft: zod.object({}).passthrough(),
+    suggested_purposes: zod.object({}).passthrough(),
+    capabilities: zod.object({
+      upload: zod.object({}).passthrough(),
+      knowledge_base: zod.object({}).passthrough(),
+      environment_version_id: zod.string().uuid(),
+      draft: zod.object({}).passthrough(),
+      participant_visibility_enabled: zod.boolean(),
+      participant_visibility_reason: zod.string().min(1),
+    }),
+  });
+
+/**
  * Verify an agent version on the held-back cases, in a run no user read shows.
 Its live or completed verify is final: asking again returns it. After one that
 failed or was canceled, asking again starts a new one.

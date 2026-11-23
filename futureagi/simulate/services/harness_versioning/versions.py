@@ -192,6 +192,32 @@ def _file_digests(environment: Mapping[str, bytes]) -> dict[str, str]:
     }
 
 
+def _source_documents(environment: Mapping[str, bytes]) -> dict[str, Any] | None:
+    manifest = _json(environment, "sources/manifest.json")
+    if not isinstance(manifest, dict):
+        return None
+    sources = [
+        {
+            "source_id": source["source_id"],
+            "purpose": source["purpose"],
+        }
+        for source in manifest.get("sources") or []
+        if isinstance(source, dict)
+        and isinstance(source.get("source_id"), str)
+        and isinstance(source.get("purpose"), str)
+    ]
+    return {
+        "schema_version": manifest.get("schema_version"),
+        "snapshot_digest": manifest.get("snapshot_digest"),
+        "source_count": len(sources),
+        "sources": sources,
+        "tested_agent_projection_sha256": manifest.get(
+            "tested_agent_projection_sha256"
+        ),
+        "validation_status": manifest.get("validation_status"),
+    }
+
+
 def _stage_outputs(pair_body: bytes) -> list[dict[str, Any]]:
     from simulate.services.hosted_harness_gateway import (
         authoring_stage_outputs_from_archive,
@@ -231,6 +257,9 @@ def prepare_pieces(
         ],
         "authoring_revisions": [authoring_revision],
     }
+    source_documents = _source_documents(split.environment)
+    if source_documents is not None:
+        environment_documents["sources"] = source_documents
     suite_documents_ = {
         "scenarios": scenarios,
         "coverage": _json(split.suite, "coverage.json"),

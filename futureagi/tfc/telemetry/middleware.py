@@ -52,6 +52,7 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     "/simulate/api/harness-jobs/secret-files/",
     "/simulate/api/harness-jobs/sources/",
     "/simulate/api/harness-environment-designs/documents/",
+    "/simulate/api/harness-environments/*/sources/",
     # Signed over its raw bytes and may carry committer emails; never read early.
     "/simulate/api/harness/github/webhook/",
     # A transcript import carries the raw transcript, before redaction.
