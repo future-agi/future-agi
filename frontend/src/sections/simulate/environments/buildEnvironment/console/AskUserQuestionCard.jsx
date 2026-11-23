@@ -11,8 +11,6 @@ import {
 import Iconify from "src/components/iconify";
 
 import ChatMarkdown from "./ChatMarkdown";
-import ConfirmChange from "./ConfirmChange";
-import { parseConfirmChange } from "./parseConfirmChange";
 
 // Prompts are the model's free text. Plain questions must show exactly as written,
 // so one stray signal like `# of rooms` or a single `code` span is not enough: it
@@ -24,8 +22,6 @@ const looksLikeMarkdown = (text = "") =>
   TABLE_DIVIDER.test(text) || (text.match(MARKDOWN_SIGNAL) || []).length >= 2;
 
 function Prompt({ text, sx }) {
-  const change = parseConfirmChange(text);
-  if (change) return <ConfirmChange change={change} sx={sx} />;
   if (looksLikeMarkdown(text)) {
     // The opening line reads as the question; anything after it, like a full
     // design to approve, stays regular weight.
@@ -162,7 +158,7 @@ export default function AskUserQuestionCard({
       {/* header */}
       <Stack
         direction="row"
-        alignItems="flex-start"
+        alignItems="center"
         spacing={1}
         sx={{ px: 2, py: 1.5 }}
       >
