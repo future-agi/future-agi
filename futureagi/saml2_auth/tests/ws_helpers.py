@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 import types
 from typing import Any
-from unittest.mock import patch
 
 try:
     from channels.testing import WebsocketCommunicator
@@ -31,9 +30,7 @@ except ModuleNotFoundError as exc:
 async def graph_socket(token: str) -> WebsocketCommunicator:
     """Connect to the real graph route through ``tfc.asgi.application``."""
 
-    # The test process's heap stays collectable; a served worker freezes its own.
-    with patch("tfc.asgi_startup.freeze_startup_heap"):
-        from tfc.asgi import application
+    from tfc.asgi import application
 
     communicator = WebsocketCommunicator(application, f"/ws/graphs/?token={token}")
     connected, detail = await communicator.connect()

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 import json
 import os
 import time
@@ -17,7 +16,6 @@ from django.test.utils import CaptureQueriesContext
 
 from simulate.models import TestExecution
 from simulate.tests.test_harness_compare_runs import WARM_QUERIES, build_environment
-from tfc.asgi_startup import freeze_startup_heap
 
 BASE = "/simulate/api/harness-environments"
 SCENARIOS = 500
@@ -51,12 +49,10 @@ REDIS_CACHES = {
 
 @pytest.fixture(scope="module", autouse=True)
 def _served_process() -> Iterator[None]:
-    """The start-up heap frozen as a served worker's is, and its Redis cache."""
-    freeze_startup_heap()
+    """The served worker's Redis cache."""
     with override_settings(CACHES=REDIS_CACHES):
         yield
         cache.delete_pattern("*")
-    gc.unfreeze()
 
 
 def _timed(client, url: str, params: dict[str, Any]) -> tuple[float, int]:
