@@ -101,6 +101,8 @@ export const paths = {
         useTemplate: (templateId) =>
           `${ROOTS.DASHBOARD}/simulate/environments/templates/${templateId}`,
         detail: (envId) => `${ROOTS.DASHBOARD}/simulate/environments/${envId}`,
+        design: (draftId) =>
+          `${ROOTS.DASHBOARD}/simulate/environments/design/${draftId}`,
         workspaceTab: (envId, tab) =>
           `${ROOTS.DASHBOARD}/simulate/environments/${envId}?tab=${tab}`,
         execution: (envId, testId, executionId) =>

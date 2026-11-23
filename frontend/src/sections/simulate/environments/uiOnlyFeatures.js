@@ -24,7 +24,8 @@ export const UI_ONLY_FEATURES = Object.freeze({
   },
   connectAgent: {
     label: "Connect an agent",
-    ask: "an endpoint to attach or change the agent an environment tests",
+    ask: "an endpoint to attach or change the agent an environment tests, with a run readiness check for the agent picked",
+    note: "UI only: the agent picked is kept in this browser, and connecting a new one adds a sample agent. Nothing is sent.",
   },
   syncAgent: {
     label: "Sync agent",
@@ -37,10 +38,6 @@ export const UI_ONLY_FEATURES = Object.freeze({
   toolFaults: {
     label: "Tool faults",
     ask: "per-tool fault injection settings",
-  },
-  mcpTools: {
-    label: "MCP tools",
-    ask: "adding, refreshing and removing tools from MCP servers",
   },
   compareRuns: {
     label: "Compare runs",
@@ -111,8 +108,33 @@ export const UI_ONLY_FEATURES = Object.freeze({
     label: "Delete eval column",
     ask: "removing one evaluation's results from a run",
   },
+  environmentSources: {
+    label: "Environment files",
+    ask: "per-file state (reading, rows rejected, can't read, not supported), the parsed table or text preview with rejected rows, per-column personal data handling, tool, actor and scenario proposals cited to the file, and whether a Knowledge base file changed since it was added; in the draft review, each change's cited file with its name and the spot as people read it (used[].name, used[].place), and each failed change's file name and fix (source_name, fix: supply the records or attach a file)",
+    note: "UI only: files are read from sample data and nothing reaches the environment.",
+  },
   environmentSettings: {
     label: "Environment settings",
     ask: "editing simulation defaults, egress, environment variables and the simulated user's model",
+  },
+  designReview: {
+    label: "Review the design",
+    ask: "a design job endpoint (see #3612) that reads the description and attached files, returns the proposed records, tools, rules, people and scenarios with their sources and open questions, saves the draft, and starts the build on approval",
+    note: "UI only: the design is proposed in this browser from sample rules. Nothing is sent, and approving runs a sample build.",
+  },
+  designBuild: {
+    label: "Build an approved design",
+    ask: "the design job's approve and build (see #3612): approving creates the draft environment and starts the cloud build, polled for its stages (records and data, tool handlers, rules and checks, scenarios) and its validation checks with what failed; the built draft's review and Save as v1 through the drafts API; a suggested_name on the design job",
+    note: 'UI only: the environment is this browser\'s design draft, built on a timer, and a records file named with "broken" fails a check. Review changes lists what the build made and Save keeps v1 here. Nothing is built or saved.',
+  },
+  designDocuments: {
+    label: "File uploads",
+    ask: "the design documents upload (see #3612) wired here: one request per file with its progress, answered with the stored document's id, and refused as too large, unsupported or a repeated name",
+    note: "UI only: uploads are simulated in this browser. Nothing is sent.",
+  },
+  environmentFiles: {
+    label: "Files and what to test on build forms",
+    ask: "build requests that accept attached files (with a personal-data choice) and a line saying what the environment should test, read into the design before the build",
+    note: "UI only: the files and the test line stay in this form. The build doesn't receive them yet.",
   },
 });

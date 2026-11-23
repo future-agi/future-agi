@@ -5,6 +5,12 @@ import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { useDebounce } from "src/hooks/use-debounce";
+import {
+  designDraftsOf,
+  designVersionsOf,
+  isDesignEnvId,
+  saveDesignDrafts,
+} from "./designEnvironment";
 
 /**
  * The version history of one environment: its agent, environment and scenario
@@ -121,17 +127,23 @@ export const versionPickFields = (picks = {}) =>
   );
 
 export const getEnvironmentVersions = async (envId) =>
-  (await axios.get(versionsPath(envId))).data;
+  isDesignEnvId(envId)
+    ? designVersionsOf(envId)
+    : (await axios.get(versionsPath(envId))).data;
 
 export const getVersionDiff = async (envId, piece, versionId, against) =>
-  (
-    await axios.get(versionDiffPath(envId, piece, versionId), {
-      params: against ? { against } : undefined,
-    })
-  ).data;
+  isDesignEnvId(envId)
+    ? null
+    : (
+        await axios.get(versionDiffPath(envId, piece, versionId), {
+          params: against ? { against } : undefined,
+        })
+      ).data;
 
 export const getSuiteMembers = async (envId, versionId) =>
-  (await axios.get(suiteMembersPath(envId, versionId))).data;
+  isDesignEnvId(envId)
+    ? []
+    : (await axios.get(suiteMembersPath(envId, versionId))).data;
 
 // The default the user saw rides along; a newer one refuses the move (409).
 export const moveDefault = async (envId, piece, versionId, expectedDefaultId) =>
@@ -184,17 +196,21 @@ export const stopNudge = async (envId, nudgeId) =>
   (await axios.post(stopNudgePath(envId, nudgeId), {})).data;
 
 export const getDrafts = async (envId) =>
-  (await axios.get(draftsPath(envId))).data;
+  isDesignEnvId(envId)
+    ? designDraftsOf(envId)
+    : (await axios.get(draftsPath(envId))).data;
 
 // Each draft carries the default it started from and the revision the user
 // saw; a newer edit or default refuses the save (409).
 export const saveDrafts = async (envId, { drafts, idempotencyKey }) =>
-  (
-    await axios.post(saveDraftsPath(envId), {
-      drafts,
-      idempotency_key: idempotencyKey,
-    })
-  ).data;
+  isDesignEnvId(envId)
+    ? saveDesignDrafts(envId)
+    : (
+        await axios.post(saveDraftsPath(envId), {
+          drafts,
+          idempotency_key: idempotencyKey,
+        })
+      ).data;
 
 export const discardDraft = async (envId, piece) =>
   (await axios.delete(discardDraftPath(envId, piece))).data;

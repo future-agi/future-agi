@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { Drawer, IconButton } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
+import usePrefersReducedMotion from "./usePrefersReducedMotion";
 
 /**
  * The shared right-side drawer, matching the ones in Datasets.
@@ -26,11 +27,13 @@ export default function SideDrawer({
   children,
 }) {
   const covered = useDrawerCovered(open);
+  const reduce = usePrefersReducedMotion();
   return (
     <Drawer
       anchor="right"
       open={open}
       onClose={onClose}
+      transitionDuration={reduce ? 0 : undefined}
       sx={{
         "&& .MuiDrawer-paper": {
           width,

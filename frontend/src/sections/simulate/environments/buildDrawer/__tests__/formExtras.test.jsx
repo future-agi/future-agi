@@ -95,6 +95,7 @@ async function livePreflight() {
 async function sampleRunAndBuild() {
   const before = preflightHarnessJob.mock.calls.length;
   const secretsBefore = storeHarnessSecretValues.mock.calls.length;
+  type("What should this environment test?", "Refunds over the limit");
   runPreflight();
   await wait(1000);
   expect(await screen.findByText("Ready to build")).toBeInTheDocument();

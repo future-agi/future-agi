@@ -14,9 +14,10 @@ import {
   shows its whole design and its last step only says it's UI only.
 */
 
+const navigate = vi.hoisted(() => vi.fn());
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
-  return { ...actual, useNavigate: () => vi.fn() };
+  return { ...actual, useNavigate: () => navigate };
 });
 
 const agent = (id, name, modality, extra = {}) => ({
@@ -65,6 +66,17 @@ vi.mock(
       ) : null,
   }),
 );
+// Uploads finish at once here; the stub's own timing is tested with its hook.
+vi.mock("src/api/simulate-environments/designDocuments", () => {
+  const upload = async (file) => ({
+    id: `doc-${file.name}`,
+    name: file.name,
+    content_type: file.type,
+    sha256: "0",
+    size: file.size,
+  });
+  return { useUploadDesignDocument: () => upload };
+});
 
 vi.mock("notistack", async () => {
   const actual = await vi.importActual("notistack");
@@ -75,6 +87,9 @@ const { createHarnessJob, preflightHarnessJob } = await import(
   "src/api/harness/harness"
 );
 const { enqueueSnackbar } = await import("notistack");
+const { useDesignDraftStore } = await import(
+  "../../design/useDesignDraftStore"
+);
 const { default: BuildEnvironmentDrawer } = await import(
   "../BuildEnvironmentDrawer"
 );
@@ -97,6 +112,14 @@ const click = (name) => fireEvent.click(button(name));
 const header = () =>
   screen.getByRole("button", { name: /^Back to / }).parentElement;
 
+// Building opens the proposed design, and nothing reaches the build API.
+const expectDesignPage = () => {
+  expect(navigate).toHaveBeenCalledWith(
+    expect.stringMatching(/\/simulate\/environments\/design\/design-/),
+  );
+  expect(createHarnessJob).not.toHaveBeenCalled();
+};
+
 // The last step says it's UI only, and nothing reaches the build API.
 const expectUiOnlyToast = () => {
   expect(enqueueSnackbar).toHaveBeenCalledWith(
@@ -110,6 +133,7 @@ const expectUiOnlyToast = () => {
 beforeEach(() => {
   agentItems = TWO_AGENTS;
   enqueueSnackbar.mockClear();
+  navigate.mockClear();
   createHarnessJob.mockReset();
   preflightHarnessJob.mockReset();
 });
@@ -152,10 +176,10 @@ describe.skip("Build from scratch", () => {
     expect(screen.getByText("4 words")).toBeInTheDocument();
     expect(build).toBeEnabled();
     fireEvent.click(build);
-    expectUiOnlyToast();
+    expectDesignPage();
   });
 
-  it("builds from an attached file alone, listed and removable", () => {
+  it("builds from an uploaded file alone, listed and removable", async () => {
     render();
     click(/Build from scratch/);
     const file = new File(["a,b"], "calls.csv", { type: "text/csv" });
@@ -164,10 +188,42 @@ describe.skip("Build from scratch", () => {
     });
     const list = screen.getByRole("list", { name: "Attached files" });
     expect(within(list).getByText("calls.csv")).toBeInTheDocument();
-    expect(button("Build environment")).toBeEnabled();
+    await waitFor(() => expect(button("Build environment")).toBeEnabled());
     click("Remove calls.csv");
-    expect(screen.queryByRole("list", { name: "Attached files" })).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByRole("list", { name: "Attached files" })).toBeNull(),
+    );
     expect(button("Build environment")).toBeDisabled();
+  });
+
+  it("refuses a second file with the same name and builds without it", async () => {
+    render();
+    click(/Build from scratch/);
+    const pick = (body) =>
+      fireEvent.change(screen.getByTestId("describe-files"), {
+        target: { files: [new File([body], "orders.csv")] },
+      });
+    pick("a,b");
+    pick("a,b\n".repeat(600));
+    const list = screen.getByRole("list", { name: "Attached files" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByRole("alert")).toHaveTextContent(
+      "Another file here has this name.",
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Build without 1 failed file",
+      }),
+    );
+    expectDesignPage();
+    const draftId = navigate.mock.calls[0][0].split("/").pop();
+    expect(useDesignDraftStore.getState().drafts[draftId].files).toEqual([
+      expect.objectContaining({
+        name: "orders.csv",
+        documentId: "doc-orders.csv",
+        size: 3,
+      }),
+    ]);
   });
 
   it("shows the Falcon AI bar and says drafting isn't wired, without drafting", () => {
@@ -349,6 +405,17 @@ describe.skip("MCP world", () => {
       screen.getByText("Pick the agent this environment is for"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("radio", { name: "Billing line" }));
+    expect(
+      screen.getByText("Say what this environment should test"),
+    ).toBeInTheDocument();
+    const test = screen.getByRole("textbox", {
+      name: "What should this environment test?",
+    });
+    fireEvent.change(test, { target: { value: "Refunds" } });
+    expect(
+      screen.getByText("Say what this environment should test"),
+    ).toBeInTheDocument();
+    fireEvent.change(test, { target: { value: "Refunds over the limit" } });
     expect(
       screen.getByText("Pick a server from your Gateway"),
     ).toBeInTheDocument();

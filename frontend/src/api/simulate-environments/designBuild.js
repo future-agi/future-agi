@@ -1,0 +1,158 @@
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { readAsOf } from "src/sections/simulate/environments/buildDrawer/forms/shared/buildFiles";
+import { useDesignDraftStore } from "src/sections/simulate/environments/design/useDesignDraftStore";
+import { designSummary } from "src/sections/simulate/environments/design/design";
+
+// Stub of the design job's build after approval (#3612): approve starts it,
+// then it's polled for its stages, validation and release. Nothing is sent;
+// see UI_ONLY_FEATURES.designBuild. The draft keeps when it was approved, so
+// a reload finds the build where it was.
+export const STAGE_MS = 1500;
+export const VALIDATE_MS = 2000;
+const POLL_MS = 500;
+
+export const BUILD_STAGES = [
+  { id: "records", label: "Records and data" },
+  { id: "tools", label: "Tool handlers" },
+  { id: "checks", label: "Rules and checks" },
+  { id: "scenarios", label: "Scenarios" },
+];
+const BUILD_MS = BUILD_STAGES.length * STAGE_MS;
+
+const CHECKS = [
+  "Records load and every key points at a record",
+  "Each tool runs against the seeded records",
+  "Each rule has a check",
+  "Each scenario can start",
+];
+
+// Builds that stopped short: the draft is kept and approved again from the
+// design page.
+export const STOPPED_BUILD = ["needs_repair", "failed", "cancelled"];
+export const FINAL_BUILD = ["ready", "saved", ...STOPPED_BUILD];
+// The stage a file with "crash" in its name breaks, in the stub.
+const FAILING_STAGE = 1;
+
+/**
+ * The build of a draft at `now`, or null before approval: { status:
+ * building | validating | ready | saved | needs_repair, stages: [{ id, label,
+ * status: queued | running | done | failed | cancelled }], validation: {
+ * checks: [{ label, ok, detail, file?, affects? }] } once checked, release: { version,
+ * name } once saved, failure: { stage, detail, file } once failed }. A clean build
+ * waits at ready until the user saves it (draft.release). A records file with
+ * "broken" in its name fails the key check, naming the file; a file with
+ * "crash" in its name fails the tool handlers stage. Cancelling stops it where
+ * it is (draft.build.cancelledAt).
+ */
+export function designBuildOf(draft, now = Date.now()) {
+  const startedAt = draft?.build?.startedAt;
+  if (!startedAt) return null;
+  const cancelledAt = draft.build.cancelledAt;
+  const t = Math.min(now, cancelledAt ?? now) - startedAt;
+  const at = Math.floor(t / STAGE_MS);
+  const failing = (draft.files || []).find((f) => /crash/i.test(f.name));
+  const stopped = failing && at >= FAILING_STAGE;
+  const stages = BUILD_STAGES.map((s, i) => {
+    if (i < (stopped ? FAILING_STAGE : at)) return { ...s, status: "done" };
+    if (stopped)
+      return { ...s, status: i === FAILING_STAGE ? "failed" : "queued" };
+    if (i !== at) return { ...s, status: "queued" };
+    return { ...s, status: cancelledAt ? "cancelled" : "running" };
+  });
+  if (stopped)
+    return {
+      status: "failed",
+      stages,
+      validation: null,
+      failure: {
+        stage: BUILD_STAGES[FAILING_STAGE].label,
+        detail: `${failing.name} couldn't be turned into tool handlers.`,
+        file: { id: failing.id, name: failing.name },
+      },
+    };
+  if (cancelledAt && t < BUILD_MS + VALIDATE_MS)
+    return { status: "cancelled", stages, validation: null };
+  if (t < BUILD_MS) return { status: "building", stages, validation: null };
+  if (t < BUILD_MS + VALIDATE_MS)
+    return { status: "validating", stages, validation: null };
+  const broken = (draft.files || []).find(
+    (f) => /broken/i.test(f.name) && readAsOf(f.name) === "Records",
+  );
+  // shortcut: a scenario reads a file's records when it names their subject
+  // ("orders-broken.csv" → order), until the build reports what each one seeds.
+  const subject = broken?.name.split(/[^a-z]/i)[0].replace(/s$/i, "");
+  const checks = CHECKS.map((label, i) =>
+    i === 0 && broken
+      ? {
+          label,
+          ok: false,
+          detail: `Some rows in ${broken.name} point at records that aren't there.`,
+          file: { id: broken.id, name: broken.name },
+          affects: designSummary({ ...draft, readUntil: 0 }, now)
+            .scenarios.map((s) => s.text)
+            .filter((text) => new RegExp(`\\b${subject}`, "i").test(text)),
+        }
+      : { label, ok: true, detail: null },
+  );
+  return broken
+    ? { status: "needs_repair", stages, validation: { checks } }
+    : draft.release
+      ? {
+          status: "saved",
+          stages,
+          validation: { checks },
+          release: draft.release,
+        }
+      : { status: "ready", stages, validation: { checks } };
+}
+
+const buildKey = (draftId, startedAt) => [
+  "simulate-environments",
+  "design-build",
+  draftId,
+  startedAt,
+];
+
+/** The draft's build, polled until it's saved or needs repair; null before approval. */
+export function useDesignBuild(draftId) {
+  const draft = useDesignDraftStore((s) => s.drafts[draftId]);
+  const startedAt = draft?.build?.startedAt;
+  const saved = !!draft?.release;
+  const { data } = useQuery({
+    queryKey: [...buildKey(draftId, startedAt), saved],
+    queryFn: () =>
+      designBuildOf(useDesignDraftStore.getState().drafts[draftId]),
+    initialData: () => designBuildOf(draft),
+    enabled: !!startedAt,
+    refetchInterval: (query) =>
+      FINAL_BUILD.includes(query.state.data?.status) ? false : POLL_MS,
+  });
+  return startedAt ? data : null;
+}
+
+/**
+ * Approves the design and starts its build. Does nothing while a build runs
+ * or once it's saved; after one stopped short it builds again.
+ */
+export function useApproveDesign(draftId) {
+  return useMutation({
+    mutationFn: async () => {
+      const { drafts, startDesignBuild } = useDesignDraftStore.getState();
+      const status = designBuildOf(drafts[draftId])?.status;
+      if (status && !STOPPED_BUILD.includes(status)) return;
+      startDesignBuild(draftId);
+    },
+  });
+}
+
+/** Cancels a build still running or being checked; the draft is kept. */
+export function useCancelDesignBuild(draftId) {
+  return useMutation({
+    mutationFn: async () => {
+      const { drafts, cancelDesignBuild } = useDesignDraftStore.getState();
+      const status = designBuildOf(drafts[draftId])?.status;
+      if (status === "building" || status === "validating")
+        cancelDesignBuild(draftId);
+    },
+  });
+}

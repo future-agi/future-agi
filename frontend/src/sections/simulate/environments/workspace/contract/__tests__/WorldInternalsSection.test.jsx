@@ -91,9 +91,14 @@ describe("WorldInternalsSection tables", () => {
     expect(screen.getByText("float")).toBeInTheDocument();
   });
 
-  it("shows no tables card when the detail sends none", () => {
-    render(<WorldInternalsSection env={env} />);
-    expect(screen.queryByText("World state · database")).toBeNull();
+  it("keeps both cards with an empty line when the detail sends no tables or tools", () => {
+    render(<WorldInternalsSection env={{}} />);
+    expect(
+      screen.getByText("World state · database schema"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^No tables yet\./)).toBeInTheDocument();
+    expect(screen.getByText("Tools · 0")).toBeInTheDocument();
+    expect(screen.queryByText(/MCP server/)).toBeNull();
   });
 });
 
