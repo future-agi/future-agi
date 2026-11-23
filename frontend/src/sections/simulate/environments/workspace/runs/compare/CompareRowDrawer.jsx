@@ -1,12 +1,9 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
 import {
   Box,
   Button,
   CircularProgress,
   Stack,
-  ToggleButton,
-  ToggleButtonGroup,
   Typography,
 } from "@mui/material";
 
@@ -113,37 +110,14 @@ CallColumn.propTypes = {
   onOpenCall: PropTypes.func.isRequired,
 };
 
-// A scenario row's calls across the compared runs, side by side: one column
-// per run, for one trial at a time, each with its transcript. Open call hands
-// one call to the run detail's call drawer.
+// A scenario trial's calls across the compared runs, side by side: one column
+// per run, each with its transcript. Open call hands one call to the run
+// detail's call drawer.
 export default function CompareRowDrawer({ row, runs, onClose, onOpenCall }) {
-  // The trial picked, kept with its row so another row opens on its first.
-  const [picked, setPicked] = useState({ rowId: null, trial: null });
-  // Every numbered trial a run played, the baseline's first. A call with no
-  // trial number shows when its run has no call for the picked trial.
-  const trials = row
-    ? [
-        ...new Set(
-          runs.flatMap((run) =>
-            (row.calls[run.id] ?? [])
-              .map((task) => task.trialIndex)
-              .filter((one) => one != null),
-          ),
-        ),
-      ]
-    : [];
-  const trial =
-    picked.rowId === row?.rowId && trials.includes(picked.trial)
-      ? picked.trial
-      : trials[0];
-  // A run without that trial shows its first call, as Show diff pairs them.
-  const columns = runs.map((run) => {
-    const calls = row?.calls[run.id] ?? [];
-    return {
-      run,
-      task: calls.find((task) => task.trialIndex === trial) ?? calls[0] ?? null,
-    };
-  });
+  const columns = runs.map((run) => ({
+    run,
+    task: row?.calls[run.id]?.[0] ?? null,
+  }));
   return (
     <SideDrawer open={!!row} onClose={onClose} width="92vw">
       {row && (
@@ -167,24 +141,6 @@ export default function CompareRowDrawer({ row, runs, onClose, onOpenCall }) {
                 .filter(Boolean)
                 .join(" · ")}
             </Typography>
-            {trials.length > 1 && (
-              <ToggleButtonGroup
-                exclusive
-                size="small"
-                value={trial}
-                onChange={(_, value) =>
-                  value != null && setPicked({ rowId: row.rowId, trial: value })
-                }
-                aria-label={COMPARE_COPY.trialPicker}
-                sx={{ mt: 1 }}
-              >
-                {trials.map((one) => (
-                  <ToggleButton key={one ?? "none"} value={one}>
-                    {COMPARE_COPY.trial(one)}
-                  </ToggleButton>
-                ))}
-              </ToggleButtonGroup>
-            )}
           </Box>
           <Stack
             direction="row"

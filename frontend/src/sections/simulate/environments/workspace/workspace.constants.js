@@ -546,6 +546,12 @@ export const DRAFTS_COPY = {
     "Unsaved changes aren't part of this run. Save them first to include them.",
 };
 
+// "Run 2", "Runs 2 and 3", "Runs 2, 3 and 5".
+const runsNamed = (ordinals) =>
+  ordinals.length > 1
+    ? `Runs ${ordinals.slice(0, -1).join(", ")} and ${ordinals.at(-1)}`
+    : `Run ${ordinals[0]}`;
+
 // Comparing 2 to 8 finished runs of the same environment, picked on the Runs
 // tab, scenario by scenario. The first run picked is the baseline.
 export const COMPARE_COPY = {
@@ -602,16 +608,15 @@ export const COMPARE_COPY = {
   drawerTitle: "Calls across runs",
   openCall: "Open call",
   trial: (n) => `Trial ${n}`,
-  trialPicker: "Trial",
   edited: "Edited",
   editedHint: "Scenario content differs from the baseline",
-  playedEdited: (ordinals) => {
-    const list =
-      ordinals.length > 1
-        ? `${ordinals.slice(0, -1).join(", ")} and ${ordinals.at(-1)}`
-        : `${ordinals[0]}`;
-    return `${ordinals.length > 1 ? "Runs" : "Run"} ${list} played the edited version`;
-  },
+  playedEdited: (ordinals) =>
+    `${runsNamed(ordinals)} played the edited version`,
+  cantVerify: "Can't verify",
+  notPinned: (ordinals) =>
+    `Can't check ${runsNamed(ordinals)} against the baseline's scenario version`,
+  cantVerifyHint:
+    "Only one side was pinned to a scenario version, so we can't tell whether it played the same scenario as the baseline.",
   openRow: (name) => `Open calls for ${name}`,
 };
 

@@ -89,17 +89,13 @@ export function mapCompareRun(raw) {
     id: ex.id,
     ordinal: ex.ordinal ?? null,
     isBaseline: !!raw?.is_baseline,
-    status: ex.status ?? null,
     agentType: ex.agent_type ?? null,
     agentLabel: ex.pinned_agent_version?.label ?? ex.agent_version ?? null,
     environmentLabel: ex.environment_version?.label ?? null,
-    trials: ex.trials ?? 1,
     passRate:
       wholeRun.pass_rate == null ? null : Math.round(wholeRun.pass_rate),
     measured: wholeRun.measured ?? 0,
     passed: wholeRun.outcomes?.passed ?? 0,
-    total: wholeRun.total ?? 0,
-    summary: raw?.summary ?? null,
     statusCounts: raw?.status_counts ?? {},
     histograms: raw?.histograms ?? {},
   };
@@ -152,9 +148,10 @@ export function mapCompareResponse(data) {
     persona: row.persona ?? null,
     situation: row.situation ?? null,
     idealOutcome: row.ideal_outcome ?? null,
-    movement: row.movement ?? "same",
     // Runs whose scenario content differs from the baseline's for this row.
     editedRunIds: row.edited_run_ids ?? [],
+    // Runs pinned to a scenario version unlike the baseline: not checkable.
+    unverifiedRunIds: row.unverified_run_ids ?? [],
     calls: Object.fromEntries(
       runs.map((run) => [
         run.id,
@@ -179,11 +176,9 @@ export function mapCompareResponse(data) {
     ),
   }));
   return {
-    baselineId: data?.baseline_execution_id ?? runs[0]?.id ?? null,
     runs,
     rows,
     groups,
-    evalColumns,
     columns: buildTraceColumns(evalColumns),
     facets: data?.facets ?? {},
     levelLabels: data?.level_labels ?? {},

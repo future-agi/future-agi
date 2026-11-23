@@ -196,27 +196,23 @@ def _read_compare_facts(
         call.result_goal = goals.get(str(call.id))  # type: ignore[attr-defined]
     scenarios, dimensions = call_scenario_sources(calls)
     pinned = run_compare.run_versions([execution.id for execution in executions])
-    versions: dict[Any, dict[str, str]] = defaultdict(dict)
     shown: dict[Any, dict[str, dict[str, Any]]] = defaultdict(dict)
     digests: dict[Any, dict[str, str | None]] = defaultdict(dict)
     for call in calls:
         run_id, key = representatives[str(call.id)]
         columns = row_level_columns(call, scenarios, dimensions)
         # One row per scenario: an edit marks the run, it never splits the row.
-        row_id = key
-        versions[run_id][key] = row_id
-        shown[run_id][row_id] = {"scenario_key": key, **columns}
+        shown[run_id][key] = {"scenario_key": key, **columns}
         # An unpinned run reads today's identity row, not what it played, so
         # it is only compared with another unpinned run, on what it showed.
         if pinned[str(run_id)]["suite"]:
             played = _played_digest(scenarios.get(str(call.id))) or ""
-            digests[run_id][row_id] = f"pinned:{played}:{_shown_digest(columns)}"
+            digests[run_id][key] = f"pinned:{played}:{_shown_digest(columns)}"
         else:
-            digests[run_id][row_id] = f"unpinned:{_shown_digest(columns)}"
+            digests[run_id][key] = f"unpinned:{_shown_digest(columns)}"
     # A representative deleted since the facts were read: its key alone.
     for run_id, key in representatives.values():
-        if key not in versions[run_id]:
-            versions[run_id][key] = key
+        if key not in shown[run_id]:
             shown[run_id][key] = {
                 "scenario_key": key,
                 "scenario": key,
@@ -227,7 +223,7 @@ def _read_compare_facts(
         execution.id: {
             "calls": facts[execution.id],
             "row_ids": {
-                call_id: versions[execution.id][one["scenario_key"] or call_id]
+                call_id: one["scenario_key"] or call_id
                 for call_id, one in facts[execution.id].items()
             },
             "rows": shown[execution.id],
@@ -268,16 +264,20 @@ def _movement(baseline: tuple[int, int], candidates: list[tuple[int, int]]) -> s
     return "inconclusive" if run_compare.INCONCLUSIVE in verdicts else "same"
 
 
-def _edited_runs(
+def _run_marks(
     entry: dict[str, Any],
     executions: list[TestExecution],
     compare_facts: dict[Any, dict[str, Any]],
     sub_goal_digests: dict[str, Any],
-) -> list[str]:
-    """The runs that played this row's scenario unlike the baseline did."""
+) -> tuple[list[str], list[str]]:
+    """``(edited, unverified)``: the runs that played this row's scenario unlike
+    the baseline did, and those pinned unlike it, whose version can't be checked.
+
+    A redefined sub-goal is known either way, so it marks a run edited.
+    """
     baseline = executions[0].id
     if not entry["calls"][baseline]:
-        return []
+        return [], []
     names = {
         name
         for run_id, ids in entry["calls"].items()
@@ -286,22 +286,24 @@ def _edited_runs(
     }
     ours = compare_facts[baseline]
     digest = ours["digests"].get(entry["row_id"])
-    edited = []
+    edited: list[str] = []
+    unverified: list[str] = []
     for execution in executions[1:]:
         if not entry["calls"][execution.id]:
             continue
         theirs = compare_facts[execution.id]
         other = theirs["digests"].get(entry["row_id"])
-        comparable = (
-            digest and other and digest.split(":", 1)[0] == other.split(":", 1)[0]
-        )
-        if (comparable and digest != other) or run_compare.changed_sub_goals(
+        known = digest and other
+        mixed = known and digest.split(":", 1)[0] != other.split(":", 1)[0]
+        if (known and not mixed and digest != other) or run_compare.changed_sub_goals(
             names,
             sub_goal_digests.get(ours["environment"]),
             sub_goal_digests.get(theirs["environment"]),
         ):
             edited.append(str(execution.id))
-    return edited
+        elif mixed:
+            unverified.append(str(execution.id))
+    return edited, unverified
 
 
 def _changed(
@@ -820,6 +822,10 @@ def build_compare_page(
         one for facts in compare_facts.values() for one in facts["calls"].values()
     )
     count = len(kept)
+    marks = {
+        entry["id"]: _run_marks(entry, executions, compare_facts, sub_goal_digests)
+        for entry in page_entries
+    }
     return {
         "baseline_execution_id": str(baseline.id),
         "runs": runs,
@@ -862,9 +868,8 @@ def build_compare_page(
                     str(baseline.id),
                 ),
                 "movement": entry["movement"],
-                "edited_run_ids": _edited_runs(
-                    entry, executions, compare_facts, sub_goal_digests
-                ),
+                "edited_run_ids": marks[entry["id"]][0],
+                "unverified_run_ids": marks[entry["id"]][1],
             }
             for entry in page_entries
         ],

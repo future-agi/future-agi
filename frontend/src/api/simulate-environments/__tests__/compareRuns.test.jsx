@@ -100,7 +100,6 @@ describe("mapCompareResponse", () => {
       agentLabel: "v2",
       environmentLabel: "v3",
     });
-    expect(data.baselineId).toBe(RUN.a);
   });
 
   it("maps every call with the run detail's mapCallRow", () => {
@@ -164,6 +163,16 @@ describe("mapCompareResponse", () => {
     const response = compareRunsResponse();
     delete response.rows[2].edited_run_ids;
     expect(mapCompareResponse(response).rows[2].editedRunIds).toEqual([]);
+  });
+
+  it("maps the runs whose scenario version can't be checked, none when absent", () => {
+    const response = compareRunsResponse();
+    response.rows[2].unverified_run_ids = [RUN.c];
+    expect(
+      mapCompareResponse(response).rows.map((row) => row.unverifiedRunIds),
+    ).toEqual([[], [], [RUN.c]]);
+    delete response.rows[2].unverified_run_ids;
+    expect(mapCompareResponse(response).rows[2].unverifiedRunIds).toEqual([]);
   });
 });
 

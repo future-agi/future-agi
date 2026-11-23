@@ -158,6 +158,13 @@ class HarnessCompareRowSerializer(serializers.Serializer):
         child=serializers.CharField(),
         help_text="Runs that played this row's scenario unlike the baseline did.",
     )
+    unverified_run_ids = serializers.ListField(
+        child=serializers.CharField(),
+        help_text=(
+            "Runs pinned to a scenario version unlike the baseline, so whether"
+            " they played the same scenario can't be checked."
+        ),
+    )
 
 
 class HarnessCompareRunsSerializer(serializers.Serializer):

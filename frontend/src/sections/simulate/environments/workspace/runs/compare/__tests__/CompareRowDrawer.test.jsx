@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "src/utils/test-utils";
+import { render, screen } from "src/utils/test-utils";
 
 vi.mock("src/api/simulate-environments/runDetail", async (importOriginal) => ({
   ...(await importOriginal()),
@@ -16,31 +16,12 @@ const rowOf = (rowId) => ({
   rowId,
   scenarioKey: rowId,
   calls: {
-    "run-1": [1, 2, 3].map((trialIndex) => ({
-      id: `${rowId}-c${trialIndex}`,
-      trialIndex,
-      status: "passed",
-    })),
+    "run-1": [{ id: `${rowId}-c1`, trialIndex: 1, status: "passed" }],
   },
 });
 const props = () => ({ onClose: vi.fn(), onOpenCall: vi.fn() });
 
 describe("CompareRowDrawer", () => {
-  it("opens another row on its first trial, not the one picked before", () => {
-    const props = { runs: RUNS, onClose: vi.fn(), onOpenCall: vi.fn() };
-    const { rerender } = render(
-      <CompareRowDrawer row={rowOf("a")} {...props} />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Trial 3" }));
-    expect(screen.getByText("Hello from a-c3")).toBeInTheDocument();
-
-    rerender(<CompareRowDrawer row={null} {...props} />);
-    rerender(<CompareRowDrawer row={rowOf("b")} {...props} />);
-
-    expect(screen.getByText("Hello from b-c1")).toBeInTheDocument();
-    expect(screen.queryByText("Hello from b-c3")).toBeNull();
-  });
-
   it("titles the drawer with the row's own scenario, not the shared name", () => {
     const row = {
       ...rowOf("a"),

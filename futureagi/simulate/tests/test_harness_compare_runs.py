@@ -482,6 +482,7 @@ class TestContract:
             "calls",
             "movement",
             "edited_run_ids",
+            "unverified_run_ids",
         }
         assert set(row["calls"]) == {str(run.id) for run in runs}
         for histograms in (run["histograms"] for run in body["runs"]):
@@ -1425,15 +1426,21 @@ class TestEditedRuns:
         )
         return environment, _runs(environment), authored
 
-    def _edited(self, auth_client, environment, runs) -> dict[str, list[list[str]]]:
+    def _edited(
+        self, auth_client, environment, runs, field: str = "edited_run_ids"
+    ) -> dict[str, list[list[str]]]:
         body = _ok(_compare(auth_client, environment, runs, page_size=100))
         _assert_declared(body)
-        # The scenario's edits, the same on each of its trial rows.
+        # The scenario's marks, the same on each of its trial rows.
         trials: dict[str, set[tuple[str, ...]]] = defaultdict(set)
         for row in body["rows"]:
-            trials[row["scenario_key"]].add(tuple(row["edited_run_ids"]))
+            assert not set(row["edited_run_ids"]) & set(row["unverified_run_ids"])
+            trials[row["scenario_key"]].add(tuple(row[field]))
         assert all(len(ids) == 1 for ids in trials.values())
         return {key: [list(ids) for ids in one] for key, one in trials.items()}
+
+    def _unverified(self, auth_client, environment, runs) -> dict[str, list[list[str]]]:
+        return self._edited(auth_client, environment, runs, "unverified_run_ids")
 
     def test_an_edited_instruction_is_one_row_flagged_on_its_run(
         self, auth_client, played
@@ -1451,6 +1458,8 @@ class TestEditedRuns:
 
         assert edited.pop(self.KEY) == [[str(runs[1].id)]]
         assert edited == dict.fromkeys(edited, [[]])
+        unverified = self._unverified(auth_client, environment, runs)
+        assert unverified == dict.fromkeys(unverified, [[]])
 
     def test_a_renamed_scenario_is_not_edited(self, auth_client, played):
         environment, runs, authored = played
@@ -1494,6 +1503,9 @@ class TestEditedRuns:
         edited = self._edited(auth_client, environment, runs)
 
         assert edited == dict.fromkeys(edited, [[]])
+        # Pinned unlike the baseline, the other run's version can't be checked.
+        unverified = self._unverified(auth_client, environment, runs)
+        assert unverified == dict.fromkeys(unverified, [[str(runs[1].id)]])
 
     def test_unpinned_runs_are_not_edited(self, auth_client, played):
         environment, runs, _ = played
@@ -1501,6 +1513,8 @@ class TestEditedRuns:
         edited = self._edited(auth_client, environment, runs)
 
         assert edited == dict.fromkeys(edited, [[]])
+        unverified = self._unverified(auth_client, environment, runs)
+        assert unverified == dict.fromkeys(unverified, [[]])
 
     def test_a_redefined_sub_goal_is_edited(self, auth_client, played):
         from simulate.models.harness_versioning import HarnessEnvironmentVersion

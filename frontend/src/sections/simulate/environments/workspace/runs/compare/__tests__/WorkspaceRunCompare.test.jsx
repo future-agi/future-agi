@@ -531,9 +531,6 @@ describe("RunCompare", () => {
     expect(screen.getAllByRole("button", { name: "Open call" })).toHaveLength(
       2,
     );
-    // A row holds one trial, so there is no trial to pick.
-    expect(screen.queryByRole("group", { name: "Trial" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Trial \d$/ })).toBeNull();
   });
 
   it("folds and unfolds a group from the keyboard", async () => {
@@ -617,6 +614,33 @@ describe("RunCompare", () => {
     expect(
       screen.getByText("Run 3 played the edited version"),
     ).toBeInTheDocument();
+  });
+
+  it("marks a scenario it can't verify and names those runs", async () => {
+    const response = compareRunsResponse();
+    response.rows[2].unverified_run_ids = [RUN.b, RUN.c];
+    renderCompare({ response });
+    await loaded();
+    const chip = screen.getByText("Can't verify");
+    const cell = chip.closest("td");
+    expect(cell).toHaveClass("compare-lead");
+    expect(
+      within(cell).getByText(
+        "Can't check Runs 2 and 3 against the baseline's scenario version",
+      ),
+    ).toBeInTheDocument();
+    expect(chip.closest("button")).toBeNull();
+
+    fireEvent.mouseOver(chip);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "we can't tell whether it played the same scenario",
+    );
+  });
+
+  it("shows no can't-verify mark when every run can be checked", async () => {
+    renderCompare();
+    await loaded();
+    expect(screen.queryByText("Can't verify")).toBeNull();
   });
 
   it("keeps the open row's drawer when a refetch drops the row", async () => {
@@ -792,7 +816,7 @@ describe("RunCompare", () => {
     await waitFor(() => expect(lastParams().page).toBe(2));
   });
 
-  it("shows a run's untagged call beside the row's trial, with no picker", async () => {
+  it("shows a run's untagged call beside the row's trial", async () => {
     const response = compareRunsResponse();
     const [first] = response.rows[0].calls[RUN.a];
     response.rows[0].calls[RUN.a] = [{ ...first, trial_index: null }];
@@ -805,8 +829,6 @@ describe("RunCompare", () => {
       await screen.findByText(`Hello from ${CALL.aRefund1}`),
     ).toBeInTheDocument();
     expect(screen.getByText(`Hello from ${CALL.bRefund1}`)).toBeInTheDocument();
-    expect(screen.queryByRole("group", { name: "Trial" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Trial / })).toBeNull();
   });
 
   it("asks for two runs when the URL has fewer", () => {

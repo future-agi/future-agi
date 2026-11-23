@@ -134,18 +134,15 @@ const rowLines = (row, runs) =>
     }));
   });
 
-// Which runs, by number, played an edited version of the row's scenario; the
-// baseline is what they are compared against, so it is never one of them.
-const playedEdited = (row, runs) => {
+// A line naming the non-baseline runs among `ids` by number; null when none
+// has one.
+const namedRuns = (ids, runs, words) => {
   const ordinals = runs
     .filter(
-      (run) =>
-        !run.isBaseline &&
-        run.ordinal != null &&
-        row.editedRunIds.includes(run.id),
+      (run) => !run.isBaseline && run.ordinal != null && ids.includes(run.id),
     )
     .map((run) => run.ordinal);
-  return ordinals.length ? COMPARE_COPY.playedEdited(ordinals) : null;
+  return ordinals.length ? words(ordinals) : null;
 };
 
 const dash = (
@@ -333,7 +330,16 @@ function CompareTable({
         {name}
       </Typography>
     );
-    const editedBy = playedEdited(row, runs);
+    const editedBy = namedRuns(
+      row.editedRunIds,
+      runs,
+      COMPARE_COPY.playedEdited,
+    );
+    const unverifiedBy = namedRuns(
+      row.unverifiedRunIds,
+      runs,
+      COMPARE_COPY.notPinned,
+    );
     return (
       <TableRow
         key={`${prefix}:${index}`}
@@ -387,6 +393,27 @@ function CompareTable({
                 sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
               >
                 {editedBy}
+              </Typography>
+            )}
+            {row.unverifiedRunIds.length > 0 && (
+              <CustomTooltip
+                show
+                describeChild
+                title={COMPARE_COPY.cantVerifyHint}
+              >
+                <Chip
+                  size="small"
+                  label={COMPARE_COPY.cantVerify}
+                  tabIndex={0}
+                  sx={{ mt: 0.5 }}
+                />
+              </CustomTooltip>
+            )}
+            {unverifiedBy && (
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+              >
+                {unverifiedBy}
               </Typography>
             )}
           </TableCell>

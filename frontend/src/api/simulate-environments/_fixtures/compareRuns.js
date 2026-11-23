@@ -280,6 +280,7 @@ const REFUND_ROW = {
   ideal_outcome: REFUND.ideal_outcome,
   movement: "improved",
   edited_run_ids: [],
+  unverified_run_ids: [],
 };
 
 export const compareRunsResponse = () => ({
@@ -475,6 +476,7 @@ export const compareRunsResponse = () => ({
       movement: "improved",
       // Run 2 played this scenario as edited after the baseline ran.
       edited_run_ids: [RUN.b],
+      unverified_run_ids: [],
     },
   ],
 });
