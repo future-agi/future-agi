@@ -1,8 +1,10 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
+import Iconify from "src/components/iconify";
 import {
   Box,
   Button,
+  ButtonBase,
   Stack,
   TextField,
   Tooltip,
@@ -39,6 +41,10 @@ const firstSentence = (d) =>
     .split(/\s+—\s+|(?<=\.)\s/)[0]
     .replace(/\.$/, "");
 const lower = (s) => String(s || "").toLowerCase();
+const sentenceOf = (t) => {
+  const x = String(t || "");
+  return x ? `${x.charAt(0).toUpperCase()}${x.slice(1)}` : "";
+};
 const BUILDER = ["tools", "release", "rebuild"];
 /* A stated limit of where the agent runs: nothing to fix. */
 const isLimit = (a) =>
@@ -132,6 +138,7 @@ Line.propTypes = {
 /* Known limits of where the agent runs (14 Nov: they change how results
    read, not whether the run starts, so they sit under How it runs). */
 export function KnownLimits({ report, scenarios, evalCount, provider }) {
+  const [open, setOpen] = useState(false);
   const limitBy = provider
     ? provider.charAt(0).toUpperCase() + provider.slice(1)
     : "Hosting";
@@ -158,26 +165,80 @@ export function KnownLimits({ report, scenarios, evalCount, provider }) {
         : "a stop may not end work already sent";
     return lower(firstSentence(d));
   };
+  const items = [
+    ...limits.map((a) => ({ id: a.id, label: a.label, text: phrase(a) })),
+    ...(voiceReplies
+      ? [
+          {
+            id: "replies",
+            label: voiceReplies.label,
+            text: voiceReplies.detail,
+          },
+        ]
+      : []),
+  ];
+  /* A toggle, not a hover: a limit like Stop has to be seen before a paid
+     run starts (TH-8890), and hover text gives no sign it's there. */
   return (
-    <Tooltip
-      arrow
-      placement="top-start"
-      title={
-        <Box sx={{ whiteSpace: "pre-line" }}>
-          {[
-            ...limits.map((a) => `${a.label}: ${phrase(a)}`),
-            ...(voiceReplies
-              ? [`${voiceReplies.label}: ${voiceReplies.detail}`]
-              : []),
-            "These come from where the agent runs, not your setup, so there's nothing to fix. Each run's results carry the same note.",
-          ].join("\n\n")}
-        </Box>
-      }
-    >
-      <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-        {`${limitBy === "Hosting" ? "Runs outside our sandbox" : `Runs on ${limitBy}`} · ${n} known limit${n === 1 ? "" : "s"}`}
-      </Typography>
-    </Tooltip>
+    <Box>
+      <Stack direction="row" spacing={1} alignItems="baseline">
+        <Typography
+          sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
+        >
+          {`${limitBy === "Hosting" ? "Runs outside our sandbox" : `Runs on ${limitBy}`} · ${n} known limit${n === 1 ? "" : "s"}`}
+        </Typography>
+        <ButtonBase
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          sx={{
+            typography: "s3",
+            color: "text.secondary",
+            gap: 0.25,
+            flexShrink: 0,
+            "&:hover": { color: "text.primary" },
+          }}
+        >
+          {open ? "Hide limits" : "Show limits"}
+          <Iconify
+            icon={
+              open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+            }
+            width={12}
+          />
+        </ButtonBase>
+      </Stack>
+      {open && (
+        <Stack
+          spacing={0.75}
+          sx={{
+            mt: 1,
+            px: 1.5,
+            py: 1.25,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+          }}
+        >
+          {items.map((it) => (
+            <Box key={it.id} minWidth={0}>
+              <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+                {it.label}
+              </Typography>
+              <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+                {sentenceOf(it.text)}
+              </Typography>
+            </Box>
+          ))}
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", pt: 0.25 }}
+          >
+            These come from where the agent runs, not your setup, so
+            there&apos;s nothing to fix. Each run&apos;s results carry the same
+            note.
+          </Typography>
+        </Stack>
+      )}
+    </Box>
   );
 }
 KnownLimits.propTypes = {
