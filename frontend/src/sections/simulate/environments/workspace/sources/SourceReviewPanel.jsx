@@ -425,7 +425,7 @@ export default function SourceReviewPanel({
       </Stack>
     );
   }
-  if (!review)
+  if (!review || !query.isFetchedAfterMount)
     return <Typography role="status">Opening source review…</Typography>;
   if (review.scope.id !== ownerId) {
     return (

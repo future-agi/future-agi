@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SourceReviewPanel from "../SourceReviewPanel";
+import { sourceReviewKey } from "src/api/simulate-environments/sourceImports";
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
 vi.mock("src/utils/axios", () => ({ default: api }));
@@ -34,9 +35,14 @@ beforeEach(() => {
   api.post.mockReset();
 });
 
-function mount(onAccepted) {
+function mount(onAccepted, cachedReview) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  if (cachedReview)
+    client.setQueryData(sourceReviewKey("review-1"), cachedReview);
   return render(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={client}>
       <SourceReviewPanel
         reviewId="review-1"
         ownerId="job-1"
@@ -49,6 +55,16 @@ function mount(onAccepted) {
 }
 
 describe("Prebuild source review", () => {
+  it("reauthorizes the server preview before displaying cached source details", async () => {
+    api.get.mockRejectedValueOnce(new Error("This review is not available."));
+    mount(undefined, repair);
+    expect(screen.queryByText("orders.csv")).toBeNull();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "This review is not available.",
+    );
+    expect(screen.queryByText("orders.csv")).toBeNull();
+  });
+
   it("keeps inferred-schema edits out of a review pinned to a template table", async () => {
     serverReview = {
       ...repair,
