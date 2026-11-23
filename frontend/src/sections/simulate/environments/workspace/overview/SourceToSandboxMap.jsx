@@ -1,11 +1,12 @@
 import PropTypes from "prop-types";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
+import CustomTooltip from "src/components/tooltip";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import OriginChip from "../../components/OriginChip";
-import { ENV_SHAPE } from "./overview.constants";
+import { ENV_SHAPE, startingCollections } from "./overview.constants";
 import {
   MAP_COPY,
   toolMapRows,
@@ -70,31 +71,45 @@ function MapSummary({ groups }) {
         }}
       >
         {groups.map((group, index) => (
-          <Box
+          <CustomTooltip
             key={group.label}
-            title={group.hint}
-            sx={{
-              px: 2,
-              py: 1,
-              minWidth: 0,
-              borderLeft: index ? "1px solid" : "none",
-              borderLeftColor: "divider",
-            }}
+            show
+            arrow
+            size="small"
+            title={
+              <Stack spacing={0.5}>
+                <Typography sx={{ typography: "s2" }}>
+                  {MAP_COPY.mappedMeans}
+                </Typography>
+                <Typography sx={{ typography: "s2" }}>{group.hint}</Typography>
+              </Stack>
+            }
           >
-            <OverflowTooltip title={group.label}>
-              <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>
-                {group.label}
-              </Typography>
-            </OverflowTooltip>
-            <OverflowTooltip title={group.right}>
-              <Typography
-                noWrap
-                sx={{ typography: "s3", color: "text.tertiary" }}
-              >
-                {group.right}
-              </Typography>
-            </OverflowTooltip>
-          </Box>
+            <Box
+              tabIndex={0}
+              sx={{
+                px: 2,
+                py: 1,
+                minWidth: 0,
+                borderLeft: index ? "1px solid" : "none",
+                borderLeftColor: "divider",
+              }}
+            >
+              <OverflowTooltip title={group.label}>
+                <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>
+                  {group.label}
+                </Typography>
+              </OverflowTooltip>
+              <OverflowTooltip title={group.right}>
+                <Typography
+                  noWrap
+                  sx={{ typography: "s3", color: "text.tertiary" }}
+                >
+                  {group.right}
+                </Typography>
+              </OverflowTooltip>
+            </Box>
+          </CustomTooltip>
         ))}
       </Box>
     </Box>
@@ -125,28 +140,40 @@ export default function SourceToSandboxMap({
   const storeRows =
     stores !== undefined ? storeRowsFromStores(stores) : storeMapRows(env);
 
-  if (backed)
+  if (backed) {
+    const statusCount = (status) =>
+      (Array.isArray(env?.toolStatus) ? env.toolStatus : []).filter(
+        (row) => row.status === status,
+      ).length;
+    const storeCount =
+      storeRows.length || startingCollections(env?.baseEnvironment).length;
     return (
       <MapSummary
         groups={[
           {
             label: MAP_COPY.groups.tools.label,
-            hint: MAP_COPY.backedGroups.tools,
+            hint: MAP_COPY.toolsHint({
+              simulated: statusCount("simulated"),
+              inProcess: statusCount("in_process"),
+              unsupported: statusCount("unsupported"),
+              unknown: statusCount("unknown"),
+            }),
             right: MAP_COPY.toolsRight(toolRows.length),
           },
           {
             label: MAP_COPY.groups.rules.label,
-            hint: MAP_COPY.backedGroups.rules,
+            hint: MAP_COPY.rulesHint(ruleRows.length),
             right: MAP_COPY.rulesRight(ruleRows.length),
           },
           {
             label: MAP_COPY.groups.stores.label,
-            hint: MAP_COPY.backedGroups.stores,
-            right: MAP_COPY.storesRight(storeRows.length),
+            hint: MAP_COPY.storesHint(storeCount),
+            right: MAP_COPY.storesRight(storeCount),
           },
         ]}
       />
     );
+  }
 
   return (
     <Box

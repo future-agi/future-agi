@@ -20,6 +20,26 @@ const MONO = "ui-monospace, Menlo, monospace";
 // The seeded rows that fill the world before the agent arrives — rebuilt every
 // task, so nothing carries over.
 
+function RowCount({ rows }) {
+  const count = Number(rows) || 0;
+  return (
+    <Typography
+      sx={{
+        typography: "s2",
+        fontWeight: count ? 600 : 400,
+        color: count ? "text.primary" : "text.tertiary",
+        fontVariantNumeric: "tabular-nums",
+      }}
+    >
+      {count ? count.toLocaleString() : OVERVIEW_COPY.emptyTable}
+    </Typography>
+  );
+}
+
+RowCount.propTypes = {
+  rows: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+};
+
 export function SeededDataCard({ env }) {
   const tables = worldTables(env);
   // A table the API sent without a row count adds nothing and shows no count.
@@ -67,19 +87,16 @@ export function SeededDataCard({ env }) {
                 </OverflowTooltip>
               )}
             </Box>
-            {hasRows(t) && (
-              <Typography
-                sx={{
-                  typography: "s2",
-                  fontWeight: 600,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {t.rows.toLocaleString()}
-              </Typography>
-            )}
+            {hasRows(t) && <RowCount rows={t.rows} />}
           </Stack>
         ))}
+        {tables.length === 0 && (
+          <Typography
+            sx={{ typography: "s2", color: "text.tertiary", px: 2.5, py: 1.25 }}
+          >
+            {OVERVIEW_COPY.noSeededData}
+          </Typography>
+        )}
       </Stack>
     </SectionCard>
   );
@@ -303,15 +320,7 @@ export function StartingDataCard({ baseEnvironment }) {
               >
                 {c.name}
               </Typography>
-              <Typography
-                sx={{
-                  typography: "s2",
-                  fontWeight: 600,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {(Number(c.rows) || 0).toLocaleString()}
-              </Typography>
+              <RowCount rows={c.rows} />
             </Stack>
           ))}
         </Stack>

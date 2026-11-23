@@ -25,6 +25,28 @@ export const MAP_COPY = {
     unknown: () => "Where it runs is not known",
   },
   ruleTarget: "Checked in every run",
+  mappedMeans:
+    "Mapped means the build found it in your agent and set it up in the test world.",
+  toolsHint: ({ simulated, inProcess, unsupported, unknown }) =>
+    [
+      simulated &&
+        `${simulated} ${simulated === 1 ? "is" : "are"} answered by a stand-in in the world when your agent calls ${simulated === 1 ? "it" : "them"}.`,
+      inProcess &&
+        `${inProcess} ${inProcess === 1 ? "runs" : "run"} inside your agent.`,
+      unsupported &&
+        `${unsupported} ${unsupported === 1 ? "reaches" : "reach"} a system the world has no copy of, so ${unsupported === 1 ? "it isn't" : "they aren't"} built.`,
+      unknown && `For ${unknown}, where it runs is not known.`,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  rulesHint: (n) =>
+    n
+      ? `${n} ${n === 1 ? "rule was" : "rules were"} read from the agent's prompt. Each is checked in every run.`
+      : "No rules were found in the agent's prompt.",
+  storesHint: (n) =>
+    n
+      ? `${n} ${n === 1 ? "table is" : "tables are"} seeded before every run, so each run starts from the same records.`
+      : "No data tables were found to seed, so the world starts with no records.",
   storesNotYet: "Seeded once the build writes the world.",
   readHead: "Read from source",
   sandboxHead: "In the sandbox world",

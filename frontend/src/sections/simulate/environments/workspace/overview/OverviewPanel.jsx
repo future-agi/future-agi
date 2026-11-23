@@ -334,16 +334,14 @@ export default function OverviewPanel({
         </Stack>
       ) : (
         <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-          {(seeded || startingData) && (
-            <Grid item xs={12} md={7}>
-              {seeded ? (
-                <SeededDataCard env={env} />
-              ) : (
-                <StartingDataCard baseEnvironment={env.baseEnvironment} />
-              )}
-            </Grid>
-          )}
-          <Grid item xs={12} md={seeded || startingData ? 5 : 7}>
+          <Grid item xs={12} md={7}>
+            {seeded || !startingData ? (
+              <SeededDataCard env={env} />
+            ) : (
+              <StartingDataCard baseEnvironment={env.baseEnvironment} />
+            )}
+          </Grid>
+          <Grid item xs={12} md={5}>
             <DependsOnCard
               dependsOn={
                 backedWorld

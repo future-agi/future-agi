@@ -55,6 +55,8 @@ export const OVERVIEW_COPY = {
     `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"}, rebuilt fresh for every task.`,
   usedBy: (name) => `used by ${Array.isArray(name) ? name.join(", ") : name}`,
   moreNames: (n) => `+${n} more`,
+  emptyTable: "Empty",
+  noSeededData: "No rows are seeded, so the world starts with no records.",
   startingTitle: "Starting data",
   startingShow: "Show the starting data",
   startingHide: "Hide the starting data",
