@@ -673,7 +673,11 @@ export const REVIEW_COPY = {
   reject: "Reject",
   accepted: "Accepted",
   rejected: "Rejected",
-  change: "Change",
+  change: "Undo",
+  validateFirst: (n) =>
+    n > 0
+      ? `Validate the ${scenarioWord(n)} affected before you save.`
+      : "Validate the accepted changes before you save.",
   restore: "Restore",
   rejectBlocked: (title) => `"${title}" needs this. Reject that one first.`,
   restoreBlocked: (title) =>

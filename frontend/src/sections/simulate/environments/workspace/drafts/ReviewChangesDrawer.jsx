@@ -167,6 +167,12 @@ export default function ReviewChangesDrawer({
   else if (flow.stale) heldReason = flow.stale;
   else if (ready && nameTooLong) heldReason = COPY.nameTooLong(NAME_LIMIT);
 
+  // Before Validate, say what it proves; after, the state it reached.
+  const note =
+    !ready && !flow.validating && !heldReason && !flow.validationState
+      ? COPY.validateFirst(names.length)
+      : flow.validationNote;
+
   const goTab = (tab) => {
     onClose?.();
     onOpenTab?.(tab);
@@ -364,7 +370,7 @@ export default function ReviewChangesDrawer({
                 </Button>
               )}
             </Stack>
-            {(flow.validationNote || flow.error) && (
+            {(note || flow.error) && (
               <Typography
                 role={flow.error ? "alert" : "status"}
                 sx={{
@@ -372,7 +378,7 @@ export default function ReviewChangesDrawer({
                   color: flow.error ? "status.danger.fg" : "text.secondary",
                 }}
               >
-                {flow.error || flow.validationNote}
+                {flow.error || note}
                 {flow.failedScenarios?.length > 0 &&
                   `: ${flow.failedScenarios.join(", ")}`}
               </Typography>

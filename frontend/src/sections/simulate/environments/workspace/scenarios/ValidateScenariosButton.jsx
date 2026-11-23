@@ -69,10 +69,12 @@ export default function ValidateScenariosButton({
       enqueueSnackbar(COPY.done(status.data?.proved, status.data?.total), {
         variant: "success",
       });
-    } else {
+    } else if (state === "finished") {
       enqueueSnackbar(status.data?.message || COPY.noResults, {
         variant: "error",
       });
+    } else {
+      enqueueSnackbar(COPY.failed(status.data?.message), { variant: "error" });
     }
   }, [enqueueSnackbar, quiet, state, status.data, validationJobId]);
 
@@ -100,15 +102,19 @@ export default function ValidateScenariosButton({
     }
   };
 
+  // A whole validation that didn't finish changes nothing: every scenario keeps its state.
+  const didNotFinish = state === "failed" || state === "unavailable";
   const ended =
     state === "finished" && status.data?.proofs_recorded === false
       ? status.data?.message || COPY.noResults
-      : state === "failed" || state === "unavailable"
-        ? status.data?.message
+      : didNotFinish
+        ? COPY.failed(status.data?.message)
         : null;
-  const said = quiet
-    ? null
-    : message || ended || (elsewhere ? COPY.elsewhere : null);
+  let said = null;
+  if (!quiet) {
+    said = message || ended || (elsewhere ? COPY.elsewhere : null);
+    if (running && !said) said = COPY.blocked;
+  }
 
   // Proofs are recorded only when the validation ends, so while it runs the status says how many it is proving,
   // never how many are done.
@@ -121,7 +127,9 @@ export default function ValidateScenariosButton({
       : COPY.validating
     : nothing
       ? COPY.nothing
-      : label;
+      : didNotFinish && !quiet
+        ? COPY.tryAgain
+        : label;
 
   return (
     <Stack direction="row" alignItems="center" spacing={1}>

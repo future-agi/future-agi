@@ -145,6 +145,7 @@ export default function ScenarioTable({
   onTogglePage,
   locked = false,
   rowHeight = "Short",
+  isValidating,
 }) {
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
   const [widths, setWidths] = useState(readWidths);
@@ -536,7 +537,10 @@ export default function ScenarioTable({
                         </Tooltip>
                       )}
                       <UnsavedMark row={row} />
-                      <LifecycleMark lifecycle={row.lifecycle} />
+                      <LifecycleMark
+                        lifecycle={row.lifecycle}
+                        validating={Boolean(isValidating?.(row))}
+                      />
                     </Stack>
                     <TruncTooltip title={row.summary || row.title}>
                       <Typography
@@ -665,4 +669,6 @@ ScenarioTable.propTypes = {
   onTogglePage: PropTypes.func,
   locked: PropTypes.bool,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
+  // (row) => whether a running validation is proving it.
+  isValidating: PropTypes.func,
 };

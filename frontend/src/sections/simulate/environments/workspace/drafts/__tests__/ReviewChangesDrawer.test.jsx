@@ -125,6 +125,9 @@ describe("ReviewChangesDrawer", () => {
     setFlow([change({ decision: "accepted" })]);
     renderDrawer();
     expect(screen.queryByLabelText(/Name this version/)).toBeNull();
+    expect(
+      screen.getByText("Validate the 1 scenario affected before you save."),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Validate" }));
     expect(flow.onValidate).toHaveBeenCalled();
   });
@@ -173,6 +176,7 @@ describe("ReviewChangesDrawer", () => {
 
   it("names the scenarios a failed validation needs changed", () => {
     setFlow([change({ decision: "accepted" })], {
+      validationState: "failed",
       validationNote: "Validation failed. 2 scenarios need a change",
       failedScenarios: ["refund-a", "refund-b"],
     });

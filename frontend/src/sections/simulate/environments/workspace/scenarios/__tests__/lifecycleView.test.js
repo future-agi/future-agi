@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   citationState,
   countsLine,
+  isBeingValidated,
   isNotMeasured,
   isRunnable,
   lifecycleChip,
@@ -124,5 +125,33 @@ describe("isNotMeasured", () => {
         warning: "no_negative_control",
       }),
     ).toBe(false);
+  });
+});
+
+describe("isBeingValidated", () => {
+  const row = (state, key = "a") => ({
+    scenarioKey: key,
+    lifecycle: { state },
+  });
+  it("marks the named scenarios, or the ones not proved yet when none are named", () => {
+    expect(
+      isBeingValidated(row("active", "a"), {
+        job_id: "j",
+        scenario_keys: ["a"],
+      }),
+    ).toBe(true);
+    expect(
+      isBeingValidated(row("draft", "b"), {
+        job_id: "j",
+        scenario_keys: ["a"],
+      }),
+    ).toBe(false);
+    expect(
+      isBeingValidated(row("draft"), { job_id: "j", scenario_keys: null }),
+    ).toBe(true);
+    expect(
+      isBeingValidated(row("active"), { job_id: "j", scenario_keys: null }),
+    ).toBe(false);
+    expect(isBeingValidated(row("draft"), { job_id: null })).toBe(false);
   });
 });

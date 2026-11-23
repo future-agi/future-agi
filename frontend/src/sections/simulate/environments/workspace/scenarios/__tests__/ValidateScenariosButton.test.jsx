@@ -65,13 +65,11 @@ describe("ValidateScenariosButton", () => {
       await screen.findByText("Re-prove all 54 scenarios?"),
     ).toBeInTheDocument();
     expect(validateScenarios).not.toHaveBeenCalled();
-    await userEvent
-      .setup()
-      .click(
-        within(screen.getByRole("dialog")).getByRole("button", {
-          name: "Re-prove all",
-        }),
-      );
+    await userEvent.setup().click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Re-prove all",
+      }),
+    );
     await waitFor(() =>
       expect(validateScenarios).toHaveBeenCalledWith("env-1", {
         reproveAll: true,
@@ -94,6 +92,9 @@ describe("ValidateScenariosButton", () => {
     expect(
       await screen.findByRole("button", { name: "Validating 3 scenarios" }),
     ).toBeDisabled();
+    expect(
+      screen.getByText("Runs are blocked until it finishes."),
+    ).toBeInTheDocument();
     expect(getScenarioValidation).toHaveBeenCalledWith("env-1", "val-9");
     expect(validateScenarios).not.toHaveBeenCalled();
   });
@@ -124,5 +125,22 @@ describe("ValidateScenariosButton", () => {
         "Validation finished but recorded no results. Try again.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("says a validation that didn't finish changed nothing, and offers Try again", async () => {
+    getScenarioValidation.mockResolvedValue({
+      state: "failed",
+      message: "The sandbox ran out of time.",
+    });
+    renderButton();
+    await pressWhenReady("Validate cases not yet proved");
+    expect(
+      await screen.findByText(
+        "Validate didn't finish: The sandbox ran out of time. Nothing changed; scenarios keep their state.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Try again" }),
+    ).toBeEnabled();
   });
 });

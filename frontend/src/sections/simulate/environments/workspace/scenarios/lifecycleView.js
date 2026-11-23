@@ -61,6 +61,18 @@ export const wrongWayRows = (lifecycle) => {
   }));
 };
 
+const PROVED_OR_OUT = new Set(["active", "validated", "archived"]);
+
+// Whether a running validation (the running-validation answer) is proving this row. A press naming cases, or Re-prove
+// all, sends its keys; a plain Validate proves the cases not yet proved and sends only a count.
+// shortcut: for a plain Validate this reads "not proved yet" from the row; a key list from the server would be exact.
+export const isBeingValidated = (row, running) => {
+  if (!running?.job_id || !row?.lifecycle) return false;
+  if (running.scenario_keys)
+    return running.scenario_keys.includes(row.scenarioKey);
+  return !PROVED_OR_OUT.has(row.lifecycle.state);
+};
+
 // Proved, but a check reads evidence this agent doesn't give, so that part isn't measured when it runs.
 export const isNotMeasured = (lifecycle) =>
   lifecycle?.warning === "evidence_not_captured";

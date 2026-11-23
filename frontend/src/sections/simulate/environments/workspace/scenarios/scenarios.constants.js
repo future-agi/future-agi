@@ -94,6 +94,11 @@ export const LIFECYCLE_COPY = {
     noResults: "Validation finished but recorded no results. Try again.",
     elsewhere: "Another validation is running. Validate this one when it ends.",
     nothing: "Nothing to validate",
+    blocked: "Runs are blocked until it finishes.",
+    rowValidating: "Validating",
+    failed: (reason) =>
+      `Validate didn't finish${reason ? `: ${reason.replace(/\.$/, "")}` : ""}. Nothing changed; scenarios keep their state.`,
+    tryAgain: "Try again",
   },
   archive: {
     action: "Archive",

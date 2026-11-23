@@ -42,6 +42,7 @@ export default function PagedScenarioViews({
   showInspector,
   locked,
   rowHeight,
+  isValidating,
   readout,
   onOpen,
 }) {
@@ -140,6 +141,7 @@ export default function PagedScenarioViews({
             onTogglePage={onTogglePage}
             locked={locked}
             rowHeight={rowHeight}
+            isValidating={isValidating}
           />
         ) : (
           <GroupedScenarioList
@@ -295,6 +297,8 @@ PagedScenarioViews.propTypes = {
   showInspector: PropTypes.bool,
   locked: PropTypes.bool,
   rowHeight: PropTypes.string,
+  // (row) => whether a running validation is proving it.
+  isValidating: PropTypes.func,
   onOpen: PropTypes.func,
   // Set while a search, filter or hidden group narrows the list.
   readout: PropTypes.shape({

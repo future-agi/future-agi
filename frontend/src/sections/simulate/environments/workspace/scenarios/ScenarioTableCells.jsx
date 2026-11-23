@@ -46,7 +46,18 @@ export function NotMeasuredChip({ lifecycle }) {
 NotMeasuredChip.propTypes = { lifecycle: PropTypes.object };
 
 // A row's state as one small mark, its name and reason on hover. Active rows get none.
-export function LifecycleMark({ lifecycle }) {
+export function LifecycleMark({ lifecycle, validating = false }) {
+  if (validating) {
+    return (
+      <StatusBadge
+        status="validating"
+        role="info"
+        label={LIFECYCLE_COPY.validate.rowValidating}
+        size="sm"
+        dot={false}
+      />
+    );
+  }
   const chip = lifecycleChip(lifecycle);
   if (!chip) return <NotMeasuredChip lifecycle={lifecycle} />;
   const title = chip.hover ? `${chip.label}: ${chip.hover}` : chip.label;
@@ -67,7 +78,11 @@ export function LifecycleMark({ lifecycle }) {
     </Tooltip>
   );
 }
-LifecycleMark.propTypes = { lifecycle: PropTypes.object };
+LifecycleMark.propTypes = {
+  lifecycle: PropTypes.object,
+  // A running validation is proving this row.
+  validating: PropTypes.bool,
+};
 
 // "Unsaved" on a row the unsaved changes add or change; an added row also says
 // why it can't be selected.

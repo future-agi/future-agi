@@ -35,7 +35,7 @@ import {
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
 import { LIFECYCLE_COPY, SCENARIOS_COPY } from "./scenarios.constants";
-import { countsLine } from "./lifecycleView";
+import { countsLine, isBeingValidated } from "./lifecycleView";
 import ValidateScenariosButton from "./ValidateScenariosButton";
 import { DRAFTS_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
@@ -45,7 +45,10 @@ import {
   isScenarioSampleMode,
   SAMPLE_PAGE_SIZE,
 } from "src/api/simulate-environments/scenariosSampleMode";
-import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHooks";
+import {
+  useHarnessScenarios,
+  useRunningScenarioValidation,
+} from "src/api/simulate-environments/scenariosHooks";
 import { useDebounce } from "src/hooks/use-debounce";
 import useSelection from "./useSelection";
 import PagedScenarioViews from "./PagedScenarioViews";
@@ -308,6 +311,10 @@ export default function ScenariosStep({
 
   // Only versioned environments carry lifecycle counts; unversioned ones show no line and no State filter.
   const countsText = countsLine(pageData.proofCounts);
+  // The rows a running validation is proving read Validating.
+  const { data: runningValidation } = useRunningScenarioValidation(
+    pageData.proofCounts ? env?.id : null,
+  );
   // Every scenario not archived, which is what Re-prove all proves again.
   const reproveCount = pageData.proofCounts
     ? (pageData.proofCounts.proved ?? 0) +
@@ -721,6 +728,7 @@ export default function ScenariosStep({
                 onPageChange={setPage}
                 query={query}
                 filters={listFilters}
+                isValidating={(row) => isBeingValidated(row, runningValidation)}
                 groupBy={activeGroupBy}
                 locked={locked}
                 rowHeight={rowHeight}
