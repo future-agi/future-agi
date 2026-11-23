@@ -20,7 +20,7 @@ export default function ContractEditDialog({ edit, onClose, onConfirm }) {
       <ConfirmDialog
         open
         onClose={onClose}
-        title={E.removeTitle(list.noun, position)}
+        title={E.removeTitle(list.noun, list.id(position))}
         content={E.removeExplain(list.noun, edit.text)}
         action={
           <Button
@@ -47,7 +47,7 @@ export default function ContractEditDialog({ edit, onClose, onConfirm }) {
       title={
         edit.op === "add"
           ? E.addTitle(list.noun)
-          : E.editTitle(list.noun, position)
+          : E.editTitle(list.noun, list.id(position))
       }
       subTitle={E.explain}
       actionBtnTitle={E.submit}

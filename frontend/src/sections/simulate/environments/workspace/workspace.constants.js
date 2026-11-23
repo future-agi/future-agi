@@ -20,6 +20,7 @@ export const WORKSPACE_TABS = [
     id: "contract",
     label: "Contract",
     icon: "solar:document-text-linear",
+    hint: "The agent's rules and purpose, and how a conversation runs and is scored. Editing makes a new environment version; affected scenarios are marked Re-check.",
   },
   { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {

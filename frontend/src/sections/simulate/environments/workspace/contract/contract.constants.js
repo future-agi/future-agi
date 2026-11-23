@@ -39,21 +39,24 @@ export const CONTRACT_COPY = {
     cutLabel: "It's cut off",
     cutBlurb: "A limit stops the conversation before it's over.",
     cutNone: "No limits recorded yet.",
-    turns: (n) => `${n} ${n === 1 ? "turn" : "turns"}`,
+    turns: (n) => `${n} agent ${n === 1 ? "turn" : "turns"}`,
     turnsNote:
       "The most turns across the suite. Each scenario can carry its own limit.",
     durationNote: "The longest the whole run can take.",
     timeLabel: (mode) => `Time · ${mode}`,
+    clockMode: { stepped: "Turn by turn", "real-time": "Real time" },
     clockNote: {
-      "real-time": "Real time: the voice call runs as it happens.",
-      stepped: "Stepped: the chat moves forward one turn at a time.",
+      "real-time":
+        "Pauses and slow replies are part of the test, so time runs as it would on a real call.",
+      stepped:
+        "The world only moves when the agent acts, so a slow model isn't marked down for being slow.",
     },
     clockNoteDefault: "How time is measured in a run.",
-    seedValue: (value) => `World seed · ${value}`,
-    seedControls: (controls) =>
+    seedTitle: "Same starting data every time",
+    seedNote: (value, controls) =>
       controls.includes("scenario_world_rng")
-        ? "Controls how the world's records are set up at the start of each run. It does not make conversations or results repeat exactly."
-        : "What this seed controls was not reported. It does not make conversations or results repeat exactly.",
+        ? `Every conversation starts from the same data (seed ${value}). The caller's turns and the agent's replies can still differ between runs.`
+        : `Every conversation starts from the same seed (${value}). What else it controls was not reported, so results may still differ between runs.`,
     notAuthored: "Not authored yet",
     // A built environment's build writes them; a template or fork is never built.
     notAuthoredBuilt:
@@ -130,6 +133,9 @@ export const CONTRACT_LISTS_COPY = {
     empty: "No rules yet.",
     add: "Add rule",
     id: (n) => `R${n}`,
+    idWidth: "36px",
+    idWeight: 600,
+    textWeight: 600,
     noun: "rule",
     field: "Rule",
   },
@@ -139,10 +145,16 @@ export const CONTRACT_LISTS_COPY = {
     empty: "No use cases yet.",
     add: "Add use case",
     id: (n) => `U${n}`,
+    idWidth: "72px",
+    idWeight: 400,
+    textWeight: 400,
     noun: "use case",
     field: "Use case",
   },
   rowActions: (noun, n) => `Actions for ${noun} ${n}`,
+  coverage: (subGoals, scenarios) =>
+    `${subGoals} ${subGoals === 1 ? "sub-goal" : "sub-goals"} · ${scenarios} ${scenarios === 1 ? "scenario" : "scenarios"}`,
+  notTested: "Not tested",
   edit: "Edit",
   remove: "Remove",
   busy: "The builder is busy. Try again once it finishes.",
@@ -150,9 +162,9 @@ export const CONTRACT_LISTS_COPY = {
 };
 
 export const CONTRACT_EDIT_COPY = {
-  addTitle: (noun) => `Add a ${noun}`,
-  editTitle: (noun, n) => `Edit ${noun} ${n}`,
-  removeTitle: (noun, n) => `Remove ${noun} ${n}`,
+  addTitle: (noun) => `Add ${noun}`,
+  editTitle: (noun, id) => `Edit ${noun} ${id}`,
+  removeTitle: (noun, id) => `Remove ${noun} ${id}`,
   explain:
     "This asks the builder to make the change. It lands as a draft that you save as a new environment version, and the scenarios that depend on it are checked again.",
   removeExplain: (noun, text) =>

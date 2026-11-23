@@ -12,9 +12,16 @@ export function Part({ n, title, blurb, children }) {
         <Stack direction="row" alignItems="center" spacing={1.25}>
           <Box
             sx={{
-              width: 20, height: 18, borderRadius: "4px", display: "grid", placeItems: "center", flexShrink: 0,
-              color: "text.secondary", bgcolor: "action.selected",
-              typography: "s3", fontWeight: 500,
+              width: 20,
+              height: 18,
+              borderRadius: "4px",
+              display: "grid",
+              placeItems: "center",
+              flexShrink: 0,
+              color: "text.secondary",
+              bgcolor: "action.selected",
+              typography: "s3",
+              fontWeight: 500,
             }}
           >
             {n}
@@ -40,7 +47,11 @@ export function Label({ children }) {
   return (
     <Typography
       sx={{
-        typography: "s1", fontWeight: 500, color: "text.secondary", mb: 1,
+        typography: "s3",
+        fontWeight: 600,
+        color: "text.tertiary",
+        letterSpacing: 0.4,
+        mb: 1,
       }}
     >
       {children}

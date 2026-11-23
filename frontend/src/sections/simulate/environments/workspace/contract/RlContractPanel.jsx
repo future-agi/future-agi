@@ -9,7 +9,6 @@ import { WORKSPACE_COPY } from "../workspace.constants";
 import { Label } from "./ContractPart";
 import ContractListCard from "./ContractListCard";
 import ContractEditDialog from "./ContractEditDialog";
-import { SubGoalsCard } from "./ContractFactsCards";
 import { contractInstruction } from "./contractInstructions";
 import {
   CONTRACT_COPY,
@@ -47,12 +46,12 @@ function realEpisode(env) {
     cutOff: [...reasonRows(ec.truncate_reasons), ...cutOff],
     seed: ec.seed
       ? {
-          title: EC.seedValue(ec.seed.value),
-          note: EC.seedControls(ec.seed.controls || []),
+          title: EC.seedTitle,
+          note: EC.seedNote(ec.seed.value, ec.seed.controls || []),
         }
       : null,
     clock: {
-      mode: ec.clock || "-",
+      mode: EC.clockMode[ec.clock] || ec.clock || "-",
       note: EC.clockNote[ec.clock] || EC.clockNoteDefault,
     },
   };
@@ -63,6 +62,8 @@ export default function RlContractPanel({
   backed = false,
   locked = false,
   chat = null,
+  scenarios = [],
+  onGo,
 }) {
   const { canEdit } = useSimulationAccess();
   const [editing, setEditing] = useState(null);
@@ -71,6 +72,18 @@ export default function RlContractPanel({
   const useCases = (env?.useCases || []).map(String).filter(Boolean);
 
   const showActions = !locked && typeof chat?.send === "function";
+  const coverageOf = (text) => {
+    const subGoal = (env?.ruleDetails || []).find(
+      (detail) => detail?.text === text,
+    )?.sub_goal;
+    if (!subGoal) return { subGoals: 0, scenarios: 0 };
+    return {
+      subGoals: 1,
+      scenarios: scenarios.filter((row) =>
+        (row?.subTasks || []).some((task) => task.id === subGoal),
+      ).length,
+    };
+  };
   const blockedReason = !canEdit
     ? WORKSPACE_COPY.viewer.edit
     : !chat?.live
@@ -95,7 +108,8 @@ export default function RlContractPanel({
       <ContractListCard
         list={CONTRACT_LISTS_COPY.rules}
         items={rules}
-        details={env?.ruleDetails}
+        coverageOf={coverageOf}
+        onGo={onGo}
         showActions={showActions}
         blockedReason={blockedReason}
         onAdd={() => open("rule", "add")()}
@@ -108,7 +122,6 @@ export default function RlContractPanel({
         <ContractListCard
           list={CONTRACT_LISTS_COPY.useCases}
           items={useCases}
-          details={env?.useCaseDetails}
           showActions={showActions}
           blockedReason={blockedReason}
           onAdd={() => open("useCase", "add")()}
@@ -118,11 +131,9 @@ export default function RlContractPanel({
         />
       )}
 
-      <SubGoalsCard subGoals={env?.subGoals} sx={{ mb: 2 }} />
-
-      <SectionCard title={EC.title} subtitle={EC.subtitle} sx={{ mb: 2 }}>
+      <SectionCard roomy title={EC.title} subtitle={EC.subtitle} sx={{ mb: 2 }}>
         {!episode ? (
-          <Box sx={{ p: 1.5 }}>
+          <Box sx={{ px: 2.5, py: 1.75 }}>
             <Typography sx={{ typography: "s1", fontWeight: 500 }}>
               {EC.notAuthored}
             </Typography>
@@ -137,7 +148,7 @@ export default function RlContractPanel({
                 display: "grid",
                 gap: "1px",
                 gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
-                bgcolor: "divider",
+                bgcolor: "action.selected",
               }}
             >
               <EndingColumn
@@ -153,66 +164,17 @@ export default function RlContractPanel({
                 none={EC.cutNone}
               />
             </Box>
-            <Stack
-              direction="row"
-              spacing={1.5}
-              alignItems="flex-start"
-              sx={{
-                px: 1.5,
-                py: 1.25,
-                borderTop: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              <Iconify
-                icon="solar:clock-circle-linear"
-                width={16}
-                sx={{ color: "text.tertiary", flexShrink: 0, mt: "1px" }}
-              />
-              <Box>
-                <Typography sx={{ typography: "s1", fontWeight: 500 }}>
-                  {EC.timeLabel(episode.clock.mode)}
-                </Typography>
-                <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-                  {episode.clock.note}
-                </Typography>
-              </Box>
-            </Stack>
+            <FooterRow
+              icon="solar:clock-circle-linear"
+              title={EC.timeLabel(episode.clock.mode)}
+              note={episode.clock.note}
+            />
             {episode.seed && (
-              <Stack
-                direction="row"
-                spacing={1.5}
-                alignItems="flex-start"
-                sx={{
-                  px: 1.5,
-                  py: 1.25,
-                  borderTop: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <Iconify
-                  icon="solar:dice-linear"
-                  width={16}
-                  sx={{ color: "text.tertiary", flexShrink: 0, mt: "1px" }}
-                />
-                <Box minWidth={0}>
-                  <Typography
-                    sx={{
-                      typography: "s1",
-                      fontWeight: 500,
-                      overflowWrap: "anywhere",
-                      userSelect: "text",
-                    }}
-                  >
-                    {episode.seed.title}
-                  </Typography>
-                  <Typography
-                    sx={{ typography: "s1", color: "text.secondary" }}
-                  >
-                    {episode.seed.note}
-                  </Typography>
-                </Box>
-              </Stack>
+              <FooterRow
+                icon="solar:dice-linear"
+                title={episode.seed.title}
+                note={episode.seed.note}
+              />
             )}
           </>
         )}
@@ -229,9 +191,40 @@ export default function RlContractPanel({
   );
 }
 
+function FooterRow({ icon, title, note }) {
+  return (
+    <Stack
+      direction="row"
+      spacing={1.75}
+      alignItems="flex-start"
+      sx={{ px: 2.5, py: 1.75, borderTop: "1px solid", borderColor: "divider" }}
+    >
+      <Iconify
+        icon={icon}
+        width={16}
+        sx={{ color: "text.tertiary", flexShrink: 0, mt: "1px" }}
+      />
+      <Box minWidth={0}>
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          {title}
+        </Typography>
+        <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+          {note}
+        </Typography>
+      </Box>
+    </Stack>
+  );
+}
+
+FooterRow.propTypes = {
+  icon: PropTypes.string.isRequired,
+  title: PropTypes.string.isRequired,
+  note: PropTypes.string.isRequired,
+};
+
 function EndingColumn({ label, blurb, rows, none }) {
   return (
-    <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
+    <Box sx={{ p: 2.5, bgcolor: "background.paper" }}>
       <Label>{label}</Label>
       <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 1.25 }}>
         {blurb}
@@ -244,7 +237,7 @@ function EndingColumn({ label, blurb, rows, none }) {
         <Stack spacing={1}>
           {rows.map((row) => (
             <Box key={row.when}>
-              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
                 {row.when}
               </Typography>
               {row.note && (
@@ -291,6 +284,8 @@ RlContractPanel.propTypes = {
   }).isRequired,
   backed: PropTypes.bool,
   locked: PropTypes.bool,
+  scenarios: PropTypes.arrayOf(PropTypes.object),
+  onGo: PropTypes.func,
   chat: PropTypes.shape({
     send: PropTypes.func,
     busy: PropTypes.bool,

@@ -1,7 +1,16 @@
 import PropTypes from "prop-types";
 import { Box, Stack, Typography } from "@mui/material";
 
-export default function SectionCard({ title, subtitle, action, children, sx, dense, wrap }) {
+export default function SectionCard({
+  title,
+  subtitle,
+  action,
+  children,
+  sx,
+  dense,
+  wrap,
+  roomy,
+}) {
   return (
     <Box
       sx={{
@@ -21,9 +30,9 @@ export default function SectionCard({ title, subtitle, action, children, sx, den
           spacing={wrap ? 0 : 2}
           sx={{
             ...(wrap && { flexWrap: "wrap", columnGap: 2, rowGap: 1.25 }),
-            px: 1.5,
-            py: dense ? 0.5 : 0.75,
-            minHeight: 36,
+            px: roomy ? 2.5 : 1.5,
+            py: roomy ? 1.75 : dense ? 0.5 : 0.75,
+            minHeight: roomy ? 0 : 36,
             borderBottom: "1px solid",
             borderColor: "divider",
           }}
@@ -35,11 +44,20 @@ export default function SectionCard({ title, subtitle, action, children, sx, den
               producing invalid DOM — a div child inside a <p> triggers
               a browser auto-close and a hydration warning.
             */}
-            <Typography component="div" sx={{ typography: "s1_2", fontWeight: 500 }}>
+            <Typography
+              component="div"
+              sx={{
+                typography: roomy ? "s1" : "s1_2",
+                fontWeight: roomy ? 600 : 500,
+              }}
+            >
               {title}
             </Typography>
             {subtitle && (
-              <Typography component="div" sx={{ typography: "s3", color: "text.subtitle" }}>
+              <Typography
+                component="div"
+                sx={{ typography: roomy ? "s2" : "s3", color: "text.subtitle" }}
+              >
                 {subtitle}
               </Typography>
             )}
@@ -52,6 +70,12 @@ export default function SectionCard({ title, subtitle, action, children, sx, den
   );
 }
 SectionCard.propTypes = {
-  title: PropTypes.node, subtitle: PropTypes.node, action: PropTypes.node,
-  children: PropTypes.node, sx: PropTypes.object, dense: PropTypes.bool, wrap: PropTypes.bool,
+  roomy: PropTypes.bool,
+  title: PropTypes.node,
+  subtitle: PropTypes.node,
+  action: PropTypes.node,
+  children: PropTypes.node,
+  sx: PropTypes.object,
+  dense: PropTypes.bool,
+  wrap: PropTypes.bool,
 };

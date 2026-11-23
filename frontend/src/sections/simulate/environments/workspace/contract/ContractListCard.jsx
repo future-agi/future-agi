@@ -1,81 +1,98 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
 import {
   Box,
   Button,
+  ButtonBase,
   IconButton,
-  ListItemIcon,
-  Menu,
-  MenuItem,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import OriginChip from "../../components/OriginChip";
 import SectionCard from "../../components/SectionCard";
 import ViewerLock from "../../components/ViewerLock";
-import {
-  CONTRACT_LISTS_COPY as L,
-  MONO_FONT,
-  RULE_DETAIL_COPY,
-} from "./contract.constants";
+import { CONTRACT_LISTS_COPY as L, MONO_FONT } from "./contract.constants";
 
-const detailFor = (details, text) => {
-  const matches = (details || []).filter((detail) => detail?.text === text);
-  return matches.length === 1 ? matches[0] : null;
-};
-
-function ItemText({ text, detail }) {
-  const meta = [
-    detail?.enforced_by?.length
-      ? RULE_DETAIL_COPY.enforcedBy(detail.enforced_by)
-      : null,
-    detail?.sub_goal ? RULE_DETAIL_COPY.checkedBy(detail.sub_goal) : null,
-  ].filter(Boolean);
+function Coverage({ coverage, onGo }) {
+  if (!coverage) return <span />;
+  const tested = coverage.subGoals > 0;
   return (
-    <Box sx={{ minWidth: 0 }}>
-      {detail?.short && (
-        <Typography
-          sx={{
-            typography: "s1",
-            fontWeight: 500,
-            fontFamily: MONO_FONT,
-            overflowWrap: "anywhere",
-          }}
-        >
-          {detail.short}
-        </Typography>
-      )}
+    <ButtonBase
+      onClick={() => onGo?.("scenarios")}
+      sx={{
+        borderRadius: "4px",
+        px: 0.5,
+        mx: -0.5,
+        "&:hover": { bgcolor: "action.hover" },
+      }}
+    >
       <Typography
+        noWrap
         sx={{
-          typography: detail?.short ? "s3" : "s1",
-          color: detail?.short ? "text.secondary" : "text.primary",
+          typography: "s3",
+          color: tested ? "text.secondary" : "text.disabled",
+          fontVariantNumeric: "tabular-nums",
         }}
       >
-        {text}
+        {tested
+          ? L.coverage(coverage.subGoals, coverage.scenarios)
+          : L.notTested}
       </Typography>
-      {meta.length > 0 && (
-        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}>
-          {meta.join(" · ")}
-        </Typography>
-      )}
-    </Box>
+    </ButtonBase>
   );
 }
 
-ItemText.propTypes = {
-  text: PropTypes.string.isRequired,
-  detail: PropTypes.shape({
-    short: PropTypes.string,
-    enforced_by: PropTypes.arrayOf(PropTypes.string),
-    sub_goal: PropTypes.string,
+Coverage.propTypes = {
+  coverage: PropTypes.shape({
+    subGoals: PropTypes.number,
+    scenarios: PropTypes.number,
   }),
+  onGo: PropTypes.func,
+};
+
+function RowActions({ label, blockedReason, onEdit, onRemove }) {
+  const blocked = Boolean(blockedReason);
+  const action = (icon, title, onClick) => (
+    <ViewerLock locked={blocked} title={blockedReason || title}>
+      <Tooltip arrow title={blocked ? "" : title}>
+        <span>
+          <IconButton
+            size="small"
+            aria-label={`${title} ${label}`}
+            disabled={blocked}
+            onClick={onClick}
+          >
+            <Iconify icon={icon} width={16} />
+          </IconButton>
+        </span>
+      </Tooltip>
+    </ViewerLock>
+  );
+  return (
+    <Stack
+      direction="row"
+      spacing={0.25}
+      className="row-edit"
+      sx={{ opacity: 0.6, transition: "opacity 120ms", alignSelf: "center" }}
+    >
+      {action("solar:pen-linear", L.edit, onEdit)}
+      {action("solar:trash-bin-minimalistic-linear", L.remove, onRemove)}
+    </Stack>
+  );
+}
+
+RowActions.propTypes = {
+  label: PropTypes.string.isRequired,
+  blockedReason: PropTypes.string,
+  onEdit: PropTypes.func.isRequired,
+  onRemove: PropTypes.func.isRequired,
 };
 
 export default function ContractListCard({
   list,
   items,
-  details,
+  coverageOf,
+  onGo,
   showActions = false,
   blockedReason = null,
   onAdd,
@@ -84,8 +101,17 @@ export default function ContractListCard({
   sx,
 }) {
   const blocked = Boolean(blockedReason);
+  const columns = [
+    list.idWidth,
+    "minmax(0, 1fr)",
+    coverageOf ? "auto" : null,
+    showActions ? "auto" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <SectionCard
+      roomy
       title={list.title(items.length)}
       subtitle={list.subtitle}
       sx={sx}
@@ -106,144 +132,73 @@ export default function ContractListCard({
         ) : null
       }
     >
-      {items.length === 0 ? (
-        <Box sx={{ px: 1.5, py: 1.25 }}>
-          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-            {list.empty}
-          </Typography>
-        </Box>
-      ) : (
-        <Stack
-          divider={
-            <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
-          }
-        >
-          {items.map((text, index) => {
-            const detail = detailFor(details, text);
-            const origin = detail?.origin;
-            return (
-              <Box
-                key={`${index}:${text}`}
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: [
-                    "40px",
-                    "minmax(0, 1fr)",
-                    origin ? "auto" : null,
-                    showActions ? "auto" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" "),
-                  columnGap: 1.5,
-                  alignItems: "center",
-                  px: 1.5,
-                  py: 1,
-                }}
-              >
-                <Typography
-                  sx={{
-                    typography: "s3",
-                    fontFamily: MONO_FONT,
-                    fontWeight: 500,
-                    color: "text.tertiary",
-                  }}
-                >
-                  {list.id(index + 1)}
-                </Typography>
-                <ItemText text={text} detail={detail} />
-                {origin && (
-                  <OriginChip
-                    origin={origin.kind}
-                    file={origin.path || origin.field}
-                    line={origin.line}
-                  />
-                )}
-                {showActions && (
-                  <RowMenu
-                    label={L.rowActions(list.noun, index + 1)}
-                    blockedReason={blockedReason}
-                    onEdit={() => onEdit(index, text)}
-                    onRemove={() => onRemove(index, text)}
-                  />
-                )}
-              </Box>
-            );
-          })}
-        </Stack>
-      )}
+      <Stack
+        divider={
+          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+        }
+      >
+        {items.map((text, index) => (
+          <Box
+            key={`${index}:${text}`}
+            sx={{
+              display: "grid",
+              gridTemplateColumns: columns,
+              columnGap: 1.5,
+              alignItems: "baseline",
+              px: 2.5,
+              py: 1.25,
+              "&:hover .row-edit": { opacity: 1 },
+            }}
+          >
+            <Typography
+              sx={{
+                typography: "s3",
+                fontFamily: MONO_FONT,
+                fontWeight: list.idWeight,
+                color: "text.tertiary",
+              }}
+            >
+              {list.id(index + 1)}
+            </Typography>
+            <Typography
+              sx={{
+                typography: "s2",
+                fontWeight: list.textWeight,
+                minWidth: 0,
+              }}
+            >
+              {text}
+            </Typography>
+            {coverageOf && <Coverage coverage={coverageOf(text)} onGo={onGo} />}
+            {showActions && (
+              <RowActions
+                label={`${list.noun} ${list.id(index + 1)}`}
+                blockedReason={blockedReason}
+                onEdit={() => onEdit(index, text)}
+                onRemove={() => onRemove(index, text)}
+              />
+            )}
+          </Box>
+        ))}
+      </Stack>
     </SectionCard>
   );
 }
-
-function RowMenu({ label, blockedReason, onEdit, onRemove }) {
-  const [anchor, setAnchor] = useState(null);
-  const blocked = Boolean(blockedReason);
-  const pick = (fn) => () => {
-    setAnchor(null);
-    fn();
-  };
-  return (
-    <>
-      <ViewerLock locked={blocked} title={blockedReason || label}>
-        <IconButton
-          size="small"
-          aria-label={label}
-          disabled={blocked}
-          onClick={(e) => setAnchor(e.currentTarget)}
-        >
-          <Iconify icon="solar:menu-dots-bold" width={16} />
-        </IconButton>
-      </ViewerLock>
-      <Menu
-        anchorEl={anchor}
-        open={Boolean(anchor)}
-        onClose={() => setAnchor(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-        transformOrigin={{ vertical: "top", horizontal: "right" }}
-      >
-        <MenuItem onClick={pick(onEdit)}>
-          <ListItemIcon>
-            <Iconify icon="solar:pen-linear" width={16} />
-          </ListItemIcon>
-          {L.edit}
-        </MenuItem>
-        <MenuItem onClick={pick(onRemove)}>
-          <ListItemIcon>
-            <Iconify icon="solar:trash-bin-minimalistic-linear" width={16} />
-          </ListItemIcon>
-          {L.remove}
-        </MenuItem>
-      </Menu>
-    </>
-  );
-}
-
-RowMenu.propTypes = {
-  label: PropTypes.string.isRequired,
-  blockedReason: PropTypes.string,
-  onEdit: PropTypes.func.isRequired,
-  onRemove: PropTypes.func.isRequired,
-};
 
 ContractListCard.propTypes = {
   list: PropTypes.shape({
     title: PropTypes.func.isRequired,
     subtitle: PropTypes.string,
-    empty: PropTypes.string,
     add: PropTypes.string,
     id: PropTypes.func.isRequired,
+    idWidth: PropTypes.string.isRequired,
+    idWeight: PropTypes.number.isRequired,
+    textWeight: PropTypes.number.isRequired,
     noun: PropTypes.string,
   }).isRequired,
   items: PropTypes.arrayOf(PropTypes.string).isRequired,
-  details: PropTypes.arrayOf(
-    PropTypes.shape({
-      text: PropTypes.string,
-      short: PropTypes.string,
-      origin: PropTypes.object,
-      enforced_by: PropTypes.arrayOf(PropTypes.string),
-      sub_goal: PropTypes.string,
-    }),
-  ),
+  coverageOf: PropTypes.func,
+  onGo: PropTypes.func,
   showActions: PropTypes.bool,
   blockedReason: PropTypes.string,
   onAdd: PropTypes.func,
