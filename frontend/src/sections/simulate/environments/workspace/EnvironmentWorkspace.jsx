@@ -49,6 +49,7 @@ import { gapsByTab, counts } from "./helpers/workspaceGaps";
 import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
+import useSimulationAccess from "../hooks/useSimulationAccess";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -131,6 +132,7 @@ export default function EnvironmentWorkspace() {
     clearError: clearCreditError,
   } = useCreditExhaustion({ feature: "hosted_harness" });
   const chat = useWorkspaceChat(env, { source });
+  const { canRun: roleCanRun } = useSimulationAccess();
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
@@ -470,13 +472,17 @@ export default function EnvironmentWorkspace() {
 
   // A backed env's run gate reads the server scenario count, not the seeded
   // client list, which keeps the count from first load.
-  const runnable = canRunHeader(
-    source,
-    env,
-    backedScenarioCount != null
-      ? !!envState.agent && backedScenarioCount > 0
-      : canRun,
-  );
+  const runnable =
+    roleCanRun &&
+    canRunHeader(
+      source,
+      env,
+      backedScenarioCount != null
+        ? !!envState.agent && backedScenarioCount > 0
+        : canRun,
+    );
+  const runReason = (reason) =>
+    roleCanRun ? reason : WORKSPACE_COPY.viewer.run;
 
   // A scenario selection on the Scenarios tab owns the primary Run — the header
   // yields its Run/Repeats while one is active ("one primary at a time").
@@ -579,16 +585,16 @@ export default function EnvironmentWorkspace() {
         env={displayEnv}
         envState={envState}
         canRun={runnable && !runMutation.isPending && !detailBlock}
-        runBlockedReason={
+        runBlockedReason={runReason(
           detailBlock ||
-          blockedReason(
-            envState,
-            env,
-            backed,
-            runMutation.isPending,
-            backedScenarioCount,
-          )
-        }
+            blockedReason(
+              envState,
+              env,
+              backed,
+              runMutation.isPending,
+              backedScenarioCount,
+            ),
+        )}
         locked={locked}
         backed={source === "harness"}
         onFork={onFork}
@@ -675,13 +681,16 @@ export default function EnvironmentWorkspace() {
               overviewWorld={overviewWorld}
               graphData={graphData}
               onStartRun={startRun}
+              runDialogOpen={Boolean(runDialog)}
               canRun={runnable && !runMutation.isPending}
-              runBlockedReason={blockedReason(
-                envState,
-                env,
-                backed,
-                runMutation.isPending,
-                backedScenarioCount,
+              runBlockedReason={runReason(
+                blockedReason(
+                  envState,
+                  env,
+                  backed,
+                  runMutation.isPending,
+                  backedScenarioCount,
+                ),
               )}
             />
           )}

@@ -133,6 +133,7 @@ def evidence_settings(settings, tmp_path, monkeypatch):
     settings.INSIGHTS_EVIDENCE_SECRET_PREVIOUS = ""
     settings.INSIGHTS_EVIDENCE_STORE = "local"
     settings.INSIGHTS_EVIDENCE_BUCKET = ""
+    settings.INSIGHTS_EVIDENCE_STORAGE_BACKEND = ""
     settings.INSIGHTS_EVIDENCE_CACHE_DIR = str(tmp_path / "cache")
     settings.INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = 2 * 1024**3
     settings.INSIGHTS_EVIDENCE_FETCH_EXTERNAL_MEDIA = False
@@ -141,6 +142,7 @@ def evidence_settings(settings, tmp_path, monkeypatch):
     cache.clear()
     evidence_store._recent.clear()
     evidence_store._checked_buckets.clear()
+    evidence_store._evidence_gcs_client.cache_clear()
     # Sweeps only when a test says so: a bucket's sweep would otherwise run
     # on a thread that may outlive the test's fakes.
     monkeypatch.setattr(evidence_store, "_swept_at", time.time() + 3600)
@@ -248,6 +250,72 @@ class TestConfiguration:
         assert broker.configured()
         settings.INSIGHTS_EVIDENCE_STORE = "s3"
         assert evidence_store.configuration_error() == "unknown_backend"
+
+    def test_the_bucket_may_be_on_gcs_while_uploads_stay_on_s3(
+        self, storage, settings, world, monkeypatch
+    ):
+        evidence_bucket = FakeStorage()
+        monkeypatch.setattr(
+            evidence_store, "_evidence_gcs_client", lambda: evidence_bucket
+        )
+        settings.INSIGHTS_EVIDENCE_STORAGE_BACKEND = "gcs"
+        monkeypatch.delenv("GCS_HMAC_ACCESS_KEY", raising=False)
+        monkeypatch.setenv("GCS_HMAC_SECRET_KEY", "secret")
+        assert evidence_store.configuration_error() == "gcs_keys_unset"
+        assert not broker.configured()
+
+        monkeypatch.setenv("GCS_HMAC_ACCESS_KEY", "GOOG1-test")
+        assert evidence_store.configuration_error() is None
+        store().put(RUN_ID, "17", broker.build(world.run, row(17, "T1")))
+        name = object_name(RUN_ID, "17")
+        # GCS encrypts at rest and takes no S3 encryption header.
+        assert evidence_bucket.uploads[(BUCKET, name)]["sse"] is None
+        assert store().get(RUN_ID, "17") is not None
+        # The platform's own storage (S3 here) is never asked.
+        assert storage.calls == [] and not storage.objects
+
+    def test_the_bucket_follows_the_platform_unless_told_gcs(
+        self, storage, settings, world, monkeypatch
+    ):
+        from tfc.utils import storage_client
+
+        def never():
+            raise AssertionError("the platform's own client serves this bucket")
+
+        monkeypatch.setattr(evidence_store, "_evidence_gcs_client", never)
+        settings.INSIGHTS_EVIDENCE_STORE = "object"
+        settings.INSIGHTS_EVIDENCE_BUCKET = BUCKET
+        # Naming the platform's own storage is the same as naming none.
+        for override in ("", "S3 "):
+            settings.INSIGHTS_EVIDENCE_STORAGE_BACKEND = override
+            assert evidence_store.configuration_error() is None
+            store().put(RUN_ID, "17", broker.build(world.run, row(17, "T1")))
+        assert (BUCKET, object_name(RUN_ID, "17")) in storage.objects
+
+        monkeypatch.setattr(storage_client, "STORAGE_BACKEND", "gcs")
+        settings.INSIGHTS_EVIDENCE_STORAGE_BACKEND = "gcs"
+        assert evidence_store.configuration_error() is None
+        assert store()._client() is storage
+
+        # Only GCS has keys apart from the platform's own.
+        monkeypatch.setattr(storage_client, "STORAGE_BACKEND", "s3")
+        for override in ("minio", "azure"):
+            settings.INSIGHTS_EVIDENCE_STORAGE_BACKEND = override
+            assert evidence_store.configuration_error() == "unknown_storage_backend"
+
+    def test_the_gcs_client_never_looks_up_the_buckets_location(self, monkeypatch):
+        # storage.objectAdmin may not read a bucket's location: a client left
+        # to look it up is refused before it reads or writes anything. The
+        # platform's MINIO_REGION is its S3 region there, never GCS's.
+        monkeypatch.setenv("GCS_HMAC_ACCESS_KEY", "GOOG1-test")
+        monkeypatch.setenv("GCS_HMAC_SECRET_KEY", "secret")
+        monkeypatch.setenv("MINIO_REGION", "us-east-2")
+        client = evidence_store._evidence_gcs_client()
+        assert client._base_url.host == "storage.googleapis.com"
+        assert client._base_url.is_https
+        assert client._base_url.region == "auto"
+        assert client._get_region(BUCKET) == "auto"
+        assert evidence_store._evidence_gcs_client() is client
 
     def test_a_bucket_whose_policy_lets_anyone_in_is_refused(self, storage, world):
         built = broker.build(world.run, row(17, "T1"))

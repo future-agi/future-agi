@@ -72,6 +72,7 @@
     "@tanstack/react-virtual": "^3.13.23",
     "@textea/json-viewer": "^4.0.1",
     "@xyflow/react": "^12.8.4",
+    "acorn": "^8.14.0",
     "ag-grid-enterprise": "35.0.0",
     "ag-grid-react": "35.0.0",
     "apexcharts": "^3.45.1",

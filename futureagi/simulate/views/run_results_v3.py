@@ -49,6 +49,7 @@ from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
+from simulate.services.harness_versioning.versions import actors_enabled
 from simulate.services.run_call_match import MATCH_FILTERS
 from simulate.services.run_dashboard_v3 import GOAL_OUTCOMES
 from simulate.services.run_results_v3 import (
@@ -668,6 +669,10 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
         "started it and the person never spoke."
     )
     trial_state = TrialStateSerializer(allow_null=True)
+    actors_enabled = serializers.BooleanField(
+        help_text="Whether actors, test conditions and the World changes record are on for this deployment; false "
+        "hides the World changes view."
+    )
     comparable = serializers.BooleanField(
         help_text="False when the trial did not start from the seeded records; it is then left out of "
         "repeatability, pass^k and run comparisons."
@@ -696,6 +701,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
             "participants",
             "has_customer",
             "trial_state",
+            "actors_enabled",
             "comparable",
             "not_comparable_reason",
             "scoring_status",
@@ -1000,6 +1006,7 @@ def build_call_execution_detail(
             "has_customer": has_customer(data["transcript"]),
             # Attempted, refused and committed per participant, and what each actor chose: kept apart.
             "trial_state": trial_state(call, calls=calls),
+            "actors_enabled": actors_enabled(),
             **comparability(call),
             "scoring_status": normalized["scoring_status"],
             "csat_status": normalized["csat_status"],

@@ -24,6 +24,10 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
+from simulate.services.call_provider import (
+    call_agent_provider,
+    call_agent_provider_expression,
+)
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_scenarios import (
     authored_scenarios_for_calls,
@@ -232,15 +236,6 @@ def call_outcome(
     if "passed" in verdicts:
         return "passed"
     return "inconclusive"
-
-
-def _provider(call: CallExecution) -> str | None:
-    if isinstance(call.provider_call_data, dict):
-        for name, payload in call.provider_call_data.items():
-            if isinstance(payload, dict) and payload:
-                return str(name)
-    agent = call.test_execution.agent_definition
-    return getattr(agent, "provider", None) if agent else None
 
 
 def function_calls(call: CallExecution) -> list[dict[str, Any]]:
@@ -822,6 +817,7 @@ def build_call_rows(
     if calls is None:
         calls = list(
             CallExecution.objects.filter(test_execution=execution)
+            .annotate(result_provider=call_agent_provider_expression())
             .select_related("scenario", "test_execution__agent_definition")
             .order_by("-updated_at")
         )
@@ -956,7 +952,7 @@ def build_call_rows(
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),
                 "modality": call.simulation_call_type,
-                "provider": _provider(call),
+                "provider": call_agent_provider(call),
                 "started_at": call.started_at,
                 "completed_at": call.completed_at,
                 "duration_seconds": call.duration_seconds,

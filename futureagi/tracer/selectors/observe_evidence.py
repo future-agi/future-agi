@@ -29,7 +29,9 @@ from tracer.utils.pii_scrubber import STRADDLE_CHARS, cut_clear
 
 logger = structlog.get_logger(__name__)
 
-SourceKind = Literal["session", "call"]
+# A "trace" is one trace with no conversation root, read as one exchange: an SDK
+# agent's trace that has no session.
+SourceKind = Literal["session", "call", "trace"]
 # What a label was given to: the whole session, one trace, or one span.
 # "row": a dataset row's label column.
 LabelTarget = Literal["session", "trace", "span", "row"]
@@ -119,8 +121,8 @@ def observe_evidence(
 ) -> dict[str, SourceEvidence]:
     """Evidence for each id asked that the project still holds, keyed by that
     id as given. An id is absent when nothing of it is retained in the project,
-    or when it names a trace that is not a call: a trace is never read as
-    another kind of source."""
+    or when it names a trace of the other kind (a call has a conversation root,
+    a trace has none): a trace is never read as another kind of source."""
     from tracer.services.clickhouse.v2 import get_reader
 
     project_id = str(project.id)
@@ -131,12 +133,13 @@ def observe_evidence(
                 list(asked.values()), project_id=project_id
             )
         else:
+            call = source_kind == "call"
             roots = [
                 root
                 for root in reader.roots_by_trace_ids(
-                    list(asked.values()), project_id=project_id, include_heavy=True
+                    list(asked.values()), project_id=project_id, include_heavy=call
                 )
-                if root.observation_type == "conversation"
+                if (root.observation_type == "conversation") == call
             ]
         roots = retained_spans(project_id, roots)
         activity = _activity(reader, project_id, roots)
@@ -200,7 +203,7 @@ def _evidence(
     activity: dict[str, list[dict]] | None,
     labels: tuple[Label, ...],
 ) -> SourceEvidence:
-    if source_kind == "session":
+    if source_kind in ("session", "trace"):
         turns, unreadable = _session_turns(roots), False
     else:
         turns, unreadable = _call_turns(roots)

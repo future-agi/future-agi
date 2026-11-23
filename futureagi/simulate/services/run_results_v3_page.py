@@ -20,6 +20,7 @@ from django.core.cache import cache
 from django.db.models import Count, Func, JSONField, QuerySet
 
 from simulate.models import CallExecution, SimulateEvalConfig, TestExecution
+from simulate.services.call_provider import call_agent_provider_expression
 from simulate.services.harness_scenarios import level_label
 from simulate.services.run_results_v3 import (
     CALL_ROW_FIELDS,
@@ -671,6 +672,7 @@ def load_row_calls(
         CallExecution.objects.filter(id__in=call_ids)
         # Callers order by their own ids.
         .order_by()
+        .annotate(result_provider=call_agent_provider_expression())
         .select_related("scenario")
         .only(
             *CALL_ROW_FIELDS,

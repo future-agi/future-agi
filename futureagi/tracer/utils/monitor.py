@@ -74,6 +74,13 @@ def build_monitor_ch_builder(monitor: UserAlertMonitor) -> "MonitorMetricsQueryB
     if monitor.project_id is None:
         raise MonitorConfigError(get_error_message("MONITOR_PROJECT_REQUIRED"))
 
+    if monitor.metric_type == MonitorMetricTypeChoices.DERIVED_METRIC:
+        from tracer.services.derived_metrics.integrations import (
+            DerivedMonitorQueryBuilder,
+        )
+
+        return DerivedMonitorQueryBuilder(monitor)
+
     eval_config_id = None
     eval_output_type = None
     if (
@@ -345,6 +352,11 @@ def process_monitor_task(monitor_id: str, now_iso: str) -> None:
 
 def _process_monitor(monitor: UserAlertMonitor, now: datetime) -> None:
     """Processes a single monitor."""
+    if monitor.metric_type == MonitorMetricTypeChoices.DERIVED_METRIC:
+        from tracer.services.derived_metrics.integrations import process_derived_monitor
+
+        return process_derived_monitor(monitor, now)
+
     time_window_start = now - timedelta(minutes=monitor.alert_frequency)
 
     # Build once: value + historical share the builder (avoids a second eval
@@ -388,6 +400,8 @@ def _get_metric_value(
         timeout_ms=MONITOR_QUERY_TIMEOUT_MS,
         settings=MONITOR_CH_SETTINGS,
     )
+    if hasattr(builder, "validate_result"):
+        builder.validate_result()
     if result.data:
         return result.data[0].get("value")
     return None
@@ -444,8 +458,10 @@ def _check_static_threshold(
     current_value: float,
     time_window_start: datetime,
     now: datetime,
-) -> None:
-    """Checks for alerts based on static thresholds."""
+    *,
+    comparison_value: float | None = None,
+) -> str | None:
+    """Check static thresholds, optionally against a conservative confidence bound."""
     op = monitor.threshold_operator
     critical_val = monitor.critical_threshold_value
     warning_val = monitor.warning_threshold_value
@@ -453,10 +469,11 @@ def _check_static_threshold(
     alert_type = None
     threshold_val = None
 
-    if critical_val is not None and _compare(current_value, op, critical_val):
+    checked_value = current_value if comparison_value is None else comparison_value
+    if critical_val is not None and _compare(checked_value, op, critical_val):
         alert_type = AlertTypeChoices.CRITICAL
         threshold_val = critical_val
-    elif warning_val is not None and _compare(current_value, op, warning_val):
+    elif warning_val is not None and _compare(checked_value, op, warning_val):
         alert_type = AlertTypeChoices.WARNING
         threshold_val = warning_val
 
@@ -466,6 +483,8 @@ def _check_static_threshold(
             f"({current_value:.2f}) breached the {alert_type} threshold "
             f"({monitor.threshold_operator} {threshold_val})."
         )
+        if comparison_value is not None:
+            message += f" The entire fixed-window 95% interval is beyond the threshold (nearest bound {comparison_value:.6g})."
         _handle_alert_trigger(
             monitor,
             message,
@@ -475,6 +494,7 @@ def _check_static_threshold(
             current_value=current_value,
             threshold_value=threshold_val,
         )
+    return alert_type
 
 
 def _check_percentage_change_threshold(
