@@ -750,6 +750,7 @@ export default function ScenariosStep({
         onAdd={addScenarios}
       />
       <ScenarioDrawer
+        envId={env?.id}
         row={openRow}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => {

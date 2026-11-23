@@ -349,3 +349,58 @@ describe("ScenarioDrawer actors", () => {
     expect(screen.queryByText(/null/)).toBeNull();
   });
 });
+
+describe("ScenarioDrawer status", () => {
+  const withLifecycle = (lifecycle) => ({
+    ...API_ROW,
+    lifecycle: { must_pass: false, negative_controls: [], ...lifecycle },
+  });
+
+  it("lists each wrong-way example with whether the checks caught it", () => {
+    open(
+      withLifecycle({
+        state: "active",
+        proof: {
+          proved: true,
+          controls: [
+            {
+              name: "Refunds twice",
+              why: "",
+              ran: true,
+              failed: true,
+              assumed: [],
+            },
+            {
+              name: "Skips the rule",
+              why: "",
+              ran: true,
+              failed: false,
+              assumed: [],
+            },
+          ],
+        },
+      }),
+    );
+    const rows = screen.getAllByTestId("wrong-way-row");
+    expect(rows.map((one) => one.textContent)).toEqual([
+      expect.stringContaining("Caught"),
+      expect.stringContaining("Not caught"),
+    ]);
+  });
+
+  it("says an older kept-as-written scenario has no wrong-way example yet", () => {
+    open(
+      withLifecycle({
+        state: "kept_as_written",
+        legacy: true,
+        reason_text: null,
+        warning_text: null,
+        proof: null,
+      }),
+    );
+    expect(
+      screen.getByText("None yet. Saved before proofs existed."),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Kept as written/).length).toBeGreaterThan(0);
+  });
+});

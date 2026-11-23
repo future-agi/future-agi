@@ -6,6 +6,7 @@ import { normaliseSubTasks } from "./scenarioEditor.constants";
 import { personaSubline } from "./personaLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { ACTORS_COPY } from "../actors/actors.constants";
+import { LifecycleHeaderLine, LifecycleSection } from "./ScenarioLifecycle";
 import {
   TEST_CONDITIONS_COPY,
   testConditionRoute,
@@ -30,6 +31,7 @@ const SECTION_HEAD = {
 };
 
 export default function ScenarioDrawer({
+  envId,
   row,
   onClose,
   onEdit,
@@ -53,14 +55,15 @@ export default function ScenarioDrawer({
               flexShrink: 0,
             }}
           >
-            <Box flex={1} minWidth={0}>
+            <Stack flex={1} minWidth={0} spacing={0.75}>
               <Typography
                 noWrap
                 sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}
               >
                 {row.name || row.title}
               </Typography>
-            </Box>
+              <LifecycleHeaderLine envId={envId} row={row} locked={locked} />
+            </Stack>
             {!locked && onEdit && (
               <Button
                 size="small"
@@ -86,6 +89,7 @@ export default function ScenarioDrawer({
 }
 
 ScenarioDrawer.propTypes = {
+  envId: PropTypes.string,
   row: SCENARIO_SHAPE,
   onClose: PropTypes.func.isRequired,
   onEdit: PropTypes.func,
@@ -248,22 +252,32 @@ function ScenarioSheet({ row, testConditions = false }) {
     ),
   ].filter(Boolean);
 
-  if (rows.length === 0) return null;
+  if (rows.length === 0 && !row.lifecycle) return null;
   return (
     <Stack spacing={3} sx={{ px: 3, py: 3, "& .sd-val": VAL_SX }}>
-      <Box>
-        <Typography sx={SECTION_HEAD}>Scenario</Typography>
-        <Box
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: "8px",
-            "& > .sr + .sr": { borderTop: "1px solid", borderColor: "divider" },
-          }}
-        >
-          {rows}
+      <LifecycleSection
+        lifecycle={row.lifecycle}
+        Row={Row}
+        sectionSx={SECTION_HEAD}
+      />
+      {rows.length > 0 && (
+        <Box>
+          <Typography sx={SECTION_HEAD}>Scenario</Typography>
+          <Box
+            sx={{
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "8px",
+              "& > .sr + .sr": {
+                borderTop: "1px solid",
+                borderColor: "divider",
+              },
+            }}
+          >
+            {rows}
+          </Box>
         </Box>
-      </Box>
+      )}
     </Stack>
   );
 }
