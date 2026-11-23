@@ -95,6 +95,7 @@ BINDING_FIELDS = frozenset(
 RELEASES_ROOT = "/work/releases"
 BINDING_PATH = "/work/binding.json"
 RUN_MANIFEST_PATH = "/work/run-manifest.json"
+BINDING_PROOF_PATH = "/work/binding-proof.json"
 
 
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -980,6 +981,19 @@ def freeze_run_manifest(
 
     composition = composition_of(environment)
     binding = composition["binding"]
+    # A tool-routed binding is scored only on the scenarios its proof proved; compose refuses the
+    # rest (`scenario_unscorable`), so the run is refused here, before a sandbox starts.
+    unscorable = {
+        one["scenario_key"]: one.get("reason") or ""
+        for one in (composition.get("alignment") or {}).get("unscorable") or []
+    }
+    if refused := [key for key in scenario_keys if key in unscorable]:
+        raise _error(
+            "scenario_unscorable",
+            "not scored with this agent: "
+            + "; ".join(f"{key} ({unscorable[key]})" for key in refused),
+            409,
+        )
     from simulate.services.harness_capacity import configured_capacity
 
     # The same selection the gateway makes at launch: a resource profile may pin its own image.
@@ -1102,6 +1116,10 @@ def release_launch_for(job: HostedHarnessJob) -> ReleaseLaunch | None:
     )
     uploads.append((BINDING_PATH, json.dumps(composition["binding"]).encode()))
     uploads.append((RUN_MANIFEST_PATH, json.dumps(manifest).encode()))
+    # Compose runs a tool-routed binding only on the subset its proof proved, and needs the proof.
+    proof = composition.get("binding_proof")
+    if proof:
+        uploads.append((BINDING_PROOF_PATH, json.dumps(proof).encode()))
     return ReleaseLaunch(
         uploads=tuple(uploads),
         prepare_command=prepare_command,
@@ -1109,6 +1127,7 @@ def release_launch_for(job: HostedHarnessJob) -> ReleaseLaunch | None:
             "rm -rf /work/bundle && python -m fi.alk.harness.releases compose "
             f"--releases {RELEASES_ROOT} --binding {BINDING_PATH} "
             f"--manifest {RUN_MANIFEST_PATH} --job /work/job.json --output /work/bundle"
+            + (f" --binding-proof {BINDING_PROOF_PATH}" if proof else "")
         ),
         simulator=manifest["simulator"],
         runtime=manifest["runtime"],
