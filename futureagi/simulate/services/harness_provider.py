@@ -352,10 +352,21 @@ def _public_metadata(value):
         public = {
             key: _public_metadata(item)
             for key, item in value.items()
-            if key not in {"object_key", "source_review_basis", "source_review_receipt"}
+            if key
+            not in {
+                "object_key",
+                "source_review_basis",
+                "source_review_receipt",
+                "design_source_pin",
+                "design_source_selection",
+            }
             and not key.endswith("_object_key")
         }
         basis = value.get("source_review_basis")
+        if value.get("design_source_selection") and isinstance(
+            public.get("design"), dict
+        ):
+            public["design"].pop("documents", None)
         if isinstance(basis, dict) and isinstance(basis.get("revision"), int):
             public["source_review_basis"] = {
                 "revision": basis["revision"],
@@ -369,6 +380,22 @@ def _public_metadata(value):
 
 def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     metadata = _public_metadata(job.payload.get("metadata", {}))
+    if (
+        isinstance(metadata, dict)
+        and metadata.get("source_review_id")
+        and job.payload["metadata"].get("design_source_selection")
+    ):
+        from simulate.models import HarnessSourceReview
+
+        metadata["source_review"] = (
+            HarnessSourceReview.objects.filter(
+                pk=metadata["source_review_id"],
+                organization_id=job.organization_id,
+                workspace_id=job.workspace_id,
+            )
+            .values("state", "revision", "draft_digest")
+            .first()
+        )
     renamed = str(job.name or "").strip()
     if isinstance(metadata, dict) and renamed:
         # A name set through the rename endpoint wins, as on the environments list.
@@ -1586,6 +1613,19 @@ class HostedHarnessProvider:
             )
         data = request.validated_data
         try:
+            selection = data.get("source_selection")
+            if not selection and data.get("document_ids"):
+                selection = {
+                    "document_ids": data["document_ids"],
+                    "document_purposes": {},
+                    "knowledge_base": [],
+                }
+            if selection:
+                from simulate.services.harness_source_reviews import (
+                    require_source_scope,
+                )
+
+                require_source_scope(request, write=True)
             payload = design_payload(
                 organization,
                 name=data["name"],
@@ -1596,7 +1636,8 @@ class HostedHarnessProvider:
                     if data.get("template_suite_id")
                     else None
                 ),
-                document_ids=data.get("document_ids") or [],
+                source_selection=selection,
+                target_table=data.get("target_table"),
                 workspace_id=getattr(request_workspace(request), "id", None),
             )
         except HostedHarnessError as exc:
@@ -1707,6 +1748,45 @@ class HostedHarnessProvider:
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
         ).rstrip("/")
+        metadata = payload["metadata"]
+        if metadata.get("design_source_selection") and not metadata.get(
+            "design_source_pin"
+        ):
+            from simulate.services.harness_designs import AWAITING_REVIEW
+            from simulate.services.harness_source_reviews import create_review
+
+            try:
+                with transaction.atomic():
+                    job, created = create_hosted_job(
+                        organization,
+                        payload,
+                        idempotency_key=idempotency_key,
+                        workspace=request_workspace(request),
+                    )
+                    if created:
+                        job.current_stage = AWAITING_REVIEW
+                        job.save(update_fields=["current_stage", "updated_at"])
+                        selection = metadata["design_source_selection"]
+                        scope = {"kind": "design", "id": str(job.id)}
+                        if selection.get("target_table"):
+                            scope["target_table"] = selection["target_table"]
+                        create_review(
+                            request,
+                            scope=scope,
+                            idempotency_key="design-selection",
+                            **{
+                                key: selection[key]
+                                for key in (
+                                    "document_ids",
+                                    "document_purposes",
+                                    "knowledge_base",
+                                )
+                            },
+                        )
+                        job.refresh_from_db()
+            except HostedHarnessError as exc:
+                return Response(exc.as_dict(), status=exc.status_code)
+            return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
         try:
             require_harness_authoring(str(organization.id))
         except Exception as exc:

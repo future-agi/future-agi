@@ -19,6 +19,11 @@ class HarnessSourceReviewViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     def handle_exception(self, exc):
+        from simulate.services.harness_provider import _usage_limit_response
+
+        limit = _usage_limit_response(exc)
+        if limit is not None:
+            return limit
         if isinstance(exc, HostedHarnessError):
             return Response(
                 exc.as_dict(), status=exc.status_code, headers=exc.headers()

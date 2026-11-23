@@ -608,6 +608,7 @@ def start_hosted_harness_gateway_workflow(
     max_infrastructure_attempts: int,
     initial_backoff_seconds: float,
     max_backoff_seconds: float,
+    allow_completed_replay: bool = True,
 ) -> str:
     return async_to_sync(_start_hosted_harness_gateway_workflow_async)(
         job_id,
@@ -615,6 +616,7 @@ def start_hosted_harness_gateway_workflow(
         max_infrastructure_attempts,
         initial_backoff_seconds,
         max_backoff_seconds,
+        allow_completed_replay,
     )
 
 
@@ -624,6 +626,7 @@ async def _start_hosted_harness_gateway_workflow_async(
     max_infrastructure_attempts: int,
     initial_backoff_seconds: float,
     max_backoff_seconds: float,
+    allow_completed_replay: bool = True,
 ) -> str:
     from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 
@@ -648,7 +651,9 @@ async def _start_hosted_harness_gateway_workflow_async(
         ),
         id=workflow_id,
         task_queue=QUEUE_RUNNER,
-        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE
+        if allow_completed_replay
+        else WorkflowIDReusePolicy.REJECT_DUPLICATE,
         id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
     )
     return workflow_id

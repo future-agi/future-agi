@@ -26,6 +26,8 @@ class HarnessSourceScopeSerializer(StrictInputSerializer):
                 "expected_draft",
             }
         else:
+            if attrs["kind"] == HarnessSourceReview.Owner.DESIGN:
+                fields -= {"target_table"}
             valid = fields in (set(), {"revision", "schema_digest"})
         if not valid:
             raise serializers.ValidationError(
@@ -34,8 +36,19 @@ class HarnessSourceScopeSerializer(StrictInputSerializer):
         return attrs
 
 
-class HarnessSourceReviewCreateSerializer(StrictInputSerializer):
-    scope = HarnessSourceScopeSerializer()
+class SourceSchemaRepairSerializer(StrictInputSerializer):
+    source_id = serializers.CharField(max_length=255)
+    text_fields = serializers.ListField(
+        child=serializers.CharField(max_length=255), required=False, max_length=256
+    )
+    identity_fields = serializers.ListField(
+        child=serializers.CharField(max_length=255), required=False, max_length=256
+    )
+    separate_entity = serializers.BooleanField(required=False)
+    manual_relationships = serializers.BooleanField(required=False)
+
+
+class HarnessDesignSourceSelectionSerializer(StrictInputSerializer):
     document_ids = serializers.ListField(
         child=serializers.UUIDField(), required=False, max_length=100, default=list
     )
@@ -47,7 +60,6 @@ class HarnessSourceReviewCreateSerializer(StrictInputSerializer):
     knowledge_base = HarnessSourceSelectionSerializer(
         many=True, required=False, default=list, max_length=100
     )
-    idempotency_key = serializers.CharField(max_length=128)
 
     def validate(self, attrs):
         document_ids = attrs["document_ids"]
@@ -60,6 +72,14 @@ class HarnessSourceReviewCreateSerializer(StrictInputSerializer):
                 "A purpose must name a selected document."
             )
         return attrs
+
+
+class HarnessSourceReviewCreateSerializer(HarnessDesignSourceSelectionSerializer):
+    scope = HarnessSourceScopeSerializer()
+    idempotency_key = serializers.CharField(max_length=128)
+    schema_repairs = SourceSchemaRepairSerializer(
+        many=True, required=False, max_length=100
+    )
 
 
 class HarnessSourceReviewCancelSerializer(StrictInputSerializer):

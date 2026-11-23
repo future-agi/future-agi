@@ -222,6 +222,14 @@ def _owner_basis(
 
 
 def _required_basis(row: HarnessSourceReview, owner: HostedHarnessJob) -> None:
+    metadata = (owner.payload or {}).get("metadata") or {}
+    if row.owner_kind == Owner.DESIGN and metadata.get("design_source_selection"):
+        if (
+            row.state != State.READING
+            and str(row.id) != metadata.get("source_review_id")
+        ) or owner.current_stage != "awaiting_source_review":
+            raise _conflict("The design is no longer waiting for this review.")
+        return
     scope = dict(row.basis)
     if row.owner_kind == Owner.ENVIRONMENT:
         scope["expected_draft"] = scope["draft"]
@@ -248,12 +256,12 @@ def _check_batch(captured) -> None:
 
 
 def _stage(
-    row: HarnessSourceReview, capture, schema: dict | None
+    row: HarnessSourceReview, capture, schema: dict | None, schema_repairs=()
 ) -> HarnessSourceReview:
     reading = HarnessSourceReview.objects.filter(
         pk=row.id, state=State.READING, revision=row.revision
     )
-    if schema is None:
+    if schema is None and "destination_tables" in row.basis:
         preview = {
             "destination_tables": row.basis["destination_tables"],
             "diagnostics": [
@@ -281,12 +289,24 @@ def _stage(
             raise HostedHarnessError(
                 "source_duplicate", "An input is selected twice.", status_code=422
             )
-        draft = sources.prepare_draft(captured, schema)
+        draft = (
+            sources.prepare_draft(captured, schema, schema_repairs)
+            if schema_repairs
+            else sources.prepare_draft(captured, schema)
+        )
         owner = _owner(
             {"organization_id": row.organization_id, "workspace_id": row.workspace_id},
             row.owner_id,
         )
         _required_basis(row, owner)
+        basis = (
+            row.basis
+            if schema is not None
+            else {
+                **row.basis,
+                "schema_digest": schema_digest(draft["destination_schema"]),
+            }
+        )
         staged = {
             "draft_payload": draft,
             "origins": [item.origin for item in captured],
@@ -313,6 +333,7 @@ def _stage(
                 retryable=True,
             ) from None
         updated = reading.filter(expires_at__gt=timezone.now()).update(
+            basis=basis,
             state=State.NEEDS_REPAIR
             if any(
                 item.get("severity") == "blocking"
@@ -334,7 +355,14 @@ def _stage(
 
 
 def _stage_review(
-    owner, kind, basis, schema, capture, idempotency_key=None, request_digest=""
+    owner,
+    kind,
+    basis,
+    schema,
+    capture,
+    idempotency_key=None,
+    request_digest="",
+    schema_repairs=(),
 ):
     values = {
         "organization_id": owner.organization_id,
@@ -352,14 +380,19 @@ def _stage_review(
             defaults=values,
         )
         if not created:
-            if row.request_digest != request_digest or row.basis != basis:
+            recorded = (
+                {**row.basis, "schema_digest": None}
+                if basis.get("schema_digest") is None
+                else row.basis
+            )
+            if row.request_digest != request_digest or recorded != basis:
                 raise _conflict(
                     "The idempotency key already names a different source selection."
                 )
             return _expire(row)
     else:
         row = HarnessSourceReview.objects.create(owner=owner, owner_kind=kind, **values)
-    return _stage(row, capture, schema)
+    return _stage(row, capture, schema, schema_repairs)
 
 
 def prepare_environment_review(owner, captured, expected_draft) -> dict:
@@ -384,10 +417,10 @@ def create_review(
     knowledge_base,
     idempotency_key,
     document_purposes=None,
+    schema_repairs=(),
 ) -> dict:
     owner = _owner(require_source_scope(request, write=True), scope["id"])
     kind = scope["kind"]
-    basis, schema = _owner_basis(owner, kind, scope)
     if not document_ids and not knowledge_base:
         raise HostedHarnessError(
             "source_selection_empty",
@@ -402,6 +435,12 @@ def create_review(
                 "documents": web_ids,
                 "document_purposes": document_purposes or {},
                 "knowledge_base": json.loads(selected),
+                **({"schema_repairs": schema_repairs} if schema_repairs else {}),
+                **(
+                    {"target_table": scope["target_table"]}
+                    if "target_table" in scope
+                    else {}
+                ),
             }
         )
     ).hexdigest()
@@ -415,6 +454,73 @@ def create_review(
             _check_batch(captured)
         return tuple(captured)
 
+    if kind == Owner.DESIGN and owner.payload["metadata"].get(
+        "design_source_selection"
+    ):
+        from simulate.services.harness_designs import (
+            AWAITING_REVIEW,
+            design_source_basis,
+        )
+
+        with transaction.atomic():
+            owner = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                pk=owner.pk
+            )
+            metadata = owner.payload["metadata"]
+            selection = metadata["design_source_selection"]
+            if owner.current_stage != AWAITING_REVIEW or (
+                web_ids,
+                json.loads(selected),
+                document_purposes or {},
+            ) != (
+                selection["document_ids"],
+                selection["knowledge_base"],
+                selection["document_purposes"],
+            ):
+                raise _conflict("This review must use the design's selected sources.")
+            if "revision" in scope:
+                previous = HarnessSourceReview.objects.filter(
+                    owner=owner, pk=metadata.get("source_review_id")
+                ).first()
+                if not previous or (scope["revision"], scope["schema_digest"]) != (
+                    previous.basis["revision"],
+                    previous.basis["schema_digest"],
+                ):
+                    raise _conflict()
+            if (
+                HarnessSourceReview.objects.filter(
+                    owner=owner, owner_kind=kind, idempotency_key=idempotency_key
+                )
+                .exclude(pk=metadata.get("source_review_id"))
+                .exists()
+            ):
+                raise _conflict("This source preview was superseded.")
+            captured = capture()
+            _check_batch(captured)
+            basis, schema = design_source_basis(
+                owner,
+                scope.get("target_table", selection.get("target_table")),
+                captured,
+            )
+            row = _stage_review(
+                owner,
+                kind,
+                basis,
+                schema,
+                lambda: captured,
+                idempotency_key,
+                digest,
+                schema_repairs,
+            )
+            if row.state in _REVIEWABLE and metadata.get("source_review_id") != str(
+                row.id
+            ):
+                metadata["source_review_id"] = str(row.id)
+                owner.save(update_fields=["payload", "updated_at"])
+            return public_review(row)
+    if schema_repairs:
+        raise _conflict("Schema repairs require an inferred simulation schema.")
+    basis, schema = _owner_basis(owner, kind, scope)
     return public_review(
         _stage_review(owner, kind, basis, schema, capture, idempotency_key, digest)
     )
@@ -515,6 +621,12 @@ def _accept(
     ).hexdigest()
     if row.state == State.ACCEPTED:
         if row.acceptance_key == idempotency_key and row.acceptance_digest == digest:
+            if row.owner_kind == Owner.DESIGN and row.owner.payload["metadata"].get(
+                "design_source_selection"
+            ):
+                from simulate.services.harness_designs import schedule_reviewed_design
+
+                schedule_reviewed_design(row.owner, request)
             return row
         raise _conflict("This source review has already been accepted.")
     if (
@@ -531,6 +643,12 @@ def _accept(
         deleted=False,
     )
     _required_basis(row, owner)
+    if row.owner_kind == Owner.DESIGN and owner.payload["metadata"].get(
+        "design_source_selection"
+    ):
+        from simulate.services.harness_usage import require_harness_authoring
+
+        require_harness_authoring(str(owner.organization_id))
     if (
         row.owner_kind != Owner.ENVIRONMENT
         and HarnessSourceReview.objects.filter(
@@ -572,6 +690,23 @@ def _accept(
             "revision",
         ]
     )
+    if row.owner_kind == Owner.DESIGN and owner.payload["metadata"].get(
+        "design_source_selection"
+    ):
+        from simulate.services.harness_designs import (
+            PENDING_DISPATCH,
+            schedule_reviewed_design,
+        )
+
+        owner.payload["metadata"]["design_source_pin"] = {
+            "owner_id": str(owner.id),
+            "review_id": str(row.id),
+            "id": result["snapshot_id"],
+            "digest": row.snapshot_digest,
+        }
+        owner.current_stage = PENDING_DISPATCH
+        owner.save(update_fields=["payload", "current_stage", "updated_at"])
+        schedule_reviewed_design(owner, request)
     return row
 
 

@@ -20788,6 +20788,32 @@ export const HarnessDesignRequestApiModality = {
   voice: "voice",
 } as const;
 
+export type HarnessSourceSelectionApiKind =
+  (typeof HarnessSourceSelectionApiKind)[keyof typeof HarnessSourceSelectionApiKind];
+
+export const HarnessSourceSelectionApiKind = {
+  knowledge_base: "knowledge_base",
+} as const;
+
+export interface HarnessSourceSelectionApi {
+  kind: HarnessSourceSelectionApiKind;
+  kb_id: string;
+  /** @maxItems 100 */
+  file_ids?: string[];
+  whole_collection?: boolean;
+}
+
+export type HarnessDesignSourceSelectionApiDocumentPurposes = {
+  [key: string]: "policy" | "reference" | "seed_records";
+};
+
+export interface HarnessDesignSourceSelectionApi {
+  /** @maxItems 100 */
+  document_ids?: string[];
+  document_purposes?: HarnessDesignSourceSelectionApiDocumentPurposes;
+  knowledge_base?: HarnessSourceSelectionApi[];
+}
+
 export interface HarnessDesignRequestApi {
   /**
    * @minLength 1
@@ -20801,6 +20827,12 @@ export interface HarnessDesignRequestApi {
   requirements: string;
   modality?: HarnessDesignRequestApiModality;
   template_suite_id?: string;
+  source_selection?: HarnessDesignSourceSelectionApi;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  target_table?: string;
   /** @maxItems 100 */
   document_ids?: string[];
   /**
@@ -23789,21 +23821,6 @@ export interface HarnessSourceAcceptResponseApi {
   validation: HarnessSourceAcceptResponseApiValidation;
 }
 
-export type HarnessSourceSelectionApiKind =
-  (typeof HarnessSourceSelectionApiKind)[keyof typeof HarnessSourceSelectionApiKind];
-
-export const HarnessSourceSelectionApiKind = {
-  knowledge_base: "knowledge_base",
-} as const;
-
-export interface HarnessSourceSelectionApi {
-  kind: HarnessSourceSelectionApiKind;
-  kb_id: string;
-  /** @maxItems 100 */
-  file_ids?: string[];
-  whole_collection?: boolean;
-}
-
 export interface HarnessSourcePrepareApi {
   expected_environment_version_id: string;
   expected_draft: HarnessSourceDraftRefApi;
@@ -24891,17 +24908,32 @@ export interface HarnessSourceScopeApi {
   target_table?: string;
 }
 
+export interface SourceSchemaRepairApi {
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  source_id: string;
+  /** @maxItems 256 */
+  text_fields?: string[];
+  /** @maxItems 256 */
+  identity_fields?: string[];
+  separate_entity?: boolean;
+  manual_relationships?: boolean;
+}
+
 export interface HarnessSourceReviewCreateApi {
-  scope: HarnessSourceScopeApi;
   /** @maxItems 100 */
   document_ids?: string[];
   document_purposes?: HarnessSourceReviewCreateApiDocumentPurposes;
   knowledge_base?: HarnessSourceSelectionApi[];
+  scope: HarnessSourceScopeApi;
   /**
    * @minLength 1
    * @maxLength 128
    */
   idempotency_key: string;
+  schema_repairs?: SourceSchemaRepairApi[];
 }
 
 export type HarnessSourceReviewReadApiState =

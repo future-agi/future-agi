@@ -637,6 +637,9 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             "source_review_basis",
             "accepted_source_review",
             "source_review_receipt",
+            "design_source_selection",
+            "design_source_pin",
+            "source_review_id",
         }
         if reserved.intersection(value):
             raise serializers.ValidationError(

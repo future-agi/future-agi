@@ -149349,6 +149349,74 @@
                 }
             }
         },
+        "HarnessSourceSelection": {
+            "required": [
+                "kind",
+                "kb_id"
+            ],
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "knowledge_base"
+                    ]
+                },
+                "kb_id": {
+                    "title": "Kb id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "file_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "maxItems": 100
+                },
+                "whole_collection": {
+                    "title": "Whole collection",
+                    "type": "boolean",
+                    "default": false
+                }
+            }
+        },
+        "HarnessDesignSourceSelection": {
+            "type": "object",
+            "properties": {
+                "document_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "default": [],
+                    "maxItems": 100
+                },
+                "document_purposes": {
+                    "title": "Document purposes",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                            "policy",
+                            "reference",
+                            "seed_records"
+                        ]
+                    },
+                    "default": {}
+                },
+                "knowledge_base": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessSourceSelection"
+                    },
+                    "default": []
+                }
+            }
+        },
         "HarnessDesignRequest": {
             "required": [
                 "name",
@@ -149383,6 +149451,15 @@
                     "type": "string",
                     "format": "uuid",
                     "x-nullable": true
+                },
+                "source_selection": {
+                    "$ref": "#/definitions/HarnessDesignSourceSelection"
+                },
+                "target_table": {
+                    "title": "Target table",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
                 },
                 "document_ids": {
                     "type": "array",
@@ -156871,40 +156948,6 @@
                 }
             }
         },
-        "HarnessSourceSelection": {
-            "required": [
-                "kind",
-                "kb_id"
-            ],
-            "type": "object",
-            "properties": {
-                "kind": {
-                    "title": "Kind",
-                    "type": "string",
-                    "enum": [
-                        "knowledge_base"
-                    ]
-                },
-                "kb_id": {
-                    "title": "Kb id",
-                    "type": "string",
-                    "format": "uuid"
-                },
-                "file_ids": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "format": "uuid"
-                    },
-                    "maxItems": 100
-                },
-                "whole_collection": {
-                    "title": "Whole collection",
-                    "type": "boolean",
-                    "default": false
-                }
-            }
-        },
         "HarnessSourcePrepare": {
             "required": [
                 "expected_environment_version_id",
@@ -159246,6 +159289,46 @@
                 }
             }
         },
+        "SourceSchemaRepair": {
+            "required": [
+                "source_id"
+            ],
+            "type": "object",
+            "properties": {
+                "source_id": {
+                    "title": "Source id",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "text_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 256
+                },
+                "identity_fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 256
+                },
+                "separate_entity": {
+                    "title": "Separate entity",
+                    "type": "boolean"
+                },
+                "manual_relationships": {
+                    "title": "Manual relationships",
+                    "type": "boolean"
+                }
+            }
+        },
         "HarnessSourceReviewCreate": {
             "required": [
                 "scope",
@@ -159253,9 +159336,6 @@
             ],
             "type": "object",
             "properties": {
-                "scope": {
-                    "$ref": "#/definitions/HarnessSourceScope"
-                },
                 "document_ids": {
                     "type": "array",
                     "items": {
@@ -159285,11 +159365,20 @@
                     },
                     "default": []
                 },
+                "scope": {
+                    "$ref": "#/definitions/HarnessSourceScope"
+                },
                 "idempotency_key": {
                     "title": "Idempotency key",
                     "type": "string",
                     "maxLength": 128,
                     "minLength": 1
+                },
+                "schema_repairs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SourceSchemaRepair"
+                    }
                 }
             }
         },

@@ -2857,6 +2857,10 @@ class HostedHarnessGateway:
             snapshot_digest=registered_snapshot_digest,
         )
         attempt = capability.attempt
+        if design is not None:
+            dispatch_payload["metadata"] = design.guest_metadata(
+                dispatch_payload["metadata"], attempt.id
+            )
         self._delete_superseded_sandboxes(job.id, attempt.attempt_number)
         dispatch_runtime = dict(dispatch_payload["runtime"])
         dispatch_runtime["parallelism"] = capability.admitted_parallelism
@@ -2929,6 +2933,17 @@ class HostedHarnessGateway:
             from simulate.services.harness_usage import record_sandbox_runtime
 
             record_sandbox_runtime(attempt, started=True)
+            if design is not None and design.receipt is not None:
+                from simulate.services.harness_designs import PRIVATE_CONTROLLER_JOB
+
+                sandbox.fs.upload_file(
+                    json.dumps(
+                        design.controller_job(dispatch_payload),
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode(),
+                    PRIVATE_CONTROLLER_JOB,
+                )
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(
                 json.dumps(
@@ -5204,10 +5219,10 @@ class HostedHarnessGateway:
         try:
             scratch = unpack_output(body)
         except tarfile.TarError:
-            job = complete_design(attempt.job, None)
+            job = complete_design(attempt, None)
         else:
             with scratch:
-                job = complete_design(attempt.job, Path(scratch.name))
+                job = complete_design(attempt, Path(scratch.name))
         attempt.terminal_stage = (
             "completed" if job.state == HostedHarnessJob.State.COMPLETED else "failed"
         )
@@ -5685,7 +5700,16 @@ def _provider_import_authoring_material(
 
 
 # Builder-chat state the server keeps on the job; ALK rejects its basis ``token``.
-_SERVER_ONLY_METADATA = ("conversation_checkpoints", "draft_saves", "evidence_adds")
+_SERVER_ONLY_METADATA = (
+    "conversation_checkpoints",
+    "draft_saves",
+    "evidence_adds",
+    "design_source_selection",
+    "design_source_pin",
+    "source_review_id",
+    "source_review_basis",
+    "source_review_receipt",
+)
 
 
 def guest_job_document(payload: dict[str, Any]) -> dict[str, Any]:
@@ -5697,6 +5721,18 @@ def guest_job_document(payload: dict[str, Any]) -> dict[str, Any]:
             for key, value in document["metadata"].items()
             if key not in _SERVER_ONLY_METADATA
         }
+        if isinstance(design := document["metadata"].get("design"), dict):
+            design = dict(design)
+            if payload["metadata"].get("design_source_selection"):
+                design.pop("documents", None)
+            if template := design.get("template"):
+                design["template"] = {
+                    "environment": [
+                        {"digest": item["digest"]} for item in template["environment"]
+                    ],
+                    "suite": {"digest": template["suite"]["digest"]},
+                }
+            document["metadata"]["design"] = design
     return document
 
 

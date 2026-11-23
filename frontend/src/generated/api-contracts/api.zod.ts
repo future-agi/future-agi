@@ -41377,6 +41377,20 @@ export const simulateApiHarnessEnvironmentDesignsCreateBodyNameMax = 255;
 export const simulateApiHarnessEnvironmentDesignsCreateBodyRequirementsMax = 20000;
 
 export const simulateApiHarnessEnvironmentDesignsCreateBodyModalityDefault = `chat`;
+export const simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionDocumentIdsDefault =
+  [];
+export const simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionDocumentIdsMax = 100;
+
+export const simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionDocumentPurposesDefault =
+  {};
+export const simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionKnowledgeBaseItemFileIdsMax = 100;
+
+export const simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionKnowledgeBaseItemWholeCollectionDefault =
+  false;
+export const simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionKnowledgeBaseDefault =
+  [];
+export const simulateApiHarnessEnvironmentDesignsCreateBodyTargetTableMax = 255;
+
 export const simulateApiHarnessEnvironmentDesignsCreateBodyDocumentIdsMax = 100;
 
 export const simulateApiHarnessEnvironmentDesignsCreateBodyIdempotencyKeyMax = 255;
@@ -41394,6 +41408,49 @@ export const SimulateApiHarnessEnvironmentDesignsCreateBody = zod.object({
     .enum(["chat", "voice"])
     .default(simulateApiHarnessEnvironmentDesignsCreateBodyModalityDefault),
   template_suite_id: zod.string().uuid().optional(),
+  source_selection: zod
+    .object({
+      document_ids: zod
+        .array(zod.string().uuid())
+        .max(
+          simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionDocumentIdsMax,
+        )
+        .default(
+          simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionDocumentIdsDefault,
+        ),
+      document_purposes: zod
+        .record(zod.string(), zod.enum(["policy", "reference", "seed_records"]))
+        .default(
+          simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionDocumentPurposesDefault,
+        ),
+      knowledge_base: zod
+        .array(
+          zod.object({
+            kind: zod.enum(["knowledge_base"]),
+            kb_id: zod.string().uuid(),
+            file_ids: zod
+              .array(zod.string().uuid())
+              .max(
+                simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionKnowledgeBaseItemFileIdsMax,
+              )
+              .optional(),
+            whole_collection: zod
+              .boolean()
+              .default(
+                simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionKnowledgeBaseItemWholeCollectionDefault,
+              ),
+          }),
+        )
+        .default(
+          simulateApiHarnessEnvironmentDesignsCreateBodySourceSelectionKnowledgeBaseDefault,
+        ),
+    })
+    .optional(),
+  target_table: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentDesignsCreateBodyTargetTableMax)
+    .optional(),
   document_ids: zod
     .array(zod.string().uuid())
     .max(simulateApiHarnessEnvironmentDesignsCreateBodyDocumentIdsMax)
@@ -54453,12 +54510,6 @@ export const SimulateApiHarnessReleasesListResponse = zod.object({
   ),
 });
 
-export const simulateApiHarnessSourceReviewsCreateBodyScopeSchemaDigestRegExp =
-  new RegExp("\\Asha256:[0-9a-f]{64}$");
-export const simulateApiHarnessSourceReviewsCreateBodyScopeExpectedDraftRevisionMin = 0;
-
-export const simulateApiHarnessSourceReviewsCreateBodyScopeTargetTableMax = 255;
-
 export const simulateApiHarnessSourceReviewsCreateBodyDocumentIdsDefault = [];
 export const simulateApiHarnessSourceReviewsCreateBodyDocumentIdsMax = 100;
 
@@ -54469,35 +54520,26 @@ export const simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseItemFileIdsMa
 export const simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseItemWholeCollectionDefault =
   false;
 export const simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseDefault = [];
+
+export const simulateApiHarnessSourceReviewsCreateBodyScopeSchemaDigestRegExp =
+  new RegExp("\\Asha256:[0-9a-f]{64}$");
+export const simulateApiHarnessSourceReviewsCreateBodyScopeExpectedDraftRevisionMin = 0;
+
+export const simulateApiHarnessSourceReviewsCreateBodyScopeTargetTableMax = 255;
+
 export const simulateApiHarnessSourceReviewsCreateBodyIdempotencyKeyMax = 128;
 
+export const simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemSourceIdMax = 255;
+
+export const simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemTextFieldsItemMax = 255;
+
+export const simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemTextFieldsMax = 256;
+
+export const simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemIdentityFieldsItemMax = 255;
+
+export const simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemIdentityFieldsMax = 256;
+
 export const SimulateApiHarnessSourceReviewsCreateBody = zod.object({
-  scope: zod.object({
-    kind: zod.enum(["environment", "design", "build_job"]),
-    id: zod.string().uuid(),
-    revision: zod.number().min(1).optional(),
-    schema_digest: zod
-      .string()
-      .min(1)
-      .regex(simulateApiHarnessSourceReviewsCreateBodyScopeSchemaDigestRegExp)
-      .optional(),
-    environment_version_id: zod.string().uuid().optional(),
-    expected_draft: zod
-      .object({
-        id: zod.string().uuid(),
-        revision: zod
-          .number()
-          .min(
-            simulateApiHarnessSourceReviewsCreateBodyScopeExpectedDraftRevisionMin,
-          ),
-      })
-      .optional(),
-    target_table: zod
-      .string()
-      .min(1)
-      .max(simulateApiHarnessSourceReviewsCreateBodyScopeTargetTableMax)
-      .optional(),
-  }),
   document_ids: zod
     .array(zod.string().uuid())
     .max(simulateApiHarnessSourceReviewsCreateBodyDocumentIdsMax)
@@ -54524,10 +54566,76 @@ export const SimulateApiHarnessSourceReviewsCreateBody = zod.object({
       }),
     )
     .default(simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseDefault),
+  scope: zod.object({
+    kind: zod.enum(["environment", "design", "build_job"]),
+    id: zod.string().uuid(),
+    revision: zod.number().min(1).optional(),
+    schema_digest: zod
+      .string()
+      .min(1)
+      .regex(simulateApiHarnessSourceReviewsCreateBodyScopeSchemaDigestRegExp)
+      .optional(),
+    environment_version_id: zod.string().uuid().optional(),
+    expected_draft: zod
+      .object({
+        id: zod.string().uuid(),
+        revision: zod
+          .number()
+          .min(
+            simulateApiHarnessSourceReviewsCreateBodyScopeExpectedDraftRevisionMin,
+          ),
+      })
+      .optional(),
+    target_table: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessSourceReviewsCreateBodyScopeTargetTableMax)
+      .optional(),
+  }),
   idempotency_key: zod
     .string()
     .min(1)
     .max(simulateApiHarnessSourceReviewsCreateBodyIdempotencyKeyMax),
+  schema_repairs: zod
+    .array(
+      zod.object({
+        source_id: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemSourceIdMax,
+          ),
+        text_fields: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .max(
+                simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemTextFieldsItemMax,
+              ),
+          )
+          .max(
+            simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemTextFieldsMax,
+          )
+          .optional(),
+        identity_fields: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .max(
+                simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemIdentityFieldsItemMax,
+              ),
+          )
+          .max(
+            simulateApiHarnessSourceReviewsCreateBodySchemaRepairsItemIdentityFieldsMax,
+          )
+          .optional(),
+        separate_entity: zod.boolean().optional(),
+        manual_relationships: zod.boolean().optional(),
+      }),
+    )
+    .optional(),
 });
 
 export const SimulateApiHarnessSourceReviewsReadParams = zod.object({

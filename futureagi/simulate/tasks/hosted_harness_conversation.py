@@ -87,6 +87,7 @@ def promote_hosted_harness_conversation_checkpoint(
 @temporal_activity(time_limit=120, max_retries=0, queue="default")
 def recover_hosted_harness_conversations() -> dict[str, int]:
     """Restart chat runtimes that died holding messages; the next tick retries a failure."""
+    from simulate.services.harness_designs import recover_reviewed_designs
     from simulate.services.hosted_harness import HostedHarnessError
     from simulate.services.hosted_harness_conversation import (
         recover_stalled_conversations,
@@ -106,6 +107,8 @@ def recover_hosted_harness_conversations() -> dict[str, int]:
                 conversation_id, base_url
             )
         )
+        if dispatched := recover_reviewed_designs(base_url):
+            counts["reviewed_designs_dispatched"] = dispatched
     finally:
         close_old_connections()
     if counts.get("restarted") or counts.get("settled") or counts.get("abandoned"):

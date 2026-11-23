@@ -3,6 +3,9 @@
 from rest_framework import serializers
 
 from simulate.serializers.harness_job import HOSTED_AGENT_MODELS, HarnessAgentSerializer
+from simulate.serializers.harness_source_review import (
+    HarnessDesignSourceSelectionSerializer,
+)
 
 
 class HarnessReleaseParentSerializer(serializers.Serializer):
@@ -136,10 +139,30 @@ class HarnessDesignRequestSerializer(serializers.Serializer):
     requirements = serializers.CharField(max_length=20000)
     modality = serializers.ChoiceField(choices=("chat", "voice"), default="chat")
     template_suite_id = serializers.UUIDField(required=False, allow_null=True)
+    source_selection = HarnessDesignSourceSelectionSerializer(required=False)
+    target_table = serializers.CharField(required=False, max_length=255)
     document_ids = serializers.ListField(
         child=serializers.UUIDField(), required=False, max_length=100
     )
     idempotency_key = serializers.CharField(max_length=255)
+
+    def validate(self, attrs):
+        if "source_selection" in attrs:
+            selection = attrs["source_selection"]
+            if "document_ids" in attrs or not (
+                selection["document_ids"] or selection["knowledge_base"]
+            ):
+                raise serializers.ValidationError(
+                    "Choose files or organization knowledge in source_selection."
+                )
+        if "target_table" in attrs and not (
+            attrs.get("template_suite_id")
+            and (attrs.get("source_selection") or attrs.get("document_ids"))
+        ):
+            raise serializers.ValidationError(
+                "A destination table requires a template and selected sources."
+            )
+        return attrs
 
 
 class HarnessDesignContinueRequestSerializer(serializers.Serializer):

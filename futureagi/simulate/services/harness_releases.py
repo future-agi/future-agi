@@ -478,7 +478,7 @@ def scenario_documents(
 
 
 def register_release(
-    environment_dir: Path, suite_dir: Path, *, organization=None
+    environment_dir: Path, suite_dir: Path, *, organization=None, expected_design=None
 ) -> tuple[HarnessEnvironmentRelease, HarnessSuiteRelease]:
     """Store one sealed environment release and a suite proved against it.
 
@@ -492,6 +492,22 @@ def register_release(
     if release.get("schema_version") != ENVIRONMENT_RELEASE_SCHEMA:
         raise _error("release_invalid", "release.json is not an environment release")
     suite, personas = _checked_suite(suite_dir, release["digest"])
+    if expected_design is not None:
+        if (release["digest"], suite["digest"]) != expected_design["digests"]:
+            raise _error(
+                "design_result_invalid",
+                "The result identifies different sealed releases.",
+            )
+        if any(
+            (item.get("metadata") or {}).get("reviewed_source")
+            != expected_design["source"]
+            for item in (release, suite)
+        ):
+            raise _error(
+                "source_snapshot_changed",
+                "The sealed releases do not match the approved source review.",
+                409,
+            )
     parent = None
     if release.get("extends"):
         parent = _visible(
@@ -1415,6 +1431,53 @@ def complete_adaptation(job: HostedHarnessJob, output: Path | None) -> HostedHar
 # A world table shown on an environment's page: its first rows, enough to see what it holds.
 _WORLD_SAMPLE_ROWS = 5
 _INTERNAL_TABLES = frozenset({POLICY_TABLE, "_alk_tool_trace", "clock"})
+
+
+def template_source_columns(
+    release: HarnessEnvironmentRelease,
+) -> dict[str, list[tuple[str, str, int]]]:
+    """Read only column declarations from the SQLite file pinned by this registered release."""
+    manifest = release.manifest
+    if _release_digest(manifest) != release.digest:
+        raise _error("release_invalid", "The template manifest changed.")
+    name = f"{WORLD}/world.sqlite"
+    record = next((f for f in manifest["files"] if f["path"] == name), None)
+    if record is None:
+        return {}
+    from simulate.services.harness_versioning import archives
+
+    body = archives.read_members(
+        _download(release.object_key), {name}, max_size=record["size"]
+    ).get(name)
+    if (
+        body is None
+        or len(body) != record["size"]
+        or hashlib.sha256(body).hexdigest() != record["sha256"]
+    ):
+        raise _error(
+            "release_invalid",
+            "The template database does not match its sealed release.",
+        )
+    with tempfile.NamedTemporaryFile(suffix=".sqlite") as file:
+        file.write(body)
+        file.flush()
+        connection = sqlite3.connect(f"file:{file.name}?immutable=1&mode=ro", uri=True)
+        try:
+            connection.execute("PRAGMA trusted_schema=OFF")
+            return {
+                table: list(
+                    connection.execute(
+                        'SELECT name, type, "notnull" OR pk FROM pragma_table_info(?)',
+                        (table,),
+                    )
+                )
+                for (table,) in connection.execute(
+                    "SELECT name FROM pragma_table_list WHERE schema='main' AND type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+                if table not in _INTERNAL_TABLES
+            }
+        finally:
+            connection.close()
 
 
 def _world_tables(world: bytes) -> list[dict[str, Any]]:

@@ -476,7 +476,8 @@ def _prepare_captured(
 
 def prepare_draft(
     captured: tuple[CapturedKnowledgeBaseSource, ...],
-    destination_schema: dict,
+    destination_schema: dict | None,
+    schema_repairs=(),
 ) -> dict:
     prepare_request = {
         "version": REQUEST_VERSION,
@@ -491,7 +492,12 @@ def prepare_draft(
             }
             for source in captured
         ],
-        "destination_schema": destination_schema,
+        **(
+            {"destination_schema": destination_schema}
+            if destination_schema is not None
+            else {}
+        ),
+        **({"schema_repairs": schema_repairs} if schema_repairs else {}),
     }
     return _alk_result(execute_source_request(prepare_request))["draft"]
 
@@ -825,6 +831,16 @@ def _accept_captured(request, owner, staged, review, existing_projection):
         )
     )
     snapshot = result["snapshot"]
+    schema = staged["draft_payload"].get("destination_schema") or {}
+    if schema.get("origin") == "simulation":
+        from simulate.services.harness_source_reviews import schema_digest
+
+        if snapshot["data"].get("simulation_schema_digest") != schema_digest(schema):
+            raise HostedHarnessError(
+                "source_snapshot_invalid",
+                "The approved simulation schema does not match the reviewed fields.",
+                status_code=409,
+            )
     snapshot_digest = snapshot["data"]["snapshot_digest"]
     reviewed = snapshot["data"]["sources"]
     pins = {item["pin"]["source_id"]: item["pin"] for item in reviewed}
@@ -899,6 +915,7 @@ def accept_checkpoint_review(
     _, snapshot, pins, digest = _accept_captured(request, owner, staged, review, [])
     return {
         "draft": None,
+        "snapshot_id": snapshot["data"]["snapshot_id"],
         "snapshot_digest": snapshot["data"]["snapshot_digest"],
         "sources": [
             {"source_id": key, "purpose": pin["role"]}

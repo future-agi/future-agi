@@ -72443,6 +72443,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           format: "uuid",
           "x-nullable": true,
         },
+        source_selection: {
+          $ref: "#/definitions/HarnessDesignSourceSelection",
+        },
+        target_table: {
+          title: "Target table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
         document_ids: {
           type: "array",
           items: {
@@ -74563,9 +74572,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["scope", "idempotency_key"],
       type: "object",
       properties: {
-        scope: {
-          $ref: "#/definitions/HarnessSourceScope",
-        },
         document_ids: {
           type: "array",
           items: {
@@ -74591,11 +74597,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           default: [],
         },
+        scope: {
+          $ref: "#/definitions/HarnessSourceScope",
+        },
         idempotency_key: {
           title: "Idempotency key",
           type: "string",
           maxLength: 128,
           minLength: 1,
+        },
+        schema_repairs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceSchemaRepair",
+          },
         },
       },
     },
@@ -113647,6 +113662,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessDesignSourceSelection: {
+      type: "object",
+      properties: {
+        document_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+          maxItems: 100,
+        },
+        document_purposes: {
+          title: "Document purposes",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            enum: ["policy", "reference", "seed_records"],
+          },
+          default: {},
+        },
+        knowledge_base: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSourceSelection",
+          },
+          default: [],
+        },
+      },
+    },
     HarnessDraftSaveItem: {
       required: ["piece", "expected_parent_id"],
       type: "object",
@@ -116754,6 +116799,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           maxLength: 255,
           minLength: 1,
+        },
+      },
+    },
+    SourceSchemaRepair: {
+      required: ["source_id"],
+      type: "object",
+      properties: {
+        source_id: {
+          title: "Source id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        text_fields: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 256,
+        },
+        identity_fields: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 256,
+        },
+        separate_entity: {
+          title: "Separate entity",
+          type: "boolean",
+        },
+        manual_relationships: {
+          title: "Manual relationships",
+          type: "boolean",
         },
       },
     },

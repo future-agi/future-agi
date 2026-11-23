@@ -23,9 +23,11 @@ import tarfile
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -53,6 +55,10 @@ logger = logging.getLogger(__name__)
 DESIGN_OUTPUT = "/work/authoring/design-output"
 DOCUMENTS_ROOT = "/work/documents"
 DOCUMENTS_ARCHIVE = "/work/documents.tar.gz"
+PRIVATE_SNAPSHOT = "/run/futureagi/design-snapshot.json"
+PRIVATE_CONTROLLER_JOB = "/run/futureagi/reviewed-source-job.json"
+AWAITING_REVIEW = "awaiting_source_review"
+PENDING_DISPATCH = "source_review_dispatch_pending"
 # Codes a design that can be continued ends with: it parked at an unanswered question, or ran
 # out of its authoring time with its last checkpoint kept.
 CONTINUABLE = frozenset({"design_waiting", "design_unfinished"})
@@ -164,6 +170,123 @@ def serialize_document(document: HarnessDesignDocument) -> dict[str, Any]:
     }
 
 
+def design_source_basis(job, target_table, captured):
+    from simulate.services.harness_releases import template_source_columns
+    from simulate.services.harness_source_reviews import _data_type, schema_digest
+
+    template = design_of(job).get("template")
+    basis = {"revision": 1, "schema_digest": None}
+    if not template:
+        if target_table:
+            raise _error(
+                "source_schema_invalid", "Scratch designs have no template table.", 422
+            )
+        return basis, None
+    ref = template["environment"][0]["digest"]
+    basis["template_digest"] = ref
+    if not any(item.role == "seed_records" for item in captured) and not target_table:
+        return basis, None
+    release = _visible(HarnessEnvironmentRelease, job.organization, ref)
+    if release is None:
+        raise _error("release_not_found", "Template environment not found.", 404)
+    tables = template_source_columns(release)
+    if not tables:
+        raise _error(
+            "source_destination_unavailable",
+            "This template has no record tables. Choose another template or start a scratch design.",
+            422,
+        )
+    if target_table is None and len(tables) != 1:
+        return {**basis, "destination_tables": sorted(tables)}, None
+    table = target_table or next(iter(tables))
+    if table not in tables:
+        raise _error(
+            "source_schema_invalid", "Choose a table from the pinned template.", 422
+        )
+    schema = {
+        "fields": [
+            {"name": name, "data_type": _data_type(kind), "required": bool(required)}
+            for name, kind, required in sorted(tables[table])
+        ]
+    }
+    return {
+        **basis,
+        "schema_digest": schema_digest(schema),
+        "target_table": table,
+    }, schema
+
+
+def schedule_reviewed_design(job, request):
+    """Persist acceptance before the workflow starts; a repeated accept retries failed dispatch."""
+    if job.current_stage != PENDING_DISPATCH:
+        return
+    base_url = (
+        getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+        or request.build_absolute_uri("/")
+    ).rstrip("/")
+    transaction.on_commit(lambda: dispatch_reviewed_design(job.id, base_url))
+
+
+def recover_reviewed_designs(base_url):
+    """Deliver durable approvals left pending by a scheduler outage or process restart."""
+    pending = (
+        HostedHarnessJob.no_workspace_objects.filter(
+            current_stage=PENDING_DISPATCH,
+            state=HostedHarnessJob.State.QUEUED,
+            deleted=False,
+        )
+        .order_by("updated_at")
+        .values_list("id", flat=True)[:50]
+    )
+    count = 0
+    for job_id in list(pending):
+        try:
+            dispatch_reviewed_design(job_id, base_url)
+            count += 1
+        except HostedHarnessError:
+            logger.warning("reviewed_design_dispatch_pending job=%s", job_id)
+    return count
+
+
+@transaction.atomic
+def dispatch_reviewed_design(job_id, base_url):
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+    job = HostedHarnessJob.no_workspace_objects.select_for_update().get(pk=job_id)
+    if (
+        job.current_stage != PENDING_DISPATCH
+        or job.current_attempt_number
+        or job.state != HostedHarnessJob.State.QUEUED
+    ):
+        return
+    retry = job.payload["retry"]
+    try:
+        start_hosted_harness_gateway_workflow(
+            str(job.id),
+            base_url,
+            retry["max_infrastructure_attempts"],
+            retry["initial_backoff_seconds"],
+            retry["max_backoff_seconds"],
+            allow_completed_replay=False,
+        )
+    except WorkflowAlreadyStartedError:
+        pass
+    except Exception:
+        raise HostedHarnessError(
+            "source_dispatch_unavailable",
+            "The approved design could not be scheduled. Retry acceptance.",
+            status_code=503,
+            retryable=True,
+        ) from None
+    job.current_stage = "queued"
+    job.deadline_at = timezone.now() + timedelta(
+        seconds=job.payload["runtime"]["max_duration_seconds"]
+    )
+    job.save(update_fields=["current_stage", "deadline_at", "updated_at"])
+
+
 def _documents(
     organization, ids: list[Any], *, workspace_id=None, allow_duplicate_names=False
 ) -> list[HarnessDesignDocument]:
@@ -228,6 +351,8 @@ def design_payload(
     modality: str,
     template_suite: HarnessSuiteRelease | None = None,
     document_ids: list[Any] | None = None,
+    source_selection: dict | None = None,
+    target_table: str | None = None,
     workspace_id=None,
     resume_from: HostedHarnessJob | None = None,
 ) -> dict[str, Any]:
@@ -257,7 +382,12 @@ def design_payload(
                 "object_key": template_suite.object_key,
             },
         }
-    documents = _documents(organization, document_ids or [], workspace_id=workspace_id)
+    documents = _documents(
+        organization,
+        source_selection["document_ids"] if source_selection else document_ids or [],
+        workspace_id=workspace_id,
+        allow_duplicate_names=bool(source_selection),
+    )
     serializer = HarnessDesignCreateSerializer(
         data={
             "artifacts": {"level": "full"},
@@ -276,6 +406,11 @@ def design_payload(
         "documents": [serialize_document(one) for one in documents],
         "resume_from": str(resume_from.id) if resume_from is not None else None,
     }
+    if source_selection:
+        payload["metadata"]["design_source_selection"] = {
+            **source_selection,
+            "target_table": target_table,
+        }
     return json.loads(json.dumps(payload, default=str))
 
 
@@ -299,7 +434,7 @@ def continued_payload(organization, job: HostedHarnessJob) -> dict[str, Any]:
             "design_not_continuable", "this design has no saved checkpoint", 409
         )
     template = design.get("template")
-    return design_payload(
+    payload = design_payload(
         organization,
         name=str((job.payload.get("metadata") or {}).get("name") or design["name"]),
         requirements=str(design.get("requirements") or ""),
@@ -309,10 +444,22 @@ def continued_payload(organization, job: HostedHarnessJob) -> dict[str, Any]:
             if template
             else None
         ),
-        document_ids=[one["id"] for one in design.get("documents") or []],
+        document_ids=[],
         workspace_id=job.workspace_id,
         resume_from=job,
     )
+    payload["metadata"]["design"]["documents"] = design.get("documents") or []
+    previous = job.payload["metadata"]
+    if previous.get("design_source_selection"):
+        if not previous.get("design_source_pin"):
+            raise _error(
+                "source_review_required",
+                "Accept the source review before continuing.",
+                409,
+            )
+        for key in ("design_source_selection", "design_source_pin", "source_review_id"):
+            payload["metadata"][key] = previous[key]
+    return payload
 
 
 @dataclass(frozen=True)
@@ -322,6 +469,52 @@ class DesignLaunch:
     uploads: tuple[tuple[str, bytes], ...]
     prepare_command: str
     command: str
+    receipt: dict | None = None
+    documents: tuple = ()
+
+    def guest_metadata(self, metadata, attempt_id):
+        return {
+            **metadata,
+            "design": {**metadata["design"], "attempt_id": str(attempt_id)},
+        }
+
+    def controller_job(self, shared):
+        metadata = shared["metadata"]
+        return {
+            **shared,
+            "metadata": {
+                **metadata,
+                "design": {**metadata["design"], "documents": self.documents},
+                "source_review_receipt": self.receipt,
+            },
+        }
+
+
+def _review_owner(job, pin):
+    owner = job
+    visited = set()
+    while str(owner.id) != pin["owner_id"]:
+        parent_id = (design_of(owner) or {}).get("resume_from")
+        if parent_id is None or parent_id in visited:
+            raise _error(
+                "source_snapshot_changed",
+                "The source review belongs to another design.",
+                409,
+            )
+        visited.add(parent_id)
+        owner = HostedHarnessJob.no_workspace_objects.filter(
+            pk=parent_id,
+            organization_id=job.organization_id,
+            workspace_id=job.workspace_id,
+            deleted=False,
+        ).first()
+        if owner is None or owner.payload["metadata"].get("design_source_pin") != pin:
+            raise _error(
+                "source_snapshot_changed",
+                "The continued source review is unavailable.",
+                409,
+            )
+    return owner
 
 
 def _documents_archive(job: HostedHarnessJob, listed: list[dict[str, Any]]) -> bytes:
@@ -367,6 +560,34 @@ def design_launch_for(job: HostedHarnessJob) -> DesignLaunch | None:
         return None
     uploads: list[tuple[str, bytes]] = []
     prepare: list[str] = []
+    metadata = job.payload["metadata"]
+    receipt = None
+    if metadata.get("design_source_selection"):
+        from simulate.services.harness_source_reviews import accepted_source_snapshot
+
+        pin = metadata.get("design_source_pin")
+        if not pin:
+            raise _error(
+                "source_review_required",
+                "Accept the selected sources before launching.",
+                409,
+            )
+        owner = _review_owner(job, pin)
+        snapshot, receipt = accepted_source_snapshot(
+            pin["review_id"], owner=owner, owner_kind="design"
+        )
+        if (receipt["snapshot_id"], receipt["snapshot_digest"]) != (
+            pin["id"],
+            pin["digest"],
+        ):
+            raise _error(
+                "source_snapshot_changed", "The source review no longer matches.", 409
+            )
+        uploads.append((PRIVATE_SNAPSHOT, snapshot))
+        prepare.insert(
+            0,
+            f"chown svc-control:svc-control {PRIVATE_SNAPSHOT} {PRIVATE_CONTROLLER_JOB} && chmod 0600 {PRIVATE_SNAPSHOT} {PRIVATE_CONTROLLER_JOB}",
+        )
     if design.get("template"):
         template_uploads, extract = _release_archives(
             job.organization,
@@ -376,7 +597,7 @@ def design_launch_for(job: HostedHarnessJob) -> DesignLaunch | None:
         uploads += template_uploads
         prepare.append(extract)
     root = shlex.quote(DOCUMENTS_ROOT)
-    if design.get("documents"):
+    if design.get("documents") and receipt is None:
         uploads.append(
             (
                 DOCUMENTS_ARCHIVE,
@@ -413,9 +634,16 @@ def design_launch_for(job: HostedHarnessJob) -> DesignLaunch | None:
         uploads=tuple(uploads),
         prepare_command=" && ".join(prepare) or "true",
         command=(
-            "python -m fi.alk.harness.design hosted --job /work/job.json "
+            f"python -m fi.alk.harness.design hosted --job {PRIVATE_CONTROLLER_JOB if receipt is not None else '/work/job.json'} "
             f"--releases /work/releases --workspace /work/authoring --documents {root}"
+            + (
+                f" --reviewed-snapshot {PRIVATE_SNAPSHOT}"
+                if receipt is not None
+                else ""
+            )
         ),
+        receipt=receipt,
+        documents=tuple(design.get("documents") or ()) if receipt is not None else (),
     )
 
 
@@ -432,13 +660,17 @@ def _design_failure(code: str, message: str) -> dict[str, Any]:
 
 
 def _register(
-    job: HostedHarnessJob, output: Path
+    job: HostedHarnessJob, output: Path, attempt_id
 ) -> tuple[dict[str, Any], dict | None]:
     try:
         result = json.loads((output / "result.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}, _design_failure(
             "design_result_missing", "the design wrote no result.json"
+        )
+    if result.get("attempt_id") != str(attempt_id):
+        return {}, _design_failure(
+            "design_attempt_mismatch", "The design output belongs to another attempt."
         )
     if result.get("status") == "failed":
         failure = result.get("failure") or {}
@@ -453,14 +685,11 @@ def _register(
     # Both digests are recomputed and every file checked before anything is stored; the
     # release is the organization's, never a system release.
     environment, suite = register_release(
-        output / "environment", output / "suite", organization=job.organization
+        output / "environment",
+        output / "suite",
+        organization=job.organization,
+        expected_design=_expected_design(job, result),
     )
-    if (result.get("environment") or {}).get("digest") != environment.digest or (
-        result.get("suite") or {}
-    ).get("digest") != suite.digest:
-        raise _error(
-            "design_result_invalid", "result.json names other releases than it sealed"
-        )
     return {
         "environment": {
             "id": str(environment.id),
@@ -476,18 +705,58 @@ def _register(
     }, None
 
 
-def complete_design(job: HostedHarnessJob, output: Path | None) -> HostedHarnessJob:
+def _expected_design(job, result):
+    metadata = job.payload["metadata"]
+    pin = metadata.get("design_source_pin")
+    if metadata.get("design_source_selection") and not pin:
+        raise _error(
+            "source_review_required", "The design has no accepted source pin.", 409
+        )
+    if pin:
+        from simulate.models import HarnessSourceReview
+
+        owner = _review_owner(job, pin)
+        if not HarnessSourceReview.objects.filter(
+            pk=pin["review_id"],
+            owner=owner,
+            workspace_id=job.workspace_id,
+            organization_id=job.organization_id,
+            owner_kind="design",
+            state="accepted",
+            snapshot_digest=pin["digest"],
+            receipt__snapshot_id=pin["id"],
+        ).exists():
+            raise _error(
+                "source_snapshot_changed",
+                "The design source approval is unavailable.",
+                409,
+            )
+    return {
+        "source": {"id": pin["id"], "digest": pin["digest"]} if pin else None,
+        "digests": tuple(
+            (result.get(key) or {}).get("digest") for key in ("environment", "suite")
+        ),
+    }
+
+
+@transaction.atomic
+def complete_design(attempt, output: Path | None) -> HostedHarnessJob:
     """Finish a design job from its `design-output` (contract §7.9). A completed design registers
     its environment and suite as the organization's releases and records
     `metadata.design_result`; anything else fails the job with the reason, which is never
     retried: every exception is caught here, because a poll that re-entered would register
     twice."""
+    job = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+        pk=attempt.job_id
+    )
+    if job.current_attempt_number != attempt.attempt_number or job.terminal_at:
+        return job
     design_result: dict[str, Any] = {}
     if output is None:
         failure = _design_failure("design_result_missing", "the design left no output")
     else:
         try:
-            design_result, failure = _register(job, Path(output))
+            design_result, failure = _register(job, Path(output), attempt.id)
         except HostedHarnessError as exc:
             failure = _design_failure(exc.code, exc.message)
         except Exception as exc:  # noqa: BLE001 - recorded on the job, which then fails
@@ -507,53 +776,47 @@ def complete_design(job: HostedHarnessJob, output: Path | None) -> HostedHarness
                 "design world view unavailable job=%s", job.id, exc_info=True
             )
     now = timezone.now()
-    with transaction.atomic():
-        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=job.id
-        )
-        payload = dict(locked.payload)
-        payload["metadata"] = {
-            **(payload.get("metadata") or {}),
-            "design_result": design_result or None,
-        }
-        locked.payload = payload
-        if world:
-            # The workspace shows the sealed world beside what the session checkpointed.
-            locked.stage_outputs = [
-                output
-                for output in (locked.stage_outputs or [])
-                if output.get("kind") not in ("environment", "stores")
-            ] + world
-        locked.state = (
-            HostedHarnessJob.State.FAILED
-            if failure
-            else HostedHarnessJob.State.COMPLETED
-        )
-        locked.current_stage = locked.state
-        locked.failure = failure
-        locked.terminal_at = now
-        locked.content_updated_at = now
-        locked.save(
-            update_fields=[
-                "payload",
-                "stage_outputs",
-                "state",
-                "current_stage",
-                "failure",
-                "terminal_at",
-                "content_updated_at",
-                "updated_at",
-            ]
-        )
-        # The builder has finished; nothing it asked is left to answer here. A parked
-        # question is asked again by the design that continues this one.
-        # Its sandbox is gone too, so a turn cut off mid-reply no longer reads as running.
-        HostedHarnessConversation.no_workspace_objects.filter(job=locked).update(
-            blocking_input=None,
-            state=HostedHarnessConversation.State.COLD,
-            updated_at=now,
-        )
-    return locked
+    payload = dict(job.payload)
+    payload["metadata"] = {
+        **(payload.get("metadata") or {}),
+        "design_result": design_result or None,
+    }
+    job.payload = payload
+    if world:
+        # The workspace shows the sealed world beside what the session checkpointed.
+        job.stage_outputs = [
+            output
+            for output in (job.stage_outputs or [])
+            if output.get("kind") not in ("environment", "stores")
+        ] + world
+    job.state = (
+        HostedHarnessJob.State.FAILED if failure else HostedHarnessJob.State.COMPLETED
+    )
+    job.current_stage = job.state
+    job.failure = failure
+    job.terminal_at = now
+    job.content_updated_at = now
+    job.save(
+        update_fields=[
+            "payload",
+            "stage_outputs",
+            "state",
+            "current_stage",
+            "failure",
+            "terminal_at",
+            "content_updated_at",
+            "updated_at",
+        ]
+    )
+    # The builder has finished; nothing it asked is left to answer here. A parked
+    # question is asked again by the design that continues this one.
+    # Its sandbox is gone too, so a turn cut off mid-reply no longer reads as running.
+    HostedHarnessConversation.no_workspace_objects.filter(job=job).update(
+        blocking_input=None,
+        state=HostedHarnessConversation.State.COLD,
+        updated_at=now,
+    )
+    return job
 
 
 def unpack_output(body: bytes) -> tempfile.TemporaryDirectory[str]:
@@ -586,4 +849,9 @@ def publish_design(job: HostedHarnessJob) -> tuple[Any, Any]:
                 fileobj=io.BytesIO(_download(record.object_key)), mode="r:gz"
             ) as tar:
                 tar.extractall(root / name, filter="data")
-        return register_release(root / "environment", root / "suite", organization=None)
+        return register_release(
+            root / "environment",
+            root / "suite",
+            organization=None,
+            expected_design=_expected_design(job, result),
+        )
