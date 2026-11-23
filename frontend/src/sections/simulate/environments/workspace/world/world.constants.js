@@ -53,7 +53,7 @@ export const TOOLS_CARD_COPY = {
 };
 
 export const CODE_BLOCK_COPY = {
-  copy: (label) => `Copy ${label.toLowerCase()}`,
+  copyCode: "Copy code",
   copied: "Copied to clipboard",
   copyFailed: "Couldn't copy it",
 };
@@ -204,7 +204,10 @@ export function repoOriginOf(env) {
     .replace(/^https?:\/\/(www\.)?github\.com\//, "")
     .replace(/\.git$/, "")
     .replace(/\/$/, "");
-  const ref = env.source.ref || null;
+  const sha = env.source.commit_sha
+    ? String(env.source.commit_sha).slice(0, 7)
+    : null;
+  const ref = env.source.ref || sha;
   const short = repo.split("/").pop() || repo;
   return { repo, ref, label: ref ? `${short} @ ${ref}` : short };
 }
@@ -269,7 +272,11 @@ export function withTypedColumns(tables = [], columns) {
     return Array.isArray(typed) && typed.length
       ? {
           ...table,
-          fields: typed.map((c) => ({ name: c.name, type: columnType(c) })),
+          fields: typed.map((c) => ({
+            name: c.name,
+            type: c.type,
+            pk: Boolean(c.pk),
+          })),
         }
       : table;
   });
@@ -287,3 +294,127 @@ export const argumentFacts = (argument) =>
   ]
     .filter(Boolean)
     .join(" · ");
+
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+export const WORLD_STRIP_COPY = {
+  summary: (agent, total, answered) => {
+    const who = agent ? `Agent ${agent}` : "Your agent";
+    if (!total) return `${who} calls no tools.`;
+    if (answered === total)
+      return `${who} calls ${plural(total, "tool")}; the world answers every one.`;
+    if (!answered)
+      return `${who} calls ${plural(total, "tool")}; the world answers none of them.`;
+    return `${who} calls ${plural(total, "tool")}; the world answers ${answered} of them.`;
+  },
+  kind: "Simulated",
+  kindTip:
+    "Simulated: tool calls are answered by this world, inside our sandbox.",
+};
+
+export const WORLD_CARD_COPY = {
+  title: (tables, tools) =>
+    `World · ${plural(tables, "table")} · ${plural(tools, "tool")}`,
+  subtitle: (rows) =>
+    `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"}. Each table with the tools that use it; a tool opens its details.`,
+  head: ["", "Table", "Rows", "Columns", "Tools that use it"],
+  noTable: "No table",
+  noToolUsesIt: "No tool uses it",
+  primaryKey: "Primary key",
+  changesThis: (desc) =>
+    [desc, "changes this table"].filter(Boolean).join(" · "),
+  readsThis: (desc) => [desc, "reads this table"].filter(Boolean).join(" · "),
+  tier: {
+    simulated: {
+      word: "Simulated",
+      note: "Answered by the world: reads and writes its seeded data, consistent across every call in a run.",
+    },
+    in_process: {
+      word: "Runs inside the agent",
+      note: "Runs inside your agent, so the world doesn't answer it.",
+    },
+    unsupported: {
+      word: "Unsupported",
+      note: "Reaches a system the world has no copy of, so a run never calls it.",
+    },
+    unknown: {
+      word: "Not known",
+      note: "The contract doesn't say where these run.",
+    },
+  },
+  tierLabel: (count, total, word) =>
+    `${count === total ? "All tools" : plural(count, "tool")}: ${word}`,
+};
+
+export const TOOL_DRAWER_COPY = {
+  close: "Close",
+  remove: "Remove from the world",
+  removeTitle: (name) => `Remove ${name}?`,
+  removeContent:
+    "This asks the builder to remove the tool from the environment. It lands as a draft that you save as a new environment version, and the scenarios that call it are checked again.",
+  removeConfirm: "Remove tool",
+  arguments: "Arguments",
+  returns: "Returns",
+  changes: "Changes",
+  reads: "Reads",
+  reset: "Reset",
+  none: "None",
+  noTables: "None of the world's tables",
+  restored: "Restored to the seed before every trial",
+  optional: "optional",
+  allowed: (values) => `one of ${values.map(String).join(", ")}`,
+  between: (min, max) =>
+    min != null && max != null
+      ? `${min} to ${max}`
+      : min != null
+        ? `at least ${min}`
+        : `at most ${max}`,
+  typeWord: {
+    str: "text",
+    string: "text",
+    int: "whole number",
+    integer: "whole number",
+    float: "number",
+    number: "number",
+    bool: "yes / no",
+    boolean: "yes / no",
+    enum: "one of",
+    date: "date",
+    object: "object",
+    dict: "object",
+    list: "list",
+    array: "list",
+  },
+};
+
+export function worldTablesOf(env) {
+  const tables = Array.isArray(env?.worldTables) ? env.worldTables : [];
+  if (tables.length) return withTypedColumns(tables, env?.dataSchemaColumns);
+  const columns = env?.dataSchemaColumns;
+  if (!columns || typeof columns !== "object") return [];
+  const base = env?.baseEnvironment;
+  return Object.entries(columns)
+    .filter(([, cols]) => Array.isArray(cols))
+    .map(([name, cols]) => ({
+      name,
+      rows:
+        base && typeof base === "object" && Array.isArray(base[name])
+          ? base[name].length
+          : null,
+      fields: cols.map((c) => ({ name: c.name, type: c.type, pk: c.pk })),
+    }));
+}
+
+export function placeTools(tables, tools) {
+  const names = new Set(tables.map((t) => t.name));
+  const byTable = new Map(tables.map((t) => [t.name, []]));
+  const none = [];
+  tools.forEach((tool) => {
+    const changed = (tool.tables?.changed || []).find((n) => names.has(n));
+    const read = (tool.tables?.read || []).find((n) => names.has(n));
+    const at = changed || read;
+    if (at) byTable.get(at).push({ tool, changes: Boolean(changed) });
+    else none.push({ tool, changes: false });
+  });
+  return { byTable, none };
+}

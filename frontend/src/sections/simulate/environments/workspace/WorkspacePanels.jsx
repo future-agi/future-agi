@@ -129,7 +129,12 @@ export default function WorkspacePanels({
     switch (current.id) {
       case "world":
         return (
-          <WorldPanel env={env} envState={envState} graphData={graphData} />
+          <WorldPanel
+            env={env}
+            envState={envState}
+            graphData={graphData}
+            chat={locked ? null : contractChat}
+          />
         );
       case "contract":
         return (
@@ -138,6 +143,8 @@ export default function WorkspacePanels({
             backed={backed}
             locked={locked}
             chat={contractChat}
+            scenarios={serverEnvState?.scenarios || envState?.scenarios || []}
+            onGo={go}
           />
         );
       case "actors":

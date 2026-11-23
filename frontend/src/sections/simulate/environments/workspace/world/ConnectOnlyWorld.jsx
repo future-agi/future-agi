@@ -29,7 +29,7 @@ export default function ConnectOnlyWorld({ env, sx }) {
   ];
 
   return (
-    <SectionCard title={C.title} subtitle={C.subtitle} sx={sx}>
+    <SectionCard roomy title={C.title} subtitle={C.subtitle} sx={sx}>
       <Stack
         divider={
           <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
@@ -42,20 +42,20 @@ export default function ConnectOnlyWorld({ env, sx }) {
               display: "grid",
               gridTemplateColumns: "120px minmax(0, 1fr)",
               columnGap: 2,
-              px: 1.5,
+              px: 2.5,
               py: 1.25,
             }}
           >
             <Typography
               sx={{
-                typography: "s1",
-                fontWeight: 500,
+                typography: "s2",
+                fontWeight: 600,
                 fontVariantNumeric: "tabular-nums",
               }}
             >
               {row.label}
             </Typography>
-            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
               {row.value}
             </Typography>
           </Box>

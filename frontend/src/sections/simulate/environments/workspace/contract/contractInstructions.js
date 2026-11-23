@@ -7,6 +7,9 @@ const NOUN = { rule: "rule", useCase: "use case" };
 
 const KEEP = "and keep everything else as it is.";
 
+export const toolRemovalInstruction = (name) =>
+  `Remove the tool "${name}" from the environment. Remove or update the scenarios and checks that call it, ${KEEP}`;
+
 export function contractInstruction({ target, op, index, text, next }) {
   const noun = NOUN[target];
   const dependents = DEPENDENTS[target];

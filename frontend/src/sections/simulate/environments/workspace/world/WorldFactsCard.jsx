@@ -19,6 +19,7 @@ export default function WorldFactsCard({
   };
   return (
     <SectionCard
+      roomy
       title={F.title}
       subtitle={F.subtitle}
       sx={sx}
@@ -85,7 +86,6 @@ export default function WorldFactsCard({
         <Collapse in={runtimeOpen} unmountOnExit>
           <Box sx={{ p: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
             <CodeBlock
-              label={F.runtime}
               file={F.runtimeFile}
               code={JSON.stringify(runtime, null, 2)}
             />

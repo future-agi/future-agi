@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
 import { useTheme } from "@mui/material/styles";
-import { Box, ButtonBase, Stack, Typography, Tab } from "@mui/material";
+import { Box, Button, ButtonBase, Stack, Typography, Tab } from "@mui/material";
 import { SegmentedTabs } from "src/components/tabs/tabs";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
@@ -24,10 +24,25 @@ import SectionCard from "../../components/SectionCard";
  * and mangles SVG geometry.
  */
 const BRANCHES = [
-  { id: "tools", label: "Tools", dataIndex: 0, icon: "solar:settings-minimalistic-linear" },
+  {
+    id: "tools",
+    label: "Tools",
+    dataIndex: 0,
+    icon: "solar:settings-minimalistic-linear",
+  },
   { id: "flows", label: "Flows", dataIndex: 1, icon: "solar:route-linear" },
-  { id: "personas", label: "Personas", dataIndex: 2, icon: "solar:users-group-rounded-linear" },
-  { id: "guardrails", label: "Guardrails", dataIndex: 3, icon: "solar:shield-check-linear" },
+  {
+    id: "personas",
+    label: "Personas",
+    dataIndex: 2,
+    icon: "solar:users-group-rounded-linear",
+  },
+  {
+    id: "guardrails",
+    label: "Guardrails",
+    dataIndex: 3,
+    icon: "solar:shield-check-linear",
+  },
 ];
 
 // How many leaves a branch shows in the "All" view before it collapses to a
@@ -36,10 +51,20 @@ const BRANCHES = [
 const MAX_LEAVES = 5;
 
 const focusRing = {
-  "&:focus-visible": { outline: "2px solid", outlineColor: "primary.main", outlineOffset: "2px", borderRadius: "4px" },
+  "&:focus-visible": {
+    outline: "2px solid",
+    outlineColor: "primary.main",
+    outlineOffset: "2px",
+    borderRadius: "4px",
+  },
 };
 
-export default function CapabilityGraph({ env, envState, data, defaultOpen = false }) {
+export default function CapabilityGraph({
+  env,
+  envState,
+  data,
+  defaultOpen = false,
+}) {
   const theme = useTheme();
   const [focus, setFocus] = useState(null);
   // The graph is one more view of the same tools, so it stays folded until
@@ -62,7 +87,9 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
   const branchData = data || {
     tools: (env.tools || []).map((t) => t.name),
     flows: (contract.useCases || []).map((u) =>
-      u.replace(/ using .*/, "").replace(/^Refuse the request that would break: /, "Refuse: "),
+      u
+        .replace(/ using .*/, "")
+        .replace(/^Refuse the request that would break: /, "Refuse: "),
     ),
     personas: personaNames,
     guardrails: contract.hardRules || [],
@@ -118,183 +145,335 @@ export default function CapabilityGraph({ env, envState, data, defaultOpen = fal
         onClick={() => setOpen(true)}
         aria-expanded={false}
         sx={{
-          ...focusRing, width: "100%", justifyContent: "flex-start", gap: 1,
-          px: 1.5, py: 1, borderRadius: "8px", border: "1px solid", borderColor: "divider",
+          ...focusRing,
+          width: "100%",
+          justifyContent: "flex-start",
+          gap: 1,
+          px: 2,
+          py: 1.25,
+          borderRadius: 1,
+          border: "1px solid",
+          borderColor: "divider",
           "&:hover": { bgcolor: "action.hover" },
         }}
       >
-        <Iconify icon="solar:graph-new-linear" width={15} sx={{ color: "text.subtitle" }} />
-        <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>Capability graph</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", flex: 1, textAlign: "left" }}>
+        <Iconify
+          icon="solar:graph-new-linear"
+          width={16}
+          sx={{ color: "text.tertiary" }}
+        />
+        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+          Capability graph
+        </Typography>
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            flex: 1,
+            textAlign: "left",
+          }}
+        >
           Tools, flows, personas and guardrails as one picture
         </Typography>
-        <Iconify icon="solar:alt-arrow-down-linear" width={14} sx={{ color: "text.subtitle" }} />
+        <Iconify
+          icon="solar:alt-arrow-down-linear"
+          width={14}
+          sx={{ color: "text.tertiary" }}
+        />
       </ButtonBase>
     );
   }
 
   return (
     <Box>
-    <SectionCard
-      dense
-      title="Capability graph"
-      subtitle="Everything read from your agent, as one object rather than four lists"
-      action={
-        <SegmentedTabs
-          value={focus || "all"}
-          onChange={(_, v) => setFocus(v === "all" ? null : v)}
-          variant="scrollable"
-          scrollButtons={false}
-          sx={{ flexShrink: 0 }}
-        >
-          <Tab value="all" label="All" />
-          {BRANCHES.map((b) => (
-            <Tab key={b.id} value={b.id} label={b.label} />
-          ))}
-        </SegmentedTabs>
-      }
-    >
-      <Box sx={{ p: 1.5, overflowX: "auto" }}>
-        <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ maxWidth: "100%", height: "auto", display: "block" }}>
-          {/* agent → hub edges */}
-          {placed.map((b) => (
-            <path
-              key={`e-${b.id}`}
-              d={`M 150 ${agentY} C 200 ${agentY}, ${colX - 60} ${b.hubY}, ${colX - 10} ${b.hubY}`}
-              fill="none"
-              stroke={b.color}
-              strokeOpacity={0.5}
-              strokeWidth={1.5}
-            />
-          ))}
-
-          {/* the agent */}
-          <rect x={16} y={agentY - 21} width={134} height={42} rx={8}
-            fill={theme.palette.action.selected}
-            stroke={theme.palette.divider} strokeWidth={1} />
-          <text x={83} y={agentY - 3} textAnchor="middle" fill={strong} fontSize={12} fontWeight={medium}>
-            {env.name.length > 18 ? `${env.name.slice(0, 17)}…` : env.name}
-          </text>
-          <text x={83} y={agentY + 12} textAnchor="middle" fill={dim} fontSize={11}>
-            read from your agent
-          </text>
-
-          {placed.map((b) => {
-            const leaves = b.items.slice(0, cap);
-            const hidden = b.items.slice(cap);
-            return (
-              <g key={b.id}>
-                {/* hub */}
-                <rect x={colX - 10} y={b.top} width={130} height={headH - 6} rx={6}
-                  fill={theme.palette.background.neutral}
-                  stroke={b.color} strokeOpacity={0.45} strokeWidth={1} />
-                <text x={colX + 2} y={b.top + 18} fill={b.color} fontSize={11} fontWeight={medium}>
-                  {b.label}
-                </text>
-                <text x={colX + 112} y={b.top + 18} textAnchor="end" fill={b.color} fontSize={11} fontWeight={medium}>
-                  {b.items.length}
-                </text>
-
-                {/* empty branch — an honest placeholder drawn like a leaf (edge
-                    + faint dot) so it reads as connected to the hub, not floating */}
-                {b.items.length === 0 && (
-                  <>
-                    <path
-                      d={`M ${colX + 120} ${b.hubY} C ${colX + 160} ${b.hubY}, ${leafX - 30} ${b.top + headH + 8}, ${leafX - 6} ${b.top + headH + 8}`}
-                      fill="none" stroke={line} strokeWidth={1}
-                    />
-                    <circle cx={leafX - 3} cy={b.top + headH + 8} r={2.5} fill={faint} />
-                    <text x={leafX + 8} y={b.top + headH + 12} fill={faint} fontSize={11} fontStyle="italic">
-                      none yet
-                    </text>
-                  </>
-                )}
-
-                {/* hub → leaf edges + leaves */}
-                {leaves.map((item, j) => {
-                  const y = b.top + headH + j * rowH + 8;
-                  return (
-                    <g key={item}>
-                      <path
-                        d={`M ${colX + 120} ${b.hubY} C ${colX + 160} ${b.hubY}, ${leafX - 30} ${y}, ${leafX - 6} ${y}`}
-                        fill="none" stroke={line} strokeWidth={1}
-                      />
-                      <circle cx={leafX - 3} cy={y} r={2.5} fill={b.color} fillOpacity={0.8} />
-                      <text x={leafX + 8} y={y + 4} fill={dim} fontSize={11}
-                        fontFamily={b.id === "tools" ? "ui-monospace, Menlo, monospace" : "inherit"}>
-                        {item.length > 74 ? `${item.slice(0, 73)}…` : item}
-                        {item.length > 74 && <title>{item}</title>}
-                      </text>
-                    </g>
-                  );
-                })}
-
-                {/* "+N more": hover lists the rest in a tooltip (product flow).
-                    Not clickable — it never moves the user off the current view. */}
-                {hidden.length > 0 && (
-                  <CustomTooltip
-                    show
-                    arrow
-                    size="small"
-                    placement="right"
-                    title={
-                      <Box sx={{ maxWidth: 320, maxHeight: 280, overflowY: "auto" }}>
-                        {hidden.map((item) => (
-                          <Stack key={item} direction="row" spacing={0.75} sx={{ py: 0.125 }}>
-                            <Box
-                              component="span"
-                              sx={{ color: b.color, flexShrink: 0, lineHeight: 1.55 }}
-                            >
-                              •
-                            </Box>
-                            <Typography
-                              sx={{
-                                typography: "s3",
-                                fontFamily: b.id === "tools" ? "ui-monospace, Menlo, monospace" : "inherit",
-                              }}
-                            >
-                              {item}
-                            </Typography>
-                          </Stack>
-                        ))}
-                      </Box>
-                    }
-                  >
-                    <text
-                      x={leafX + 8}
-                      y={b.top + headH + leaves.length * rowH + 12}
-                      fill={b.color}
-                      fontSize={11}
-                      fontWeight={medium}
-                      style={{ cursor: "default" }}
-                    >
-                      + {hidden.length} more
-                    </text>
-                  </CustomTooltip>
-                )}
-              </g>
-            );
-          })}
-        </svg>
-      </Box>
-
-      <Stack
-        direction="row" spacing={1.25} alignItems="center"
-        sx={{ px: 1.5, py: 1, borderTop: "1px solid", borderColor: "divider" }}
+      <SectionCard
+        roomy
+        title="Capability graph"
+        subtitle="Everything read from your agent, as one object rather than four lists"
+        action={
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            sx={{ flexShrink: 0 }}
+          >
+            <SegmentedTabs
+              value={focus || "all"}
+              onChange={(_, v) => setFocus(v === "all" ? null : v)}
+              variant="scrollable"
+              scrollButtons={false}
+            >
+              <Tab value="all" label="All" />
+              {BRANCHES.map((b) => (
+                <Tab key={b.id} value={b.id} label={b.label} />
+              ))}
+            </SegmentedTabs>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => setOpen(false)}
+              startIcon={
+                <Iconify icon="solar:alt-arrow-up-linear" width={14} />
+              }
+              sx={{ color: "text.primary", borderColor: "divider" }}
+            >
+              Hide
+            </Button>
+          </Stack>
+        }
       >
-        <Iconify icon="solar:info-circle-linear" width={15} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-          Tools and guardrails are read from the source. Flows are derived from them. Personas
-          are the callers the agent serves.
-        </Typography>
-      </Stack>
-    </SectionCard>
+        <Box sx={{ p: 2.5, overflowX: "auto" }}>
+          <svg
+            width={W}
+            height={H}
+            viewBox={`0 0 ${W} ${H}`}
+            style={{ maxWidth: "100%", height: "auto", display: "block" }}
+          >
+            {/* agent → hub edges */}
+            {placed.map((b) => (
+              <path
+                key={`e-${b.id}`}
+                d={`M 150 ${agentY} C 200 ${agentY}, ${colX - 60} ${b.hubY}, ${colX - 10} ${b.hubY}`}
+                fill="none"
+                stroke={b.color}
+                strokeOpacity={0.5}
+                strokeWidth={1.5}
+              />
+            ))}
+
+            {/* the agent */}
+            <rect
+              x={16}
+              y={agentY - 21}
+              width={134}
+              height={42}
+              rx={8}
+              fill={theme.palette.action.selected}
+              stroke={theme.palette.divider}
+              strokeWidth={1}
+            />
+            <text
+              x={83}
+              y={agentY - 3}
+              textAnchor="middle"
+              fill={strong}
+              fontSize={12}
+              fontWeight={medium}
+            >
+              {env.name.length > 18 ? `${env.name.slice(0, 17)}…` : env.name}
+            </text>
+            <text
+              x={83}
+              y={agentY + 12}
+              textAnchor="middle"
+              fill={dim}
+              fontSize={11}
+            >
+              read from your agent
+            </text>
+
+            {placed.map((b) => {
+              const leaves = b.items.slice(0, cap);
+              const hidden = b.items.slice(cap);
+              return (
+                <g key={b.id}>
+                  {/* hub */}
+                  <rect
+                    x={colX - 10}
+                    y={b.top}
+                    width={130}
+                    height={headH - 6}
+                    rx={6}
+                    fill={theme.palette.background.neutral}
+                    stroke={b.color}
+                    strokeOpacity={0.45}
+                    strokeWidth={1}
+                  />
+                  <text
+                    x={colX + 2}
+                    y={b.top + 18}
+                    fill={b.color}
+                    fontSize={11}
+                    fontWeight={medium}
+                  >
+                    {b.label}
+                  </text>
+                  <text
+                    x={colX + 112}
+                    y={b.top + 18}
+                    textAnchor="end"
+                    fill={b.color}
+                    fontSize={11}
+                    fontWeight={medium}
+                  >
+                    {b.items.length}
+                  </text>
+
+                  {/* empty branch — an honest placeholder drawn like a leaf (edge
+                    + faint dot) so it reads as connected to the hub, not floating */}
+                  {b.items.length === 0 && (
+                    <>
+                      <path
+                        d={`M ${colX + 120} ${b.hubY} C ${colX + 160} ${b.hubY}, ${leafX - 30} ${b.top + headH + 8}, ${leafX - 6} ${b.top + headH + 8}`}
+                        fill="none"
+                        stroke={line}
+                        strokeWidth={1}
+                      />
+                      <circle
+                        cx={leafX - 3}
+                        cy={b.top + headH + 8}
+                        r={2.5}
+                        fill={faint}
+                      />
+                      <text
+                        x={leafX + 8}
+                        y={b.top + headH + 12}
+                        fill={faint}
+                        fontSize={11}
+                        fontStyle="italic"
+                      >
+                        none yet
+                      </text>
+                    </>
+                  )}
+
+                  {/* hub → leaf edges + leaves */}
+                  {leaves.map((item, j) => {
+                    const y = b.top + headH + j * rowH + 8;
+                    return (
+                      <g key={item}>
+                        <path
+                          d={`M ${colX + 120} ${b.hubY} C ${colX + 160} ${b.hubY}, ${leafX - 30} ${y}, ${leafX - 6} ${y}`}
+                          fill="none"
+                          stroke={line}
+                          strokeWidth={1}
+                        />
+                        <circle
+                          cx={leafX - 3}
+                          cy={y}
+                          r={2.5}
+                          fill={b.color}
+                          fillOpacity={0.8}
+                        />
+                        <text
+                          x={leafX + 8}
+                          y={y + 4}
+                          fill={dim}
+                          fontSize={11}
+                          fontFamily={
+                            b.id === "tools"
+                              ? "ui-monospace, Menlo, monospace"
+                              : "inherit"
+                          }
+                        >
+                          {item.length > 74 ? `${item.slice(0, 73)}…` : item}
+                          {item.length > 74 && <title>{item}</title>}
+                        </text>
+                      </g>
+                    );
+                  })}
+
+                  {/* "+N more": hover lists the rest in a tooltip (product flow).
+                    Not clickable — it never moves the user off the current view. */}
+                  {hidden.length > 0 && (
+                    <CustomTooltip
+                      show
+                      arrow
+                      size="small"
+                      placement="right"
+                      title={
+                        <Box
+                          sx={{
+                            maxWidth: 320,
+                            maxHeight: 280,
+                            overflowY: "auto",
+                          }}
+                        >
+                          {hidden.map((item) => (
+                            <Stack
+                              key={item}
+                              direction="row"
+                              spacing={0.75}
+                              sx={{ py: 0.125 }}
+                            >
+                              <Box
+                                component="span"
+                                sx={{
+                                  color: b.color,
+                                  flexShrink: 0,
+                                  lineHeight: 1.55,
+                                }}
+                              >
+                                •
+                              </Box>
+                              <Typography
+                                sx={{
+                                  typography: "s3",
+                                  fontFamily:
+                                    b.id === "tools"
+                                      ? "ui-monospace, Menlo, monospace"
+                                      : "inherit",
+                                }}
+                              >
+                                {item}
+                              </Typography>
+                            </Stack>
+                          ))}
+                        </Box>
+                      }
+                    >
+                      <text
+                        x={leafX + 8}
+                        y={b.top + headH + leaves.length * rowH + 12}
+                        fill={b.color}
+                        fontSize={11}
+                        fontWeight={medium}
+                        style={{ cursor: "default" }}
+                      >
+                        + {hidden.length} more
+                      </text>
+                    </CustomTooltip>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        </Box>
+
+        <Stack
+          direction="row"
+          spacing={1.25}
+          alignItems="center"
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderTop: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Iconify
+            icon="solar:info-circle-linear"
+            width={15}
+            sx={{ color: "text.subtitle", flexShrink: 0 }}
+          />
+          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+            Tools and guardrails are read from the source. Flows are derived
+            from them. Personas are the callers the agent serves.
+          </Typography>
+        </Stack>
+      </SectionCard>
       <ButtonBase
         onClick={() => setOpen(false)}
         aria-expanded
         sx={{
-          ...focusRing, mt: 0.75, px: 0.5, typography: "s3", fontWeight: "fontWeightMedium",
-          color: "text.secondary", borderRadius: 0.5, "&:hover": { color: "text.primary" },
+          ...focusRing,
+          mt: 0.75,
+          px: 0.5,
+          typography: "s3",
+          fontWeight: "fontWeightMedium",
+          color: "text.secondary",
+          borderRadius: 0.5,
+          "&:hover": { color: "text.primary" },
         }}
       >
         Hide capability graph
