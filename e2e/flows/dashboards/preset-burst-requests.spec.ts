@@ -70,6 +70,7 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     ],
   }),
 }, async ({ page, actor, probe }, testInfo) => {
+  const PRESET_DEBOUNCE_MS = 500; // Require actual delivery within the debounce window.
   // Seed ~25 + load 60 + 3 stages × (UI_READY 60 + ASYNC_JOB 60) = 445 s worst case.
   test.setTimeout(480_000);
   const uiExpect = expect.configure({ timeout: UI_READY });
@@ -271,11 +272,41 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   };
   let burstStart = 0, burstNav = NaN, clickedNav30 = NaN, highlightedNav30 = NaN;
   await test.step('UI: Today, 7D and 30D clicked back to back; 30D highlights before any 30D query', async () => {
+    const labels = ['Today', '7D', '30D'];
+    // Resolve actionability/geometry before starting the burst, not between clicks.
+    const points = [];
+    for (const label of labels) {
+      const target = chip(page, label);
+      await target.click({ trial: true });
+      const box = await target.boundingBox();
+      if (!box) throw new Error(`No visible bounds for ${label}`);
+      points.push({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
+    }
+    const delivery = await timing.evaluateHandle(t => {
+      const clicks: { label: string | null; trusted: boolean; at: number }[] = [];
+      const record = (event: MouseEvent) => {
+        const target = event.target instanceof Element ? event.target.closest('.MuiChip-root') : null;
+        clicks.push({ label: target?.querySelector('.MuiChip-label')?.textContent ?? null,
+          trusted: event.isTrusted, at: t.nav() });
+      };
+      document.addEventListener('click', record, true);
+      return { finish() { document.removeEventListener('click', record, true); return clicks; } };
+    });
     burstStart = Date.now(); // Runner-clock receipt filter.
     burstNav = await sinceNav();
-    await chip(page, 'Today').click();
-    await chip(page, '7D').click();
-    clickedNav30 = await clickDispatch(chip30);
+    // Browser hit-testing and normal trusted mouse events; setFixedTime fixes only Date.
+    // Measure delivery in the capture handler on the real monotonic clock used for CDP.
+    for (const { x, y } of points) await page.mouse.click(x, y);
+    const clicks = await delivery.evaluate(d => d.finish());
+    await attach('burst-click-delivery', clicks);
+    expect(clicks.map(c => [c.label, c.trusted]), 'trusted clicks in delivery order')
+      .toEqual(labels.map(label => [label, true]));
+    const times = clicks.map(c => navTime(c.at, `${c.label} click`));
+    expect(times[0]).toBeGreaterThanOrEqual(burstNav);
+    expect(times[1]).toBeGreaterThanOrEqual(times[0]);
+    clickedNav30 = times[2];
+    expect(clickedNav30).toBeGreaterThanOrEqual(times[1]);
+    expect(clickedNav30 - times[0], 'delivered Today → 30D burst (ms)').toBeLessThan(PRESET_DEBOUNCE_MS);
     await expect(chip30).toHaveClass(PRIMARY);
     highlightedNav30 = await readNav(() => highlight.evaluate(state => state.at), '30D primary transition');
     await expect(chip(page, 'Today')).not.toHaveClass(PRIMARY);
@@ -283,21 +314,16 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
   });
 
   await test.step('API: the burst sends only the 30-day range per widget, at least 450 ms after the click', async () => {
-    for (const metric of METRICS) {
-      await uiExpect.poll(() => queries(metric, burstStart).length, { message: `${metric} 30D query sent` })
-        .toBeGreaterThan(0);
-    }
-    await Promise.all([...http.pending]);
-    for (const metric of METRICS) {
-      const sent = queries(metric, burstStart);
-      await attach(`burst-${metric}`, sent.map(r => ({ input: r.input, runnerStartedAt: r.startedAt })));
-      // Exactly one range on the wire, and it is the 30-day one: Today and 7D never left the browser.
-      expect(distinctRanges(metric, burstStart), `${metric} burst ranges`).toHaveLength(1);
-      expect(distinctRanges(metric, burstStart)).toEqual([key30]);
-      const first = await firstNav(metric, key30, burstNav);
-      await attach(`ordering-${metric}`, { navigationStart, highlightedNav30, clickedNav30, dispatchNavMs: first });
-      expect(first, `${metric} 30D query after the highlight`).toBeGreaterThan(highlightedNav30);
-      expect(first - clickedNav30, `${metric} 30D query waits out the debounce`).toBeGreaterThanOrEqual(DEBOUNCE_FLOOR_MS);
+    try {
+      for (const metric of METRICS) {
+        const first = await firstNav(metric, key30, burstNav);
+        await attach(`ordering-${metric}`, { navigationStart, highlightedNav30, clickedNav30, dispatchNavMs: first });
+        expect(first, `${metric} 30D query after the highlight`).toBeGreaterThan(highlightedNav30);
+        expect(first - clickedNav30, `${metric} 30D query waits out the debounce`).toBeGreaterThanOrEqual(DEBOUNCE_FLOOR_MS);
+      }
+    } finally {
+      // Keep even a wrong-range-only dispatch when no matching 30D query ever arrives.
+      await attach('burst-dispatches-observed', dispatches.filter(d => dispatchNav(d) >= burstNav));
     }
   });
 
@@ -329,6 +355,14 @@ test('DASH-E2E-018: rapid date presets query only the final range, custom Done a
     doneAt = Date.now();
     doneNav = await sinceNav();
     clickedNavDone = await clickDispatch(done);
+    // Done ends the burst observation window. Include late requests after either exact
+    // response, exclude the next action by its delivered click, and never deduplicate.
+    const wire = await correlated();
+    for (const metric of METRICS) {
+      const burst = wire.filter(d => d.metric === metric && d.dispatchNavMs >= burstNav && d.dispatchNavMs < clickedNavDone);
+      await attach(`burst-${metric}`, burst);
+      expect(burst.map(d => d.range), `${metric}: exactly one 30D POST; no Today, 7D or duplicate`).toEqual([key30]);
+    }
     await expect(chip(page, `${today.label} - ${today.label}`)).toHaveClass(PRIMARY);
   });
 
