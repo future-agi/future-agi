@@ -39,3 +39,34 @@ def test_agent_config_still_has_to_be_an_object(bad):
     serializer = HarnessAgentSerializer(data={"connector": "vapi", "config": bad})
     assert not serializer.is_valid()
     assert "config" in serializer.errors
+
+
+@pytest.mark.parametrize(
+    ("value", "valid"),
+    [
+        (900, True),
+        ("900", True),
+        (300.5, True),
+        (3300, True),
+        (0, False),
+        (-5, False),
+        (3301, False),
+        ("slow", False),
+        (True, False),
+    ],
+)
+def test_a_chat_agent_s_reply_deadline_is_a_number_of_seconds_within_the_build_s_budget(
+    value, valid
+):
+    serializer = HarnessAgentSerializer(
+        data={"connector": "auto", "config": {"chat_call_timeout_seconds": value}}
+    )
+    assert serializer.is_valid() is valid, serializer.errors
+    if not valid:
+        assert "chat_call_timeout_seconds" in str(serializer.errors["config"])
+
+
+def test_a_chat_agent_with_no_reply_deadline_keeps_the_default():
+    serializer = HarnessAgentSerializer(data={"connector": "auto", "config": {}})
+    assert serializer.is_valid(), serializer.errors
+    assert "chat_call_timeout_seconds" not in serializer.validated_data["config"]
