@@ -9,6 +9,12 @@ import {
   scenarioFromApi,
   amendScenarios,
   scenarioCoverage,
+  validateScenarios,
+  getScenarioValidation,
+  getRunningScenarioValidation,
+  archiveScenario,
+  restoreScenario,
+  getSourceChanges,
 } from "src/api/simulate-environments/scenarios";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import {
@@ -31,7 +37,14 @@ export const harnessScenariosListKey = (jobId) => ["harness-scenarios", jobId];
 
 export const harnessScenariosKey = (
   jobId,
-  { page = 0, pageSize = 25, search = "", groupBy, ordering, filters = {} } = {},
+  {
+    page = 0,
+    pageSize = 25,
+    search = "",
+    groupBy,
+    ordering,
+    filters = {},
+  } = {},
 ) => [
   ...harnessScenariosListKey(jobId),
   { page, pageSize, search, groupBy, ordering, filters },
@@ -64,7 +77,14 @@ export function useHarnessScenarios({
   filters = {},
 } = {}) {
   return useQuery({
-    queryKey: harnessScenariosKey(jobId, { page, pageSize, search, groupBy, ordering, filters }),
+    queryKey: harnessScenariosKey(jobId, {
+      page,
+      pageSize,
+      search,
+      groupBy,
+      ordering,
+      filters,
+    }),
     queryFn: () =>
       listScenarios(jobId, {
         page: page + 1,
@@ -88,14 +108,23 @@ export function useHarnessScenarios({
 export const harnessScenarioCoverageKey = (
   jobId,
   { search = "", filters = {}, rowAxis, colAxis } = {},
-) => [...harnessScenariosListKey(jobId), "coverage", { search, filters, rowAxis, colAxis }];
+) => [
+  ...harnessScenariosListKey(jobId),
+  "coverage",
+  { search, filters, rowAxis, colAxis },
+];
 
 export function useScenarioCoverage(
   jobId,
   { search = "", filters = {}, rowAxis, colAxis } = {},
 ) {
   return useQuery({
-    queryKey: harnessScenarioCoverageKey(jobId, { search, filters, rowAxis, colAxis }),
+    queryKey: harnessScenarioCoverageKey(jobId, {
+      search,
+      filters,
+      rowAxis,
+      colAxis,
+    }),
     queryFn: () =>
       scenarioCoverage(jobId, {
         search,
@@ -122,7 +151,9 @@ export function useAmendScenarios(jobId) {
     meta: { errorHandled: true },
     mutationFn: (body) => amendScenarios(jobId, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(jobId) });
+      queryClient.invalidateQueries({
+        queryKey: harnessScenariosListKey(jobId),
+      });
       // The header and tab badge read the scenario count from the detail.
       queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(jobId) });
       // Only the list: a saved version's own diff and scenarios never change.
@@ -133,5 +164,89 @@ export function useAmendScenarios(jobId) {
       // With versioning on, the edit lands in the unsaved changes.
       refreshDrafts(queryClient, jobId);
     },
+  });
+}
+
+// A scenario validation can run up to its deadline, so it is read every 15s while it runs.
+export const VALIDATION_POLL_MS = 15_000;
+
+// Under the list prefix, so whatever refreshes the list (a validation ending, an archive) reads it again.
+export const runningValidationKey = (envId) => [
+  ...harnessScenariosListKey(envId),
+  "running-validation",
+];
+
+// The default pair's validation still running, so a reload or another page follows it.
+export function useRunningScenarioValidation(envId) {
+  return useQuery({
+    queryKey: runningValidationKey(envId),
+    queryFn: () => getRunningScenarioValidation(envId),
+    enabled: Boolean(envId),
+    meta: { errorHandled: true },
+  });
+}
+
+export function useValidateScenarios(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: (args = {}) => validateScenarios(envId, args),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: runningValidationKey(envId),
+        exact: true,
+      });
+    },
+  });
+}
+
+// Poll one validation until it settles, then refetch the list so each case shows its new state.
+export function useScenarioValidation(envId, validationJobId) {
+  const queryClient = useQueryClient();
+  return useQuery({
+    // Outside the list prefix: a key under it would be refetched by the invalidate below, forever.
+    queryKey: ["harness-scenario-validation", envId, validationJobId],
+    queryFn: async () => {
+      const status = await getScenarioValidation(envId, validationJobId);
+      if (status.state !== "validating") {
+        queryClient.invalidateQueries({
+          queryKey: harnessScenariosListKey(envId),
+        });
+      }
+      return status;
+    },
+    enabled: Boolean(envId && validationJobId),
+    refetchInterval: (query) =>
+      !query.state.data || query.state.data.state === "validating"
+        ? VALIDATION_POLL_MS
+        : false,
+    meta: { errorHandled: true },
+  });
+}
+
+// Archive or restore one scenario; the caller reads `live` and `lifecycle` from the answer.
+export function useArchiveScenario(envId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: ({ key, reason, restore = false }) =>
+      restore
+        ? restoreScenario(envId, key)
+        : archiveScenario(envId, key, reason),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: harnessScenariosListKey(envId),
+      });
+      queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(envId) });
+    },
+  });
+}
+
+// The rules and files an environment version changed that scenarios cite, before and after.
+export function useSourceChanges(envId, versionId, { enabled = true } = {}) {
+  return useQuery({
+    queryKey: [...harnessScenariosListKey(envId), "source-changes", versionId],
+    queryFn: () => getSourceChanges(envId, versionId),
+    enabled: Boolean(enabled && envId && versionId),
   });
 }

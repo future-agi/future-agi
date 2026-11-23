@@ -15,7 +15,11 @@ import {
   amendScenarios,
   scenariosCoveragePath,
   scenariosAmendPath,
+  validateScenarios,
+  archiveScenario,
+  ARCHIVE_REASON_MAX,
 } from "../scenarios";
+import axios from "src/utils/axios";
 import {
   isContractedApiPath,
   getContractedApiMethods,
@@ -66,14 +70,18 @@ describe("scenarios.js — sample-mode delegation (?scnSample)", () => {
   it("routes an amend through the emulator when sample mode is on", async () => {
     isScenarioSampleMode.mockReturnValue(true);
     const name = SAMPLE_ROWS[3].name;
-    const res = await amendScenarios("any-job", { changes: [{ op: "drop", scenario: name }] });
+    const res = await amendScenarios("any-job", {
+      changes: [{ op: "drop", scenario: name }],
+    });
     expect(res.receipts).toEqual([{ scenario: name, outcome: "applied" }]);
   });
 });
 
 describe("serializeScenarioParams", () => {
   it("repeats an array key so it becomes an OR-set on the wire", () => {
-    const qs = serializeScenarioParams({ "persona.accent": ["Canadian", "Indian"] });
+    const qs = serializeScenarioParams({
+      "persona.accent": ["Canadian", "Indian"],
+    });
     expect(qs).toBe("persona.accent=Canadian&persona.accent=Indian");
   });
 
@@ -112,7 +120,9 @@ describe("scenarioFromApi", () => {
     expect(mapped.conversationBranch).toBe(raw.branch);
     expect(mapped.subTasks).toEqual(raw.sub_goals);
     expect(mapped.persona.ageGroup).toBe(raw.persona.age_group);
-    expect(mapped.persona.communicationStyle).toBe(raw.persona.communication_style);
+    expect(mapped.persona.communicationStyle).toBe(
+      raw.persona.communication_style,
+    );
     expect(mapped.coverage).toEqual(raw.coverage);
     expect(mapped.group).toBe(raw.group);
     expect(mapped._raw).toBe(raw);
@@ -194,7 +204,10 @@ describe("queryScenarioFixture — filters", () => {
   });
 
   it("negates with a _not suffix (coverage.overlay_not=none)", () => {
-    const res = queryScenarioFixture({ limit: 25, "coverage.overlay_not": ["none"] });
+    const res = queryScenarioFixture({
+      limit: 25,
+      "coverage.overlay_not": ["none"],
+    });
     expect(res.count).toBe(negated.count);
     expect(numbersOf(res)).toEqual(numbersOf(negated));
   });
@@ -224,7 +237,8 @@ describe("queryScenarioFixture — fields catalogue", () => {
       limit: 25,
       "persona.accent": ["Canadian", "Indian"],
     });
-    const accentOf = (res) => res.fields.find((f) => f.value === "persona.accent");
+    const accentOf = (res) =>
+      res.fields.find((f) => f.value === "persona.accent");
     // Applying an accent filter must NOT shrink the accent choices — that is how
     // an OR stays buildable. Matches sample 03 (no filter) vs 04 (filtered).
     expect(accentOf(filtered).counts).toEqual(accentOf(unfiltered).counts);
@@ -236,7 +250,13 @@ describe("queryScenarioFixture — fields catalogue", () => {
   it("orders enum choices count-desc then name and drops unused properties", () => {
     const res = queryScenarioFixture({ limit: 25 });
     const accent = res.fields.find((f) => f.value === "persona.accent");
-    expect(accent.choices).toEqual(["Canadian", "Australian", "Neutral", "American", "Indian"]);
+    expect(accent.choices).toEqual([
+      "Canadian",
+      "Australian",
+      "Neutral",
+      "American",
+      "Indian",
+    ]);
     // A field the suite never varies (search that hits one row) drops enums with
     // no members; string fields (name) always remain.
     const narrow = queryScenarioFixture({ limit: 25, search: "payment sms" });
@@ -250,7 +270,9 @@ describe("amendScenarioFixture — drop", () => {
   it("drops a scenario by name and the list no longer serves it", () => {
     const before = queryScenarioFixture({ limit: 25 }).count;
     const name = nameOf(4);
-    const res = amendScenarioFixture({ changes: [{ op: "drop", scenario: name }] });
+    const res = amendScenarioFixture({
+      changes: [{ op: "drop", scenario: name }],
+    });
 
     expect(res.receipts).toEqual([{ scenario: name, outcome: "applied" }]);
     const after = queryScenarioFixture({ limit: 25 });
@@ -260,16 +282,23 @@ describe("amendScenarioFixture — drop", () => {
 
   it("bulk-drops an array of scenarios in one change, one receipt each", () => {
     const names = [nameOf(1), nameOf(2), nameOf(3)];
-    const res = amendScenarioFixture({ changes: [{ op: "drop", scenarios: names }] });
+    const res = amendScenarioFixture({
+      changes: [{ op: "drop", scenarios: names }],
+    });
 
     expect(res.receipts).toHaveLength(3);
     expect(res.receipts.every((r) => r.outcome === "applied")).toBe(true);
-    expect(queryScenarioFixture({ limit: 25 }).count).toBe(SAMPLE_ROWS.length - 3);
+    expect(queryScenarioFixture({ limit: 25 }).count).toBe(
+      SAMPLE_ROWS.length - 3,
+    );
   });
 
   it("resolves a number and does not renumber the survivors", () => {
     amendScenarioFixture({ changes: [{ op: "drop", scenario: "2" }] });
-    const numbers = queryScenarioFixture({ limit: 25, group_by: "" }).results.map((r) => r.number);
+    const numbers = queryScenarioFixture({
+      limit: 25,
+      group_by: "",
+    }).results.map((r) => r.number);
     expect(numbers).not.toContain(2);
     // 1 and 3 survive with their original numbers — a drop leaves 1, 3, 4…
     expect(numbers).toContain(1);
@@ -277,17 +306,27 @@ describe("amendScenarioFixture — drop", () => {
   });
 
   it("resolves a numeric range", () => {
-    const res = amendScenarioFixture({ changes: [{ op: "drop", scenario: "1-3" }] });
+    const res = amendScenarioFixture({
+      changes: [{ op: "drop", scenario: "1-3" }],
+    });
     expect(res.receipts).toHaveLength(3);
-    const numbers = queryScenarioFixture({ limit: 25, group_by: "" }).results.map((r) => r.number);
+    const numbers = queryScenarioFixture({
+      limit: 25,
+      group_by: "",
+    }).results.map((r) => r.number);
     expect(numbers).not.toContain(1);
     expect(numbers).not.toContain(2);
     expect(numbers).not.toContain(3);
   });
 
   it("refuses a token that matches no scenario", () => {
-    const res = amendScenarioFixture({ changes: [{ op: "drop", scenario: "no_such_scenario" }] });
-    expect(res.receipts[0]).toMatchObject({ scenario: "no_such_scenario", outcome: "refused" });
+    const res = amendScenarioFixture({
+      changes: [{ op: "drop", scenario: "no_such_scenario" }],
+    });
+    expect(res.receipts[0]).toMatchObject({
+      scenario: "no_such_scenario",
+      outcome: "refused",
+    });
     expect(res.receipts[0].why).toMatch(/no scenario matches/);
   });
 });
@@ -298,10 +337,19 @@ describe("amendScenarioFixture — set_field", () => {
   it("applies an editable descriptive field (tests) immediately", () => {
     const name = nameOf(4);
     const res = amendScenarioFixture({
-      changes: [{ op: "set_field", scenario: name, field: "tests", value: "Passes when it does the thing." }],
+      changes: [
+        {
+          op: "set_field",
+          scenario: name,
+          field: "tests",
+          value: "Passes when it does the thing.",
+        },
+      ],
     });
     expect(res.receipts).toEqual([{ scenario: name, outcome: "applied" }]);
-    const row = queryScenarioFixture({ limit: 25 }).results.find((r) => r.name === name);
+    const row = queryScenarioFixture({ limit: 25 }).results.find(
+      (r) => r.name === name,
+    );
     expect(row.tests).toBe("Passes when it does the thing.");
   });
 
@@ -309,10 +357,14 @@ describe("amendScenarioFixture — set_field", () => {
     const name = nameOf(4);
     const res = amendScenarioFixture({
       rework: true,
-      changes: [{ op: "set_field", scenario: name, field: "max_turns", value: 15 }],
+      changes: [
+        { op: "set_field", scenario: name, field: "max_turns", value: 15 },
+      ],
     });
     expect(res.receipts).toEqual([{ scenario: name, outcome: "reworked" }]);
-    const row = queryScenarioFixture({ limit: 25 }).results.find((r) => r.name === name);
+    const row = queryScenarioFixture({ limit: 25 }).results.find(
+      (r) => r.name === name,
+    );
     expect(row.max_turns).toBe(15);
   });
 
@@ -320,9 +372,19 @@ describe("amendScenarioFixture — set_field", () => {
     const name = nameOf(4);
     const res = amendScenarioFixture({
       rework: false,
-      changes: [{ op: "set_field", scenario: name, field: "background_noise", value: "cafe" }],
+      changes: [
+        {
+          op: "set_field",
+          scenario: name,
+          field: "background_noise",
+          value: "cafe",
+        },
+      ],
     });
-    expect(res.receipts[0]).toMatchObject({ scenario: name, outcome: "refused" });
+    expect(res.receipts[0]).toMatchObject({
+      scenario: name,
+      outcome: "refused",
+    });
     expect(res.receipts[0].why).toMatch(/re-proof/);
   });
 
@@ -330,10 +392,17 @@ describe("amendScenarioFixture — set_field", () => {
     const name = nameOf(4);
     const res = amendScenarioFixture({
       rework: true,
-      changes: [{ op: "set_field", scenario: name, field: "branch", value: "anything" }],
+      changes: [
+        { op: "set_field", scenario: name, field: "branch", value: "anything" },
+      ],
     });
-    expect(res.receipts[0]).toMatchObject({ scenario: name, outcome: "refused" });
-    expect(res.receipts[0].why).toMatch(/not editable: it is proved, not described/);
+    expect(res.receipts[0]).toMatchObject({
+      scenario: name,
+      outcome: "refused",
+    });
+    expect(res.receipts[0].why).toMatch(
+      /not editable: it is proved, not described/,
+    );
   });
 });
 
@@ -344,10 +413,14 @@ describe("amendScenarioFixture — set_persona", () => {
     const name = nameOf(4);
     const res = amendScenarioFixture({
       rework: true,
-      changes: [{ op: "set_persona", scenario: name, persona: { accent: "Irish" } }],
+      changes: [
+        { op: "set_persona", scenario: name, persona: { accent: "Irish" } },
+      ],
     });
     expect(res.receipts).toEqual([{ scenario: name, outcome: "reworked" }]);
-    const row = queryScenarioFixture({ limit: 25 }).results.find((r) => r.name === name);
+    const row = queryScenarioFixture({ limit: 25 }).results.find(
+      (r) => r.name === name,
+    );
     expect(row.persona.accent).toBe("Irish");
   });
 
@@ -355,9 +428,18 @@ describe("amendScenarioFixture — set_persona", () => {
     const name = nameOf(4);
     const res = amendScenarioFixture({
       rework: true,
-      changes: [{ op: "set_persona", scenario: name, persona: { name: "Someone Else" } }],
+      changes: [
+        {
+          op: "set_persona",
+          scenario: name,
+          persona: { name: "Someone Else" },
+        },
+      ],
     });
-    expect(res.receipts[0]).toMatchObject({ scenario: name, outcome: "refused" });
+    expect(res.receipts[0]).toMatchObject({
+      scenario: name,
+      outcome: "refused",
+    });
     expect(res.receipts[0].why).toMatch(/not editable/);
   });
 });
@@ -375,21 +457,34 @@ describe("coverageScenarioFixture", () => {
 
   it("keeps empty cross-tab cells as explicit zeros", () => {
     const cov = coverageScenarioFixture({});
-    const zero = cov.cells.find((c) => c.row === "authenticate_otp" && c.column === "destructive");
-    expect(zero).toEqual({ row: "authenticate_otp", column: "destructive", count: 0 });
+    const zero = cov.cells.find(
+      (c) => c.row === "authenticate_otp" && c.column === "destructive",
+    );
+    expect(zero).toEqual({
+      row: "authenticate_otp",
+      column: "destructive",
+      count: 0,
+    });
   });
 
   it("honours row_axis / col_axis", () => {
-    const cov = coverageScenarioFixture({ row_axis: "counterparty", col_axis: "interface" });
+    const cov = coverageScenarioFixture({
+      row_axis: "counterparty",
+      col_axis: "interface",
+    });
     expect(cov.row_axis).toBe("counterparty");
     expect(cov.col_axis).toBe("interface");
     expect(cov.rows).toEqual(cov.rows.slice().sort());
   });
 
   it("reshapes after an amend drop", () => {
-    const before = coverageScenarioFixture({}).per_axis.find((a) => a.axis === "task").scenarios;
+    const before = coverageScenarioFixture({}).per_axis.find(
+      (a) => a.axis === "task",
+    ).scenarios;
     amendScenarioFixture({ changes: [{ op: "drop", scenario: "1-5" }] });
-    const after = coverageScenarioFixture({}).per_axis.find((a) => a.axis === "task").scenarios;
+    const after = coverageScenarioFixture({}).per_axis.find(
+      (a) => a.axis === "task",
+    ).scenarios;
     expect(after).toBe(before - 5);
   });
 });
@@ -418,10 +513,39 @@ describe("scenarios.js — live routes are in the generated contract", () => {
 
   it("caps the request contract's scenario_count at the UI's MAX_SCENARIOS", () => {
     expect(
-      OPENAPI_CONTRACT.definitions.HarnessJobCreate.properties.scenario_count.maximum,
+      OPENAPI_CONTRACT.definitions.HarnessJobCreate.properties.scenario_count
+        .maximum,
     ).toBe(MAX_SCENARIOS);
     expect(
-      OPENAPI_CONTRACT.definitions.HarnessPreflight.properties.scenario_count.maximum,
+      OPENAPI_CONTRACT.definitions.HarnessPreflight.properties.scenario_count
+        .maximum,
     ).toBe(MAX_SCENARIOS);
+  });
+});
+
+describe("scenario lifecycle requests", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("sends only what Validate asks for: nothing, the keys, or reprove_all", async () => {
+    const post = vi.spyOn(axios, "post").mockResolvedValue({ data: {} });
+    await validateScenarios("env-1");
+    await validateScenarios("env-1", { keys: ["a", "b"] });
+    await validateScenarios("env-1", { reproveAll: true });
+    expect(post.mock.calls.map((call) => call[1])).toEqual([
+      {},
+      { keys: ["a", "b"] },
+      { reprove_all: true },
+    ]);
+    expect(post.mock.calls[0][0]).toBe(
+      "/simulate/api/harness-environments/env-1/scenarios/validate/",
+    );
+  });
+
+  it("drops an empty archive note and cuts a long one to the server's limit", async () => {
+    const post = vi.spyOn(axios, "post").mockResolvedValue({ data: {} });
+    await archiveScenario("env-1", "case-1", "   ");
+    await archiveScenario("env-1", "case-1", "x".repeat(300));
+    expect(post.mock.calls[0][1]).toEqual({});
+    expect(post.mock.calls[1][1].reason).toHaveLength(ARCHIVE_REASON_MAX);
   });
 });

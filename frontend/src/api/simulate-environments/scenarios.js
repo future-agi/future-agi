@@ -90,6 +90,71 @@ export const scenarioCoverage = async (jobId, params = {}) => {
   ).data;
 };
 
+const validatePath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/validate/", {
+    id: envId,
+  });
+const runningValidationPath = (envId) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/scenarios/validate/running/",
+    {
+      id: envId,
+    },
+  );
+const archivePath = (envId, key) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/{key}/archive/", {
+    id: envId,
+    key,
+  });
+const restorePath = (envId, key) =>
+  apiPath("/simulate/api/harness-environments/{id}/scenarios/{key}/restore/", {
+    id: envId,
+    key,
+  });
+const sourceChangesPath = (envId, versionId) =>
+  apiPath(
+    "/simulate/api/harness-environments/{id}/versions/environment/{version_id}/source-changes/",
+    { id: envId, version_id: versionId },
+  );
+
+// The archive note the server keeps is at most 255 characters.
+export const ARCHIVE_REASON_MAX = 255;
+
+// Prove the default pair's scenarios: those with no current proof, only `keys`, or all with `reprove_all`.
+// 200 answers `ready` (nothing to prove) or `unavailable`; 202 a running job to poll.
+export const validateScenarios = async (
+  envId,
+  { keys, reproveAll = false } = {},
+) => {
+  const body = {};
+  if (keys?.length) body.keys = keys;
+  if (reproveAll) body.reprove_all = true;
+  return (await axios.post(validatePath(envId), body)).data;
+};
+
+export const getScenarioValidation = async (envId, jobId) =>
+  (await axios.get(validatePath(envId), { params: { job_id: jobId } })).data;
+
+// The default pair's validation still running, so a page opened later follows it instead of starting another.
+export const getRunningScenarioValidation = async (envId) =>
+  (await axios.get(runningValidationPath(envId))).data;
+
+export const archiveScenario = async (envId, key, reason = "") => {
+  const trimmed = reason.trim().slice(0, ARCHIVE_REASON_MAX);
+  return (
+    await axios.post(
+      archivePath(envId, key),
+      trimmed ? { reason: trimmed } : {},
+    )
+  ).data;
+};
+
+export const restoreScenario = async (envId, key) =>
+  (await axios.post(restorePath(envId, key), {})).data;
+
+export const getSourceChanges = async (envId, versionId) =>
+  (await axios.get(sourceChangesPath(envId, versionId))).data;
+
 // Map a server row to the SCENARIO_SHAPE the table/list render, carrying the
 // raw row on `_raw` for the Phase-2 edit drawer. The persona is normalised to
 // the shape's camelCase keys; coverage/keywords and the run fields ride along
