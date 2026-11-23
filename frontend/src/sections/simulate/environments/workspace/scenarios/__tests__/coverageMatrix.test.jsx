@@ -9,7 +9,9 @@ import CoverageMatrix from "../CoverageMatrix";
 vi.mock("src/api/simulate-environments/scenariosHooks", () => ({
   useScenarioCoverage: vi.fn(),
 }));
-const { useScenarioCoverage } = await import("src/api/simulate-environments/scenariosHooks");
+const { useScenarioCoverage } = await import(
+  "src/api/simulate-environments/scenariosHooks"
+);
 
 beforeEach(() => {
   useScenarioCoverage.mockReset();
@@ -20,7 +22,9 @@ describe("CoverageMatrix", () => {
   it("sits as one toolbar button that names the summary, with the breakdown closed", () => {
     render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
     expect(
-      screen.getByRole("button", { name: /^Coverage: Axes 8\/8, Pairs \d+%, Forced 5\/5$/ }),
+      screen.getByRole("button", {
+        name: /^Coverage: Axes 8\/8, Pairs \d+%, Forced 5\/5$/,
+      }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Destructive / irreversible")).toBeNull();
   });
@@ -49,7 +53,13 @@ describe("CoverageMatrix", () => {
   });
 
   it("passes the search + filters through to the coverage hook", () => {
-    render(<CoverageMatrix jobId="job-1" search="ride" filters={{ "persona.accent": ["Canadian"] }} />);
+    render(
+      <CoverageMatrix
+        jobId="job-1"
+        search="ride"
+        filters={{ "persona.accent": ["Canadian"] }}
+      />,
+    );
     expect(useScenarioCoverage).toHaveBeenCalledWith(
       "job-1",
       expect.objectContaining({
@@ -72,9 +82,15 @@ describe("CoverageMatrix", () => {
     // Without this, a failed request renders 0/8 axes and 0% pairs — falsely
     // telling the user their suite covers nothing.
     const refetch = vi.fn();
-    useScenarioCoverage.mockReturnValue({ data: undefined, isError: true, refetch });
+    useScenarioCoverage.mockReturnValue({
+      data: undefined,
+      isError: true,
+      refetch,
+    });
     render(<CoverageMatrix jobId="job-1" search="" filters={{}} />);
-    fireEvent.click(screen.getByRole("button", { name: "Coverage couldn't load" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Coverage couldn't load" }),
+    );
     expect(screen.getByText(/Couldn't load coverage/i)).toBeInTheDocument();
     expect(screen.queryByText("8/8")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
@@ -87,5 +103,46 @@ describe("CoverageMatrix", () => {
     expect(screen.getByLabelText("Loading coverage")).toBeInTheDocument();
     expect(screen.queryByText(/0 scenarios/)).toBeNull();
     expect(screen.queryByText("0%")).toBeNull();
+  });
+
+  const openWith = (workflows, versioned = true) => {
+    useScenarioCoverage.mockReturnValue({
+      data: { ...coverageSample, workflows },
+    });
+    render(
+      <CoverageMatrix
+        jobId="job-1"
+        search=""
+        filters={{}}
+        versioned={versioned}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Coverage/ }));
+  };
+
+  it("shows each use case's proof, marking what's missing", () => {
+    openWith([
+      {
+        workflow: "Refunds",
+        success: 2,
+        refusal: 0,
+        wrong_result: 1,
+        missing: ["refusal"],
+      },
+    ]);
+    const row = screen.getByRole("row", { name: /Refunds/ });
+    expect(row).toHaveTextContent("2");
+    expect(row).toHaveTextContent("Missing");
+    expect(row).toHaveTextContent("1");
+  });
+
+  it("says why the proof is empty", () => {
+    openWith([]);
+    expect(screen.getByText(/Nothing to count yet/)).toBeInTheDocument();
+  });
+
+  it("leaves the proof out when the environment has no versioning", () => {
+    openWith([], false);
+    expect(screen.queryByText("Proof per use case")).toBeNull();
   });
 });

@@ -606,6 +606,7 @@ export default function ScenariosStep({
                         jobId={env?.id}
                         search={debouncedQuery}
                         filters={filters}
+                        versioned={Boolean(env?.versioning?.enabled)}
                       />
                       {!locked && env?.id && (
                         <ImportEvidenceButton

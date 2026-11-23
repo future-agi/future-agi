@@ -271,3 +271,18 @@ export const groupScenarios = (rows, mode = "goal", env) => {
   // push the meaty groups out of view.
   return [...buckets.values()].sort((a, b) => b.rows.length - a.rows.length);
 };
+
+// The Coverage drawer's proof per use case: whether each one proves a success, a refusal and a caught wrong answer.
+export const WORKFLOW_PROOF_COPY = {
+  title: "Proof per use case",
+  hint: "Counted over the saved default scenarios, not the filter or unsaved changes. Once any scenario is must-pass, only use cases with one are listed.",
+  columns: {
+    workflow: "Use case",
+    success: "Does it right",
+    refusal: "Says no",
+    wrong_result: "Wrong answer caught",
+  },
+  missing: "Missing",
+  complete: "All three proved",
+  empty: "Nothing to count yet: there are no saved scenarios with a use case.",
+};
