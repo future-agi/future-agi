@@ -483,13 +483,6 @@ export default function RunDetail({
             mx: 2,
             mt: 1.5,
             flexShrink: 0,
-            ...(!stopNotice.bad && {
-              bgcolor: "background.neutral",
-              color: "text.primary",
-              border: "1px solid",
-              borderColor: "divider",
-              "& .MuiAlert-icon": { color: "text.secondary" },
-            }),
           }}
         >
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
