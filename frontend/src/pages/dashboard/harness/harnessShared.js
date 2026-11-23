@@ -380,12 +380,20 @@ export const shortDigest = (digest) => {
 export const ADAPTATION_STEPS = [
   { key: "binding", label: "Binding drafted", tool: "submit_binding" },
   { key: "proof", label: "Binding proved", tool: "run_proof" },
-  { key: "conflicts", label: "Policy conflicts reviewed", tool: "report_conflicts" },
+  {
+    key: "conflicts",
+    label: "Policy conflicts reviewed",
+    tool: "report_conflicts",
+  },
   { key: "sealed", label: "Approved and sealed", tool: "finish_adaptation" },
 ];
 
 // Which steps are done, from the conversation's tool results in order. A new binding voids the
 // proof of the one before it, so an earlier proof never shows a later binding as proved.
+// How agent-learning-kit's adaptation workbench opens its approval question (`approval_question`).
+export const isAdaptationApproval = (question) =>
+  String(question?.prompt || "").startsWith("Use this binding for ");
+
 export const adaptationProgress = (conversation) => {
   const done = new Set();
   for (const event of conversation?.events || []) {

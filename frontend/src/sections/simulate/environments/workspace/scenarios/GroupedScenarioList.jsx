@@ -168,7 +168,7 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, flexShrink: 0 }}>
                     <IconButton
                       size="small"
-                      disabled={locked || Boolean(editHint)}
+                      disabled={locked}
                       aria-label={SCENARIOS_COPY.editLabel}
                       onClick={() => onEdit?.(s)}
                     >
@@ -180,7 +180,7 @@ function CollapsibleGroup({ group, env, onEdit, onRemove, onHideGroup, selection
                   <Box component="span" sx={{ display: "inline-flex", mt: 1, mr: 1.5, flexShrink: 0 }}>
                     <IconButton
                       size="small"
-                      disabled={locked || Boolean(editHint)}
+                      disabled={locked}
                       aria-label={SCENARIOS_COPY.removeLabel}
                       onClick={() => onRemove(s.id)}
                     >

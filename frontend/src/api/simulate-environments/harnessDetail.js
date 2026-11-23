@@ -186,7 +186,8 @@ export function harnessDetailToEnvironment(detail) {
       seedServices: services?.length ? "real" : "mock",
       scenarios: detail.scenarios?.length ? "real" : "mock",
     },
-    detailReady: contract != null,
+    // A composition is assembled from sealed releases and has no contract of its own.
+    detailReady: contract != null || detail.composition != null,
   };
 
   const scenarios = Array.isArray(detail.scenarios)

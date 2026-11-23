@@ -17,11 +17,11 @@ import {
   WORLD_TYPES,
   domainLabelOf,
   filterWorlds,
-  isSoonWorld,
 } from "../worlds";
 import { SANDBOX_APPS } from "./sandboxApps";
 import { QuietTag } from "./startBits";
-import { SaasSandboxCard, WorldCard } from "./worldCards";
+import { SaasSandboxCard } from "./worldCards";
+import ReadyEnvironmentCard from "./ReadyEnvironmentCard";
 
 const SANDBOX_TYPE = {
   id: "any",
@@ -125,8 +125,8 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
           <InputBase
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search worlds"
-            inputProps={{ "aria-label": "Search worlds" }}
+            placeholder="Search environments"
+            inputProps={{ "aria-label": "Search environments" }}
             sx={{ ...T13, flex: 1 }}
           />
         </Stack>
@@ -187,14 +187,14 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
             flexShrink: 0,
           }}
         >
-          {`${listed.length + (withSandbox ? 1 : 0)} of ${total} worlds`}
+          {`${listed.length + (withSandbox ? 1 : 0)} of ${total} environments`}
         </Typography>
       </Stack>
 
       {listed.length || withSandbox ? (
         <Box
           component="ul"
-          aria-label="Prebuilt worlds"
+          aria-label="Ready environments"
           sx={{
             listStyle: "none",
             m: 0,
@@ -206,17 +206,12 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
         >
           {withSandbox && <SaasSandboxCard onOpen={onOpenSandbox} />}
           {listed.map((w) => (
-            <WorldCard
-              key={w.id}
-              world={w}
-              onOpen={onOpenWorld}
-              soon={isSoonWorld(w)}
-            />
+            <ReadyEnvironmentCard key={w.id} world={w} onOpen={onOpenWorld} />
           ))}
         </Box>
       ) : (
         <EmptyContent
-          title="No world matches"
+          title="No environment matches"
           sx={{ height: "auto", flexGrow: 0, py: 3 }}
           action={
             <Button

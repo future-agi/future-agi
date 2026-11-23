@@ -19,7 +19,6 @@ import {
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import { usePrebuiltEnvironments } from "src/api/simulate-environments/prebuilt";
 import SideDrawer from "../components/SideDrawer";
 import DrawerCatalog from "./DrawerCatalog";
 import ConnectSection from "./ConnectSection";
@@ -32,7 +31,7 @@ import {
 } from "./connectNewAgent";
 import LogoTile from "./LogoTile";
 import UiOnlyFlag from "../components/UiOnlyFlag";
-import { worldsFrom } from "./worlds";
+import { useReadyEnvironments } from "./readyEnvironments";
 import { BTN_SX, T12, T14 } from "./drawerStyles";
 import { FORMS_BY_PANEL } from "./forms/formsByPanel";
 import WorldsBrowser from "./starts/WorldsBrowser";
@@ -96,8 +95,7 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
   const [busy, setBusy] = useState(false);
   // Agents connected from here, which the agent pickers list first.
   const [samples, setSamples] = useState([]);
-  const { data: templates } = usePrebuiltEnvironments();
-  const worlds = useMemo(() => worldsFrom(templates || []), [templates]);
+  const { worlds } = useReadyEnvironments({ enabled: open });
   const nextAt = useRef(0);
   const backRef = useRef(null);
   const scrollBoxes = useRef(new Map());
@@ -198,7 +196,7 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
     const backLabel = under
       ? `Back to ${titleOf(under)}`
       : view === "worlds"
-        ? "Back to prebuilt worlds"
+        ? "Back to ready environments"
         : "Back to build environment";
     const item = layer.kind === "setup" ? layer.item : null;
     const setup = item?.setup;
@@ -260,7 +258,7 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
         />
         <Box flex={1} minWidth={0}>
           <Typography sx={{ ...T14, fontWeight: 600 }}>
-            Prebuilt worlds
+            Ready environments
             <Box
               component="span"
               sx={{ color: "text.secondary", fontWeight: 500, ml: 0.75 }}
@@ -269,8 +267,8 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
             </Box>
           </Typography>
           <Typography noWrap sx={{ ...T12, color: "text.secondary" }}>
-            Tables, tools and rules, as designed. Try one now with its sample
-            agent, or use it with one of your agents.
+            Tables, tools, rules and scenarios, ready made. Use one with your
+            agent, or customize a copy.
           </Typography>
         </Box>
         <CloseButton label="Close" onClick={closeAll} />
@@ -314,7 +312,7 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
     view === "worlds" ? (
       <WorldsBrowser
         worlds={worlds}
-        onOpenWorld={(w) => pick(worldItem(w))}
+        onOpenWorld={(w, tab) => pick(worldItem(w, tab))}
         onOpenSandbox={() => pick(SANDBOX_ITEM)}
       />
     ) : (
@@ -335,7 +333,16 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
       );
     }
     const Form = FORMS_BY_PANEL[layer.item.setup.panel];
-    const form = <Form item={layer.item} onBusyChange={setBusy} />;
+    const form = (
+      <Form
+        item={layer.item}
+        onBusyChange={setBusy}
+        onOtherWorld={() => {
+          back();
+          setView("worlds");
+        }}
+      />
+    );
     return layer.connect ? (
       <ConnectModeContext.Provider value={layer.connect}>
         {form}

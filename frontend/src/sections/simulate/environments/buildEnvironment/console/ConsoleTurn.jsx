@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Box, Stack, Typography, Collapse } from "@mui/material";
 import Iconify from "src/components/iconify";
 
+import { isAdaptationApproval } from "src/pages/dashboard/harness/harnessShared";
 import AskUserQuestionCard from "./AskUserQuestionCard";
 import ChatMarkdown from "./ChatMarkdown";
 import NudgeCard from "./NudgeCard";
@@ -141,6 +142,19 @@ export function Step({ step }) {
       >
         {step.text}
       </Typography>
+    );
+  }
+
+  if (step.kind === "ask" && isAdaptationApproval(step.question)) {
+    // An adaptation's design is approved on Review the design, not answered here.
+    return (
+      <QuietRow role={step.resolved ? "success" : "warning"}>
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+          {step.resolved
+            ? "Approved in Review the design"
+            : "Waiting for your approval in Review the design"}
+        </Typography>
+      </QuietRow>
     );
   }
 

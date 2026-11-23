@@ -41,16 +41,15 @@ export const SANDBOX_ITEM = {
   },
 };
 
-/** A prebuilt world's setup: named for the world, tagged with its type. */
-export const worldItem = (world) => ({
-  id: `world:${world.id}`,
+/** A ready environment, opened on one of its tabs (world, start or customize). */
+export const worldItem = (world, initialTab = "world") => ({
+  id: `world:${world.id}:${initialTab}`,
   name: world.name,
   tag: world.typeLabel,
   world,
+  initialTab,
   setup: {
-    panel: "world",
-    uiOnly: true,
-    subtitle:
-      "Try it now with its sample agent, or use it with one of your agents.",
+    panel: "ready",
+    subtitle: `${world.scenarioCount} scenarios · ${world.tools} tools · ${world.rules.length} rules`,
   },
 });

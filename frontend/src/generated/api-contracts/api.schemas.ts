@@ -19924,6 +19924,7 @@ export type HarnessEnvironmentApiStatus =
   (typeof HarnessEnvironmentApiStatus)[keyof typeof HarnessEnvironmentApiStatus];
 
 export const HarnessEnvironmentApiStatus = {
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -19972,6 +19973,7 @@ export interface HarnessEnvironmentApi {
 }
 
 export interface HarnessEnvironmentStatusCountsApi {
+  awaiting_approval: number;
   building: number;
   running: number;
   completed: number;
@@ -20013,6 +20015,7 @@ export type HarnessEnvironmentOverviewApiStatus =
   (typeof HarnessEnvironmentOverviewApiStatus)[keyof typeof HarnessEnvironmentOverviewApiStatus];
 
 export const HarnessEnvironmentOverviewApiStatus = {
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -20715,6 +20718,107 @@ export interface HarnessEnvironmentSettingsApi {
   enable_tool_evaluation: boolean;
 }
 
+export interface HarnessCompositionReleaseApi {
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+/**
+ * The environment's agent_policy rules no scenario in this suite grades.
+ */
+export interface HarnessCompositionRuleApi {
+  /** @minLength 1 */
+  id: string;
+  text: string;
+}
+
+export type HarnessCompositionScenarioApiOrigin =
+  (typeof HarnessCompositionScenarioApiOrigin)[keyof typeof HarnessCompositionScenarioApiOrigin];
+
+export const HarnessCompositionScenarioApiOrigin = {
+  base: "base",
+  specialized: "specialized",
+  custom: "custom",
+} as const;
+
+export interface HarnessCompositionScenarioApi {
+  /** @minLength 1 */
+  key: string;
+  origin: HarnessCompositionScenarioApiOrigin;
+  /** @minLength 1 */
+  derived_from: string;
+}
+
+export type HarnessCompositionSuiteApiPolicyProfile = {
+  [key: string]: unknown;
+};
+
+export interface HarnessCompositionSuiteApi {
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  parent_digest: string;
+  policy_profile: HarnessCompositionSuiteApiPolicyProfile;
+  /** The environment's agent_policy rules no scenario in this suite grades. */
+  unscored_agent_rules: HarnessCompositionRuleApi[];
+  scenarios: HarnessCompositionScenarioApi[];
+}
+
+export type HarnessCompositionBindingApiMode =
+  (typeof HarnessCompositionBindingApiMode)[keyof typeof HarnessCompositionBindingApiMode];
+
+export const HarnessCompositionBindingApiMode = {
+  canonical: "canonical",
+  tool_routed: "tool_routed",
+} as const;
+
+export type HarnessCompositionBindingApiAgentToolsItem = {
+  [key: string]: unknown;
+};
+
+export type HarnessCompositionBindingApiToolsItem = { [key: string]: unknown };
+
+export interface HarnessCompositionBindingApi {
+  /** @minLength 1 */
+  digest: string;
+  mode: HarnessCompositionBindingApiMode;
+  agent_tools: HarnessCompositionBindingApiAgentToolsItem[];
+  tools: HarnessCompositionBindingApiToolsItem[];
+}
+
+export interface HarnessCompositionAgentApi {
+  agent_definition_id: string;
+  agent_version_id: string;
+  /** @minLength 1 */
+  connector: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  version_name: string;
+}
+
+export type HarnessCompositionProofApiScenarios = { [key: string]: unknown };
+
+export interface HarnessCompositionProofApi {
+  passed: boolean;
+  scenarios: HarnessCompositionProofApiScenarios;
+}
+
+export type HarnessCompositionApiAlignment = { [key: string]: unknown };
+
+export interface HarnessCompositionApi {
+  environment: HarnessCompositionReleaseApi[];
+  suite: HarnessCompositionSuiteApi;
+  binding: HarnessCompositionBindingApi;
+  agent: HarnessCompositionAgentApi;
+  alignment: HarnessCompositionApiAlignment;
+  binding_proof: HarnessCompositionProofApi;
+}
+
 export interface HarnessEnvironmentDetailApi {
   id: string;
   overview: HarnessEnvironmentOverviewApi;
@@ -20725,6 +20829,7 @@ export interface HarnessEnvironmentDetailApi {
   settings: HarnessEnvironmentSettingsApi;
   /** edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab. */
   actors_tab: HarnessEnvironmentDetailApiActorsTab;
+  composition: HarnessCompositionApi;
 }
 
 export interface HarnessEnvironmentRenameApi {
@@ -23372,6 +23477,7 @@ export const HarnessAgentApiConnector = {
   retell_chat: "retell_chat",
   phone: "phone",
   auto: "auto",
+  hosted_agent: "hosted_agent",
 } as const;
 
 export type HarnessAgentApiMode =
@@ -23430,6 +23536,9 @@ export type HarnessAgentApiConfig = { [key: string]: unknown };
 
 export type HarnessAgentApiSecretRefs = { [key: string]: SecretReferenceApi };
 
+/**
+ * How the hosted agent is reached. Omitted for an agent connected on the Agents page: its provider, agent id and stored key are read from the version.
+ */
 export interface HarnessAgentApi {
   connector: HarnessAgentApiConnector;
   mode?: HarnessAgentApiMode;
@@ -24679,6 +24788,7 @@ export const HarnessConversationEventApiKind = {
   tool_result: "tool_result",
   question_requested: "question_requested",
   confirmation_requested: "confirmation_requested",
+  question_answered: "question_answered",
   turn_interrupted: "turn_interrupted",
   turn_completed: "turn_completed",
   checkpoint_committed: "checkpoint_committed",
@@ -41326,6 +41436,453 @@ export interface ActivationResponseApi {
   scope: ActivationResponseApiScope;
 }
 
+export type HarnessHostedAgentRequestApiModel =
+  (typeof HarnessHostedAgentRequestApiModel)[keyof typeof HarnessHostedAgentRequestApiModel];
+
+export const HarnessHostedAgentRequestApiModel = {
+  "vertex_ai/gemini-37-flash": "vertex_ai/gemini-3.7-flash",
+  "vertex_ai/gemini-38-flash": "vertex_ai/gemini-3.8-flash",
+} as const;
+
+export interface HarnessHostedAgentRequestApi {
+  suite_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 65536
+   */
+  instructions: string;
+  model: HarnessHostedAgentRequestApiModel;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
+  /**
+   * Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.
+   * @minimum 1
+   * @maximum 8
+   */
+  parallelism?: number;
+}
+
+export interface HarnessHostedAgentResponseApi {
+  /** The composition, an environment id. */
+  id: string;
+  agent_version_id: string;
+}
+
+export interface HarnessReleaseParentApi {
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+}
+
+export interface HarnessReleaseToolApi {
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  mutates_state: boolean;
+}
+
+export type HarnessReleasePolicyParameterApiType =
+  (typeof HarnessReleasePolicyParameterApiType)[keyof typeof HarnessReleasePolicyParameterApiType];
+
+export const HarnessReleasePolicyParameterApiType = {
+  string: "string",
+  integer: "integer",
+  number: "number",
+  boolean: "boolean",
+} as const;
+
+export type HarnessReleasePolicyParameterApiDefault = {
+  [key: string]: unknown;
+};
+
+export type HarnessReleasePolicyParameterApiAllowedItem = {
+  [key: string]: unknown;
+};
+
+export interface HarnessReleasePolicyParameterApi {
+  /** @minLength 1 */
+  name: string;
+  type: HarnessReleasePolicyParameterApiType;
+  default: HarnessReleasePolicyParameterApiDefault;
+  allowed: HarnessReleasePolicyParameterApiAllowedItem[];
+}
+
+export interface HarnessReleaseAgentRuleApi {
+  /** @minLength 1 */
+  id: string;
+  text: string;
+}
+
+export interface HarnessReleasePolicyApi {
+  parameters: HarnessReleasePolicyParameterApi[];
+  agent_rules: HarnessReleaseAgentRuleApi[];
+}
+
+export interface HarnessSuiteOriginsApi {
+  base: number;
+  specialized: number;
+  custom: number;
+}
+
+export type HarnessSuiteSummaryApiPolicyProfile = { [key: string]: unknown };
+
+export interface HarnessSuiteSummaryApi {
+  id: string;
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+  scenario_count: number;
+  origins: HarnessSuiteOriginsApi;
+  policy_profile: HarnessSuiteSummaryApiPolicyProfile;
+}
+
+export type HarnessReleaseCatalogueApiChannel =
+  (typeof HarnessReleaseCatalogueApiChannel)[keyof typeof HarnessReleaseCatalogueApiChannel];
+
+export const HarnessReleaseCatalogueApiChannel = {
+  chat: "chat",
+  voice: "voice",
+} as const;
+
+export interface HarnessReleaseAppApi {
+  /** @minLength 1 */
+  capability: string;
+  /** @minLength 1 */
+  server: string;
+  tools: string[];
+  records: number;
+}
+
+export type HarnessReleaseCatalogueApiRecords = { [key: string]: number };
+
+/**
+ * Null for a release sealed before catalogue metadata existed.
+ */
+export interface HarnessReleaseCatalogueApi {
+  /** @minLength 1 */
+  title: string;
+  summary: string;
+  channel: HarnessReleaseCatalogueApiChannel;
+  records: HarnessReleaseCatalogueApiRecords;
+  apps: HarnessReleaseAppApi[];
+  example_requests: string[];
+}
+
+export interface HarnessReleaseApi {
+  id: string;
+  /** @minLength 1 */
+  digest: string;
+  /** @minLength 1 */
+  name: string;
+  system: boolean;
+  parent: HarnessReleaseParentApi;
+  tools: HarnessReleaseToolApi[];
+  policy: HarnessReleasePolicyApi;
+  suites: HarnessSuiteSummaryApi[];
+  catalogue: HarnessReleaseCatalogueApi;
+}
+
+export interface HarnessReleaseListResponseApi {
+  results: HarnessReleaseApi[];
+}
+
+/**
+ * World tool to the agent tool it is paired with, as the person reviewed it.
+ */
+export type HarnessReleaseAgentRequestApiPairing = { [key: string]: string };
+
+/**
+ * review: the builder drafts the binding and the person approves its design. run: the binding is drafted and checked without a session, then the measurable cases run.
+ */
+export type HarnessReleaseAgentRequestApiMode =
+  (typeof HarnessReleaseAgentRequestApiMode)[keyof typeof HarnessReleaseAgentRequestApiMode];
+
+export const HarnessReleaseAgentRequestApiMode = {
+  review: "review",
+  run: "run",
+} as const;
+
+export interface HarnessReleaseAgentRequestApi {
+  suite_id: string;
+  agent_version_id: string;
+  agent?: HarnessAgentApi;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  name: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  idempotency_key: string;
+  /**
+   * Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.
+   * @minimum 1
+   * @maximum 8
+   */
+  parallelism?: number;
+  /** World tool to the agent tool it is paired with, as the person reviewed it. */
+  pairing?: HarnessReleaseAgentRequestApiPairing;
+  /** review: the builder drafts the binding and the person approves its design. run: the binding is drafted and checked without a session, then the measurable cases run. */
+  mode?: HarnessReleaseAgentRequestApiMode;
+}
+
+export type HarnessRunReportApiRunMode =
+  (typeof HarnessRunReportApiRunMode)[keyof typeof HarnessRunReportApiRunMode];
+
+export const HarnessRunReportApiRunMode = {
+  canonical: "canonical",
+  tool_routed: "tool_routed",
+  conversation_only: "conversation_only",
+} as const;
+
+export type HarnessRunReportManifestApiEnvironmentItem = {
+  [key: string]: string;
+};
+
+export type HarnessRunReportManifestApiSuite = { [key: string]: string };
+
+export type HarnessRunReportManifestApiBinding = { [key: string]: string };
+
+export type HarnessRunReportManifestApiAgent = { [key: string]: string };
+
+export type HarnessRunReportManifestApiSelection = { [key: string]: string };
+
+export type HarnessRunReportManifestApiSimulator = { [key: string]: string };
+
+export type HarnessRunReportManifestApiScorer = { [key: string]: string };
+
+export type HarnessRunReportManifestApiRuntime = { [key: string]: string };
+
+export interface HarnessRunReportManifestApi {
+  /** @minLength 1 */
+  digest: string;
+  environment: HarnessRunReportManifestApiEnvironmentItem[];
+  suite: HarnessRunReportManifestApiSuite;
+  binding: HarnessRunReportManifestApiBinding;
+  agent: HarnessRunReportManifestApiAgent;
+  selection: HarnessRunReportManifestApiSelection;
+  simulator: HarnessRunReportManifestApiSimulator;
+  scorer: HarnessRunReportManifestApiScorer;
+  runtime: HarnessRunReportManifestApiRuntime;
+}
+
+export interface HarnessRunReportComparabilityApi {
+  /** @minLength 1 */
+  baseline_run_id: string;
+  comparable: boolean;
+  differing: string[];
+}
+
+export interface HarnessRunReportCoverageApi {
+  runnable: number;
+  suite_scenarios: number;
+  base_scenarios: number;
+  unscorable: string[];
+  extension_tools: string[];
+}
+
+export interface HarnessRunReportUseCaseApi {
+  use_case: string;
+  scenarios: number;
+  trials: number;
+  pass_1: number;
+  pass_k: number;
+}
+
+export type HarnessRunReportScenarioApiOrigin =
+  (typeof HarnessRunReportScenarioApiOrigin)[keyof typeof HarnessRunReportScenarioApiOrigin];
+
+export const HarnessRunReportScenarioApiOrigin = {
+  base: "base",
+  specialized: "specialized",
+  custom: "custom",
+} as const;
+
+export type HarnessRunReportScenarioApiTrialsItem =
+  (typeof HarnessRunReportScenarioApiTrialsItem)[keyof typeof HarnessRunReportScenarioApiTrialsItem];
+
+export const HarnessRunReportScenarioApiTrialsItem = {
+  passed: "passed",
+  failed: "failed",
+  errored: "errored",
+  skipped: "skipped",
+} as const;
+
+export interface HarnessRunReportScenarioApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  /** @minLength 1 */
+  name: string;
+  use_case: string;
+  origin: HarnessRunReportScenarioApiOrigin;
+  trials: HarnessRunReportScenarioApiTrialsItem[];
+  pass_1: number;
+  passed_all: boolean;
+}
+
+export interface HarnessRunReportApi {
+  run_mode: HarnessRunReportApiRunMode;
+  manifest: HarnessRunReportManifestApi;
+  comparability: HarnessRunReportComparabilityApi;
+  coverage: HarnessRunReportCoverageApi;
+  use_cases: HarnessRunReportUseCaseApi[];
+  scenarios: HarnessRunReportScenarioApi[];
+  environment_faults: number;
+}
+
+export type HarnessReleaseFitRequestApiPairing = { [key: string]: string };
+
+export interface HarnessReleaseFitRequestApi {
+  suite_id: string;
+  agent_version_id: string;
+  pairing?: HarnessReleaseFitRequestApiPairing;
+}
+
+export interface HarnessReleaseFitAgentApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  version: string;
+}
+
+export interface HarnessReleaseFitToolApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  description?: string;
+}
+
+export type HarnessReleaseFitRowApiKind =
+  (typeof HarnessReleaseFitRowApiKind)[keyof typeof HarnessReleaseFitRowApiKind];
+
+export const HarnessReleaseFitRowApiKind = {
+  matched: "matched",
+  mapped: "mapped",
+  missing: "missing",
+} as const;
+
+export interface HarnessReleaseFitRowApi {
+  /** @minLength 1 */
+  world: string;
+  /** @minLength 1 */
+  agent: string;
+  kind: HarnessReleaseFitRowApiKind;
+}
+
+export interface HarnessReleaseFitCaseApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  title: string;
+}
+
+export interface HarnessReleaseFitResponseApi {
+  agent: HarnessReleaseFitAgentApi;
+  agent_tools: HarnessReleaseFitToolApi[];
+  rows: HarnessReleaseFitRowApi[];
+  platform_actions: HarnessReleaseFitToolApi[];
+  total: number;
+  unmeasured: HarnessReleaseFitCaseApi[];
+}
+
+/**
+ * checking: the mapping is still being checked on every case; awaiting_approval: Approve and build may be pressed; building: approved; ready: the environment exists.
+ */
+export type HarnessAdaptationDesignApiState =
+  (typeof HarnessAdaptationDesignApiState)[keyof typeof HarnessAdaptationDesignApiState];
+
+export const HarnessAdaptationDesignApiState = {
+  checking: "checking",
+  awaiting_approval: "awaiting_approval",
+  building: "building",
+  ready: "ready",
+  failed: "failed",
+} as const;
+
+export type HarnessAdaptationDesignApiFailure = { [key: string]: unknown };
+
+/**
+ * What checking the mapping on every case found, once it has: the approval's data.
+ */
+export type HarnessAdaptationDesignApiCheck = { [key: string]: unknown };
+
+export type HarnessAdaptationWorldApiRecords = { [key: string]: number };
+
+export interface HarnessAdaptationWorldApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  title: string;
+  summary: string;
+  /** @minLength 1 */
+  channel: string;
+  /**
+   * The release's digest.
+   * @minLength 1
+   */
+  release: string;
+  records: HarnessAdaptationWorldApiRecords;
+  tools: HarnessReleaseFitToolApi[];
+  rules: HarnessReleaseAgentRuleApi[];
+  people: string[];
+}
+
+export interface HarnessAdaptationCaseApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  title: string;
+}
+
+export interface HarnessReleaseConflictApi {
+  /** @minLength 1 */
+  rule: string;
+  /**
+   * The rule as the world states it.
+   * @minLength 1
+   */
+  policy: string;
+  /**
+   * The agent's instruction, quoted.
+   * @minLength 1
+   */
+  agent: string;
+}
+
+export interface HarnessReleaseConflictsResponseApi {
+  /** False when the instructions couldn't be read against the rules yet. */
+  checked: boolean;
+  conflicts: HarnessReleaseConflictApi[];
+}
+
+export interface HarnessAdaptationDesignApi {
+  /** checking: the mapping is still being checked on every case; awaiting_approval: Approve and build may be pressed; building: approved; ready: the environment exists. */
+  state: HarnessAdaptationDesignApiState;
+  failure: HarnessAdaptationDesignApiFailure;
+  composition_id: string;
+  agent: HarnessReleaseFitAgentApi;
+  world: HarnessAdaptationWorldApi;
+  /** @minLength 1 */
+  suite: string;
+  scenarios: HarnessAdaptationCaseApi[];
+  fit: HarnessReleaseFitResponseApi;
+  conflicts: HarnessReleaseConflictsResponseApi;
+  /** What checking the mapping on every case found, once it has: the approval's data. */
+  check: HarnessAdaptationDesignApiCheck;
+}
+
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   "x-amzn-marketplace-token": string;
   "x-amzn-marketplace-product-id"?: string;
@@ -43970,6 +44527,7 @@ export type SimulateApiHarnessEnvironmentsListStatus =
   (typeof SimulateApiHarnessEnvironmentsListStatus)[keyof typeof SimulateApiHarnessEnvironmentsListStatus];
 
 export const SimulateApiHarnessEnvironmentsListStatus = {
+  awaiting_approval: "awaiting_approval",
   building: "building",
   running: "running",
   completed: "completed",
@@ -46612,4 +47170,8 @@ export type UsageWorkspaceUsageSummaryListParams = {
    */
   month?: number;
   year?: number;
+};
+
+export type SimulateApiHarnessEnvironmentsRunsRunReportParams = {
+  baseline?: string;
 };

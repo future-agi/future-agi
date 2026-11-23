@@ -33,6 +33,7 @@ export const RUN_STATUS = {
   flaky: { role: "warning", label: "Flaky" },
   needs_input: { role: "warning", label: "Needs input" },
   needs_review: { role: "warning", label: "Needs review" },
+  awaiting_approval: { role: "warning", label: "Awaiting approval" },
   stopped: { role: "neutral", label: "Stopped" },
   cancelled: { role: "neutral", label: "Cancelled" },
   canceled: { role: "neutral", label: "Cancelled" },

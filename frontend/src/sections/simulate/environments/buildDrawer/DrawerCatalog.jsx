@@ -3,10 +3,9 @@ import { useMemo, useState } from "react";
 import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useConnectedAgents } from "src/api/agents/connectedAgents";
-import { usePrebuiltEnvironments } from "src/api/simulate-environments/prebuilt";
 import UiOnlyFlag from "../components/UiOnlyFlag";
 import ConnectSection from "./ConnectSection";
-import { featuredWorlds, worldsFrom } from "./worlds";
+import { useReadyEnvironments } from "./readyEnvironments";
 import {
   BTN_SX,
   OUTLINED_BTN_SX,
@@ -18,7 +17,8 @@ import {
   focusRing,
 } from "./drawerStyles";
 import { SectionHead } from "./starts/startBits";
-import { SaasSandboxRow, WorldCard } from "./starts/worldCards";
+import { SaasSandboxRow } from "./starts/worldCards";
+import ReadyEnvironmentCard from "./starts/ReadyEnvironmentCard";
 import BuildEnvironmentDialog from "src/sections/agent-playground/connected/detail/BuildEnvironmentDialog";
 import {
   FROM_CODE_ITEM,
@@ -70,43 +70,51 @@ function BuildFromCode({ onOpen }) {
 BuildFromCode.propTypes = { onOpen: PropTypes.func.isRequired };
 
 function PrebuiltSection({ onPick, onBrowse }) {
-  const { data } = usePrebuiltEnvironments();
-  const worlds = useMemo(() => worldsFrom(data || []), [data]);
-  const featured = featuredWorlds(worlds);
+  const { worlds, isLoading } = useReadyEnvironments();
+  const featured = worlds.slice(0, 3);
   return (
     <Box>
       <SectionHead
-        title="Use a prebuilt world"
-        subtitle="Tables, tools and rules, as designed. Try one now with its sample agent, or use it with one of your agents."
+        title="Start from a ready environment"
+        subtitle="Tables, tools, rules and scenarios, ready made. Use one with your agent, or customize a copy."
         action={
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <UiOnlyFlag />
+          worlds.length > 3 && (
             <Button
               size="small"
               variant="outlined"
               onClick={onBrowse}
               sx={OUTLINED_BTN_SX}
             >
-              {`Browse all ${worlds.length + 1}`}
+              {`Browse all ${worlds.length}`}
             </Button>
-          </Stack>
+          )
         }
       />
-      <Box
-        component="ul"
-        sx={{
-          listStyle: "none",
-          m: 0,
-          p: 0,
-          display: "grid",
-          gap: 1.5,
-          gridTemplateColumns: "repeat(3, 1fr)",
-        }}
-      >
-        {featured.map((w) => (
-          <WorldCard key={w.id} world={w} onOpen={() => onPick(worldItem(w))} />
-        ))}
-      </Box>
+      {!isLoading && worlds.length === 0 ? (
+        <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+          No ready environments are published to this workspace yet.
+        </Typography>
+      ) : (
+        <Box
+          component="ul"
+          sx={{
+            listStyle: "none",
+            m: 0,
+            p: 0,
+            display: "grid",
+            gap: 1.5,
+            gridTemplateColumns: "repeat(3, 1fr)",
+          }}
+        >
+          {featured.map((w) => (
+            <ReadyEnvironmentCard
+              key={w.id}
+              world={w}
+              onOpen={(world, tab) => onPick(worldItem(world, tab))}
+            />
+          ))}
+        </Box>
+      )}
       <Box sx={{ mt: 1.5 }}>
         <SaasSandboxRow onOpen={() => onPick(SANDBOX_ITEM)} />
       </Box>
@@ -295,7 +303,8 @@ function YourAgentsSection() {
  * in. `onPick(item)` opens an item's setup; `onBrowseWorlds` every world.
  */
 const SHOW_BUILD_FROM_CODE = false;
-const SHOW_PREBUILT_WORLDS = false;
+// Ready environments read the release API, so they are live wherever releases are published.
+const SHOW_PREBUILT_WORLDS = true;
 const SHOW_MCP_WORLD = false;
 
 export default function DrawerCatalog({ onPick, onBrowseWorlds }) {

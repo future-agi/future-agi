@@ -40101,7 +40101,9 @@ export const SimulateApiHarnessEnvironmentsListQueryParams = zod.object({
     .string()
     .max(simulateApiHarnessEnvironmentsListQuerySearchMax)
     .optional(),
-  status: zod.enum(["building", "running", "completed", "failed"]).optional(),
+  status: zod
+    .enum(["awaiting_approval", "building", "running", "completed", "failed"])
+    .optional(),
   agent_type: zod.enum(["voice", "chat"]).optional(),
 });
 
@@ -40122,7 +40124,13 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
       domain: zod.string().min(1),
       source_kind: zod.string().min(1),
       agent_type: zod.enum(["voice", "chat"]),
-      status: zod.enum(["building", "running", "completed", "failed"]),
+      status: zod.enum([
+        "awaiting_approval",
+        "building",
+        "running",
+        "completed",
+        "failed",
+      ]),
       stage: zod.string().min(1),
       scenario_count: zod.number(),
       sub_goals_count: zod.number(),
@@ -40226,6 +40234,7 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
     }),
   ),
   status_counts: zod.object({
+    awaiting_approval: zod.number(),
     building: zod.number(),
     running: zod.number(),
     completed: zod.number(),
@@ -40252,7 +40261,13 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     domain: zod.string().min(1),
     source_kind: zod.string().min(1),
     agent_type: zod.enum(["voice", "chat"]),
-    status: zod.enum(["building", "running", "completed", "failed"]),
+    status: zod.enum([
+      "awaiting_approval",
+      "building",
+      "running",
+      "completed",
+      "failed",
+    ]),
     stage: zod.string().min(1),
     scenario_count: zod.number(),
     sub_goals_count: zod.number(),
@@ -40787,6 +40802,59 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     .describe(
       "edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab.",
     ),
+  composition: zod.object({
+    environment: zod.array(
+      zod.object({
+        digest: zod.string().min(1),
+        name: zod.string().min(1),
+      }),
+    ),
+    suite: zod.object({
+      digest: zod.string().min(1),
+      name: zod.string().min(1),
+      parent_digest: zod.string().min(1),
+      policy_profile: zod.object({}).passthrough(),
+      unscored_agent_rules: zod
+        .array(
+          zod
+            .object({
+              id: zod.string().min(1),
+              text: zod.string(),
+            })
+            .describe(
+              "The environment's agent_policy rules no scenario in this suite grades.",
+            ),
+        )
+        .describe(
+          "The environment's agent_policy rules no scenario in this suite grades.",
+        ),
+      scenarios: zod.array(
+        zod.object({
+          key: zod.string().min(1),
+          origin: zod.enum(["base", "specialized", "custom"]),
+          derived_from: zod.string().min(1),
+        }),
+      ),
+    }),
+    binding: zod.object({
+      digest: zod.string().min(1),
+      mode: zod.enum(["canonical", "tool_routed"]),
+      agent_tools: zod.array(zod.object({}).passthrough()),
+      tools: zod.array(zod.object({}).passthrough()),
+    }),
+    agent: zod.object({
+      agent_definition_id: zod.string().uuid(),
+      agent_version_id: zod.string().uuid(),
+      connector: zod.string().min(1),
+      name: zod.string().min(1),
+      version_name: zod.string().min(1),
+    }),
+    alignment: zod.object({}).passthrough(),
+    binding_proof: zod.object({
+      passed: zod.boolean(),
+      scenarios: zod.object({}).passthrough(),
+    }),
+  }),
 });
 
 /**
@@ -40817,7 +40885,13 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     domain: zod.string().min(1),
     source_kind: zod.string().min(1),
     agent_type: zod.enum(["voice", "chat"]),
-    status: zod.enum(["building", "running", "completed", "failed"]),
+    status: zod.enum([
+      "awaiting_approval",
+      "building",
+      "running",
+      "completed",
+      "failed",
+    ]),
     stage: zod.string().min(1),
     scenario_count: zod.number(),
     sub_goals_count: zod.number(),
@@ -41352,6 +41426,59 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     .describe(
       "edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab.",
     ),
+  composition: zod.object({
+    environment: zod.array(
+      zod.object({
+        digest: zod.string().min(1),
+        name: zod.string().min(1),
+      }),
+    ),
+    suite: zod.object({
+      digest: zod.string().min(1),
+      name: zod.string().min(1),
+      parent_digest: zod.string().min(1),
+      policy_profile: zod.object({}).passthrough(),
+      unscored_agent_rules: zod
+        .array(
+          zod
+            .object({
+              id: zod.string().min(1),
+              text: zod.string(),
+            })
+            .describe(
+              "The environment's agent_policy rules no scenario in this suite grades.",
+            ),
+        )
+        .describe(
+          "The environment's agent_policy rules no scenario in this suite grades.",
+        ),
+      scenarios: zod.array(
+        zod.object({
+          key: zod.string().min(1),
+          origin: zod.enum(["base", "specialized", "custom"]),
+          derived_from: zod.string().min(1),
+        }),
+      ),
+    }),
+    binding: zod.object({
+      digest: zod.string().min(1),
+      mode: zod.enum(["canonical", "tool_routed"]),
+      agent_tools: zod.array(zod.object({}).passthrough()),
+      tools: zod.array(zod.object({}).passthrough()),
+    }),
+    agent: zod.object({
+      agent_definition_id: zod.string().uuid(),
+      agent_version_id: zod.string().uuid(),
+      connector: zod.string().min(1),
+      name: zod.string().min(1),
+      version_name: zod.string().min(1),
+    }),
+    alignment: zod.object({}).passthrough(),
+    binding_proof: zod.object({
+      passed: zod.boolean(),
+      scenarios: zod.object({}).passthrough(),
+    }),
+  }),
 });
 
 /**
@@ -46538,7 +46665,13 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       domain: zod.string().min(1),
       source_kind: zod.string().min(1),
       agent_type: zod.enum(["voice", "chat"]),
-      status: zod.enum(["building", "running", "completed", "failed"]),
+      status: zod.enum([
+        "awaiting_approval",
+        "building",
+        "running",
+        "completed",
+        "failed",
+      ]),
       stage: zod.string().min(1),
       scenario_count: zod.number(),
       sub_goals_count: zod.number(),
@@ -47079,6 +47212,59 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       .describe(
         "edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab.",
       ),
+    composition: zod.object({
+      environment: zod.array(
+        zod.object({
+          digest: zod.string().min(1),
+          name: zod.string().min(1),
+        }),
+      ),
+      suite: zod.object({
+        digest: zod.string().min(1),
+        name: zod.string().min(1),
+        parent_digest: zod.string().min(1),
+        policy_profile: zod.object({}).passthrough(),
+        unscored_agent_rules: zod
+          .array(
+            zod
+              .object({
+                id: zod.string().min(1),
+                text: zod.string(),
+              })
+              .describe(
+                "The environment's agent_policy rules no scenario in this suite grades.",
+              ),
+          )
+          .describe(
+            "The environment's agent_policy rules no scenario in this suite grades.",
+          ),
+        scenarios: zod.array(
+          zod.object({
+            key: zod.string().min(1),
+            origin: zod.enum(["base", "specialized", "custom"]),
+            derived_from: zod.string().min(1),
+          }),
+        ),
+      }),
+      binding: zod.object({
+        digest: zod.string().min(1),
+        mode: zod.enum(["canonical", "tool_routed"]),
+        agent_tools: zod.array(zod.object({}).passthrough()),
+        tools: zod.array(zod.object({}).passthrough()),
+      }),
+      agent: zod.object({
+        agent_definition_id: zod.string().uuid(),
+        agent_version_id: zod.string().uuid(),
+        connector: zod.string().min(1),
+        name: zod.string().min(1),
+        version_name: zod.string().min(1),
+      }),
+      alignment: zod.object({}).passthrough(),
+      binding_proof: zod.object({
+        passed: zod.boolean(),
+        scenarios: zod.object({}).passthrough(),
+      }),
+    }),
   });
 
 /**
@@ -50935,51 +51121,56 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
         .optional(),
     })
     .optional(),
-  agent: zod.object({
-    connector: zod.enum([
-      "livekit",
-      "vapi",
-      "retell",
-      "retell_chat",
-      "phone",
-      "auto",
-    ]),
-    mode: zod
-      .enum(["connect_only", "environment_backed", "provider_import"])
-      .optional(),
-    call_direction: zod
-      .enum(["inbound", "outbound"])
-      .optional()
-      .describe(
-        "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
-      ),
-    config: zod
-      .object({})
-      .passthrough()
-      .default(simulateApiHarnessJobsCreateBodyAgentConfigDefault),
-    secret_refs: zod
-      .record(
-        zod.string(),
-        zod.object({
-          manager: zod.enum(["platform-vault", "platform-config"]),
-          key: zod
-            .string()
-            .min(1)
-            .max(simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax),
-          version: zod
-            .string()
-            .min(1)
-            .max(simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax)
-            .optional(),
-          purpose: zod.enum([
-            "target_provider",
-            "simulator_provider",
-            "source_checkout",
-          ]),
-        }),
-      )
-      .default(simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault),
-  }),
+  agent: zod
+    .object({
+      connector: zod.enum([
+        "livekit",
+        "vapi",
+        "retell",
+        "retell_chat",
+        "phone",
+        "auto",
+        "hosted_agent",
+      ]),
+      mode: zod
+        .enum(["connect_only", "environment_backed", "provider_import"])
+        .optional(),
+      call_direction: zod
+        .enum(["inbound", "outbound"])
+        .optional()
+        .describe(
+          "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+        ),
+      config: zod
+        .object({})
+        .passthrough()
+        .default(simulateApiHarnessJobsCreateBodyAgentConfigDefault),
+      secret_refs: zod
+        .record(
+          zod.string(),
+          zod.object({
+            manager: zod.enum(["platform-vault", "platform-config"]),
+            key: zod
+              .string()
+              .min(1)
+              .max(simulateApiHarnessJobsCreateBodyAgentSecretRefsKeyMax),
+            version: zod
+              .string()
+              .min(1)
+              .max(simulateApiHarnessJobsCreateBodyAgentSecretRefsVersionMax)
+              .optional(),
+            purpose: zod.enum([
+              "target_provider",
+              "simulator_provider",
+              "source_checkout",
+            ]),
+          }),
+        )
+        .default(simulateApiHarnessJobsCreateBodyAgentSecretRefsDefault),
+    })
+    .describe(
+      "How the hosted agent is reached. Omitted for an agent connected on the Agents page: its provider, agent id and stored key are read from the version.",
+    ),
   scenario_count: zod
     .number()
     .min(1)
@@ -51297,51 +51488,56 @@ export const SimulateApiHarnessJobsPreflightBody = zod.object({
         .optional(),
     })
     .optional(),
-  agent: zod.object({
-    connector: zod.enum([
-      "livekit",
-      "vapi",
-      "retell",
-      "retell_chat",
-      "phone",
-      "auto",
-    ]),
-    mode: zod
-      .enum(["connect_only", "environment_backed", "provider_import"])
-      .optional(),
-    call_direction: zod
-      .enum(["inbound", "outbound"])
-      .optional()
-      .describe(
-        "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
-      ),
-    config: zod
-      .object({})
-      .passthrough()
-      .default(simulateApiHarnessJobsPreflightBodyAgentConfigDefault),
-    secret_refs: zod
-      .record(
-        zod.string(),
-        zod.object({
-          manager: zod.enum(["platform-vault", "platform-config"]),
-          key: zod
-            .string()
-            .min(1)
-            .max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax),
-          version: zod
-            .string()
-            .min(1)
-            .max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax)
-            .optional(),
-          purpose: zod.enum([
-            "target_provider",
-            "simulator_provider",
-            "source_checkout",
-          ]),
-        }),
-      )
-      .default(simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault),
-  }),
+  agent: zod
+    .object({
+      connector: zod.enum([
+        "livekit",
+        "vapi",
+        "retell",
+        "retell_chat",
+        "phone",
+        "auto",
+        "hosted_agent",
+      ]),
+      mode: zod
+        .enum(["connect_only", "environment_backed", "provider_import"])
+        .optional(),
+      call_direction: zod
+        .enum(["inbound", "outbound"])
+        .optional()
+        .describe(
+          "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+        ),
+      config: zod
+        .object({})
+        .passthrough()
+        .default(simulateApiHarnessJobsPreflightBodyAgentConfigDefault),
+      secret_refs: zod
+        .record(
+          zod.string(),
+          zod.object({
+            manager: zod.enum(["platform-vault", "platform-config"]),
+            key: zod
+              .string()
+              .min(1)
+              .max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsKeyMax),
+            version: zod
+              .string()
+              .min(1)
+              .max(simulateApiHarnessJobsPreflightBodyAgentSecretRefsVersionMax)
+              .optional(),
+            purpose: zod.enum([
+              "target_provider",
+              "simulator_provider",
+              "source_checkout",
+            ]),
+          }),
+        )
+        .default(simulateApiHarnessJobsPreflightBodyAgentSecretRefsDefault),
+    })
+    .describe(
+      "How the hosted agent is reached. Omitted for an agent connected on the Agents page: its provider, agent id and stored key are read from the version.",
+    ),
   scenario_count: zod
     .number()
     .min(1)
@@ -53262,6 +53458,7 @@ export const SimulateApiHarnessConversationsEventsBody = zod.object({
         "tool_result",
         "question_requested",
         "confirmation_requested",
+        "question_answered",
         "turn_interrupted",
         "turn_completed",
         "checkpoint_committed",
@@ -96410,4 +96607,429 @@ export const V1SelfHostedActivationsCreateResponse = zod.object({
   allowed_services: zod.array(zod.string().min(1)),
   allowed_models: zod.array(zod.string().min(1)),
   scope: zod.enum(["oss", "enterprise"]),
+});
+
+/**
+ * Compose our own agent with a release suite; it answers the composed environment.
+ */
+export const simulateApiHarnessHostedAgentsCreateBodyNameMax = 255;
+
+export const simulateApiHarnessHostedAgentsCreateBodyInstructionsMax = 65536;
+
+export const simulateApiHarnessHostedAgentsCreateBodyIdempotencyKeyMax = 255;
+
+export const simulateApiHarnessHostedAgentsCreateBodyParallelismMax = 8;
+
+export const SimulateApiHarnessHostedAgentsCreateBody = zod.object({
+  suite_id: zod.string().uuid(),
+  name: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessHostedAgentsCreateBodyNameMax),
+  instructions: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessHostedAgentsCreateBodyInstructionsMax),
+  model: zod.enum(["vertex_ai/gemini-3.7-flash", "vertex_ai/gemini-3.8-flash"]),
+  idempotency_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessHostedAgentsCreateBodyIdempotencyKeyMax),
+  parallelism: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessHostedAgentsCreateBodyParallelismMax)
+    .optional()
+    .describe(
+      "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
+    ),
+});
+
+export const SimulateApiHarnessReleasesListResponse = zod.object({
+  results: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      digest: zod.string().min(1),
+      name: zod.string().min(1),
+      system: zod.boolean(),
+      parent: zod.object({
+        digest: zod.string().min(1),
+        name: zod.string().min(1),
+      }),
+      tools: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          description: zod.string(),
+          mutates_state: zod.boolean(),
+        }),
+      ),
+      policy: zod.object({
+        parameters: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            type: zod.enum(["string", "integer", "number", "boolean"]),
+            default: zod.object({}).passthrough(),
+            allowed: zod.array(zod.object({}).passthrough()),
+          }),
+        ),
+        agent_rules: zod.array(
+          zod.object({
+            id: zod.string().min(1),
+            text: zod.string(),
+          }),
+        ),
+      }),
+      suites: zod.array(
+        zod.object({
+          id: zod.string().uuid(),
+          digest: zod.string().min(1),
+          name: zod.string().min(1),
+          scenario_count: zod.number(),
+          origins: zod.object({
+            base: zod.number(),
+            specialized: zod.number(),
+            custom: zod.number(),
+          }),
+          policy_profile: zod.object({}).passthrough(),
+        }),
+      ),
+      catalogue: zod
+        .object({
+          title: zod.string().min(1),
+          summary: zod.string(),
+          channel: zod.enum(["chat", "voice"]),
+          records: zod.record(zod.string(), zod.number()),
+          apps: zod.array(
+            zod.object({
+              capability: zod.string().min(1),
+              server: zod.string().min(1),
+              tools: zod.array(zod.string().min(1)),
+              records: zod.number(),
+            }),
+          ),
+          example_requests: zod.array(zod.string().min(1)),
+        })
+        .describe(
+          "Null for a release sealed before catalogue metadata existed.",
+        ),
+    }),
+  ),
+});
+
+/**
+ * Adapt an agent to a release suite. The job is followed like any harness job.
+ */
+export const simulateApiHarnessAdaptationsCreateBodyAgentConfigDefault = {};
+export const simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsKeyMax = 255;
+
+export const simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsVersionMax = 255;
+
+export const simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsDefault = {};
+export const simulateApiHarnessAdaptationsCreateBodyNameMax = 255;
+
+export const simulateApiHarnessAdaptationsCreateBodyIdempotencyKeyMax = 255;
+
+export const simulateApiHarnessAdaptationsCreateBodyParallelismMax = 8;
+
+export const simulateApiHarnessAdaptationsCreateBodyModeDefault = `review`;
+
+export const SimulateApiHarnessAdaptationsCreateBody = zod.object({
+  suite_id: zod.string().uuid(),
+  agent_version_id: zod.string().uuid(),
+  agent: zod
+    .object({
+      connector: zod.enum([
+        "livekit",
+        "vapi",
+        "retell",
+        "retell_chat",
+        "phone",
+        "auto",
+        "hosted_agent",
+      ]),
+      mode: zod
+        .enum(["connect_only", "environment_backed", "provider_import"])
+        .optional(),
+      call_direction: zod
+        .enum(["inbound", "outbound"])
+        .optional()
+        .describe(
+          "inbound: the simulated caller dials the agent. outbound: the agent dials the simulated caller. Voice connectors only.",
+        ),
+      config: zod
+        .object({})
+        .passthrough()
+        .default(simulateApiHarnessAdaptationsCreateBodyAgentConfigDefault),
+      secret_refs: zod
+        .record(
+          zod.string(),
+          zod.object({
+            manager: zod.enum(["platform-vault", "platform-config"]),
+            key: zod
+              .string()
+              .min(1)
+              .max(
+                simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsKeyMax,
+              ),
+            version: zod
+              .string()
+              .min(1)
+              .max(
+                simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsVersionMax,
+              )
+              .optional(),
+            purpose: zod.enum([
+              "target_provider",
+              "simulator_provider",
+              "source_checkout",
+            ]),
+          }),
+        )
+        .default(simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsDefault),
+    })
+    .optional()
+    .describe(
+      "How the hosted agent is reached. Omitted for an agent connected on the Agents page: its provider, agent id and stored key are read from the version.",
+    ),
+  name: zod.string().min(1).max(simulateApiHarnessAdaptationsCreateBodyNameMax),
+  idempotency_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessAdaptationsCreateBodyIdempotencyKeyMax),
+  parallelism: zod
+    .number()
+    .min(1)
+    .max(simulateApiHarnessAdaptationsCreateBodyParallelismMax)
+    .optional()
+    .describe(
+      "Worlds the composition's runs use side by side; admission may lower it. Omitted: as many as this deployment admits.",
+    ),
+  pairing: zod
+    .record(zod.string(), zod.string().min(1))
+    .optional()
+    .describe(
+      "World tool to the agent tool it is paired with, as the person reviewed it.",
+    ),
+  mode: zod
+    .enum(["review", "run"])
+    .default(simulateApiHarnessAdaptationsCreateBodyModeDefault)
+    .describe(
+      "review: the builder drafts the binding and the person approves its design. run: the binding is drafted and checked without a session, then the measurable cases run.",
+    ),
+});
+
+/**
+ * The report of one run of a composition, optionally compared with a baseline run.
+ */
+export const SimulateApiHarnessEnvironmentsRunsRunReportParams = zod.object({
+  id: zod.string(),
+  run_id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsRunsRunReportQueryParams =
+  zod.object({
+    baseline: zod.string().uuid().optional(),
+  });
+
+export const SimulateApiHarnessEnvironmentsRunsRunReportResponse = zod.object({
+  run_mode: zod.enum(["canonical", "tool_routed", "conversation_only"]),
+  manifest: zod.object({
+    digest: zod.string().min(1),
+    environment: zod.array(zod.record(zod.string(), zod.string())),
+    suite: zod.record(zod.string(), zod.string()),
+    binding: zod.record(zod.string(), zod.string()),
+    agent: zod.record(zod.string(), zod.string()),
+    selection: zod.record(zod.string(), zod.string()),
+    simulator: zod.record(zod.string(), zod.string()),
+    scorer: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(zod.string(), zod.string()),
+  }),
+  comparability: zod.object({
+    baseline_run_id: zod.string().min(1),
+    comparable: zod.boolean(),
+    differing: zod.array(zod.string().min(1)),
+  }),
+  coverage: zod.object({
+    runnable: zod.number(),
+    suite_scenarios: zod.number(),
+    base_scenarios: zod.number(),
+    unscorable: zod.array(zod.string().min(1)),
+    extension_tools: zod.array(zod.string().min(1)),
+  }),
+  use_cases: zod.array(
+    zod.object({
+      use_case: zod.string(),
+      scenarios: zod.number(),
+      trials: zod.number(),
+      pass_1: zod.number(),
+      pass_k: zod.number(),
+    }),
+  ),
+  scenarios: zod.array(
+    zod.object({
+      scenario_key: zod.string().min(1),
+      name: zod.string().min(1),
+      use_case: zod.string(),
+      origin: zod.enum(["base", "specialized", "custom"]),
+      trials: zod.array(zod.enum(["passed", "failed", "errored", "skipped"])),
+      pass_1: zod.number(),
+      passed_all: zod.boolean(),
+    }),
+  ),
+  environment_faults: zod.number(),
+});
+
+/**
+ * How a connected agent fits a release suite: its tools paired with the world's and
+the cases that pairing can measure. Nothing is built.
+ */
+
+export const SimulateApiHarnessReleasesFitBody = zod.object({
+  suite_id: zod.string().uuid(),
+  agent_version_id: zod.string().uuid(),
+  pairing: zod.record(zod.string(), zod.string().min(1)).optional(),
+});
+
+export const SimulateApiHarnessReleasesFitResponse = zod.object({
+  agent: zod.object({
+    name: zod.string().min(1),
+    version: zod.string().min(1),
+  }),
+  agent_tools: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      description: zod.string().min(1).optional(),
+    }),
+  ),
+  rows: zod.array(
+    zod.object({
+      world: zod.string().min(1),
+      agent: zod.string().min(1),
+      kind: zod.enum(["matched", "mapped", "missing"]),
+    }),
+  ),
+  platform_actions: zod.array(
+    zod.object({
+      name: zod.string().min(1),
+      description: zod.string().min(1).optional(),
+    }),
+  ),
+  total: zod.number(),
+  unmeasured: zod.array(
+    zod.object({
+      key: zod.string().min(1),
+      title: zod.string().min(1),
+    }),
+  ),
+});
+
+/**
+ * Approve and build: the design is taken once the mapping has been checked on every case.
+ */
+export const SimulateApiHarnessAdaptationsApproveParams = zod.object({
+  id: zod.string(),
+});
+
+/**
+ * Review the design: what the adaptation takes from the ready world, before it's built.
+ */
+export const SimulateApiHarnessAdaptationsDesignParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessAdaptationsDesignResponse = zod.object({
+  state: zod
+    .enum(["checking", "awaiting_approval", "building", "ready", "failed"])
+    .describe(
+      "checking: the mapping is still being checked on every case; awaiting_approval: Approve and build may be pressed; building: approved; ready: the environment exists.",
+    ),
+  failure: zod.object({}).passthrough(),
+  composition_id: zod.string().uuid(),
+  agent: zod.object({
+    name: zod.string().min(1),
+    version: zod.string().min(1),
+  }),
+  world: zod.object({
+    name: zod.string().min(1),
+    title: zod.string().min(1),
+    summary: zod.string(),
+    channel: zod.string().min(1),
+    release: zod.string().min(1).describe("The release's digest."),
+    records: zod.record(zod.string(), zod.number()),
+    tools: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        description: zod.string().min(1).optional(),
+      }),
+    ),
+    rules: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string(),
+      }),
+    ),
+    people: zod.array(zod.string().min(1)),
+  }),
+  suite: zod.string().min(1),
+  scenarios: zod.array(
+    zod.object({
+      key: zod.string().min(1),
+      title: zod.string().min(1),
+    }),
+  ),
+  fit: zod.object({
+    agent: zod.object({
+      name: zod.string().min(1),
+      version: zod.string().min(1),
+    }),
+    agent_tools: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        description: zod.string().min(1).optional(),
+      }),
+    ),
+    rows: zod.array(
+      zod.object({
+        world: zod.string().min(1),
+        agent: zod.string().min(1),
+        kind: zod.enum(["matched", "mapped", "missing"]),
+      }),
+    ),
+    platform_actions: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        description: zod.string().min(1).optional(),
+      }),
+    ),
+    total: zod.number(),
+    unmeasured: zod.array(
+      zod.object({
+        key: zod.string().min(1),
+        title: zod.string().min(1),
+      }),
+    ),
+  }),
+  conflicts: zod.object({
+    checked: zod
+      .boolean()
+      .describe(
+        "False when the instructions couldn't be read against the rules yet.",
+      ),
+    conflicts: zod.array(
+      zod.object({
+        rule: zod.string().min(1),
+        policy: zod
+          .string()
+          .min(1)
+          .describe("The rule as the world states it."),
+        agent: zod.string().min(1).describe("The agent's instruction, quoted."),
+      }),
+    ),
+  }),
+  check: zod
+    .object({})
+    .passthrough()
+    .describe(
+      "What checking the mapping on every case found, once it has: the approval's data.",
+    ),
 });

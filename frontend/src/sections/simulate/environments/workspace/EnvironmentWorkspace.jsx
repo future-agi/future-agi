@@ -36,6 +36,7 @@ import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
 import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
+import ReviewTheDesign from "./adaptation/ReviewTheDesign";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
@@ -146,8 +147,19 @@ export default function EnvironmentWorkspace() {
     mutationFn: async ({ ids, trials, picks, resolved, seed }) => {
       // Run-all reads the keys from the server list: the bootstrap
       // `envState.scenarios` is seeded once and keeps a key an amend dropped.
+      // On a composition, "all" is the scenarios the agent can be scored on: the rest need
+      // a tool no agent tool reaches, so running them costs a conversation and scores nothing.
+      const unscorable = new Set(
+        (evalDetailQuery.data?.composition?.alignment?.unscorable || []).map(
+          (item) => item.scenario_key,
+        ),
+      );
       const scenarioIds =
-        ids === undefined ? await listAllScenarioKeys(env.id) : ids;
+        ids === undefined
+          ? (await listAllScenarioKeys(env.id)).filter(
+              (key) => !unscorable.has(key),
+            )
+          : ids;
       const selection = JSON.stringify([
         env.id,
         scenarioIds,
@@ -255,6 +267,17 @@ export default function EnvironmentWorkspace() {
 
   const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
   const usageLimit = jobQuery.data?.usage_limit;
+  // An adaptation is followed here as a job; once it finishes, the environment is the
+  // composition it made, so the page moves there (the job itself has no details to load).
+  const compositionId =
+    jobQuery.data?.job?.metadata?.adaptation_result?.composition_id;
+  useEffect(() => {
+    if (compositionId && compositionId !== envId) {
+      navigate(paths.dashboard.simulate.environments.detail(compositionId), {
+        replace: true,
+      });
+    }
+  }, [compositionId, envId, navigate]);
   const hadRemoteUsageLimit = useRef(false);
   useEffect(() => {
     if (usageLimit) {
@@ -286,6 +309,15 @@ export default function EnvironmentWorkspace() {
 
   const executionMatch = useMatch(EXECUTION_PATTERN);
   const improvementMatch = useMatch(IMPROVEMENT_PATTERN);
+
+  // Adapt to my agent opens its design at once, before the job has anything else to show;
+  // nothing is built until it's approved, so the build stage never shows.
+  if (
+    jobQuery.data?.job?.metadata?.adaptation?.mode === "review" &&
+    !compositionId
+  ) {
+    return <ReviewTheDesign jobId={envId} chat={chat} />;
+  }
 
   if (notFound) {
     return (
