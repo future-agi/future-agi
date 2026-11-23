@@ -7,7 +7,11 @@ from typing import Any, get_args
 from django.conf import settings
 from rest_framework import serializers
 
-from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB, MAX_SEED
+from simulate.models.hosted_harness import (
+    MAX_SCENARIOS_PER_JOB,
+    MAX_SEED,
+    HostedHarnessJob,
+)
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
@@ -1189,6 +1193,18 @@ class HarnessJobStatusSerializer(serializers.Serializer):
     queued_scenarios = serializers.IntegerField(required=False)
     total_scenarios = serializers.IntegerField()
     deadline_at = serializers.CharField()
+    cancel_requested_at = serializers.CharField(allow_null=True, required=False)
+    cancel_confirmed_at = serializers.CharField(allow_null=True, required=False)
+    cancel_confirmed_by = serializers.ChoiceField(
+        choices=HostedHarnessJob.CancelConfirmation.choices,
+        allow_null=True,
+        required=False,
+    )
+    cancel_status = serializers.ChoiceField(
+        choices=("requested", "confirmed", "unconfirmed", "cleanup_failed"),
+        allow_null=True,
+        required=False,
+    )
     failure = serializers.JSONField(allow_null=True)
 
 
@@ -1358,3 +1374,35 @@ class HarnessJobReadSerializer(serializers.Serializer):
     consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
     usage_limit = serializers.JSONField(required=False, allow_null=True)
     versioning = HarnessVersioningFlagsSerializer(required=False)
+
+
+class RunStopSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=("requested", "confirmed", "unconfirmed", "cleanup_failed"),
+        help_text="requested until the agent's side is seen to stop, confirmed once it"
+        " is, unconfirmed when the provider check gave up, cleanup_failed when it"
+        " stayed unverified for 10 minutes.",
+    )
+    kind = serializers.ChoiceField(
+        choices=("sandbox", "provider", "endpoint"),
+        help_text="How a stop can be confirmed: our sandbox, the provider's calls, or"
+        " never for an agent at its own URL.",
+    )
+    provider = serializers.CharField(allow_null=True)
+    requested_at = serializers.DateTimeField()
+    confirmed_at = serializers.DateTimeField(allow_null=True)
+    confirmed_by = serializers.ChoiceField(
+        choices=HostedHarnessJob.CancelConfirmation.choices, allow_null=True
+    )
+    reason = serializers.ChoiceField(
+        choices=("no_key", "key_rejected", "no_target", "no_calls", "too_many_calls"),
+        allow_null=True,
+        help_text="Why the provider could not be checked, when confirmed_by is"
+        " provider_unchecked.",
+    )
+    check_window_minutes = serializers.IntegerField(
+        help_text="How long the provider check waits for open calls to end."
+    )
+    cleanup_grace_minutes = serializers.IntegerField(
+        help_text="How long a stop stays unverified before it reads cleanup_failed."
+    )

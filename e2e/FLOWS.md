@@ -3818,6 +3818,34 @@
 - B reading A's import answers 404, through A's environment and through B's own
 - a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending
 
+### SIM-E2E-037 — a stopped Run reads Stop requested while its agent is unconfirmed, and Stopped once the stop is confirmed
+
+**Goal:** A developer stops a Run and is told Stop requested while the agent's side has not confirmed it stopped, and Stopped only once it has
+
+**Spec:** `flows/simulate/stop-run-cancel-confirmation.spec.ts:39`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed two running Runs in one environment: one whose agent runs at its own URL, one whose agent ran in our sandbox
+2. open the URL agent's Run and click Stop simulation, then Stop run
+3. read the Run's status and hover it
+4. open the sandboxed agent's Run and stop it the same way
+5. open the environment's Runs tab and read both Runs' status
+
+**Backend state verified:**
+
+- the calls API serves the URL agent's Run as cancelled with its stop requested, of the endpoint kind
+- the URL agent's hosted job is canceled with its stop requested and not confirmed
+- the calls API serves the sandboxed Run with its stop confirmed by sandbox_absent, and so does its hosted job
+- the runs list serves the URL agent's Run as requested and the sandboxed Run as confirmed
+
+**Browser observations:**
+
+- the URL agent's Run reads Stop requested, its hover says the stop can't be confirmed, and its note says why
+- the runs list reads Stop requested for the URL agent's Run and Stopped for the sandboxed Run
+
 ### SIM-E2E-038 — a reviewed draft saves only the accepted change, and only through Validate
 
 **Goal:** A builder reviews a chat-proposed rule and their own actor edit, keeps the rule, rejects the actor, validates and saves a named version holding only the rule

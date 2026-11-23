@@ -74,7 +74,9 @@ export function executionToRun(raw) {
     trialsInconclusive: raw.trials_inconclusive,
     // The run's lifecycle for the Status column — `status` above is a verdict
     // (passed/failed), this is where the run is (queued/running/completed).
-    runState: runStateFor(raw.status),
+    runState: runStateFor(raw.status, raw.stop),
+    stop: raw?.stop ?? null,
+    voice: raw?.agent_type === "voice",
     // Only a run that hasn't finished and isn't already stopping can be stopped.
     stoppable: STOPPABLE_RUN_STATUSES.includes(raw?.status),
     // Its evals are being graded. `runState` reads this as running, like a run
