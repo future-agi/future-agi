@@ -118,15 +118,28 @@ export default function VersionDetail({ envId, piece, version, siblings }) {
   // A compared version that a refresh removed falls back to the previous one.
   const against = others.some((one) => one.id === picked) ? picked : "";
   const first = !against && isFirst(version, siblings);
+  const asked = useVersionDiff(envId, piece, version.id, against || undefined, {
+    enabled: !first,
+  });
+  // No change was saved with this version: work it out against the version
+  // it was made from instead, which the server can do from both contents.
+  const savedMissing =
+    !against &&
+    !first &&
+    Boolean(parent) &&
+    !asked.isLoading &&
+    !asked.isError &&
+    asked.data?.diff == null;
+  const live = useVersionDiff(envId, piece, version.id, parent?.id, {
+    enabled: savedMissing,
+  });
   const {
     data,
     isLoading,
     isError: refreshFailed,
     // The last comparison, kept while another one loads.
     isPlaceholderData: stale,
-  } = useVersionDiff(envId, piece, version.id, against || undefined, {
-    enabled: !first,
-  });
+  } = savedMissing ? live : asked;
   // A failed refresh keeps the diff it already has.
   const isError = refreshFailed && !data;
   const noRecord = !first && !isLoading && !isError && data?.diff == null;

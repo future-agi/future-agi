@@ -24,6 +24,9 @@ const state = {
   membersRefreshFailed: false,
 };
 const diffCalls = [];
+// The last comparison the panel actually asked for (a switched-off call asks
+// nothing).
+const lastAsked = () => diffCalls.filter((call) => call.enabled).at(-1);
 // What a move of the default answers: "pending", { error } or { versions }.
 const move = { answer: undefined, calls: [] };
 vi.mock("src/api/simulate-environments/versions", async () => {
@@ -426,6 +429,24 @@ describe("VersionsPanel", () => {
     expect(within(detail).getByRole("table")).toHaveTextContent("billing");
   });
 
+  it("works out the change from the previous version when none was saved", async () => {
+    const user = userEvent.setup();
+    state.diffs["e2:"] = { summary: "", diff: null };
+    state.diffs["e2:e1"] = ENV_DIFF;
+    render(<VersionsPanel env={ENV} />);
+    await user.click(row("environment", "v2"));
+
+    const detail = screen.getByTestId("version-detail");
+    expect(lastAsked()).toMatchObject({ id: "e2", against: "e1" });
+    expect(within(detail).getByText("issue_refund")).toBeInTheDocument();
+    expect(
+      within(detail).queryByText("No change record for this version."),
+    ).toBeNull();
+    expect(
+      screen.getByRole("combobox", { name: "Compared with" }),
+    ).toHaveTextContent("Its previous version (v1)");
+  });
+
   it("compares against another version of the same piece", async () => {
     const user = userEvent.setup();
     state.versions = {
@@ -454,7 +475,7 @@ describe("VersionsPanel", () => {
     ).toEqual(["Its previous version (v1)", "Unsaved draft", "v0"]);
     await user.click(screen.getByRole("option", { name: "v0" }));
 
-    expect(diffCalls.at(-1)).toEqual({
+    expect(lastAsked()).toEqual({
       piece: "environment",
       id: "e2",
       against: "e0",
@@ -729,7 +750,7 @@ describe("VersionsPanel", () => {
     render(<VersionsPanel env={ENV} />);
     await user.click(row("environment", "v2"));
     expect(screen.queryByText(/This is the first version/)).toBeNull();
-    expect(diffCalls.at(-1)).toMatchObject({ id: "e2", enabled: true });
+    expect(lastAsked()).toMatchObject({ id: "e2", enabled: true });
   });
 
   it("names an unnumbered version instead of showing its id", () => {
@@ -787,12 +808,12 @@ describe("VersionsPanel", () => {
     await user.click(row("environment", "v2"));
     await user.click(screen.getByRole("combobox", { name: "Compared with" }));
     await user.click(screen.getByRole("option", { name: "v0" }));
-    expect(diffCalls.at(-1)).toMatchObject({ id: "e2", against: "e0" });
+    expect(lastAsked()).toMatchObject({ id: "e2", against: "e0" });
 
     state.versions = VERSIONS;
     rerender(<VersionsPanel env={ENV} />);
 
-    expect(diffCalls.at(-1)).toMatchObject({ id: "e2", against: undefined });
+    expect(lastAsked()).toMatchObject({ id: "e2", against: undefined });
     expect(
       screen.getByRole("combobox", { name: "Compared with" }),
     ).toHaveTextContent("Its previous version");
