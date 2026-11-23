@@ -399,7 +399,7 @@ jobs:
           if [ "$E2E_STACK" = standalone ]; then
             services=(postgres clickhouse mock-llm)
           else
-            services=(postgres clickhouse redis minio temporal mock-llm mock-slack
+            services=(postgres clickhouse redis minio temporal mock-llm mock-slack mock-daytona
               peerdb-server peerdb-flow-worker peerdb-flow-snapshot-worker
               peerdb-flow-api peerdb-catalog peerdb-temporal peerdb-minio
               property-catalog-kafka property-catalog-topic-init

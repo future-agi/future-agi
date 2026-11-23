@@ -77,6 +77,7 @@ services:
       HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
       # Actors and test conditions, which the actor flows cover.
       HARNESS_ACTORS_ENABLED: "true"
+      HARNESS_AGENT_READING_ENABLED: "true"
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
       # Metrics (/dashboard/metrics, /tracer/derived-metrics/) is a deployment
@@ -93,6 +94,7 @@ services:
     environment:
       HARNESS_VERSIONING_ENABLED: "true"
       HARNESS_ACTORS_ENABLED: "true"
+      HARNESS_AGENT_READING_ENABLED: "true"
       MODEL_SERVING_URL: http://mock-llm:8080
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
@@ -169,6 +171,44 @@ services:
     environment:
       FUTURE_AGI_TELEMETRY_DISABLED: "true"
       FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+  worker-reading:
+    extends:
+      file: ./docker-compose.distributed.yml
+      service: worker
+    networks: [default, link-public]
+    restart: "no"
+    volumes: !reset []
+    environment:
+      HARNESS_VERSIONING_ENABLED: "true"
+      HARNESS_ACTORS_ENABLED: "true"
+      HARNESS_BUNDLE_CERTIFY_ENABLED: "true"
+      HARNESS_AGENT_READING_ENABLED: "true"
+      MODEL_SERVING_URL: http://mock-llm:8080
+      FUTURE_AGI_TELEMETRY_DISABLED: "true"
+      FUTURE_AGI_TELEMETRY_URL: http://127.0.0.1:9
+      DJANGO_SETTINGS_MODULE: tfc.settings.e2e
+      INTEGRATION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      TEMPORAL_ALL_QUEUES: "false"
+      TEMPORAL_TASK_QUEUE: simulation_runner
+      TEMPORAL_EXCLUDED_QUEUES: ""
+      HOSTED_SANDBOX_PROVIDER: daytona
+      DAYTONA_API_URL: http://mock-daytona:8080/api
+      DAYTONA_API_KEY: e2e-mock
+      DAYTONA_TARGET: e2e
+      DAYTONA_USE_DEPRECATED_POLLING: "true"
+      ALK_DAYTONA_SNAPSHOT: e2e-mock
+      AGENTCC_BASE_URL: http://agentcc-gateway:8080
+    depends_on:
+      mock-daytona:
+        condition: service_started
+  mock-daytona:
+    image: node:22-alpine
+    command: ["node", "/srv/server.mjs"]
+    volumes:
+      - ./e2e/stack/mock-daytona/server.mjs:/srv/server.mjs:ro
+    ports:
+      - "127.0.0.1:28084:8080"
+    restart: "no"
   worker-sql-workbench:
     networks: [default, link-public]
     restart: "no"
