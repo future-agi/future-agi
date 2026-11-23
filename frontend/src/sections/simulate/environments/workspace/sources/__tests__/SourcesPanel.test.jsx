@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SourcesPanel from "../SourcesPanel";
+import DraftBar from "../../drafts/DraftBar";
 
 const api = vi.hoisted(() => ({
   get: vi.fn(),
@@ -33,7 +34,7 @@ vi.mock("../KnowledgeBasePicker", () => ({
   ),
 }));
 
-function mount(state) {
+function mount(state, withDraft = false) {
   return render(
     <MemoryRouter
       initialEntries={[{ pathname: "/env", search: "?tab=world", state }]}
@@ -47,6 +48,9 @@ function mount(state) {
           })
         }
       >
+        {withDraft && (
+          <DraftBar env={{ id: "env-1", versioning: { enabled: true } }} />
+        )}
         <SourcesPanel env={{ id: "env-1" }} />
       </QueryClientProvider>
     </MemoryRouter>,
@@ -344,6 +348,58 @@ describe("SourcesPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add to draft" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it("holds Save through generation and shows grounded scenarios with source citations", async () => {
+    sessionStorage.setItem(storageKey, ready.id);
+    let generation = { id: "generation-1", state: "queued" };
+    serverReview = {
+      ...ready,
+      state: "accepted",
+      receipt: { scenario_generation: generation },
+    };
+    const fallback = api.get.getMockImplementation();
+    api.get.mockImplementation(async (path) => {
+      if (path === `${reviewPath}generate-scenarios/`)
+        return { data: generation };
+      if (path.endsWith("/drafts/")) {
+        return {
+          data: {
+            environment: { id: "draft-1", parent_id: "env-v1", revision: 1 },
+            suite: null,
+          },
+        };
+      }
+      return fallback(path);
+    });
+    mount(undefined, true);
+    expect(
+      await screen.findByText("Scenario generation is queued."),
+    ).toBeInTheDocument();
+    const save = await screen.findByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+
+    generation = {
+      ...generation,
+      state: "completed",
+      generated_scenarios: [
+        {
+          scenario_key: "refund-window",
+          name: "Refund within the approved 15-day window",
+          citations: [{ source_id: "policy", page: 2 }],
+        },
+      ],
+    };
+    expect(
+      await screen.findByText(
+        "Refund within the approved 15-day window",
+        {},
+        { timeout: 3000 },
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("policy.pdf · Page 2")).toBeInTheDocument();
+    expect(save).toBeEnabled();
     expect(api.post).not.toHaveBeenCalled();
   });
 });

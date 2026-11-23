@@ -21,6 +21,7 @@ import {
   useReprepareEnvironmentSourceReview,
 } from "src/api/simulate-environments/sourceImports";
 import { buildSourceReview } from "./importSourceReview";
+import SourceScenarioGeneration from "./SourceScenarioGeneration";
 
 const roles = {
   seed_records: "Structured scenario data",
@@ -439,9 +440,11 @@ export default function SourceReviewPanel({
         stale={stale}
         {...editor}
       />
-      {onDismiss && !unfinished.includes(review.state) && (
+      {review.state === "accepted" && review.receipt?.scenario_generation ? (
+        <SourceScenarioGeneration review={review} onDismiss={onDismiss} />
+      ) : onDismiss && !unfinished.includes(review.state) ? (
         <Button onClick={onDismiss}>Close</Button>
-      )}
+      ) : null}
     </>
   );
 }

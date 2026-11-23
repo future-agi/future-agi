@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { useLocation, useNavigate } from "react-router-dom";
 import { Alert, Button, Chip, Stack, Typography } from "@mui/material";
@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import {
   sourceSummaryKey,
+  useActiveEnvironmentSourceReview,
   useCreateSourceReview,
   useEnvironmentSources,
   useSourceCapabilities,
@@ -30,10 +31,7 @@ export default function SourcesPanel({ env, locked }) {
   const writable = canEdit && !locked;
   const sources = useBuildSources();
   const { addKnowledgeSelection } = sources;
-  const storageKey = `harness-environment-source-review:${env.id}`;
-  const [reviewId, setReviewId] = useState(() =>
-    sessionStorage.getItem(storageKey),
-  );
+  const { reviewId, setReviewId } = useActiveEnvironmentSourceReview(env.id);
   const request = useRef(null);
   const consumedSelection = useRef(null);
   const create = useCreateSourceReview();
@@ -81,7 +79,6 @@ export default function SourcesPanel({ env, locked }) {
       { ...body, idempotency_key: request.current.key },
       {
         onSuccess: (review) => {
-          sessionStorage.setItem(storageKey, review.id);
           setReviewId(review.id);
         },
       },
@@ -89,7 +86,6 @@ export default function SourcesPanel({ env, locked }) {
   };
   const close = () => {
     request.current = null;
-    sessionStorage.removeItem(storageKey);
     setReviewId(null);
   };
   const refresh = () => {

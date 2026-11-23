@@ -792,6 +792,49 @@ describe("EnvironmentWorkspace route shell", () => {
     ).toBeDisabled();
   });
 
+  it.each(["design", "build_job"])(
+    "restores the parked %s source review before showing build progress",
+    async (kind) => {
+      const reviewId = "review-1";
+      getHarnessJob.mockResolvedValue({
+        ...BUILDING_JOB,
+        job: {
+          ...BUILDING_JOB.job,
+          metadata: {
+            ...BUILDING_JOB.job.metadata,
+            source_review: { id: reviewId, state: "reading", revision: 1 },
+          },
+        },
+        status: { stage: "awaiting_source_review", created_at: NOW },
+      });
+      const fallback = axios.get.getMockImplementation();
+      axios.get.mockImplementation((url) =>
+        url === "/simulate/api/harness-source-reviews/review-1/"
+          ? Promise.resolve({
+              data: {
+                id: reviewId,
+                scope: { id: "job-build", kind },
+                state: "reading",
+                revision: 1,
+                draft_digest: null,
+                preview: {},
+              },
+            })
+          : fallback(url),
+      );
+
+      renderWorkspace("/dashboard/simulate/environments/job-build");
+      expect(
+        await screen.findByRole("heading", { name: "Review sources" }),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Reading sources…")).toBeInTheDocument();
+      expect(screen.queryByText(PIPELINE_CHECKS_COPY.heading)).toBeNull();
+      expect(
+        screen.getByRole("button", { name: /Run simulation/ }),
+      ).toBeDisabled();
+    },
+  );
+
   it("keeps the build layout but freezes it on a terminal-failed job", async () => {
     getHarnessJob.mockResolvedValue({
       ...BUILDING_JOB,

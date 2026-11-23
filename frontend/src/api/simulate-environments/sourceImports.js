@@ -47,6 +47,24 @@ export const sourceReviewKey = (reviewId) => [
   reviewId,
 ];
 
+export function useActiveEnvironmentSourceReview(envId) {
+  const queryClient = useQueryClient();
+  const storageKey = `harness-environment-source-review:${envId}`;
+  const queryKey = ["active-environment-source-review", envId];
+  const { data: reviewId } = useQuery({
+    queryKey,
+    queryFn: () => (envId ? sessionStorage.getItem(storageKey) : null),
+    enabled: false,
+    initialData: () => (envId ? sessionStorage.getItem(storageKey) : null),
+  });
+  const setReviewId = (id) => {
+    if (id) sessionStorage.setItem(storageKey, id);
+    else sessionStorage.removeItem(storageKey);
+    queryClient.setQueryData(queryKey, id);
+  };
+  return { reviewId, setReviewId };
+}
+
 export const useEnvironmentSourceReview = (reviewId) =>
   useQuery({
     queryKey: sourceReviewKey(reviewId),
@@ -62,6 +80,29 @@ export const useEnvironmentSourceReview = (reviewId) =>
     refetchOnMount: "always",
     refetchInterval: (query) =>
       query.state.data?.state === "reading" ? 1000 : false,
+  });
+
+export const sourceGenerationPending = (generation) =>
+  ["queued", "running"].includes(generation?.state);
+
+export const useEnvironmentSourceGeneration = (reviewId, initial) =>
+  useQuery({
+    queryKey: [...sourceReviewKey(reviewId), "generation"],
+    queryFn: async () =>
+      (
+        await axios.get(
+          apiPath(
+            "/simulate/api/harness-source-reviews/{id}/generate-scenarios/",
+            {
+              id: reviewId,
+            },
+          ),
+        )
+      ).data,
+    enabled: Boolean(reviewId && initial),
+    initialData: initial,
+    refetchInterval: (query) =>
+      sourceGenerationPending(query.state.data) ? 1000 : false,
   });
 
 function useSourceReviewMutation(path, afterSuccess) {

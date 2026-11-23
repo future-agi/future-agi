@@ -57,7 +57,7 @@ export default function UseInEnvironmentDialog({ open, onClose, selection }) {
             >
               <ListItemText
                 primary={environment.name}
-                secondary="Open Sources review"
+                secondary="Add to the Environment source selection"
               />
             </ListItemButton>
           ))}

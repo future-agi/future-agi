@@ -14,6 +14,12 @@ import { DRAFTS_COPY as COPY, WORKSPACE_COPY } from "../workspace.constants";
 import ViewerLock from "../../components/ViewerLock";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import { changeCount } from "./changeCount";
+import {
+  sourceGenerationPending,
+  useActiveEnvironmentSourceReview,
+  useEnvironmentSourceGeneration,
+  useEnvironmentSourceReview,
+} from "src/api/simulate-environments/sourceImports";
 
 const pieceLine = (piece, draft) =>
   `${COPY.pieces[piece]} · ${
@@ -54,6 +60,14 @@ export default function DraftBar({
 }) {
   const enabled = Boolean(env?.versioning?.enabled);
   const { data: drafts } = useDrafts(env?.id, { enabled });
+  const { reviewId } = useActiveEnvironmentSourceReview(env?.id);
+  const { data: review } = useEnvironmentSourceReview(
+    enabled ? reviewId : null,
+  );
+  const { data: sourceGeneration } = useEnvironmentSourceGeneration(
+    review?.id,
+    review?.receipt?.scenario_generation,
+  );
   const save = useSaveDrafts(env?.id);
   const discard = useDiscardDraft(env?.id);
   const { canEdit } = useSimulationAccess();
@@ -61,6 +75,8 @@ export default function DraftBar({
   const staleId = useId();
   const busyId = useId();
   const holdId = useId();
+  const generationId = useId();
+  const generatingScenarios = sourceGenerationPending(sourceGeneration);
 
   // A refusal is about the drafts it was sent for, so it goes when they
   // change. draft_changed stays: it asks to review the drafts it refetched.
@@ -88,7 +104,11 @@ export default function DraftBar({
   const pending = save.isPending || discard.isPending;
   const staleReason = drafts.stale ? staleText(drafts) : null;
   const holdReasons = [busy && busyId, rebuilding && holdId].filter(Boolean);
-  const saveReasons = [staleReason && staleId, ...holdReasons].filter(Boolean);
+  const saveReasons = [
+    staleReason && staleId,
+    generatingScenarios && generationId,
+    ...holdReasons,
+  ].filter(Boolean);
 
   const onSave = () => {
     discard.reset();
@@ -187,6 +207,14 @@ export default function DraftBar({
           sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
         >
           {COPY.busy}
+        </Typography>
+      )}
+      {generatingScenarios && (
+        <Typography
+          id={generationId}
+          sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+        >
+          Save becomes available when source scenario generation finishes.
         </Typography>
       )}
       {rebuilding && (
