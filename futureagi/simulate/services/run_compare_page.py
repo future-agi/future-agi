@@ -729,8 +729,8 @@ def build_compare_page(
     # The page's rows read the scenario sources their calls just did, so an
     # edit since the facts were cached shows alike on both.
     for entry in page_entries:
-        ids: list[str] = next((ids for ids in entry["calls"].values() if ids), [])
-        if (call := by_id.get(min(ids, default=""))) is not None:
+        found: list[str] = next((ids for ids in entry["calls"].values() if ids), [])
+        if (call := by_id.get(min(found, default=""))) is not None:
             entry["shown"] = {
                 **entry["shown"],
                 **row_level_columns(call, *scenario_sources),

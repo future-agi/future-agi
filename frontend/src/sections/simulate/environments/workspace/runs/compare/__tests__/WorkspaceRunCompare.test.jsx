@@ -89,6 +89,10 @@ function renderCompare({
 }
 
 const loaded = () => screen.findAllByTestId("compare-run-pill");
+// The group header rows, by their toggle button.
+const groupToggles = (expanded = "") =>
+  document.querySelectorAll(`tbody button[aria-expanded${expanded}]`);
+const groupHeads = () => [...groupToggles()].map((b) => b.closest("tr"));
 
 beforeEach(() => {
   axios.get.mockReset();
@@ -451,7 +455,7 @@ describe("RunCompare", () => {
   it("shows group headers with each run's pass rate", async () => {
     renderCompare();
     await loaded();
-    const head = document.querySelector('tr[aria-expanded="true"]');
+    const [head] = groupHeads();
     expect(
       within(head).getByText("Refund a double charge"),
     ).toBeInTheDocument();
@@ -464,7 +468,7 @@ describe("RunCompare", () => {
     response.rows[0].calls[RUN.a][0].evaluations[0].status = "pending";
     renderCompare({ response });
     await loaded();
-    const [refund, escalate] = document.querySelectorAll("tr[aria-expanded]");
+    const [refund, escalate] = groupHeads();
     // Refund correctness has no group score; only run 1's refund call grades.
     expect(refund.querySelectorAll(".MuiSkeleton-root")).toHaveLength(1);
     expect(escalate.querySelectorAll(".MuiSkeleton-root")).toHaveLength(0);
@@ -536,7 +540,10 @@ describe("RunCompare", () => {
     const user = userEvent.setup();
     renderCompare();
     await loaded();
-    const head = document.querySelector('tr[aria-expanded="true"]');
+    const head = screen.getByRole("button", {
+      name: /^Refund a double charge/,
+      expanded: true,
+    });
     head.focus();
 
     await user.keyboard("{Enter}");
@@ -545,15 +552,18 @@ describe("RunCompare", () => {
     expect(head).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("opens a row's calls from the keyboard on its first line only", async () => {
+  it("opens a row's calls from the keyboard by its named button", async () => {
     const user = userEvent.setup();
     renderCompare();
     await loaded();
-    const lines = [...document.querySelectorAll("tbody tr[data-run]")];
-    // The refund row's first line, then its other lines.
-    expect(lines[0]).toHaveAttribute("tabindex", "0");
-    expect(lines[1]).not.toHaveAttribute("tabindex");
-    lines[0].focus();
+    // Rows are plain rows; the lead cell's button is the control.
+    document
+      .querySelectorAll("tbody tr")
+      .forEach((tr) => expect(tr).not.toHaveAttribute("tabindex"));
+    const open = screen.getByRole("button", {
+      name: "Open calls for refund-double-charge · Trial 1",
+    });
+    open.focus();
 
     await user.keyboard("{Enter}");
 
@@ -566,35 +576,47 @@ describe("RunCompare", () => {
     const user = userEvent.setup();
     renderCompare();
     await loaded();
-    // The escalate row's first line: the baseline's call met 1 of 2 sub-goals.
-    const count = screen
-      .getAllByText("1/2 sub-goals")
-      .find((el) => el.closest("tr").getAttribute("tabindex") === "0");
+    // The refund row's first line: the baseline's call met 1 of 2 sub-goals.
+    const [count] = screen.getAllByText("1/2 sub-goals");
     count.focus();
 
     await user.keyboard("{Enter}");
 
-    expect(screen.queryByText(`Hello from ${CALL.aEsc1}`)).toBeNull();
+    expect(screen.queryByText(`Hello from ${CALL.aRefund1}`)).toBeNull();
     expect(screen.queryByText(/Calls across runs/)).toBeNull();
   });
 
-  it("marks a scenario a run played edited once, in its scenario cell", async () => {
+  it("marks an edited scenario once and names the runs that played it", async () => {
     const response = compareRunsResponse();
     // Even when sent, the baseline is what the others are compared against.
-    response.rows[2].edited_run_ids = [RUN.a, RUN.b];
+    response.rows[2].edited_run_ids = [RUN.a, RUN.b, RUN.c];
     renderCompare({ response });
     await loaded();
     const [chip] = screen.getAllByText("Edited");
     expect(screen.getAllByText("Edited")).toHaveLength(1);
-    expect(chip.closest("td")).toHaveClass("compare-lead");
+    const cell = chip.closest("td");
+    expect(cell).toHaveClass("compare-lead");
+    expect(within(cell).getByText("Escalate to a human")).toBeInTheDocument();
     expect(
-      within(chip.closest("td")).getByText("Escalate to a human"),
+      within(cell).getByText("Runs 2 and 3 played the edited version"),
     ).toBeInTheDocument();
+    // The chip's tooltip trigger is not inside the row's button.
+    expect(chip.closest("button")).toBeNull();
 
     fireEvent.mouseOver(chip);
     expect(await screen.findByRole("tooltip")).toHaveTextContent(
-      "Scenario content differs from the baseline",
+      "Runs 2 and 3 played the edited version",
     );
+  });
+
+  it("names the one run that played an edited scenario", async () => {
+    const response = compareRunsResponse();
+    response.rows[2].edited_run_ids = [RUN.c];
+    renderCompare({ response });
+    await loaded();
+    expect(
+      screen.getByText("Run 3 played the edited version"),
+    ).toBeInTheDocument();
   });
 
   it("keeps the open row's drawer when a refetch drops the row", async () => {
@@ -611,11 +633,7 @@ describe("RunCompare", () => {
     moved.groups = moved.groups.slice(1);
     axios.get.mockResolvedValue({ data: moved });
     await lastClient.refetchQueries();
-    await waitFor(() =>
-      expect(
-        document.querySelectorAll('tr[aria-expanded="true"]'),
-      ).toHaveLength(1),
-    );
+    await waitFor(() => expect(groupToggles('="true"')).toHaveLength(1));
 
     expect(screen.getByText(`Hello from ${CALL.aRefund1}`)).toBeInTheDocument();
   });
@@ -623,7 +641,7 @@ describe("RunCompare", () => {
   it("counts a group's scenarios on every page, not only this one", async () => {
     renderCompare();
     await loaded();
-    const head = document.querySelector('tr[aria-expanded="true"]');
+    const [head] = groupHeads();
     expect(within(head).getByText("3 tasks")).toBeInTheDocument();
   });
 
@@ -638,9 +656,7 @@ describe("RunCompare", () => {
       await screen.findByRole("menuitem", { name: "No grouping" }),
     );
     await waitFor(() => expect(lastParams()).not.toHaveProperty("group_by"));
-    await waitFor(() =>
-      expect(document.querySelector("tr[aria-expanded]")).toBeNull(),
-    );
+    await waitFor(() => expect(groupToggles()).toHaveLength(0));
 
     axios.get.mockReturnValueOnce(new Promise(() => {}));
     fireEvent.click(screen.getByRole("button", { name: /Group by/ }));

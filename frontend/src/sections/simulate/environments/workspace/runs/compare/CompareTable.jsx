@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
 import React, { memo, useState } from "react";
 import {
+  ButtonBase,
   Chip,
   Stack,
   Table,
@@ -68,13 +69,21 @@ const focusRingSx = {
     outlineOffset: -2,
   },
 };
-// Enter or Space on the row itself; a key on a control inside it is its own.
-const onRowKey = (fn) => (e) => {
-  if (e.target !== e.currentTarget) return;
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    fn();
-  }
+// The lead cell's control: a native button styled as the cell's text. The
+// row keeps its own click for the mouse; the button stops the bubble so one
+// press acts once.
+const leadButtonSx = {
+  width: "100%",
+  justifyContent: "flex-start",
+  textAlign: "left",
+  font: "inherit",
+  color: "inherit",
+  borderRadius: 0.5,
+  ...focusRingSx,
+};
+const ownClick = (fn) => (e) => {
+  e.stopPropagation();
+  fn();
 };
 
 // The measure a column's change arrow reads.
@@ -124,6 +133,20 @@ const rowLines = (row, runs) =>
       span: calls.length,
     }));
   });
+
+// Which runs, by number, played an edited version of the row's scenario; the
+// baseline is what they are compared against, so it is never one of them.
+const playedEdited = (row, runs) => {
+  const ordinals = runs
+    .filter(
+      (run) =>
+        !run.isBaseline &&
+        run.ordinal != null &&
+        row.editedRunIds.includes(run.id),
+    )
+    .map((run) => run.ordinal);
+  return ordinals.length ? COMPARE_COPY.playedEdited(ordinals) : null;
+};
 
 const dash = (
   <Typography
@@ -198,15 +221,14 @@ function CompareGroupHeaderRow({
     );
   };
   return (
-    <TableRow
-      onClick={onToggle}
-      tabIndex={0}
-      onKeyDown={onRowKey(onToggle)}
-      aria-expanded={!collapsed}
-      sx={focusRingSx}
-    >
+    <TableRow onClick={onToggle}>
       <TableCell className={LEAD_CLASS} sx={groupCellSx}>
-        <Stack direction="row" alignItems="center" spacing={1}>
+        <ButtonBase
+          disableRipple
+          aria-expanded={!collapsed}
+          onClick={ownClick(onToggle)}
+          sx={{ ...leadButtonSx, gap: 1, minWidth: 0 }}
+        >
           <Iconify
             icon={
               collapsed
@@ -217,18 +239,20 @@ function CompareGroupHeaderRow({
             sx={{ color: "text.subtitle", flexShrink: 0 }}
           />
           <Typography
+            component="span"
             noWrap
             sx={{ typography: "s1", fontWeight: "fontWeightBold" }}
           >
             {group.label}
           </Typography>
           <Typography
+            component="span"
             noWrap
             sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0 }}
           >
             {COMPARE_COPY.scenarioCount(group.rowCount)}
           </Typography>
-        </Stack>
+        </ButtonBase>
       </TableCell>
       {sharedKeys.map((key) => (
         <TableCell key={key} sx={groupCellSx} />
@@ -297,17 +321,25 @@ function CompareTable({
   const renderLine = (row, rep, lines, line, index, prefix) => {
     const { run, task } = line;
     const marker = <RunDot ordinal={run.ordinal} colorIndex={run.colorIndex} />;
-    // Every line opens the same drawer, so only a scenario's first is a stop.
-    const keyable = onOpenRow && index === 0;
     const diff = showDiff && task ? wordDiff(task.diff) : null;
+    const name = `${rep.sourceScenario || row.scenario || row.scenarioKey}${
+      row.trialIndex != null ? ` · ${COMPARE_COPY.trial(row.trialIndex)}` : ""
+    }`;
+    const nameText = (
+      <Typography
+        component="span"
+        sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}
+      >
+        {name}
+      </Typography>
+    );
+    const editedBy = playedEdited(row, runs);
     return (
       <TableRow
         key={`${prefix}:${index}`}
         hover
         onClick={() => onOpenRow?.(row)}
-        tabIndex={keyable ? 0 : undefined}
-        onKeyDown={keyable ? onRowKey(() => onOpenRow(row)) : undefined}
-        sx={{ cursor: "pointer", ...(keyable && focusRingSx) }}
+        sx={{ cursor: "pointer" }}
         data-run={run.id}
       >
         {index === 0 && (
@@ -316,13 +348,18 @@ function CompareTable({
             rowSpan={lines.length}
             sx={groups ? nestedLeadCellSx : leadCellSx}
           >
-            <Typography
-              sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}
-            >
-              {rep.sourceScenario || row.scenario || row.scenarioKey}
-              {row.trialIndex != null &&
-                ` · ${COMPARE_COPY.trial(row.trialIndex)}`}
-            </Typography>
+            {onOpenRow ? (
+              <ButtonBase
+                disableRipple
+                aria-label={COMPARE_COPY.openRow(name)}
+                onClick={ownClick(() => onOpenRow(row))}
+                sx={leadButtonSx}
+              >
+                {nameText}
+              </ButtonBase>
+            ) : (
+              nameText
+            )}
             {row.useCase && (
               <Typography
                 sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
@@ -331,7 +368,11 @@ function CompareTable({
               </Typography>
             )}
             {row.editedRunIds.length > 0 && (
-              <CustomTooltip show describeChild title={COMPARE_COPY.editedHint}>
+              <CustomTooltip
+                show
+                describeChild
+                title={editedBy || COMPARE_COPY.editedHint}
+              >
                 <Chip
                   size="small"
                   label={COMPARE_COPY.edited}
@@ -340,6 +381,13 @@ function CompareTable({
                   sx={{ mt: 0.5 }}
                 />
               </CustomTooltip>
+            )}
+            {editedBy && (
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+              >
+                {editedBy}
+              </Typography>
             )}
           </TableCell>
         )}

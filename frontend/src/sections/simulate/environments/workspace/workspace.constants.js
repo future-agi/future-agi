@@ -605,6 +605,14 @@ export const COMPARE_COPY = {
   trialPicker: "Trial",
   edited: "Edited",
   editedHint: "Scenario content differs from the baseline",
+  playedEdited: (ordinals) => {
+    const list =
+      ordinals.length > 1
+        ? `${ordinals.slice(0, -1).join(", ")} and ${ordinals.at(-1)}`
+        : `${ordinals[0]}`;
+    return `${ordinals.length > 1 ? "Runs" : "Run"} ${list} played the edited version`;
+  },
+  openRow: (name) => `Open calls for ${name}`,
 };
 
 // The run's agent is not the one its environment version was built with.
