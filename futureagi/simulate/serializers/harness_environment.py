@@ -1174,6 +1174,7 @@ class HarnessSourceDraftRefSerializer(StrictInputSerializer):
 
 class HarnessSourcePrepareSerializer(StrictInputSerializer):
     expected_environment_version_id = serializers.UUIDField()
+    target_table = serializers.CharField(required=False, max_length=255)
     expected_draft = HarnessSourceDraftRefSerializer()
     selection = HarnessSourceSelectionSerializer()
 
@@ -1201,6 +1202,7 @@ class HarnessSourceFileListInspector(FieldInspector):
 
 class HarnessSourceUploadPrepareSerializer(StrictInputSerializer):
     expected_environment_version_id = serializers.UUIDField()
+    target_table = serializers.CharField(required=False, max_length=255)
     expected_draft_id = serializers.UUIDField(required=False, allow_null=True)
     expected_draft_revision = serializers.IntegerField(min_value=0)
     purpose = serializers.ChoiceField(

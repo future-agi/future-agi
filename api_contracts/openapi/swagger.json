@@ -55359,6 +55359,14 @@
                         "format": "uuid"
                     },
                     {
+                        "name": "target_table",
+                        "in": "formData",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    {
                         "name": "expected_draft_id",
                         "in": "formData",
                         "required": false,
@@ -156960,6 +156968,12 @@
                     "title": "Expected environment version id",
                     "type": "string",
                     "format": "uuid"
+                },
+                "target_table": {
+                    "title": "Target table",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
                 },
                 "expected_draft": {
                     "$ref": "#/definitions/HarnessSourceDraftRef"

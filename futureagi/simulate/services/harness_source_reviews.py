@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from contextlib import contextmanager
 from datetime import timedelta
 from uuid import UUID
 
@@ -88,20 +89,29 @@ def _owner(query: dict, owner_id) -> HostedHarnessJob:
 
 
 def _environment_basis(
-    owner: HostedHarnessJob, expected_draft: drafts.DraftRef, target_table=None
+    owner: HostedHarnessJob,
+    expected_draft: drafts.DraftRef,
+    target_table=None,
+    *,
+    records=True,
 ) -> tuple[dict, dict | None]:
     refs = drafts.draft_refs(owner)
     if refs["environment"] != expected_draft:
         raise _conflict(
             "The Environment draft changed. Prepare the source review again."
         )
-    schema, tables = _environment_schema(owner, target_table)
+    schema, tables = (
+        _environment_schema(owner, target_table) if records else ({"fields": []}, [])
+    )
     return {
         "environment_version_id": str(owner.environment_version_id),
         "draft": sources._ref_value(expected_draft),
         "suite_version_id": str(owner.suite_version_id),
         "suite_draft": sources._ref_value(refs["suite"]),
-        "target_table": target_table or (tables[0] if len(tables) == 1 else None),
+        "target_table": (target_table or (tables[0] if len(tables) == 1 else None))
+        if records
+        else None,
+        **({"record_mapping_required": False} if not records else {}),
         "schema_digest": schema_digest(schema) if schema else None,
         **({"destination_tables": tables} if schema is None else {}),
     }, schema
@@ -184,7 +194,7 @@ def _data_type(sql_type: str) -> str:
 
 
 def _owner_basis(
-    owner: HostedHarnessJob, kind: str, scope: dict
+    owner: HostedHarnessJob, kind: str, scope: dict, *, records=True
 ) -> tuple[dict, dict | None]:
     metadata = (owner.payload or {}).get("metadata") or {}
     if kind == Owner.ENVIRONMENT:
@@ -198,7 +208,9 @@ def _owner_basis(
         current = sources._require_import_basis(
             owner, scope["environment_version_id"], scope["expected_draft"]
         )
-        return _environment_basis(owner, current, scope.get("target_table"))
+        return _environment_basis(
+            owner, current, scope.get("target_table"), records=records
+        )
     if bool(metadata.get("design")) != (kind == Owner.DESIGN) or metadata.get(
         "adaptation"
     ):
@@ -233,7 +245,12 @@ def _required_basis(row: HarnessSourceReview, owner: HostedHarnessJob) -> None:
     scope = dict(row.basis)
     if row.owner_kind == Owner.ENVIRONMENT:
         scope["expected_draft"] = scope["draft"]
-    current, _schema = _owner_basis(owner, row.owner_kind, scope)
+    current, _schema = _owner_basis(
+        owner,
+        row.owner_kind,
+        scope,
+        records=row.basis.get("record_mapping_required", True),
+    )
     if current != row.basis:
         raise _conflict()
 
@@ -395,8 +412,15 @@ def _stage_review(
     return _stage(row, capture, schema, schema_repairs)
 
 
-def prepare_environment_review(owner, captured, expected_draft) -> dict:
-    basis, schema = _environment_basis(owner, expected_draft)
+def prepare_environment_review(
+    owner, captured, expected_draft, target_table=None
+) -> dict:
+    basis, schema = _environment_basis(
+        owner,
+        expected_draft,
+        target_table,
+        records=any(item.role == "seed_records" for item in captured),
+    )
     row = _stage_review(owner, Owner.ENVIRONMENT, basis, schema, lambda: captured)
     return {
         "import_ref": str(row.id),
@@ -520,6 +544,20 @@ def create_review(
             return public_review(row)
     if schema_repairs:
         raise _conflict("Schema repairs require an inferred simulation schema.")
+    if kind == Owner.ENVIRONMENT:
+        captured = capture()
+        _check_batch(captured)
+        basis, schema = _owner_basis(
+            owner,
+            kind,
+            scope,
+            records=any(item.role == "seed_records" for item in captured),
+        )
+        return public_review(
+            _stage_review(
+                owner, kind, basis, schema, lambda: captured, idempotency_key, digest
+            )
+        )
     basis, schema = _owner_basis(owner, kind, scope)
     return public_review(
         _stage_review(owner, kind, basis, schema, capture, idempotency_key, digest)
@@ -532,11 +570,17 @@ def _find(review_id, scope: dict, *, lock=False) -> HarnessSourceReview:
     except (ValueError, TypeError):
         raise _not_found() from None
     queryset = (
-        HarnessSourceReview.objects.select_for_update()
+        HarnessSourceReview.objects.select_related("owner").select_for_update()
         if lock
         else HarnessSourceReview.objects
     )
-    row = queryset.filter(pk=review_id, owner__deleted=False, **scope).first()
+    row = queryset.filter(
+        pk=review_id,
+        owner__deleted=False,
+        owner__organization_id=scope["organization_id"],
+        owner__workspace_id=scope["workspace_id"],
+        **scope,
+    ).first()
     if row is None:
         raise _not_found()
     return row
@@ -562,6 +606,16 @@ def public_review(row: HarnessSourceReview) -> dict:
         "receipt": row.receipt,
         "expires_at": row.expires_at,
     }
+
+
+@contextmanager
+def _accepting_review(review_id, scope):
+    with transaction.atomic():
+        row = _expire(_find(review_id, scope, lock=True))
+        if row.state != State.EXPIRED:
+            yield row
+            return
+    raise _conflict("The source review expired. Prepare the sources again.")
 
 
 def get_review(request, review_id) -> dict:
@@ -636,12 +690,7 @@ def _accept(
         != (expected_revision, expected_draft_digest)
     ):
         raise _conflict()
-    owner = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-        pk=row.owner_id,
-        organization_id=row.organization_id,
-        workspace_id=row.workspace_id,
-        deleted=False,
-    )
+    owner = row.owner
     _required_basis(row, owner)
     if row.owner_kind == Owner.DESIGN and owner.payload["metadata"].get(
         "design_source_selection"
@@ -721,9 +770,7 @@ def accept_review(
     idempotency_key,
 ) -> dict:
     scope = require_source_scope(request, write=True)
-    _expire(_find(review_id, scope))
-    with transaction.atomic():
-        row = _find(review_id, scope, lock=True)
+    with _accepting_review(review_id, scope) as row:
         if row.basis["schema_digest"] != expected_schema_digest:
             raise _conflict("The reviewed destination schema changed.")
         return public_review(
@@ -760,9 +807,7 @@ def accept_environment_review(
         request_scope[key] != scope[key] for key in ("organization_id", "workspace_id")
     ):
         raise _not_found()
-    _expire(_find(review_id, scope))
-    with transaction.atomic():
-        row = _find(review_id, scope, lock=True)
+    with _accepting_review(review_id, scope) as row:
         if row.owner_kind != Owner.ENVIRONMENT or (
             row.basis["environment_version_id"],
             row.basis["draft"],

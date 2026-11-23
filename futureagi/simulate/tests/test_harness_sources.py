@@ -61,6 +61,7 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
 
     def alk(payload):
         if payload["operation"] == "prepare":
+            assert payload["destination_schema"] == {"fields": []}
             content = base64.b64decode(payload["sources"][0]["content_base64"])
             prepared_draft["sources"] = [
                 {
@@ -212,6 +213,13 @@ def test_upload_prepare_keeps_csv_and_json_in_one_review(
     environment = _built(user, workspace, "source-multi-upload")
     seen = {}
 
+    version = environment.environment_version
+    version.documents["contract"]["data_schema"] = {
+        "customers": {"customer_id": "TEXT"},
+        "orders": {"order_id": "INTEGER"},
+    }
+    version.save(update_fields=["documents"])
+
     def alk(payload):
         seen.update(payload)
         return {
@@ -228,20 +236,33 @@ def test_upload_prepare_keeps_csv_and_json_in_one_review(
 
     monkeypatch.setattr(harness_sources, "execute_source_request", alk)
     basis = drafts.draft_refs(environment)["environment"]
-    prepared = harness_sources.prepare_upload_import(
-        environment,
-        [
-            SimpleUploadedFile("customers.csv", b"customer_id\nC17\n", "text/csv"),
-            SimpleUploadedFile(
-                "orders.json",
-                b'[{"order_id":"O1","buyer_id":"C17"}]',
-                "application/json",
-            ),
-        ],
-        purpose="seed_records",
-        expected_environment_version_id=str(environment.environment_version_id),
-        expected_draft={"id": basis.id, "revision": basis.revision},
-    )
+
+    def upload(target_table=None):
+        return harness_sources.prepare_upload_import(
+            environment,
+            [
+                SimpleUploadedFile("customers.csv", b"customer_id\nC17\n", "text/csv"),
+                SimpleUploadedFile(
+                    "orders.json",
+                    b'[{"order_id":"O1","buyer_id":"C17"}]',
+                    "application/json",
+                ),
+            ],
+            purpose="seed_records",
+            expected_environment_version_id=str(environment.environment_version_id),
+            expected_draft={"id": basis.id, "revision": basis.revision},
+            target_table=target_table,
+        )
+
+    ambiguous = upload()
+    assert ambiguous["state"] == "needs_repair"
+    assert ambiguous["draft_digest"] == ""
+    assert ambiguous["draft"]["destination_tables"] == ["customers", "orders"]
+    assert not seen
+    prepared = upload("orders")
+    assert seen["destination_schema"] == {
+        "fields": [{"name": "order_id", "data_type": "integer", "required": False}]
+    }
 
     assert prepared["draft_digest"] == "sha256:prepared"
     assert [source["filename"] for source in seen["sources"]] == [

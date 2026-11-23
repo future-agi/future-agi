@@ -230,12 +230,13 @@ def prepare_source_import(
     *,
     expected_environment_version_id: str,
     expected_draft: dict,
+    target_table: str | None = None,
 ) -> dict:
     current_ref = _require_import_basis(
         environment, expected_environment_version_id, expected_draft
     )
     captured = capture_kb(request, selection)
-    return _prepare_captured(environment, captured, current_ref)
+    return _prepare_captured(environment, captured, current_ref, target_table)
 
 
 def capture_kb(request, selection: dict) -> tuple[CapturedKnowledgeBaseSource, ...]:
@@ -259,12 +260,13 @@ def prepare_upload_import(
     purpose: str | None,
     expected_environment_version_id: str,
     expected_draft: dict,
+    target_table: str | None = None,
 ) -> dict:
     current_ref = _require_import_basis(
         environment, expected_environment_version_id, expected_draft
     )
     return _prepare_captured(
-        environment, capture_uploads(uploaded, purpose), current_ref
+        environment, capture_uploads(uploaded, purpose), current_ref, target_table
     )
 
 
@@ -468,10 +470,11 @@ def _prepare_captured(
     environment,
     captured: tuple[CapturedKnowledgeBaseSource, ...],
     current_ref: drafts.DraftRef,
+    target_table: str | None,
 ) -> dict:
     from simulate.services.harness_source_reviews import prepare_environment_review
 
-    return prepare_environment_review(environment, captured, current_ref)
+    return prepare_environment_review(environment, captured, current_ref, target_table)
 
 
 def prepare_draft(

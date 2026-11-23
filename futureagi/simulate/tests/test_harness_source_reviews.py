@@ -2,11 +2,13 @@ import base64
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+from threading import Event
 from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from django.db import close_old_connections
+from django.db import close_old_connections, connection, transaction
 from rest_framework.exceptions import PermissionDenied
 
 from accounts.models.workspace import Workspace
@@ -261,3 +263,62 @@ def test_concurrent_acceptance_returns_one_immutable_receipt(
         first, second = pool.map(accept, range(2))
     assert first == second
     assert mock_processor == ["prepare", "accept"]
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("cleanup_first", [False, True])
+def test_accept_waiting_across_expiry_never_reads_staging(
+    user, workspace, request, monkeypatch, mock_processor, cleanup_first
+):
+    from simulate.tasks import environment_source_imports as cleanup
+
+    request.getfixturevalue("_storage_fixture")
+    owner, request, scope = _case(user, workspace, "design")
+    document = store_design_document(
+        user.organization, workspace, user, name="guide.txt", body=b"safe"
+    )
+    ready = reviews.create_review(
+        request,
+        scope=scope,
+        document_ids=[document.id],
+        knowledge_base=[],
+        idempotency_key="prepare",
+    )
+    row = reviews.HarnessSourceReview.objects.get(pk=ready["id"])
+    now = row.expires_at - timedelta(seconds=1)
+    monkeypatch.setattr(reviews, "timezone", SimpleNamespace(now=lambda: now))
+    monkeypatch.setattr(cleanup, "timezone", SimpleNamespace(now=lambda: now))
+    removed = []
+    monkeypatch.setattr(cleanup, "remove_private", removed.append)
+    waiting = Event()
+
+    def mark_query(execute, sql, params, many, context):
+        if "FOR UPDATE" in sql:
+            waiting.set()
+        return execute(sql, params, many, context)
+
+    def accept():
+        try:
+            with connection.execute_wrapper(mark_query):
+                return reviews.accept_review(
+                    request, ready["id"], **_accept_args(ready)
+                )
+        finally:
+            close_old_connections()
+
+    with ThreadPoolExecutor(1) as pool:
+        with transaction.atomic():
+            reviews.HarnessSourceReview.objects.select_for_update().get(pk=row.id)
+            future = pool.submit(accept)
+            assert waiting.wait(10)
+            now = row.expires_at
+            if cleanup_first:
+                cleanup.expire_environment_source_import._original_func(
+                    reviews._staging_key(row)
+                )
+        with pytest.raises(HostedHarnessError, match="expired"):
+            future.result(timeout=10)
+    row.refresh_from_db()
+    assert row.state == reviews.State.EXPIRED
+    assert mock_processor == ["prepare"]
+    assert removed == ([reviews._staging_key(row)] if cleanup_first else [])

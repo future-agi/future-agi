@@ -51321,6 +51321,8 @@ export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportPara
     id: zod.string(),
   });
 
+export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyTargetTableMax = 255;
+
 export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyExpectedDraftRevisionMin = 0;
 
 export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodySelectionFileIdsMax = 100;
@@ -51331,6 +51333,13 @@ export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBody
 export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBody =
   zod.object({
     expected_environment_version_id: zod.string().uuid(),
+    target_table: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyTargetTableMax,
+      )
+      .optional(),
     expected_draft: zod.object({
       id: zod.string().uuid(),
       revision: zod
@@ -51385,6 +51394,7 @@ export const SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadPara
 export const SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBody =
   zod.object({
     expected_environment_version_id: zod.string().uuid(),
+    target_table: zod.string().optional(),
     expected_draft_id: zod.string().uuid().optional(),
     expected_draft_revision: zod.number(),
     purpose: zod.string().optional(),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
@@ -19,18 +20,25 @@ def expire_environment_source_import(object_key: str) -> dict[str, bool]:
     match = _STAGING_KEY.fullmatch(object_key)
     if not match:
         raise ValueError("invalid environment source import key")
-    remove_private(object_key)
-    HarnessSourceReview.objects.filter(
+    reviews = HarnessSourceReview.objects.filter(
         organization_id=match["org"],
         owner_id=match["owner"],
         staged_digest=match["digest"],
-        expires_at__lte=timezone.now(),
-        state__in=[
-            HarnessSourceReview.State.READING,
-            HarnessSourceReview.State.READY,
-            HarnessSourceReview.State.NEEDS_REPAIR,
-        ],
-    ).update(
-        state=HarnessSourceReview.State.EXPIRED, revision=F("revision") + 1, preview={}
     )
+    with transaction.atomic():
+        rows = list(reviews.select_for_update().only("expires_at"))
+        if any(row.expires_at > timezone.now() for row in rows):
+            return {"expired": False}
+        reviews.filter(
+            state__in=[
+                HarnessSourceReview.State.READING,
+                HarnessSourceReview.State.READY,
+                HarnessSourceReview.State.NEEDS_REPAIR,
+            ]
+        ).update(
+            state=HarnessSourceReview.State.EXPIRED,
+            revision=F("revision") + 1,
+            preview={},
+        )
+    remove_private(object_key)
     return {"expired": True}

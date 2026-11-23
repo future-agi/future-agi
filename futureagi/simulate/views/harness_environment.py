@@ -912,6 +912,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 request,
                 job,
                 body["selection"],
+                target_table=body.get("target_table"),
                 expected_environment_version_id=body["expected_environment_version_id"],
                 expected_draft=body["expected_draft"],
             )
@@ -943,6 +944,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             prepare_upload_import(
                 job,
                 body["files"],
+                target_table=body.get("target_table"),
                 purpose=body.get("purpose"),
                 expected_environment_version_id=body["expected_environment_version_id"],
                 expected_draft={

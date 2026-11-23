@@ -74459,6 +74459,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           format: "uuid",
         },
+        target_table: {
+          title: "Target table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
         expected_draft: {
           $ref: "#/definitions/HarnessSourceDraftRef",
         },

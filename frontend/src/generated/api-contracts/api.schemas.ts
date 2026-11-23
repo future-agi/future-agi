@@ -23823,6 +23823,11 @@ export interface HarnessSourceAcceptResponseApi {
 
 export interface HarnessSourcePrepareApi {
   expected_environment_version_id: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  target_table?: string;
   expected_draft: HarnessSourceDraftRefApi;
   selection: HarnessSourceSelectionApi;
 }
@@ -46894,6 +46899,7 @@ export type SimulateApiHarnessEnvironmentsRunsRunReportParams = {
 export type SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyOne =
   {
     expected_environment_version_id: string;
+    target_table?: string;
     expected_draft_id?: string;
     expected_draft_revision: number;
     purpose?: string;
@@ -46905,6 +46911,7 @@ export type SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyO
 export type SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyTwo =
   {
     expected_environment_version_id: string;
+    target_table?: string;
     expected_draft_id?: string;
     expected_draft_revision: number;
     purpose?: string;

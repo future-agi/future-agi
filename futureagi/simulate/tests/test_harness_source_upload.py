@@ -25,6 +25,7 @@ def test_prepare_upload_accepts_repeated_multipart_files(monkeypatch):
             ("second.csv", b"id\n42"),
         ]
         assert kwargs["expected_environment_version_id"] == version_id
+        assert kwargs["target_table"] == "customers"
         assert kwargs["expected_draft"] == {"id": None, "revision": 0}
         return {"import_ref": "test-review"}
 
@@ -36,6 +37,7 @@ def test_prepare_upload_accepts_repeated_multipart_files(monkeypatch):
         url,
         {
             "expected_environment_version_id": str(version_id),
+            "target_table": "customers",
             "expected_draft_revision": "0",
             "files": [
                 SimpleUploadedFile("first.txt", b"reference"),
@@ -63,7 +65,7 @@ def _capture(monkeypatch, name, content, purpose=None):
     monkeypatch.setattr(
         harness_sources,
         "_prepare_captured",
-        lambda environment, captured, current_ref: captured,
+        lambda environment, captured, current_ref, target_table: captured,
     )
     uploaded = io.BytesIO(content)
     uploaded.name = name
