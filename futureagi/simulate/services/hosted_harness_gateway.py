@@ -828,7 +828,16 @@ def detect_source_credentials(
     return sorted(found), sorted(required_files), scanned
 
 
-_API_KEY_NAME = re.compile(r"\b([A-Z][A-Z0-9_]*_API_KEY)\b")
+_API_KEY = r"([A-Z][A-Z0-9_]*_API_KEY)"
+_API_KEY_READS = (
+    re.compile(
+        r"""\b(?:environ(?:\.get\s*\(|\s*\[)|getenv\s*\()\s*["']"""
+        + _API_KEY
+        + r"""["']"""
+    ),
+    re.compile(r"""\bprocess\.env\.""" + _API_KEY + r"\b"),
+    re.compile(r"""\bprocess\.env\[\s*["'`]""" + _API_KEY + r"""["'`]\s*\]"""),
+)
 
 
 def detect_source_api_keys(
@@ -837,7 +846,8 @@ def detect_source_api_keys(
     names: set[str] = set()
     try:
         for text in _source_texts(archive, subfolder):
-            names.update(_API_KEY_NAME.findall(text))
+            for read in _API_KEY_READS:
+                names.update(read.findall(text))
     except (tarfile.TarError, OSError, EOFError):
         return []
     return sorted(names)

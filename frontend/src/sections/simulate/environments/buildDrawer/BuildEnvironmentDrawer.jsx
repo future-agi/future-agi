@@ -42,6 +42,7 @@ import { QuietTag } from "./starts/startBits";
 import { SANDBOX_ITEM, SCRATCH_ITEM, worldItem } from "./starts/startItems";
 
 const DRAWER_WIDTH = 960;
+const SHOW_BUILD_FROM_SCRATCH = false;
 
 const CloseButton = forwardRef(function CloseButton(
   { label, onClick, disabled, icon = "solar:close-linear" },
@@ -334,16 +335,18 @@ export default function BuildEnvironmentDrawer({
             then start from its own world or one of these.
           </Typography>
         </Box>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          onClick={() => pick(SCRATCH_ITEM)}
-          startIcon={<Iconify icon="solar:document-add-linear" width={14} />}
-          sx={{ ...BTN_SX, flexShrink: 0 }}
-        >
-          Build from scratch
-        </Button>
+        {SHOW_BUILD_FROM_SCRATCH && (
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={() => pick(SCRATCH_ITEM)}
+            startIcon={<Iconify icon="solar:document-add-linear" width={14} />}
+            sx={{ ...BTN_SX, flexShrink: 0 }}
+          >
+            Build from scratch
+          </Button>
+        )}
         <CloseButton label="Close" onClick={closeAll} />
       </Stack>
     );

@@ -114,7 +114,16 @@ beforeEach(() => {
   preflightHarnessJob.mockReset();
 });
 
-describe("Build from scratch", () => {
+describe("Build environment header", () => {
+  it("offers no Build from scratch until it builds a real environment", () => {
+    render();
+    expect(
+      screen.queryByRole("button", { name: /Build from scratch/ }),
+    ).toBeNull();
+  });
+});
+
+describe.skip("Build from scratch", () => {
   it("opens from the header, UI only, and builds once there's enough to go on", () => {
     render();
     click(/Build from scratch/);

@@ -6,6 +6,7 @@ import { prepareSourceForBuild } from "src/sections/simulate/environments/hooks/
 
 export default function useConnectPreflight() {
   const preflight = useRuntimePreflight();
+  const { mutate, reset: resetPreflight } = preflight;
   const [preparing, setPreparing] = useState(false);
   const runSeq = useRef(0);
 
@@ -25,21 +26,19 @@ export default function useConnectPreflight() {
       }
       if (seq !== runSeq.current) return;
       setPreparing(false);
-      preflight.mutate({
+      mutate({
         draft: prepared.draft,
         credentialValues: prepared.credentialValues,
       });
     },
-    [preflight],
+    [mutate],
   );
 
   const reset = useCallback(() => {
     runSeq.current += 1;
     setPreparing(false);
-    if (preflight.data || preflight.error || preflight.isPending) {
-      preflight.reset();
-    }
-  }, [preflight]);
+    resetPreflight();
+  }, [resetPreflight]);
 
   const status =
     preparing || preflight.isPending
