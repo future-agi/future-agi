@@ -1411,6 +1411,12 @@ HARNESS_PRIVATE_BUCKET = (
     os.getenv("HARNESS_PRIVATE_BUCKET", "").strip()
     or f"{UPLOAD_BUCKET_NAME}-harness-private"
 )
+if HARNESS_PRIVATE_BUCKET == UPLOAD_BUCKET_NAME:
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        "HARNESS_PRIVATE_BUCKET must differ from UPLOAD_BUCKET_NAME."
+    )
 
 # Storage backend: "s3" (default/US), "gcs" (EU via S3-interop HMAC keys),
 # or "minio" (self-hosted OSS local stack)

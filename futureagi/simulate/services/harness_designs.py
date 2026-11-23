@@ -524,7 +524,7 @@ def _documents_archive(job: HostedHarnessJob, listed: list[dict[str, Any]]) -> b
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w:gz") as archive:
         for document in documents:
-            body = read_private(document.object_key)
+            body = read_private(document.object_key, legacy_archive=True)
             if hashlib.sha256(body).hexdigest() != document.sha256:
                 raise _error(
                     "document_changed",

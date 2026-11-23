@@ -119,6 +119,27 @@ def test_upload_size_is_read_with_a_hard_bound(monkeypatch):
     assert caught.value.code == "source_limit_exceeded"
 
 
+def test_valid_multisheet_and_malformed_workbooks_have_distinct_actionable_results():
+    from openpyxl import Workbook
+
+    book = Workbook()
+    book.active.append(["id"])
+    book.active.append(["001"])
+    body = io.BytesIO()
+    book.save(body)
+    assert harness_sources._spreadsheet_as_csv(body.getvalue()) == b"id\r\n001\r\n"
+    book.create_sheet("Plan B")
+    body = io.BytesIO()
+    book.save(body)
+    with pytest.raises(HostedHarnessError) as ambiguous:
+        harness_sources._spreadsheet_as_csv(body.getvalue())
+    assert ambiguous.value.code == "source_workbook_needs_repair"
+    assert "separate CSV" in ambiguous.value.message
+    with pytest.raises(HostedHarnessError) as corrupt:
+        harness_sources._spreadsheet_as_csv(b"not a workbook")
+    assert corrupt.value.code == "source_workbook_invalid"
+
+
 def test_upload_batch_has_a_total_size_limit(monkeypatch):
     monkeypatch.setattr(harness_sources, "MAX_SELECTION_BYTES", 3)
     monkeypatch.setattr(

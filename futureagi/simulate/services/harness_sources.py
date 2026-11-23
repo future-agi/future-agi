@@ -109,7 +109,7 @@ def _put_private(key: str, body: bytes) -> None:
 
 
 def _get_private(key: str) -> bytes:
-    return read_private(key)
+    return read_private(key, legacy_archive=key.startswith(f"{SNAPSHOT_PREFIX}/"))
 
 
 def _schedule_staging_expiry(key: str) -> None:
@@ -394,7 +394,7 @@ def capture_documents(
     captured = []
     for document in staged:
         try:
-            original = raw = read_private(document.object_key)
+            original = raw = read_private(document.object_key, legacy_archive=True)
             if (
                 len(raw) != document.size
                 or hashlib.sha256(raw).hexdigest() != document.sha256
@@ -447,7 +447,20 @@ def capture_documents(
                     },
                 )
             )
-        except (DocumentTextError, UnicodeDecodeError, ValueError, S3Error):
+        except S3Error as exc:
+            if exc.code not in {"NoSuchKey", "NoSuchBucket"}:
+                raise HostedHarnessError(
+                    "source_processor_unavailable",
+                    "Uploaded file storage is temporarily unavailable.",
+                    status_code=503,
+                    retryable=True,
+                ) from None
+            raise HostedHarnessError(
+                "source_content_unavailable",
+                "The uploaded file is unavailable.",
+                status_code=409,
+            ) from None
+        except (DocumentTextError, UnicodeDecodeError, ValueError):
             raise HostedHarnessError(
                 "source_content_unavailable",
                 "An uploaded document could not be prepared.",
@@ -457,14 +470,47 @@ def capture_documents(
 
 
 def _spreadsheet_as_csv(raw: bytes) -> bytes:
-    from openpyxl import load_workbook
+    from xml.etree.ElementTree import ParseError
+    from zipfile import BadZipFile
 
-    workbook = load_workbook(
-        io.BytesIO(raw), read_only=True, data_only=True, keep_links=False
-    )
+    from lxml.etree import XMLSyntaxError
+    from openpyxl import load_workbook
+    from openpyxl.utils.exceptions import InvalidFileException
+
+    try:
+        workbook = load_workbook(
+            io.BytesIO(raw), read_only=True, data_only=True, keep_links=False
+        )
+    except (
+        BadZipFile,
+        InvalidFileException,
+        KeyError,
+        OSError,
+        ParseError,
+        XMLSyntaxError,
+        ValueError,
+    ):
+        raise HostedHarnessError(
+            "source_workbook_invalid",
+            "The workbook could not be read. Upload a valid .xlsx or CSV.",
+            status_code=422,
+        ) from None
     try:
         if len(workbook.worksheets) != 1:
-            raise ValueError("A record workbook must contain one sheet")
+            raise HostedHarnessError(
+                "source_workbook_needs_repair",
+                "Save each worksheet you want to include as a separate CSV, then upload those files together.",
+                status_code=422,
+                details={
+                    "diagnostics": [
+                        {
+                            "code": "source_workbook_multiple_sheets",
+                            "severity": "blocking",
+                            "span": {},
+                        }
+                    ]
+                },
+            )
         output = io.StringIO()
         rows = workbook.active.iter_rows(values_only=True)
         output_rows = csv.writer(output)
@@ -473,6 +519,12 @@ def _spreadsheet_as_csv(raw: bytes) -> bytes:
             if output.tell() > 25 * 1024 * 1024:
                 raise ValueError("Workbook output limit")
         return output.getvalue().encode()
+    except (BadZipFile, KeyError, ParseError, XMLSyntaxError, OSError):
+        raise HostedHarnessError(
+            "source_workbook_invalid",
+            "The workbook could not be read. Upload a valid .xlsx or CSV.",
+            status_code=422,
+        ) from None
     finally:
         workbook.close()
 
@@ -660,13 +712,7 @@ def accept_source_import(
 def _checked_review(request, staged: dict, review: dict) -> dict:
     for origin in staged["origins"]:
         if origin["kind"] == "knowledge_base":
-            kb, _file = authorized_knowledge_base_file(
-                request, origin["kb_id"], origin["file_id"]
-            )
-            if kb.workspace_id != getattr(request.workspace, "id", None):
-                raise HostedHarnessError(
-                    "source_access_denied", "Source not found.", status_code=404
-                )
+            authorized_knowledge_base_file(request, origin["kb_id"], origin["file_id"])
     checked = dict(review)
     proposals = {
         item["rule_id"]: item

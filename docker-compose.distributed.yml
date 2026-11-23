@@ -279,6 +279,8 @@ services:
       # CDC readiness. This is not a catalog refresh/backfill scheduler.
       REGISTER_TEMPORAL_SCHEDULES: "true"
     depends_on:
+      minio:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:

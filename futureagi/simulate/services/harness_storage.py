@@ -19,10 +19,10 @@ def private_bucket() -> str:
     return bucket
 
 
-def put_private(key: str, body: bytes, content_type: str) -> None:
+def ensure_private_bucket() -> str:
     bucket = private_bucket()
     client = get_storage_client()
-    if settings.STORAGE_BACKEND != "gcs" and not client.bucket_exists(bucket):
+    if settings.STORAGE_BACKEND == "minio" and not client.bucket_exists(bucket):
         try:
             client.make_bucket(bucket)
         except S3Error as exc:
@@ -44,7 +44,12 @@ def put_private(key: str, body: bytes, content_type: str) -> None:
         ):
             raise RuntimeError("The private harness bucket grants public access.")
         _VERIFIED_MINIO_BUCKETS.add(bucket)
-    client.put_object(
+    return bucket
+
+
+def put_private(key: str, body: bytes, content_type: str) -> None:
+    bucket = ensure_private_bucket()
+    get_storage_client().put_object(
         bucket, key, io.BytesIO(body), len(body), content_type=content_type
     )
 
@@ -80,3 +85,14 @@ def stat_customer_archive(key: str):
 
 def remove_private(key: str) -> None:
     get_storage_client().remove_object(private_bucket(), key)
+
+
+def remove_customer_prefix(prefix: str) -> None:
+    client = get_storage_client()
+    for bucket in (private_bucket(), settings.UPLOAD_BUCKET_NAME):
+        try:
+            for stored in client.list_objects(bucket, prefix=prefix, recursive=True):
+                client.remove_object(bucket, stored.object_name)
+        except S3Error as exc:
+            if exc.code != "NoSuchBucket":
+                raise

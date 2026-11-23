@@ -457,6 +457,7 @@ class Command(BaseCommand):
     )
 
     def add_arguments(self, parser):
+        parser.add_argument("--provision-harness-bucket", action="store_true")
         parser.add_argument(
             "--wait-timeout",
             type=int,
@@ -506,6 +507,10 @@ class Command(BaseCommand):
 
         attempts = max(1, options["temporal_attempts"])
         migrate_and_seed(self.log)
+        if options.get("provision_harness_bucket"):
+            from django.core.management import call_command
+
+            call_command("provision_harness_private_bucket")
         clickhouse_native_schema(self.log, options["clickhouse_timeout"])
         if options["skip_property_catalog"]:
             self.log("observed-attribute index skipped (--skip-property-catalog)")

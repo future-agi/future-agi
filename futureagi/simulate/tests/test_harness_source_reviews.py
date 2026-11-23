@@ -156,6 +156,40 @@ def _accept_args(review):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("failure", ["parser", "object_storage"])
+def test_failed_prepare_retries_same_selection(
+    user, workspace, request, mock_processor, monkeypatch, failure
+):
+    request.getfixturevalue("_storage_fixture")
+    owner, req, scope = _case(user, workspace, "build_job")
+    document = store_design_document(
+        user.organization, workspace, user, name="guide.txt", body=b"safe"
+    )
+    args = {
+        "scope": scope,
+        "document_ids": [document.id],
+        "knowledge_base": [],
+        "idempotency_key": "retry",
+    }
+    name = "prepare_draft" if failure == "parser" else "_put_private"
+    with monkeypatch.context() as patch:
+
+        def unavailable(*args):
+            raise OSError("private internal detail")
+
+        patch.setattr(harness_sources, name, unavailable)
+        with pytest.raises(HostedHarnessError) as caught:
+            reviews.create_review(req, **args)
+        assert caught.value.status_code == 503 and caught.value.retryable
+    row = reviews.HarnessSourceReview.objects.get(owner=owner)
+    assert row.state == "needs_repair"
+    assert "private internal detail" not in json.dumps(row.preview)
+    retried = reviews.create_review(req, **args)
+    assert retried["id"] == str(row.pk) and retried["state"] == "ready"
+    assert retried["revision"] > row.revision
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("kind", ["design", "build_job"])
 def test_one_private_receipt_for_a_mixed_batch(
     kind, user, workspace, request, monkeypatch, mock_processor

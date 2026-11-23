@@ -80,12 +80,6 @@ def capture_knowledge_base_selection(
             "Choose either a whole Knowledge Base or an explicit file selection.",
         )
     kb = authorized_knowledge_base(request, kb_id)
-    if kb.workspace_id != getattr(request.workspace, "id", None):
-        raise KnowledgeBaseSnapshotError(
-            "source_access_denied",
-            "The Knowledge Base was not found in this workspace.",
-            status_code=404,
-        )
     if kb.status != StatusType.COMPLETED.value:
         raise KnowledgeBaseSnapshotError(
             "source_not_ready",

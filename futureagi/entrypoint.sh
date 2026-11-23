@@ -319,6 +319,9 @@ if [ "$FAST_STARTUP" != "true" ]; then
         if [ "$SERVICE_TYPE" = "backend" ] || [ "$SERVICE_TYPE" = "bootstrap" ]; then
             run_migrations
             if [ "$SERVICE_TYPE" = "bootstrap" ]; then
+                if [ "${STORAGE_BACKEND:-}" = "minio" ]; then
+                    python manage.py provision_harness_private_bucket
+                fi
                 python manage.py seed_system_evals
             fi
             collect_static

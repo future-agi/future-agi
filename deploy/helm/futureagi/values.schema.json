@@ -1166,6 +1166,10 @@
           "type": "string",
           "description": "[UPLOAD_BUCKET_NAME] bucket for uploads, datasets and exports. Created on the first upload (not on GCS) with a public-read policy."
         },
+        "harnessPrivateBucket": {
+          "type": "string",
+          "description": "[HARNESS_PRIVATE_BUCKET] private bucket for harness inputs and checkpoints. Empty uses the upload bucket name with the suffix \"-harness-private\". Bundled MinIO provisions it. Provision external S3/GCS buckets before enabling harness uploads."
+        },
         "region": {
           "type": "string",
           "description": "[S3_REGION, AWS_DEFAULT_REGION] bucket region."

@@ -701,9 +701,8 @@ def forget(evidence_import_id: str) -> None:
     the checkpoints, the chat's rows (messages, events, transcripts, lease) and the
     job. Each step is safe to repeat, so a pass that stops part way is finished by
     the next."""
+    from simulate.services.harness_storage import remove_customer_prefix
     from simulate.services.hosted_harness_gateway import HostedHarnessGateway
-    from tfc.settings.settings import UPLOAD_BUCKET_NAME
-    from tfc.utils.storage_client import get_storage_client
 
     # A deleted import too: its environment's deletion leaves its drafting here.
     evidence_import = EvidenceImport._base_manager.filter(id=evidence_import_id).first()
@@ -728,14 +727,10 @@ def forget(evidence_import_id: str) -> None:
                 )
             else:
                 gateway._delete_chat_sandbox(ref, conversation.id)
-        client = get_storage_client()
         prefix = (
             f"harness-conversations/{conversation.organization_id}/{conversation.id}/"
         )
-        for stored in client.list_objects(
-            UPLOAD_BUCKET_NAME, prefix=prefix, recursive=True
-        ):
-            client.remove_object(UPLOAD_BUCKET_NAME, stored.object_name)
+        remove_customer_prefix(prefix)
         with transaction.atomic():
             environment = HostedHarnessJob._base_manager.select_for_update().get(
                 id=evidence_import.environment_id

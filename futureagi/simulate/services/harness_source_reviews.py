@@ -409,8 +409,26 @@ def _stage(
         row.refresh_from_db()
         if not updated:
             raise _conflict()
-    except (HostedHarnessError, PermissionDenied):
-        reading.update(state=State.NEEDS_REPAIR, revision=row.revision + 1)
+    except Exception as exc:
+        code = (
+            exc.code
+            if isinstance(exc, HostedHarnessError)
+            else "source_processor_unavailable"
+        )
+        reading.update(
+            state=State.NEEDS_REPAIR,
+            revision=row.revision + 1,
+            preview={
+                "diagnostics": [{"code": code, "severity": "blocking", "span": {}}]
+            },
+        )
+        if not isinstance(exc, (HostedHarnessError, PermissionDenied)):
+            raise HostedHarnessError(
+                "source_processor_unavailable",
+                "Source processing is temporarily unavailable.",
+                status_code=503,
+                retryable=True,
+            ) from exc
         raise
     return row
 
@@ -450,7 +468,22 @@ def _stage_review(
                 raise _conflict(
                     "The idempotency key already names a different source selection."
                 )
-            return _expire(row)
+            row = _expire(row)
+            if not (
+                row.state == State.NEEDS_REPAIR
+                and not row.staged_digest
+                and not row.draft_digest
+            ):
+                return row
+            claimed = HarnessSourceReview.objects.filter(
+                pk=row.pk,
+                state=State.NEEDS_REPAIR,
+                revision=row.revision,
+                expires_at__gt=timezone.now(),
+            ).update(state=State.READING, revision=row.revision + 1, preview={})
+            row.refresh_from_db()
+            if not claimed:
+                return _expire(row)
     else:
         row = HarnessSourceReview.objects.create(owner=owner, owner_kind=kind, **values)
     return _stage(row, capture, schema, schema_repairs)

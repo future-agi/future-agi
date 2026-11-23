@@ -282,3 +282,6 @@ empty is no storageClassName (the cluster default), "-" is storageClassName
 {{- if $errors -}}
 {{- fail (printf "\n\nFuture AGI chart: fix these values\n  - %s\n\n%s\n" (join "\n  - " $errors) $hint) -}}
 {{- end -}}
+{{- if eq .Values.objectStorage.bucket .Values.objectStorage.harnessPrivateBucket }}
+{{- fail "objectStorage.harnessPrivateBucket must differ from objectStorage.bucket" }}
+{{- end }}

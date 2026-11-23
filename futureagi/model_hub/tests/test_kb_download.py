@@ -178,8 +178,15 @@ def test_viewer_has_existing_read_permission(download_case):
     response.close()
 
 
-def test_environment_snapshot_captures_authorized_completed_text(download_case):
+@pytest.mark.parametrize("legacy_default", [False, True])
+def test_environment_snapshot_captures_authorized_completed_text(
+    download_case, legacy_default
+):
     c = download_case
+    if legacy_default:
+        c.request.workspace.is_default = True
+        c.request.workspace.save(update_fields=["is_default"])
+        c.kb.workspace = None
     c.kb.status = StatusType.COMPLETED.value
     c.kb.save()
     c.stored.read.return_value = b"  trusted   reference  "
