@@ -16,7 +16,6 @@ export const useErrorFeedStore = create((set, get) => ({
   selectedStatus: "",
   selectedSeverity: "",
   selectedErrorType: "",
-  selectedFixLayer: "",
   selectedSource: "",
   timeRange: "7",
   sortBy: "lastSeen",
@@ -56,7 +55,6 @@ export const useErrorFeedStore = create((set, get) => ({
   setSelectedStatus: (v) => set({ selectedStatus: v, page: 0 }),
   setSelectedSeverity: (v) => set({ selectedSeverity: v, page: 0 }),
   setSelectedErrorType: (v) => set({ selectedErrorType: v, page: 0 }),
-  setSelectedFixLayer: (v) => set({ selectedFixLayer: v, page: 0 }),
   setSelectedSource: (v) => set({ selectedSource: v, page: 0 }),
   setTimeRange: (v) => set({ timeRange: v, page: 0 }),
   setSortBy: (col) => {
@@ -135,7 +133,6 @@ export const useErrorFeedApiParams = () => {
   const searchQuery = useErrorFeedStore((s) => s.searchQuery);
   const selectedStatus = useErrorFeedStore((s) => s.selectedStatus);
   const selectedSeverity = useErrorFeedStore((s) => s.selectedSeverity);
-  const selectedFixLayer = useErrorFeedStore((s) => s.selectedFixLayer);
   const selectedSource = useErrorFeedStore((s) => s.selectedSource);
   const selectedErrorType = useErrorFeedStore((s) => s.selectedErrorType);
   const timeRange = useErrorFeedStore((s) => s.timeRange);
@@ -150,7 +147,6 @@ export const useErrorFeedApiParams = () => {
     if (searchQuery?.trim()) params.search = searchQuery.trim();
     if (selectedStatus) params.status = selectedStatus;
     if (selectedSeverity) params.severity = selectedSeverity;
-    if (selectedFixLayer) params.fix_layer = selectedFixLayer;
     if (selectedSource) params.source = selectedSource;
     if (selectedErrorType) params.issue_group = selectedErrorType;
     if (timeRange) params.time_range_days = Number(timeRange);
@@ -166,7 +162,6 @@ export const useErrorFeedApiParams = () => {
     searchQuery,
     selectedStatus,
     selectedSeverity,
-    selectedFixLayer,
     selectedSource,
     selectedErrorType,
     timeRange,

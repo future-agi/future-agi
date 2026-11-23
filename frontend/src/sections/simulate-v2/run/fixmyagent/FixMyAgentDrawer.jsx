@@ -48,7 +48,7 @@ const editedDiff = (diff = [], lines = []) => [
 ];
 
 /**
- * Debug failures → Improve.
+ * Debug failures → Run Epoch.
  *
  * One drawer, two widths. Narrow while you are reading what went wrong, wide
  * once an improvement run is open — because a diagnosis is a column of text
@@ -608,6 +608,14 @@ export default function FixMyAgentDrawer({
           onHandToAgent={handToAgent}
           previous={previous}
           onOpenPrevious={(id) => {
+            /* A running epoch opens on its own page — the one running view,
+               its candidates arriving in the table there. */
+            const o = (envState?.optimizations || []).find((x) => x.id === id);
+            if (o?.status === OPT_STATUS.RUNNING && env?.id) {
+              close();
+              navigate(improvementPath(env.id, id));
+              return;
+            }
             setActiveId(id);
             setView("optimization");
           }}

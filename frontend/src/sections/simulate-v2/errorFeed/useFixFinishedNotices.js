@@ -77,7 +77,7 @@ export default function useFixFinishedNotices(state, commit) {
           .forEach(({ o, key }) => {
             const issueId = o.trigger?.issueId;
             const name = issueId
-              ? `The fix for ${issueId}`
+              ? `The epoch for ${issueId}`
               : improvementRunName(es, o);
             const title = `${name} ${SAID[key]}`;
             const href = improvementPath(env.id, o.id);
@@ -124,8 +124,8 @@ export default function useFixFinishedNotices(state, commit) {
               event: "fix_finished",
               title,
               lines: [env.name],
-              actions: ["Open fix"],
-              links: { "Open fix": href },
+              actions: ["Open epoch"],
+              links: { "Open epoch": href },
             });
           });
       });

@@ -81,7 +81,7 @@ export default function SilentBreaks({ projectId }) {
           >
             {rows.length}
           </Box>
-          {` conversation${rows.length === 1 ? "" : "s"} broke a requirement but didn't join an issue, so no fix covers ${rows.length === 1 ? "it" : "them"}`}
+          {` conversation${rows.length === 1 ? "" : "s"} broke a requirement but didn't join an issue, so no epoch covers ${rows.length === 1 ? "it" : "them"}`}
         </Typography>
         <Box sx={{ flex: 1 }} />
         <Button
@@ -117,7 +117,7 @@ export default function SilentBreaks({ projectId }) {
             </Typography>
             <Typography fontSize="12px" color="text.tertiary">
               Each looks like an existing issue but wasn&apos;t close enough to
-              join it. A fix only covers its issue&apos;s conversations — open
+              join it. An epoch only covers its issue&apos;s conversations — open
               the issue to check whether these are the same failure.
             </Typography>
           </Box>

@@ -10,14 +10,12 @@ import {
   IconButton,
   Tabs,
   Tab,
-  Checkbox,
-  TextField,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { clickable, focusRing } from "../../components/clickable";
 import { RunTraceLog } from "../../components/RunTrace";
-import ImprovementProgress from "./ImprovementProgress";
+import ImprovementStages from "../../improvements/ImprovementStages";
 import {
   searchTrace,
   blockingVerdict,
@@ -35,19 +33,16 @@ import {
   staleSince,
   optimizationVerdict,
   OPT_STATUS,
-  DEFAULT_LIMITS,
   improvementOutcome,
   improvementTotalSpend,
   issueLine,
-  limitRows,
   searchSpend,
   ladderOf,
   improvementPhaseOf,
+  improvementProgressOf,
   IMPROVEMENT_PHASES,
-  TRACE_STEP_MS,
   statusOf,
   settlePending,
-  reproduceStepsOf,
   improvementSpendParts,
 } from "../../_mock/optimizationRuns";
 import CostPartsTable from "../../improvements/CostPartsTable";
@@ -127,9 +122,10 @@ import { attemptsOf, sessionState } from "../../_mock/improverAttempts";
 import { candidateSourceOf, takesSnapshot } from "../../_mock/candidateSource";
 import CandidateSourcePicker from "../CandidateSourcePicker";
 import NotReproducedBody from "./NotReproducedBody";
+import IssueScenarioEditor from "../../improvements/IssueScenarioEditor";
 import { creditsLabel } from "../../_mock/metering";
+import { plural } from "../../_mock/nudgeEffects";
 import { envVersionNameOf } from "../../_mock/codeRefs";
-import ClosableDialog from "../../components/ClosableDialog";
 
 /**
  * One improvement run.
@@ -168,9 +164,6 @@ export default function OptimizationRunView({
   onDone,
   onRunWinner,
   handoff,
-  decisionOnly = false,
-  shipOnly = false,
-  onOpenDecision,
 }) {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -187,7 +180,7 @@ export default function OptimizationRunView({
   /* Opened beside the improvement's runs list, it's the decision only — the
      runs and their chart are already on the page. */
   const [tab, setTab] = useState(
-    decisionOnly || record.result?.winner ? "changes" : "evidence",
+    record.result?.winner ? "changes" : "evidence",
   );
   const [openTrial, setOpenTrial] = useState(null);
   /* Running for over a day without finishing means it was timed out — the
@@ -221,6 +214,9 @@ export default function OptimizationRunView({
     return () => clearInterval(t);
   }, [running]);
   const phase = running ? improvementPhaseOf(record, phaseNow) : null;
+  /* The one clock every running view reads — the same stages the epoch's
+     page shows, whichever path it took (pending, suggestion only, search). */
+  const progress = running ? improvementProgressOf(record, phaseNow) : null;
   /* "agent v3 × env v2" — the same pairing every run is named by. */
   const identity = improvementIdentityOf(record, env, envState);
   const diag = result ? diagnosisSummaryOf(record, result) : null;
@@ -311,8 +307,7 @@ export default function OptimizationRunView({
      frozen on, and the one the approval minted. */
   const frozenOn =
     env && envState
-      ? snapshotName(snapshotOfImprovement(record, env, envState), true) ||
-        null
+      ? snapshotName(snapshotOfImprovement(record, env, envState), true) || null
       : null;
   const ca = record.contractApproval;
   const shownApproval = ca
@@ -327,7 +322,10 @@ export default function OptimizationRunView({
           (env && envState ? envLabelOf(env, envState, ca.to) : ca.to),
         from:
           (ca.fromSnapshot && env && envState
-            ? snapshotName(snapshotByLabel(env, envState, ca.fromSnapshot), true)
+            ? snapshotName(
+                snapshotByLabel(env, envState, ca.fromSnapshot),
+                true,
+              )
             : null) ||
           frozenOn ||
           ca.from,
@@ -511,6 +509,14 @@ export default function OptimizationRunView({
       ),
     });
 
+  /* The last stage has played: save the ending — the one an ending decided
+     up front was heading for, or the search's. */
+  useEffect(() => {
+    if (!progress?.done) return;
+    if (record.pendingEnding) settleNow();
+    else onDone?.();
+  }, [progress?.done]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /* A finished run that hasn't shipped reads quietly: no stepper (the status
      chip says how it ended), the trigger folded into the subtitle. */
   const quietHeader =
@@ -569,133 +575,6 @@ export default function OptimizationRunView({
       })}
     />
   );
-
-  /*
-    Ship, on its own: what ships and what happens next — nothing else. The
-    verdict, runs and constraints are on the page behind it; the evidence is
-    one click away (How it was decided).
-  */
-  if (shipOnly && result && winner) {
-    const ships = shipped || winner;
-    const count = (ships.proposals || []).length;
-    return (
-      <Stack sx={{ height: "100%", minHeight: 0 }}>
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={1.5}
-          sx={{
-            px: 2.5,
-            py: 2,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-            flexShrink: 0,
-          }}
-        >
-          <Box flex={1} minWidth={0}>
-            <Typography
-              sx={{ typography: "s1", fontWeight: 600 }}
-            >{`Ship Candidate ${ships.n}`}</Typography>
-            <Typography
-              noWrap
-              sx={{ typography: "s3", color: "text.tertiary" }}
-            >
-              {[
-                agent?.name || env?.name,
-                agent ? agentSourceOf(agent).label : null,
-                record.trigger?.issueId,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </Typography>
-          </Box>
-          {onOpenDecision && (
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={onOpenDecision}
-              startIcon={
-                <Iconify icon="solar:shield-check-linear" width={16} />
-              }
-              sx={{
-                color: "text.primary",
-                borderColor: "divider",
-                flexShrink: 0,
-              }}
-            >
-              How it was decided
-            </Button>
-          )}
-          <IconButton size="small" onClick={onClose}>
-            <Iconify icon="solar:close-linear" width={16} />
-          </IconButton>
-        </Stack>
-        <Box
-          sx={{ flex: 1, overflowY: "auto", minHeight: 0, px: 2.5, py: 2.5 }}
-        >
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            What ships
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 1 }}>
-            {`${count} ${count === 1 ? "change" : "changes"} · ${outcome?.strength?.key === "proven" ? "Verified on held-back and must-pass scenarios" : `${outcome?.strength?.label || "Limited validation"} — checked on its target and must-pass scenarios, not proven on enough unseen ones`}`}
-          </Typography>
-          <Box
-            sx={{
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: 1,
-            }}
-          >
-            <WinnerChanges
-              env={env}
-              winner={ships}
-              record={record}
-              members={
-                scope.hasMembers
-                  ? proposalMembers(ships.proposals || [], {
-                      agent,
-                      limits: record.limits,
-                      target: record.targetMember,
-                    })
-                  : null
-              }
-            />
-          </Box>
-          <Typography sx={{ typography: "s2", fontWeight: 600, mt: 3 }}>
-            What happens next
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 1 }}>
-            {
-              "Nothing goes live from here — it's released when someone makes it live where the agent runs."
-            }
-          </Typography>
-          {/* The verdict controls the actions: a candidate that didn't
-              verify gets no pull request or default — the current version stays. */}
-          {outcome.strength?.key === "none" && !lifecycle ? (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              Inconclusive — it didn&apos;t fix enough of the held-back
-              scenarios to call it a fix, so there&apos;s nothing to ship. The
-              current version stays. Look at the evidence, or run it again with
-              more held-back scenarios.
-            </Typography>
-          ) : verified || lifecycle ? (
-            handoffOf()
-          ) : (
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={() => onRunWinner?.(null)}
-              disabled={!onRunWinner}
-              startIcon={<Iconify icon="solar:play-bold" width={14} />}
-            >
-              {`Verify Candidate ${ships.n}`}
-            </Button>
-          )}
-        </Box>
-      </Stack>
-    );
-  }
 
   return (
     <Stack sx={{ height: "100%", minHeight: 0 }}>
@@ -771,11 +650,13 @@ export default function OptimizationRunView({
               ? startedFrom
               : pending
                 ? "reproducing on today's version first"
-                : notReproduced || failedToRun || overBudget || !result
-                  ? "stopped before searching"
-                  : suggestion
-                    ? `${record.reproduce?.total ? `Reproduced on ${record.reproduce.reproduced || 0} of ${record.reproduce.total} scenarios` : `${result.trainMeasured + result.heldMeasured} scenarios measured`} · no change tried`
-                    : `${record.stoppedAtBudget ? `${result.trials.length} of ${record.stoppedAtBudget.of}` : result.stoppedEarly && !running ? `${result.trials.length} of up to ${result.stoppedEarly.of}` : result.trials.length} candidates × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.stoppedEarly && !running ? (result.stoppedEarly.complete ? " · stopped once every failing target was fixed" : ` · stopped early, no gain in the last ${noGainRunsOf(result.stoppedEarly)}`) : ""}`}
+                : running && !result
+                  ? "queued"
+                  : notReproduced || failedToRun || overBudget || !result
+                    ? "stopped before searching"
+                    : suggestion
+                      ? `${record.reproduce?.total ? `Reproduced on ${record.reproduce.reproduced || 0} of ${plural(record.reproduce.total, "scenario")}` : `${plural(result.trainMeasured + result.heldMeasured, "scenario")} measured`} · no change tried`
+                      : `${record.stoppedAtBudget ? `${result.trials.length} of ${record.stoppedAtBudget.of}` : result.stoppedEarly && !running ? `${result.trials.length} of up to ${result.stoppedEarly.of}` : result.trials.length} candidates × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.stoppedEarly && !running ? (result.stoppedEarly.complete ? " · stopped once every failing target was fixed" : ` · stopped early, no gain in the last ${noGainRunsOf(result.stoppedEarly)}`) : ""}`}
           </Typography>
         </Box>
         {!running && result && (
@@ -799,7 +680,8 @@ export default function OptimizationRunView({
         </IconButton>
       </Stack>
 
-      {!quietHeader && (
+      {/* Finished or stopped: the steps it took. Running, the stages below say it. */}
+      {!quietHeader && !running && (
         <ImprovementSteps
           shipped={lifecycle}
           record={record}
@@ -953,47 +835,39 @@ export default function OptimizationRunView({
         </Box>
       )}
 
-      {/* Reproducing first, on the way to an ending already known. */}
-      {pending && (
-        <Box sx={{ flex: 1, overflowY: "auto" }}>
-          <RunningConstraints record={record} model={agentModel} />
-          <ImprovementProgress
-            title="Reproducing"
-            subtitle={
-              record.reproduce?.total
-                ? `${record.reproduce.total} scenarios from ${record.trigger?.issueId || "the issue"} on ${record.baseAgentVersion ? versionName(record.baseAgentVersion) : "today's version"}`
-                : `The environment's scenarios on ${record.baseAgentVersion ? versionName(record.baseAgentVersion) : "today's version"}`
+      {/* While it runs: the one running view, the same stages the epoch's
+          page shows — on the way to an ending already known, suggestion
+          only, or searching. */}
+      {running && (
+        <Box sx={{ flex: 1, overflowY: "auto", px: 2.5, pt: 2.5 }}>
+          <ImprovementStages
+            record={record}
+            envState={envState}
+            progress={progress}
+            model={agentModel}
+            onOpenIssue={
+              record.trigger?.issueId
+                ? () => {
+                    navigate(
+                      paths.dashboard.errorFeed.detail(record.trigger.issueId),
+                    );
+                    onClose?.();
+                  }
+                : undefined
             }
-            steps={reproduceStepsOf(record)}
-            trials={[]}
-            stepMs={TRACE_STEP_MS}
-            onDone={settleNow}
-          />
-        </Box>
-      )}
-
-      {running && result && (
-        <Box sx={{ flex: 1, overflowY: "auto" }}>
-          {/* What every candidate is held to, visible while they're tried. */}
-          <RunningConstraints record={record} model={agentModel} />
-          {/* The same shape as Debug failures' read: a strip, the steps one
-              line each, and candidate runs arriving one at a time. */}
-          <ImprovementProgress
-            title={
-              phase?.label ||
-              (record.fixDepth === "suggestion"
-                ? IMPROVEMENT_PHASES.reproducing
-                : IMPROVEMENT_PHASES.searching)
+            onOpenRun={
+              fromRun && env?.id
+                ? () => {
+                    navigate(
+                      paths.dashboard.simulate.simulationRun(
+                        env.id,
+                        fromRun.id,
+                      ),
+                    );
+                    onClose?.();
+                  }
+                : undefined
             }
-            subtitle={
-              record.fixDepth === "suggestion"
-                ? `${result.trainMeasured + result.heldMeasured} scenarios on the agent as it runs today`
-                : `${result.trials.length} candidates × ${result.trainMeasured} target ${result.trainMeasured === 1 ? "scenario" : "scenarios"}${result.textSearch ? " in text" : ""}`
-            }
-            steps={searchTrace(result, record)}
-            trials={record.fixDepth === "suggestion" ? [] : result.trials}
-            stepMs={TRACE_STEP_MS}
-            onDone={onDone}
           />
         </Box>
       )}
@@ -1148,30 +1022,25 @@ export default function OptimizationRunView({
               )}
               {/* The coding agent's progress, one click from its attempts. */}
               {sessionNow && (
-                /* Beside the runs list there's no Runs tab here — the runs are on the page. */
                 <Typography
-                  {...clickable(decisionOnly ? null : () => setTab("evidence"))}
+                  {...clickable(() => setTab("evidence"))}
                   sx={{
                     typography: "s2",
                     color: "text.secondary",
                     mt: 0.5,
                     pl: 4,
-                    ...(!decisionOnly && {
-                      cursor: "pointer",
-                      "&:hover": { color: "text.primary" },
-                    }),
+                    cursor: "pointer",
+                    "&:hover": { color: "text.primary" },
                     ...focusRing,
                   }}
                 >
                   {sessionNow.key === "accepted"
                     ? shippable
-                      ? `${sessionNow.attempt.label} was also accepted by Future AGI — ${decisionOnly ? "see its attempts under the runs" : "see Runs"}.`
-                      : `Our search found no safe change, but ${sessionNow.attempt.label} passed every check — ${decisionOnly ? "proof is under the runs" : "see Runs for proof"}.`
+                      ? `${sessionNow.attempt.label} was also accepted by Future AGI — see Runs.`
+                      : `Our search found no safe change, but ${sessionNow.attempt.label} passed every check — see Runs for proof.`
                     : sessionNow.key === "budget"
-                      ? `${improverLabel} stopped without an accepted run — ${decisionOnly ? "see its attempts under the runs" : "see Runs"}.`
-                      : decisionOnly
-                        ? `${improverLabel} is working on this — its attempts are listed under the runs.`
-                        : `${improverLabel} is working on this — its attempts show in Runs.`}
+                      ? `${improverLabel} stopped without an accepted run — see Runs.`
+                      : `${improverLabel} is working on this — its attempts show in Runs.`}
                 </Typography>
               )}
               {/* Re-read is on the stepper; only an outside change needs saying. */}
@@ -1316,7 +1185,7 @@ export default function OptimizationRunView({
                     }
                   />
                   <Metric
-                    label="Latency"
+                    label="Reply time"
                     value={
                       outcome.latencyKnown
                         ? signedPct(outcome.effect.latency)
@@ -1418,64 +1287,60 @@ export default function OptimizationRunView({
                   <>
                     {/* Everything the run rests on, stacked: the runs, the
                         finalists on the held-back set, and the trade-offs. */}
-                    {!decisionOnly && (
-                      <>
-                        <EvidenceHeading>Runs</EvidenceHeading>
-                        {/* The coding agent's submissions first, judged the same way. */}
-                        {session && (
-                          <ImproverAttempts
-                            record={record}
-                            env={env}
-                            envState={envState}
-                            session={session}
-                            name={name || record.name}
-                            searchSpent={searchSpend(result, env?.surface)}
-                          />
-                        )}
-                        {session && (
-                          <Typography
-                            sx={{
-                              px: 2,
-                              py: 1,
-                              typography: "s3",
-                              fontWeight: 600,
-                              color: "text.tertiary",
-                              textTransform: "none",
-                              letterSpacing: 0.5,
-                              borderBottom: "1px solid",
-                              borderColor: "divider",
-                            }}
-                          >
-                            Future AGI search
-                          </Typography>
-                        )}
-                        {/* Best so far, then every run — open one to see its calls. */}
-                        <Box
-                          sx={{
-                            px: 2,
-                            pt: 1.5,
-                            pb: 1,
-                            borderBottom: "1px solid",
-                            borderColor: "divider",
-                          }}
-                        >
-                          <Growth
-                            trials={result.trials}
-                            base={result.base}
-                            theme={theme}
-                            winner={winner}
-                          />
-                        </Box>
-                        <TrialList
-                          trials={result.trials}
-                          winner={winner}
-                          openTrial={openTrial}
-                          setOpenTrial={setOpenTrial}
-                          onOpenRun={openTrialRun}
-                          record={record}
-                        />
-                      </>
+                    <EvidenceHeading>Runs</EvidenceHeading>
+                    {/* The coding agent's submissions first, judged the same way. */}
+                    {session && (
+                      <ImproverAttempts
+                        record={record}
+                        env={env}
+                        envState={envState}
+                        session={session}
+                        name={name || record.name}
+                        searchSpent={searchSpend(result, env?.surface)}
+                      />
                     )}
+                    {session && (
+                      <Typography
+                        sx={{
+                          px: 2,
+                          py: 1,
+                          typography: "s3",
+                          fontWeight: 600,
+                          color: "text.tertiary",
+                          textTransform: "none",
+                          letterSpacing: 0.5,
+                          borderBottom: "1px solid",
+                          borderColor: "divider",
+                        }}
+                      >
+                        Future AGI search
+                      </Typography>
+                    )}
+                    {/* Best so far, then every run — open one to see its calls. */}
+                    <Box
+                      sx={{
+                        px: 2,
+                        pt: 1.5,
+                        pb: 1,
+                        borderBottom: "1px solid",
+                        borderColor: "divider",
+                      }}
+                    >
+                      <Growth
+                        trials={result.trials}
+                        base={result.base}
+                        theme={theme}
+                        winner={winner}
+                      />
+                    </Box>
+                    <TrialList
+                      trials={result.trials}
+                      winner={winner}
+                      openTrial={openTrial}
+                      setOpenTrial={setOpenTrial}
+                      onOpenRun={openTrialRun}
+                      record={record}
+                    />
                     {!!result.finalists?.length && (
                       <>
                         <EvidenceHeading>Finalists</EvidenceHeading>
@@ -1584,11 +1449,6 @@ export default function OptimizationRunView({
 }
 
 OptimizationRunView.propTypes = {
-  /* Beside the runs list: hide the runs and the search chart. */
-  decisionOnly: PropTypes.bool,
-  /* Ship's drawer: what ships and the next steps only. */
-  shipOnly: PropTypes.bool,
-  onOpenDecision: PropTypes.func,
   record: PropTypes.object,
   name: PropTypes.string,
   env: PropTypes.object,
@@ -1798,144 +1658,6 @@ OverBudgetBody.propTypes = {
   patch: PropTypes.func,
   onClose: PropTypes.func,
 };
-
-/*
-  The scenarios a fix built from its issue, edited in place: rename one, or
-  leave it out, then reproduce again on the same improvement.
-*/
-const REPRO_WORD = {
-  reproduced: "Reproduced",
-  inconclusive: "Inconclusive",
-  passed: "Not reproduced",
-};
-function IssueScenarioEditor({
-  open,
-  drafts,
-  perScenario,
-  onClose,
-  onReproduce,
-}) {
-  const [edits, setEdits] = useState({});
-  useEffect(() => {
-    if (open) setEdits({});
-  }, [open]);
-  const set = (id, patchIn) =>
-    setEdits((e) => ({ ...e, [id]: { ...e[id], ...patchIn } }));
-  const included = drafts.filter((d) => edits[d.id]?.include !== false).length;
-  return (
-    <ClosableDialog
-      open={open}
-      onClose={onClose}
-      maxWidth={false}
-      fullWidth
-      PaperProps={{
-        sx: { maxWidth: 720, borderRadius: "8px", backgroundImage: "none" },
-      }}
-    >
-      <Box
-        sx={{
-          px: 2.5,
-          py: 2,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-          Edit this fix&apos;s scenarios
-        </Typography>
-        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          Built from the issue&apos;s traces. They stay with this improvement —
-          the environment&apos;s own scenarios don&apos;t change.
-        </Typography>
-      </Box>
-      <Stack
-        divider={
-          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
-        }
-        sx={{ maxHeight: "56vh", overflowY: "auto" }}
-      >
-        {drafts.map((d) => {
-          const on = edits[d.id]?.include !== false;
-          const state = perScenario?.[d.id]?.state;
-          return (
-            <Stack
-              key={d.id}
-              direction="row"
-              alignItems="center"
-              spacing={1.25}
-              sx={{ px: 2, py: 1 }}
-            >
-              <Checkbox
-                size="small"
-                checked={on}
-                onChange={(e) => set(d.id, { include: e.target.checked })}
-                inputProps={{ "aria-label": `Include ${d.title}` }}
-                sx={{ p: 0.5 }}
-              />
-              <TextField
-                size="small"
-                fullWidth
-                disabled={!on}
-                value={edits[d.id]?.title ?? d.title ?? ""}
-                onChange={(e) => set(d.id, { title: e.target.value })}
-                inputProps={{ "aria-label": "Scenario title" }}
-                sx={{ "& .MuiInputBase-input": { typography: "s2" } }}
-              />
-              <Typography
-                noWrap
-                sx={{
-                  typography: "s3",
-                  color: "text.tertiary",
-                  width: 104,
-                  flexShrink: 0,
-                  textAlign: "right",
-                }}
-              >
-                {REPRO_WORD[state] || "—"}
-              </Typography>
-            </Stack>
-          );
-        })}
-      </Stack>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1.5}
-        sx={{
-          px: 2.5,
-          py: 1.75,
-          borderTop: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Typography sx={{ typography: "s3", color: "text.tertiary", flex: 1 }}>
-          {`${included} of ${drafts.length} included · each runs ${REPEATS_WORD} on the agent as it runs today`}
-        </Typography>
-        <Button size="small" onClick={onClose} sx={{ color: "text.secondary" }}>
-          Cancel
-        </Button>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          disabled={!included}
-          onClick={() => onReproduce(edits)}
-          startIcon={<Iconify icon="solar:play-bold" width={14} />}
-        >
-          Reproduce again
-        </Button>
-      </Stack>
-    </ClosableDialog>
-  );
-}
-IssueScenarioEditor.propTypes = {
-  open: PropTypes.bool,
-  drafts: PropTypes.array,
-  perScenario: PropTypes.object,
-  onClose: PropTypes.func,
-  onReproduce: PropTypes.func,
-};
-const REPEATS_WORD = "three times";
 
 /* A heading between the stacked parts of the Evidence tab. */
 function EvidenceHeading({ children }) {
@@ -2750,72 +2472,6 @@ ImprovementSteps.propTypes = {
   onOpenIssue: PropTypes.func,
   onOpenRun: PropTypes.func,
   shipped: PropTypes.object,
-};
-
-/* The constraints in force while the search runs — a candidate that breaks one is dropped. */
-function RunningConstraints({ record, model }) {
-  /* Must-pass across every environment it checks: this one's set, plus each other's. */
-  const mustPass =
-    (record.result?.mustPass?.total ?? record.frozen?.mustPass ?? 0) +
-    (record.result?.otherEnvs || []).reduce((n, e) => n + (e.mustPass || 0), 0);
-  const rows = [
-    ...limitRows(record.limits || DEFAULT_LIMITS, model, { mustPass }).filter(
-      (c) =>
-        !(record.budget && c.id === "budget") &&
-        !["cost", "latency"].includes(c.id),
-    ),
-    ...(record.budget
-      ? [
-          {
-            id: "spend",
-            label: "Run budget",
-            value: creditsLabel(record.budget),
-          },
-        ]
-      : []),
-  ];
-  return (
-    <Stack
-      direction="row"
-      alignItems="baseline"
-      flexWrap="wrap"
-      columnGap={2}
-      rowGap={0.5}
-      sx={{
-        px: 2.5,
-        py: 1.25,
-        borderBottom: "1px solid",
-        borderColor: "divider",
-      }}
-    >
-      <Typography
-        sx={{
-          typography: "s3",
-          fontWeight: 600,
-          color: "text.tertiary",
-          textTransform: "none",
-          letterSpacing: 0.5,
-        }}
-      >
-        Constraints
-      </Typography>
-      {rows.map((c) => (
-        <Typography
-          key={c.id}
-          sx={{ typography: "s3", color: "text.secondary" }}
-        >
-          {`${c.label} · `}
-          <Box component="span" sx={{ color: "text.primary", fontWeight: 600 }}>
-            {c.value}
-          </Box>
-        </Typography>
-      ))}
-    </Stack>
-  );
-}
-RunningConstraints.propTypes = {
-  record: PropTypes.object,
-  model: PropTypes.string,
 };
 
 /* The agent's constraints a candidate had to keep, each passed or broken, with the measure. */

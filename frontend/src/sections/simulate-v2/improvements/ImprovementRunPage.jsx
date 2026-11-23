@@ -12,6 +12,7 @@ import { shippedCandidate } from "../run/fixmyagent/tradeoffs";
 import { improvementRunName } from "../_mock/optimizer";
 import {
   OPT_STATUS,
+  improvementOutcome,
   improvementProgressOf,
   settlePending,
 } from "../_mock/optimizationRuns";
@@ -20,15 +21,18 @@ import { nextAgentVersion, currentEnvVersion } from "../_mock/versions";
 import { protoRunId } from "../_mock/executionAdapter";
 import SideDrawer from "../components/SideDrawer";
 import ImprovementRunsView from "./ImprovementRunsView";
-import ImprovementDecision from "./ImprovementDecision";
+import EpochShipDrawer from "./EpochShipDrawer";
 import CodingAgentImprovementView from "./CodingAgentImprovementView";
+import { earlyEndingOf } from "./epochEndings";
 
 /**
- * One improvement, on its own page — `simulate/improvements/:envId/:optId`,
- * level 2 of Improvements. Once its search has tried runs, the page lists
- * them (ImprovementRunsView) and the search itself opens beside them; while
- * it's still searching, or when it stopped before trying any, the page is
- * the search.
+ * One epoch, on its own page — `simulate/improvements/:envId/:optId`,
+ * level 2 of Epochs. Once its search has tried candidates, or once it ended
+ * early (stopped, not reproduced, too few, over budget), the page is the
+ * epoch (ImprovementRunsView): its verdict or its ending, then its tabs.
+ * Everything the old decision and full-record drawers showed is on that
+ * page now; Ship opens beside it. Only a run still reproducing, a
+ * suggestion-only epoch or a question to answer shows the search view.
  *
  * An improvement belongs to its environment, not to a run, so one started
  * without a run (a goal, a schedule) reopens here rather than on the
@@ -55,11 +59,10 @@ export default function ImprovementRunPage() {
   const location = useLocation();
   const fromIssue = location.state?.fromIssue || null;
   const from = location.state?.back || null;
-  /* The drawer beside the runs: the short decision first; the full record on request. */
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [fullRecord, setFullRecord] = useState(false);
   /* Ship: what ships and the next steps, on their own. */
   const [shipOpen, setShipOpen] = useState(false);
+  /* Ship's "See changes" closes it onto the Changes tab. */
+  const [tabAsk, setTabAsk] = useState(null);
   /* Back goes to the issue it fixes, else the list it was opened from. */
   const back = () => {
     if (fromIssue) navigate(paths.dashboard.errorFeed.detail(fromIssue));
@@ -250,21 +253,15 @@ export default function ImprovementRunPage() {
       ),
     });
 
-  const search = (inDrawer, { ship = false } = {}) => (
+  const handoff = {
+    key: record.id,
+    landedVersion: landed,
+    provenance,
+    onLand: land,
+    onRerun: newRun,
+  };
+  const search = () => (
     <OptimizationRunView
-      shipOnly={ship}
-      onOpenDecision={
-        ship
-          ? () => {
-              setShipOpen(false);
-              setFullRecord(false);
-              setSearchOpen(true);
-            }
-          : undefined
-      }
-      /* In the drawer beside the runs list: the decision, not the runs
-           and growth chart the page already shows. */
-      decisionOnly={inDrawer}
       record={record}
       name={improvementRunName(envState, record)}
       env={env}
@@ -272,22 +269,10 @@ export default function ImprovementRunPage() {
       patch={patch}
       tasks={tasks}
       onRunWinner={runWinner}
-      handoff={{
-        key: record.id,
-        landedVersion: landed,
-        provenance,
-        onLand: land,
-        onRerun: newRun,
-      }}
-      onBack={inDrawer ? () => setFullRecord(false) : back}
-      backLabel={inDrawer ? undefined : fromIssue}
-      onClose={
-        ship
-          ? () => setShipOpen(false)
-          : inDrawer
-            ? () => setSearchOpen(false)
-            : close
-      }
+      handoff={handoff}
+      onBack={back}
+      backLabel={fromIssue}
+      onClose={close}
       onDone={finish}
     />
   );
@@ -321,7 +306,12 @@ export default function ImprovementRunPage() {
   /* Runs to list once the search has tried some — as they finish while it
      runs. A suggestion-only fix tries none, so it stays on the search view.
      One whose ending is already known still shows Reproduce here first. */
+  /* An early ending reads on the epoch page too — the same header, one
+     ending layout — never the old full-record view. */
+  const ended =
+    !isRunning && !!earlyEndingOf(record, improvementOutcome(record));
   const hasRuns =
+    ended ||
     (!!progress?.pending && record.fixDepth !== "suggestion") ||
     ((record.result?.trials || []).length > 0 &&
       (record.status !== OPT_STATUS.RUNNING ||
@@ -333,17 +323,17 @@ export default function ImprovementRunPage() {
           <title>{`${improvementRunName(envState, record)} · Epochs`}</title>
         </Helmet>
         <ImprovementRunsView
+          /* A fresh page per epoch: its tab and open sections don't carry over. */
+          key={`${env.id}/${record.id}`}
           env={env}
           envState={envState}
           record={record}
           patch={patch}
           onBack={back}
           backLabel={backLabel}
-          onOpenSearch={() => {
-            setFullRecord(false);
-            setSearchOpen(true);
-          }}
           progress={progress}
+          tabAsk={tabAsk}
+          onTabAsked={() => setTabAsk(null)}
           onOpenIssue={
             record.trigger?.issueId
               ? () =>
@@ -372,35 +362,30 @@ export default function ImprovementRunPage() {
           }
           onVerify={() => runWinner()}
           onRecheck={recheck}
-          onShip={() => {
-            setSearchOpen(false);
-            setShipOpen(true);
-          }}
+          onShip={() => setShipOpen(true)}
         />
         <SideDrawer
           open={shipOpen}
           onClose={() => setShipOpen(false)}
-          width={960}
+          width={720}
         >
-          {shipOpen && search(true, { ship: true })}
-        </SideDrawer>
-        <SideDrawer
-          open={searchOpen}
-          onClose={() => setSearchOpen(false)}
-          width={fullRecord ? 960 : 640}
-        >
-          {searchOpen &&
-            (fullRecord ? (
-              search(true)
-            ) : (
-              <ImprovementDecision
-                record={record}
-                env={env}
-                envState={envState}
-                onClose={() => setSearchOpen(false)}
-                onFullRecord={() => setFullRecord(true)}
-              />
-            ))}
+          {shipOpen && (
+            <EpochShipDrawer
+              record={record}
+              name={improvementRunName(envState, record)}
+              env={env}
+              envState={envState}
+              patch={patch}
+              tasks={tasks}
+              handoff={handoff}
+              onRunWinner={runWinner}
+              onSeeChanges={() => {
+                setShipOpen(false);
+                setTabAsk("changes");
+              }}
+              onClose={() => setShipOpen(false)}
+            />
+          )}
         </SideDrawer>
       </Box>
     );
@@ -419,7 +404,7 @@ export default function ImprovementRunPage() {
       <Helmet>
         <title>Epoch · Future AGI</title>
       </Helmet>
-      {search(false)}
+      {search()}
     </Box>
   );
 }

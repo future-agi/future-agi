@@ -23,16 +23,13 @@ import {
   fixEnvFor,
   fixEstimate,
   fixPreview,
+  fixMinutesWithin,
   fixScenariosOf,
   issueScenarioDrafts,
   runnableDraftsOf,
   useIssueFix,
 } from "./issueFix";
 
-/* The longest a fix may take — the agent's own time cap, as the Fix page picks it. */
-const MINUTES = [15, 30, 45, 60, 90, 120];
-const minutesFor = (ceiling) =>
-  MINUTES.filter((m) => m <= ceiling).at(-1) || ceiling;
 
 export default function useFixPlan(issue, rootCause = null, envId = null) {
   const fix = useIssueFix(issue);
@@ -86,6 +83,10 @@ export default function useFixPlan(issue, rootCause = null, envId = null) {
     [preview, drafts.length, main?.surface, inEnv],
   );
   const budgets = budgetsWithin(limits.budget.dollars);
+  /* The longest it may take — the agent's own time cap, as the Fix page picks it. */
+  const minutes = fixMinutesWithin(
+    limits.budget?.minutes || DEFAULT_LIMITS.budget.minutes,
+  ).at(-1);
   const diagnosis = useMemo(() => {
     if (!agent || !main) return null;
     const def = agentDefinitionOf({ agent, env: main, envState: mainState });
@@ -119,9 +120,7 @@ export default function useFixPlan(issue, rootCause = null, envId = null) {
       drafts: reviewed?.length ? reviewed : drafts,
       regressionEnvIds: [main.id],
       budget,
-      minutes: minutesFor(
-        limits.budget?.minutes || DEFAULT_LIMITS.budget.minutes,
-      ),
+      minutes,
       textSearch: inText,
       rootCause,
       diagnosis: diagnosis
@@ -150,6 +149,7 @@ export default function useFixPlan(issue, rootCause = null, envId = null) {
     limits,
     estimate,
     budgets,
+    minutes,
     consentNeeded,
     building,
     ready,

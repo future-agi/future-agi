@@ -1,9 +1,5 @@
-import React, { useState } from "react";
-import PropTypes from "prop-types";
-import { Button, Menu, MenuItem, Stack, Typography } from "@mui/material";
-import { enqueueSnackbar } from "notistack";
-import Iconify from "src/components/iconify";
 import { useErrorFeedOverview } from "src/api/errorFeed/mockAdapter";
+import { enqueueSnackbar } from "notistack";
 import { downloadCsv, tracesToCsv } from "./exportTracesCsv";
 
 /*
@@ -65,13 +61,12 @@ const analysisOf = (issue, overview, rootCause) => {
   return lines.join("\n");
 };
 
-export default function IssueExportButton({ issue, rootCause }) {
-  const [anchor, setAnchor] = useState(null);
+/** The issue's two exports, for the header's ⋯ menu. */
+export function useIssueExport(issue, rootCause) {
   const { data: overview } = useErrorFeedOverview(issue?.cluster_id);
   const traces = overview?.representative_traces || [];
 
   const exportTraces = () => {
-    setAnchor(null);
     if (!traces.length) {
       enqueueSnackbar("No traces to export", { variant: "info" });
       return;
@@ -89,7 +84,6 @@ export default function IssueExportButton({ issue, rootCause }) {
     );
   };
   const exportAnalysis = () => {
-    setAnchor(null);
     download(
       analysisOf(issue, overview, rootCause),
       `error-feed-${issue.cluster_id}-analysis.md`,
@@ -97,76 +91,5 @@ export default function IssueExportButton({ issue, rootCause }) {
     );
     enqueueSnackbar("Exported the analysis", { variant: "success" });
   };
-
-  const items = [
-    {
-      key: "traces",
-      icon: "solar:document-text-linear",
-      label: "Traces",
-      note: "CSV · ready to upload as a dataset",
-      onClick: exportTraces,
-      disabled: !traces.length,
-    },
-    {
-      key: "analysis",
-      icon: "solar:clipboard-text-linear",
-      label: "Analysis",
-      note: "Markdown · cause, suggested fix, pattern, traces",
-      onClick: exportAnalysis,
-    },
-  ];
-
-  return (
-    <>
-      <Button
-        size="small"
-        variant="outlined"
-        startIcon={
-          <Iconify icon="solar:download-minimalistic-linear" width={14} />
-        }
-        endIcon={<Iconify icon="solar:alt-arrow-down-linear" width={14} />}
-        onClick={(e) => setAnchor(e.currentTarget)}
-        sx={{
-          height: 30,
-          borderRadius: "6px",
-          borderColor: "divider",
-          color: "text.secondary",
-        }}
-      >
-        Export
-      </Button>
-      <Menu
-        anchorEl={anchor}
-        open={!!anchor}
-        onClose={() => setAnchor(null)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-        transformOrigin={{ vertical: "top", horizontal: "right" }}
-      >
-        {items.map((i) => (
-          <MenuItem key={i.key} onClick={i.onClick} disabled={i.disabled}>
-            <Stack direction="row" spacing={1} alignItems="flex-start">
-              <Iconify
-                icon={i.icon}
-                width={16}
-                sx={{ mt: "2px", color: "text.secondary" }}
-              />
-              <Stack>
-                <Typography sx={{ typography: "s2", fontWeight: 500 }}>
-                  {i.label}
-                </Typography>
-                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                  {i.note}
-                </Typography>
-              </Stack>
-            </Stack>
-          </MenuItem>
-        ))}
-      </Menu>
-    </>
-  );
+  return { exportTraces, exportAnalysis, hasTraces: traces.length > 0 };
 }
-
-IssueExportButton.propTypes = {
-  issue: PropTypes.object,
-  rootCause: PropTypes.object,
-};

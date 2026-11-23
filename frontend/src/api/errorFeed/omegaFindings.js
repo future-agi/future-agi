@@ -147,7 +147,7 @@ export const suggestedFixFor = (cluster) => {
 
 /** Input and output for an evidence step; the decisive one carries the issue's own. */
 export const stepIOFor = (cluster, step, failed) => {
-  const t = typeOf(cluster);
+  const t = { io: storyOf(cluster).io };
   if (step.label === "User") return {};
   if (step.isFailure) return { wentIn: t.io.in, cameOut: t.io.out };
   if (step.label === "Tool")
@@ -353,10 +353,298 @@ const STORIES = {
   },
 };
 
+/*
+  The type's story is one domain's. An issue whose own traces use other
+  tools reads its own: the steps, the tool and what went in and came out are
+  the ones its calls show (its why_shown names the tool), so a clinic issue
+  never shows a refund. Issues the type's story already describes keep it.
+*/
+const ISSUE_STORIES = {
+  "ISS-4536": { tool: "lookup_booking" },
+  "ISS-4529": {
+    steps: [
+      "Changed the booking time halfway through",
+      "Noted the request",
+      "Called modify_booking with the first time",
+      "Confirmed the table to the guest",
+    ],
+    tool: "modify_booking",
+    good: "Called modify_booking with the corrected time",
+    io: { in: "time: 19:00 (guest said 20:00)", out: "Table booked for 7pm" },
+  },
+  "ISS-4471": {
+    steps: [
+      "Changed the pickup address",
+      "Noted the new address",
+      "Called book_pickup with the old address",
+      "Confirmed the pickup to the caller",
+    ],
+    tool: "book_pickup",
+    good: "Called book_pickup with the corrected address",
+    io: {
+      in: "address: 8 Elm Street (caller said 12 Elm Street)",
+      out: "Pickup booked to 8 Elm Street",
+    },
+  },
+  "ISS-4489": {
+    steps: [
+      "Asked to cancel a car booked a minute ago",
+      "Opened the booking",
+      "Charged the fee before reading the fare policy",
+      "Told the caller a fee applies",
+    ],
+    tool: "cancel_pickup",
+    good: "Read the free cancellation window, then cancelled with no fee",
+    io: {
+      in: "fare policy: (not read) · booked 1 min ago",
+      out: "Cancelled with a $5 fee",
+    },
+  },
+  "ISS-4431": {
+    steps: [
+      "Asked to send the order to a new address",
+      "Called update_shipping_address",
+      "The update failed; the agent didn't read the result",
+      "Told the caller the address was changed",
+    ],
+    tool: "update_shipping_address",
+    good: "Checked shipment_status first and said the parcel had left",
+    io: {
+      in: "update_shipping_address: error (parcel dispatched)",
+      out: "Agent says the address was changed",
+    },
+  },
+  "ISS-4552": {
+    steps: [
+      "Asked for a table for twelve",
+      "Checked Saturday's availability",
+      "Called create_booking without the large-party rule",
+      "Confirmed the table to the guest",
+    ],
+    tool: "create_booking",
+    good: "Took a number for the events team, as the rule says",
+    io: {
+      in: "party_size: 12 (events team rule: skipped)",
+      out: "Table for twelve booked",
+    },
+  },
+  "ISS-4557": {
+    steps: [
+      "Asked to move an appointment",
+      "Found a patient by name",
+      "Called reschedule_appointment before the date of birth was confirmed",
+      "Told the caller the appointment was moved",
+    ],
+    tool: "reschedule_appointment",
+    good: "Confirmed the name and date of birth, then rescheduled",
+    io: {
+      in: "patient: matched by name · date_of_birth: (not asked)",
+      out: "Appointment moved to Tuesday 10am",
+    },
+  },
+  "ISS-4548": { tool: "search_flights" },
+  "ISS-4563": {
+    steps: [
+      "Asked for the loyalty discount",
+      "Opened the order",
+      "Called apply_discount_code without check_loyalty_status",
+      "Told the caller the discount was applied",
+    ],
+    tool: "apply_discount_code",
+    good: "Checked the loyalty tier, then applied the discount",
+    io: {
+      in: "loyalty tier: (not checked)",
+      out: "15% loyalty discount applied",
+    },
+  },
+  "ISS-4566": {
+    tool: "generate_return_label",
+    io: {
+      in: "generate_return_label: error 502",
+      out: "Agent says the label was sent",
+    },
+  },
+  "ISS-4571": {
+    steps: [
+      "Asked what the group deposit is",
+      "Called the booking tool",
+      "Quoted the deposit from last season's price list",
+      "Gave the caller the old deposit",
+    ],
+    tool: "create_booking",
+    good: "Read the deposit from the booking result",
+    io: {
+      in: "deposit: $20 a head (last season)",
+      out: "Quoted $280 for fourteen",
+    },
+  },
+  "ISS-4574": {
+    steps: [
+      "Asked for the next flight, aisle seat",
+      "Found a partner flight",
+      "Rebooked without the seat request",
+      "Told the traveller it's all set",
+    ],
+    tool: "rebook_flight",
+    good: "Sent the seat request with the partner rebooking",
+    io: {
+      in: "segments: [partner 9:40] · seat: (dropped)",
+      out: "Rebooked with no seat request",
+    },
+  },
+  "ISS-4578": {
+    steps: [
+      "Asked to move to Thursday at 3",
+      "Called the booking tool",
+      "The slot was taken; the agent didn't read the result",
+      "Told the caller the appointment was moved",
+    ],
+    tool: "reschedule_appointment",
+    good: "Read the taken slot and offered the next free one",
+    io: {
+      in: "reschedule_appointment: slot taken",
+      out: "Agent says Thursday 3pm is booked",
+    },
+  },
+  "ISS-4582": {
+    steps: [
+      "Asked for a refund for a broken item",
+      "Opened the order",
+      "Offered store credit without checking the refund rule",
+      "Told the caller store credit is the option",
+    ],
+    tool: "check_refund_policy",
+    good: "Checked the order's refund rule, then refunded",
+    io: { in: "refund rule: (not checked)", out: "Store credit offered" },
+  },
+  "ISS-4585": {
+    steps: [
+      "Asked about a late fee",
+      "Fetched the invoice",
+      "Sent a total without the late fee it just mentioned",
+      "Gave the customer two different amounts",
+    ],
+    tool: "get_invoice",
+    good: "Added the late fee, then quoted the total once",
+    io: { in: "late fee: $35 · total: $1,275", out: "Agent says $1,240" },
+  },
+  "ISS-4593": {
+    steps: [
+      "Asked to move to the 6pm flight",
+      "Called the rebooking tool",
+      "Confirmed without reading the fare difference",
+      "Told the traveller there was nothing to pay",
+    ],
+    tool: "rebook_flight",
+    good: "Quoted the fare difference before confirming",
+    io: {
+      in: "fare difference: $86 (not read)",
+      out: "Agent says nothing more to pay",
+    },
+  },
+  "ISS-4589": {
+    steps: [
+      "Asked what cancelling would cost",
+      "Opened the order",
+      "Called cancel_order without asking",
+      "Told the customer the order was cancelled",
+    ],
+    tool: "cancel_order",
+    good: "Explained the policy and waited for a yes",
+    io: { in: "intent: question (no yes given)", out: "Order cancelled" },
+  },
+  "ISS-4601": {
+    steps: [
+      "Asked for a table on Friday at 8",
+      "Checked availability",
+      "Booked without reading back the date and party size",
+      "Told the guest they're all set",
+    ],
+    tool: "create_booking",
+    good: "Read the date and party size back, then booked",
+    io: {
+      in: "date, party_size: (not read back)",
+      out: "Table booked for the wrong day",
+    },
+  },
+  "ISS-4602": {
+    steps: [
+      "Asked to pick up a repeat prescription",
+      "Found a patient by name",
+      "Booked the pickup without the identity check",
+      "Told the caller it's ready on Thursday",
+    ],
+    tool: "book_prescription_pickup",
+    good: "Verified the date of birth, then booked the pickup",
+    io: {
+      in: "date_of_birth: (not asked)",
+      out: "Prescription pickup booked",
+    },
+  },
+  "ISS-4603": {
+    steps: [
+      "Asked about the bag allowance after a rebooking",
+      "Kept the original fare's details",
+      "Quoted the allowance from the fare before the rebooking",
+      "Told the traveller two bags are included",
+    ],
+    tool: "get_booking",
+    good: "Read the allowance from the new booking",
+    io: {
+      in: "fare: basic (allowance from the old fare)",
+      out: "Quoted two free bags",
+    },
+  },
+  "ISS-4604": {
+    steps: [
+      "Said the card on file was cancelled",
+      "Opened the order",
+      "Refunded to the cancelled card",
+      "Told the customer the refund is on its way",
+    ],
+    tool: "issue_refund",
+    good: "Offered store credit or a new card, then refunded",
+    io: {
+      in: "refund_to: card ending 4417 (cancelled)",
+      out: "Refund of $64 sent",
+    },
+  },
+  "ISS-4605": {
+    steps: [
+      "Asked what closing an account involves",
+      "Looked up the account",
+      "Closed the account without asking",
+      "Told the caller the account is closed",
+    ],
+    tool: "close_account",
+    good: "Explained the steps and waited for a yes",
+    io: { in: "intent: question (no yes given)", out: "Account closed" },
+  },
+  "ISS-4606": {
+    steps: [
+      "Asked for a car now",
+      "Created the job",
+      "Promised an ETA before a driver accepted",
+      "Told the caller a driver is 5 minutes away",
+    ],
+    tool: "dispatch_job",
+    good: "Said a driver is being found until one accepted",
+    io: { in: "driver: (unassigned)", out: "Agent says 5 minutes away" },
+  },
+};
+
+/* The issue's own story: its type's, with what its own traces show. */
+const storyOf = (cluster) => {
+  const base = STORIES[cluster?.error?.type] || STORIES.PolicyViolation;
+  const own = ISSUE_STORIES[cluster?.cluster_id] || {};
+  return { ...base, ...own, io: own.io || typeOf(cluster).io };
+};
+
 /** The failing and working evidence reels for one conversation of an issue. */
 export const reelsFor = (cluster, input, agentSays) => {
   const t = typeOf(cluster);
-  const st = STORIES[cluster?.error?.type] || STORIES.PolicyViolation;
+  const st = storyOf(cluster);
+  const io = st.io;
   const [ask, prep, wrong, told] = st.steps;
   const fail = [
     { label: "User", text: ask, note: `User said: "${input}"` },
@@ -371,15 +659,15 @@ export const reelsFor = (cluster, input, agentSays) => {
       text: wrong,
       note: `Where it goes wrong: ${t.label.toLowerCase()}.`,
       isFailure: true,
-      wentIn: t.io.in,
-      cameOut: t.io.out,
+      wentIn: io.in,
+      cameOut: io.out,
     },
     {
       label: "Agent",
       text: told,
       note: `Agent said: "${agentSays}"`,
       wentIn: "tool result",
-      cameOut: t.io.out,
+      cameOut: io.out,
     },
   ];
   const pass = [
@@ -394,9 +682,10 @@ export const reelsFor = (cluster, input, agentSays) => {
     {
       label: "Tool",
       text: st.good,
-      wentIn: t.io.in
-        .replace(/\s*\(.*?\)\s*$/, "")
-        .replace(/: .*$/, ": (checked)"),
+      /* The value that was missing, now checked — or the whole input. */
+      wentIn: /: \([^)]*\)$/.test(io.in)
+        ? io.in.replace(/: \([^)]*\)$/, ": (checked)")
+        : io.in.replace(/\s*\(.*?\)\s*$/, "").replace(/: .*$/, ": (checked)"),
       cameOut: "Result matches the request",
       status: "pass",
     },

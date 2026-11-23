@@ -52,7 +52,7 @@ export default function IssueConnectCard({
           [traced.agentName ? "ID" : "Assistant", traced.agentId, true],
           ["Channel", traced.agentType === "chat" ? "Chat" : "Voice"],
         ];
-  const why = `Its ${traced.via === "traceai" ? "traces" : "call logs"} reach ${project.name}, but no agent is linked to it. Connect it once to fix its issues.`;
+  const why = `Its ${traced.via === "traceai" ? "traces" : "call logs"} reach ${project.name}, but no agent is linked to it. Connect it once to run epochs on its issues.`;
 
   return (
     <Box

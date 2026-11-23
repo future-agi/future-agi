@@ -155,7 +155,9 @@ export default function DatasetImport({ env, onAdd, selected }) {
     (r) => picked.has(r.__id) && !added(r) && !cantRun(r),
   );
   const count = chosen.length;
-  const commit = () => onAdd(scenariosFromDataset(env, dataset, roles, chosen));
+  /* The dataset travels with the rows, so its review can name it. */
+  const commit = () =>
+    onAdd(scenariosFromDataset(env, dataset, roles, chosen), dataset);
 
   const filled = [
     !personaCol && "a persona is assigned to each row",
@@ -164,8 +166,8 @@ export default function DatasetImport({ env, onAdd, selected }) {
 
   return (
     <SectionCard
-      title="Import from a dataset"
-      subtitle="Each row becomes one scenario"
+      title="From a dataset"
+      subtitle="Each row becomes a draft — you review them before they join"
     >
       <Grid container spacing={2} sx={{ p: 2.5 }}>
         {/* ── 1. the dataset ── */}
@@ -262,8 +264,8 @@ export default function DatasetImport({ env, onAdd, selected }) {
                 sx={{ whiteSpace: "nowrap", minWidth: 148, flexShrink: 0 }}
               >
                 {count > 0
-                  ? `Add ${count.toLocaleString()} scenario${count === 1 ? "" : "s"}`
-                  : "Add scenarios"}
+                  ? `Create ${count.toLocaleString()} draft${count === 1 ? "" : "s"} to review`
+                  : "Pick rows"}
               </Button>
             </Stack>
 

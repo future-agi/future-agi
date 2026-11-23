@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   CircularProgress,
+  Collapse,
   Dialog,
   DialogContent,
   DialogTitle,
@@ -41,6 +42,7 @@ import {
   clickable,
   focusRing,
 } from "src/sections/simulate-v2/components/clickable";
+import { observeProjectById } from "src/sections/simulate-v2/_mock/connectAgent";
 import IssueStatusChip from "./IssueStatusChip";
 
 const humanizeTime = (iso) => {
@@ -156,26 +158,66 @@ MetaRow.propTypes = {
 };
 
 // ── Section ──────────────────────────────────────────────────────────────────
-function Section({ title, children }) {
+/* Each rail section folds on its title; open by default unless told not to. */
+function Section({ title, children, defaultOpen = true, last = false }) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <Stack gap={1}>
-      <Typography
+    <Stack gap={open ? 1 : 0}>
+      <Stack
+        direction="row"
+        alignItems="center"
+        gap={0.5}
+        {...clickable(() => setOpen((v) => !v), { expanded: open })}
         sx={{
-          fontSize: "12px",
-          fontWeight: 600,
-          color: "text.secondary",
-          textTransform: "none",
-          letterSpacing: 0,
+          ...focusRing,
+          cursor: "pointer",
+          userSelect: "none",
+          minHeight: 20,
+          borderRadius: "4px",
+          "& .rail-chevron": { opacity: open ? 0 : 1 },
+          "&:hover .rail-chevron, &:focus-visible .rail-chevron": {
+            opacity: 1,
+          },
         }}
       >
-        {title}
-      </Typography>
-      {children}
-      <Divider sx={{ borderColor: "divider", mt: 0.25 }} />
+        <Typography
+          sx={{
+            fontSize: "12px",
+            fontWeight: 600,
+            color: "text.secondary",
+            textTransform: "none",
+            letterSpacing: 0,
+            flex: 1,
+          }}
+        >
+          {title}
+        </Typography>
+        <Iconify
+          className="rail-chevron"
+          icon="solar:alt-arrow-down-linear"
+          width={14}
+          sx={{
+            color: "text.disabled",
+            transform: open ? "none" : "rotate(-90deg)",
+            transition: "transform 0.2s, opacity 0.15s",
+          }}
+        />
+      </Stack>
+      <Collapse in={open} timeout={150} unmountOnExit>
+        {children}
+      </Collapse>
+      {!last && (
+        <Divider sx={{ borderColor: "divider", mt: open ? 0.25 : 0.75 }} />
+      )}
     </Stack>
   );
 }
-Section.propTypes = { title: PropTypes.string, children: PropTypes.node };
+Section.propTypes = {
+  title: PropTypes.string,
+  children: PropTypes.node,
+  defaultOpen: PropTypes.bool,
+  last: PropTypes.bool,
+};
 
 // ── Status dropdown ──────────────────────────────────────────────────────────
 const STATUS_OPTIONS = [
@@ -1259,6 +1301,14 @@ export default function ErrorMetadataPanel({ error }) {
      and its age are already in Timeline (#81). */
   const activityLog = [];
   const evalScore = sidebar?.ai_metadata?.eval_score ?? error.eval_score;
+  /* Details: the project by name, and the trace open on the Overview. */
+  const projectName =
+    sidebar?.ai_metadata?.project ??
+    error.project ??
+    observeProjectById(error.project_id)?.name ??
+    null;
+  const detailTraceId =
+    sidebar?.ai_metadata?.trace_id ?? error.trace_id ?? effectiveTraceId;
 
   return (
     <Box
@@ -1286,7 +1336,7 @@ export default function ErrorMetadataPanel({ error }) {
             </FieldRow>
             {/* The fix's own status (RSI PRD: a fix-status chip), beside the issue's. */}
             {improving && fix && (
-              <FieldRow label="Fix">
+              <FieldRow label="Epoch">
                 <IssueStatusChip issue={error} />
               </FieldRow>
             )}
@@ -1386,17 +1436,17 @@ export default function ErrorMetadataPanel({ error }) {
           </Stack>
         </Section>
 
-        {/* ── AI Metadata ── (only when something is known) */}
+        {/* ── Details: model, agent, project, trace — folded by default ── */}
         {[
           sidebar?.ai_metadata?.model ?? error.model,
           sidebar?.ai_metadata?.model_version ?? error.model_version,
           error.agent,
           error.pipeline,
           error.connector,
-          sidebar?.ai_metadata?.project ?? error.project,
-          sidebar?.ai_metadata?.trace_id ?? error.trace_id,
+          projectName,
+          detailTraceId,
         ].some((v) => v != null && v !== "") && (
-          <Section title="AI Metadata">
+          <Section title="Details" defaultOpen={false}>
             <Stack gap={0.5}>
               <MetaRow
                 label="Model"
@@ -1432,12 +1482,12 @@ export default function ErrorMetadataPanel({ error }) {
               )}
               <MetaRow
                 label="Project"
-                value={sidebar?.ai_metadata?.project ?? error.project}
+                value={projectName}
                 icon="solar:folder-linear"
               />
               <MetaRow
                 label="Trace ID"
-                value={sidebar?.ai_metadata?.trace_id ?? error.trace_id}
+                value={detailTraceId}
                 icon="solar:graph-linear"
                 monospace
               />
@@ -1556,25 +1606,14 @@ export default function ErrorMetadataPanel({ error }) {
         )}
 
         {/* ── Integrations ── */}
-        <Stack gap={1}>
-          <Typography
-            sx={{
-              fontSize: "12px",
-              fontWeight: 600,
-              color: "text.disabled",
-              textTransform: "none",
-              letterSpacing: 0,
-            }}
-          >
-            Integrations
-          </Typography>
+        <Section title="Integrations" last>
           <Integrations
             clusterId={error?.cluster_id}
             traceId={effectiveTraceId}
             externalIssueUrl={error?.external_issue_url}
             externalIssueId={error?.external_issue_id}
           />
-        </Stack>
+        </Section>
       </Stack>
     </Box>
   );

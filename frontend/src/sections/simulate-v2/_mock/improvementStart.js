@@ -165,37 +165,13 @@ export const MAX_CANDIDATES = 4;
 export const FIX_DEFAULTS = { dollars: 15, minutes: 150 };
 export const HELD_BACK = { minimum: 4, recommended: 8 };
 
-/** "2 h 30 min" — a time limit in the review sentence. */
+/** "2 h 30 min" — a time limit, said short. */
 export const hoursLabel = (n) =>
   n < 60
     ? `${n} min`
     : `${Math.floor(n / 60)} h${n % 60 ? ` ${n % 60} min` : ""}`;
 
-const PART_WORDS = {
-  prompt: "instructions",
-  tools: "tool descriptions",
-  settings: "settings",
-  skills: "skills",
-  memory: "memory",
-  code: "code",
-  structure: "structure",
-};
-const listWords = (xs) =>
-  xs.length < 2
-    ? xs[0] || ""
-    : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
-
-/** The one sentence a fix is reviewed by before it starts. */
-export const fixReviewSentence = ({
-  targets,
-  protectedN,
-  allowed,
-  credits,
-  minutes,
-}) =>
-  `Fix ${targets} failing ${targets === 1 ? "case" : "cases"}${protectedN ? ` without breaking ${protectedN} protected ${protectedN === 1 ? "case" : "cases"}` : ""}, changing ${listWords((allowed || []).map((a) => PART_WORDS[a] || a))} only, up to ${credits} or ${hoursLabel(minutes)}.`;
-
-/** Where a fix's held-back set stands against the minimum and recommendation. */
+/** Where an epoch's held-back set stands against the minimum and recommendation. */
 export const heldBackOf = (n) => ({
   n,
   ...HELD_BACK,
@@ -499,7 +475,7 @@ export const planSearch = ({
 */
 export const stopEarlyNote = (max = MAX_CANDIDATES) =>
   max > MIN_RUNS_BEFORE_STOP
-    ? `After at least ${MIN_RUNS_BEFORE_STOP} trials, stops early if ${NO_GAIN_RUNS} in a row don't beat the best on the target scenarios by more than trial-to-trial noise, and verifies the best — so it often spends less.`
+    ? `After at least ${MIN_RUNS_BEFORE_STOP} candidates, stops early if ${NO_GAIN_RUNS} in a row don't beat the best on the target scenarios by more than the noise between repeats, and verifies the best — so it often spends less.`
     : "Stops at the limit with the best it found, and verifies the best.";
 
 /**
@@ -831,10 +807,10 @@ export const buildImprovement = ({
         : tooFew
           ? OPT_STATUS.TOO_FEW
           : stopBefore
-          ? OPT_STATUS.OVER_BUDGET
-          : infra
-            ? OPT_STATUS.FAILED
-            : OPT_STATUS.RUNNING;
+            ? OPT_STATUS.OVER_BUDGET
+            : infra
+              ? OPT_STATUS.FAILED
+              : OPT_STATUS.RUNNING;
   /* An ending known before searching still reproduces first: the record
      starts running and settles to it once Reproduce has played
      (optimizationRuns.statusOf). Records kept exactly as seeded (no engine
@@ -851,7 +827,7 @@ export const buildImprovement = ({
     ...(nothing && { nothing: { goal: result.goal } }),
     ...(clarify && {
       clarify: {
-        question: `Should "${result.goal?.label || goal?.label || "the goal"}" win over the rule that protects passing cases?`,
+        question: `Should "${result.goal?.label || goal?.label || "the goal"}" win over must-pass, the rule that keeps passing scenarios passing?`,
       },
     }),
     createdAt,

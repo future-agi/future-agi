@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Stack, Typography, Button, Tooltip } from "@mui/material";
+import { Box, Stack, Typography, Button, Tooltip, Link } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { connectedAgentPath } from "../improvements/improvementNav";
 import { SectionCard } from "../components/primitives";
@@ -755,29 +755,31 @@ export default function OmegaHandoff({
                     ? "I've merged it"
                     : `It's live on ${source.label}`}
               </Button>
-              {canCanary && (
-                <Tooltip arrow title={CANARY_NOTE}>
-                  <span>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() =>
-                        setCanary({
-                          share: CANARY_SHARE,
-                          startedAt: new Date().toISOString(),
-                        })
-                      }
-                      startIcon={
-                        <Iconify icon="solar:pie-chart-2-linear" width={14} />
-                      }
-                      sx={{ color: "text.primary", borderColor: "divider" }}
-                    >
-                      {`Try it on ${CANARY_SHARE}% of calls first`}
-                    </Button>
-                  </span>
-                </Tooltip>
-              )}
             </Stack>
+            {/* A side path, not a peer of the step's one button. */}
+            {canCanary && (
+              <Tooltip arrow placement="bottom-start" title={CANARY_NOTE}>
+                <Link
+                  component="button"
+                  type="button"
+                  underline="hover"
+                  onClick={() =>
+                    setCanary({
+                      share: CANARY_SHARE,
+                      startedAt: new Date().toISOString(),
+                    })
+                  }
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.primary",
+                    alignSelf: "flex-start",
+                  }}
+                >
+                  {`Or try it on ${CANARY_SHARE}% of calls first`}
+                </Link>
+              </Tooltip>
+            )}
             {draft.watch && !demo && (
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                 {provider === "vapi"

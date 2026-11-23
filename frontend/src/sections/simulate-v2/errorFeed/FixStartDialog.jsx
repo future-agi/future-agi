@@ -32,26 +32,21 @@ import { currentAgentVersion } from "../_mock/versions";
 import { buildPresetFor } from "../agents/agentViewUtils";
 import {
   envFitsIssue,
+  epochBudgetLine,
   issueFixNav,
   issueMechanismOf,
   issueRunFor,
   scenarioGroupsOf,
 } from "./issueFix";
 import TraceReviewDrawer from "../workspace/scenarios/TraceReviewDrawer";
-import {
-  draftSourcesOf,
-  draftStatusOf,
-  mappingsOf,
-  reviewOf,
-} from "../_mock/traceReview";
 import { fixImportIdOf, issueImportOf } from "../_mock/errorFeedSource";
 import ClosableDialog from "../components/ClosableDialog";
 
 /*
-  Fix, confirmed in place: what it tests, where, and what it may spend —
-  then Start fix lands on the fix running. Run scenarios only runs the
-  issue's scenarios as a normal run instead (via the run plan), and Edit plan opens the
-  whole plan to edit.
+  Run Epoch, confirmed in place: what it tests, where, and what it may
+  spend. One main action at a time — Review the drafts, then Reproduce, then
+  run the epoch. Run scenarios only (a link in Scenarios) runs the issue's
+  scenarios as a normal run instead, and Edit plan opens the whole plan.
 */
 function Row({ k, children }) {
   return (
@@ -76,8 +71,9 @@ function Row({ k, children }) {
 }
 Row.propTypes = { k: PropTypes.string, children: PropTypes.node };
 
-/* Fix again: what to change before this one, by how the last one ended —
-   the same fix on the same rules and scenarios would likely end the same way. */
+/* Run Epoch again: what to change before this one, by how the last one
+   ended — the same epoch on the same rules and scenarios would likely end
+   the same way. */
 const LAST_NEXT = {
   "no-fix":
     "Every change fixed too little or broke something. Loosen a rule, edit the scenarios, or hand it to your coding agent.",
@@ -86,7 +82,7 @@ const LAST_NEXT = {
   "over-budget":
     "It stopped at its budget before trying a change. Pick a bigger budget below.",
   reopened:
-    "It was released and the issue came back. This fix starts from the agent as it runs now.",
+    "It was released and the issue came back. This epoch starts from the agent as it runs now.",
   stopped:
     "It was stopped before it finished, so nothing it tried was checked. This one starts over.",
 };
@@ -117,21 +113,19 @@ export default function FixStartDialog({
   const reviewRows = (mainState?.scenarios || []).filter(
     (r) => r.traceImport?.id === reviewId,
   );
-  const statusOfRow = (r) => {
-    const src = draftSourcesOf(r, main, mainState);
-    return draftStatusOf(r, reviewOf(r, src), mappingsOf(r, main, src)).id;
+  /* Kept for the fix in the review (or already in the environment). */
+  const keptOf = (r) => !r.proposed || !!r.traceReview?.kept;
+  const reviewStats = {
+    kept: reviewRows.filter(keptOf).length,
+    waiting: reviewRows.filter((r) => !keptOf(r)).length,
   };
-  const reviewStats = reviewRows.reduce((acc, r) => {
-    const k = r.proposed ? statusOfRow(r) : "ready";
-    return { ...acc, [k]: (acc[k] || 0) + 1 };
-  }, {});
-  const reviewed =
-    reviewRows.length > 0 &&
-    (reviewStats.ready || 0) > 0 &&
-    (reviewStats.ready || 0) + (reviewStats.rejected || 0) ===
-      reviewRows.length;
+  const reviewed = reviewRows.length > 0 && reviewRows.every(keptOf);
+  /* Drafts the user removed in the review stay removed — they're not drafted again. */
+  const removedBefore = (mainState?.traceImports || []).some(
+    (x) => x.importId === reviewId,
+  );
   const startReview = () => {
-    if (!reviewRows.length && main) {
+    if (!reviewRows.length && !removedBefore && main) {
       const at = new Date().toISOString();
       patchMain({
         scenarios: [
@@ -157,9 +151,7 @@ export default function FixStartDialog({
   /* What runs: the drafts as the review left them (merged, settled,
      rejected ones out) — the review decides the tests, not the first draft. */
   const runDrafts = reviewed
-    ? reviewRows
-        .filter((r) => !r.proposed || statusOfRow(r) === "ready")
-        .map(({ proposed: _p, ...r }) => r)
+    ? reviewRows.filter(keptOf).map(({ proposed: _p, ...r }) => r)
     : drafts;
   /* Reviewed drafts join the environment when the run starts (step 4,
      "save and validate"), so the run reproduces what was reviewed. */
@@ -167,9 +159,7 @@ export default function FixStartDialog({
     reviewRows.length &&
     patchMain({
       scenarios: (mainState?.scenarios || []).map((r) =>
-        r.traceImport?.id === reviewId &&
-        r.proposed &&
-        statusOfRow(r) === "ready"
+        r.traceImport?.id === reviewId && r.proposed && keptOf(r)
           ? { ...r, proposed: undefined }
           : r,
       ),
@@ -200,8 +190,6 @@ export default function FixStartDialog({
   const teachLabel = `Teach it ${toolGap.length === 1 ? "this tool" : `these ${toolGap.length} tools`}`;
   const [budget, setBudget] = useState(null);
   const [showAll, setShowAll] = useState(false);
-  /* Folded to a summary when nothing needs a decision; Show details opens it. */
-  const [details, setDetails] = useState(false);
   /* One click starts one fix — the button turns off once pressed. */
   const [starting, setStarting] = useState(false);
   /* Run scenarios only, priced the way the run plan prices any run. */
@@ -229,7 +217,6 @@ export default function FixStartDialog({
     if (open) {
       setBudget(null);
       setShowAll(false);
-      setDetails(false);
       setStarting(false);
     }
   }, [open]);
@@ -278,7 +265,7 @@ export default function FixStartDialog({
   const held = !main
     ? `${agent?.name || "This agent"} has no environment yet — build one first.`
     : plan.building
-      ? `${main.name} is still building — the fix can start once it's done.`
+      ? `${main.name} is still building — the epoch can start once it's done.`
       : issueNeeds.length
         ? `${main.name} can't answer ${issueNeeds.join(", ")} yet — teach it first.`
         : !drafts.length
@@ -289,7 +276,6 @@ export default function FixStartDialog({
      tool answered, consent already given, nothing holding it. The summary
      says what will happen; the rest is one click away. */
   const compact =
-    !details &&
     !!main &&
     !!estimate &&
     !held &&
@@ -338,6 +324,153 @@ export default function FixStartDialog({
     );
   };
 
+  /* The drafts are reviewed before any change is tried (B31) — until then
+     the one main action is the review; after it, the run. */
+  const needsReview = !!main && drafts.length > 0 && !reviewed;
+  const reviewLabel =
+    reviewRows.length > 0 ? "Continue review" : "Review the drafts";
+  const scenariosLine = reviewed
+    ? `${runDrafts.length} reviewed ${runDrafts.length === 1 ? "scenario" : "scenarios"} from ${traceTotal} failing traces · reproduced first, some held back to prove the change`
+    : reviewRows.length > 0
+      ? `${reviewStats.kept} of ${reviewRows.length} ${reviewRows.length === 1 ? "draft" : "drafts"} kept so far · review each before any change is tried`
+      : `${drafts.length} ${drafts.length === 1 ? "draft" : "drafts"} from ${traceTotal} failing traces${plan.capped ? `, the ${drafts.length} most common of ${plan.allDrafts.length}` : ""} · review each before any change is tried`;
+  /* The budget, said the same way the Fix page and the setup sheet say it. */
+  const budgetLine = epochBudgetLine({
+    candidates: estimate?.runs,
+    credits: creditsLabel(spend),
+    minutes: plan.minutes,
+  });
+  const inlineLink = {
+    typography: "s3",
+    fontWeight: 600,
+    verticalAlign: "baseline",
+  };
+  const cantRunLine = main && (plan.cantRun || []).length > 0 && (
+    <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>
+      {`${plan.cantRun.length} more can't run on ${main.name} yet, so ${plan.cantRun.length === 1 ? "it's" : "they're"} left out: ${String(
+        plan.cantRun[0].why || "",
+      )
+        .replace(/\.$/, "")
+        .replace(/^./, (c) => c.toLowerCase())}.`}
+    </Typography>
+  );
+  /* A side path, not a peer of the run: the issue's scenarios as a normal run. */
+  const reproduceLink = plan.ready && !waiting && (
+    <Tooltip
+      arrow
+      title={`Runs the issue's ${runDrafts.length} ${runDrafts.length === 1 ? "scenario" : "scenarios"} ${runRepeats} times each; no change is tried.`}
+    >
+      <Link
+        component="button"
+        type="button"
+        underline="hover"
+        onClick={reproduceOnly}
+        sx={{ ...inlineLink, display: "block", mt: 0.5 }}
+      >
+        {`Run scenarios only${runPrice != null ? ` · ≈ ${Math.round(runPrice).toLocaleString()} credits` : ""}`}
+      </Link>
+    </Tooltip>
+  );
+  const scenariosRow = (
+    <Row k="Scenarios">
+      <Typography sx={{ typography: "s2" }}>
+        {scenariosLine}
+        {reviewed && (
+          <>
+            <Box component="span" sx={{ color: "text.disabled" }}>
+              {" · "}
+            </Box>
+            <Link
+              component="button"
+              type="button"
+              underline="hover"
+              onClick={startReview}
+              sx={{ typography: "s2", verticalAlign: "baseline" }}
+            >
+              Open review
+            </Link>
+          </>
+        )}
+      </Typography>
+      {cantRunLine}
+      {/* Names, compactly: scenarios when there are few, the situations
+          they share when there are many — three, then the rest in a short
+          scrolling list, so the buttons never move off screen. */}
+      {!compact && listed.length > 0 && (
+        <Box
+          component="ul"
+          sx={{
+            m: 0,
+            mt: 0.5,
+            p: 0,
+            listStyle: "none",
+            ...(showAll && { maxHeight: 168, overflowY: "auto" }),
+          }}
+        >
+          {(showAll ? listed : listed.slice(0, 3)).map((x) => (
+            <Stack
+              key={x.id}
+              component="li"
+              direction="row"
+              spacing={1}
+              sx={{ minWidth: 0, lineHeight: "20px" }}
+            >
+              <Typography
+                noWrap
+                title={x.label}
+                sx={{
+                  typography: "s3",
+                  color: "text.secondary",
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              >
+                {x.label}
+              </Typography>
+              {x.meta && (
+                <Typography
+                  noWrap
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    flexShrink: 0,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {x.meta}
+                </Typography>
+              )}
+            </Stack>
+          ))}
+        </Box>
+      )}
+      {!compact && listed.length > 3 && (
+        <Link
+          component="button"
+          type="button"
+          underline="hover"
+          onClick={() => setShowAll((v) => !v)}
+          sx={{ ...inlineLink, color: "text.secondary" }}
+        >
+          {showAll
+            ? "Show fewer"
+            : `Show all ${listed.length} ${grouped ? "situations" : "scenarios"}`}
+        </Link>
+      )}
+      {!compact && plan.capped && (
+        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}>
+          {`Pick others in Edit plan: ${plan.allDrafts.length - drafts.length} more aren't in this epoch.`}
+        </Typography>
+      )}
+      {reproduceLink}
+    </Row>
+  );
+  /* The full plan: one link, never a second button beside the main one. */
+  const primaryOpensPlan =
+    !!held &&
+    !(!main && agent) &&
+    !(main && !plan.building && issueNeeds.length);
+
   return (
     <>
       <TraceReviewDrawer
@@ -347,8 +480,21 @@ export default function FixStartDialog({
         envState={mainState}
         patch={patchMain}
         importId={reviewId}
-        onApprove={() => setReviewing(false)}
-        doneLabel="Back to the fix"
+        onApprove={(rows) => {
+          const ids = new Set(rows.map((r) => r.id));
+          patchMain({
+            scenarios: (mainState?.scenarios || []).map((r) =>
+              ids.has(r.id)
+                ? {
+                    ...r,
+                    traceReview: { ...(r.traceReview || {}), kept: true },
+                  }
+                : r,
+            ),
+          });
+          setReviewing(false);
+        }}
+        approveLabel={(n) => (n ? `Use ${n} in the epoch` : "Use in the epoch")}
       />
       <ClosableDialog
         open={open && !reviewing}
@@ -358,7 +504,7 @@ export default function FixStartDialog({
       >
         <Box sx={{ px: 2.5, pt: 2.5, pb: 1 }}>
           <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-            {`Fix ${issueId}`}
+            {`Run Epoch · ${issueId}`}
           </Typography>
           <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
             {issue?.title || issue?.error_name || ""}
@@ -366,12 +512,12 @@ export default function FixStartDialog({
         </Box>
         <Box sx={{ px: 2.5 }}>
           {lastStatus && (
-            <Row k="Last fix">
+            <Row k="Last epoch">
               <Typography sx={{ typography: "s2" }}>
                 {[
                   `${lastStatus.label}${lastStatus.detail ? ` · ${lastStatus.detail}` : ""}`,
                   lastTrials &&
-                    `${lastTrials} ${lastTrials === 1 ? "trial" : "trials"} tried`,
+                    `${lastTrials} ${lastTrials === 1 ? "candidate" : "candidates"} tried`,
                   lastRecord?.createdAt &&
                     new Date(lastRecord.createdAt).toLocaleDateString("en-GB", {
                       day: "numeric",
@@ -393,7 +539,7 @@ export default function FixStartDialog({
                   }}
                   sx={{ typography: "s2", verticalAlign: "baseline" }}
                 >
-                  View last fix
+                  View last epoch
                 </Link>
               </Typography>
               <Typography
@@ -403,37 +549,17 @@ export default function FixStartDialog({
               </Typography>
             </Row>
           )}
+          <Row k="Agent">
+            <Typography sx={{ typography: "s2" }}>{agent?.name}</Typography>
+          </Row>
           {compact ? (
             <>
-              <Row k="Agent">
-                <Typography sx={{ typography: "s2" }}>{agent?.name}</Typography>
-              </Row>
               <Row k="Runs in">
                 <Typography sx={{ typography: "s2" }}>{main.name}</Typography>
               </Row>
-              {main && drafts.length > 0 && (
-                <Box sx={{ mb: 1.5 }}>
-                  <FixReviewRow
-                    total={reviewRows.length || drafts.length}
-                    traceTotal={traceTotal}
-                    started={reviewRows.length > 0}
-                    stats={reviewStats}
-                    reviewed={reviewed}
-                    onReview={startReview}
-                  />
-                </Box>
-              )}
-              <Row k="Scenarios">
-                <Typography sx={{ typography: "s2" }}>
-                  {reviewed
-                    ? `${runDrafts.length} reviewed ${runDrafts.length === 1 ? "scenario" : "scenarios"} from ${traceTotal} failing traces · reproduced first, some held back to prove the fix`
-                    : `${drafts.length} ${drafts.length === 1 ? "scenario" : "scenarios"} from ${traceTotal} failing traces${plan.capped ? ` — the ${drafts.length} most common of ${plan.allDrafts.length}` : ""} · reproduced first, some held back to prove the fix`}
-                </Typography>
-              </Row>
+              {scenariosRow}
               <Row k="Budget">
-                <Typography sx={{ typography: "s2" }}>
-                  {`Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`}
-                </Typography>
+                <Typography sx={{ typography: "s2" }}>{budgetLine}</Typography>
                 {liveConsent && (
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
@@ -442,29 +568,12 @@ export default function FixStartDialog({
                   </Typography>
                 )}
               </Row>
-              <Link
-                component="button"
-                type="button"
-                underline="hover"
-                onClick={() => setDetails(true)}
-                sx={{
-                  typography: "s3",
-                  fontWeight: 600,
-                  color: "text.secondary",
-                  mt: 0.5,
-                }}
-              >
-                Show details
-              </Link>
             </>
           ) : (
             <>
-              <Row k="Agent">
-                <Typography sx={{ typography: "s2" }}>{agent?.name}</Typography>
-              </Row>
               <Row k="Runs in">
                 {envs.length > 1 ? (
-                  /* Several: pick one for this fix — the agent's main stays as it is. */
+                  /* Several: pick one for this epoch — the agent's main stays as it is. */
                   <Select
                     size="small"
                     value={main?.id || ""}
@@ -509,7 +618,7 @@ export default function FixStartDialog({
                   <Typography sx={{ typography: "s2" }}>
                     {main ? main.name : "No environment yet"}
                     {/* Its only one: another is built from the agent, never
-                  borrowed from another agent's environment. */}
+                        borrowed from another agent's environment. */}
                     {main && envs.length === 1 && agent && (
                       <>
                         <Box component="span" sx={{ color: "text.disabled" }}>
@@ -532,7 +641,7 @@ export default function FixStartDialog({
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
                   >
-                    {`A fix tests its changes in an environment. Build one from ${agent.name} first.`}
+                    {`An epoch tests its changes in an environment. Build one from ${agent.name} first.`}
                   </Typography>
                 )}
                 {main && !envFitsIssue(main, issue) && (
@@ -555,7 +664,7 @@ export default function FixStartDialog({
                   </Typography>
                 )}
                 {/* Said before anything is spent, with what it actually affects,
-              and fixed right here. */}
+                    and fixed right here. */}
                 {main && toolGap.length > 0 && (
                   <Stack direction="row" spacing={0.75} sx={{ mt: 0.5 }}>
                     <Iconify
@@ -579,129 +688,23 @@ export default function FixStartDialog({
                       {issueNeeds.length
                         ? `The issue goes through ${issueNeeds.join(", ")}, which ${main.name} can't answer yet. `
                         : `${toolGap.length} of the agent's tools aren't in ${main.name} (${toolGap.slice(0, 2).join(", ")}${toolGap.length > 2 ? "…" : ""}). The issue doesn't use them, but scenarios that do won't count in the check that nothing breaks. `}
-                      <Link
-                        component="button"
-                        type="button"
-                        underline="hover"
-                        onClick={teach}
-                        sx={{
-                          typography: "s3",
-                          fontWeight: 600,
-                          verticalAlign: "baseline",
-                        }}
-                      >
-                        {`${teachLabel} · a few seconds`}
-                      </Link>
+                      {/* The main action teaches it when the issue needs it. */}
+                      {!issueNeeds.length && (
+                        <Link
+                          component="button"
+                          type="button"
+                          underline="hover"
+                          onClick={teach}
+                          sx={inlineLink}
+                        >
+                          {`${teachLabel} · a few seconds`}
+                        </Link>
+                      )}
                     </Typography>
                   </Stack>
                 )}
               </Row>
-              {main && drafts.length > 0 && (
-                <Box sx={{ mb: 1.5 }}>
-                  <FixReviewRow
-                    total={reviewRows.length || drafts.length}
-                    traceTotal={traceTotal}
-                    started={reviewRows.length > 0}
-                    stats={reviewStats}
-                    reviewed={reviewed}
-                    onReview={startReview}
-                  />
-                </Box>
-              )}
-              <Row k="Scenarios">
-                <Typography sx={{ typography: "s2" }}>
-                  {reviewed
-                    ? `${runDrafts.length} reviewed ${runDrafts.length === 1 ? "scenario" : "scenarios"} from ${traceTotal} failing traces · reproduced first, some held back to prove the fix`
-                    : `${drafts.length} ${drafts.length === 1 ? "scenario" : "scenarios"} from ${traceTotal} failing traces${plan.capped ? ` — the ${drafts.length} most common of ${plan.allDrafts.length}` : ""} · reproduced first, some held back to prove the fix`}
-                </Typography>
-                {/* The run skips what can't stage here, so the fix leaves it out too. */}
-                {main && (plan.cantRun || []).length > 0 && (
-                  <Typography
-                    sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
-                  >
-                    {`${plan.cantRun.length} more ${plan.cantRun.length === 1 ? "can't" : "can't"} run on ${main.name} yet, so ${plan.cantRun.length === 1 ? "it's" : "they're"} left out: ${String(
-                      plan.cantRun[0].why || "",
-                    )
-                      .replace(/\.$/, "")
-                      .toLowerCase()}.`}
-                  </Typography>
-                )}
-                {/* Names, compactly: scenarios when there are few, the situations
-              they share when there are many — three, then the rest in a
-              short scrolling list, so the buttons never move off screen. */}
-                {listed.length > 0 && (
-                  <Box
-                    component="ul"
-                    sx={{
-                      m: 0,
-                      mt: 0.5,
-                      p: 0,
-                      listStyle: "none",
-                      ...(showAll && { maxHeight: 168, overflowY: "auto" }),
-                    }}
-                  >
-                    {(showAll ? listed : listed.slice(0, 3)).map((x) => (
-                      <Stack
-                        key={x.id}
-                        component="li"
-                        direction="row"
-                        spacing={1}
-                        sx={{ minWidth: 0, lineHeight: "20px" }}
-                      >
-                        <Typography
-                          noWrap
-                          title={x.label}
-                          sx={{
-                            typography: "s3",
-                            color: "text.secondary",
-                            flex: 1,
-                            minWidth: 0,
-                          }}
-                        >
-                          {x.label}
-                        </Typography>
-                        {x.meta && (
-                          <Typography
-                            noWrap
-                            sx={{
-                              typography: "s3",
-                              color: "text.tertiary",
-                              flexShrink: 0,
-                              fontVariantNumeric: "tabular-nums",
-                            }}
-                          >
-                            {x.meta}
-                          </Typography>
-                        )}
-                      </Stack>
-                    ))}
-                  </Box>
-                )}
-                {listed.length > 3 && (
-                  <Link
-                    component="button"
-                    type="button"
-                    underline="hover"
-                    onClick={() => setShowAll((v) => !v)}
-                    sx={{
-                      typography: "s3",
-                      fontWeight: 600,
-                      color: "text.secondary",
-                    }}
-                  >
-                    {showAll
-                      ? "Show fewer"
-                      : `Show all ${listed.length} ${grouped ? "situations" : "scenarios"}`}
-                  </Link>
-                )}
-                {plan.capped && (
-                  <Typography
-                    sx={{ typography: "s3", color: "text.tertiary", mt: 0.5 }}
-                  >
-                    {`Pick others in Edit plan — ${plan.allDrafts.length - drafts.length} more aren't in this fix.`}
-                  </Typography>
-                )}
-              </Row>
+              {scenariosRow}
               {/* A live agent that already consented: said, so nothing looks missing. */}
               {liveConsent && (
                 <Row k="Live tests">
@@ -725,32 +728,21 @@ export default function FixStartDialog({
                   <Typography
                     sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
                   >
-                    {SHOW_RUN_COST
-                      ? `Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min.`
-                      : `Up to ${estimate.runs} trials · ${estimate.minutes} min.`}
+                    {budgetLine}
                   </Typography>
+                  {/* A cost breakdown before the epoch starts is Later (costFlags). */}
+                  {SHOW_RUN_COST && (
+                    <Box sx={{ mt: 1 }}>
+                      <CostPartsTable
+                        parts={estimate.parts}
+                        totalLabel="Up to"
+                        totalUsd={estimate.likely}
+                      />
+                    </Box>
+                  )}
                 </Row>
               )}
-              {main && estimate && (
-                <Box
-                  sx={{
-                    pt: 1,
-                    pb: 0.5,
-                    borderTop: "1px solid",
-                    borderColor: "divider",
-                  }}
-                >
-                  {/* A cost breakdown before the fix starts is Later (plan improve §4). */}
-                  {SHOW_RUN_COST && (
-                    <CostPartsTable
-                      parts={estimate.parts}
-                      totalLabel="Up to"
-                      totalUsd={estimate.likely}
-                    />
-                  )}
-                </Box>
-              )}
-              {/* A live agent: consent is given here, then Start fix — never a page away. */}
+              {/* A live agent: consent is given here, then the run — never a page away. */}
               {!held && plan.consentNeeded && (
                 <Box
                   sx={{
@@ -783,6 +775,15 @@ export default function FixStartDialog({
               )}
             </>
           )}
+          {/* Why the run is off, said where the person is looking — never a
+              silently disabled button. */}
+          {!held && !needsReview && waiting && (
+            <Typography
+              sx={{ typography: "s3", color: "text.primary", pt: 1.25 }}
+            >
+              Choose how its tools are handled to start: this agent runs live.
+            </Typography>
+          )}
         </Box>
         <Stack
           direction="row"
@@ -797,29 +798,24 @@ export default function FixStartDialog({
           }}
         >
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            {/* Why Start is off, said where the person is looking — never a
-              silently disabled button. */}
-            {plan.ready && waiting && !held ? (
-              <Typography sx={{ typography: "s3", color: "text.primary" }}>
-                Choose how its tools are handled to start — this agent runs
-                live.
-              </Typography>
-            ) : (
-              plan.ready && (
-                <Tooltip
-                  arrow
-                  title={`Runs the issue's ${drafts.length} ${drafts.length === 1 ? "scenario" : "scenarios"} ${runRepeats} times each; no fix is tried.`}
+            {!primaryOpensPlan && (
+              <Tooltip
+                arrow
+                title="Change the diagnosis, scenarios, budget or rules before starting."
+              >
+                <Link
+                  component="button"
+                  type="button"
+                  underline="hover"
+                  onClick={() => {
+                    onClose();
+                    onAdjust();
+                  }}
+                  sx={{ typography: "s2", fontWeight: 600 }}
                 >
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    onClick={reproduceOnly}
-                    sx={{ ml: -1 }}
-                  >
-                    {`Run scenarios only${runPrice != null ? ` · ≈ ${Math.round(runPrice).toLocaleString()} credits` : ""}`}
-                  </Button>
-                </Tooltip>
-              )
+                  Edit plan
+                </Link>
+              </Tooltip>
             )}
           </Box>
           <Button
@@ -829,18 +825,13 @@ export default function FixStartDialog({
           >
             Cancel
           </Button>
-          <Tooltip
-            arrow
-            title={
-              held
-                ? ""
-                : "Change the diagnosis, scenarios, budget or rules before starting."
-            }
-          >
+          {/* One main action at a time: what's holding it, else the review,
+              else the run. */}
+          {held ? (
             <Button
               size="small"
-              variant={held ? "contained" : "outlined"}
-              color={held ? "primary" : "inherit"}
+              variant="contained"
+              color="primary"
               onClick={() => {
                 /* No environment: build one, the same way the agent page does. */
                 if (!main && agent) {
@@ -855,33 +846,34 @@ export default function FixStartDialog({
                 onClose();
                 onAdjust();
               }}
-              sx={held ? undefined : { borderColor: "divider" }}
             >
               {!main && agent
                 ? "Build environment"
                 : main && !plan.building && issueNeeds.length
                   ? teachLabel
-                  : held
-                    ? "Open the full plan"
-                    : "Edit plan"}
+                  : "Open the full plan"}
             </Button>
-          </Tooltip>
-          {!held && (
+          ) : needsReview ? (
             <Button
               size="small"
               variant="contained"
               color="primary"
-              disabled={
-                waiting ||
-                starting ||
-                (!!main && drafts.length > 0 && !reviewed)
-              }
+              onClick={startReview}
+            >
+              {reviewLabel}
+            </Button>
+          ) : (
+            <Button
+              size="small"
+              variant="contained"
+              color="primary"
+              disabled={waiting || starting}
               onClick={start}
               startIcon={<Iconify icon="solar:play-bold" width={14} />}
             >
               {main && drafts.length > 0
-                ? "Run to reproduce, then fix"
-                : "Start fix"}
+                ? "Reproduce, then run the epoch"
+                : "Run Epoch"}
             </Button>
           )}
         </Stack>
@@ -908,63 +900,6 @@ export default function FixStartDialog({
     </>
   );
 }
-/* The fix's first step: the issue's drafts, reviewed like any import. */
-function FixReviewRow({
-  total,
-  traceTotal,
-  started,
-  stats,
-  reviewed,
-  onReview,
-}) {
-  const ready = stats.ready || 0;
-  const blocked = stats.blocked || 0;
-  return (
-    <Stack
-      direction="row"
-      alignItems="center"
-      spacing={1.5}
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
-        px: 1.5,
-        py: 1,
-      }}
-    >
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          {reviewed ? "Tests reviewed" : "Turn the issue into tests first"}
-        </Typography>
-        <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-          {started
-            ? `${ready} of ${total} draft${total === 1 ? "" : "s"} ready${blocked ? ` · ${blocked} blocked` : ""} — each is reviewed for personal data, what should have happened and its starting state.`
-            : `${total} drafts from ${traceTotal} failing traces. Review each one — personal data, what should have happened, its starting state — before any fix is tried.`}
-        </Typography>
-      </Box>
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={onReview}
-        sx={{ flexShrink: 0 }}
-      >
-        {reviewed
-          ? "Open review"
-          : started
-            ? "Continue review"
-            : "Review the drafts"}
-      </Button>
-    </Stack>
-  );
-}
-FixReviewRow.propTypes = {
-  total: PropTypes.number,
-  traceTotal: PropTypes.number,
-  started: PropTypes.bool,
-  stats: PropTypes.object,
-  reviewed: PropTypes.bool,
-  onReview: PropTypes.func.isRequired,
-};
 
 FixStartDialog.propTypes = {
   open: PropTypes.bool,
@@ -972,6 +907,6 @@ FixStartDialog.propTypes = {
   issue: PropTypes.object,
   plan: PropTypes.object.isRequired,
   onAdjust: PropTypes.func.isRequired,
-  /* (envId) — the environment picked for this fix. */
+  /* (envId) — the environment picked for this epoch. */
   onEnv: PropTypes.func,
 };

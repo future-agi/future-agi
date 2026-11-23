@@ -44,16 +44,6 @@ const TIME_RANGE_OPTIONS = [
   { value: "90", label: "Last 90 days" },
 ];
 
-const FIX_LAYER_OPTIONS = [
-  { value: "", label: "All Fix Layers" },
-  { value: "Prompt", label: "Prompt" },
-  { value: "Tools", label: "Tools" },
-  { value: "Orchestration", label: "Orchestration" },
-  { value: "Guardrails", label: "Guardrails" },
-  { value: "Data", label: "Data" },
-  { value: "Memory", label: "Memory" },
-];
-
 const SOURCE_OPTIONS = [
   { value: "", label: "All Sources" },
   { value: "scanner", label: "Scanner" },
@@ -283,8 +273,6 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
     setSelectedStatus,
     selectedSeverity,
     setSelectedSeverity,
-    selectedFixLayer,
-    setSelectedFixLayer,
     timeRange,
     setTimeRange,
   } = useErrorFeedStore();
@@ -309,7 +297,7 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
           <OutlinedInput
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search errors or IDs"
+            placeholder="Search issues or IDs"
             size="small"
             startAdornment={
               <InputAdornment position="start">
@@ -378,14 +366,6 @@ export default function ErrorFeedFilters({ selected, onClearSelection }) {
             value={selectedSeverity}
             onChange={setSelectedSeverity}
             options={SEVERITY_OPTIONS}
-            minWidth={120}
-          />
-          <CompactSelect
-            multiple
-            noun="fix layers"
-            value={selectedFixLayer}
-            onChange={setSelectedFixLayer}
-            options={FIX_LAYER_OPTIONS}
             minWidth={120}
           />
           <CompactSelect

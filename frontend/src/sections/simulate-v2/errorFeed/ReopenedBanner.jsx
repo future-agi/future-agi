@@ -1,9 +1,11 @@
 import PropTypes from "prop-types";
-import { Alert, AlertTitle, Button, Stack, Tooltip } from "@mui/material";
+import { Button } from "@mui/material";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import { useNavigate } from "react-router-dom";
-import Iconify from "src/components/iconify";
 import { useAgentImprovementFlag } from "../_mock/featureFlags";
 import { issueFixNav, useIssueFix } from "./issueFix";
+import IssueStripRow from "./IssueStripRow";
+import { epochNameOf } from "./issueFixHeader";
 
 const ago = (iso) => {
   const m = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
@@ -15,69 +17,50 @@ const ago = (iso) => {
 
 /**
  * An issue that came back after its fix was released. Says which change was
- * meant to fix it — the version, how it shipped, the improvement that proved
- * it — so the reopen is a lead, not just a status. Fix again starts a new
- * improvement; the old one stays as the record of what didn't hold.
+ * meant to fix it — the version, how it shipped, the epoch that proved it —
+ * so the reopen is a lead, not just a status. The header's one primary
+ * button is Fix again (a new epoch); this row keeps View fix, and the old
+ * epoch stays as the record of what didn't hold.
  */
-export default function ReopenedBanner({ issue, onFixAgain }) {
+export default function ReopenedBanner({ issue }) {
   const navigate = useNavigate();
-  const { status, agent, gate } = useIssueFix(issue);
+  const { status, state } = useIssueFix(issue);
   const improving = useAgentImprovementFlag();
   if (!improving || status?.key !== "reopened" || !status.change) return null;
   const c = status.change;
-  /* Same hold as the header's Fix: a disconnected or archived agent — said
-     on hover. Live-test consent isn't one: the Fix
-     drawer asks for it before anything runs. */
-  const blockedWhy =
-    gate && gate.key !== "consent" ? `${gate.title}. ${gate.body}` : null;
   return (
-    <Alert
-      severity="warning"
-      icon={<Iconify icon="solar:restart-linear" width={16} />}
-      sx={{ mx: 2, my: 1.5 }}
+    <IssueStripRow
+      badge={
+        <StatusBadge
+          status="reopened"
+          role="warning"
+          variant="badge"
+          label="Reopened"
+        />
+      }
+      sub={
+        c.reopenedBy
+          ? `The change that was meant to fix it: ${c.name}${c.via ? `, shipped as ${c.via}` : ""}. Run Epoch again starts a new one from production.`
+          : `The change that was meant to fix it: ${c.name}${c.via ? `, shipped as ${c.via}` : ""}. Its scenarios passed, so production does something they don't cover.`
+      }
       action={
-        <Stack direction="row" spacing={1}>
-          <Button
-            size="small"
-            variant="outlined"
-            onClick={() => navigate(...issueFixNav(status, issue?.cluster_id))}
-            sx={{ flexShrink: 0 }}
-          >
-            View fix
-          </Button>
-          {/* No agent linked: the header's Connect agent to fix is the way on. */}
-          {agent && (
-            <Tooltip arrow title={blockedWhy || ""}>
-              <span>
-                <Button
-                  size="small"
-                  variant="contained"
-                  color="primary"
-                  disabled={!!blockedWhy}
-                  onClick={onFixAgain}
-                  sx={{ flexShrink: 0 }}
-                >
-                  Fix again
-                </Button>
-              </span>
-            </Tooltip>
-          )}
-        </Stack>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => navigate(...issueFixNav(status, issue?.cluster_id))}
+          sx={{ flexShrink: 0 }}
+        >
+          {`View ${epochNameOf(state, status) || "Epoch"}`}
+        </Button>
       }
     >
-      <AlertTitle>
-        {c.reopenedBy
-          ? `Reopened by ${c.reopenedBy} ${ago(c.seenAt)} — the fix on agent ${c.version} had been released ${ago(c.releasedAt)}`
-          : `Reopened — seen again on agent ${c.version}, released ${ago(c.releasedAt)}`}
-      </AlertTitle>
       {c.reopenedBy
-        ? `The change that was meant to fix it: ${c.name}${c.via ? `, shipped as ${c.via}` : ""}. Fix again starts a new one from production.`
-        : `The change that was meant to fix it: ${c.name}${c.via ? `, shipped as ${c.via}` : ""}. Its scenarios passed, so production does something they don't cover.`}
-    </Alert>
+        ? `Reopened by ${c.reopenedBy} ${ago(c.seenAt)}. The change on agent ${c.version} had been released ${ago(c.releasedAt)}.`
+        : `Seen again on agent ${c.version}, released ${ago(c.releasedAt)}.`}
+    </IssueStripRow>
   );
 }
 
 ReopenedBanner.propTypes = {
   issue: PropTypes.object,
-  onFixAgain: PropTypes.func,
 };

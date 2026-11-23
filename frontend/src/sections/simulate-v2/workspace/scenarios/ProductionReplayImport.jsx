@@ -13,6 +13,7 @@ import {
   Tooltip,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import { paths } from "src/routes/paths";
 import { SectionCard } from "../../components/primitives";
 import { replayScenarioOf, asProposal } from "../../_mock/scenarioSources";
 import {
@@ -36,7 +37,8 @@ import {
   parseDataset,
   parseTranscript,
 } from "../../_mock/evidenceSources";
-import { useEnvState } from "../../store";
+import { useEnvState, useSimStore } from "../../store";
+import { observeEnvsOf } from "../../_mock/runningNow";
 import CopyCommandButton from "../../components/CopyCommandButton";
 import { TextLink } from "../../agents/connect/connectBits";
 import { relativeTime } from "../../_mock/scenarioProvenance";
@@ -61,27 +63,28 @@ const fmtDuration = (s) =>
  * scenarios should represent and where they go. Drafts then wait for review.
  */
 export default function ProductionReplayImport({
+  mode = "observe",
   env,
   envState,
   onAdd,
   selected,
 }) {
-  /* Evidence brought from outside — an uploaded transcript or a CSV/JSON
-     dataset. Observe traces arrive here only from Observe's "Create
-     environment test" (?from=observe); an issue's traces come through From
-     Error Feed, and failed simulations through From failing cases. */
+  /* Two of Add scenarios' sources. "observe": From production — the agent's
+     Observe traces, or exactly what Observe's "Create environment test"
+     handed over (?from=observe). "files": an uploaded transcript or a
+     CSV/JSON file. An issue's traces come through From an Error Feed issue,
+     and failed simulations through From failing cases. */
   const [searchParams] = useSearchParams();
-  const kinds = [
-    ...(searchParams.get("from") === "observe" ? ["observe"] : []),
-    "transcript",
-    "dataset",
-  ];
+  const kinds = mode === "files" ? ["transcript", "dataset"] : ["observe"];
   const [src, setSrc] = useState(kinds[0]);
   const fileRef = useRef(null);
   const navigate = useNavigate();
   /* The exact sessions, traces or calls picked in Observe — they open frozen,
      so nothing is picked twice from another list (evidence.md, step 1). */
-  const sel = useMemo(() => observeSelectionOf(searchParams), [searchParams]);
+  const sel = useMemo(
+    () => (mode === "observe" ? observeSelectionOf(searchParams) : null),
+    [mode, searchParams],
+  );
   const selTraces = useMemo(
     () => selectionTracesOf(sel, productionTracesOf(env, envState)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,6 +98,15 @@ export default function ProductionReplayImport({
     );
   }, [src, env, envState, sel, selTraces]);
   const noun = EVIDENCE_KINDS[src].noun;
+  /* The Observe project this environment takes traces from — the same
+     link Observe's Create environment test reads. */
+  const { state: simState } = useSimStore();
+  const observeProjectId = useMemo(
+    () =>
+      observeEnvsOf(simState).find((x) => x.envId === env?.id)?.projectId ||
+      null,
+    [simState, env?.id],
+  );
   const project = sel?.project || traceProjectOf(env, envState);
   const unit = sel?.kind || "traces";
   /* What each becomes as a replay, already scrubbed — the only form shown. */
@@ -150,15 +162,18 @@ export default function ProductionReplayImport({
     return () => clearTimeout(t);
   }, [queue]);
   /* Draft imports: a frozen selection saved to finish later. */
-  const drafts0 = envState?.traceImportDrafts || [];
+  const allDrafts = envState?.traceImportDrafts || [];
+  /* Each source lists only its own saved drafts (older ones are Observe's). */
+  const drafts0 = allDrafts.filter((d) => kinds.includes(d.src || "observe"));
   const [draftId, setDraftId] = useState(null);
   const saveDraft = () => {
     const id = draftId || `dimp_${Date.now().toString(36)}`;
     patch({
       traceImportDrafts: [
-        ...drafts0.filter((d) => d.id !== id),
+        ...allDrafts.filter((d) => d.id !== id),
         {
           id,
+          src,
           at: new Date().toISOString(),
           frozen,
           traceIds: frozenTraces.map((t) => t.traceId),
@@ -174,6 +189,7 @@ export default function ProductionReplayImport({
   };
   const resumeDraft = (d) => {
     setDraftId(d.id);
+    if (d.src && kinds.includes(d.src)) setSrc(d.src);
     setFrozen(d.frozen);
     setGoal(d.goal);
     setGroup(d.group || "");
@@ -182,13 +198,14 @@ export default function ProductionReplayImport({
   };
   const dropDraft = (id = draftId) => {
     if (!id) return;
-    patch({ traceImportDrafts: drafts0.filter((d) => d.id !== id) });
+    patch({ traceImportDrafts: allDrafts.filter((d) => d.id !== id) });
     setDraftId(null);
   };
   const chosen = traces.filter((c) => picked[c.id]);
   const frozenTraces = traces.filter((t) => frozen.includes(t.id));
   const goalMeta = TRACE_GOALS.find((g) => g.id === goal);
   const noState = frozenTraces.filter((t) => !t.evidence.startingState);
+  const passedTraces = frozenTraces.filter((t) => t.outcome === "passed");
   const noTools = frozenTraces.filter((t) => !t.evidence.tools);
   const groups = groupsOf(envState);
 
@@ -448,7 +465,7 @@ export default function ProductionReplayImport({
               </Typography>
               <Stack spacing={0.75}>
                 {TRACE_GOALS.map((g) => {
-                  const off = g.later || (g.min || 1) > frozenTraces.length;
+                  const off = (g.min || 1) > frozenTraces.length;
                   const on = goal === g.id;
                   return (
                     <Box
@@ -479,16 +496,23 @@ export default function ProductionReplayImport({
                       <Typography
                         sx={{ typography: "s3", color: "text.tertiary" }}
                       >
-                        {g.later
-                          ? "Comes later"
-                          : off
-                            ? `Needs ${g.min} or more traces`
-                            : `Needs: ${g.needs}`}
+                        {off
+                          ? `Needs ${g.min} or more traces`
+                          : `Needs: ${g.needs}`}
                       </Typography>
                     </Box>
                   );
                 })}
               </Stack>
+              {/* A trace that passed has no failure to reproduce — said
+                  before anything is created, and drafted as a regression. */}
+              {goal === "reproduce" && passedTraces.length > 0 && (
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.75 }}
+                >
+                  {`${passedTraces.map((t) => t.traceId).join(", ")} passed — ${passedTraces.length === 1 ? "it's" : "they're"} drafted as a regression to keep, not a failure to reproduce.`}
+                </Typography>
+              )}
               {/* Missing evidence, said before anything is created. */}
               {goal === "reproduce" && noState.length > 0 && (
                 <Typography
@@ -498,7 +522,7 @@ export default function ProductionReplayImport({
                     mt: 0.75,
                   }}
                 >
-                  {`${noState.map((t) => t.traceId).join(", ")} ${noState.length === 1 ? "has" : "have"} no starting state — at review you add it, replay the recorded responses instead, or keep ${noState.length === 1 ? "it" : "them"} blocked. Never called an exact reproduction.`}
+                  {`${noState.map((t) => t.traceId).join(", ")} ${noState.length === 1 ? "has" : "have"} no starting state — the draft makes it up and labels it synthetic, so it's not an exact replay. You can add the real data at review.`}
                 </Typography>
               )}
               {goal === "replay" && noTools.length > 0 && (
@@ -626,7 +650,7 @@ export default function ProductionReplayImport({
       >
         <Box flex={1} minWidth={0}>
           <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            Import evidence
+            {mode === "files" ? "Upload transcript or file" : "From production"}
           </Typography>
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
             {src === "observe"
@@ -638,31 +662,44 @@ export default function ProductionReplayImport({
           <Stack
             direction="row"
             spacing={0.5}
+            alignItems="center"
             sx={{ mt: 0.75, flexWrap: "wrap" }}
           >
-            {kinds
-              .map((id) => [id, EVIDENCE_KINDS[id]])
-              .map(([id, k]) => (
-                <Button
-                  variant="outlined"
-                  key={id}
-                  size="small"
-                  onClick={() => {
-                    setSrc(id);
-                    setPicked({});
-                  }}
-                  sx={{
-                    px: 1,
-                    minWidth: 0,
-                    height: 24,
-                    typography: "s3",
-                    color: src === id ? "text.primary" : "text.secondary",
-                    bgcolor: src === id ? "action.selected" : "transparent",
-                  }}
-                >
-                  {k.label}
-                </Button>
-              ))}
+            {/* Picking in Observe itself: its table, filters and sessions —
+                Create environment test there brings the pick back here. */}
+            {mode === "observe" && observeProjectId && (
+              <TextLink
+                onClick={() =>
+                  navigate(`${paths.dashboard.observe}/${observeProjectId}`)
+                }
+              >
+                Pick traces or sessions in Observe
+              </TextLink>
+            )}
+            {kinds.length > 1 &&
+              kinds
+                .map((id) => [id, EVIDENCE_KINDS[id]])
+                .map(([id, k]) => (
+                  <Button
+                    variant="outlined"
+                    key={id}
+                    size="small"
+                    onClick={() => {
+                      setSrc(id);
+                      setPicked({});
+                    }}
+                    sx={{
+                      px: 1,
+                      minWidth: 0,
+                      height: 24,
+                      typography: "s3",
+                      color: src === id ? "text.primary" : "text.secondary",
+                      bgcolor: src === id ? "action.selected" : "transparent",
+                    }}
+                  >
+                    {k.label}
+                  </Button>
+                ))}
             {(src === "transcript" || src === "dataset") && (
               <>
                 <input
@@ -795,6 +832,23 @@ export default function ProductionReplayImport({
         </Box>
       )}
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+        {traces.length === 0 && (
+          <Typography
+            sx={{
+              typography: "s2",
+              color: "text.tertiary",
+              px: 2.5,
+              py: 4,
+              textAlign: "center",
+            }}
+          >
+            {src === "observe"
+              ? "No traces from this agent yet."
+              : src === "transcript"
+                ? "No transcripts yet — upload a .txt, .md or .json file."
+                : "No files yet — upload a .csv or .json file."}
+          </Typography>
+        )}
         {traces.map((c) => (
           <ConversationRow
             key={c.id}
@@ -810,6 +864,7 @@ export default function ProductionReplayImport({
   );
 }
 ProductionReplayImport.propTypes = {
+  mode: PropTypes.oneOf(["observe", "files"]),
   env: PropTypes.object,
   envState: PropTypes.object,
   onAdd: PropTypes.func,

@@ -48,6 +48,7 @@ import {
   validatingRunBlock,
 } from "../_mock/validating";
 import { currentUser } from "../_mock/scenarioProvenance";
+import { importChatOf } from "../_mock/importReview";
 import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
 import { BOOT_STEPS } from "../_mock/runStream";
@@ -2316,6 +2317,30 @@ export default function EnvironmentWorkspace() {
     ]);
     setChatRunning(true);
     if (hasSelection) clearScenarioSelection();
+
+    /*
+      Handed over by Review imported evidence: change one drafted scenario
+      ("Edit with the builder"), or cover what some imported cases need
+      ("Update environment"). The drafts stay waiting for review either way.
+    */
+    const importAsk = importChatOf(trimmed, latestEnvState.current, {
+      by: currentUser().name,
+    });
+    if (importAsk) {
+      setTimeout(() => {
+        setChatRunning(false);
+        if (importAsk.patch) patch(importAsk.patch);
+        setTurns((cur) => [
+          ...cur,
+          {
+            id: `a-${Date.now()}-${cur.length}`,
+            role: "assistant",
+            steps: [{ kind: "note", text: importAsk.reply }],
+          },
+        ]);
+      }, 900);
+      return undefined;
+    }
 
     /*
       A correction to the contract after the build — a rule, a use case, or

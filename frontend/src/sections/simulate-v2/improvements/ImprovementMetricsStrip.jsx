@@ -22,27 +22,27 @@ export default function ImprovementMetricsStrip({ rows }) {
             "Finished epochs whose proposal someone accepted — shipped as a pull request, a draft or a new version.",
         },
         {
-          label: "Time to a fix to review",
+          label: "Time to a change to review",
           value: minutesLabel(m.time.prompt ?? m.time.code),
           hint:
             m.time.prompt != null && m.time.code != null
-              ? `Prompt fixes · code fixes take ${minutesLabel(m.time.code)}`
+              ? `Prompt changes · code changes take ${minutesLabel(m.time.code)}`
               : m.time.code != null
-                ? "Median · code fixes"
+                ? "Median · code changes"
                 : m.time.prompt != null
-                  ? "Median · prompt fixes"
+                  ? "Median · prompt changes"
                   : "No proposal yet",
           tooltip:
             "Median time from starting an epoch to a proposal ready for review, for prompt-level and code-level changes.",
         },
         {
-          label: "Fix survival at 30 days",
+          label: "Change survival at 30 days",
           value: m.survival ? `${m.survival.rate}%` : "—",
           hint: m.survival
-            ? `${m.survival.n} of ${m.survival.of} released fixes held for 30 days`
-            : "No released fix has finished its 30-day watch",
+            ? `${m.survival.n} of ${m.survival.of} released changes held for 30 days`
+            : "No released change has finished its 30-day watch",
           tooltip:
-            "Released fixes that didn't come back in the 30 days after release.",
+            "Released changes whose issue didn't come back in the 30 days after release.",
         },
       ]}
     />

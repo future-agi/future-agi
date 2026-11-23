@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   Box,
   Chip,
@@ -10,7 +10,6 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import { enqueueSnackbar } from "notistack";
 import {
   useLocation,
   useNavigate,
@@ -19,11 +18,8 @@ import {
 } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { useErrorFeedDetail } from "src/api/errorFeed/mockAdapter";
-import ErrorMetadataPanel, {
-  LinearTeamPicker,
-} from "./components/ErrorMetadataPanel";
+import ErrorMetadataPanel from "./components/ErrorMetadataPanel";
 import OverviewTab from "./components/OverviewTab";
-import SuggestedFixCard from "./components/SuggestedFixCard";
 import TracesTab from "./components/TracesTab";
 import TrendsTab from "./components/TrendsTab";
 import ClusterHeadlineCard from "./components/ClusterHeadlineCard";
@@ -37,8 +33,14 @@ import FixButton from "src/sections/simulate-v2/errorFeed/FixButton";
 import IssueProjectLine from "src/sections/simulate-v2/errorFeed/IssueProjectLine";
 import { useIssueFix } from "src/sections/simulate-v2/errorFeed/issueFix";
 import { useAnalyzeRunner } from "./useAnalyzeRunner";
-import IssueBriefButton from "./IssueBriefButton";
-import IssueExportButton from "./IssueExportButton";
+import IssueActionsMenu from "./IssueActionsMenu";
+import IssueFixStrip from "src/sections/simulate-v2/errorFeed/IssueFixStrip";
+import ErrorStatusChip from "./components/ErrorStatusChip";
+import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
+import {
+  clickable,
+  focusRing,
+} from "src/sections/simulate-v2/components/clickable";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -101,19 +103,9 @@ export default function ErrorFeedDetailView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { activeTab, setActiveTab } = useErrorFeedStore();
-  const [linearPickerOpen, setLinearPickerOpen] = useState(false);
-  const setAnalyzePendingStart = useErrorFeedStore(
-    (s) => s.setAnalyzePendingStart,
-  );
   const { data: detail, isLoading } = useErrorFeedDetail(id);
   const fixSheetOpen = useErrorFeedStore((s) => s.fixSheetOpen);
   const setFixSheetOpen = useErrorFeedStore((s) => s.setFixSheetOpen);
-  const copyText = (text, msg) => {
-    navigator.clipboard
-      ?.writeText(text)
-      .then(() => enqueueSnackbar(msg, { variant: "success" }))
-      .catch(() => {});
-  };
   /* Fix is a page of its own — this issue's address with ?fix=1, so Back
      returns to the issue and the link can be shared. Anything that asks for
      it through the store (the Root cause tab) lands here too. */
@@ -159,7 +151,7 @@ export default function ErrorFeedDetailView() {
 
   useAnalyzeRunner(currentError?.cluster_id, currentError);
   /* Fix needs to know which agent the issue came from. */
-  const { agent: fixAgent, status: fixStatus } = useIssueFix(currentError);
+  const { agent: fixAgent } = useIssueFix(currentError);
   /* Fix and Copy for coding agent carry the same root cause. */
   const rootCause = useIssueRootCause(currentError);
   /* Triage is the issue's own; the fix's status shows beside it, never in
@@ -212,12 +204,12 @@ export default function ErrorFeedDetailView() {
             bgcolor: "background.paper",
           }}
         >
-          {/* Two lines: back · title, then ID · what kind · where. Status, fix,
-              severity, counts and times live in the right rail, so they
-              aren't repeated here.
-              The breadcrumb is the back arrow; the ID copies on click. */}
+          {/* One object header (C3): Error Feed / title on one line, the
+              issue's state and where it comes from on the next. Actions:
+              one ⋯ menu and one primary — the fix action, an epoch on this
+              issue. Status is changed in the right rail. */}
           <Stack direction="row" alignItems="center" gap={2}>
-            <Stack gap={0.25} flex={1} minWidth={0}>
+            <Stack gap={0.5} flex={1} minWidth={0}>
               <Stack direction="row" alignItems="center" gap={1} minWidth={0}>
                 <Tooltip title="Back to Error Feed" arrow>
                   <IconButton
@@ -229,57 +221,80 @@ export default function ErrorFeedDetailView() {
                     <Iconify icon="solar:arrow-left-linear" width={16} />
                   </IconButton>
                 </Tooltip>
-                <Typography
-                  noWrap
-                  sx={{
-                    fontSize: 16,
-                    lineHeight: "24px",
-                    fontWeight: 600,
-                    color: "text.primary",
-                    minWidth: 0,
-                  }}
+                <Stack
+                  direction="row"
+                  alignItems="baseline"
+                  gap={0.75}
+                  minWidth={0}
                 >
-                  {currentError.error.name}
-                </Typography>
+                  <Typography
+                    {...clickable(() => navigate("/dashboard/error-feed"), {
+                      role: "link",
+                    })}
+                    sx={{
+                      typography: "s1",
+                      color: "text.secondary",
+                      flexShrink: 0,
+                      cursor: "pointer",
+                      "&:hover": { color: "text.primary" },
+                      ...focusRing,
+                    }}
+                  >
+                    Error Feed
+                  </Typography>
+                  <Typography
+                    sx={{ typography: "s1", color: "text.disabled", flexShrink: 0 }}
+                  >
+                    /
+                  </Typography>
+                  <Tooltip title={currentError.error.name} arrow>
+                    <Typography
+                      component="h1"
+                      noWrap
+                      sx={{
+                        fontSize: 15,
+                        lineHeight: "22px",
+                        fontWeight: 600,
+                        color: "text.primary",
+                        minWidth: 0,
+                      }}
+                    >
+                      {currentError.error.name}
+                    </Typography>
+                  </Tooltip>
+                </Stack>
               </Stack>
               <Stack
                 direction="row"
                 alignItems="center"
-                gap={0.75}
+                gap={1}
                 minWidth={0}
                 sx={{ pl: 4, overflow: "hidden" }}
               >
-                <Tooltip title="Copy issue ID" arrow>
-                  <Typography
-                    component="button"
-                    onClick={() =>
-                      copyText(currentError.cluster_id, "Issue ID copied")
-                    }
-                    sx={{
-                      flexShrink: 0,
-                      p: 0,
-                      border: 0,
-                      bgcolor: "transparent",
-                      cursor: "pointer",
-                      typography: "s2",
-                      color: "text.secondary",
-                      fontFamily:
-                        "ui-monospace, SFMono-Regular, Menlo, monospace",
-                      "&:hover": { color: "text.primary" },
-                    }}
-                  >
-                    {currentError.cluster_id}
-                  </Typography>
-                </Tooltip>
-                <Typography
-                  typography="s2"
-                  color="text.tertiary"
-                  noWrap
-                  sx={{ flexShrink: 0 }}
-                >
-                  {`· ${errorTypeLabel(currentError.error.type)} ·`}
-                </Typography>
-                {/* The Observe project it comes from, and the agent that project traces. */}
+                {errorTypeLabel(currentError.error.type) && (
+                  <Tooltip arrow title="Error type">
+                    <Chip
+                      size="small"
+                      label={errorTypeLabel(currentError.error.type)}
+                      sx={{ flexShrink: 0 }}
+                    />
+                  </Tooltip>
+                )}
+                <Box sx={{ flexShrink: 0 }}>
+                  <ErrorStatusChip status={currentError.status} />
+                </Box>
+                <Box sx={{ flexShrink: 0 }}>
+                  <ErrorSeverityBadge severity={currentError.severity} />
+                </Box>
+                {currentError.trace_count != null && (
+                  <Chip
+                    size="small"
+                    icon={<Iconify icon="solar:layers-minimalistic-linear" width={12} />}
+                    label={`${currentError.trace_count} ${currentError.trace_count === 1 ? "trace" : "traces"}`}
+                    sx={{ flexShrink: 0 }}
+                  />
+                )}
+                {/* The Tracing project it comes from, and the agent linked to it. */}
                 <Box
                   sx={{
                     minWidth: 0,
@@ -304,27 +319,14 @@ export default function ErrorFeedDetailView() {
               gap={0.75}
               flexShrink={0}
             >
-              <Tooltip title="Copy link" arrow>
-                <IconButton
-                  size="small"
-                  aria-label="Copy link"
-                  onClick={() => copyText(window.location.href, "Link copied")}
-                  sx={{ color: "text.secondary" }}
-                >
-                  <Iconify icon="solar:link-linear" width={16} />
-                </IconButton>
-              </Tooltip>
-              {/* Download the traces or the analysis (#65). */}
-              <IssueExportButton issue={currentError} rootCause={rootCause} />
-              {/* Status is set in the right rail — one place, not two. */}
-              {/* Hand the issue to a coding agent instead. */}
-              <IssueBriefButton
+              {/* Copy link, Share, Export, hand to a coding agent. */}
+              <IssueActionsMenu
                 issue={currentError}
                 agent={fixAgent}
-                sx={{ height: 30, borderRadius: "6px" }}
+                rootCause={rootCause}
               />
-              {/* Fix: prove a change in simulation, ship it as a draft. A
-                  coding agent can join from the sheet. */}
+              {/* The one primary: Fix (an epoch on this issue), or what it
+                  needs first — Connect agent, Link agent — or Retry Epoch N. */}
               <FixButton
                 issue={currentError}
                 onOpenSheet={openFix}
@@ -334,8 +336,10 @@ export default function ErrorFeedDetailView() {
           </Stack>
         </Box>
 
+        {/* What the fix action needs, or how the last epoch ended. */}
+        <IssueFixStrip issue={currentError} />
         {/* A fix that didn't hold — linked to the change. */}
-        <ReopenedBanner issue={currentError} onFixAgain={openFix} />
+        <ReopenedBanner issue={currentError} />
         {/* Once the fix is released: keep its scenarios as must-pass? */}
         <RegressionMemoryRow issue={currentError} />
 
@@ -400,23 +404,7 @@ export default function ErrorFeedDetailView() {
               <Box sx={{ p: 2 }}>
                 {activeTabKey === "overview" && (
                   <Box sx={{ mb: 2 }}>
-                    <ClusterHeadlineCard
-                      error={currentError}
-                      onOpenAnalyze={() => setActiveTab("analyze")}
-                      onStartAnalysis={() => {
-                        setAnalyzePendingStart(currentError.cluster_id, true);
-                        setActiveTab("analyze");
-                      }}
-                      onCreateLinear={() => setLinearPickerOpen(true)}
-                    />
-                    {currentError?.suggested_fix && (
-                      <Box sx={{ mt: 1.5 }}>
-                        <SuggestedFixCard
-                          fix={currentError.suggested_fix}
-                          status={fixStatus}
-                        />
-                      </Box>
-                    )}
+                    <ClusterHeadlineCard error={currentError} />
                   </Box>
                 )}
                 {activeTabKey === "overview" && (
@@ -436,13 +424,6 @@ export default function ErrorFeedDetailView() {
 
       {/* ── Right sidebar ── */}
       <ErrorMetadataPanel error={currentError} />
-
-      <LinearTeamPicker
-        open={linearPickerOpen}
-        onClose={() => setLinearPickerOpen(false)}
-        clusterId={currentError?.cluster_id}
-        traceId={null}
-      />
     </Box>
   );
 }

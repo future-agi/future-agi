@@ -20,6 +20,7 @@ import { rereadFor } from "../_mock/improvementPolicy";
 import { envStateOnVersion } from "../_mock/improvementStart";
 import { expectedRunMs } from "../_mock/runGroup";
 import { currentUser } from "../_mock/scenarioProvenance";
+import { OPT_STATUS } from "../_mock/optimizationRuns";
 import {
   FIX_IN_FLIGHT,
   agentKeyForIssue,
@@ -224,6 +225,32 @@ export function useIssueFix(issue) {
     [status, state, commit],
   );
 
+  /* Retry a stopped epoch (it couldn't run): the same epoch starts again
+     with its scenarios and limits, keeping the check runs that finished.
+     Once only — the same rule as on the epoch's own page. */
+  const retry = useCallback(() => {
+    if (!status?.envId || !status?.optId || !status.failed?.canRetry) return;
+    const es = state.byEnv[status.envId];
+    const optimizations = (es?.optimizations || []).map((o) =>
+      o.id === status.optId
+        ? {
+            ...o,
+            status: OPT_STATUS.RUNNING,
+            startedAt: new Date().toISOString(),
+            result: o.result || o.pendingResult,
+            pendingResult: undefined,
+            pendingEnding: undefined,
+            retries: (o.retries || 0) + 1,
+          }
+        : o,
+    );
+    commit({
+      type: "patchEnvState",
+      envId: status.envId,
+      patch: { optimizations },
+    });
+  }, [status, state, commit]);
+
   return {
     state,
     agent,
@@ -234,6 +261,7 @@ export function useIssueFix(issue) {
     gate,
     evidence,
     start,
+    retry,
     setReopened,
   };
 }

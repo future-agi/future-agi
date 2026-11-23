@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Link, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { diagnosisSummaryOf, goalWords, rejectedFor } from "../_mock/optimizer";
 import { plural } from "../_mock/nudgeEffects";
@@ -8,22 +8,72 @@ import {
   limitRows,
   runsCountOf,
   waitingAt,
+  improvementTotalSpend,
+  startMsOf,
+  stopImprovement,
   IMPROVEMENT_PHASES,
   OPT_STATUS,
   DEFAULT_LIMITS,
 } from "../_mock/optimizationRuns";
-import { creditsLabel } from "../_mock/metering";
+import { creditsForUsd, creditsLabel } from "../_mock/metering";
 import { envVersionNameOf } from "../_mock/codeRefs";
+import { mayChangeListOf } from "./constraintEdits";
 
 /*
-  A running improvement, as the stages a fix goes through — Queued,
-  Reproducing, Diagnosing, Proposing, Checking (Stopping while a stop
-  settles), then Done — one row each, in the key-value
-  shape of the verdict that replaces it when it finishes. The runs it tries
-  arrive in the table below, as real runs; this says only where it is and
-  what each stage is working from.
+  A running epoch, as the stages it goes through — Queued, Reproducing,
+  Diagnosing, Proposing, Checking (Stopping while a stop settles) — one row
+  each, in the key-value shape of the verdict that replaces it when it
+  finishes. The one running view on every path. A finished stage keeps its
+  one-line result; only the stage running now says more, and how long it
+  has been going and what it has spent (a stage can take up to an hour).
+  The candidates it tries arrive in the table below; this says only where
+  it is and what each stage is working from.
 */
 const NUM = { fontVariantNumeric: "tabular-nums" };
+
+/* "14 min ago", "1 h 5 min ago". */
+const agoLabel = (ms) => {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  if (m < 1) return "under a minute ago";
+  if (m < 60) return `${m} min ago`;
+  return `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""} ago`;
+};
+
+/* A text with its first mention of each link token made a text link. */
+function Linked({ text, links }) {
+  const parts = [text];
+  links.forEach(({ token, onClick }) => {
+    const at = parts.findIndex(
+      (p) => typeof p === "string" && p.includes(token),
+    );
+    if (at < 0) return;
+    const [before, ...rest] = parts[at].split(token);
+    parts.splice(
+      at,
+      1,
+      before,
+      <Link
+        key={token}
+        component="button"
+        type="button"
+        underline="hover"
+        onClick={onClick}
+        sx={{
+          typography: "inherit",
+          fontWeight: "inherit",
+          color: "text.primary",
+          verticalAlign: "baseline",
+          textDecoration: "underline",
+          textUnderlineOffset: "3px",
+        }}
+      >
+        {token}
+      </Link>,
+      rest.join(token),
+    );
+  });
+  return parts.filter((p) => p !== "");
+}
 
 function StateIcon({ state }) {
   if (state === "now") {
@@ -150,7 +200,7 @@ export default function ImprovementStages({
                 : `Measured ${version} on ${plural((r.trainMeasured || 0) + (r.heldMeasured || 0), "scenario")}`,
       sub: [
         feed && rep.total
-          ? `Scenarios from ${issueId} are for this fix only.`
+          ? `Scenarios from ${issueId} are for this epoch only.`
           : null,
         /* What measuring today found in the environment — once it has. */
         feed && fromRun && stateOf("reproduce") === "done"
@@ -169,12 +219,12 @@ export default function ImprovementStages({
       ]
         .filter(Boolean)
         .join(" "),
-      /* The environment's run, named so it isn't read as one of this page's runs. */
+      /* The environment's run, a link where the line names it. */
       link:
         fromRun &&
         onOpenRun &&
         (!fromRun.measuredFor || stateOf("reproduce") === "done")
-          ? { label: `Environment Run ${fromRun.ordinal}`, onClick: onOpenRun }
+          ? { token: `Run ${fromRun.ordinal}`, onClick: onOpenRun }
           : null,
     },
     {
@@ -196,10 +246,6 @@ export default function ImprovementStages({
           ? stateOf("reproduce") === "done"
             ? `Aimed at ${goalWords(goal)}: ${plural(r.goalTargets || 0, "scenario")} short of it today.`
             : `Aimed at ${goalWords(goal)}.`
-          : null,
-      link:
-        feed && onOpenIssue
-          ? { label: `View ${issueId}`, onClick: onOpenIssue }
           : null,
     },
     {
@@ -253,13 +299,6 @@ export default function ImprovementStages({
           .filter(Boolean)
           .join(" ") || null,
     },
-    {
-      key: "review",
-      label: "Done",
-      text: "A winner comes back as a new version. You decide whether to make it the default.",
-      sub: null,
-      state: "todo",
-    },
   ];
 
   /* What every run is held to, visible while they're tried (RSI PRD: constraints
@@ -267,24 +306,54 @@ export default function ImprovementStages({
   const mustPassTotal =
     (r.mustPass?.total ?? record.frozen?.mustPass ?? 0) +
     (r.otherEnvs || []).reduce((n, e) => n + (e.mustPass || 0), 0);
-  const heldTo = [
-    ...limitRows(record.limits || DEFAULT_LIMITS, model, {
-      mustPass: mustPassTotal,
-    }).filter(
+  /* What may change reads as the agent's rules name it; the budget is said
+     on the running stage's progress line. */
+  const heldTo = limitRows(record.limits || DEFAULT_LIMITS, model, {
+    mustPass: mustPassTotal,
+  })
+    .filter(
       (c) =>
         !(record.budget && c.id === "budget") &&
         !["cost", "latency"].includes(c.id),
-    ),
-    ...(record.budget
-      ? [
-          {
-            id: "spend",
-            label: "Run budget",
-            value: creditsLabel(record.budget),
-          },
-        ]
-      : []),
-  ];
+    )
+    .map((c) =>
+      c.id === "changes"
+        ? {
+            ...c,
+            label: "May change",
+            value: mayChangeListOf(
+              record.limits || DEFAULT_LIMITS,
+              envState?.agent || null,
+            ),
+          }
+        : c,
+    );
+
+  /* How long the running stage has been going and what it has spent:
+     "Started 14 min ago · 3,120 of 25,000 credits spent". */
+  const progressLine = (() => {
+    if (!running || done || queued) return null;
+    const started = `Started ${agoLabel(Date.now() - startMsOf(record))}`;
+    if (!progress) return started;
+    const spent = creditsForUsd(
+      improvementTotalSpend(
+        stopImprovement(record, progress),
+        record.surface || envState?.surface,
+      ),
+    ).toLocaleString();
+    return record.budget
+      ? `${started} · ${spent} of ${creditsLabel(record.budget)} spent`
+      : `${started} · ${spent} credits spent`;
+  })();
+
+  /* Each link once: the issue where a line first names it, the run likewise. */
+  const issueLink =
+    feed && issueId && onOpenIssue
+      ? { token: issueId, onClick: onOpenIssue }
+      : null;
+  const issueRow = issueLink
+    ? rows.find((row) => String(row.text).includes(issueId))?.key
+    : null;
 
   return (
     <Box
@@ -298,8 +367,19 @@ export default function ImprovementStages({
       }}
     >
       {rows.map((row, i) => {
-        const state = row.state || stateOf(row.key);
+        const state = stateOf(row.key);
         const quiet = state === "todo";
+        const links = [
+          ...(row.key === issueRow ? [issueLink] : []),
+          ...(row.link && String(row.text).includes(row.link.token)
+            ? [row.link]
+            : []),
+        ];
+        /* A run link the line doesn't name goes at its end. */
+        const trailing =
+          row.link && !String(row.text).includes(row.link.token)
+            ? row.link
+            : null;
         return (
           <Stack
             key={row.key}
@@ -345,27 +425,35 @@ export default function ImprovementStages({
                   ...NUM,
                 }}
               >
-                {row.text}
+                <Linked text={row.text} links={links} />
+                {trailing && (
+                  <>
+                    {" · "}
+                    <Linked text={trailing.token} links={[trailing]} />
+                  </>
+                )}
               </Typography>
-              {row.sub && !quiet && (
+              {/* The detail is the running stage's alone. */}
+              {row.sub && state === "now" && (
                 <Typography
                   sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
                 >
                   {row.sub}
                 </Typography>
               )}
+              {state === "now" && progressLine && (
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.secondary",
+                    mt: 0.25,
+                    ...NUM,
+                  }}
+                >
+                  {progressLine}
+                </Typography>
+              )}
             </Box>
-            {row.link && (
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={row.link.onClick}
-                endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-                sx={{ flexShrink: 0, minWidth: 0 }}
-              >
-                {row.link.label}
-              </Button>
-            )}
           </Stack>
         );
       })}

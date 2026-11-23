@@ -432,8 +432,14 @@ export function ReceiptButton({
   attempts,
   identity = null,
   envSnapshot = null,
+  /* Opened from elsewhere (the epoch page's ⋯ menu): no button of its own. */
+  open: openFrom,
+  onClose: closeFrom,
 }) {
-  const [open, setOpen] = useState(false);
+  const [openHere, setOpenHere] = useState(false);
+  const controlled = openFrom !== undefined;
+  const open = controlled ? openFrom : openHere;
+  const setOpen = (v) => (controlled ? !v && closeFrom?.() : setOpenHere(v));
   /* The seal as the receipt was written, and what Verify found. */
   const [sealed, setSealed] = useState(null);
   const [check, setCheck] = useState(null);
@@ -465,15 +471,17 @@ export function ReceiptButton({
     );
   return (
     <>
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={openReceipt}
-        startIcon={<Iconify icon="solar:document-text-linear" width={14} />}
-        sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
-      >
-        Receipt
-      </Button>
+      {!controlled && (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={openReceipt}
+          startIcon={<Iconify icon="solar:document-text-linear" width={14} />}
+          sx={{ color: "text.primary", borderColor: "divider", flexShrink: 0 }}
+        >
+          Receipt
+        </Button>
+      )}
       <Dialog
         open={open}
         onClose={() => setOpen(false)}
@@ -592,4 +600,6 @@ ReceiptButton.propTypes = {
   attempts: PropTypes.array,
   identity: PropTypes.string,
   envSnapshot: PropTypes.string,
+  open: PropTypes.bool,
+  onClose: PropTypes.func,
 };

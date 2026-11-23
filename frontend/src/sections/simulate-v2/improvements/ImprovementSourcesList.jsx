@@ -14,7 +14,6 @@ import {
   InputAdornment,
   Stack,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import { neutralCheckboxSx } from "../components/primitives";
@@ -29,6 +28,7 @@ import { formatCreatedAt, modalityOfSurface } from "./improvementSources";
 import StatusPill from "./ImprovementStatusPill";
 import { ROW_HEIGHT as DS_ROW_HEIGHT } from "src/theme/sizes";
 import ClosableDialog from "../components/ClosableDialog";
+import { agentIdOf, envAgentKey } from "../_mock/agentRegistry";
 
 const compactInputSx = {
   "& .MuiInputBase-root": { typography: "s2", height: 32 },
@@ -259,10 +259,20 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
     setConfirmDelete(false);
   };
 
+  /* The Agent column earns its place only when the rows name more than one. */
+  const manyAgents = new Set(rows.map((r) => r.agentKey)).size > 1;
+  /* The environment's own agent — what Run Epoch on its tab starts with. */
+  const envAgentId = useMemo(() => {
+    if (!inEnv) return null;
+    const es = state.byEnv?.[inEnv.envId];
+    if (!es?.agent) return null;
+    return agentIdOf(envAgentKey(es.agent, inEnv.envId));
+  }, [inEnv, state.byEnv]);
+
   const columns = [
     {
       id: "select",
-      header: () => null,
+      header: "",
       size: 44,
       enableSorting: false,
       cell: ({ row }) => (
@@ -285,13 +295,12 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
       minSize: 160,
       enableSorting: false,
       cell: ({ row: { original: r } }) => {
-        /* Under the name, as Chintan asked (canvas #24): agent · source ·
-           what it was · where it ran. */
+        /* Under the name: what started it and where it ran. The agent has
+           its own column when more than one is listed. */
         const sub =
           r.kind === "dataset"
             ? `${r.envName} · ${r.sub}`
             : [
-                r.agentName || r.modality?.label,
                 r.duplicate && r.agentId,
                 r.trigger && `${r.trigger.source} · ${r.trigger.label}`,
                 !inEnv && `in ${r.envName}`,
@@ -319,7 +328,7 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
     },
     /* The PRD's columns: which agent, how it ended, what it proved, what it
        shipped and what it cost. The runs it tried live on its own page. */
-    ...(agent || run
+    ...(agent || run || !manyAgents
       ? []
       : [
           {
@@ -358,7 +367,7 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
     {
       id: "status",
       header: "Status",
-      size: 190,
+      size: 240,
       enableSorting: false,
       cell: ({ row: { original: r } }) => (
         <StatusPill ending={r.status} headline={r.headline} />
@@ -392,29 +401,6 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
                     : "broke none"}
               </Box>
             )}
-          </Typography>
-        ) : (
-          <Typography sx={{ typography: "s3", color: "text.disabled" }}>
-            —
-          </Typography>
-        ),
-    },
-    {
-      /* What it handed over, and where that is now. */
-      id: "output",
-      header: "Hand-off",
-      renderHeader: () => (
-        <HeaderTip
-          label="Hand-off"
-          tip="What the epoch handed over and where it is now."
-        />
-      ),
-      size: 170,
-      enableSorting: false,
-      cell: ({ row: { original: r } }) =>
-        r.output?.label ? (
-          <Typography noWrap sx={{ typography: "s2", minWidth: 0 }}>
-            {r.output.label}
           </Typography>
         ) : (
           <Typography sx={{ typography: "s3", color: "text.disabled" }}>
@@ -526,7 +512,23 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
         </Button>
         <Box flex={1} />
         {/* RSI PRD Flow 4 — start one aimed at a goal. A run's Debug failures
-            stays the other way in. The agent's tab has its own header. */}
+            stays the other way in. The agent's tab has its own header; the
+            environment's tab starts one with its agent (secondary — the
+            environment's primary is Run simulation). */}
+        {inEnv && !run && (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Iconify icon="solar:play-linear" width={16} />}
+            onClick={() => {
+              setNewAgentId(envAgentId);
+              setNewOpen(true);
+            }}
+            sx={{ color: "text.primary", borderColor: "divider" }}
+          >
+            Run Epoch
+          </Button>
+        )}
         {!embedded && (
           <Button
             size="small"
@@ -645,9 +647,9 @@ export default function ImprovementSourcesList({ agent, run, env: inEnv }) {
               : run
                 ? `Nothing has been improved from ${run.label} yet. Debug failures starts one from its failing scenarios.`
                 : inEnv
-                  ? "Nothing has been improved in this environment yet. Start one from Debug failures on a finished run, or Fix on an Error Feed issue."
+                  ? "No epochs here yet. Run Epoch starts one with this environment's agent; Debug failures on a finished run and Run Epoch on an Error Feed issue start one too."
                   : agent
-                    ? `${agent.name} hasn't been improved yet. Start one from Debug failures on a finished run, or Fix on an Error Feed issue.`
+                    ? `No epochs for ${agent.name} yet. Start one from Debug failures on a finished run, or Run Epoch on an Error Feed issue.`
                     : "No epochs yet. Start one with New epoch."
           }
         />
@@ -715,23 +717,3 @@ ImprovementSourcesList.propTypes = {
     label: PropTypes.string,
   }),
 };
-
-/* A column header that says what the column means on hover. */
-function HeaderTip({ label, tip }) {
-  return (
-    <Stack direction="row" alignItems="center" spacing={0.5} component="span">
-      {/* The grid's own title class, so it reads like the other headers. */}
-      <span className="MuiDataGrid-columnHeaderTitle">{label}</span>
-      <Tooltip arrow title={tip}>
-        <Box component="span" sx={{ display: "flex" }}>
-          <Iconify
-            icon="solar:info-circle-linear"
-            width={14}
-            sx={{ color: "text.disabled" }}
-          />
-        </Box>
-      </Tooltip>
-    </Stack>
-  );
-}
-HeaderTip.propTypes = { label: PropTypes.string, tip: PropTypes.string };

@@ -295,53 +295,53 @@ jobs:
           FI_API_KEY: \${{ secrets.FI_API_KEY }}
           AGENT_VERSION: \${{ vars.AGENT_VERSION }}   # the version this PR builds`;
 
-  /* A fix run from code — the same fix run the Improvements page shows, by
+  /* An epoch from code — the same epoch the Epochs page shows, by
      the ID on its page. Flags follow the API's fields; the final fi spelling
      isn't set yet. */
   const improveSteps = [
     {
-      title: "Start a fix run",
-      body: "From a run's failures: the cases to fix, the ones it must not break, what it may change and what stays locked.",
+      title: "Start an epoch",
+      body: "From a run's failures: the target scenarios, the must-pass ones it must not break, what it may change and what stays locked.",
       hint: "It stops at the credit budget or the time limit, whichever comes first. Surfaces it can't change yet are refused, not ignored.",
-      cmd: `fi api fix-runs create --source-run-id <run-id> \\\n  --target-case-keys <case-keys> --protected-case-keys <case-keys> \\\n  --surfaces prompt,skill,config --locked-paths <paths> \\\n  --budget-credits 2000 --max-minutes 30`,
+      cmd: `fi api epochs create --source-run-id <run-id> \\\n  --target-case-keys <case-keys> --protected-case-keys <case-keys> \\\n  --surfaces prompt,skill,config --locked-paths <paths> \\\n  --budget-credits 2000 --max-minutes 30`,
     },
     {
       title: "Follow it",
-      body: "Its state, the candidates it tried and how each did on the held-back cases.",
-      cmd: "fi api fix-runs get <fix-run-id> --json",
+      body: "Its state, the candidates it tried and how each did on the held-back scenarios.",
+      cmd: "fi api epochs get <epoch-id> --json",
     },
     {
       title: "Act on the one you choose",
       body: "Open a pull request (a draft one under limited validation) or make it the environment default — nothing ships on its own.",
-      cmd: "fi api fix-runs open-pr <fix-run-id> --candidate <candidate-id>",
+      cmd: "fi api epochs open-pr <epoch-id> --candidate <candidate-id>",
     },
   ];
 
-  /* Fix runs and releases from Python and Node — the same fix runs and
+  /* Epochs and releases from Python and Node — the same epochs and
      releases by the same IDs; final signatures ship with the release. */
-  const pythonMore = `# Improve: a fix run from a run's failures
-fix = client.fix_runs.create(
+  const pythonMore = `# Improve: an epoch from a run's failures
+epoch = client.epochs.create(
     source_run_id="<run-id>",
     target_case_keys=[...], protected_case_keys=[...],
     surfaces=["prompt", "skill", "config"], locked_paths=[...],
     budget_credits=2000, max_minutes=30,
 )
-fix = client.fix_runs.wait(fix.id)        # state, candidates, held-back results
-client.fix_runs.open_pr(fix.id, candidate=fix.candidates[0].id)
+epoch = client.epochs.wait(epoch.id)      # state, candidates, held-back results
+client.epochs.open_pr(epoch.id, candidate=epoch.candidates[0].id)
 
 # Environment release: save a reviewed draft privately
 release = client.sim.environments.save_release(environment="${id}", draft="<draft-id>")
 release.wait_for_checks()                 # Ready once all five release checks pass`;
 
-  const nodeMore = `// Improve: a fix run from a run's failures
-let fix = await client.fixRuns.create({
+  const nodeMore = `// Improve: an epoch from a run's failures
+let epoch = await client.epochs.create({
   sourceRunId: "<run-id>",
   targetCaseKeys: [/* … */], protectedCaseKeys: [/* … */],
   surfaces: ["prompt", "skill", "config"], lockedPaths: [/* … */],
   budgetCredits: 2000, maxMinutes: 30
 });
-fix = await client.fixRuns.wait(fix.id);
-await client.fixRuns.openPr(fix.id, { candidate: fix.candidates[0].id });
+epoch = await client.epochs.wait(epoch.id);
+await client.epochs.openPr(epoch.id, { candidate: epoch.candidates[0].id });
 
 // Environment release
 const release = await client.sim.environments.saveRelease({ environment: "${id}", draft: "<draft-id>" });
@@ -636,8 +636,8 @@ await release.waitForChecks();`;
                     color: "text.secondary",
                   }}
                 >
-                  The same fix run as on the Epochs page — copy its ID
-                  there to follow or act on it from here.
+                  The same epoch as on the Epochs page — copy its ID there to
+                  follow or act on it from here.
                 </Typography>
                 <LocalSteps steps={mark(improveSteps)} />
               </Stack>
@@ -676,7 +676,7 @@ await release.waitForChecks();`;
                     color: "text.tertiary",
                   }}
                 >
-                  Runs, failures and fixes from your coding agent. Connect it
+                  Runs, failures and epochs from your coding agent. Connect it
                   once in{" "}
                   <Link
                     component={RouterLink}

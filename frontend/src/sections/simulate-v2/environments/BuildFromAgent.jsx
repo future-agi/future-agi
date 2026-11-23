@@ -1323,7 +1323,7 @@ export default function BuildFromAgent() {
             {
               kind: "note",
               text: fromIssue
-                ? `Waiting on one step: ${gap.title || "a setup step"}. Then continue fixing ${fromIssue} from the banner above.`
+                ? `Waiting on one step: ${gap.title || "a setup step"}. Then run the epoch on ${fromIssue} from the banner above.`
                 : `Waiting on one step: ${gap.title || "a setup step"}. Then run it once — Run simulation, top right.`,
             },
           ],
@@ -1345,12 +1345,12 @@ export default function BuildFromAgent() {
         patch: { improveIntent: { at: new Date().toISOString() } },
       });
     play(
-      fromIssue ? "Ready to fix" : "Ready to run",
+      fromIssue ? "Ready to run the epoch" : "Ready to run",
       [
         {
           kind: "note",
           text: fromIssue
-            ? `Built — ${saved.length} scenarios. Continue fixing ${fromIssue} from the banner above; the fix runs them on agent ${agentLabel}.`
+            ? `Built — ${saved.length} scenarios. Run the epoch on ${fromIssue} from the banner above; it runs them on agent ${agentLabel}.`
             : toImprove
               ? `Built — ${saved.length} scenarios. Run simulation, top right, runs them on agent ${agentLabel} (3 repeats each) to see where it fails.`
               : `Built — ${saved.length} scenarios. Run simulation, top right, runs them on agent ${agentLabel} (3 repeats each).`,

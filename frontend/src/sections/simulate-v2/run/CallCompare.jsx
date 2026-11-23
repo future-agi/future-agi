@@ -72,6 +72,8 @@ export default function CallCompare({
   onDiff,
   onClose,
   onOpenRow,
+  /* Replaces "Comparing N runs" — e.g. an epoch's before / candidate pair. */
+  heading,
 }) {
   const { enqueueSnackbar } = useSnackbar();
   const [tab, setTab] = useState("transcript");
@@ -309,7 +311,7 @@ export default function CallCompare({
               letterSpacing: 0.4,
             }}
           >
-            Comparing {row.cells.length} runs
+            {heading || `Comparing ${row.cells.length} runs`}
           </Typography>
           <Box flex={1} />
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
@@ -365,6 +367,7 @@ CallCompare.propTypes = {
   onDiff: PropTypes.func,
   onClose: PropTypes.func,
   onOpenRow: PropTypes.func,
+  heading: PropTypes.string,
 };
 
 /* ── one run's column ────────────────────────────────────────────────────── */
@@ -423,15 +426,33 @@ function RunColumn({
         >
           {cell.letter}
         </Box>
-        <Typography
-          noWrap
-          sx={{ typography: "s1", fontWeight: 600, flex: 1, minWidth: 0 }}
-        >
-          {run?.kind === "trial"
-            ? `Run ${run.trialN}${run.selfImprovementName ? ` · ${run.selfImprovementName}` : ""}`
-            : `Run ${run?.ordinal}`}{" "}
-          · {name}
-        </Typography>
+        {/* A column can name itself (an epoch's "Before the change" /
+            "Candidate 2"), with a line under it — how many trials passed. */}
+        {cell.label ? (
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography noWrap sx={{ typography: "s1", fontWeight: 600 }}>
+              {cell.label}
+            </Typography>
+            {cell.note && (
+              <Typography
+                noWrap
+                sx={{ typography: "s3", color: "text.tertiary" }}
+              >
+                {cell.note}
+              </Typography>
+            )}
+          </Box>
+        ) : (
+          <Typography
+            noWrap
+            sx={{ typography: "s1", fontWeight: 600, flex: 1, minWidth: 0 }}
+          >
+            {run?.kind === "trial"
+              ? `Run ${run.trialN}${run.selfImprovementName ? ` · ${run.selfImprovementName}` : ""}`
+              : `Run ${run?.ordinal}`}{" "}
+            · {name}
+          </Typography>
+        )}
         {detail && !detail.measured && <DomainChip domain={detail.domain} />}
         {isBaseline && (
           <Typography
@@ -454,8 +475,9 @@ function RunColumn({
       {!detail ? (
         <Box sx={{ p: 3 }}>
           <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
-            This scenario did not run here, so there is nothing to compare
-            against the other columns.
+            {cell.label
+              ? "No call of this scenario here, so there is nothing to compare."
+              : "This scenario did not run here, so there is nothing to compare against the other columns."}
           </Typography>
         </Box>
       ) : (
@@ -570,7 +592,9 @@ function RunColumn({
                 sx={{ color: "text.tertiary" }}
               />
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                Everything to the right is read against this run.
+                {cell.label
+                  ? "Everything to the right is read against this call."
+                  : "Everything to the right is read against this run."}
               </Typography>
             </Stack>
           )}
@@ -591,8 +615,9 @@ function RunColumn({
                 sx={{ color: "text.tertiary" }}
               />
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                The baseline run never covered this scenario, so there is
-                nothing to diff against.
+                {cell.label
+                  ? "There is no call before the change for this scenario, so there is nothing to diff against."
+                  : "The baseline run never covered this scenario, so there is nothing to diff against."}
               </Typography>
             </Stack>
           )}

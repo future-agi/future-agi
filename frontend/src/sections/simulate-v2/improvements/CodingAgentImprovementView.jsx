@@ -114,7 +114,7 @@ export default function CodingAgentImprovementView({
         }}
       >
         <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          {`${coder.improver} writes the fix · Future AGI checks every attempt`}
+          {`${coder.improver} writes the change · Future AGI checks every attempt`}
         </Typography>
         <Typography
           sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}

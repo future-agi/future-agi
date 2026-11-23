@@ -509,7 +509,15 @@ export default function ScenarioTable({
   /* Inside a batch of proposals: its header already says where they came
      from and that they're proposed, so the rows don't repeat it. */
   inProposal = false,
+  /* Read-only result mode (an epoch's per-scenario results): the same
+     columns, plus one result column after Scenario — no selection, no row
+     menu, nothing to edit. `result` = { id, label, tip, w, render(row),
+     sort: "asc" | "desc", onSort }. */
+  result = null,
+  /* Opens a row; wins over the Scenarios tab's own onOpen. */
+  onOpenRow,
 }) {
+  const readOnly = !!result;
   /* Stored env labels read as major.minor ("v3" → "v2.1"). */
   const vl = (label) => (envState ? envLabelOf(env, envState, label) : label);
   /* Caller-side cast: a scenario that includes one reads "With <Name>". */
@@ -617,7 +625,30 @@ export default function ScenarioTable({
   const runsShown =
     historyOf && firstRow ? (historyOf(firstRow) || []).length : 0;
   /* No runs yet: the runs column would be "No runs yet" on every row — leave it out. */
-  const columns = runsShown ? COLUMNS : COLUMNS.filter((c) => c.id !== "runs");
+  const columns = (runsShown ? COLUMNS : COLUMNS.filter((c) => c.id !== "runs"))
+    /* Read-only: no selection and no row menu. */
+    .filter((c) => !readOnly || (c.id !== "select" && c.id !== "actions"))
+    .flatMap((c) =>
+      readOnly && c.id === "scenario"
+        ? [
+            c,
+            {
+              id: "result",
+              label: result.label,
+              w: result.w || 190,
+              tip: result.tip,
+            },
+          ]
+        : [
+            readOnly && c.id === "subgoals"
+              ? { ...c, tip: "Sub-goals this scenario is graded on" }
+              : c,
+          ],
+    );
+  /* Without the checkbox column the pinned # and Scenario move left. */
+  const pinShift = readOnly ? 40 : 0;
+  const pinLeft = (id) =>
+    PIN_LEFT[id] != null ? PIN_LEFT[id] - pinShift : null;
   const labelOf = (c) =>
     c.id === "runs" && runsShown
       ? `Last ${runsShown} run${runsShown === 1 ? "" : "s"}`
@@ -692,7 +723,8 @@ export default function ScenarioTable({
             .filter(Boolean)
             .join(" · ");
           const withLine = withLineOf(subActorsOf(row, callers, env));
-          const open = onOpen ? () => onOpen(row) : undefined;
+          const opener = onOpenRow || onOpen;
+          const open = opener ? () => opener(row) : undefined;
           const stop = (e) => e.stopPropagation();
           return (
             <TableRow
@@ -711,22 +743,24 @@ export default function ScenarioTable({
                 ...(archived && { "& .scn-dim > *": { opacity: 0.45 } }),
               }}
             >
+              {!readOnly && (
+                <TableCell
+                  padding="checkbox"
+                  className="scn-pin scn-pin-0"
+                  sx={{ ...cellSx, pl: 1.5 }}
+                  onClick={stop}
+                >
+                  <Checkbox
+                    size="small"
+                    checked={selected.has(row.id)}
+                    onChange={() => toggle(row.id)}
+                    disabled={locked}
+                    sx={selectableCheckboxSx}
+                  />
+                </TableCell>
+              )}
               <TableCell
-                padding="checkbox"
-                className="scn-pin scn-pin-0"
-                sx={{ ...cellSx, pl: 1.5 }}
-                onClick={stop}
-              >
-                <Checkbox
-                  size="small"
-                  checked={selected.has(row.id)}
-                  onChange={() => toggle(row.id)}
-                  disabled={locked}
-                  sx={selectableCheckboxSx}
-                />
-              </TableCell>
-              <TableCell
-                className="scn-pin scn-pin-1"
+                className={`scn-pin ${readOnly ? "scn-pin-0" : "scn-pin-1"}`}
                 sx={{
                   ...cellSx,
                   px: 1,
@@ -741,7 +775,7 @@ export default function ScenarioTable({
               {/* SCENARIO — what it is, in words, and how many sub-goals
                         grade it. The id-style name is on hover and inside. */}
               <TableCell
-                className="scn-dim scn-pin scn-pin-2 scn-pin-last"
+                className={`scn-dim scn-pin ${readOnly ? "scn-pin-1" : "scn-pin-2"} scn-pin-last`}
                 sx={cellSx}
               >
                 <Stack
@@ -857,6 +891,11 @@ export default function ScenarioTable({
                 )}
               </TableCell>
 
+              {/* RESULT — read-only mode's one extra column. */}
+              {readOnly && (
+                <TableCell sx={cellSx}>{result.render(row)}</TableCell>
+              )}
+
               {/* PERSONA — who calls, in one line. */}
               <TableCell className="scn-dim" sx={cellSx}>
                 <Stack
@@ -932,7 +971,7 @@ export default function ScenarioTable({
                   row={row}
                   locked={locked || !!row.archived}
                   onToggle={
-                    onStateAction
+                    onStateAction && !readOnly
                       ? () => onStateAction("blocker", row, !row.critical)
                       : undefined
                   }
@@ -961,22 +1000,28 @@ export default function ScenarioTable({
               </TableCell>
 
               {/* Every row action, in the ⋯ menu. */}
-              <TableCell
-                align="right"
-                sx={{ ...cellSx, whiteSpace: "nowrap", pr: 1 }}
-                onClick={stop}
-              >
-                <AddAction row={row} onAction={onStateAction} locked={locked} />
-                <RowMenu
-                  row={row}
-                  state={stateOf ? stateOf(row) : null}
-                  archived={archived}
-                  locked={locked}
-                  onEdit={onEdit}
-                  onStateAction={onStateAction}
-                  onRemove={onRemove}
-                />
-              </TableCell>
+              {!readOnly && (
+                <TableCell
+                  align="right"
+                  sx={{ ...cellSx, whiteSpace: "nowrap", pr: 1 }}
+                  onClick={stop}
+                >
+                  <AddAction
+                    row={row}
+                    onAction={onStateAction}
+                    locked={locked}
+                  />
+                  <RowMenu
+                    row={row}
+                    state={stateOf ? stateOf(row) : null}
+                    archived={archived}
+                    locked={locked}
+                    onEdit={onEdit}
+                    onStateAction={onStateAction}
+                    onRemove={onRemove}
+                  />
+                </TableCell>
+              )}
             </TableRow>
           );
         })}
@@ -989,7 +1034,11 @@ export default function ScenarioTable({
           and Scenario stay pinned so a row never loses its name. */}
       <Table
         size="small"
-        sx={{ minWidth: 1580, tableLayout: "fixed", ...PINNED_SX }}
+        sx={{
+          minWidth: readOnly ? 1600 : 1580,
+          tableLayout: "fixed",
+          ...PINNED_SX,
+        }}
       >
         <colgroup>
           {columns.map((c) => (
@@ -1014,14 +1063,16 @@ export default function ScenarioTable({
                   py: 1,
                   ...(c.id === "select" && { pl: 1.5 }),
                   ...(c.id === "#" && { px: 1 }),
-                  ...(PIN_LEFT[c.id] != null && {
+                  ...(pinLeft(c.id) != null && {
                     position: "sticky",
-                    left: PIN_LEFT[c.id],
+                    left: pinLeft(c.id),
                     zIndex: 3,
                   }),
+                  ...(c.id === "result" &&
+                    result.sort && { color: "text.primary" }),
                 }}
                 className={
-                  PIN_LEFT[c.id] != null
+                  pinLeft(c.id) != null
                     ? `scn-pin${c.id === "scenario" ? " scn-pin-last" : ""}`
                     : undefined
                 }
@@ -1035,6 +1086,38 @@ export default function ScenarioTable({
                     disabled={locked}
                     sx={selectableCheckboxSx}
                   />
+                ) : c.id === "result" && result.onSort ? (
+                  /* The result column sorts: Broke first, or the reverse. */
+                  <Tooltip arrow title={c.tip || ""}>
+                    <Box
+                      component="button"
+                      type="button"
+                      onClick={result.onSort}
+                      aria-label={`Sort by ${c.label}`}
+                      sx={{
+                        ...focusRing,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        p: 0,
+                        border: 0,
+                        bgcolor: "transparent",
+                        font: "inherit",
+                        color: "inherit",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {labelOf(c)}
+                      <Iconify
+                        icon={
+                          result.sort === "desc"
+                            ? "solar:arrow-up-linear"
+                            : "solar:arrow-down-linear"
+                        }
+                        width={12}
+                      />
+                    </Box>
+                  </Tooltip>
                 ) : c.tip ? (
                   <Tooltip arrow title={c.tip}>
                     <span>{labelOf(c)}</span>
@@ -1102,6 +1185,8 @@ ScenarioTable.propTypes = {
   selectedIds: PropTypes.array,
   onSelectionChange: PropTypes.func,
   locked: PropTypes.bool,
+  result: PropTypes.object,
+  onOpenRow: PropTypes.func,
 };
 
 /* A cell's text on one line; the whole of it on hover. */

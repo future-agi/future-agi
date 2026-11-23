@@ -17,6 +17,7 @@
 */
 import { stampProvenance, defaultBatchId, currentUser } from "./scenarioProvenance";
 import { suiteLogPatch } from "./suiteLog";
+import { withSourceKeywords, FROM_ISSUE, FROM_PRODUCTION } from "./scenarioKeywords";
 
 /** The rows an improvement created. */
 export const improvementScenarioRows = (record) => {
@@ -62,7 +63,8 @@ export const addImprovementScenariosPatch = (envState, record, ids, { by = curre
     const source = r.source || (r.errorFeedIssue ? "error-feed" : r.failingCase ? "failing-case" : "improvement");
     const { proposed: _p, tier: _t, ...row } = r;
     return {
-      ...stampProvenance(row, { source, at, batchId }),
+      /* An epoch run for an Error Feed issue: its scenarios are from that issue. */
+      ...withSourceKeywords(stampProvenance(row, { source, at, batchId }), record?.trigger?.kind === "error-feed" ? [FROM_ISSUE, FROM_PRODUCTION] : []),
       fromImprovement: { id: record.id, name: nameOf(record) },
       batchNote: r.batchNote || `from ${nameOf(record)}`,
     };

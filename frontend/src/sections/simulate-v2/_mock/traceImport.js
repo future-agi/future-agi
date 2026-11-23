@@ -21,6 +21,21 @@ export const traceProjectOf = (env, envState) => {
  * transcript, tool calls with responses, and the starting state of the
  * records it touched (often missing).
  */
+/* Something a production call relied on that lives outside the agent's own
+   tools — the world built from the agent can't hold it until someone adds
+   it (a clinic's referrals come from the GP's system). */
+const OUTSIDE = [
+  [/clinic|appointment|patient|health/i, "a referral record"],
+  [/refund|return|retail|order/i, "a gift-card balance"],
+  [/airline|flight|travel|rebook/i, "a partner-airline booking"],
+  [/bank/i, "a joint-account record"],
+  [/guest|hotel|booking/i, "a group-booking record"],
+  [/support|help|customer/i, "a warranty record"],
+];
+const outsideRecordOf = (env) =>
+  OUTSIDE.find(([re]) => re.test(`${env?.name || ""} ${env?.id || ""}`))?.[1] ||
+  "a record from another system";
+
 export const productionTracesOf = (env, envState) => {
   const versions = agentVersions(envState).map((v) => v.label);
   return productionConversationsOf(env).map((c, i) => {
@@ -41,6 +56,8 @@ export const productionTracesOf = (env, envState) => {
         transcript: true,
         tools: h % 4 !== 0,
         startingState: h % 3 === 0,
+        /* What the call relied on that the world doesn't hold, if anything. */
+        uncovered: h % 3 === 1 ? outsideRecordOf(env) : null,
       },
     };
   });
@@ -69,10 +86,9 @@ export const TRACE_GOALS = [
     id: "replay",
     label: "Replay the conversation",
     keeps: "The caller's words, said verbatim, and the recorded tool responses",
-    makes: "Nothing — but it can't recreate state the trace didn't record",
+    makes:
+      "One scenario per trace that plays the conversation back as it happened — nothing made up, so state the trace didn't record stays missing",
     needs: "A transcript; tool responses to replay them",
-    /* Recorded-tool replay is Later (clarified plan, 30 Oct). */
-    later: true,
   },
   {
     id: "variants",
@@ -86,10 +102,10 @@ export const TRACE_GOALS = [
     id: "pattern",
     label: "Pull out a common pattern",
     keeps: "Every trace as a source, and which ones didn't fit",
-    makes: "One situation that stands for the group",
+    makes:
+      "One scenario for the situation the traces share, standing for the whole group",
     needs: "Two or more traces with the same symptom",
     min: 2,
-    later: true,
   },
 ];
 
@@ -108,17 +124,90 @@ export const rangeOf = (traces) => {
   return a === b ? a : `${a} – ${b}`;
 };
 
+/*
+  What one trace's draft is, from the goal and what the trace shows: a
+  passed trace can't reproduce a failure — it's kept as a regression — and
+  a failed one has no success to keep, so it reproduces the failure.
+*/
+export const draftIntentOf = (goal, outcome) => {
+  if (goal === "reproduce" && outcome === "passed") return "preserve";
+  if (goal === "preserve" && outcome === "failed") return "reproduce";
+  return goal;
+};
+
+/* The title and summary of a reproduce / keep draft — what the draft is. */
+const INTENT_TITLE = {
+  reproduce: (id) => `reproduces ${id}`,
+  preserve: (id) => `keeps ${id} as a regression`,
+};
+const intentSummaryOf = (intent, origin, id) =>
+  intent === "preserve"
+    ? `Keeps what worked in ${origin} ${id} as a regression`
+    : `Reproduces ${origin} ${id} — the situation and the failure, judged against the policy`;
+
+/*
+  A draft retitled for what its record shows, once the reviewer says so:
+  Failure reproduces it, Success keeps it as a regression. Partial evidence
+  — and every other kind of draft — keeps the title it has.
+*/
+export const retitleForShows = (row, shows) => {
+  const imp = row?.traceImport;
+  const intent =
+    shows === "failure" ? "reproduce" : shows === "success" ? "preserve" : null;
+  const [id] = imp?.sourceIds || [];
+  if (
+    !intent ||
+    !id ||
+    imp.sourceIds.length !== 1 ||
+    !["reproduce", "preserve"].includes(imp.goal) ||
+    imp.goal === intent
+  )
+    return row;
+  /* Only a title this import wrote ("<topic> — reproduces <id>"). */
+  const title = String(row.title || "");
+  const tail = [INTENT_TITLE[imp.goal](id), `keeps what worked in ${id}`].find(
+    (x) => title.endsWith(` — ${x}`),
+  );
+  if (!tail) return row;
+  const topic = title.slice(0, -` — ${tail}`.length);
+  const origin =
+    (row.summary || "").match(
+      /^(?:Reproduces|Keeps what worked in) (.+?) \S+(?: —| as a regression)/,
+    )?.[1] || "production trace";
+  return {
+    ...row,
+    title: `${topic} — ${INTENT_TITLE[intent](id)}`,
+    summary: intentSummaryOf(intent, origin, id),
+    traceImport: { ...imp, goal: intent },
+  };
+};
+
 /**
  * The drafts a frozen selection becomes under `goal`. Every draft carries the
  * import — the frozen trace IDs, project, range and goal — so its source
  * stays traceable whatever happens to the filter or the traces later.
  */
 export const traceDraftsOf = (traces, goal, env, importInfo) => {
-  const stamp = (row, sourceIds, extra = {}) => ({
-    ...row,
-    traceImport: { ...importInfo, goal, sourceIds },
-    ...extra,
-  });
+  /* A case that relied on something the world doesn't hold waits for the
+     environment — it isn't drafted until the environment covers it. */
+  const needsOf = (sourceIds) =>
+    traces.find((t) => sourceIds.includes(t.traceId) && t.evidence?.uncovered)
+      ?.evidence.uncovered;
+  const stamp = (row, sourceIds, extra = {}, intent = goal) => {
+    const needs = needsOf(sourceIds);
+    return {
+      ...row,
+      traceImport: { ...importInfo, goal: intent, sourceIds },
+      ...extra,
+      ...(needs && {
+        blocked: {
+          gate: "data",
+          needs,
+          reason: `It relies on ${needs}, which isn't in this environment.`,
+        },
+      }),
+    };
+  };
   if (goal === "pattern") {
     const base = replayScenarioOf(traces[0], env);
     return [
@@ -146,9 +235,12 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
           productionReplay: undefined,
         }),
       );
+    /* Each draft says what it is: a passed trace under "Reproduce the
+       failure" is kept as a regression, never titled as reproducing one. */
+    const intent = draftIntentOf(goal, t.outcome);
     const titles = {
-      reproduce: `${t.topic} — reproduces ${t.traceId}`,
-      preserve: `${t.topic} — keeps what worked in ${t.traceId}`,
+      reproduce: `${t.topic} — ${INTENT_TITLE.reproduce(t.traceId)}`,
+      preserve: `${t.topic} — ${INTENT_TITLE.preserve(t.traceId)}`,
       replay: base.title,
     };
     /* Where it came from, said as it is — an upload isn't a production trace. */
@@ -160,26 +252,31 @@ export const traceDraftsOf = (traces, goal, env, importInfo) => {
         simCall: "simulated call",
       }[t.sourceKind] || "production trace";
     const summaries = {
-      reproduce: `Reproduces ${origin} ${t.traceId} — the situation and the failure, judged against the policy`,
-      preserve: `Keeps what worked in ${origin} ${t.traceId} as a regression`,
+      reproduce: intentSummaryOf("reproduce", origin, t.traceId),
+      preserve: intentSummaryOf("preserve", origin, t.traceId),
     };
     return [
-      stamp(base, [t.traceId], {
-        id: goal === "replay" ? base.id : `${goal}::${t.id}`,
-        title: titles[goal],
-        ...(t.sourceKind && {
-          source: {
-            transcript: "transcript",
-            dataset: "dataset-import",
-            simulation: "simulation",
-            simCall: "simulation",
-          }[t.sourceKind],
-        }),
-        ...(goal !== "replay" && {
-          productionReplay: undefined,
-          summary: summaries[goal],
-        }),
-      }),
+      stamp(
+        base,
+        [t.traceId],
+        {
+          id: goal === "replay" ? base.id : `${intent}::${t.id}`,
+          title: titles[intent],
+          ...(t.sourceKind && {
+            source: {
+              transcript: "transcript",
+              dataset: "dataset-import",
+              simulation: "simulation",
+              simCall: "simulation",
+            }[t.sourceKind],
+          }),
+          ...(goal !== "replay" && {
+            productionReplay: undefined,
+            summary: summaries[intent],
+          }),
+        },
+        intent,
+      ),
     ];
   });
 };

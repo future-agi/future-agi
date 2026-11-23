@@ -30,7 +30,8 @@ import {
 import Iconify from "src/components/iconify";
 import { alpha } from "@mui/material/styles";
 import { PersonaBadge } from "../components/primitives";
-import { generatedPool, goalLabel } from "../_mock/scenarios";
+import { generatedPool } from "../_mock/scenarios";
+import { deriveUseCase } from "./scenarios/scenarioGoal";
 import { runScopeOf } from "../_mock/runScope";
 import {
   staleScenarios,
@@ -80,7 +81,8 @@ import {
 } from "../_mock/scenarioProvenance";
 
 /* AddScenariosDrawer emits `route` ids (generate | error-feed | failing |
-   twin | dataset | script | personas); provenance vocab is different, so
+   twin | dataset | script | personas) or, for imports, a provenance id
+   (addScenarioRoutes.addSourceOf); provenance vocab is different, so
    translate at the boundary. Chat never comes through here — the chat
    stamps its own batches. */
 const SOURCE_MAP = {
@@ -90,7 +92,12 @@ const SOURCE_MAP = {
   twin: "template",
   production: "production",
   replay: "production",
+  observe: "production",
+  files: "transcript",
+  transcript: "transcript",
+  simulation: "simulation",
   dataset: "dataset-import",
+  "dataset-import": "dataset-import",
   script: "manual",
   manual: "manual",
   personas: "persona-library",
@@ -101,6 +108,7 @@ import {
   scenarioMatchesSubActor,
   scenarioSubActorOptions,
 } from "../_mock/subActors";
+import { keywordChoicesOf, matchesKeywords } from "../_mock/scenarioKeywords";
 import {
   currentAgentVersion,
   currentEnvVersion,
@@ -179,6 +187,11 @@ import {
 import GroupsBar from "./scenarios/GroupsBar";
 import { clickable, focusRing } from "../components/clickable";
 import TraceReviewDrawer from "./scenarios/TraceReviewDrawer";
+import {
+  draftEditScaffold,
+  isEnvironmentGap,
+  waitingLineOf,
+} from "../_mock/importReview";
 import { contractUseCasesOf } from "../_mock/rlContract";
 import { sendToBuilder } from "../_mock/builderPromptBus";
 import useVersionChange from "./useVersionChange";
@@ -607,10 +620,10 @@ export default function ScenariosStep({
   );
   const staleCount = live.filter((r) => stateOf(r).id === "stale").length;
   const backCount = live.filter((r) => stateOf(r).back).length;
-  /* Drafts from production traces are reviewed in their own drawer, never added in bulk. */
+  /* Drafts from imported evidence are reviewed in their own drawer, never
+     added in bulk — the tab says they're waiting in one line. */
   const proposed = live.filter((r) => r.proposed && !r.traceImport);
-  const traceDrafts = live.filter((r) => r.proposed && r.traceImport);
-  const traceImportIds = [...new Set(traceDrafts.map((r) => r.traceImport.id))];
+  const waitingLine = buildMode ? null : waitingLineOf(envState);
   /* The scenario quality review. Read on the version being viewed. */
   const qualityReview = useMemo(
     () => (buildMode ? null : suiteGateOf(env, viewState)),
@@ -778,6 +791,14 @@ export default function ScenariosStep({
       return false;
     if (filters.subgoal?.length && !filters.subgoal.includes(subgoalFacet(r)))
       return false;
+    /* Keywords — where it came from (from-production, from-issue, …). */
+    if (
+      !matchesKeywords(r, envState, {
+        is: filters.keyword || [],
+        isNot: filters.keyword_not || [],
+      })
+    )
+      return false;
     return true;
   };
 
@@ -813,6 +834,16 @@ export default function ScenariosStep({
     );
     return [...s].sort();
   }, [selected, env]);
+  /* Keywords in use, each with how many scenarios carry it — counted on the
+     rows the table lists (imported drafts wait in their review). */
+  const keywordChoices = useMemo(
+    () =>
+      keywordChoicesOf(
+        selected.filter((r) => !(r.proposed && r.traceImport)),
+        envState,
+      ),
+    [selected, envState],
+  );
   const filterFields = useMemo(
     () => [
       {
@@ -852,6 +883,19 @@ export default function ScenariosStep({
         type: "enum",
         choices: Object.values(KIND_LABEL),
       },
+      ...(keywordChoices.length
+        ? [
+            {
+              value: "keyword",
+              label: "Keywords",
+              type: "enum",
+              choices: keywordChoices.map((o) => o.id),
+              choiceLabels: Object.fromEntries(
+                keywordChoices.map((o) => [o.id, o.label]),
+              ),
+            },
+          ]
+        : []),
       {
         value: "subgoal",
         label: "Sub-goal",
@@ -882,7 +926,8 @@ export default function ScenariosStep({
         : []),
       // eslint-disable-next-line react-hooks/exhaustive-deps
     ],
-    [personaChoices, subActorChoices, subgoalChoices, orgTags, orgGroups],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [personaChoices, subActorChoices, keywordChoices, subgoalChoices, orgTags, orgGroups],
   );
 
   /* A search or a filter other than the suite picker narrows the list — what
@@ -894,6 +939,8 @@ export default function ScenariosStep({
     );
   const shown = selected.filter((r) => {
     if (pendingScn?.has(r.id)) return false;
+    /* Imported drafts wait in their review, not in the table. */
+    if (r.proposed && r.traceImport) return false;
     if (!matchesFilters(r)) return false;
     if (!q) return true;
     const hay =
@@ -1011,22 +1058,37 @@ export default function ScenariosStep({
         ? fresh[0].traceImport.id
         : null;
       if (importId) {
+        /* A failed check on the draft itself is settled in its review (or
+           with the builder); only what the environment can't cover yet
+           holds a case back — and that case is never shown as a failure. */
         const all = [
           ...batch.rows.map((r) =>
             r.proposed
               ? r
               : { ...r, proposed: { at: at0, source: stampSource } },
           ),
-          ...blockedRows,
+          ...blockedRows.map((r) =>
+            isEnvironmentGap(r.blocked) ? r : { ...r, blocked: null },
+          ),
         ];
+        const drafted = all.filter((r) => !r.blocked).length;
         patch({
           scenarios: dropReplacedProposals([...selected, ...all]),
-          importHistory: history,
+          importHistory: [
+            ...history.slice(0, -1),
+            {
+              ...history[history.length - 1],
+              created: drafted,
+              blocked: 0,
+              needsEnvironment: all.length - drafted,
+            },
+          ],
         });
-        enqueueSnackbar(
-          `${all.length} draft${all.length === 1 ? "" : "s"} to review${blockedRows.length ? ` · ${blockedRows.length} blocked until its evidence is settled` : ""} — only ready ones join the environment.`,
-          { variant: "info" },
-        );
+        if (drafted)
+          enqueueSnackbar(
+            `${drafted} drafted scenario${drafted === 1 ? "" : "s"} waiting for your review — ${drafted === 1 ? "it joins" : "they join"} the suite once you add ${drafted === 1 ? "it" : "them"}.`,
+            { variant: "info" },
+          );
         setTraceReview(importId);
         return;
       }
@@ -1761,25 +1823,8 @@ export default function ScenariosStep({
             },
         ].filter(Boolean),
       },
-    ...traceImportIds.map((importId) => {
-      const n = traceDrafts.filter((r) => r.traceImport.id === importId).length;
-      const ids = traceDrafts.find((r) => r.traceImport.id === importId)
-        ?.traceImport?.ids;
-      return {
-        id: `trace-${importId}`,
-        icon: "solar:server-linear",
-        attention: true,
-        title: `${n} imported draft${n === 1 ? "" : "s"} waiting for review`,
-        sub: `From ${(ids || []).join(", ")}. Review each draft; only ready ones are added.`,
-        actions: [
-          {
-            label: "Review",
-            primary: true,
-            onClick: () => setTraceReview(importId),
-          },
-        ],
-      };
-    }),
+    /* Imported drafts aren't listed here — one line above the table says
+       they're waiting (waitingLine). */
     proposed.length > 0 && {
       id: "proposed",
       icon: "solar:inbox-linear",
@@ -2328,6 +2373,55 @@ export default function ScenariosStep({
           )}
       </Box>
 
+      {/* Imported drafts waiting for review — one quiet line, never a table
+          block. They join the suite only from the review. */}
+      {waitingLine && mode === "scenarios" && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ mb: 1.5, px: 0.25, minWidth: 0 }}
+        >
+          <Iconify
+            icon={
+              waitingLine.kind === "review"
+                ? "solar:inbox-linear"
+                : "solar:globus-linear"
+            }
+            width={16}
+            sx={{ color: "text.tertiary", flexShrink: 0 }}
+          />
+          <Typography
+            noWrap
+            sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
+          >
+            {waitingLine.text}
+          </Typography>
+          <Typography sx={{ typography: "s2", color: "text.tertiary" }}>
+            ·
+          </Typography>
+          <Box
+            component="button"
+            type="button"
+            onClick={() => setTraceReview("all")}
+            sx={{
+              ...focusRing,
+              p: 0,
+              border: 0,
+              bgcolor: "transparent",
+              cursor: "pointer",
+              typography: "s2",
+              fontWeight: 500,
+              color: "text.primary",
+              flexShrink: 0,
+              "&:hover": { textDecoration: "underline" },
+            }}
+          >
+            {waitingLine.action}
+          </Box>
+        </Stack>
+      )}
+
       {/* The shared definitions the suite grades with, one entry per meaning. */}
       {mode === "subgoals" && (
         <SubGoalsPanel
@@ -2562,7 +2656,11 @@ export default function ScenariosStep({
                         groups={orgGroups}
                         rows={selected}
                         stateOf={stateOf}
-                        total={selected.length}
+                        /* Imported drafts wait in their review, not in the suite. */
+                        total={
+                          selected.filter((r) => !(r.proposed && r.traceImport))
+                            .length
+                        }
                         active={filters.group?.[0] || null}
                         onPick={(name) =>
                           setFilters((f) => {
@@ -2912,17 +3010,48 @@ export default function ScenariosStep({
           default) so users see the three summary numbers on landing
           instead of having to scroll past the whole list. */}
 
-      {/* Drafts from production traces — reviewed before they join. */}
+      {/* Imported evidence — reviewed before it joins. The builder chat is
+          the one way to change a draft or the environment: the review
+          closes first, then the chat opens with the request pinned (a
+          closing drawer hands focus back to its opener, which would pull
+          the cursor out of the chat). */}
       <TraceReviewDrawer
         open={!!traceReview}
         onClose={() => setTraceReview(null)}
         env={env}
         envState={envState}
         patch={patch}
-        importId={traceReview}
-        onApprove={(rows) => {
-          approveImport(rows);
+        importId={traceReview === "all" ? null : traceReview}
+        onApprove={(rows) => approveImport(rows)}
+        onEditWithBuilder={
+          ro
+            ? null
+            : (row) => {
+                setTraceReview(null);
+                setTimeout(
+                  () => injectComposerScaffold(draftEditScaffold(row)),
+                  260,
+                );
+              }
+        }
+        onUpdateEnvironment={
+          ro
+            ? null
+            : (nudge) => {
+                setTraceReview(null);
+                setTimeout(() => injectComposerScaffold(nudge.scaffold), 260);
+              }
+        }
+        onViewInSuite={() => {
           setTraceReview(null);
+          setQuery("");
+          setFilters({});
+          setMode("scenarios");
+          requestAnimationFrame(() =>
+            document
+              .querySelector('[data-scenarios-safe="list"]')
+              ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+          );
         }}
       />
       {/* Scenarios improvements wrote — reviewed from the Needs review list. */}
@@ -3078,77 +3207,8 @@ RoutePlaceholder.propTypes = {
 
 /* ── grouping ────────────────────────────────────────────────────────────── */
 
-/**
- * Use-case-based grouping.
- *
- * Kind buckets (Tool use / Rule enforcement / Data traps / …) group by
- * how the scenario was *derived*, which is a builder concept. A reader
- * scanning 30+ scenarios cares about *what task the agent is being
- * asked to do*: verify identity, look up an order, refuse a refund,
- * handle a saved-card record. Those are the real use cases and they
- * cut across the derivation kinds.
- *
- * The scenario's title carries this cleanly:
- *   Core   → "Routine task using {tool_name}"  → group by the tool
- *   Rule   → the rule text (short, one per rule)
- *   Trap   → "{table_name}: {note}"            → group by the table
- *   Adv    → the template title (Instruction override, Authority claim…)
- *   Edge   → the template title
- *
- * So every group's label is what the scenarios in it are actually
- * doing, not the builder bucket they fell out of.
- */
-const humanize = (s = "") =>
-  s
-    .replace(/[_-]/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-    .trim();
-
-const deriveUseCase = (row) => {
-  /*
-    The scenario now carries its own use-case sentence — the mock stamps
-    `row.useCase` with a spec-line description of what the group tests
-    ("Verify a caller's identity before touching account state"). Group
-    key is a slug of that sentence so scenarios with matching text land
-    in the same group. Legacy scenarios that predate the field fall back
-    to the previous id-based derivation.
-  */
-  if (row?.useCase) {
-    const slug = row.useCase
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-    return { id: slug, label: goalLabel(row.useCase) };
-  }
-  const id = row?.id || "";
-  const title = row?.title || "";
-  if (id.includes("-core-")) {
-    const m = title.match(/(?:using|needing|landing on)\s+([\w_-]+)/i);
-    if (m) return { id: `tool:${m[1].toLowerCase()}`, label: humanize(m[1]) };
-    return { id: "tool:other", label: "Tool use" };
-  }
-  if (id.includes("-rule-")) {
-    const short = title.split(/[.:]/)[0].slice(0, 42).trim();
-    return {
-      id: `rule:${short.toLowerCase()}`,
-      label: short || "Rule enforcement",
-    };
-  }
-  if (id.includes("-trap-")) {
-    const table = title.split(":")[0].trim();
-    if (table)
-      return {
-        id: `trap:${table.toLowerCase()}`,
-        label: `${humanize(table)} data`,
-      };
-    return { id: "trap:other", label: "Data traps" };
-  }
-  if (id.includes("-adversarial-"))
-    return { id: `adv:${title.toLowerCase()}`, label: title || "Adversarial" };
-  if (id.includes("-edge-"))
-    return { id: `edge:${title.toLowerCase()}`, label: title || "Edge case" };
-  return { id: "other", label: "Other" };
-};
+/* Use-case grouping (deriveUseCase) lives in scenarios/scenarioGoal.js —
+   the epoch's per-scenario results group the same way. */
 
 /**
  * Group key + label for one row, in a given mode.

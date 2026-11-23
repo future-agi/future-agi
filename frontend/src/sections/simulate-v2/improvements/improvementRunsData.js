@@ -3,6 +3,25 @@
   points on its pass-rate chart.
 */
 import { triedLabelOf } from "../_mock/optimizer";
+import { improvementSpendParts } from "../_mock/optimizationRuns";
+import { creditsForUsd } from "../_mock/metering";
+
+/**
+ * What an epoch spent, part by part, and the total in credits — the sum of
+ * each part's own credits, so the Cost table, the ending line and the
+ * Epochs list never read a credit apart.
+ */
+export const epochSpendOf = (record, surface, opts) => {
+  const parts = improvementSpendParts(record, surface, opts);
+  return {
+    parts,
+    credits: parts.reduce((n, p) => n + (creditsForUsd(p.usd || 0) || 0), 0),
+  };
+};
+
+/** "6,721 credits". */
+export const creditsWord = (n) =>
+  n == null ? "—" : `${Math.round(n).toLocaleString()} credits`;
 
 /** Each run (trial) the search scored, oldest first — the order it tried them in. */
 export const trialRowsFor = (env, envState, record, candidates = []) => {

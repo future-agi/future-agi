@@ -1675,7 +1675,9 @@ export default function DiagnosisPane({
                         <Iconify icon="solar:magic-stick-3-bold" width={16} />
                       }
                     >
-                      {checksFirst && !running ? "Improve anyway" : "Improve"}
+                      {checksFirst && !running
+                        ? "Run Epoch anyway"
+                        : "Run Epoch"}
                     </Button>
                   </Box>
                 </Tooltip>

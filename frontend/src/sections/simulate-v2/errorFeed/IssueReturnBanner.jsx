@@ -44,13 +44,13 @@ export default function IssueReturnBanner({ envId }) {
     commit({ type: "patchEnvironment", envId, patch: { returnToIssue: null } });
 
   const title = ready
-    ? `Ready to fix ${issueId}`
+    ? `Ready to run an epoch on ${issueId}`
     : built
       ? `Building for ${issueId}`
-      : `Fixing ${issueId} — waiting for this environment`;
+      : `Epoch for ${issueId} — waiting for this environment`;
   const body = ready
-    ? `${built ? "Built for it. " : ""}The fix runs this environment's scenarios on today's version first — what passes there must keep passing.`
-    : "When it's built, continue the fix from here.";
+    ? `${built ? "Built for it. " : ""}The epoch runs this environment's scenarios on today's version first — what passes there must keep passing.`
+    : "When it's built, run the epoch from here.";
 
   return (
     <Alert
@@ -66,7 +66,7 @@ export default function IssueReturnBanner({ envId }) {
             onClick={back}
             sx={{ flexShrink: 0 }}
           >
-            {ready ? `Continue fixing ${issueId}` : `Back to ${issueId}`}
+            {ready ? `Run Epoch on ${issueId}` : `Back to ${issueId}`}
           </Button>
           <IconButton size="small" onClick={dismiss} aria-label="Dismiss">
             <Iconify icon="solar:close-circle-linear" width={16} />

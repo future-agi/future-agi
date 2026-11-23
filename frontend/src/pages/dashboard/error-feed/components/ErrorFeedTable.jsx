@@ -30,6 +30,8 @@ import {
 import { useErrorFeedApiParams, useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
 import { ROW_HEIGHT } from "src/theme/sizes";
+import { paths } from "src/routes/paths";
+import { OBSERVE_PROJECTS } from "src/sections/simulate-v2/_mock/connectAgent";
 import {
   clickable,
   focusRing,
@@ -51,132 +53,113 @@ const humanizeTime = (iso) => {
   }
 };
 
-/* The small tags under an issue's name, as production shows them (#64):
-   an icon and a word on a quiet fill, so where it came from and what kind
-   of error it is read at a glance. */
-function RowTag({ icon, label, tip }) {
-  return (
-    <Tooltip arrow title={tip}>
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.5}
-        sx={{
-          height: 20,
-          px: 0.75,
-          borderRadius: 0.5,
-          bgcolor: "background.neutral",
-          color: "text.secondary",
-          maxWidth: 170,
-          flexShrink: 0,
-        }}
-      >
-        <Iconify icon={icon} width={12} sx={{ flexShrink: 0 }} />
-        <Typography noWrap sx={{ typography: "s3", fontWeight: 500 }}>
-          {label}
-        </Typography>
-      </Stack>
-    </Tooltip>
-  );
-}
-RowTag.propTypes = {
-  icon: PropTypes.string,
-  label: PropTypes.string,
-  tip: PropTypes.string,
-};
-
-/* Scanner (Future AGI's own checks) or Eval (one of the customer's evals) —
-   the backend's own source values. */
-function SourceTag({ source }) {
-  const evalSource = source === "eval";
-  return (
-    <RowTag
-      icon="solar:tag-linear"
-      label={evalSource ? "Eval" : "Scanner"}
-      tip={
-        evalSource
-          ? "Source: Eval — found by one of your evals"
-          : "Source: Scanner — found by Future AGI's trace scanner"
-      }
-    />
-  );
-}
-SourceTag.propTypes = { source: PropTypes.string };
-
 const shortTypeOf = (type = "") =>
   type
     .replace(/Error$/, "")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .trim();
 
-// ── Fix layer chip ──────────────────────────────────────────────────────────
-/* Where the fix most likely belongs. */
-const FIX_LAYER_CONFIG = {
-  prompt: {
-    label: "Prompt",
-    tip: "Most likely fixed in the agent's prompt or instructions.",
-  },
-  orchestration: {
-    label: "Orchestration",
-    tip: "Most likely fixed in how the agent's steps and tool calls are wired together.",
-  },
-  tools: {
-    label: "Tools",
-    tip: "Most likely fixed in a tool, or in how the agent calls it.",
-  },
-  guardrails: {
-    label: "Guardrails",
-    tip: "Most likely fixed in a check or guardrail around the agent.",
-  },
-  data: {
-    label: "Data",
-    tip: "Most likely fixed in the data the agent reads.",
-  },
-  memory: {
-    label: "Memory",
-    tip: "Most likely fixed in what the agent keeps between turns or hands over.",
-  },
+/* Where the fix most likely belongs — said in the title's tooltip; the
+   list has no Layer column or filter (Kartik's review, C10). */
+const FIX_LAYER_LABEL = {
+  prompt: "Prompt",
+  orchestration: "Orchestration",
+  tools: "Tools",
+  guardrails: "Guardrails",
+  data: "Data",
+  memory: "Memory",
 };
 
-function FixLayerChip({ layer }) {
-  const theme = useTheme();
-  const cfg = FIX_LAYER_CONFIG[layer];
-  if (!cfg)
-    return (
-      <span style={{ color: theme.palette.text.disabled, fontSize: 12 }}>
-        —
-      </span>
-    );
-  return (
-    <Tooltip arrow title={cfg.tip}>
-      <Typography
-        noWrap
-        sx={{ fontSize: "12px", fontWeight: 500, color: "text.primary" }}
-      >
-        {cfg.label}
-      </Typography>
-    </Tooltip>
-  );
-}
-FixLayerChip.propTypes = { layer: PropTypes.string };
-
+/* Kartik's review (C10): the issue's epoch reads in its own column, in
+   words, right after its triage status — no icon after the name. */
 const COLUMNS = [
   {
-    id: "error",
-    label: "Error",
+    id: "issue",
+    label: "Issue",
     sortable: false,
     width: "auto",
-    minWidth: 340,
+    minWidth: 170,
   },
-  { id: "severity", label: "Severity", sortable: true, width: 100 },
-  { id: "status", label: "Status", sortable: false, width: 150 },
-  { id: "traceCount", label: "Traces", sortable: true, width: 85 },
-  { id: "usersAffected", label: "Users", sortable: false, width: 75 },
-  { id: "fixLayer", label: "Layer", sortable: false, width: 120 },
-  { id: "trends", label: "Trend (14d)", sortable: false, width: 130 },
-  { id: "lastSeen", label: "Last seen", sortable: true, width: 120 },
+  { id: "severity", label: "Severity", sortable: true, width: 95 },
+  { id: "status", label: "Status", sortable: false, width: 125 },
+  { id: "epoch", label: "Epoch", sortable: false, width: 200, improving: true },
+  { id: "traceCount", label: "Events", sortable: true, width: 75 },
+  { id: "trends", label: "Trend (14d)", sortable: false, width: 90 },
+  { id: "lastSeen", label: "Last seen", sortable: true, width: 100 },
 ];
-/* A fix shows as one icon after the issue's name, not a column (#63). */
+
+const SAMPLE_PROJECT_IDS = new Set(OBSERVE_PROJECTS.map((p) => p.id));
+
+/* Rows under their Observe project, in the order the sort puts them: a
+   project comes where its first issue would. */
+const groupByProject = (rows) => {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const key = row.project_id || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  });
+  return [...groups].map(([project, items]) => ({ project, items }));
+};
+
+/* "{Project} · N issues" above the project's rows. No band fill; the name
+   is a link to the project, the count quiet beside it. */
+function ProjectGroupRow({ name, count, colSpan, onOpen }) {
+  return (
+    <TableRow>
+      <TableCell
+        colSpan={colSpan}
+        sx={{
+          height: ROW_HEIGHT.default,
+          py: 0,
+          px: 1.5,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Stack direction="row" alignItems="baseline" gap={0.75}>
+          <Tooltip
+            describeChild
+            arrow
+            placement="top-start"
+            title="Open this project in Tracing"
+          >
+            <Typography
+              component="span"
+              {...clickable(onOpen, { role: "link" })}
+              sx={{
+                ...focusRing,
+                typography: "s2",
+                fontWeight: 500,
+                color: "text.primary",
+                cursor: "pointer",
+                "&:hover": { textDecoration: "underline" },
+              }}
+            >
+              {name}
+            </Typography>
+          </Tooltip>
+          <Typography
+            component="span"
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {`· ${count} ${count === 1 ? "issue" : "issues"}`}
+          </Typography>
+        </Stack>
+      </TableCell>
+    </TableRow>
+  );
+}
+ProjectGroupRow.propTypes = {
+  name: PropTypes.string,
+  count: PropTypes.number,
+  colSpan: PropTypes.number,
+  onOpen: PropTypes.func,
+};
 
 function SortIcon({ active, dir }) {
   if (!active)
@@ -199,7 +182,7 @@ SortIcon.propTypes = { active: PropTypes.bool, dir: PropTypes.string };
 
 // ── skeleton rows ──────────────────────────────────────────────────────────
 /* eslint-disable-next-line react/prop-types */
-function SkeletonRow({ withAgent = false }) {
+function SkeletonRow({ withEpoch = false }) {
   const pulse = {
     bgcolor: "action.selected",
     borderRadius: "4px",
@@ -210,7 +193,7 @@ function SkeletonRow({ withAgent = false }) {
     },
   };
   return (
-    <TableRow sx={{ height: ROW_HEIGHT.twoLine }}>
+    <TableRow sx={{ height: ROW_HEIGHT.default }}>
       <TableCell padding="checkbox">
         <Checkbox disabled size="small" />
       </TableCell>
@@ -223,25 +206,16 @@ function SkeletonRow({ withAgent = false }) {
       <TableCell>
         <Box sx={{ ...pulse, height: 20, width: 70, borderRadius: "4px" }} />
       </TableCell>
-      {withAgent && (
+      {withEpoch && (
         <TableCell>
-          <Box sx={{ ...pulse, height: 14, width: 90 }} />
+          <Box sx={{ ...pulse, height: 14, width: 140 }} />
         </TableCell>
       )}
       <TableCell>
         <Box sx={{ ...pulse, height: 14, width: 40 }} />
       </TableCell>
       <TableCell>
-        <Box sx={{ ...pulse, height: 14, width: 35 }} />
-      </TableCell>
-      <TableCell>
-        <Box sx={{ ...pulse, height: 14, width: 35 }} />
-      </TableCell>
-      <TableCell>
-        <Box sx={{ ...pulse, height: 20, width: 90, borderRadius: "4px" }} />
-      </TableCell>
-      <TableCell>
-        <Box sx={{ ...pulse, height: 36, width: "100%" }} />
+        <Box sx={{ ...pulse, height: 28, width: "100%" }} />
       </TableCell>
       <TableCell>
         <Box sx={{ ...pulse, height: 12, width: 80 }} />
@@ -279,13 +253,13 @@ function EmptyState({ filtered, colSpan = 9 }) {
             fontWeight="fontWeightMedium"
           >
             {filtered
-              ? "No errors match your filters"
-              : "No errors — everything looks good!"}
+              ? "No issues match your filters"
+              : "No issues — everything looks good!"}
           </Typography>
           <Typography typography="s2" color="text.secondary">
             {filtered
               ? "Try adjusting your search or filter criteria."
-              : "Errors captured by Future AGI will appear here."}
+              : "Issues Future AGI finds in your traces appear here."}
           </Typography>
         </Stack>
       </TableCell>
@@ -298,7 +272,10 @@ EmptyState.propTypes = { filtered: PropTypes.bool, colSpan: PropTypes.number };
 export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
   const theme = useTheme();
   const improving = useAgentImprovementFlag();
-  const columns = COLUMNS;
+  const columns = useMemo(
+    () => COLUMNS.filter((c) => !c.improving || improving),
+    [improving],
+  );
   const navigate = useNavigate();
   const { sortBy, sortDir, setSortBy, page, pageSize, setPage } =
     useErrorFeedStore();
@@ -327,6 +304,21 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
 
   const rows = useMemo(() => data?.data ?? [], [data]);
   const totalCount = data?.total ?? 0;
+
+  /* Grouped by project by default (Kartik's review, C10). One project
+     filtered in still gets its group row — the name says where you are. */
+  const groups = useMemo(() => groupByProject(rows), [rows]);
+  /* The project's page in Tracing. The prototype's sample projects have no
+     page there, so they open the Tracing list. */
+  const openProject = useCallback(
+    (projectId) =>
+      navigate(
+        projectId && !SAMPLE_PROJECT_IDS.has(projectId)
+          ? `${paths.dashboard.observe}/${projectId}/llm-tracing`
+          : paths.dashboard.observe,
+      ),
+    [navigate],
+  );
 
   const handleRowClick = useCallback(
     (clusterId) => {
@@ -429,197 +421,166 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
           <TableBody>
             {isLoading ? (
               Array.from({ length: pageSize }).map((_, i) => (
-                <SkeletonRow key={i} />
+                <SkeletonRow key={i} withEpoch={improving} />
               ))
             ) : rows.length === 0 ? (
               <EmptyState filtered={isFiltered} colSpan={columns.length + 2} />
             ) : (
-              rows.map((row) => {
-                const isSelected = selected.includes(row.cluster_id);
-                return (
-                  <TableRow
-                    key={row.cluster_id}
-                    hover
-                    selected={isSelected}
-                    {...clickable(() => handleRowClick(row.cluster_id), {
-                      role: "link",
-                    })}
-                    role={undefined}
-                    sx={{
-                      ...focusRing,
-                      cursor: "pointer",
-                      height: ROW_HEIGHT.twoLine,
-                      "&.MuiTableRow-hover:hover": { bgcolor: hoverBg },
-                      "&.Mui-selected": { bgcolor: selectedBg },
-                      "&.Mui-selected:hover": { bgcolor: selectedBg },
-                      "& .MuiTableCell-body": {
-                        borderBottom: "1px solid",
-                        borderColor: "divider",
-                        px: 1.5,
-                        py: 0,
-                      },
-                    }}
-                  >
-                    {/* Checkbox */}
-                    <TableCell
-                      padding="checkbox"
-                      onClick={(e) => e.stopPropagation()}
+              groups.map(({ project, items }) => [
+                <ProjectGroupRow
+                  key={`project:${project}`}
+                  name={projectName[project] || project || "No project"}
+                  count={items.length}
+                  colSpan={columns.length + 2}
+                  onOpen={() => openProject(project)}
+                />,
+                ...items.map((row) => {
+                  const isSelected = selected.includes(row.cluster_id);
+                  return (
+                    <TableRow
+                      key={row.cluster_id}
+                      hover
+                      selected={isSelected}
+                      {...clickable(() => handleRowClick(row.cluster_id), {
+                        role: "link",
+                      })}
+                      role={undefined}
+                      sx={{
+                        ...focusRing,
+                        cursor: "pointer",
+                        height: ROW_HEIGHT.default,
+                        "&.MuiTableRow-hover:hover": { bgcolor: hoverBg },
+                        "&.Mui-selected": { bgcolor: selectedBg },
+                        "&.Mui-selected:hover": { bgcolor: selectedBg },
+                        "& .MuiTableCell-body": {
+                          borderBottom: "1px solid",
+                          borderColor: "divider",
+                          px: 1.5,
+                          py: 0,
+                        },
+                      }}
                     >
-                      <Checkbox
-                        size="small"
-                        checked={isSelected}
-                        onChange={(e) =>
-                          onSelect(row.cluster_id, e.target.checked)
-                        }
-                      />
-                    </TableCell>
-
-                    {/* Error name + type */}
-                    <TableCell>
-                      <Stack
-                        direction="column"
-                        gap={0.5}
-                        justifyContent="center"
+                      {/* Checkbox */}
+                      <TableCell
+                        padding="checkbox"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <Stack
-                          direction="row"
-                          alignItems="center"
-                          spacing={0.75}
-                          sx={{ minWidth: 0 }}
-                        >
-                          <Tooltip
-                            title={`${row.error.name} · ${row.cluster_id}`}
-                            placement="top-start"
-                            arrow
-                          >
-                            <Typography
-                              typography="s2_1"
-                              fontWeight="fontWeightMedium"
-                              color="text.primary"
-                              sx={{
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                                maxWidth: 420,
-                                display: "block",
-                              }}
-                            >
-                              {row.error.name}
-                            </Typography>
-                          </Tooltip>
-                          {improving && (
-                            <IssueStatusChip issue={row} variant="icon" />
-                          )}
-                        </Stack>
-                        <Stack direction="row" alignItems="center" gap={0.75}>
-                          <SourceTag source={row.source} />
-                          {/* One tag (where it came from); the type and the
-                              project as quiet text; the eval score on hover. */}
-                          <Tooltip
-                            arrow
-                            placement="bottom-start"
-                            title={[
-                              `Error type: ${shortTypeOf(row.error.type)}`,
-                              projectName[row.project_id] &&
-                                `Project: ${projectName[row.project_id]}`,
-                              row.eval_score != null &&
-                                `Eval score: ${row.eval_score.toFixed(2)}`,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          >
-                            <Typography
-                              noWrap
-                              sx={{
-                                typography: "s3",
-                                color: "text.tertiary",
-                                minWidth: 0,
-                              }}
-                            >
-                              {[
-                                shortTypeOf(row.error.type),
-                                projectName[row.project_id],
-                              ]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </Typography>
-                          </Tooltip>
-                        </Stack>
-                      </Stack>
-                    </TableCell>
-
-                    {/* Severity */}
-                    <TableCell>
-                      <ErrorSeverityBadge severity={row.severity} />
-                    </TableCell>
-
-                    {/* Status */}
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <ErrorStatusChip status={row.status} />
-                    </TableCell>
-
-                    {/* Traces */}
-                    <TableCell>
-                      <Typography
-                        typography="s2_1"
-                        fontWeight="fontWeightMedium"
-                        color="text.primary"
-                        sx={{ fontFeatureSettings: "'tnum'" }}
-                      >
-                        {fmt(row.trace_count)}
-                      </Typography>
-                    </TableCell>
-
-                    {/* Users */}
-                    <TableCell>
-                      <Typography
-                        typography="s2_1"
-                        color="text.secondary"
-                        sx={{ fontFeatureSettings: "'tnum'" }}
-                      >
-                        {fmt(row.users_affected)}
-                      </Typography>
-                    </TableCell>
-
-                    {/* Layer */}
-                    <TableCell>
-                      <FixLayerChip layer={row.fix_layer} />
-                    </TableCell>
-
-                    {/* Trend sparkline */}
-                    <TableCell sx={{ p: "0 8px !important" }}>
-                      <ErrorTrendSparkline
-                        data={row.trends}
-                        severity={row.severity}
-                      />
-                    </TableCell>
-
-                    {/* Last seen */}
-                    <TableCell>
-                      <Typography typography="s3" color="text.disabled" noWrap>
-                        {row.lastSeenHuman ?? humanizeTime(row.last_seen)}
-                      </Typography>
-                    </TableCell>
-
-                    {/* Actions */}
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Tooltip title="View details" arrow>
-                        <IconButton
+                        <Checkbox
                           size="small"
-                          sx={{
-                            opacity: 0,
-                            transition: "opacity 0.15s",
-                            ".MuiTableRow-root:hover &": { opacity: 1 },
-                          }}
-                          onClick={() => handleRowClick(row.cluster_id)}
+                          checked={isSelected}
+                          onChange={(e) =>
+                            onSelect(row.cluster_id, e.target.checked)
+                          }
+                        />
+                      </TableCell>
+
+                      {/* Issue: its name only; type, source and score on
+                          hover. maxWidth 0 lets a long name truncate instead
+                          of pushing the table wider than the page. */}
+                      <TableCell sx={{ maxWidth: 0 }}>
+                        <Tooltip
+                          arrow
+                          placement="top-start"
+                          title={[
+                            row.error.name,
+                            row.cluster_id,
+                            shortTypeOf(row.error.type),
+                            row.source === "eval"
+                              ? "Found by an eval"
+                              : "Found by the scanner",
+                            row.users_affected != null &&
+                              `${fmt(row.users_affected)} users`,
+                            FIX_LAYER_LABEL[row.fix_layer] &&
+                              `Fix layer: ${FIX_LAYER_LABEL[row.fix_layer]}`,
+                            row.eval_score != null &&
+                              `Eval score ${row.eval_score.toFixed(2)}`,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
                         >
-                          <Iconify icon="solar:arrow-right-linear" width={16} />
-                        </IconButton>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                );
-              })
+                          <Typography
+                            typography="s2"
+                            fontWeight="fontWeightMedium"
+                            color="text.primary"
+                            noWrap
+                            sx={{ display: "block" }}
+                          >
+                            {row.error.name}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+
+                      {/* Severity */}
+                      <TableCell>
+                        <ErrorSeverityBadge severity={row.severity} />
+                      </TableCell>
+
+                      {/* Status */}
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <ErrorStatusChip status={row.status} />
+                      </TableCell>
+
+                      {/* Epoch: which epoch works on it, and where it stands */}
+                      {improving && (
+                        <TableCell sx={{ maxWidth: 200 }}>
+                          <IssueStatusChip issue={row} variant="epoch" />
+                        </TableCell>
+                      )}
+
+                      {/* Events: the issue's trace count */}
+                      <TableCell>
+                        <Typography
+                          typography="s2_1"
+                          fontWeight="fontWeightMedium"
+                          color="text.primary"
+                          sx={{ fontFeatureSettings: "'tnum'" }}
+                        >
+                          {fmt(row.trace_count)}
+                        </Typography>
+                      </TableCell>
+
+                      {/* Trend sparkline */}
+                      <TableCell sx={{ p: "0 8px !important" }}>
+                        <ErrorTrendSparkline
+                          data={row.trends}
+                          severity={row.severity}
+                        />
+                      </TableCell>
+
+                      {/* Last seen */}
+                      <TableCell>
+                        <Typography
+                          typography="s3"
+                          color="text.disabled"
+                          noWrap
+                        >
+                          {row.lastSeenHuman ?? humanizeTime(row.last_seen)}
+                        </Typography>
+                      </TableCell>
+
+                      {/* Actions */}
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Tooltip title="View details" arrow>
+                          <IconButton
+                            size="small"
+                            sx={{
+                              opacity: 0,
+                              transition: "opacity 0.15s",
+                              ".MuiTableRow-root:hover &": { opacity: 1 },
+                            }}
+                            onClick={() => handleRowClick(row.cluster_id)}
+                          >
+                            <Iconify
+                              icon="solar:arrow-right-linear"
+                              width={16}
+                            />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
+                    </TableRow>
+                  );
+                }),
+              ])
             )}
           </TableBody>
         </Table>

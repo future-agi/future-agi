@@ -8,7 +8,6 @@
 import { envAgentKey, repairAgentRecord } from "../_mock/agentRegistry";
 import {
   improvementOutcome,
-  improvementTotalSpend,
   searchMinutes,
   searchSpend,
   REPEATS,
@@ -18,12 +17,12 @@ import { attemptsOf, coderStatusOf } from "../_mock/improverAttempts";
 import { improverSessionFor } from "../_mock/integrations";
 import { prOfImprovement } from "../_mock/improvementPr";
 import { improvementRunName, depthOf } from "../_mock/optimizer";
-import { creditsForUsd } from "../_mock/metering";
 import { runIdentityOf } from "../_mock/runIdentity";
 import { snapshotOfImprovement } from "../_mock/envSnapshot";
 import { shippedStateOf } from "../errorFeed/issueFix";
 import { improvementPath } from "./improvementNav";
 import { needsRecheck } from "./behindProduction";
+import { epochSpendOf } from "./improvementRunsData";
 
 /**
  * "agent v3 × env v7" for an improvement — the agent version it improved and
@@ -50,20 +49,42 @@ export const improvementIdentityOf = (record, env, es) => {
 };
 
 /*
-  What a shipped improvement became, in the Error Feed's own words
-  (`shippedStateOf`, the same reading the issue's fix chip uses): In review
-  (PR #n, a Vapi copy, a Retell draft, a draft version) → Watching
-  (n days left) → Resolved, or Reopened. A goal improvement is watched the
-  same way; only an issue fix can come back as its issue.
+  What a shipped epoch became (`shippedStateOf`, the same reading the
+  issue's fix chip uses): Shipped (PR #n, a Vapi copy, a Retell draft, a
+  draft version) → Watching (n days left) → Resolved, or Reopened. A goal
+  epoch is watched the same way; only an issue's epoch can come back as
+  its issue. Where it went rides on the status as its detail — the list
+  has no separate column for it.
 */
-/* The run's status once its change has left Future AGI. */
 const SHIPPED_STATUS = {
-  draft: { key: "shipped", label: "In review" },
-  pr: { key: "shipped", label: "In review" },
-  version: { key: "shipped", label: "In review" },
+  draft: { key: "shipped", label: "Shipped" },
+  pr: { key: "shipped", label: "Shipped" },
+  version: { key: "shipped", label: "Shipped" },
   watching: { key: "released", label: "Watching" },
   resolved: { key: "released", label: "Resolved" },
-  reopened: { key: "failed", label: "Reopened" },
+  reopened: { key: "reopened", label: "Reopened" },
+};
+
+/*
+  The word for each way an epoch can end early — the same on the Epochs
+  list, the page's status and its ending. One that stopped on our side
+  reads "Stopped", never a red "Failed": the agent didn't fail anything (C11).
+*/
+export const ENDING_WORD = {
+  failed: "Stopped",
+  stopped: "Stopped",
+  "no-fix": "No safe change",
+  "not-reproduced": "Not reproduced",
+  "too-few": "Too few failing",
+  nothing: "Nothing to improve",
+  "over-budget": "Over budget",
+};
+const endingStatusOf = (ending, record) => {
+  const key =
+    record?.status === "over-budget" && ending?.key === "budget"
+      ? "over-budget"
+      : ending?.key;
+  return ENDING_WORD[key] ? { ...ending, label: ENDING_WORD[key] } : ending;
 };
 
 const lifecycleOf = (record, env, es, prs, now) => {
@@ -87,6 +108,11 @@ const lifecycleOf = (record, env, es, prs, now) => {
       st.key === "review"
         ? st.label
         : `${st.label}${st.detail ? ` · ${st.detail}` : ""}`,
+    /* Where it is, without the status word: "PR #12", "27 days left". */
+    detail:
+      st.key === "review"
+        ? st.via || (landed ? `draft version ${landed}` : null)
+        : st.detail || null,
     version: st.version || landed,
     ...(pr && { merged: pr.status === "merged" }),
   };
@@ -161,8 +187,8 @@ export const heldShortOf = (outcome) => {
       text: `${outcome.chosen.projected ? "≈" : ""}${outcome.chosen.held}% held back`,
       broke: null,
       note: outcome.chosen.verified
-        ? `Run ${outcome.chosen.n}, your pick`
-        : `Run ${outcome.chosen.n} · not verified`,
+        ? `Candidate ${outcome.chosen.n}, your pick`
+        : `Candidate ${outcome.chosen.n} · not verified`,
     };
   }
   if (outcome.thin) return { text: "Too few to hold back", broke: null };
@@ -217,6 +243,7 @@ const improvementRowsRaw = ({
         /* Fell behind production while it waited — re-checked before it ships. */
         const behindNow =
           ["ready", "stopped-early", "budget"].includes(outcome?.ending?.key) &&
+          record.status !== "over-budget" &&
           needsRecheck({ record, env, envState: es, agents });
         const agentKey = agentKeyAt(es, env.id, record.createdAt, agents);
         const agent = byKey.get(agentKey);
@@ -243,9 +270,9 @@ const improvementRowsRaw = ({
                   searchSpend(record.result, env.surface),
               })
             : [];
-        const spend = running
+        const spent = running
           ? null
-          : improvementTotalSpend(record, env.surface, { attempts });
+          : epochSpendOf(record, env.surface, { attempts }).credits;
         /* Fix to proposal, from what the run had to simulate — reproducing,
          every candidate, the held-back check. */
         const r = record.result;
@@ -291,7 +318,10 @@ const improvementRowsRaw = ({
            for review" beside a released change. */
           status: phase
             ? { key: "running", label: phase.label, phase: phase.key }
-            : (lifecycle && SHIPPED_STATUS[lifecycle.kind]) ||
+            : (lifecycle && {
+                ...SHIPPED_STATUS[lifecycle.kind],
+                detail: lifecycle.detail,
+              }) ||
               (coder && { key: coder.key, label: coder.label }) ||
               (behindNow && !phase
                 ? {
@@ -299,7 +329,7 @@ const improvementRowsRaw = ({
                     label: `Needs re-check on ${behindNow.prod}`,
                   }
                 : null) ||
-              outcome.ending,
+              endingStatusOf(outcome.ending, record),
           headline: coder?.headline || outcome.headline || "",
           /* A coding agent's improvement: what its attempts came to, in the Result column. */
           held: coder
@@ -325,7 +355,7 @@ const improvementRowsRaw = ({
             ? r.trainMeasured + r.heldMeasured + (r.mustPassMeasured || 0)
             : null,
           /* What the run used, in the workspace's unit — AI credits. */
-          credits: spend != null ? creditsForUsd(spend) : null,
+          credits: spent,
           minutes,
           issueId: record.trigger?.issueId || null,
           releasedAt: release?.at || null,

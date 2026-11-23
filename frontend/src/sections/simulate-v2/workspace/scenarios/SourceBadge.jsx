@@ -4,6 +4,7 @@ import { Box, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { sourceLinkOf } from "../../_mock/scenarioProvenance";
 import { openBuilderChat } from "../../_mock/builderPromptBus";
+import { keywordsOf } from "../../_mock/scenarioKeywords";
 import {
   personalDataLine,
   personalDataDetail,
@@ -47,6 +48,8 @@ export default function SourceBadge({
   /* A production conversation links back to its trace in Observe. */
   const to = link.to || link.observe?.to || null;
   const linked = !!(to || link.chat);
+  /* Where it came from, as keywords (from-production, from-issue, …). */
+  const keywords = keywordsOf(scenario, envState);
 
   const title = (
     <Stack spacing={0.375} sx={{ py: 0.25, maxWidth: 320 }}>
@@ -56,6 +59,11 @@ export default function SourceBadge({
       {link.detail && (
         <Typography sx={{ typography: "s3", color: "inherit" }}>
           {link.detail}
+        </Typography>
+      )}
+      {keywords.length > 0 && (
+        <Typography sx={{ typography: "s3", color: "inherit" }}>
+          {`Keywords: ${keywords.join(", ")}`}
         </Typography>
       )}
       {/* Generated or inferred facts are an assumption, not a cited source. */}
@@ -114,11 +122,19 @@ export default function SourceBadge({
     link.ref && !link.label.toLowerCase().includes(link.ref.toLowerCase())
       ? link.ref
       : null;
+  /* Added from outside (production, an Error Feed issue, a dataset, a
+     transcript): its keywords are what the row shows, so those scenarios
+     stay findable and the Keywords filter matches what you read. One on the
+     row, "+N" for the rest; the tooltip names them all and keeps the id. */
+  const keyword = keywords.length
+    ? `${keywords[0]}${keywords.length > 1 ? ` +${keywords.length - 1}` : ""}`
+    : null;
   const chipText = labelled
-    ? `${link.label}${refShown ? ` · ${refShown}` : ""}${link.assumption ? " · Assumption" : ""}`
-    : link.assumption && !linked
-      ? "Assumption"
-      : link.ref || SHORT[link.label] || link.label;
+    ? `${link.label}${refShown ? ` · ${refShown}` : ""}${keywords.length ? ` · ${keywords.join(", ")}` : ""}${link.assumption ? " · Assumption" : ""}`
+    : keyword ||
+      (link.assumption && !linked
+        ? "Assumption"
+        : link.ref || SHORT[link.label] || link.label);
 
   if (!linked) {
     /* Nowhere to go back to (a replayed production conversation, a

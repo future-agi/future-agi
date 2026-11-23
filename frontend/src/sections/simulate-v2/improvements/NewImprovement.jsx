@@ -1,7 +1,7 @@
 import PropTypes from "prop-types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 import { paths } from "src/routes/paths";
 import { useSimStore, useConnectedAgents } from "../store";
 import { mainEnvOf, agentStatusOf } from "../_mock/agentLifecycle";
@@ -25,7 +25,6 @@ import BuildEnvironmentDialog from "../agents/BuildEnvironmentDialog";
 import { buildPresetFor } from "../agents/agentViewUtils";
 import SideDrawer from "../components/SideDrawer";
 import AgentPicker from "./AgentPicker";
-import { LogoTile } from "../environments/LandingBits";
 import { creditsLabel } from "../_mock/metering";
 import {
   FIX_DEFAULTS,
@@ -259,14 +258,25 @@ export default function NewImprovement({
           onClick: () => connectNew(),
         }}
       />
+      {/* Not connected yet: one link, the full connect flow behind it. */}
       {!pickedChoice && (
         <>
           <Typography
             sx={{ typography: "s3", color: "text.subtitle", mt: 0.5 }}
           >
-            Its goals, budget and cost show here once it&apos;s picked.
+            {"Agent not connected yet? "}
+            <TextLink
+              onClick={() => connectNew()}
+              sx={{
+                color: "text.primary",
+                textDecoration: "underline",
+                textUnderlineOffset: "3px",
+              }}
+            >
+              Connect it
+            </TextLink>
           </Typography>
-          <NotConnectedYet onConnect={connectNew} />
+          <HowAnEpochRuns />
         </>
       )}
       {pickedChoice && (
@@ -372,7 +382,7 @@ function AgentReadPanel({ agent, onCheck }) {
   const steps = [
     "Build its environment from what we read — simulated tools, seeded data, rules and scenarios. A few minutes.",
     "Run it once, to see where it fails.",
-    "Improve from what that run finds — up to 4 candidates, proven on held-back scenarios.",
+    `Run an epoch on what that run finds — up to ${MAX_CANDIDATES} candidates, proven on held-back scenarios.`,
   ];
   return (
     <Stack spacing={3} sx={{ mt: 2.5 }}>
@@ -473,121 +483,44 @@ AgentReadPanel.propTypes = {
 };
 
 /*
-  Before an agent is picked: the other way in (an agent not connected yet,
-  on the sources a fix can change first) and what an improvement does, in
-  three plain steps — the empty-state pattern, no illustration.
+  Before an agent is picked: what an epoch does, in three plain steps — the
+  empty-state pattern, no illustration. A winner's hand-back is said once,
+  in the footer, once an agent is picked.
 */
-const SOURCES = [
-  {
-    id: "github",
-    kind: "repo",
-    name: "GitHub",
-    logo: "github",
-    initial: { host: "github" },
-    note: "Changes come back as a pull request",
-  },
-  {
-    id: "upload",
-    kind: "upload",
-    name: "Upload a folder",
-    icon: "solar:upload-minimalistic-linear",
-    note: "Changes come back as a patch to apply",
-  },
-  {
-    id: null,
-    name: "Another way",
-    icon: "solar:widget-add-linear",
-    note: "Vapi, Retell, an endpoint or a phone number — ends in a suggested change",
-  },
-];
-function NotConnectedYet({ onConnect }) {
+function HowAnEpochRuns() {
   const steps = [
     "Runs the agent's current version on its environment's scenarios, to see what fails.",
-    `Tries up to ${MAX_CANDIDATES} changes, within ${creditsLabel(FIX_DEFAULTS.dollars)} or ${hoursLabel(FIX_DEFAULTS.minutes)}.`,
-    "Proves the best on held-back and must-pass scenarios. A winner comes back as a new version.",
+    `Tries up to ${MAX_CANDIDATES} changes, within ${creditsLabel(FIX_DEFAULTS.dollars)} or ${hoursLabel(FIX_DEFAULTS.minutes)} for the whole epoch.`,
+    "Proves the best on held-back and must-pass scenarios.",
   ];
   return (
-    <Stack spacing={3} sx={{ mt: 3 }}>
-      <Box>
-        <Typography sx={{ typography: "m3", fontWeight: 500 }}>
-          Or connect a new agent
-        </Typography>
-        <Typography sx={{ typography: "s1", color: "text.tertiary", mb: 1 }}>
-          Not connected yet? Bring it in — you come back here with it picked,
-          and its environment is built before the epoch starts.
-        </Typography>
-        <Box
-          sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1 }}
-        >
-          {SOURCES.map((src, i) => (
-            <Stack
-              key={src.name}
-              direction="row"
-              alignItems="center"
-              spacing={1.25}
+    <Box sx={{ mt: 3 }}>
+      <Typography sx={{ typography: "m3", fontWeight: 500, mb: 1 }}>
+        How an epoch runs
+      </Typography>
+      <Stack spacing={1}>
+        {steps.map((t, i) => (
+          <Stack key={t} direction="row" spacing={1.25}>
+            <Typography
               sx={{
-                px: 1.5,
-                py: 1,
-                ...(i > 0 && {
-                  borderTop: "1px solid",
-                  borderColor: "divider",
-                }),
+                typography: "s1",
+                color: "text.tertiary",
+                width: 12,
+                flexShrink: 0,
+                fontVariantNumeric: "tabular-nums",
               }}
             >
-              <LogoTile logo={src.logo} icon={src.icon} size={24} />
-              <Box flex={1} minWidth={0}>
-                <Typography sx={{ typography: "s1", fontWeight: 500 }}>
-                  {src.name}
-                </Typography>
-                <Typography
-                  noWrap
-                  sx={{ typography: "s3", color: "text.tertiary" }}
-                >
-                  {src.note}
-                </Typography>
-              </Box>
-              <Button
-                size="small"
-                variant="outlined"
-                color="inherit"
-                onClick={() => onConnect(src.id ? src : null)}
-                sx={{ borderColor: "divider", flexShrink: 0 }}
-              >
-                Connect
-              </Button>
-            </Stack>
-          ))}
-        </Box>
-      </Box>
-      <Box>
-        <Typography sx={{ typography: "m3", fontWeight: 500, mb: 1 }}>
-          How an epoch runs
-        </Typography>
-        <Stack spacing={1}>
-          {steps.map((t, i) => (
-            <Stack key={t} direction="row" spacing={1.25}>
-              <Typography
-                sx={{
-                  typography: "s1",
-                  color: "text.tertiary",
-                  width: 12,
-                  flexShrink: 0,
-                  fontVariantNumeric: "tabular-nums",
-                }}
-              >
-                {i + 1}
-              </Typography>
-              <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-                {t}
-              </Typography>
-            </Stack>
-          ))}
-        </Stack>
-      </Box>
-    </Stack>
+              {i + 1}
+            </Typography>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+              {t}
+            </Typography>
+          </Stack>
+        ))}
+      </Stack>
+    </Box>
   );
 }
-NotConnectedYet.propTypes = { onConnect: PropTypes.func.isRequired };
 
 NewImprovement.propTypes = {
   open: PropTypes.bool,

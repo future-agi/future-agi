@@ -6,7 +6,7 @@
   exist in production are named. What happened and what should happen are
   separate, and an inferred fact is never shown as observed.
 */
-import { productionTracesOf } from "./traceImport";
+import { productionTracesOf, retitleForShows } from "./traceImport";
 import { failedSimulationsOf } from "./evidenceSources";
 import { rulesOf } from "./envModel";
 import { currentUser } from "./scenarioProvenance";
@@ -58,7 +58,7 @@ export const STATE_MODES = {
   synthetic: {
     label: "Labelled synthetic reproduction",
     evidence:
-      "Synthetic — a made-up starting state, labelled as such on every result",
+      "Synthetic — the starting records are made up and labelled on every result: not an exact replay",
   },
   /* evidence.md §3: no pre-state — a conversation-only test, never a
      claim of exact state replay. */
@@ -67,6 +67,8 @@ export const STATE_MODES = {
     evidence:
       "Conversation only — no starting state, so checks on records are Unmeasured",
   },
+  /* Older reviews only — a draft no longer waits on its starting state; a
+     missing one is made up and labelled synthetic. */
   blocked: {
     label: "Keep blocked",
     evidence: "Blocked — not runnable until the starting state is settled",
@@ -79,7 +81,14 @@ export const reviewOf = (row, sources) => {
   const hasState =
     sources.length > 0 && sources.every((s) => s.evidence.startingState);
   return {
-    stateMode: r.stateMode || (hasState ? "observed" : "blocked"),
+    /* A missing starting state is made up and labelled, never a reason to
+       hold the draft back (an older "blocked" reads the same way). */
+    stateMode:
+      r.stateMode && r.stateMode !== "blocked"
+        ? r.stateMode
+        : hasState
+          ? "observed"
+          : "synthetic",
     fixture: r.fixture || null,
     redaction: r.redaction || {},
     happened: r.happened ?? null,
@@ -319,12 +328,20 @@ export const duplicatesOf = (rows) => {
 
 /** The patch that saves part of one draft's review. */
 export const reviewPatch = (envState, id, fields) => ({
-  scenarios: (envState?.scenarios || []).map((r) =>
-    r.id === id
-      ? { ...r, traceReview: { ...(r.traceReview || {}), ...fields } }
-      : r,
-  ),
+  scenarios: (envState?.scenarios || []).map((r) => {
+    if (r.id !== id) return r;
+    /* Saying what the record shows retitles the draft to match. */
+    const row = fields.shows ? retitleForShows(r, fields.shows) : r;
+    return { ...row, traceReview: { ...(r.traceReview || {}), ...fields } };
+  }),
 });
+
+/**
+ * A draft as its review reads it: titled for what its record shows — a
+ * session that passed is kept as a regression, never "reproduces".
+ */
+export const reviewedDraftOf = (row, env, envState) =>
+  retitleForShows(row, reviewOf(row, draftSourcesOf(row, env, envState)).shows);
 
 /** Merge duplicates into the first: every source kept, the others dropped from the draft list. */
 export const mergePatch = (envState, ids) => {

@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Box,
   Button,
@@ -32,6 +33,12 @@ import {
 } from "../../_mock/rsiModel";
 import { useWorkspaceSettings } from "../../store";
 import { focusRing } from "../../components/clickable";
+import {
+  PRODUCTION_ROUTES,
+  addSourceOf,
+  datasetImportOf,
+  routeOfLink,
+} from "./addScenarioRoutes";
 
 /* The builder chat is the other way to add scenarios — say what's missing and
    it writes them. This is the skill chip that hands the job over. */
@@ -44,7 +51,7 @@ const ADD_IN_CHAT = {
 };
 
 /**
- * Add scenarios.
+ * Add scenarios — the one way in on the Scenarios tab.
  *
  * Scenarios already exist by the time anyone reaches this screen — they are
  * derived from the agent when the environment is built. So these routes are
@@ -52,10 +59,10 @@ const ADD_IN_CHAT = {
  * not know to write.
  *
  * Every source is shown the same way, in two rows: ways to write new
- * scenarios, and ways to turn what already happened into scenarios.
- *
- * Behind a button, and in a drawer, so the page leads with the scenarios you
- * have and the routes stay one click away.
+ * scenarios, and ways to turn what already happened into scenarios. Each
+ * source of evidence (production, an issue, a dataset, an uploaded file)
+ * ends in the same review of imported evidence — there is no separate
+ * import button or pop-up.
  */
 const GROUPS = [
   {
@@ -75,9 +82,9 @@ const GROUPS = [
       },
       {
         id: "manual",
-        label: "By hand",
+        label: "Write one",
         icon: "solar:pen-new-square-linear",
-        blurb: "Write one yourself",
+        blurb: "Write it yourself",
       },
       {
         id: "script",
@@ -90,37 +97,42 @@ const GROUPS = [
   {
     label: "From what already happened",
     routes: [
+      /* The exact traces or sessions picked become reviewed drafts. */
+      {
+        id: "observe",
+        label: "From production",
+        icon: "solar:server-linear",
+        blurb: "Traces or sessions from Observe",
+      },
       {
         id: "error-feed",
-        label: "From Error Feed",
+        label: "From an Error Feed issue",
         icon: "solar:bug-linear",
-        blurb: "Real users · an issue's failing conversations",
+        blurb: "An issue's failing conversations",
       },
       {
         id: "failing",
         label: "From failing cases",
         icon: "solar:restart-linear",
-        blurb: "Simulated · failed or flaky in this environment's runs",
-      },
-      /* Exact picked evidence becomes reviewed drafts. */
-      {
-        id: "replay",
-        label: "Import evidence",
-        icon: "solar:server-linear",
-        blurb: "Transcripts or CSV/JSON files you upload",
+        blurb: "Failed or flaky in this environment's runs",
       },
       {
         id: "dataset",
         label: "From a dataset",
         icon: "solar:database-linear",
-        blurb: "Each row becomes a task",
+        blurb: "Each row becomes a draft",
+      },
+      {
+        id: "files",
+        label: "Upload transcript or file",
+        icon: "solar:upload-minimalistic-linear",
+        blurb: "Transcripts, CSV or JSON",
       },
     ],
   },
 ];
-
-/* `?add=production` predates the Error Feed source — same place now. */
-const ROUTE_ALIASES = { production: "error-feed" };
+/* Both rows share one column count, so tiles line up across them. */
+const COLS = Math.max(...GROUPS.map((g) => g.routes.length));
 
 export default function AddScenariosDrawer({
   open,
@@ -132,12 +144,13 @@ export default function AddScenariosDrawer({
   onBuilderPrompt,
   initialRoute,
 }) {
-  const first = ROUTE_ALIASES[initialRoute] || initialRoute || null;
-  const [route, setRoute] = useState(first);
+  const [searchParams] = useSearchParams();
+  const [route, setRoute] = useState(() =>
+    routeOfLink(initialRoute, searchParams),
+  );
   /* Production-derived sources follow the workspace-admin switch in Settings. */
   const { settings: workspaceSettings } = useWorkspaceSettings();
   const productionOff = !productionScenariosOn(envState, workspaceSettings);
-  const PRODUCTION_ROUTES = new Set(["error-feed", "replay"]);
   const offRoute = productionOff && PRODUCTION_ROUTES.has(route);
 
   const close = () => {
@@ -147,7 +160,7 @@ export default function AddScenariosDrawer({
 
   /* Close first, then let the parent show the confirmation toast. */
   const add = (rows) => {
-    onAdd(rows, route);
+    onAdd(rows, addSourceOf(route, rows));
     close();
   };
   /* Re-check only what's still blocked, under the same import. */
@@ -273,7 +286,7 @@ export default function AddScenariosDrawer({
                     gap: 1,
                     gridTemplateColumns: {
                       xs: "repeat(2, minmax(0, 1fr))",
-                      md: "repeat(4, minmax(0, 1fr))",
+                      md: `repeat(${COLS}, minmax(0, 1fr))`,
                     },
                   }}
                 >
@@ -354,8 +367,10 @@ export default function AddScenariosDrawer({
                 onClose={close}
               />
             )}
-            {route === "replay" && !offRoute && (
+            {(route === "observe" || route === "files") && !offRoute && (
               <ProductionReplayImport
+                key={route}
+                mode={route}
                 env={env}
                 envState={envState}
                 onAdd={add}
@@ -374,7 +389,11 @@ export default function AddScenariosDrawer({
               <ChatSource onSend={sendToChat} onOpenChat={openChat} />
             )}
             {route === "dataset" && (
-              <DatasetImport env={env} onAdd={add} selected={selected} />
+              <DatasetImport
+                env={env}
+                onAdd={(rows, dataset) => add(datasetImportOf(rows, dataset))}
+                selected={selected}
+              />
             )}
             {route === "script" && (
               <ScriptUpload env={env} onAdd={add} selected={selected} />
@@ -436,7 +455,20 @@ export default function AddScenariosDrawer({
                         })}
                       </Typography>
                       <Typography sx={{ typography: "s3", flex: 1 }}>
-                        {`${sourceOf(h.source).label} · ${h.created} created · ${h.blocked} blocked · ${h.duplicate} duplicate`}
+                        {[
+                          sourceOf(h.source).label,
+                          `${h.created} created`,
+                          /* Imported evidence never reads "blocked": a case
+                             waits for the environment instead. */
+                          h.needsEnvironment == null
+                            ? `${h.blocked} blocked`
+                            : h.needsEnvironment
+                              ? `${h.needsEnvironment} need the environment`
+                              : null,
+                          `${h.duplicate} duplicate`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </Typography>
                       {h.blocked > 0 && retryBlocked && (
                         <Button

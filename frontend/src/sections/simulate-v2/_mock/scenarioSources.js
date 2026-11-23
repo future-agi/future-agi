@@ -24,6 +24,7 @@
 import { scrubPersonalData } from "./rsiModel";
 import { currentAgentVersion } from "./versions";
 import { subGoalsOfScenario } from "./envModel";
+import { withSourceKeywords } from "./scenarioKeywords";
 
 const hash = (s) => {
   let h = 2166136261;
@@ -41,10 +42,12 @@ const sentence = (t = "") => {
 const lowerFirst = (t = "") => (t ? t.charAt(0).toLowerCase() + t.slice(1) : t);
 
 /* Every source lands as a proposal — it joins the environment once someone adds it. */
-export const asProposal = (row, source, at = new Date().toISOString()) => ({
-  ...row,
-  proposed: row.proposed || { at, source },
-});
+export const asProposal = (row, source, at = new Date().toISOString()) =>
+  /* Where it came from travels with it as keywords (from-production, …). */
+  withSourceKeywords({
+    ...row,
+    proposed: row.proposed || { at, source },
+  });
 
 /* The name a proposal is matched on — the same scenario proposed again. */
 const proposalKey = (row) =>

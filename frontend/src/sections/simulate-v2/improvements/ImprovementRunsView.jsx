@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { requiredEvalIds } from "../_mock/evals";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   Box,
@@ -38,14 +38,14 @@ import {
   shippedCandidate,
 } from "../run/fixmyagent/tradeoffs";
 import WinnerChanges from "../run/fixmyagent/WinnerChanges";
-import ScenarioOutcomes from "../run/fixmyagent/ScenarioOutcomes";
-import { membersChanged, proposalMembers } from "../_mock/improvementPolicy";
+import EpochScenarioResults from "./EpochScenarioResults";
+import { membersOf, proposalMembers } from "../_mock/improvementPolicy";
 import {
   improvementOutcome,
   IMPROVEMENT_PHASES,
+  OPT_STATUS,
   runsCountOf,
   searchSpend,
-  improvementSpendParts,
   improvementTotalSpend,
   stopImprovement,
   requestStop,
@@ -53,12 +53,17 @@ import {
 import CostPartsTable from "./CostPartsTable";
 import { downloadExperiment } from "../_mock/experimentExport";
 import RaiseLimitBar from "./RaiseLimitBar";
-import { creditsLabel } from "../_mock/metering";
+import { creditsForUsd, creditsLabel } from "../_mock/metering";
 import { RATE_PLAN } from "../_mock/rates";
 import RunsOverview from "../run/RunsOverview";
 import WinnerDrawer from "../run/WinnerDrawer";
 import { improvementRowsOf } from "./improvementRows";
-import { chartRunOf, trialRowsFor } from "./improvementRunsData";
+import {
+  chartRunOf,
+  creditsWord,
+  epochSpendOf,
+  trialRowsFor,
+} from "./improvementRunsData";
 import StatusPill from "./ImprovementStatusPill";
 import {
   agentDefinitionOf,
@@ -68,6 +73,45 @@ import {
 import { behindProductionOf } from "./behindProduction";
 import ImprovementStages from "./ImprovementStages";
 import ClosableDialog from "../components/ClosableDialog";
+import { improvementRunName } from "../_mock/optimizer";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import EpochVerdict from "./EpochVerdict";
+import EpochCandidatesTable from "./EpochCandidatesTable";
+import CandidateChangeDrawer from "./CandidateChangeDrawer";
+import {
+  candidateGroupsOf,
+  candidateRowsOf,
+  changeSummaryOf,
+  evidenceRowsOf,
+} from "./epochCandidates";
+import EpochEnding from "./EpochEnding";
+import EpochMoreMenu from "./EpochMoreMenu";
+import EpochSearchDetails from "./EpochSearchDetails";
+import IssueScenarioEditor from "./IssueScenarioEditor";
+import NewImprovement from "./NewImprovement";
+import {
+  ENDINGS_WITH_CANDIDATES,
+  earlyEndingOf,
+  endingCopyOf,
+} from "./epochEndings";
+import { epochBriefOf, epochProofOf } from "./epochBrief";
+import { downloadPatch, patchTextOf } from "./epochShip";
+import { proofDisplay } from "../run/fixmyagent/proofBlock";
+import { ReceiptButton } from "../run/fixmyagent/ProofParts";
+import { ContractNotice } from "../run/fixmyagent/ImprovementPanels";
+import {
+  contractApprovalPatch,
+  issueDraftsOf,
+  nextContractVersion,
+  reproduceAgainPatch,
+} from "../run/fixmyagent/improvementView";
+import {
+  snapshotByLabel,
+  snapshotName,
+  snapshotOfImprovement,
+} from "../_mock/envSnapshot";
+import { envLabelOf } from "../_mock/envVersionKinds";
+import { currentEnvVersion } from "../_mock/versions";
 
 const RED = "status.danger.fg";
 const DELTA = 56;
@@ -99,13 +143,14 @@ export default function ImprovementRunsView({
   patch,
   onBack,
   backLabel,
-  onOpenSearch,
   onVerify,
   onShip,
   onRecheck,
   progress = null,
   onOpenIssue,
   onOpenStartRun,
+  tabAsk = null,
+  onTabAsked,
 }) {
   const running = !!progress;
   /* The model the agent runs on — what a model lock holds every run to. */
@@ -125,15 +170,17 @@ export default function ImprovementRunsView({
   );
   const [selected, setSelected] = useState([]);
   const [picking, setPicking] = useState(false);
-  /* The experiment's ID — what fi api fix-runs results / promote and
-     the SDK take, so code reads this same experiment. */
+  /* The epoch's ID — what fi api epochs get / promote and the SDK take,
+     so code reads this same epoch. */
   const experimentId = `${env.id}/${record.id}`;
-  const [idCopied, setIdCopied] = useState(false);
-  const copyId = () => {
-    navigator.clipboard?.writeText(experimentId).catch(() => {});
-    setIdCopied(true);
-    setTimeout(() => setIdCopied(false), 1500);
-  };
+  const command = `fi api epochs get ${experimentId} --json`;
+  const copyText = (text) =>
+    navigator.clipboard?.writeText(text).catch(() => {});
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  /* Run Epoch again, with this agent — the setup drawer. */
+  const [againOpen, setAgainOpen] = useState(false);
+  /* Not reproduced: the issue's scenarios, edited in place. */
+  const [editingScenarios, setEditingScenarios] = useState(false);
   /* Stop: asked first, with what has run and what it has cost so far. */
   const [stopAsk, setStopAsk] = useState(false);
   const stopNow = () => {
@@ -152,6 +199,12 @@ export default function ImprovementRunsView({
   /* Flow 5's tabs once it has finished: the runs, what the kept change
      changes (each with its reason), and what it did to each scenario. */
   const [tab, setTab] = useState(null);
+  /* Asked from outside (Ship's See changes): open that tab once. */
+  useEffect(() => {
+    if (!tabAsk) return;
+    setTab(tabAsk);
+    onTabAsked?.();
+  }, [tabAsk]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const row = useMemo(
     () =>
@@ -202,28 +255,80 @@ export default function ImprovementRunsView({
   const shippable =
     ["ready", "stopped-early", "budget"].includes(outcome.ending.key) &&
     outcome.strength?.key !== "none" &&
+    record.status !== OPT_STATUS.OVER_BUDGET &&
     !!record.result?.winner;
   const result = record.result;
   /* What ships — the search's pick or the run someone chose — and which
      members of a multi-agent its changes touch. */
   const shipped = shippedCandidate(record) || result?.winner || null;
+  /* Only an agent with more than one member says which one a change lands on. */
   const members = useMemo(() => {
     const ctx = {
       agent: envState?.agent || null,
       limits: record.limits,
       target: record.targetMember,
     };
-    const proposals = shipped?.proposals || [];
-    return membersChanged(proposals, ctx).hasMembers
-      ? proposalMembers(proposals, ctx)
+    return membersOf(ctx.agent).length > 1
+      ? proposalMembers(shipped?.proposals || [], ctx)
       : null;
   }, [shipped, envState, record.limits, record.targetMember]);
   /* A stopped one has no kept change and no held-back results: its trials
      and what it cost, nothing to choose. */
   const stopped = outcome?.ending?.key === "stopped";
-  const tabbed = !running && !!result;
-  /* Opens on the first tab — Changes — unless it stopped and has none. */
-  const view = tabbed ? tab || (stopped ? "runs" : "changes") : "runs";
+  /* Ended early — stopped, no safe change, not reproduced, too few, over
+     budget: one ending layout (EpochEnding) instead of the verdict. */
+  const ending = running ? null : earlyEndingOf(record, outcome);
+  /* Tabs once there are candidates to read; an ending with none is the
+     ending alone. */
+  const tabbed =
+    !running &&
+    !!result?.trials?.length &&
+    (!ending || ENDINGS_WITH_CANDIDATES.has(ending));
+  /* What it spent — one sum, read by the ending line and the Cost tab. */
+  const spend = useMemo(
+    () => epochSpendOf(record, env?.surface),
+    [record, env?.surface],
+  );
+  /* A winner to lead with: kept, and an ending that has one to review. */
+  const hasWinner = !running && !!kept && !ending;
+  /* Every candidate, at the step where the epoch stopped it. */
+  const candidateRows = useMemo(
+    () =>
+      running
+        ? []
+        : candidateRowsOf(record, {
+            rows: allRuns,
+            candidates,
+            keptN,
+            hasWinner,
+            stopped,
+          }),
+    [running, record, allRuns, candidates, keptN, hasWinner, stopped],
+  );
+  const candidateGroups = useMemo(
+    () => candidateGroupsOf(candidateRows, { stopped, hasWinner }),
+    [candidateRows, stopped, hasWinner],
+  );
+  const winnerRow = candidateRows.find((c) => c.stage === "winner") || null;
+  const alsoPassed = candidateRows
+    .filter((c) => c.stage === "passed")
+    .sort((a, b) => b.score - a.score || a.n - b.n);
+  /* No change to show — stopped, or nothing safe was found: the candidates
+     (the rejected ones included) are where to look. */
+  const noChanges = stopped || ending === "no-fix";
+  /* Opens on the first tab — Changes — unless it has none to show. */
+  const view = tabbed
+    ? tab || (noChanges ? "candidates" : "changes")
+    : running
+      ? "runs"
+      : "none";
+  /* The Candidates tab: grouped by where the epoch stopped each one, or
+     every measurement side by side (the chart, Compare, Choose winner). */
+  const [candidatesMode, setCandidatesMode] = useState("result");
+  const measurements =
+    view === "runs" || (view === "candidates" && candidatesMode === "all");
+  /* One candidate's change, in a drawer beside the page. */
+  const [changeOf, setChangeOf] = useState(null);
   /*
     Every pass rate here is on the target scenarios, so a run's change is
     read against what the agent scored on those same scenarios before
@@ -255,8 +360,11 @@ export default function ImprovementRunsView({
     () => behindProductionOf({ record, env, envState, agents }),
     [record, env, envState, agents],
   );
+  /* Live already (released, watched, resolved or reopened): nothing left
+     to re-check before it ships. */
+  const live = ["released", "reopened"].includes(row?.status?.key);
   /* Behind and not re-checked: Ship waits for the re-check. */
-  const holdShip = !!behind && !behind.recheck;
+  const holdShip = !!behind && !behind.recheck && !live;
   /* A repo agent's patch that conflicts with newer commits: a person reviews
      the rebase before it's re-checked — nothing stale is applied. */
   const rebaseFirst = !!behind?.conflict && !behind.conflict.resolved;
@@ -393,6 +501,190 @@ export default function ImprovementRunsView({
       state: { back: { to: `${location.pathname}${location.search}` } },
     });
 
+  /* ── the ways on from an early ending ── */
+  const markRecord = (fn) =>
+    patch({
+      optimizations: (envState?.optimizations || []).map((o) =>
+        o.id === record.id ? fn(o) : o,
+      ),
+    });
+  /* Stopped on our side: the same epoch again, from now — once (Kartik, #77). */
+  const retry = () =>
+    markRecord((o) => ({
+      ...o,
+      status: OPT_STATUS.RUNNING,
+      startedAt: new Date().toISOString(),
+      result: o.result || o.pendingResult,
+      pendingResult: undefined,
+      pendingEnding: undefined,
+      retries: (o.retries || 0) + 1,
+    }));
+  /* Not reproduced → a diagnosis and a suggested change, no candidates. */
+  const diagnoseOnly = () =>
+    markRecord((o) => ({
+      ...o,
+      status: OPT_STATUS.RUNNING,
+      startedAt: new Date().toISOString(),
+      fixDepth: "suggestion",
+      result: {
+        ...(o.result || o.pendingResult),
+        winner: null,
+        finalists: [],
+        trials: [],
+      },
+      pendingResult: undefined,
+      pendingEnding: undefined,
+      reproduce: { ...o.reproduce, diagnosticOnly: true },
+    }));
+  /* A new epoch: an issue's starts from its issue (Run Epoch there), any
+     other from the setup drawer with this agent picked. */
+  const runAgain = () => {
+    if (record.trigger?.issueId && onOpenIssue) onOpenIssue();
+    else setAgainOpen(true);
+  };
+  const openScenarios = () =>
+    navigate(paths.dashboard.simulate.environmentStep(env.id, "scenarios"));
+  const openRules = envState?.agent
+    ? () =>
+        navigate(
+          `${paths.dashboard.agents}/connected/${agentIdOf(envAgentKey(envState.agent, env.id))}?tab=constraints`,
+        )
+    : null;
+  const endingCopy = ending
+    ? endingCopyOf(ending, {
+        record,
+        outcome,
+        name: row?.name || record.name,
+        credits: spend.credits,
+      })
+    : null;
+  /* One primary and at most two links per ending. */
+  const endingActions = (() => {
+    if (ending === "failed")
+      return {
+        primary:
+          outcome.canRetry !== false
+            ? { label: `Retry ${row?.name || "the epoch"}`, onClick: retry }
+            : { label: "Run Epoch again", onClick: runAgain },
+      };
+    if (ending === "stopped")
+      return { primary: { label: "Run Epoch again", onClick: runAgain } };
+    if (ending === "not-reproduced")
+      return {
+        primary: issueDraftsOf(record).length
+          ? {
+              label: "Edit scenarios and reproduce again",
+              onClick: () => setEditingScenarios(true),
+            }
+          : null,
+        links: [
+          { label: "Diagnose only", onClick: diagnoseOnly },
+          {
+            label: "Connect a source",
+            onClick: () =>
+              navigate(
+                paths.dashboard.simulate.environmentStep(env.id, "world"),
+              ),
+          },
+        ],
+      };
+    if (ending === "too-few" || ending === "nothing")
+      return { primary: { label: "Add scenarios", onClick: openScenarios } };
+    return {};
+  })();
+  /* The ⋯ menu: everything that isn't the page's one primary. */
+  const moreItems = [
+    {
+      label: "Copy epoch ID",
+      hint: experimentId,
+      icon: "solar:copy-linear",
+      done: "Copied",
+      onClick: () => copyText(experimentId),
+    },
+    {
+      label: "Copy command",
+      hint: command,
+      icon: "solar:code-linear",
+      done: "Copied",
+      onClick: () => copyText(command),
+    },
+    !running && {
+      label: "Export epoch",
+      hint: "Baseline, scenarios, changes, candidates, result and spend — no credentials.",
+      icon: "solar:download-minimalistic-linear",
+      onClick: () => downloadExperiment(record, env),
+    },
+    !running &&
+      (shipped?.proposals || []).length > 0 &&
+      !noChanges && {
+        label: "Download patch",
+        hint: "The winner's changes, file by file.",
+        icon: "solar:download-minimalistic-linear",
+        onClick: () =>
+          downloadPatch(
+            `${env.name} ${row?.name || record.name}`,
+            patchTextOf(env, shipped.proposals),
+          ),
+      },
+    !running &&
+      result && {
+        label: "Receipt",
+        hint: "What ran, on which versions, and its seal.",
+        icon: "solar:document-text-linear",
+        onClick: () => setReceiptOpen(true),
+      },
+    !running &&
+      result && {
+        label: "Copy for coding agent",
+        hint: "A brief with the issue, what the search found, what still fails and the constraints.",
+        icon: "solar:programming-linear",
+        done: "Copied",
+        onClick: () =>
+          copyText(
+            epochBriefOf({
+              record,
+              env,
+              envState,
+              state: simState,
+              name: row?.name || record.name,
+            }),
+          ),
+      },
+  ];
+  /* The environment version it was frozen on, and a contract approval's. */
+  const frozenOn = snapshotName(
+    snapshotOfImprovement(record, env, envState),
+    true,
+  );
+  const ca = record.contractApproval;
+  const shownApproval = ca
+    ? {
+        ...ca,
+        to:
+          (ca.toSnapshot
+            ? snapshotByLabel(env, envState, ca.toSnapshot)?.envLabel
+            : null) || envLabelOf(env, envState, ca.to),
+        from:
+          (ca.fromSnapshot
+            ? snapshotName(
+                snapshotByLabel(env, envState, ca.fromSnapshot),
+                true,
+              )
+            : null) ||
+          frozenOn ||
+          ca.from,
+      }
+    : ca;
+  const proofLine =
+    proofDisplay(epochProofOf(record, envState?.agent || null))?.line || null;
+  /* Shipped: Ship opens its steps where it stands. */
+  const shippedKind = row?.output?.kind || null;
+  const shipLabel = !shippedKind
+    ? `Ship ${kept?.name || ""}`.trim()
+    : ["draft", "version"].includes(shippedKind)
+      ? "Continue shipping"
+      : "View shipping";
+
   const statusOf = (r) => {
     if (running) {
       if (r.why) {
@@ -483,25 +775,52 @@ export default function ImprovementRunsView({
                   <Iconify icon="solar:arrow-left-linear" width={16} />
                 </IconButton>
               </Tooltip>
-              {/* Where you came from, in view (#72): the issue, the run or
-                  the Improvements list. */}
-              {backLabel && (
-                <Box
-                  component="button"
-                  type="button"
-                  onClick={onBack}
-                  sx={{
-                    all: "unset",
-                    cursor: "pointer",
-                    typography: "s2",
-                    color: "text.tertiary",
-                    whiteSpace: "nowrap",
-                    "&:hover": { color: "text.primary" },
-                  }}
+              {/* Where it lives: its environment and that environment's
+                  Epochs tab — never the issue or cluster it was started
+                  from (the back arrow still returns there). */}
+              {[
+                {
+                  label: env.name,
+                  to: paths.dashboard.simulate.environmentDetail(env.id),
+                },
+                {
+                  label: "Epochs",
+                  to: `${paths.dashboard.simulate.environmentDetail(env.id)}/improvements`,
+                },
+              ].map((c) => (
+                <Stack
+                  key={c.label}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{ minWidth: 0, flexShrink: c.label === "Epochs" ? 0 : 1 }}
                 >
-                  {`${backLabel} /`}
-                </Box>
-              )}
+                  <Link
+                    component="button"
+                    type="button"
+                    underline="hover"
+                    onClick={() => navigate(c.to)}
+                    noWrap
+                    sx={{
+                      typography: "s2",
+                      color: "text.tertiary",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      minWidth: 0,
+                      "&:hover": { color: "text.primary" },
+                    }}
+                  >
+                    {c.label}
+                  </Link>
+                  <Typography
+                    component="span"
+                    sx={{ typography: "s2", color: "text.disabled" }}
+                  >
+                    /
+                  </Typography>
+                </Stack>
+              ))}
               <Typography
                 noWrap
                 sx={{ fontSize: 16, lineHeight: "24px", fontWeight: 600 }}
@@ -539,8 +858,8 @@ export default function ImprovementRunsView({
                 }}
               >
                 {[
+                  /* The environment is in the crumb above. */
                   row?.identity,
-                  env.name,
                   /* The issue it fixes, by name — not just its ID. */
                   record.trigger?.issueId
                     ? `${record.trigger.issueId} ${mockCluster(record.trigger.issueId)?.error?.name || ""}`.trim()
@@ -588,7 +907,8 @@ export default function ImprovementRunsView({
                   >
                     None of them has been checked on the held-back scenarios, so
                     nothing can be chosen — today&apos;s version stays. The
-                    trials that ran stay on this page; nothing more is spent.
+                    candidates that ran stay on this page; nothing more is
+                    spent.
                   </Typography>
                 </DialogContent>
                 <DialogActions sx={{ px: 3, pb: 2.5 }}>
@@ -611,89 +931,10 @@ export default function ImprovementRunsView({
               </ClosableDialog>
             </>
           )}
-          <Tooltip
-            arrow
-            title={
-              idCopied
-                ? "Copied"
-                : `Copy fix run ID · ${experimentId} — for fi api fix-runs get and the SDK`
-            }
-          >
-            <IconButton
-              size="small"
-              aria-label="Copy fix run ID"
-              onClick={copyId}
-              sx={{
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: 1,
-                flexShrink: 0,
-              }}
-            >
-              <Iconify
-                icon={
-                  idCopied ? "solar:check-circle-linear" : "solar:copy-linear"
-                }
-                width={16}
-              />
-            </IconButton>
-          </Tooltip>
-          {/* The whole experiment as a file — baseline, scenarios, changes,
-              trials, result and spend; no credentials. */}
-          {!running && (
-            <Tooltip arrow title="Export fix run">
-              <IconButton
-                size="small"
-                aria-label="Export fix run"
-                onClick={() => downloadExperiment(record, env)}
-                sx={{
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  flexShrink: 0,
-                }}
-              >
-                <Iconify icon="solar:download-minimalistic-linear" width={16} />
-              </IconButton>
-            </Tooltip>
-          )}
-          {!running && (
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={onOpenSearch}
-              startIcon={
-                <Iconify icon="solar:shield-check-linear" width={16} />
-              }
-              sx={{
-                color: "text.primary",
-                borderColor: "divider",
-                flexShrink: 0,
-              }}
-            >
-              How it was decided
-            </Button>
-          )}
-          {kept && (
-            <Tooltip
-              arrow
-              describeChild
-              title={`Opens ${kept.name}: its changes, how it did on each scenario, and its runs.`}
-            >
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => openRun(kept)}
-                sx={{
-                  color: "text.primary",
-                  borderColor: "divider",
-                  flexShrink: 0,
-                }}
-              >
-                {`Open ${kept.name}`}
-              </Button>
-            </Tooltip>
-          )}
+          {/* Copy ID, Copy command, Export, Receipt, Copy for coding agent —
+              everything that isn't the page's one primary. */}
+          <EpochMoreMenu items={moreItems} />
+          {/* The winner's own run opens from the winner block below. */}
           {/* Only a verified change ships: a run chosen over the search's
               pick is verified first. */}
           {kept &&
@@ -714,6 +955,20 @@ export default function ImprovementRunsView({
                   {`Verify ${kept.name}`}
                 </Button>
               </Tooltip>
+            ) : onShip && row?.output?.kind === "pr" ? (
+              /* Its pull request is open: Ship shows it. */
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={onShip}
+                startIcon={
+                  <Iconify icon="solar:git-pull-request-linear" width={14} />
+                }
+                sx={{ flexShrink: 0 }}
+              >
+                View pull request
+              </Button>
             ) : onShip && holdShip && rebaseFirst && patch ? (
               <Button
                 size="small"
@@ -748,14 +1003,16 @@ export default function ImprovementRunsView({
               <Tooltip
                 arrow
                 title={
-                  row?.output
+                  shippedKind
                     ? ""
-                    : `Makes ${kept.name}'s version the default in ${env?.name || "this environment"}. A rejected candidate can't ship.`
+                    : `Opens the steps that ship ${kept.name} where ${envState?.agent?.name || "the agent"} runs. Nothing goes live until someone makes it live there.`
                 }
               >
                 <Button
                   size="small"
-                  variant="contained"
+                  variant={
+                    shipLabel === "View shipping" ? "outlined" : "contained"
+                  }
                   color="primary"
                   onClick={onShip}
                   startIcon={
@@ -764,9 +1021,16 @@ export default function ImprovementRunsView({
                       width={14}
                     />
                   }
-                  sx={{ flexShrink: 0 }}
+                  sx={{
+                    flexShrink: 0,
+                    /* Nothing left to do: a quiet button, not the primary. */
+                    ...(shipLabel === "View shipping" && {
+                      color: "text.primary",
+                      borderColor: "divider",
+                    }),
+                  }}
                 >
-                  {row?.output ? "Hand-over" : "Ship"}
+                  {shipLabel}
                 </Button>
               </Tooltip>
             ) : null)}
@@ -813,50 +1077,37 @@ export default function ImprovementRunsView({
         </ClosableDialog>
       )}
 
-      {/* Fell behind production while it waited — re-check before shipping. */}
-      {behind &&
-        !running &&
-        !["released", "watching", "resolved"].includes(row?.status?.key) && (
-          <Stack
-            direction="row"
-            spacing={1.25}
-            sx={{
-              mb: 1.5,
-              px: 2,
-              py: 1.125,
-              flexShrink: 0,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "8px",
-            }}
-          >
-            <Iconify
-              icon="solar:history-linear"
-              width={16}
-              sx={{ color: "text.secondary", flexShrink: 0, mt: "2px" }}
-            />
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              <Box
-                component="span"
-                sx={{ color: "text.primary", fontWeight: 600 }}
-              >
-                {behind.git
-                  ? `main has moved on ${behind.since} commit${behind.since === 1 ? "" : "s"} since this fix started.`
-                  : `${behind.prod} is in production now — ${behind.since} version${behind.since === 1 ? "" : "s"} after this fix started.`}
-              </Box>
-              {behind.recheck
-                ? ` Re-checked on ${behind.prod}${recheckRun ? ` in Run ${recheckRun.ordinal}${recheckRun.finishedAt ? "" : " (still running)"}` : ""} — compare it with its proof on ${behind.base} before it ${behind.git ? "is merged" : "ships"}.`
-                : rebaseFirst
-                  ? ` Its patch conflicts with those commits in ${behind.conflict.path}. Review the rebase onto ${behind.prod} first — nothing is applied until you accept it — then it's re-checked there before it is merged.`
-                  : behind.git
-                    ? ` Its patch is rebased onto ${behind.prod}${behind.conflict ? ` (${behind.conflict.path} merged by you)` : ""} and re-checked there before it is merged — its proof is on ${behind.base}.`
-                    : ` Its proof is on ${behind.base}, so it's re-checked on ${behind.prod} before it ships.`}
-            </Typography>
-          </Stack>
-        )}
+      {/* Fell behind production while it waited — only when something can
+          still ship; the header's Re-check is the way on. */}
+      {behind && !running && hasWinner && shippable && !live && (
+        <EpochEnding
+          label={
+            behind.recheck
+              ? `Re-checked on ${behind.prod}`
+              : rebaseFirst
+                ? "Needs a rebase"
+                : "Needs re-check"
+          }
+          sentence={
+            behind.git
+              ? `main has moved on ${behind.since} commit${behind.since === 1 ? "" : "s"} since this epoch started.`
+              : `${behind.prod} is in production now — ${behind.since} version${behind.since === 1 ? "" : "s"} after this epoch started.`
+          }
+          spent={
+            behind.recheck
+              ? `Re-checked on ${behind.prod}${recheckRun ? ` in Run ${recheckRun.ordinal}${recheckRun.finishedAt ? "" : " (still running)"}` : ""} — compare it with its proof on ${behind.base} before it ${behind.git ? "is merged" : "ships"}.`
+              : rebaseFirst
+                ? `Its patch conflicts with those commits in ${behind.conflict.path}. Review the rebase onto ${behind.prod} first — nothing is applied until you accept it — then it's re-checked there.`
+                : behind.git
+                  ? `Its patch is rebased onto ${behind.prod}${behind.conflict ? ` (${behind.conflict.path} merged by you)` : ""} and re-checked there before it is merged — its proof is on ${behind.base}.`
+                  : `Its proof is on ${behind.base}, so it's re-checked on ${behind.prod} before it ships.`
+          }
+        />
+      )}
 
-      {/* The verdict first: what it found, the held-back figure, the
-          constraints. While it runs, the stage it's in takes that place. */}
+      {/* Winner first: one sentence, one line of checks, then the winner
+          and the others that passed. While it runs, the stage it's in takes
+          that place; an epoch that ended early reads as its ending. */}
       {running ? (
         <ImprovementStages
           record={record}
@@ -866,32 +1117,87 @@ export default function ImprovementRunsView({
           onOpenIssue={onOpenIssue}
           onOpenRun={onOpenStartRun}
         />
+      ) : ending && endingCopy ? (
+        <EpochEnding
+          label={endingCopy.label}
+          danger={endingCopy.danger}
+          sentence={endingCopy.sentence}
+          spent={endingCopy.spent}
+          primary={endingActions.primary}
+          links={endingActions.links}
+        >
+          {ending === "no-fix" ? (
+            /* Never a dead end: what to try instead, one way on each. */
+            <NextSteps
+              issueId={record.trigger?.issueId || null}
+              onOpenIssue={onOpenIssue}
+              onOpenRules={openRules}
+            />
+          ) : ending === "over-budget" && patch && record.pendingResult ? (
+            /* Raise it here and continue — the inline raise is the way on. */
+            <Box sx={{ px: 2, py: 1 }}>
+              <RaiseLimitBar
+                record={record}
+                env={env}
+                envState={envState}
+                patch={patch}
+                framed={false}
+              />
+            </Box>
+          ) : null}
+        </EpochEnding>
       ) : (
-        <Verdict
+        <EpochVerdict
           outcome={outcome}
           result={result}
-          targetNow={kept?.score ?? null}
+          winner={hasWinner ? winnerRow : null}
+          winnerNote={
+            kept && keptN !== searchWinner
+              ? needsVerify
+                ? "your pick · not verified yet"
+                : "your pick"
+              : null
+          }
+          changeSummary={changeSummaryOf(env, shipped?.proposals || [])}
+          alsoPassed={hasWinner ? alsoPassed : []}
+          evidence={
+            hasWinner
+              ? evidenceRowsOf(outcome, result, winnerRow, proofLine)
+              : []
+          }
+          onSeeDiff={noChanges ? undefined : () => setTab("changes")}
+          onSeeChange={setChangeOf}
+          onOpenRun={openRun}
+          onShowCandidates={() => {
+            setCandidatesMode("result");
+            setTab("candidates");
+          }}
         />
       )}
 
-      {/* No safe change: never a dead end — what to try instead. */}
-      {!running && outcome?.ending?.key === "no-fix" && (
-        <NoFixNext
-          issueId={record.trigger?.issueId || null}
-          onOpenIssue={onOpenIssue}
-          onOpenRules={
-            envState?.agent
-              ? () =>
-                  navigate(
-                    `${paths.dashboard.agents}/connected/${agentIdOf(envAgentKey(envState.agent, env.id))}?tab=constraints`,
-                  )
-              : null
-          }
+      {/* Not reproduced: the issue's scenarios, edited, then reproduced again. */}
+      {ending === "not-reproduced" && patch && (
+        <IssueScenarioEditor
+          open={editingScenarios}
+          drafts={issueDraftsOf(record)}
+          perScenario={record.reproduce?.perScenario}
+          onClose={() => setEditingScenarios(false)}
+          onReproduce={(edits) => {
+            const next = reproduceAgainPatch({
+              record,
+              env,
+              envState,
+              state: simState,
+              edits,
+            });
+            if (next) patch(next);
+            setEditingScenarios(false);
+          }}
         />
       )}
 
       {/* Stopped partway at its budget or time cap: raise it here and continue. */}
-      {!running && record.stoppedAtBudget?.trials > 0 && (
+      {!running && !ending && record.stoppedAtBudget?.trials > 0 && (
         <RaiseLimitBar
           record={record}
           env={env}
@@ -912,16 +1218,152 @@ export default function ImprovementRunsView({
             borderColor: "divider",
           }}
         >
-          {/* The plan's finished tabs: Changes / Scenarios / Evidence (the
-              candidates and their runs), plus measured cost. */}
-          {!stopped && <Tab value="changes" label="Changes" />}
+          {/* Changes / Scenarios / Candidates (every one the epoch tried,
+              and what each measured), plus measured cost. No safe change
+              has no Changes: its rejected tries are under Candidates. */}
+          {!noChanges && <Tab value="changes" label="Changes" />}
           {!stopped && <Tab value="scenarios" label="Scenarios" />}
-          <Tab value="runs" label="Evidence" />
+          <Tab
+            value="candidates"
+            label={
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <span>Candidates</span>
+                <Typography
+                  component="span"
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {candidateRows.length}
+                </Typography>
+              </Stack>
+            }
+          />
           <Tab value="cost" label="Cost" />
         </Tabs>
       )}
 
-      {view !== "runs" && (
+      {/* Scenarios: the environment's own Scenarios table, read only, with
+          the epoch's result per scenario — and the scenarios it wrote, to
+          add to the environment. */}
+      {view === "scenarios" && (
+        <Box sx={{ flexShrink: 0 }}>
+          <EpochScenarioResults
+            env={env}
+            envState={envState}
+            record={record}
+            epochName={improvementRunName(envState, record)}
+            patch={patch}
+          />
+        </Box>
+      )}
+
+      {/* Candidates: grouped by where the epoch stopped each one, or every
+          measurement side by side. The pick rule, said once. */}
+      {view === "candidates" && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{ mb: 1.5, flexShrink: 0, minHeight: 30 }}
+        >
+          <SegmentedTabs
+            value={candidatesMode}
+            onChange={(_, v) => setCandidatesMode(v)}
+            aria-label="Show candidates"
+          >
+            <Tab value="result" label="By result" />
+            <Tab value="all" label="All measurements" />
+          </SegmentedTabs>
+          <Box flex={1} />
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              textAlign: "right",
+            }}
+          >
+            Finalists are scored once on held-back scenarios; of those that
+            pass, the highest target score is kept. Only the winner ships.
+          </Typography>
+        </Stack>
+      )}
+      {/* A change the frozen environment can't prove: approve the contract. */}
+      {view === "candidates" && result?.contract && (
+        <Box sx={{ mx: -2.5, mt: -2.25, mb: 1.5, flexShrink: 0 }}>
+          <ContractNotice
+            contract={result.contract}
+            envVersion={shownApproval?.from || frozenOn}
+            nextVersion={nextContractVersion(env, envState)}
+            approval={shownApproval}
+            onApprove={() =>
+              patch(
+                contractApprovalPatch({
+                  env,
+                  envState,
+                  record,
+                  from: currentEnvVersion(env, envState)?.label || null,
+                }),
+              )
+            }
+          />
+        </Box>
+      )}
+      {view === "candidates" && candidatesMode === "result" && (
+        <Box sx={{ flexShrink: 0 }}>
+          <EpochCandidatesTable
+            key={record.id}
+            groups={candidateGroups}
+            onSeeChange={setChangeOf}
+          />
+        </Box>
+      )}
+
+      {view === "cost" && (
+        <Box
+          sx={{
+            flexShrink: 0,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            bgcolor: "background.paper",
+            p: 2,
+          }}
+        >
+          {/* Reserved and committed mean something only while it runs. */}
+          {running && (
+            <CreditLedger
+              spent={spend.credits}
+              budget={record.budget}
+              reserved={record.reservedCredits}
+            />
+          )}
+          {/* What this epoch spent, part by part, on the versions in its
+              header; a stop at the budget keeps what it found. */}
+          <CostPartsTable
+            parts={spend.parts}
+            totalLabel={
+              record.budget
+                ? `Spent of ${creditsLabel(record.budget)} budget`
+                : "Spent"
+            }
+            note={[
+              record.stoppedAtBudget
+                ? "Stopped at its budget — the best it found is kept"
+                : null,
+              `${RATE_PLAN.name} · ${RATE_PLAN.version} rates`,
+              "each part charged once — its candidates' own Cost tabs list their calls",
+              record.budget ? "the budget is for the whole epoch" : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          />
+        </Box>
+      )}
+
+      {view === "changes" && (
         <Box
           sx={{
             flexShrink: 0,
@@ -931,50 +1373,17 @@ export default function ImprovementRunsView({
             bgcolor: "background.paper",
           }}
         >
-          {view === "cost" ? (
-            /* What this improvement spent, part by part, on the versions in
-               its header; a stop at the budget keeps what it found. */
-            <Box sx={{ p: 2 }}>
-              <CreditLedger
-                spent={improvementSpendParts(record, env?.surface).reduce(
-                  (n, p) => n + (p.usd || 0),
-                  0,
-                )}
-                budget={record.budget}
-                running={running}
-                reserved={record.reservedCredits}
-              />
-              <CostPartsTable
-                parts={improvementSpendParts(record, env?.surface)}
-                totalLabel="Spent"
-                note={[
-                  record.budget
-                    ? `Budget ${creditsLabel(record.budget)}`
-                    : null,
-                  record.stoppedAtBudget
-                    ? "stopped at its budget — the best it found is kept"
-                    : null,
-                  `${RATE_PLAN.name} · ${RATE_PLAN.version} rates`,
-                  "each part charged once; its candidates' own Cost tabs list their calls",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              />
-            </Box>
-          ) : view === "changes" ? (
-            <WinnerChanges
-              env={env}
-              winner={shipped}
-              record={record}
-              members={members}
-            />
-          ) : (
-            <ScenarioOutcomes result={result} winner={result.winner || null} />
-          )}
+          <WinnerChanges
+            env={env}
+            winner={shipped}
+            record={record}
+            members={members}
+            patchName={`${env.name} ${row?.name || record.name}`}
+          />
         </Box>
       )}
 
-      {view === "runs" && chartRuns.length > 0 && (
+      {measurements && chartRuns.length > 0 && (
         <Box sx={{ mb: 2, flexShrink: 0 }}>
           <RunsOverview
             runs={chartRuns}
@@ -992,7 +1401,7 @@ export default function ImprovementRunsView({
         </Box>
       )}
 
-      {view === "runs" && (
+      {measurements && (
         <>
           <Stack
             direction="row"
@@ -1520,6 +1929,48 @@ export default function ImprovementRunsView({
         </>
       )}
 
+      {/* How it searched and what it was measured against — collapsed. */}
+      {view === "candidates" && (
+        <EpochSearchDetails
+          record={record}
+          model={agentModel}
+          identity={row?.identity || null}
+          envSnapshot={frozenOn}
+        />
+      )}
+
+      {/* Opened from the ⋯ menu. */}
+      {result && (
+        <ReceiptButton
+          open={receiptOpen}
+          onClose={() => setReceiptOpen(false)}
+          record={record}
+          outcome={outcome}
+          identity={row?.identity || null}
+          envSnapshot={frozenOn}
+        />
+      )}
+      <NewImprovement
+        open={againOpen}
+        initialAgentId={
+          envState?.agent
+            ? agentIdOf(envAgentKey(envState.agent, env.id))
+            : null
+        }
+        onClose={() => setAgainOpen(false)}
+      />
+
+      <CandidateChangeDrawer
+        candidate={changeOf}
+        env={env}
+        record={record}
+        onClose={() => setChangeOf(null)}
+        onOpenRun={(c) => {
+          setChangeOf(null);
+          openRun(c);
+        }}
+      />
+
       <WinnerDrawer
         open={picking}
         onClose={() => setPicking(false)}
@@ -1536,28 +1987,20 @@ export default function ImprovementRunsView({
   );
 }
 
-/*
-  The improvement's verdict above its chart (RSI PRD, Flow 5), compact: the
-  sentence; the numbers side by side — held-back change, target change,
-  overfit gap, cost and latency; then the constraints as one line — how many
-  passed, any that didn't named in red — with the full checklist a click
-  away. Colour only on the change and on a broken constraint.
-*/
 /* What a retry read from the run before it, and what it changed because of it. */
 const feedbackText = (f) =>
   `Fed Candidate ${f.from}'s results (${f.conversations} failing ${f.conversations === 1 ? "conversation" : "conversations"}): ${f.stillFailing.length} still failing (${f.stillFailing.map((x) => `“${x.title.replace(/\.$/, "")}”`).join(", ")}). Adds: “${f.adds}”`;
-const signedPct = (n) =>
-  `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(Math.round(n * 10) / 10)}%`;
 /*
-  No safe improvement: every change it tried fixed too little or broke
-  something. Three things to try, each with where to do it — never just
-  "Fix again", which would repeat the same search.
+  No safe change: every change it tried fixed too little or broke
+  something. Three things to try, as one table — the first that applies
+  is the one button, the others are links. Never just "Run Epoch again",
+  which would repeat the same search.
 */
-function NoFixNext({ issueId, onOpenIssue, onOpenRules }) {
+function NextSteps({ issueId, onOpenIssue, onOpenRules }) {
   const items = [
     {
       title: "The constraints ruled out the change it needs",
-      body: "Allowed changes, protected parts or the cost and latency limits can block the fix. Loosen one, then fix again.",
+      body: "Allowed changes, must-pass parts or the cost and reply time limits can block the change. Loosen one, then run the epoch again.",
       action: onOpenRules && {
         label: "Open its constraints",
         onClick: onOpenRules,
@@ -1570,25 +2013,27 @@ function NoFixNext({ issueId, onOpenIssue, onOpenRules }) {
     },
     issueId && {
       title: "Its scenarios miss what triggers it",
-      body: "Add scenarios from newer traces or edit them, then Fix again from the issue.",
+      body: "Add scenarios from newer traces or edit them, then Run Epoch again from the issue.",
       action: null,
     },
   ].filter(Boolean);
+  const first = items.findIndex((it) => it.action);
   return (
     <Box
-      sx={{
-        mb: 2,
-        flexShrink: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px",
-        "& > * + *": { borderTop: "1px solid", borderColor: "divider" },
-      }}
+      sx={{ "& > * + *": { borderTop: "1px solid", borderColor: "divider" } }}
     >
-      <Typography sx={{ px: 2, py: 1, typography: "s2", fontWeight: 500 }}>
+      <Typography
+        sx={{
+          px: 2,
+          py: 0.75,
+          typography: "s3",
+          fontWeight: 600,
+          color: "text.tertiary",
+        }}
+      >
         What to try next
       </Typography>
-      {items.map((it) => (
+      {items.map((it, i) => (
         <Stack
           key={it.title}
           direction="row"
@@ -1604,370 +2049,42 @@ function NoFixNext({ issueId, onOpenIssue, onOpenRules }) {
               {it.body}
             </Typography>
           </Box>
-          {it.action && (
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              onClick={it.action.onClick}
-              sx={{ flexShrink: 0, borderColor: "divider" }}
-            >
-              {it.action.label}
-            </Button>
-          )}
+          {it.action &&
+            (i === first ? (
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={it.action.onClick}
+                sx={{ flexShrink: 0 }}
+              >
+                {it.action.label}
+              </Button>
+            ) : (
+              <Link
+                component="button"
+                type="button"
+                underline="hover"
+                onClick={it.action.onClick}
+                sx={{
+                  typography: "s2",
+                  fontWeight: 600,
+                  color: "text.primary",
+                  flexShrink: 0,
+                }}
+              >
+                {it.action.label}
+              </Link>
+            ))}
         </Stack>
       ))}
     </Box>
   );
 }
-NoFixNext.propTypes = {
+NextSteps.propTypes = {
   issueId: PropTypes.string,
   onOpenIssue: PropTypes.func,
   onOpenRules: PropTypes.func,
-};
-
-function Verdict({ outcome, result, targetNow }) {
-  const [allChecks, setAllChecks] = useState(false);
-  if (!result?.winner && !outcome.headline) return null;
-  const thin = !!result?.split?.thin;
-  const heldNow = outcome.heldScore ?? result?.heldScore;
-  const lift =
-    heldNow != null && result?.heldBase != null
-      ? heldNow - result.heldBase
-      : null;
-  const targetLift =
-    targetNow != null && result?.base != null ? targetNow - result.base : null;
-  const checks = outcome.checks || [];
-  const projected = !!outcome.chosen?.projected;
-  const effect = outcome.effect || null;
-  const cells = [
-    /* Hidden when nothing was held back — proven on the targets only. */
-    result?.winner &&
-      !thin &&
-      heldNow != null &&
-      result?.heldBase != null && {
-        k: "Held back",
-        v: thin ? "Too few to measure" : `${result.heldBase}% → ${heldNow}%`,
-        sub: projected
-          ? "projected"
-          : result.confirm
-            ? "re-run after the pick"
-            : "never seen by the search",
-        pts: thin || !lift ? null : lift,
-      },
-    result?.winner &&
-      targetLift != null && {
-        k: "Target",
-        /* When the targets were set (#76). */
-        tip: "Set when the fix started: the issue's scenarios that failed on the agent in production. Some of them are held back to check the change on cases it never saw.",
-        v: `${result.base}% → ${targetNow}%`,
-        sub: "the issue's failing scenarios",
-        pts: targetLift || null,
-      },
-    result?.winner &&
-      outcome.gap != null &&
-      !thin && {
-        k: "Overfit gap",
-        v: `${outcome.gap} pts`,
-        sub: "between target and held back",
-      },
-    result?.winner &&
-      effect && {
-        /* Two tiles, as everywhere else (#73, #75). */
-        k: "Cost per conversation",
-        v: outcome.costKnown === false ? "—" : signedPct(effect.cost),
-        sub: outcome.costKnown === false ? "not measured" : "vs today",
-      },
-    result?.winner &&
-      effect && {
-        k: "Latency",
-        v: outcome.latencyKnown === false ? "—" : signedPct(effect.latency),
-        sub: outcome.latencyKnown === false ? "not measured" : "vs today",
-      },
-  ].filter(Boolean);
-  const failed = checks.filter((c) => c.pass === false);
-  const passed = checks.filter((c) => c.pass === true).length;
-  const line = { typography: "s3", color: "text.subtitle" };
-  return (
-    <Box
-      sx={{
-        mb: 2,
-        flexShrink: 0,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px",
-        bgcolor: "background.paper",
-        overflow: "hidden",
-      }}
-    >
-      <Typography
-        sx={{
-          px: 2,
-          py: 1,
-          typography: "s1",
-          fontWeight: 600,
-          lineHeight: 1.45,
-        }}
-      >
-        {outcome.headline}
-      </Typography>
-      {/* What the held-back result is worth, so a count never reads as proof on its own. */}
-      {outcome.strength && (
-        <Typography
-          sx={{
-            px: 2,
-            mt: -0.75,
-            pb: 1,
-            typography: "s2",
-            color: "text.secondary",
-          }}
-        >
-          <Box component="span" sx={{ fontWeight: 600, color: "text.primary" }}>
-            {outcome.strength.label}
-          </Box>
-          {` · ${outcome.strength.note.charAt(0).toUpperCase()}${outcome.strength.note.slice(1)}.`}
-        </Typography>
-      )}
-
-      {/* What else failed today, as the winner left it — a bonus said
-          plainly, and what's left to fix separately. Never a target. */}
-      {outcome.alongTheWay && (
-        <Box sx={{ px: 2, pb: 1, mt: outcome.strength ? -0.5 : -0.75 }}>
-          {outcome.alongTheWay.fixed.length > 0 && (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              <Box
-                component="span"
-                sx={{ fontWeight: 600, color: "text.primary" }}
-              >
-                Also fixed along the way
-              </Box>
-              {` · ${outcome.alongTheWay.fixed.map((f) => `“${f.title}”`).join(", ")} — failing today, passing with this change. It wasn't aimed at ${outcome.alongTheWay.fixed.length === 1 ? "it" : "them"}.`}
-            </Typography>
-          )}
-          {outcome.alongTheWay.still.length > 0 && (
-            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
-              <Box
-                component="span"
-                sx={{ fontWeight: 600, color: "text.primary" }}
-              >
-                {`Still failing, not part of this fix`}
-              </Box>
-              {` · ${outcome.alongTheWay.still.length} ${outcome.alongTheWay.still.length === 1 ? "scenario" : "scenarios"} (${outcome.alongTheWay.still
-                .slice(0, 2)
-                .map((f) => `“${f.title}”`)
-                .join(
-                  ", ",
-                )}${outcome.alongTheWay.still.length > 2 ? "…" : ""}) failed before this fix too — fix ${outcome.alongTheWay.still.length === 1 ? "it" : "them"} separately.`}
-            </Typography>
-          )}
-        </Box>
-      )}
-
-      {/* ── the numbers, side by side ── */}
-      {cells.length > 0 && (
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "repeat(2, minmax(0, 1fr))",
-              md: `repeat(${cells.length}, minmax(0, 1fr))`,
-            },
-            borderTop: "1px solid",
-            borderColor: "divider",
-            "& > *": {
-              borderColor: "divider",
-              borderStyle: "solid",
-              borderWidth: 0,
-            },
-            "& > *:not(:first-of-type)": { borderLeftWidth: 1 },
-          }}
-        >
-          {cells.map((c) => (
-            <Box key={c.k} sx={{ px: 2, py: 0.875, minWidth: 0 }}>
-              <Tooltip arrow placement="top-start" title={c.tip || ""}>
-                <Typography
-                  noWrap
-                  sx={{
-                    ...line,
-                    ...(c.tip && {
-                      width: "fit-content",
-                      maxWidth: "100%",
-                      textDecoration: "underline dotted",
-                      textUnderlineOffset: "3px",
-                    }),
-                  }}
-                >
-                  {c.k}
-                </Typography>
-              </Tooltip>
-              <Stack
-                direction="row"
-                alignItems="baseline"
-                spacing={0.75}
-                sx={{ minWidth: 0 }}
-              >
-                <Typography
-                  noWrap
-                  sx={{
-                    typography: "s1",
-                    fontWeight: 600,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {c.v}
-                </Typography>
-                {!!c.pts && (
-                  <Typography
-                    noWrap
-                    sx={{
-                      typography: "s3",
-                      fontWeight: 600,
-                      fontVariantNumeric: "tabular-nums",
-                      color: c.pts > 0 ? "status.success.fg" : RED,
-                    }}
-                  >
-                    {`${c.pts > 0 ? "▲" : "▼"} ${Math.abs(c.pts)} pts`}
-                  </Typography>
-                )}
-              </Stack>
-              <Typography noWrap sx={line}>
-                {c.sub}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
-      )}
-
-      {/* ── the constraints: one line, the failures named, the rest on demand ── */}
-      {checks.length > 0 && (
-        <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1}
-            sx={{ px: 2, py: 0.75, minWidth: 0 }}
-          >
-            <Iconify
-              icon={
-                failed.length
-                  ? "solar:close-circle-bold"
-                  : "solar:check-circle-linear"
-              }
-              width={14}
-              sx={{
-                color: failed.length ? RED : "text.secondary",
-                flexShrink: 0,
-              }}
-            />
-            <Typography
-              noWrap
-              sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}
-            >
-              {`Checks · ${passed} of ${checks.length} passed`}
-            </Typography>
-            <Typography
-              noWrap
-              sx={{ typography: "s2", color: RED, flex: 1, minWidth: 0 }}
-            >
-              {failed
-                .map((c) => `${c.label}${c.actual ? ` (${c.actual})` : ""}`)
-                .join(" · ")}
-            </Typography>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => setAllChecks((o) => !o)}
-              endIcon={
-                <Iconify
-                  icon={
-                    allChecks
-                      ? "solar:alt-arrow-up-linear"
-                      : "solar:alt-arrow-down-linear"
-                  }
-                  width={12}
-                />
-              }
-              sx={{ flexShrink: 0, minWidth: 0 }}
-            >
-              {allChecks ? "Hide" : "Show all"}
-            </Button>
-          </Stack>
-          {allChecks && (
-            <Box
-              sx={{
-                px: 2,
-                pb: 1,
-                pl: 4.25,
-                display: "grid",
-                gridTemplateColumns: {
-                  xs: "1fr",
-                  md: "repeat(2, minmax(0, 1fr))",
-                },
-                columnGap: 3,
-                rowGap: 0.5,
-              }}
-            >
-              {checks.map((c) => (
-                <Stack
-                  key={c.id}
-                  direction="row"
-                  alignItems="center"
-                  spacing={0.75}
-                  sx={{ minWidth: 0 }}
-                >
-                  <Iconify
-                    icon={
-                      c.pass === null
-                        ? "solar:question-circle-linear"
-                        : c.pass
-                          ? "solar:check-circle-linear"
-                          : "solar:close-circle-bold"
-                    }
-                    width={14}
-                    sx={{
-                      color:
-                        c.pass === false
-                          ? RED
-                          : c.pass === null
-                            ? "text.disabled"
-                            : "text.secondary",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Typography
-                    noWrap
-                    sx={{
-                      typography: "s2",
-                      fontWeight: 600,
-                      color: c.pass === false ? RED : "text.primary",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {c.label}
-                  </Typography>
-                  <Typography
-                    noWrap
-                    sx={{
-                      typography: "s3",
-                      color: "text.subtitle",
-                      minWidth: 0,
-                    }}
-                  >
-                    {c.actual}
-                  </Typography>
-                </Stack>
-              ))}
-            </Box>
-          )}
-        </Box>
-      )}
-    </Box>
-  );
-}
-Verdict.propTypes = {
-  outcome: PropTypes.object.isRequired,
-  result: PropTypes.object,
-  targetNow: PropTypes.number,
 };
 
 /*
@@ -1975,13 +2092,17 @@ Verdict.propTypes = {
   when it ends), committed (spent plus reserved) and the budget. Reserved is
   what the service reports — never budget minus spent.
 */
-function CreditLedger({ spent, budget, running, reserved: reported }) {
-  const reserved = running ? reported ?? null : 0;
+function CreditLedger({ spent, budget, reserved }) {
+  /* Spent is in credits (epochSpendOf); the rest are what the service reports. */
+  const reservedCredits = reserved == null ? null : creditsForUsd(reserved);
   const cells = [
-    { k: "Spent", v: spent },
-    { k: "Reserved", v: reserved },
-    { k: "Committed", v: reserved == null ? null : spent + reserved },
-    { k: "Budget", v: budget ?? null },
+    { k: "Spent", v: creditsWord(spent) },
+    { k: "Reserved", v: creditsWord(reservedCredits) },
+    {
+      k: "Committed",
+      v: creditsWord(reservedCredits == null ? null : spent + reservedCredits),
+    },
+    { k: "Budget", v: creditsLabel(budget ?? null) },
   ];
   return (
     <Stack
@@ -2009,7 +2130,7 @@ function CreditLedger({ spent, budget, running, reserved: reported }) {
           <Typography
             sx={{ typography: "s2", fontVariantNumeric: "tabular-nums" }}
           >
-            {creditsLabel(c.v)}
+            {c.v}
           </Typography>
         </Box>
       ))}
@@ -2021,7 +2142,6 @@ CreditLedger.propTypes = {
   reserved: PropTypes.number,
   spent: PropTypes.number,
   budget: PropTypes.number,
-  running: PropTypes.bool,
 };
 
 ImprovementRunsView.propTypes = {
@@ -2031,10 +2151,9 @@ ImprovementRunsView.propTypes = {
   patch: PropTypes.func.isRequired,
   onBack: PropTypes.func.isRequired,
   backLabel: PropTypes.string,
-  onOpenSearch: PropTypes.func,
   /* Runs the chosen winner on the full suite. */
   onVerify: PropTypes.func,
-  /* Opens the hand-over for a verified winner. */
+  /* Opens Ship for a verified winner. */
   onShip: PropTypes.func,
   /* Re-run the kept change on today's production version. */
   onRecheck: PropTypes.func,
@@ -2043,4 +2162,7 @@ ImprovementRunsView.propTypes = {
   onOpenIssue: PropTypes.func,
   /* The run it started from, when it started from one. */
   onOpenStartRun: PropTypes.func,
+  /* A tab to open, asked from outside the page (Ship's See changes). */
+  tabAsk: PropTypes.string,
+  onTabAsked: PropTypes.func,
 };

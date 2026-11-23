@@ -266,7 +266,7 @@ export default function TradeoffView({ record, chosen, onChoose }) {
                   flexShrink: 0,
                   fontVariantNumeric: "tabular-nums",
                 }}
-              >{`latency ${signed(c.latency)}`}</Typography>
+              >{`reply time ${signed(c.latency)}`}</Typography>
               <Typography
                 noWrap
                 sx={{

@@ -22,6 +22,7 @@
  * same way.
  */
 import { stampProvenance, defaultBatchId } from "./scenarioProvenance";
+import { withSourceKeywords } from "./scenarioKeywords";
 import { currentEnvVersion } from "./versions";
 import { knownToolsFor, requiredToolsOf, worldToolsFor } from "./toolFit";
 import { connectOnlyEnv, declineKindOf } from "./admissionGates";
@@ -79,7 +80,8 @@ export const stampNewBatch = (rows, { env, envState, source, actor, at = new Dat
       return;
     }
     stamped.push({
-      ...stampProvenance(r, { source, actor, at, batchId }),
+      /* Added from outside: it keeps where it came from as keywords. */
+      ...withSourceKeywords(stampProvenance(r, { source, actor, at, batchId })),
       requiredTools: requiredToolsOf(r, known),
       provedAgainst: r.provedAgainst || envLabel,
       provedAt: r.provedAt || at,

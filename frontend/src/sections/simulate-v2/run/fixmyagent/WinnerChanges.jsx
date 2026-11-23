@@ -1,13 +1,26 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Link, Stack, Typography } from "@mui/material";
 import { changeFileFor } from "../../_mock/optimize";
 import { envAgentKey } from "../../_mock/agentRegistry";
 import { skillLandsOf } from "../../_mock/skillLibrary";
 import { useOptionalSimStore } from "../../store";
 import { CodePlan } from "./ImprovementPanels";
+import {
+  changeCountLine,
+  downloadPatch,
+  patchTextOf,
+} from "../../improvements/epochShip";
 
-/* What the winner changes — each file, why, and the lines. */
-export default function WinnerChanges({ env, winner, members, record }) {
+/* What the winner changes — each file, why, and the lines. With `patchName`,
+   a summary row leads: how many changes in how many files, and the patch
+   as a download. */
+export default function WinnerChanges({
+  env,
+  winner,
+  members,
+  record,
+  patchName,
+}) {
   const store = useOptionalSimStore();
   const proposals = winner?.proposals || [];
   const agentKey = envAgentKey(store?.state?.byEnv?.[env?.id]?.agent, env?.id);
@@ -16,7 +29,7 @@ export default function WinnerChanges({ env, winner, members, record }) {
       <Typography
         sx={{ px: 2, py: 2.5, typography: "s2", color: "text.tertiary" }}
       >
-        No change to show — no run qualified.
+        No change to show — no candidate qualified.
       </Typography>
     );
   }
@@ -26,6 +39,32 @@ export default function WinnerChanges({ env, winner, members, record }) {
         <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
       }
     >
+      {patchName && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ px: 2, minHeight: 36 }}
+        >
+          <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+            {changeCountLine(env, proposals)}
+          </Typography>
+          <Typography sx={{ typography: "s2", color: "text.disabled" }}>
+            ·
+          </Typography>
+          <Link
+            component="button"
+            type="button"
+            underline="hover"
+            onClick={() =>
+              downloadPatch(patchName, patchTextOf(env, proposals))
+            }
+            sx={{ typography: "s2", fontWeight: 600, color: "text.primary" }}
+          >
+            Download patch
+          </Link>
+        </Stack>
+      )}
       {/* A code or structural change says its plan before its diff. */}
       <CodePlan env={env} record={record} proposals={proposals} />
       {proposals.map((p) => (
@@ -171,4 +210,6 @@ WinnerChanges.propTypes = {
   winner: PropTypes.object,
   members: PropTypes.object,
   record: PropTypes.object,
+  /* The download's name — set, the summary row with Download patch shows. */
+  patchName: PropTypes.string,
 };

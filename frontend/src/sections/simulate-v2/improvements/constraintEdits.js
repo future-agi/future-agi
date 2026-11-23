@@ -1,10 +1,13 @@
 /*
-  An improvement's own constraints: the agent's (Agents → Constraints), with
-  whatever this one improvement changes inline. A change applies to this
-  improvement only unless the person saves it to the agent too — then every
-  later improvement for that agent is held to it.
+  An epoch's own constraints: the agent's (Agents → Constraints), with what
+  this one epoch may spend set inline (its budget and time, the skill it
+  focuses on). A spend past the agent's limit applies to this epoch only
+  unless the person saves it to the agent too. What it may change is never
+  set per epoch — only on the agent.
 */
 import { BUDGETS } from "../_mock/improvementStart";
+import { areaStatesOf, configAreasFor } from "../agents/configAreas";
+import { surfaceAvailability } from "../agents/agentLimits";
 
 export const BUDGET_STEPS = BUDGETS;
 export const MINUTE_STEPS = [15, 30, 60, 120, 150];
@@ -17,6 +20,42 @@ export const minutesLabel = (n) =>
     : n % 60
       ? `${Math.floor(n / 60)} h ${n % 60} min`
       : `${n / 60} hour${n === 60 ? "" : "s"}`;
+
+/*
+  What an epoch may change, read from the agent's rules (Agents →
+  Constraints) and named the way that tab names them — its areas, then Code
+  for a code agent. The agent's rules are the only place this is set; an
+  epoch's setup and its running view only say it.
+    → ["Instructions", "Opening and closing", "Tools"]
+*/
+export const mayChangeAreasOf = (limits, agent = null) => {
+  const can = agent ? surfaceAvailability(agent) : {};
+  const states = areaStatesOf(limits, can);
+  const names = configAreasFor(agent)
+    .filter((a) => states[a.id])
+    .map((a) => a.label);
+  const code =
+    (limits?.allowed || []).includes("code") && (!agent || can.code?.ok);
+  return code ? [...names, "Code"] : names;
+};
+
+/* "Instructions, opening and closing, tools" — the areas as one list. */
+export const mayChangeListOf = (limits, agent = null) => {
+  const names = mayChangeAreasOf(limits, agent);
+  return names.length
+    ? names
+        .map((n, i) => (i ? n.charAt(0).toLowerCase() + n.slice(1) : n))
+        .join(", ")
+    : "Nothing";
+};
+
+/* "Instructions, tools · Model locked" — the agent's rules in one line. */
+export const mayChangeLineOf = (limits, agent = null) =>
+  `${mayChangeListOf(limits, agent)} · ${
+    limits?.model?.mode === "approved"
+      ? "Model: approved list only"
+      : "Model locked"
+  }`;
 
 /* The agent's own value for an editable constraint. */
 export const agentValueOf = (limits, key) => {

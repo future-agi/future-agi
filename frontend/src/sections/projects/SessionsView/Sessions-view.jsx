@@ -37,6 +37,10 @@ import { singleProjectIdFromFilters } from "../LLMTracing/GraphSection/graphFilt
 const PrimaryGraph = lazy(
   () => import("../LLMTracing/GraphSection/PrimaryGraph"),
 );
+/* Loaded on use — it brings the simulation store with it. */
+const EnvironmentTestDialog = lazy(
+  () => import("src/sections/simulate-v2/components/EnvironmentTestDialog"),
+);
 const AddToQueueDialog = lazy(
   () =>
     import("src/sections/annotations/queues/components/add-to-queue-dialog"),
@@ -73,7 +77,7 @@ import {
 } from "./ReplaySessions/store";
 import { REPLAY_TYPES } from "./ReplaySessions/constants";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
-import { observeImportHref } from "src/sections/simulate-v2/_mock/observeSelection";
+import { useGetProjectDetails } from "src/api/project/project-detail";
 import { envsForObserveProject } from "src/sections/simulate-v2/_mock/runningNow";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
@@ -800,6 +804,13 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const selectedCount = selectedCountState.count;
 
   const [queueAnchorEl, setQueueAnchorEl] = useState(null);
+  /* What "Create environment test" was clicked on: { kind, ids, all, total }. */
+  const [envTest, setEnvTest] = useState(null);
+  const { data: projectDetail } = useGetProjectDetails(
+    observeId,
+    !!observeId,
+    true,
+  );
   // Opt-in for filter-mode bulk add — set when the SelectAllBanner is
   // clicked; reset on select-all clear, project change, or filter change.
   const [sessionFilterSelectionMode, setSessionFilterSelectionMode] =
@@ -834,24 +845,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           },
         });
       } else if (action === "environment-test") {
-        const [target] = envsForObserveProject(observeId);
-        if (!target) {
-          enqueueSnackbar(
-            "This project isn't linked to an agent's environment yet. Link it from the agent, then try again.",
-            { variant: "info" },
-          );
-          navigate("/dashboard/simulate/environments");
-          return;
-        }
-        /* The exact sessions picked here — the review opens on them. */
-        navigate(
-          observeImportHref(target.envId, {
-            kind: "sessions",
-            ids: toggledNodes || [],
-            all: selectAll,
-            project: target.projectName,
-          }),
-        );
+        /* The exact sessions picked here — the review opens on them. The
+           dialog goes straight on with one environment, asks with several,
+           and says what's missing with none. */
+        setEnvTest({
+          kind: "sessions",
+          ids: toggledNodes || [],
+          all: !!selectAll,
+          total: selectAll ? selectedCount ?? null : null,
+        });
       } else if (action === "annotation-queue") {
         // Choosing the queue action is an explicit request to operate on the
         // header's inverted select-all set. Switch to the server-side filter
@@ -863,10 +865,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     },
     [
-      navigate,
       observeId,
       toggledNodes,
       selectAll,
+      selectedCount,
       sessionFilterSelectionMode,
       createReplaySessions,
       setCreatedReplay,
@@ -1142,6 +1144,18 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         onAddEvals={handleAddEvals}
         onAddCustomColumn={() => setOpenCustomColumn(true)}
       />
+
+      {envTest && (
+        <Suspense fallback={null}>
+          <EnvironmentTestDialog
+            open={!!envTest}
+            onClose={() => setEnvTest(null)}
+            project={observeId ? String(observeId) : null}
+            projectName={projectDetail?.name}
+            selection={envTest}
+          />
+        </Suspense>
+      )}
 
       <Suspense fallback={null}>
         <AddToQueueDialog

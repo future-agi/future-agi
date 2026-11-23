@@ -20,11 +20,11 @@ import {
 } from "./constraintEdits";
 
 /*
-  An improvement's spend (budget, time cap), picked where it's set up —
-  never a page away. The agent's run budget and time cap are ceilings: a
-  value under one is just this improvement's choice; a value past one
-  applies to this improvement only, and asks once, in place, whether the
-  agent's own limit should move too.
+  An epoch's spend (budget, time cap), picked on its Budget row — never a
+  page away. The agent's run budget and time cap are ceilings: a value under
+  one is just this epoch's choice; a value past one applies to this epoch
+  only, and asks once, in place, whether the agent's own limit should move
+  too.
 */
 
 const selectSx = {
@@ -167,22 +167,17 @@ ConstraintPicker.propTypes = {
 };
 
 /**
- * Advanced in an improvement's setup. Two kinds of constraint, kept apart:
- * what this improvement may spend (its time cap here, its budget beside the
- * goal) is its own; the agent's rules — what may change, what's never
- * edited, the model, cost and latency — are the agent's Constraints tab
- * itself, edited in place and saved to the agent, so every improvement for
- * it is held to the same rules. Never a one-off loosening.
+ * The agent's rules, opened in place from an epoch's setup ("Edit agent
+ * rules"): the agent's Constraints tab itself — what may change, what's
+ * never edited, the model, must-pass — saved to the agent, so every epoch for
+ * it is held to the same rules. Never a one-off loosening. What one epoch
+ * may spend (budget, time) is set on its Budget row, not here.
  */
 export default function ImprovementConstraints({
   agent,
   env,
   envState,
-  limits,
-  edits,
-  onChange,
   model = null,
-  showTime = true,
 }) {
   const { state } = useSimStore();
   const files = useMemo(() => {
@@ -222,36 +217,6 @@ export default function ImprovementConstraints({
   if (!agent) return null;
   return (
     <Stack spacing={2.5}>
-      {showTime && (
-        <Box>
-          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-            This epoch
-          </Typography>
-          <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 1 }}>
-            What this one may spend. The budget is beside the goal.
-          </Typography>
-          <Stack direction="row" spacing={1.5} alignItems="flex-start">
-            <Typography
-              sx={{
-                typography: "s2",
-                color: "text.subtitle",
-                width: 160,
-                flexShrink: 0,
-                lineHeight: "28px",
-              }}
-            >
-              Time limit
-            </Typography>
-            <ConstraintPicker
-              agent={agent}
-              limits={limits}
-              field="minutes"
-              value={edits?.minutes ?? agentValueOf(limits, "minutes")}
-              onChange={(v) => onChange({ ...edits, minutes: v })}
-            />
-          </Stack>
-        </Box>
-      )}
       <Box>
         {agent.deleted?.at ? (
           <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
@@ -275,9 +240,10 @@ ImprovementConstraints.propTypes = {
   agent: PropTypes.object,
   env: PropTypes.object,
   envState: PropTypes.object,
-  limits: PropTypes.object.isRequired,
+  /* Kept for callers that still pass them; the rules save to the agent. */
+  limits: PropTypes.object,
   edits: PropTypes.object,
-  onChange: PropTypes.func.isRequired,
+  onChange: PropTypes.func,
   model: PropTypes.string,
   showTime: PropTypes.bool,
 };

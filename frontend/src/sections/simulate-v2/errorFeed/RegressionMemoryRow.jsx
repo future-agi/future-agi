@@ -86,7 +86,7 @@ export default function RegressionMemoryRow({ issue }) {
             minWidth: 0,
           }}
         >
-          {`Not kept as must-pass — ${plural(n, "scenario", "scenarios")} from this fix could still guard against it coming back.`}
+          {`Not kept as must-pass — ${plural(n, "scenario", "scenarios")} from this epoch could still guard against it coming back.`}
         </Typography>
         <Button
           size="small"
@@ -104,7 +104,7 @@ export default function RegressionMemoryRow({ issue }) {
     <Row icon="solar:shield-check-linear">
       <Box flex={1} minWidth={0}>
         <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-          {`Keep ${plural(n, "scenario", "scenarios")} from this fix as must-pass in ${envName}?`}
+          {`Keep ${plural(n, "scenario", "scenarios")} from this epoch as must-pass in ${envName}?`}
         </Typography>
         {/* Which ones and why (#79): the issue's own scenarios that passed
             every repeat of the check run on the released version. */}

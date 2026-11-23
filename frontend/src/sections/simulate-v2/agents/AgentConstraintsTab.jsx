@@ -200,8 +200,8 @@ export default function AgentConstraintsTab({
               }
               hint={
                 limits.model.mode === "approved"
-                  ? "Held to the same cost and latency limits as any change. Never to a model off this list."
-                  : "A fix never switches the model."
+                  ? "Held to the same cost and reply time limits as any change. Never to a model off this list."
+                  : "An epoch never switches the model."
               }
             >
               <ToggleButtonGroup

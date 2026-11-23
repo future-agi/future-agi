@@ -901,7 +901,7 @@ const modelProposals = (models, failing) =>
     id: `model-${m}`,
     kind: "Model",
     title: `Switch the model to ${m}`,
-    why: `${m} is on this agent's approved list. Tried like any other change: it has to fix more than it breaks, within the cost and latency limits.`,
+    why: `${m} is on this agent's approved list. Tried like any other change: it has to fix more than it breaks, within the cost and reply-time limits.`,
     diff: [{ type: "add", text: `model: ${m}` }],
     addresses: failing.filter((t) => modelHelps(m, t)).map((t) => t.id),
     model: m,
@@ -2383,7 +2383,7 @@ export const blockingVerdict = (result) => {
       tests ? "broke the repository's tests" : null,
       unfit ? "didn't fit the simulated environment" : null,
       stat ? "failed a static check" : null,
-      over ? "went over the cost or latency limit" : null,
+      over ? "went over the cost or reply-time limit" : null,
     ].filter(Boolean);
     const why =
       reasons.length > 1

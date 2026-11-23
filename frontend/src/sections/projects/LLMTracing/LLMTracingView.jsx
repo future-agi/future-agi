@@ -228,7 +228,6 @@ import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { REPLAY_TYPES } from "../SessionsView/ReplaySessions/constants";
 import { filtersContentEqual } from "../saved-view-utils";
 import { useCreateReplaySessions } from "src/api/project/replay-sessions";
-import { observeImportHref } from "src/sections/simulate-v2/_mock/observeSelection";
 import { envsForObserveProject } from "src/sections/simulate-v2/_mock/runningNow";
 import { enqueueSnackbar } from "notistack";
 import {
@@ -262,6 +261,10 @@ import ContentSkeleton from "src/components/content-skeleton";
 
 // Lazy load graph components — only loaded when viewMode changes
 const PrimaryGraph = lazy(() => import("./GraphSection/PrimaryGraph"));
+/* Loaded on use — it brings the simulation store with it. */
+const EnvironmentTestDialog = lazy(
+  () => import("src/sections/simulate-v2/components/EnvironmentTestDialog"),
+);
 const AgentGraph = lazy(() => import("./GraphSection/AgentGraph"));
 const AgentPath = lazy(() => import("./GraphSection/AgentPath"));
 
@@ -739,6 +742,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const [openColumnConfigure, setOpenColumnConfigure] = useState(false);
   const [columnConfigureAnchor, setColumnConfigureAnchor] = useState(null);
   const [openAddDataset, setOpenAddDataset] = useState(false);
+  /* What "Create environment test" was clicked on: { kind, ids, all, total }. */
+  const [envTest, setEnvTest] = useState(null);
   const [tagsAnchorEl, setTagsAnchorEl] = useState(null);
   const [tagsBulkItems, setTagsBulkItems] = useState([]);
   const [tagsFetching, setTagsFetching] = useState(false);
@@ -4081,6 +4086,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     id: "environment-test",
                     label: "Create environment test",
                     icon: "solar:test-tube-linear",
+                    /* A test is built from whole conversations. */
+                    disabled: selectedTab !== "trace",
+                    disabledReason:
+                      "Pick traces or sessions — a test is built from whole conversations, not single spans.",
                   },
                   {
                     id: "dataset",
@@ -4157,27 +4166,18 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 /* Picked calls or traces become reviewed tests in the linked
                    agent's environment (clarified plan) — not legacy Replay. */
                 if (actionId === "environment-test") {
-                  const [target] = envsForObserveProject(observeId);
-                  if (!target) {
-                    enqueueSnackbar(
-                      "This project isn't linked to an agent's environment yet. Link it from the agent, then try again.",
-                      { variant: "info" },
-                    );
-                    navigate("/dashboard/simulate/environments");
-                    return;
-                  }
                   /* The exact traces or calls picked here — the review opens
-                     on them. A Simulator project's calls are simulated, and
-                     import as simulated, not as production. */
+                     on them, in any project. A Simulator project's calls are
+                     simulated, and import as simulated, not as production.
+                     The dialog goes straight on with one environment, asks
+                     with several, and says what's missing with none. */
                   const calls = projectSource === PROJECT_SOURCE.SIMULATOR;
-                  navigate(
-                    observeImportHref(target.envId, {
-                      kind: calls ? "calls" : "traces",
-                      ids: calls ? selectedCallIds || [] : selectedTraces || [],
-                      all: calls ? false : !!allTracesSelected,
-                      project: target.projectName,
-                    }),
-                  );
+                  setEnvTest({
+                    kind: calls ? "calls" : "traces",
+                    ids: calls ? selectedCallIds || [] : selectedTraces || [],
+                    all: calls ? false : !!allTracesSelected,
+                    total: calls ? null : traceSelectionCount.count ?? null,
+                  });
                   return;
                 }
                 const isSimulator = projectSource === PROJECT_SOURCE.SIMULATOR;
@@ -4594,6 +4594,17 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     </CustomTooltip>
                   </Box>
                 </Box>
+                {envTest && (
+                  <Suspense fallback={null}>
+                    <EnvironmentTestDialog
+                      open={!!envTest}
+                      onClose={() => setEnvTest(null)}
+                      project={observeId ? String(observeId) : null}
+                      projectName={projectDetail?.name}
+                      selection={envTest}
+                    />
+                  </Suspense>
+                )}
                 <AddDataset
                   handleClose={() => {
                     setOpenAddDataset(false);

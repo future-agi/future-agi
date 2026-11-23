@@ -1,6 +1,4 @@
-import PropTypes from "prop-types";
 import { useErrorFeedOverview } from "src/api/errorFeed/mockAdapter";
-import CopyBriefButton from "src/sections/simulate-v2/components/CopyBriefButton";
 import { briefBreakdownOf, codingAgentBrief } from "src/sections/simulate-v2/_mock/codingAgentBrief";
 import { codeDiagnosisOf } from "src/sections/simulate-v2/errorFeed/codeDiagnosis";
 import { useSimStore } from "src/sections/simulate-v2/store";
@@ -12,14 +10,14 @@ import { startImproverSession } from "src/sections/simulate-v2/_mock/integration
 import useIssueRootCause from "./useIssueRootCause";
 
 /**
- * "Copy for coding agent" on an Error Feed issue — the issue, where in the
- * agent it goes wrong (the fix's diagnosis, else one drafted the same way),
- * the Root cause tab's finding as the symptom, a per-scenario breakdown, a
- * handful of failing traces, and the agent's constraints.
- *
- * Wraps the shared button so the issue page only places it.
+ * "Copy for coding agent" on an Error Feed issue, for the header's ⋯ menu —
+ * the issue, where in the agent it goes wrong (the fix's diagnosis, else one
+ * drafted the same way), the Root cause tab's finding as the symptom, a
+ * per-scenario breakdown, a handful of failing traces, and the agent's
+ * constraints. `handOff(coder)` starts the epoch the coding agent's attempts
+ * land on, where it can, and returns where to watch them.
  */
-export default function IssueBriefButton({ issue, agent, sx }) {
+export function useIssueBrief(issue, agent) {
   const { state } = useSimStore();
   const { data: overview } = useErrorFeedOverview(issue?.cluster_id);
   /* The same root cause Fix carries — see useIssueRootCause. */
@@ -45,7 +43,7 @@ export default function IssueBriefButton({ issue, agent, sx }) {
     if (own?.envId && own?.optId && FIX_IN_FLIGHT.has(own.key)) {
       startImproverSession({ agentId: coder.id, envId: own.envId, optId: own.optId, where: "future-agi" });
       const [href, opts] = issueFixNav(own, issue.cluster_id);
-      return { href, state: opts?.state, label: "See its attempts on the fix" };
+      return { href, state: opts?.state, label: "See its attempts on the epoch" };
     }
     const env = envsForAgent(agent, state)[0] || null;
     if (!env) return null;
@@ -102,21 +100,5 @@ export default function IssueBriefButton({ issue, agent, sx }) {
     });
   };
 
-  /* Every kind of agent works: the brief's submit step says what to send —
-     a commit, a settings patch for a hosted agent, a draft version for one
-     built here (candidateRoute). */
-  return (
-    <CopyBriefButton
-      getBrief={brief}
-      target={issue?.cluster_id ? { kind: "issue", issueId: issue.cluster_id } : undefined}
-      onOpened={handOff}
-      sx={sx}
-    />
-  );
+  return { brief, handOff };
 }
-
-IssueBriefButton.propTypes = {
-  issue: PropTypes.object,
-  agent: PropTypes.object,
-  sx: PropTypes.object,
-};

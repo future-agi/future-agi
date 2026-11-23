@@ -228,7 +228,7 @@ function AgentHealth({ agent, production }) {
     },
     {
       id: "fix",
-      header: "Fix",
+      header: "Epoch",
       size: 200,
       cell: ({ row: { original: x } }) => (
         <Typography

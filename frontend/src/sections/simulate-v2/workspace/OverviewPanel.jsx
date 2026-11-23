@@ -2407,7 +2407,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
           defaultOpen={streaming}
           label="Tools"
           hint={`${fromDescription ? (envState?.toolsRead ? `read from ${envState.toolsRead.from} when it was connected` : "read when your agent is connected") : "from the agent config & call-graph"}${viaMcp ? ` · ${viaMcp} added from MCP` : ""}`}
-          right={found(tools.length, allTools.length, `${tools.length} mapped`)}
+          right={found(tools.length, allTools.length, `${tools.length} in the world`)}
           first
         >
           {streaming && tools.length < allTools.length && (
@@ -2447,7 +2447,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
           right={found(
             ruleProv.length,
             allRules.length,
-            `${ruleProv.length} mapped`,
+            `${ruleProv.length} in the world`,
           )}
         >
           {streaming && ruleProv.length < allRules.length && (
@@ -2489,7 +2489,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
           right={found(
             tables.length,
             allTables.length,
-            `${tables.length} mapped`,
+            `${tables.length} in the world`,
           )}
         >
           {streaming && tables.length < allTables.length && (
@@ -2519,7 +2519,7 @@ function SourceToSandboxMap({ env, envState, progress }) {
             defaultOpen={streaming}
             label="Other parties"
             hint="from the call-graph & prompt"
-            right={`${actorMapped} mapped · ${actors.length - actorMapped} derived`}
+            right={`${actorMapped} from your agent · ${actors.length - actorMapped} added by the builder`}
           >
             {actors.map((a, i) => (
               <MapRow

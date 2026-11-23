@@ -26,6 +26,8 @@ import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useErrorFeedOverview } from "src/api/errorFeed/mockAdapter";
 import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
+import TraceFindings from "./TraceFindings";
+import { OUTCOME, evidenceStepsOf, goToStep } from "./issueEvidence";
 import { buildGraphDiff, comparisonGraphForMode } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
 import { TOKEN_PRICE_USD, TRACE_STATUS } from "../constants";
@@ -1269,7 +1271,7 @@ function roleColor(isFailure) {
   return isFailure ? "status.danger.fg" : "text.tertiary";
 }
 
-function ReelStep({ step, isFailReel, isLast, index }) {
+function ReelStep({ step, isFailReel, isLast, index, role }) {
   const [showRaw, setShowRaw] = useState(false);
 
   const status = step.status;
@@ -1312,6 +1314,20 @@ function ReelStep({ step, isFailReel, isLast, index }) {
       >
         <RichText text={step.text} isFailReel={isFailReel} />
       </Typography>
+      {/* Where the case starts, goes wrong and shows — the rows above. */}
+      {role && (
+        <Box
+          component="span"
+          sx={{
+            flexShrink: 0,
+            fontSize: "12px",
+            color: "text.tertiary",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {role}
+        </Box>
+      )}
       {step.meta && (
         <Box
           component="span"
@@ -1530,13 +1546,21 @@ StepOpen.propTypes = {
 
 ReelStep.propTypes = {
   index: PropTypes.number,
+  role: PropTypes.string,
   step: PropTypes.object.isRequired,
   isFailReel: PropTypes.bool,
   isLast: PropTypes.bool,
 };
 
-function BreadcrumbList({ steps, isFailReel }) {
+function BreadcrumbList({ steps, isFailReel, evidence }) {
   const theme = useTheme();
+  const roles = isFailReel
+    ? Object.fromEntries(
+        evidenceStepsOf({ evidence: evidence ?? { fail_reel: steps } }).map(
+          (r) => [r.index, r.label],
+        ),
+      )
+    : {};
   const accent = statusColors(theme, isFailReel ? "danger" : "success").solid;
   if (!steps.length) {
     return (
@@ -1566,6 +1590,7 @@ function BreadcrumbList({ steps, isFailReel }) {
           <ReelStep
             key={i}
             index={i}
+            role={roles[i]}
             step={step}
             isFailReel={isFailReel}
             isLast={i === steps.length - 1}
@@ -1577,6 +1602,7 @@ function BreadcrumbList({ steps, isFailReel }) {
 }
 BreadcrumbList.propTypes = {
   steps: PropTypes.array.isRequired,
+  evidence: PropTypes.object,
   isFailReel: PropTypes.bool,
 };
 
@@ -1750,191 +1776,6 @@ ReelTabs.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
-/* ── This conversation: outcome, recovered, failure type, and its checklist ── */
-const OUTCOME = {
-  succeeded: { label: "Succeeded", color: "status.success.fg" },
-  failed: { label: "Failed", color: "status.danger.fg" },
-  unclear: { label: "Unclear", color: "text.secondary" },
-};
-const CHECK = {
-  met: {
-    icon: "solar:check-circle-linear",
-    color: "status.success.fg",
-    label: "Met",
-  },
-  broken: {
-    icon: "solar:close-circle-linear",
-    color: "status.danger.fg",
-    label: "Broken",
-  },
-  unclear: {
-    icon: "solar:question-circle-linear",
-    color: "text.tertiary",
-    label: "Unclear",
-  },
-};
-const goToStep = (i) => {
-  const el = document.querySelector(`[data-reel-step="${i}"]`);
-  if (!el) return;
-  el.scrollIntoView({ behavior: "smooth", block: "start" });
-  el.animate?.([{ opacity: 0.4 }, { opacity: 1 }], { duration: 600 });
-};
-
-function ConversationFindings({ trace }) {
-  const [all, setAll] = useState(false);
-  const list = trace?.checklist || [];
-  if (!trace?.outcome && !list.length) return null;
-  const n = (k) => list.filter((c) => c.status === k).length;
-  const open = list.filter((c) => c.status !== "met");
-  const shown = all ? list : open;
-  const o = OUTCOME[trace.outcome] || OUTCOME.unclear;
-  const labels = [
-    trace.recovered == null
-      ? null
-      : trace.recovered
-        ? "Recovered"
-        : "Not recovered",
-    trace.failure_type,
-  ].filter(Boolean);
-  return (
-    <Box
-      sx={{
-        borderRadius: "8px",
-        border: "1px solid",
-        borderColor: "divider",
-        bgcolor: "background.paper",
-      }}
-    >
-      {/* Outcome · recovered · failure type, then the checklist's tally. */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        gap={1}
-        sx={{
-          px: 1.75,
-          py: 1,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          minWidth: 0,
-        }}
-      >
-        <Typography
-          fontSize="12px"
-          fontWeight={600}
-          color="text.secondary"
-          noWrap
-        >
-          This conversation
-        </Typography>
-        <Typography fontSize="12px" noWrap sx={{ minWidth: 0 }}>
-          <Box component="span" sx={{ color: o.color, fontWeight: 600 }}>
-            {o.label}
-          </Box>
-          {labels.length > 0 && (
-            <Box component="span" sx={{ color: "text.secondary" }}>
-              {` · ${labels.join(" · ")}`}
-            </Box>
-          )}
-        </Typography>
-        <Box sx={{ flex: 1 }} />
-        {list.length > 0 && (
-          <Typography
-            fontSize="12px"
-            color="text.tertiary"
-            noWrap
-            sx={{ fontVariantNumeric: "tabular-nums" }}
-          >
-            {`${n("met")} of ${list.length} met`}
-            {n("broken") ? ` · ${n("broken")} broken` : ""}
-            {n("unclear") ? ` · ${n("unclear")} unclear` : ""}
-          </Typography>
-        )}
-      </Stack>
-      {/* What it was supposed to do — the open items first; the met ones fold away. */}
-      {shown.length > 0 && (
-        <Stack sx={{ px: 1.75, py: 0.75 }} gap={0.25}>
-          {shown.map((c, i) => {
-            const k = CHECK[c.status] || CHECK.unclear;
-            return (
-              <Stack
-                key={i}
-                direction="row"
-                alignItems="center"
-                gap={1}
-                sx={{ minHeight: 26, minWidth: 0 }}
-              >
-                <Tooltip title={k.label} arrow>
-                  <Box
-                    component="span"
-                    sx={{ display: "inline-flex", flexShrink: 0 }}
-                  >
-                    <Iconify icon={k.icon} width={16} sx={{ color: k.color }} />
-                  </Box>
-                </Tooltip>
-                <Typography
-                  fontSize="13px"
-                  color="text.primary"
-                  noWrap
-                  sx={{ minWidth: 0 }}
-                >
-                  {c.text}
-                  {c.note && (
-                    <Box component="span" sx={{ color: "text.tertiary" }}>
-                      {` (${c.note})`}
-                    </Box>
-                  )}
-                </Typography>
-                {c.status === "broken" && c.proofStep != null && (
-                  <Box
-                    {...clickable(() => goToStep(c.proofStep), {
-                      role: "link",
-                    })}
-                    sx={{
-                      ...focusRing,
-                      flexShrink: 0,
-                      fontSize: "12px",
-                      fontWeight: 500,
-                      color: "text.secondary",
-                      cursor: "pointer",
-                      "&:hover": {
-                        color: "text.primary",
-                        textDecoration: "underline",
-                      },
-                    }}
-                  >
-                    See proof
-                  </Box>
-                )}
-              </Stack>
-            );
-          })}
-        </Stack>
-      )}
-      {n("met") > 0 && (
-        <Box
-          {...clickable(() => setAll((v) => !v), { expanded: all })}
-          sx={{
-            ...focusRing,
-            px: 1.75,
-            pb: 1,
-            pt: shown.length ? 0 : 1,
-            fontSize: "12px",
-            fontWeight: 500,
-            color: "text.secondary",
-            cursor: "pointer",
-            "&:hover": { color: "text.primary" },
-          }}
-        >
-          {all
-            ? "Show only what's open"
-            : `Show all ${list.length} requirements`}
-        </Box>
-      )}
-    </Box>
-  );
-}
-ConversationFindings.propTypes = { trace: PropTypes.object };
-
 function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
   const [viewMode, setViewMode] = useState("breadcrumb");
   const [activeReel, setActiveReel] = useState("fail");
@@ -1953,6 +1794,14 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
   const steps = activeReel === "fail" ? failReel : passReel;
   const isFailActive = activeReel === "fail";
   const isBreadcrumb = viewMode === "breadcrumb";
+
+  /* A step named above opens in the failing reel, in place. */
+  const jumpToStep = (i) => {
+    setViewMode("breadcrumb");
+    setActiveReel("fail");
+    setSplitView(false);
+    setTimeout(() => goToStep(i), 60);
+  };
 
   const summary = trace?.summary ?? {};
   const tokens =
@@ -2126,6 +1975,9 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
         </Stack>
       )}
 
+      {/* ── What the analyzer stored about this conversation ── */}
+      <TraceFindings trace={trace} onJump={jumpToStep} />
+
       {/* ── Body ── */}
       <Box sx={{ p: 1.75 }}>
         {/* Agent Graph / Agent Path — single trace, or split with a working trace. */}
@@ -2156,7 +2008,11 @@ function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
         {/* Breadcrumb mode — single reel or side-by-side */}
         {isBreadcrumb &&
           (!splitView ? (
-            <BreadcrumbList steps={steps} isFailReel={isFailActive} />
+            <BreadcrumbList
+              steps={steps}
+              isFailReel={isFailActive}
+              evidence={evidence}
+            />
           ) : (
             <Box
               sx={{
@@ -2928,7 +2784,9 @@ export default function OverviewTab({ _error: currentError }) {
             />
           ) : (
             <Stack gap={1.5} sx={{ p: 1.75 }}>
-              <ConversationFindings trace={trace} />
+              {currentError?.source === "eval" && (
+                <TraceFindings trace={trace} bordered />
+              )}
               {currentError?.source === "eval" ? (
                 <SectionCard
                   title={isVoice ? "Voice call" : "Input / Output"}

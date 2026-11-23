@@ -10,7 +10,6 @@ const DEFAULT_LIST_STATE = {
   selectedStatus: "",
   selectedSeverity: "",
   selectedErrorType: "",
-  selectedFixLayer: "",
   selectedSource: "",
   timeRange: "7",
   sortBy: "lastSeen",

@@ -93,8 +93,8 @@ export default function FixRunNote({ envId, run, issue = null }) {
       <Iconify icon="fagi:fix" width={14} sx={{ color: "text.tertiary" }} />
       <Typography sx={{ typography: "s3", color: "text.secondary" }}>
         {kind === "fix"
-          ? `Fix for ${issueId} · step 1, reproduce on today's agent${progress}`
-          : `${issueId}'s scenarios only · no fix is tried${progress}`}
+          ? `Epoch for ${issueId} · step 1, reproduce on today's agent${progress}`
+          : `${issueId}'s scenarios only · no change is tried${progress}`}
         {fix && (
           <>
             {" · "}
@@ -105,7 +105,7 @@ export default function FixRunNote({ envId, run, issue = null }) {
               onClick={() => navigate(improvementPath(envId, fix.id))}
               sx={linkSx}
             >
-              View fix progress
+              View epoch progress
             </Link>
           </>
         )}

@@ -217,7 +217,7 @@ export default function CasePicker({ pickable, pick, onChange }) {
       <CaseList
         readOnly
         title="Held back"
-        note="Untouched — used to verify the fix."
+        note="Untouched — used to verify the change."
         items={heldItems}
         chosen={heldIds}
         onChange={() => {}}

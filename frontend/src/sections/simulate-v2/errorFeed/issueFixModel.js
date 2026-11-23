@@ -53,6 +53,10 @@ const ISSUE_TRACE_VERSIONS = {
   "ISS-4529": "v1",
 };
 
+/** The agent version the issue's traces were recorded on, where the feed has it. */
+export const issueTraceVersionOf = (issue) =>
+  issue?.agent_version || ISSUE_TRACE_VERSIONS[issue?.cluster_id] || null;
+
 /* What each linked issue's traces look like as scenarios — the
    representative failure first, then the variations seen around it. */
 const ISSUE_CASES = {
@@ -401,7 +405,7 @@ export const fixGateOf = (agent, env, es = null) => {
       title: `${agent.name} is archived`,
       body:
         status.reason ||
-        "New runs and epochs are stopped. Restore the agent to fix this issue.",
+        "New runs and epochs are stopped. Restore the agent to run an epoch on this issue.",
     };
   }
   if (status.key === "disconnected") {
@@ -410,7 +414,7 @@ export const fixGateOf = (agent, env, es = null) => {
       title: `${agent.name} is disconnected`,
       body:
         status.reason ||
-        "Reconnect it on the agent's Connections tab to fix this issue.",
+        "Reconnect it on the agent's Connections tab to run an epoch on this issue.",
       action: "connections",
     };
   }
@@ -422,7 +426,7 @@ export const fixGateOf = (agent, env, es = null) => {
     return {
       key: "found-live",
       title: "Mark the tools that must never run for real first",
-      body: `${agent.name} runs live, so its real tools would be called. Mark the ones that must never run for real, or switch it to simulated runs, then fix.`,
+      body: `${agent.name} runs live, so its real tools would be called. Mark the ones that must never run for real, or switch it to simulated runs, then run the epoch.`,
       action: "overview",
     };
   }
@@ -430,7 +434,7 @@ export const fixGateOf = (agent, env, es = null) => {
     return {
       key: "found",
       title: "Confirm what we found in its code first",
-      body: `Optional — check what we read from ${agent.name}'s code on its Overview. Fix works now.`,
+      body: `Optional — check what we read from ${agent.name}'s code on its Overview. Run Epoch works now.`,
       action: "overview",
     };
   }
@@ -464,7 +468,7 @@ export const evidenceGateOf = (issue) => {
   return {
     key: e,
     title: "Not confirmed yet",
-    body: `${why} Fix reproduces it first — if it can't, it stops at Could not reproduce before any search is spent.`,
+    body: `${why} Run Epoch reproduces it first — if it can't, it stops at Could not reproduce before any search is spent.`,
   };
 };
 
@@ -586,6 +590,35 @@ export const scenarioGroupsOf = (drafts = []) => {
   });
   return [...byId.values()].sort((a, b) => b.traces - a.traces);
 };
+
+/* The time limits an epoch can take from the issue — never more than the
+   agent's own cap. The popup and the Fix page both default to the last. */
+export const FIX_MINUTES = [15, 30, 45, 60, 90, 120];
+export const fixMinutesWithin = (ceiling) => {
+  const list = FIX_MINUTES.filter((m) => m <= ceiling);
+  return list.length ? list : [ceiling];
+};
+export const fixMinutesLabel = (m = 0) =>
+  m >= 60
+    ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ""}`
+    : `${m} min`;
+
+/**
+ * The epoch's budget, said one way wherever the issue path shows it:
+ * "Up to 4 candidates · stops at 1,500 credits or 2 h · for the whole epoch".
+ * A limit, not an estimate — the pre-run cost stays hidden (costFlags).
+ * `stops` overrides the middle part, e.g. "whichever comes first" under pickers.
+ */
+export const epochBudgetLine = ({ candidates, credits, minutes, stops }) =>
+  [
+    candidates
+      ? `Up to ${candidates} ${candidates === 1 ? "candidate" : "candidates"}`
+      : null,
+    stops || `stops at ${credits} or ${fixMinutesLabel(minutes)}`,
+    "for the whole epoch",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
 /**
  * Does the failure actually happen on today's agent? Each scenario runs
@@ -735,7 +768,7 @@ export const todayRunFor = (env, es, issueId, now = new Date()) =>
     ? measureTodayRun(env, es, {
         key: fixSeed(es, issueId),
         measuredFor: { kind: "fix", issueId },
-        startedBy: `Fix · ${issueId}`,
+        startedBy: `Epoch · ${issueId}`,
         now,
       })
     : null;
@@ -816,7 +849,7 @@ export const fixRunFor = (env, es, issue, drafts, now = new Date()) => {
     /* Played when its page opens, like a run-group member. */
     status: "running",
     pending: true,
-    label: `Fix · ${issue.cluster_id}`,
+    label: `Epoch · ${issue.cluster_id}`,
   };
 };
 
@@ -1059,8 +1092,7 @@ export const recurrenceOf = (record, es, now = Date.now()) => {
   wording for the PRD's Draft shipped, from Flow 3's chip), "In review · …"
   on any other improvement.
 */
-const inReview = (record, via) =>
-  `${record?.trigger?.issueId ? "Fix in review" : "In review"} · ${via}`;
+const inReview = (record, via) => `In review · ${via}`;
 
 /**
  * Where a shipped proposal is (RSI PRD, Part 3 "Improvement states": Draft
@@ -1198,7 +1230,7 @@ export const fixStatusOf = (
       improver: coder.improver,
     };
   }
-  const { ending, beforeSearch, reason } = improvementOutcome(record);
+  const { ending, beforeSearch, reason, canRetry } = improvementOutcome(record);
   /* While it runs, the PRD's own phases: Reproducing → Searching → Verifying. */
   if (ending.key === "running")
     return {
@@ -1222,6 +1254,8 @@ export const fixStatusOf = (
       key: "no-fix",
       label: "Failed",
       ...(reason && { detail: reason.label.toLowerCase() }),
+      /* Why it couldn't run, and whether Retry is still offered (once). */
+      failed: { cause: reason?.key || "ours", canRetry: !!canRetry },
     };
   if (ending.key === "no-fix")
     return { ...at, key: "no-fix", label: "No safe improvement" };
@@ -1297,7 +1331,7 @@ export const triageFixEffect = (fix, status) => {
   ) {
     return {
       reopen: true,
-      note: `Reopens the fix on ${fix.version}. Fix again starts a new one; this fix keeps its page.`,
+      note: `Reopens the epoch's change on ${fix.version}. Run Epoch again starts a new one; the last epoch keeps its page.`,
     };
   }
   if (status === "resolved" && fix.key === "reopened" && fix.byPerson) {

@@ -191,7 +191,7 @@ export const optimizationSummary = (record) => {
   if (record.status === OPT_STATUS.RUNNING) {
     return {
       headline: "Running",
-      sub: `${r.trials?.length || 0} trials`,
+      sub: `${r.trials?.length || 0} ${r.trials?.length === 1 ? "candidate" : "candidates"}`,
       tone: "#CA8A04",
     };
   }
@@ -224,7 +224,7 @@ export const optimizationVerdict = (record) => {
       return {
         tone: "#CA8A04",
         title: `Run ${n} scored higher and was rejected`,
-        body: "It broke a must-pass scenario. The winner below is the best trial that did not.",
+        body: "It broke a must-pass scenario. The winner below is the best candidate that did not.",
       };
     }
     if (!finalist) {
@@ -240,7 +240,7 @@ export const optimizationVerdict = (record) => {
     return {
       tone: "#CA8A04",
       title: `Run ${n} scored higher and was rejected`,
-      body: `${finalist.why ? `Rejected: ${finalist.why}.` : "It didn't pass the held-back checks."} The winner below is the best trial that passed.`,
+      body: `${finalist.why ? `Rejected: ${finalist.why}.` : "It didn't pass the held-back checks."} The winner below is the best candidate that passed.`,
     };
   }
   /*
@@ -396,7 +396,7 @@ const SURFACE_LABEL = {
   code: "code",
   structure: "structure",
 };
-/* The same surfaces as `fi api fix-runs create --allow` names them. */
+/* The same surfaces as `fi api epochs create --surfaces` names them. */
 const SURFACE_CLI = {
   prompt: "prompt",
   tools: "tools",
@@ -655,7 +655,7 @@ export const searchSpendParts = (result, surface, { trials } = {}) => {
     ),
     part(
       "heldOut",
-      "Held-out check",
+      "Held-back check",
       `${finalists} finalist${finalists === 1 ? "" : "s"} on scenarios they never saw`,
       finalists * result.heldMeasured * reps,
       perFinal,
@@ -1009,7 +1009,7 @@ export const limitGate = ({
     if (latencyKnown && e.latency > latency)
       return {
         id: "latency",
-        actual: `latency ${signed(e.latency)}, over +${latency}%`,
+        actual: `reply time ${signed(e.latency)}, over +${latency}%`,
       };
     return null;
   };
@@ -1139,8 +1139,8 @@ const outcomeOf = (rec, { model } = {}) => {
   }
   if (record?.status === OPT_STATUS.NOTHING) {
     return {
-      ending: { key: "nothing", label: "Could not reproduce" },
-      headline: `Could not reproduce — every scenario already meets ${goalWords(record.nothing?.goal)}.`,
+      ending: { key: "nothing", label: "Nothing to improve" },
+      headline: `Nothing to improve — every scenario already meets ${goalWords(record.nothing?.goal)}.`,
     };
   }
   if (record?.status === OPT_STATUS.CLARIFY) {
@@ -1181,7 +1181,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ending: { key: "stopped", label: "Stopped" },
       headline: s.trials
-        ? `Stopped after ${s.trials} of up to ${s.of} ${s.of === 1 ? "trial" : "trials"}. ${s.finalists ? `${plural(s.finalists, "finalist")} had been checked on the held-back scenarios, but the check wasn't finished, so nothing can be chosen` : "None was checked on the held-back scenarios, so nothing can be chosen"} — today's version stays. What finished stays here.`
+        ? `Stopped after ${s.trials} of up to ${s.of} ${s.of === 1 ? "candidate" : "candidates"}. ${s.finalists ? `${plural(s.finalists, "finalist")} had been checked on the held-back scenarios, but the check wasn't finished, so nothing can be chosen` : "None was checked on the held-back scenarios, so nothing can be chosen"} — today's version stays. What finished stays here.`
         : "Stopped before it tried a change. Today's version stays.",
       beforeSearch: !s.trials,
     };
@@ -1193,7 +1193,9 @@ const outcomeOf = (rec, { model } = {}) => {
     const stage =
       record.infra?.stageLabel ||
       (grading ? "grading the held-back cases" : "running the candidates");
-    const cause = FAIL_REASONS[record.infra?.cause] ? record.infra.cause : "ours";
+    const cause = FAIL_REASONS[record.infra?.cause]
+      ? record.infra.cause
+      : "ours";
     const yours = cause === "yours";
     const canRetry = (record.retries || 0) < RETRY_LIMIT;
     return {
@@ -1580,7 +1582,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ...base,
       ending: { key: "no-fix", label: "No safe improvement" },
-      headline: `No safe improvement — the ${chosen ? "trial you chose" : "best trial"} ${why.replace(/^it /, "")}.`,
+      headline: `No safe improvement — the ${chosen ? "candidate you chose" : "best candidate"} ${why.replace(/^it /, "")}.`,
     };
   }
   if (blocking && !chosen) {
@@ -1596,7 +1598,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ...base,
       ending: { key: "no-fix", label: "No safe improvement" },
-      headline: `No fix for ${issue.id} — the best trial didn't fix it on any of the ${plural(issue.targets, "scenario")} where it failed.`,
+      headline: `No safe change for ${issue.id} — the best candidate didn't fix it on any of the ${plural(issue.targets, "scenario")} where it failed.`,
     };
   }
   /* Fixed only where the search could see it: fitted, not fixed. */
@@ -1604,7 +1606,7 @@ const outcomeOf = (rec, { model } = {}) => {
     return {
       ...base,
       ending: { key: "no-fix", label: "No safe improvement" },
-      headline: `No fix for ${issue.id} — the best trial fixed it on scenarios the search saw, but not on the ${issue.held === 1 ? "one" : issue.held} it never saw.`,
+      headline: `No safe change for ${issue.id} — the best candidate fixed it on scenarios the search saw, but not on the ${issue.held === 1 ? "one" : issue.held} it never saw.`,
     };
   }
   /*
@@ -1648,7 +1650,7 @@ const outcomeOf = (rec, { model } = {}) => {
         key: "stopped-early",
         label: base.strength?.label || "Ready for review",
       },
-      headline: `The search stopped after ${noGainRunsOf(s)} trials in a row without gain (${s.after} of up to ${s.of}), then verified the best. Best: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
+      headline: `The search stopped after ${noGainRunsOf(s)} candidates in a row without gain (${s.after} of up to ${s.of}), then verified the best. Best: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
     };
   }
   if (record.stoppedAtBudget) {
@@ -1664,7 +1666,7 @@ const outcomeOf = (rec, { model } = {}) => {
         key: "budget",
         label: "Stopped at budget",
       },
-      headline: `Stopped at the ${limit} after ${s.trials} of ${s.of} trials. Best so far: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
+      headline: `Stopped at the ${limit} after ${s.trials} of ${s.of} candidates. Best so far: ${said.charAt(0).toLowerCase()}${said.slice(1)}.`,
     };
   }
   return {
@@ -1900,7 +1902,7 @@ export const ladderOf = (record, trial) => {
       ? [
           {
             id: "limits",
-            label: "Cost and latency",
+            label: "Cost and reply time",
             state: trial.overLimit ? "fail" : "pass",
             note: trial.overLimit
               ? `${trial.overLimit.actual} — dropped here`

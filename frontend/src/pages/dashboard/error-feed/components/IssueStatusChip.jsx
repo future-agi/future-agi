@@ -10,6 +10,7 @@ import {
   useIssueFix,
 } from "src/sections/simulate-v2/errorFeed/issueFix";
 import { WATCH_DAYS } from "src/sections/simulate-v2/errorFeed/issueFixModel";
+import { improvementRunName } from "src/sections/simulate-v2/_mock/optimizer";
 
 /*
   The fix-status chip (RSI PRD: "a fix-status chip on the list"). It sits
@@ -37,37 +38,37 @@ const TONE = {
 const fixTip = (status) => {
   const { key, label } = status;
   if (key === "fixing")
-    return "A fix is running: it reproduces the issue, then searches for a change that fixes it without breaking your must-pass scenarios.";
+    return "An epoch is running: it reproduces the issue, then searches for a change that fixes it without breaking your must-pass scenarios.";
   if (key === "ready") {
     if (status.recheck)
-      return "Another change went live after this fix measured the agent. Re-check its change on the version in production before you ship it.";
+      return "Another change went live after this epoch measured the agent. Re-check its change on the version in production before you ship it.";
     if (/budget/i.test(label))
-      return "The fix stopped at its budget. The best change it found so far is ready for you to review.";
+      return "The epoch stopped at its budget. The best change it found so far is ready for you to review.";
     if (/suggestion/i.test(label))
-      return "The fix suggests a change it couldn't test here. Review it before you ship it.";
-    return "The fix found a change that fixes this issue without breaking your must-pass scenarios. Review it and ship it.";
+      return "The epoch suggests a change it couldn't test here. Review it before you ship it.";
+    return "The epoch found a change that fixes this issue without breaking your must-pass scenarios. Review it and ship it.";
   }
   if (key === "review")
     return status.awaitingRelease
-      ? "The change is saved as a draft agent version, not live yet. Mark it released on the fix once it's live — the Error Feed then watches for the issue."
-      : "The change was sent as a draft, not live yet. Mark it released on the fix once it's live — the Error Feed then watches for the issue.";
+      ? "The change is saved as a draft agent version, not live yet. Mark it released on the epoch once it's live — the Error Feed then watches for the issue."
+      : "The change was sent as a draft, not live yet. Mark it released on the epoch once it's live — the Error Feed then watches for the issue.";
   if (key === "watching")
     return `Released. The Error Feed watches production for ${WATCH_DAYS} days — resolved if it doesn't come back, reopened if it does.`;
   if (key === "resolved")
     return `Fixed: released and not seen for ${WATCH_DAYS} days.`;
   if (key === "reopened")
-    return "Seen again on the fixed version. Fix again to try another change.";
+    return "Seen again on the fixed version. Run Epoch again to try another change.";
   if (/infrastructure/i.test(label))
-    return "The fix couldn't finish for infrastructure reasons — not because of the agent. Try again.";
+    return "The epoch couldn't finish for infrastructure reasons — not because of the agent. Try again.";
   if (key === "no-fix")
-    return "The fix tried changes but none fixed the issue without breaking something else. Nothing was shipped.";
+    return "The epoch tried changes but none fixed the issue without breaking something else. Nothing was shipped.";
   if (key === "not-reproduced")
-    return "The fix couldn't make the issue happen in the environment, so it didn't search. You can continue anyway.";
+    return "The epoch couldn't make the issue happen in the environment, so it didn't search. You can continue anyway.";
   if (key === "stopped")
-    return "Someone stopped the fix before it finished. Nothing it tried was checked or shipped — Fix again starts a new one.";
+    return "Someone stopped the epoch before it finished. Nothing it tried was checked or shipped — Run Epoch again starts a new one.";
   if (key === "over-budget")
-    return "The fix stopped at its budget before searching: checking the finalists alone would have cost more. No change was tried — Fix again with a bigger budget.";
-  return "Where this issue's fix stands.";
+    return "The epoch stopped at its budget before searching: checking the finalists alone would have cost more. No change was tried — Run Epoch again with a bigger budget.";
+  return "Where this issue's epoch stands.";
 };
 
 /*
@@ -81,12 +82,130 @@ const EMPHASIS = {
   reopened: { role: "danger", weight: 600 },
 };
 
+/*
+  The list's Epoch column (Kartik's review, C10): which epoch is working on
+  the issue and where it stands, in words — "Epoch 3 · Ready for review".
+  A filled dot while it's live or wants a person, coloured by its state; a
+  hollow grey one for an epoch that ended without a change.
+*/
+const EPOCH_DOT = {
+  fixing: "info",
+  ready: "success",
+  review: "info",
+  watching: "info",
+  resolved: "success",
+  reopened: "danger",
+};
+const EPOCH_WORDS = {
+  "Too few failing scenarios": "Too few failing",
+  "Fix in review": "In review",
+};
+
+function EpochCell({ issue, status, agent, state }) {
+  const theme = useTheme();
+  const navigate = useNavigate();
+  if (!status) {
+    const unlinked = state?.hydrated && !agent;
+    return (
+      <Tooltip
+        arrow
+        placement="top-start"
+        title={
+          unlinked
+            ? "No agent is linked to this issue's project yet. Open the issue to connect one, then run an epoch."
+            : "No epoch has worked on this issue yet."
+        }
+      >
+        <Typography
+          component="span"
+          sx={{ typography: "s2", color: "text.disabled" }}
+        >
+          —
+        </Typography>
+      </Tooltip>
+    );
+  }
+  const es = state?.byEnv?.[status.envId];
+  const record = (es?.optimizations || []).find((o) => o.id === status.optId);
+  const epoch = record ? improvementRunName(es, record) : null;
+  const [head, ...rest] = status.label.split(" · ");
+  const words = EPOCH_WORDS[head] || head;
+  const detail =
+    rest.join(" · ") ||
+    (status.key !== "not-reproduced" ? status.detail : null) ||
+    null;
+  const role = status.recheck ? "warning" : EPOCH_DOT[status.key];
+  const dot = role ? statusColors(theme, role).fg : theme.palette.text.disabled;
+  const open = status.optId
+    ? (e) => {
+        e.stopPropagation();
+        navigate(...issueFixNav(status, issue?.cluster_id));
+      }
+    : undefined;
+  const text = [epoch, words].filter(Boolean).join(" · ");
+  return (
+    <Tooltip
+      arrow
+      placement="top-start"
+      title={`${text}${detail ? ` · ${detail}` : ""}. ${fixTip(status)}${open ? " Click to open the epoch." : ""}`}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={0.75}
+        onClick={open}
+        aria-label={`Epoch: ${text}`}
+        sx={{
+          minWidth: 0,
+          maxWidth: "100%",
+          width: "fit-content",
+          cursor: open ? "pointer" : "default",
+          "&:hover .epoch-words": open
+            ? { textDecoration: "underline" }
+            : undefined,
+        }}
+      >
+        <Box
+          component="span"
+          sx={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            flexShrink: 0,
+            boxSizing: "border-box",
+            ...(role
+              ? { bgcolor: dot }
+              : { border: "1px solid", borderColor: dot }),
+          }}
+        />
+        <Typography
+          className="epoch-words"
+          noWrap
+          sx={{ typography: "s2", color: "text.secondary" }}
+        >
+          {text}
+        </Typography>
+      </Stack>
+    </Tooltip>
+  );
+}
+EpochCell.propTypes = {
+  issue: PropTypes.object,
+  status: PropTypes.object,
+  agent: PropTypes.object,
+  state: PropTypes.object,
+};
+
 export default function IssueStatusChip({ issue, variant = "chip" }) {
   const theme = useTheme();
   const navigate = useNavigate();
   const improving = useAgentImprovementFlag();
   const { status, agent, state } = useIssueFix(issue);
   if (!improving) return null;
+  if (variant === "epoch")
+    return (
+      <EpochCell issue={issue} status={status} agent={agent} state={state} />
+    );
   if (!status) {
     if (variant !== "text") return null;
     /* No agent linked to the issue's project: say why there's no fix here,
@@ -97,7 +216,7 @@ export default function IssueStatusChip({ issue, variant = "chip" }) {
         <Tooltip
           arrow
           placement="top-start"
-          title="No agent is linked to this issue's project yet. Open the issue to connect one, then fix it."
+          title="No agent is linked to this issue's project yet. Open the issue to connect one, then run an epoch."
         >
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             Connect agent
@@ -125,7 +244,7 @@ export default function IssueStatusChip({ issue, variant = "chip" }) {
         navigate(...issueFixNav(status, issue?.cluster_id));
       }
     : undefined;
-  const tip = `${status.detail && label === status.label ? `${status.label} · ${status.detail}. ` : ""}${fixTip(status)}${open ? " Click to open the fix." : ""}`;
+  const tip = `${status.detail && label === status.label ? `${status.label} · ${status.detail}. ` : ""}${fixTip(status)}${open ? " Click to open the epoch." : ""}`;
 
   /* In the list (#63): one icon after the issue's name, its state on hover.
      Issues without a fix show nothing. */
@@ -135,12 +254,12 @@ export default function IssueStatusChip({ issue, variant = "chip" }) {
       <Tooltip
         arrow
         placement="top-start"
-        title={`Fix: ${label}. ${fixTip(status)}${open ? " Click to open the fix." : ""}`}
+        title={`Epoch: ${label}. ${fixTip(status)}${open ? " Click to open the epoch." : ""}`}
       >
         <Box
           component="span"
           onClick={open}
-          aria-label={`Fix: ${label}`}
+          aria-label={`Epoch: ${label}`}
           sx={{
             display: "inline-flex",
             flexShrink: 0,
@@ -240,5 +359,5 @@ export default function IssueStatusChip({ issue, variant = "chip" }) {
 
 IssueStatusChip.propTypes = {
   issue: PropTypes.object,
-  variant: PropTypes.oneOf(["chip", "text", "icon"]),
+  variant: PropTypes.oneOf(["chip", "text", "icon", "epoch"]),
 };

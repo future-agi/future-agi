@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Box, Button, Chip, Stack, Typography } from "@mui/material";
 import TrialHeatmap from "./TrialHeatmap";
 import { scenarioTitle } from "../../_mock/scenarios";
+import { epochEntriesOf } from "../../improvements/epochResultRows";
 
 const OUTCOME = {
   fixed: "Fixed",
@@ -28,16 +29,16 @@ const CHIP = { "off-script": "Caller went off script" };
 /* The plan's three lists — a case is in only one. Each is a heading, so a
    row carries one result, not a second label beside it. */
 const SETS = [
-  { id: "Target", title: "Targets", note: "the failing cases it was tuned on" },
+  { id: "Target", title: "Targets", note: "the failing scenarios it was tuned on" },
   {
     id: "Held back",
     title: "Held back",
-    note: "never seen — they check the fix holds",
+    note: "never seen — they check the change holds",
   },
   {
-    id: "Protected",
-    title: "Protected",
-    note: "passing cases it must not break",
+    id: "Must-pass",
+    title: "Must-pass",
+    note: "passing scenarios it must not break",
   },
 ];
 
@@ -56,28 +57,13 @@ const chipSx = (on) => ({
 export default function ScenarioOutcomes({ result, winner }) {
   const [only, setOnly] = useState(null);
   const [grid, setGrid] = useState(false);
-  const rows = [
-    ...(result.heldTasks || []).map((t) => ({
-      ...t,
-      split: "Held back",
-      outcome: result.heldPerScenario?.[t.id] || "same",
-    })),
-    ...(result.trainMeasuredTasks || []).map((t) => ({
-      ...t,
-      split: "Target",
-      outcome: winner?.perScenario?.[t.id] || "same",
-    })),
-  ];
-  const taken = new Set(rows.map((x) => x.id));
-  rows.push(
-    ...(result.mustPassTasks || [])
-      .filter((t) => !taken.has(t.id))
-      .map((t) => ({
-        ...t,
-        split: "Protected",
-        outcome: winner?.perScenario?.[t.id] || "same",
-      })),
-  );
+  /* The same reading as the epoch's Scenarios tab, so a must-pass row
+     agrees with the verdict's must-pass check. */
+  const SPLIT = { held: "Held back", target: "Target", mustpass: "Must-pass" };
+  const rows = epochEntriesOf({ ...result, winner }).map((t) => ({
+    ...t,
+    split: SPLIT[t.set],
+  }));
   const inSet = rows;
   /* must-pass only says something when some rows aren't. */
   const markCritical = rows.some((x) => !x.critical);
@@ -111,7 +97,7 @@ export default function ScenarioOutcomes({ result, winner }) {
             size="small"
             clickable
             onClick={() => setOnly(only === k ? null : k)}
-            label={`${k === "same" && inSet.filter((x) => x.outcome === "same").every((x) => x.split === "Protected") ? "Still passing" : CHIP[k] || OUTCOME[k]} ${counts[k]}`}
+            label={`${k === "same" && inSet.filter((x) => x.outcome === "same").every((x) => x.split === "Must-pass") ? "Still passing" : CHIP[k] || OUTCOME[k]} ${counts[k]}`}
             sx={chipSx(only === k)}
           />
         ))}
@@ -227,7 +213,7 @@ export default function ScenarioOutcomes({ result, winner }) {
                             : "text.secondary",
                     }}
                   >
-                    {x.split === "Protected" && x.outcome === "same"
+                    {x.split === "Must-pass" && x.outcome === "same"
                       ? "Still passing"
                       : OUTCOME[x.outcome]}
                   </Typography>

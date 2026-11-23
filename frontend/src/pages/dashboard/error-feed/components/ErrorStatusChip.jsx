@@ -7,17 +7,17 @@ import PropTypes from "prop-types";
 const STATUS_CONFIG = {
   escalating: {
     label: "Escalating",
-    tip: "Not triaged yet, and happening more often. No fix has started.",
+    tip: "Not triaged yet, and happening more often. No epoch has started.",
     icon: "solar:graph-up-linear",
   },
   acknowledged: {
     label: "Acknowledged",
-    tip: "Someone on the team has seen it. No fix has started.",
+    tip: "Someone on the team has seen it. No epoch has started.",
     icon: "solar:check-circle-linear",
   },
   for_review: {
     label: "For review",
-    tip: "Flagged for a person to look at and decide what to do. No fix has started.",
+    tip: "Flagged for a person to look at and decide what to do. No epoch has started.",
     icon: "solar:eye-linear",
   },
   resolved: {

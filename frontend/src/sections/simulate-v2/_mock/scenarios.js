@@ -724,7 +724,7 @@ export const scenariosFromDataset = (env, dataset, roles, rows) => {
       /* What this scenario brings into the sandbox when it runs, because the
          seed has nothing equivalent. */
       fixtures: fits.filter((f) => f.status === "added").map(({ table, value, role }) => ({ table, value, role })),
-      datasetRow: { dataset: dataset.id, rowId: row.__id, version: dataset.updated, importedAt },
+      datasetRow: { dataset: dataset.id, rowId: row.__id, row: i + 1, version: dataset.updated, importedAt },
     };
   });
 };

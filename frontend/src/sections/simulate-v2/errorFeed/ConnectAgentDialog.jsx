@@ -36,7 +36,13 @@ import { useConnectedAgents } from "../store";
  */
 const mono = { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" };
 
-export default function ConnectAgentDialog({ open, onClose, issue, project }) {
+export default function ConnectAgentDialog({
+  open,
+  onClose,
+  issue,
+  project,
+  noAgents = false,
+}) {
   const { enqueueSnackbar } = useSnackbar();
   const save = useSaveConnectedAgent();
   const known = observeProjectById(project);
@@ -44,7 +50,8 @@ export default function ConnectAgentDialog({ open, onClose, issue, project }) {
   const traced = known?.traced || null;
   const issueId = issue?.cluster_id || null;
   const { agents } = useConnectedAgents();
-  const hasAgents = agents.some((a) => !a?.deleted?.at);
+  /* `noAgents`: the header said none are connected (the ?prereq=none demo too). */
+  const hasAgents = !noAgents && agents.some((a) => !a?.deleted?.at);
 
   /* null: what the traces say · "detected": the one right way · "all": every way. */
   const [mode, setMode] = useState(null);
@@ -66,7 +73,7 @@ export default function ConnectAgentDialog({ open, onClose, issue, project }) {
       const saved = save(source);
       onClose();
       enqueueSnackbar(
-        `${saved.name} ${saved.exists ? "updated" : "connected"} · ${projectName} is linked, so this issue can be fixed`,
+        `${saved.name} ${saved.exists ? "updated" : "connected"} · ${projectName} is linked, so you can run an epoch on this issue`,
         { variant: "success" },
       );
     },
@@ -88,8 +95,9 @@ export default function ConnectAgentDialog({ open, onClose, issue, project }) {
         }
       : {
           icon: "solar:bug-linear",
-          name: "Connect agent to fix",
-          detail: issueId,
+          /* Your agents first when there are some: linking is the usual step. */
+          name: mode === null && hasAgents ? "Link agent" : "Connect agent",
+          detail: projectName,
         };
 
   return (
@@ -143,7 +151,11 @@ export default function ConnectAgentDialog({ open, onClose, issue, project }) {
           {meta.detail && (
             <Typography
               noWrap
-              sx={{ typography: "s2", color: "text.secondary", ...mono }}
+              sx={{
+                typography: "s2",
+                color: "text.secondary",
+                ...(meta.detail === issueId && mono),
+              }}
             >
               {meta.detail}
             </Typography>
@@ -181,7 +193,7 @@ export default function ConnectAgentDialog({ open, onClose, issue, project }) {
             onLinked={(agent) => {
               onClose();
               enqueueSnackbar(
-                `${projectName} is linked to ${agent.name} — this issue can be fixed now`,
+                `${projectName} is linked to ${agent.name} — you can run an epoch on this issue now`,
                 { variant: "success" },
               );
             }}
@@ -277,7 +289,7 @@ export default function ConnectAgentDialog({ open, onClose, issue, project }) {
                   minWidth: 0,
                 }}
               >
-                {`${projectName} is linked to the agent you connect — then every issue from it can be fixed.`}
+                {`${projectName} is linked to the agent you connect — then you can run an epoch on any issue from it.`}
               </Typography>
               {(traced || hasAgents) && (
                 <TextLink onClick={() => setMode(null)}>
@@ -311,4 +323,5 @@ ConnectAgentDialog.propTypes = {
   issue: PropTypes.object,
   /* The issue's Observe project id. */
   project: PropTypes.string,
+  noAgents: PropTypes.bool,
 };

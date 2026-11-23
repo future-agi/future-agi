@@ -8,6 +8,7 @@ import {
   Checkbox,
   CircularProgress,
   InputBase,
+  Link,
   MenuItem,
   Select,
   Stack,
@@ -44,7 +45,10 @@ import { codeDiagnosisOf } from "./codeDiagnosis";
 import { clickable, focusRing } from "../components/clickable";
 import {
   FIX_IN_FLIGHT,
+  FIX_MINUTES,
   FIX_SCENARIO_CAP,
+  epochBudgetLine,
+  fixMinutesWithin,
   variationsPlanOf,
   envsForAgent,
   fixEnvFor,
@@ -55,6 +59,7 @@ import {
   issueProjectLinkOf,
   issueScenarioDrafts,
   productionVersionOf,
+  runnableDraftsOf,
   useIssueFix,
 } from "./issueFix";
 import { creditsForUsd, creditsLabel } from "../_mock/metering";
@@ -68,13 +73,7 @@ import { withEdits } from "../improvements/constraintEdits";
 import { RATE_PLAN } from "../_mock/rates";
 import { useSimStore, useConnectedAgents } from "../store";
 import { LiveConsentCard } from "../agents/AgentLiveConsent";
-
-/* The time budgets a fix can take — never more than the agent's own. */
-const MINUTES = [15, 30, 45, 60, 90, 120];
-const minutesWithin = (ceiling) => {
-  const list = MINUTES.filter((m) => m <= ceiling);
-  return list.length ? list : [ceiling];
-};
+import SideDrawer from "../components/SideDrawer";
 
 const label = {
   typography: "s3",
@@ -90,11 +89,11 @@ const label = {
  * scenarios to edit, where it's tested, how it searches, the constraints and
  * the budget — to deserve the page (team feedback, Oct 2026).
  *
- * Laid out like the improvement page it leads to: the plan reads top to
- * bottom in the main column, in the order it happens (what we're fixing →
- * the scenarios → where they're tested → how it searches → what it may
- * change), and a summary stays beside it — the agent, the environment, the
- * budget and its estimate — with Start always in view.
+ * Scenarios on the left, one spec rail on the right (simplify pass, 23 Nov):
+ * the diagnosis folds to one line (its rows open on Edit), where it's
+ * tested is the rail's Tested in picker, how it searches sits under More
+ * options, and the rules are the agent's own — one rail row that opens the
+ * agent's rules tab in a drawer. Run Epoch is always in view.
  *
  * Everything arrives filled in, and the page holds itself to what the Fix
  * button checks, so every way in (the button, Prove it before it ships, Fix
@@ -126,7 +125,11 @@ const PREP_STEPS = [
     label: "Diagnosing it in the agent's prompt and tools",
     ms: 900,
   },
-  { id: "scenarios", label: "Collecting the issue's failing scenarios", ms: 1100 },
+  {
+    id: "scenarios",
+    label: "Collecting the issue's failing scenarios",
+    ms: 1100,
+  },
   { id: "limits", label: "Applying the agent's limits", ms: 500 },
 ];
 
@@ -142,7 +145,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
      this fix (`?env=`, from the Fix popup), else the best fit for the
      issue's channel — the agent's main one when it fits. Picking never
      changes the agent's main environment. */
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const envs = useMemo(() => envsForAgent(agent, state), [agent, state]);
   const main =
     envs.find((e) => e.id === params.get("env")) ||
@@ -168,6 +171,11 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
   const [target, setTarget] = useState("");
   const [textSearch, setTextSearch] = useState(null);
   const [buildOpen, setBuildOpen] = useState(false);
+  /* Folded by default: the diagnosis (its rows open on Edit), How it
+     searches (under More options) and the agent's rules (a drawer). */
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   /* Live-test consent is asked here, where it's needed — not a dead end on
      the button. Nothing runs (the baseline, the fix) until it's given, and
      once given it stays on screen as "Given just now". */
@@ -242,6 +250,16 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     () => (issue ? issueScenarioDrafts(issue, main, mainState) : []),
     [issue, main, mainState],
   );
+  /* Only what can run here is picked — the same rule the popup and the run
+     apply, so both say the same count. */
+  const runnableSet = useMemo(
+    () => runnableDraftsOf(main, mainState, drafts),
+    [main, mainState, drafts],
+  );
+  const cantRun = useMemo(
+    () => new Map(runnableSet.cant.map((c) => [c.id, c.why])),
+    [runnableSet],
+  );
   const [picked, setPicked] = useState({});
   /* Search the issue's scenarios once there are many to scan. */
   const [scenarioQuery, setScenarioQuery] = useState("");
@@ -257,7 +275,11 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     if (!open) return;
     /* The most common situations, up to the cap, are in by default. */
     setPicked(
-      Object.fromEntries(fixScenariosOf(drafts).used.map((d) => [d.id, true])),
+      Object.fromEntries(
+        fixScenariosOf(drafts)
+          .used.filter((d) => !cantRun.has(d.id))
+          .map((d) => [d.id, true]),
+      ),
     );
     setScenarioQuery("");
     setTitles({});
@@ -266,7 +288,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     setEdits({});
     setAlsoIn([]);
     setAcrossLineage(false);
-  }, [open, drafts, main]);
+  }, [open, drafts, main, cantRun]);
   useEffect(() => {
     if (!open) return;
     setTarget("");
@@ -294,7 +316,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     (budgets.includes(FIX_DEFAULTS.dollars)
       ? FIX_DEFAULTS.dollars
       : budgets[budgets.length - 1]);
-  const minuteChoices = minutesWithin(
+  const minuteChoices = fixMinutesWithin(
     agentLimits.budget?.minutes || DEFAULT_LIMITS.budget.minutes,
   );
   const spendMinutes = minutes ?? minuteChoices[minuteChoices.length - 1];
@@ -378,7 +400,6 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
     (k) => diagEdits[k] !== drafted?.[k],
   );
   const diagnosis = drafted ? { ...drafted, ...diagEdits, edited } : null;
-  const lead = diagnosis ? 1 : 0;
   const constraints = limitRows(limits, model);
 
   const go = () => {
@@ -503,9 +524,9 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
 
   /* What the summary and the button say, by where things stand. */
   const startNote = needsEnv
-    ? "Build its environment first — then start the fix from here."
+    ? "Build its environment first — then run the epoch from here."
     : building
-      ? "Its environment is still building — start the fix when it's done."
+      ? "Its environment is still building — run the epoch when it's done."
       : overBalance
         ? `Up to ${creditsLabel(spend)}, but only ${Math.max(0, creditBalance.left).toLocaleString()} credits are left this month.`
         : "A winner comes back as a new version; you decide if it's the default.";
@@ -538,12 +559,23 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
       onClick={go}
       startIcon={<Iconify icon="solar:magic-stick-3-linear" width={16} />}
     >
-      Start fix
+      Run Epoch
     </Button>
   );
-  const alsoNames = others
-    .filter((e) => alsoIn.includes(e.id))
-    .map((e) => e.name);
+  const heldBack = Math.round(chosen.length * HELD_SHARE);
+  /* The agent's rules in one line: the model, then what must keep passing. */
+  const modelRule = constraints.find((c) => c.id === "model")?.value;
+  const mustPassHere = main && ready ? mustPassIn(main) : null;
+  const rulesLine =
+    [
+      modelRule &&
+        (/^Unchanged/.test(modelRule)
+          ? `Model ${modelRule.replace(/^Unchanged/, "unchanged")}`
+          : `Model: ${modelRule}`),
+      mustPassHere != null && `${mustPassHere} must-pass`,
+    ]
+      .filter(Boolean)
+      .join(" · ") || "As the agent sets them";
 
   return (
     <Box
@@ -579,7 +611,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                 minWidth: 0,
               }}
             >
-              {`Fix · ${issue?.error?.name || "this issue"}`}
+              {`Run Epoch · ${issue?.error?.name || "this issue"}`}
             </Typography>
           </Stack>
           <Typography
@@ -595,7 +627,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
           <Notice
             icon="solar:link-broken-linear"
             title={`No agent is linked to ${projectName || "this issue's project"}`}
-            body="Fix tests changes on the agent behind these traces. Connect it once."
+            body="An epoch tests changes on the agent behind these traces. Connect it once."
             action={
               <Button
                 variant="contained"
@@ -603,7 +635,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                 size="small"
                 onClick={() => setConnecting(true)}
               >
-                Connect agent to fix
+                Connect agent
               </Button>
             }
             onCancel={onClose}
@@ -621,8 +653,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
         {inFlight && (
           <Notice
             icon="solar:magic-stick-3-linear"
-            title={`This issue already has a fix · ${status.label}`}
-            body="An issue has one fix at a time. If it comes back, Fix again starts a new one."
+            title={`This issue already has an epoch · ${status.label}`}
+            body="An issue has one epoch at a time. If it comes back, Run Epoch again starts a new one."
             action={
               <Button
                 variant="contained"
@@ -632,7 +664,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   navigate(...issueFixNav(status, issue?.cluster_id))
                 }
               >
-                View fix
+                View epoch
               </Button>
             }
             onCancel={onClose}
@@ -643,12 +675,12 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
         {agent && !inFlight && !prepared && (
           <Box sx={{ maxWidth: 640 }}>
             <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-              Preparing the fix plan
+              Preparing the epoch plan
             </Typography>
             <Typography
               sx={{ typography: "s2", color: "text.secondary", mt: 0.5 }}
             >
-              What the fix needs — usually a few seconds. The changes are
+              What the epoch needs — usually a few seconds. The changes are
               drafted after you start.
             </Typography>
             <Box
@@ -664,8 +696,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                   issue: `${issue?.trace_count || 0} traces · ${issue?.users_affected || 0} users`,
                   agent: `${agent.name} · ${production.label || "production"}`,
                   env: main
-                    ? `${main.name} · ${ready ? "already built — the fix measures it on today's version first" : "still building"}`
-                    : "None yet — you'll build one before the fix starts",
+                    ? `${main.name} · ${ready ? "already built — the epoch measures it on today's version first" : "still building"}`
+                    : "None yet — you'll build one before the epoch starts",
                   diagnosis: drafted
                     ? `${drafted.where.map((w) => `${w.kind} · ${w.ref}`).join(", ")}`
                     : "No prompt or tools to read — the search starts from the issue",
@@ -765,9 +797,9 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       icon="solar:check-circle-linear"
                       title={`${main.name} is built`}
                     >
-                      The fix runs its scenarios on today&apos;s version first.
-                      Those that pass every repeat, with any you mark must-pass,
-                      must keep passing.
+                      The epoch runs its scenarios on today&apos;s version
+                      first. Those that pass every repeat, with any you mark
+                      must-pass, must keep passing.
                     </Callout>
                   )}
                 {evidence && (
@@ -795,41 +827,70 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
               <Stack spacing={2.5} sx={{ minWidth: 0 }}>
                 {diagnosis && (
                   <Section
-                    n={1}
                     title="Diagnosis"
                     meta={
                       edited
-                        ? "Edited by you — the search starts from this"
-                        : "From the Error Feed · edit it if it's wrong"
+                        ? "Edited by you · the search starts from this"
+                        : `From ${issue?.cluster_id || "the Error Feed"}`
                     }
                     action={
-                      edited ? (
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          onClick={() => setDiagEdits({})}
-                          sx={{
-                            minWidth: 0,
-                            flexShrink: 0,
-                          }}
+                      <Stack
+                        direction="row"
+                        spacing={1.5}
+                        sx={{ flexShrink: 0 }}
+                      >
+                        {edited && (
+                          <Link
+                            component="button"
+                            type="button"
+                            underline="hover"
+                            onClick={() => setDiagEdits({})}
+                            sx={{
+                              typography: "s3",
+                              fontWeight: 600,
+                              color: "text.secondary",
+                            }}
+                          >
+                            Reset
+                          </Link>
+                        )}
+                        <Link
+                          component="button"
+                          type="button"
+                          underline="hover"
+                          aria-expanded={diagOpen}
+                          onClick={() => setDiagOpen((v) => !v)}
+                          sx={{ typography: "s3", fontWeight: 600 }}
                         >
-                          Reset
-                        </Button>
-                      ) : null
+                          {diagOpen ? "Done" : ready ? "Edit" : "Show"}
+                        </Link>
+                      </Stack>
                     }
                   >
-                    <Diagnosis
-                      diagnosis={diagnosis}
-                      readOnly={!ready}
-                      onEdit={(k, v) => setDiagEdits((d) => ({ ...d, [k]: v }))}
-                    />
+                    {diagOpen && (
+                      <Diagnosis
+                        diagnosis={diagnosis}
+                        readOnly={!ready}
+                        onEdit={(k, v) =>
+                          setDiagEdits((d) => ({ ...d, [k]: v }))
+                        }
+                      />
+                    )}
                   </Section>
                 )}
 
                 <Section
-                  n={lead + 1}
                   title="Scenarios from this issue"
-                  meta={`${chosen.length} of ${drafts.length}${drafts.length > FIX_SCENARIO_CAP ? ` · the ${FIX_SCENARIO_CAP} most common are in` : ""}`}
+                  meta={[
+                    `${chosen.length} of ${drafts.length}`,
+                    cantRun.size > 0 &&
+                      main &&
+                      `${cantRun.size} can't run on ${main.name} yet`,
+                    drafts.length > FIX_SCENARIO_CAP &&
+                      `the ${FIX_SCENARIO_CAP} most common are in`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 >
                   {drafts.length > 20 && (
                     <Box
@@ -879,7 +940,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                         <Checkbox
                           size="small"
                           checked={!!picked[d.id]}
-                          disabled={!ready}
+                          disabled={!ready || cantRun.has(d.id)}
                           onChange={(e) =>
                             setPicked((p) => ({
                               ...p,
@@ -924,6 +985,12 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                             sx={{ typography: "s3", color: "text.subtitle" }}
                           >
                             {`${d.errorFeedIssue.traceIds.length} traces${d.persona?.archetype ? ` · ${d.persona.archetype}` : d.persona?.name ? ` · ${d.persona.name}` : ""}`}
+                            {cantRun.has(d.id) &&
+                              ` · Can't run on ${main.name} yet: ${String(
+                                cantRun.get(d.id) || "",
+                              )
+                                .replace(/\.$/, "")
+                                .replace(/^./, (c) => c.toLowerCase())}`}
                           </Typography>
                         </Box>
                       </Stack>
@@ -942,260 +1009,150 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                     {[
                       drafts[0]?.subGoals?.[1] &&
                         `Each checks: ${drafts[0].subGoals[1].replace(/^Verify the step that failed in production:\s*/i, "")}.`,
-                      !ready && "You can edit them once its environment is ready.",
+                      !ready &&
+                        "You can edit them once its environment is ready.",
                     ]
                       .filter(Boolean)
                       .join(" ")}
                   </Typography>
                 </Section>
 
-                <Section
-                  n={lead + 2}
-                  title="Where it's tested"
-                  /* How it was found (#84): the issue's project → its agent →
-                     that agent's main environment; none yet → Build one. */
-                  meta={
-                    main
-                      ? "Breaking what passes today is rejected"
-                      : `${agent.name} has no environment yet — build one here`
-                  }
-                >
-                  {!main ? (
+                {/* How it searches: every choice has a working default, so
+                    it waits under More options. */}
+                {(members.length > 0 ||
+                  (ready && main.surface === "voice") ||
+                  lineageVersions.length > 0) && (
+                  <Box>
                     <Stack
                       direction="row"
                       alignItems="center"
-                      spacing={1.25}
-                      sx={{ px: 2, py: 1 }}
+                      spacing={0.75}
+                      {...clickable(() => setMoreOpen((v) => !v), {
+                        expanded: moreOpen,
+                      })}
+                      sx={{
+                        ...focusRing,
+                        cursor: "pointer",
+                        width: "fit-content",
+                      }}
                     >
                       <Iconify
-                        icon="solar:box-minimalistic-linear"
-                        width={16}
-                        sx={{ color: "text.secondary", flexShrink: 0 }}
+                        icon={
+                          moreOpen
+                            ? "solar:alt-arrow-down-linear"
+                            : "solar:alt-arrow-right-linear"
+                        }
+                        width={14}
+                        sx={{ color: "text.secondary" }}
                       />
-                      <Box flex={1} minWidth={0}>
-                        <Typography
-                          sx={{ typography: "s2_1", fontWeight: 500 }}
-                        >
-                          No environment yet
-                        </Typography>
-                        <Typography
-                          sx={{ typography: "s3", color: "text.subtitle" }}
-                        >{`Built from ${agent.name} — a few minutes. Then you come back here and start.`}</Typography>
-                      </Box>
-                    </Stack>
-                  ) : (
-                    <Stack
-                      direction="row"
-                      alignItems="center"
-                      spacing={1.25}
-                      sx={{ px: 2, py: 1 }}
-                    >
-                      <Iconify
-                        icon="solar:box-minimalistic-linear"
-                        width={16}
-                        sx={{ color: "text.secondary", flexShrink: 0 }}
-                      />
-                      <Box flex={1} minWidth={0}>
-                        <Typography
-                          noWrap
-                          sx={{ typography: "s2_1", fontWeight: 500 }}
-                        >
-                          {main.name}
-                        </Typography>
-                        <Typography
-                          noWrap
-                          sx={{ typography: "s3", color: "text.subtitle" }}
-                        >
-                          {ready
-                            ? pairOf(main)
-                            : "Still building — the fix starts once it's built"}
-                        </Typography>
-                      </Box>
                       <Typography
                         sx={{
-                          typography: "s3",
+                          typography: "s2",
                           fontWeight: 600,
-                          color: "text.subtitle",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {main.id === envs[0]?.id ? "Main" : "Runs here"}
-                      </Typography>
-                    </Stack>
-                  )}
-                  {/* The agent's other environments: their must-pass sets can join the check. */}
-                  {ready &&
-                    others.map((e) => {
-                      const on = alsoIn.includes(e.id);
-                      const n = mustPassIn(e);
-                      return (
-                        <Stack
-                          key={e.id}
-                          direction="row"
-                          alignItems="center"
-                          spacing={1.25}
-                          {...clickable(
-                            () =>
-                              setAlsoIn((ids) =>
-                                on
-                                  ? ids.filter((x) => x !== e.id)
-                                  : [...ids, e.id],
-                              ),
-                            { role: "checkbox", checked: on },
-                          )}
-                          sx={{
-                            px: 2,
-                            py: 1,
-                            borderTop: "1px solid",
-                            borderColor: "divider",
-                            cursor: "pointer",
-                            "&:hover": { bgcolor: "action.hover" },
-                            ...focusRing,
-                          }}
-                        >
-                          <Checkbox
-                            size="small"
-                            checked={on}
-                            tabIndex={-1}
-                            disableRipple
-                            inputProps={{ "aria-hidden": true }}
-                            sx={{ p: 0, flexShrink: 0 }}
-                          />
-                          <Box flex={1} minWidth={0}>
-                            <Typography
-                              noWrap
-                              sx={{ typography: "s2_1", fontWeight: 500 }}
-                            >
-                              {e.name}
-                            </Typography>
-                            <Typography
-                              noWrap
-                              sx={{ typography: "s3", color: "text.subtitle" }}
-                            >
-                              {pairOf(e)}
-                            </Typography>
-                          </Box>
-                          <Typography
-                            noWrap
-                            sx={{
-                              typography: "s3",
-                              color: "text.subtitle",
-                              flexShrink: 0,
-                              fontVariantNumeric: "tabular-nums",
-                            }}
-                          >
-                            {n
-                              ? `Also check ${n} must-pass`
-                              : "No must-pass yet"}
-                          </Typography>
-                        </Stack>
-                      );
-                    })}
-                </Section>
-
-                <Section n={lead + 3} title="How it searches">
-                  {members.length > 0 && (
-                    <SettingRow
-                      title="Target member"
-                      body={
-                        target
-                          ? `Changes stay inside ${target}; shared parts change only when needed.`
-                          : `Each proposal names the members it changes.${targetable.length < members.length ? " Protected members are never changed." : ""}`
-                      }
-                    >
-                      <Select
-                        size="small"
-                        displayEmpty
-                        value={target}
-                        onChange={(e) => setTarget(e.target.value)}
-                        sx={{
-                          minWidth: 240,
-                          typography: "s2",
-                          "& .MuiSelect-select": { typography: "s2", py: 0.75 },
-                        }}
-                      >
-                        <MenuItem value="" sx={{ typography: "s2" }}>
-                          Any member the evidence points to
-                        </MenuItem>
-                        {members.map((m) => (
-                          <MenuItem
-                            key={m.id}
-                            value={m.name}
-                            disabled={isProtectedMember(m, limits)}
-                            sx={{ typography: "s2" }}
-                          >
-                            {isProtectedMember(m, limits)
-                              ? `${m.name} · protected, never changed`
-                              : m.name}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </SettingRow>
-                  )}
-                  {ready && main.surface === "voice" && (
-                    <SettingRow
-                      title="Search in text, confirm finalists as real calls"
-                      body={
-                        estimate.allCalls
-                          ? `Up to ${estimate.minutes} min and ${creditsLabel(estimate.likely)} as text, against ${estimate.allCalls.minutes} min and ${creditsLabel(estimate.allCalls.likely)} as real calls.`
-                          : "Every run is a real call — slower and dearer, and closest to production."
-                      }
-                    >
-                      <Switch
-                        size="small"
-                        checked={inText}
-                        onChange={(e) => setTextSearch(e.target.checked)}
-                      />
-                    </SettingRow>
-                  )}
-                  {lineageVersions.length > 0 && (
-                    <SettingRow
-                      title="Search across earlier versions"
-                      body={`Also tries the ${lineageVersions.length === 1 ? `change ${lineageVersions[0].label}` : `changes ${lineageVersions[0].label}–${lineageVersions[lineageVersions.length - 1].label}`} made, on ${production.label}.`}
-                    >
-                      <Switch
-                        size="small"
-                        checked={acrossLineage}
-                        onChange={(e) => setAcrossLineage(e.target.checked)}
-                      />
-                    </SettingRow>
-                  )}
-                  {!members.length &&
-                    !(ready && main.surface === "voice") &&
-                    !lineageVersions.length && (
-                      <Typography
-                        sx={{
-                          px: 2,
-                          py: 1.25,
-                          typography: "s2",
                           color: "text.secondary",
                         }}
                       >
-                        Guided by the evidence — nothing to choose for this agent.
+                        More options
                       </Typography>
+                      {!moreOpen && (
+                        <Typography
+                          sx={{ typography: "s3", color: "text.tertiary" }}
+                        >
+                          How it searches
+                        </Typography>
+                      )}
+                    </Stack>
+                    {moreOpen && (
+                      <Box
+                        sx={{
+                          mt: 1,
+                          border: "1px solid",
+                          borderColor: "divider",
+                          borderRadius: "8px",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {members.length > 0 && (
+                          <SettingRow
+                            title="Target member"
+                            body={
+                              target
+                                ? `Changes stay inside ${target}; shared parts change only when needed.`
+                                : `Each proposal names the members it changes.${targetable.length < members.length ? " Locked members are never changed." : ""}`
+                            }
+                          >
+                            <Select
+                              size="small"
+                              displayEmpty
+                              value={target}
+                              onChange={(e) => setTarget(e.target.value)}
+                              sx={{
+                                minWidth: 240,
+                                typography: "s2",
+                                "& .MuiSelect-select": {
+                                  typography: "s2",
+                                  py: 0.75,
+                                },
+                              }}
+                            >
+                              <MenuItem value="" sx={{ typography: "s2" }}>
+                                Any member the evidence points to
+                              </MenuItem>
+                              {members.map((m) => (
+                                <MenuItem
+                                  key={m.id}
+                                  value={m.name}
+                                  disabled={isProtectedMember(m, limits)}
+                                  sx={{ typography: "s2" }}
+                                >
+                                  {isProtectedMember(m, limits)
+                                    ? `${m.name} · locked, never changed`
+                                    : m.name}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </SettingRow>
+                        )}
+                        {ready && main.surface === "voice" && (
+                          <SettingRow
+                            title="Search in text, confirm finalists as real calls"
+                            body={
+                              /* A limit, not an estimate (costFlags): the
+                                 budget row says what it stops at. */
+                              !SHOW_RUN_COST
+                                ? inText
+                                  ? "Faster and cheaper than real calls; the finalists still run as real calls. Either way it stops at the budget."
+                                  : "Every run is a real call: slower and dearer, closest to production. It stops at the budget."
+                                : estimate.allCalls
+                                  ? `Up to ${estimate.minutes} min and ${creditsLabel(estimate.likely)} as text, against ${estimate.allCalls.minutes} min and ${creditsLabel(estimate.allCalls.likely)} as real calls.`
+                                  : "Every run is a real call: slower and dearer, closest to production."
+                            }
+                          >
+                            <Switch
+                              size="small"
+                              checked={inText}
+                              onChange={(e) => setTextSearch(e.target.checked)}
+                            />
+                          </SettingRow>
+                        )}
+                        {lineageVersions.length > 0 && (
+                          <SettingRow
+                            title="Search across earlier versions"
+                            body={`Also tries the ${lineageVersions.length === 1 ? `change ${lineageVersions[0].label}` : `changes ${lineageVersions[0].label}–${lineageVersions[lineageVersions.length - 1].label}`} made, on ${production.label}.`}
+                          >
+                            <Switch
+                              size="small"
+                              checked={acrossLineage}
+                              onChange={(e) =>
+                                setAcrossLineage(e.target.checked)
+                              }
+                            />
+                          </SettingRow>
+                        )}
+                      </Box>
                     )}
-                </Section>
-
-                <Section
-                  n={lead + 4}
-                  /* One name for the agent's rules everywhere (#87): the
-                     agent's Constraints tab, the improvement's Constraints. */
-                  title="Constraints"
-                  meta="A change that breaks one is rejected"
-                >
-                  <Box sx={{ px: 2, py: 1.5 }}>
-                    <ImprovementConstraints
-                      agent={agent}
-                      env={main}
-                      envState={mainState}
-                      limits={agentLimits}
-                      edits={edits}
-                      onChange={setEdits}
-                      model={model}
-                      showTime={false}
-                    />
                   </Box>
-                </Section>
+                )}
               </Stack>
 
               {/* ── beside it: the summary, and Start always in view ── */}
@@ -1218,7 +1175,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       borderColor: "divider",
                     }}
                   >
-                    This fix
+                    This epoch
                   </Typography>
                   <SumRow k="Agent">
                     <Typography
@@ -1254,23 +1211,132 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       View agent
                     </Typography>
                   </SumRow>
+                  {/* Where it's tested: the environment it runs in (picked
+                      here, for this epoch only — the agent's main stays), and
+                      the must-pass sets of its others that join the check. */}
                   <SumRow k="Tested in">
+                    {ready && envs.length > 1 ? (
+                      <Select
+                        size="small"
+                        fullWidth
+                        value={main.id}
+                        onChange={(e) =>
+                          setParams(
+                            (p) => {
+                              const next = new URLSearchParams(p);
+                              next.set("env", e.target.value);
+                              return next;
+                            },
+                            { replace: true },
+                          )
+                        }
+                        renderValue={(id) =>
+                          envs.find((e) => e.id === id)?.name || ""
+                        }
+                        inputProps={{ "aria-label": "Environment it runs in" }}
+                        sx={{
+                          height: 28,
+                          typography: "s2",
+                          fontWeight: 600,
+                          "& .MuiSelect-select": { typography: "s2", py: 0.5 },
+                        }}
+                      >
+                        {envs.map((e) => (
+                          <MenuItem
+                            key={e.id}
+                            value={e.id}
+                            sx={{ typography: "s2", gap: 2 }}
+                          >
+                            <Box component="span" sx={{ flex: 1 }}>
+                              {e.name}
+                            </Box>
+                            {e.id === envs[0]?.id && (
+                              <Box
+                                component="span"
+                                sx={{
+                                  typography: "s3",
+                                  color: "text.tertiary",
+                                }}
+                              >
+                                Main
+                              </Box>
+                            )}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    ) : (
+                      <Typography
+                        noWrap
+                        sx={{ typography: "s2", fontWeight: 600 }}
+                      >
+                        {main ? main.name : "Not set up yet"}
+                      </Typography>
+                    )}
                     <Typography
-                      noWrap
-                      sx={{ typography: "s2", fontWeight: 600 }}
+                      sx={{
+                        typography: "s3",
+                        color: "text.subtitle",
+                        mt: 0.25,
+                      }}
                     >
-                      {main ? main.name : "Not set up yet"}
+                      {!main
+                        ? "Built before the epoch starts"
+                        : building
+                          ? "Still building: the epoch starts once it's built"
+                          : `${pairOf(main)} · breaking what passes today is rejected`}
                     </Typography>
-                    <Typography
-                      noWrap
-                      sx={{ typography: "s3", color: "text.subtitle" }}
-                    >
-                      {main
-                        ? alsoNames.length
-                          ? `+ must-pass from ${alsoNames.join(", ")}`
-                          : "its must-pass set guards regressions"
-                        : "built before the fix starts"}
-                    </Typography>
+                    {ready &&
+                      others.map((e) => {
+                        const on = alsoIn.includes(e.id);
+                        const n = mustPassIn(e);
+                        return (
+                          <Stack
+                            key={e.id}
+                            direction="row"
+                            alignItems="flex-start"
+                            spacing={0.75}
+                            {...(n
+                              ? clickable(
+                                  () =>
+                                    setAlsoIn((ids) =>
+                                      on
+                                        ? ids.filter((x) => x !== e.id)
+                                        : [...ids, e.id],
+                                    ),
+                                  { role: "checkbox", checked: on },
+                                )
+                              : {})}
+                            sx={{
+                              mt: 0.5,
+                              minWidth: 0,
+                              cursor: n ? "pointer" : "default",
+                              ...focusRing,
+                            }}
+                          >
+                            <Checkbox
+                              size="small"
+                              checked={on}
+                              disabled={!n}
+                              tabIndex={-1}
+                              disableRipple
+                              inputProps={{ "aria-hidden": true }}
+                              sx={{ p: 0, mt: "1px", flexShrink: 0 }}
+                            />
+                            <Typography
+                              title={e.name}
+                              sx={{
+                                typography: "s3",
+                                color: n ? "text.secondary" : "text.disabled",
+                                minWidth: 0,
+                              }}
+                            >
+                              {n
+                                ? `Also check ${n} must-pass in ${e.name}`
+                                : `No must-pass yet in ${e.name}`}
+                            </Typography>
+                          </Stack>
+                        );
+                      })}
                   </SumRow>
                   <SumRow k="Scenarios">
                     <Typography
@@ -1294,14 +1360,14 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       held back, what may change, what stays locked. */}
                   <SumRow k="Held back">
                     <Typography sx={{ typography: "s2" }}>
-                      {`About ${Math.round(chosen.length * HELD_SHARE)} scenarios${variationsPlanOf(chosen.length).drafted ? " and some variations" : ""}, kept aside`}
+                      {`About ${heldBack} ${heldBack === 1 ? "scenario" : "scenarios"}${variationsPlanOf(chosen.length).drafted ? " and some variations" : ""}, kept aside`}
                     </Typography>
                     <Typography
                       sx={{ typography: "s3", color: "text.subtitle" }}
                     >
-                      {Math.round(chosen.length * HELD_SHARE) < 4
+                      {heldBack < 4
                         ? "Under 4: can't be Verified; a PR opens as a draft."
-                        : "Enough to verify the fix."}
+                        : "Enough to verify the change."}
                     </Typography>
                   </SumRow>
                   <SumRow k="May change">
@@ -1317,7 +1383,8 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                               code: "Code",
                             })[x] || x,
                         )
-                        .join(", ") || "Nothing yet — set it in Constraints"}
+                        .join(", ") ||
+                        "Nothing yet: set it in the agent's rules"}
                     </Typography>
                     <Typography
                       sx={{ typography: "s3", color: "text.subtitle" }}
@@ -1331,6 +1398,23 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                         ? limits.protected.join(", ")
                         : "No files locked"}
                     </Typography>
+                  </SumRow>
+                  {/* The agent's rules decide what an epoch may change (D2):
+                      said here in one line, edited on the agent's own rules
+                      tab, opened in place. */}
+                  <SumRow k="Rules">
+                    <Typography sx={{ typography: "s2" }}>
+                      {rulesLine}
+                    </Typography>
+                    <Link
+                      component="button"
+                      type="button"
+                      underline="hover"
+                      onClick={() => setRulesOpen(true)}
+                      sx={{ typography: "s3", fontWeight: 600 }}
+                    >
+                      Edit agent rules
+                    </Link>
                   </SumRow>
                   <SumRow k="Budget">
                     {ready ? (
@@ -1353,7 +1437,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                             field="minutes"
                             value={spendMinutes}
                             onChange={setMinutes}
-                            steps={MINUTES}
+                            steps={FIX_MINUTES}
                             fullWidth
                           />
                         </Stack>
@@ -1368,8 +1452,11 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           {/* A limit, not an estimate — pre-run cost is Later
                               (plan improve §4, costFlags). */}
                           {SHOW_RUN_COST
-                            ? `Up to ${estimate.runs} trials · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`
-                            : `Up to ${estimate.runs} candidates · stops at ${creditsLabel(spend)} or ${spendMinutes >= 60 ? `${Math.floor(spendMinutes / 60)} h${spendMinutes % 60 ? ` ${spendMinutes % 60} min` : ""}` : `${spendMinutes} min`}`}
+                            ? `Up to ${estimate.runs} candidates · ${creditsLabel(estimate.likely)} · ${estimate.minutes} min`
+                            : epochBudgetLine({
+                                candidates: estimate.runs,
+                                stops: "stops at whichever comes first",
+                              })}
                         </Typography>
                         <Typography
                           sx={{
@@ -1382,7 +1469,7 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                           }}
                         >
                           {SHOW_RUN_COST && (overBudget || overTime)
-                            ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} trials; you'll get the best it found.`
+                            ? `May reach the ${overBudget ? "credit" : "time"} budget before all ${estimate.runs} candidates; you'll get the best it found.`
                             : SHOW_RUN_COST
                               ? `Up to ${estimate.conversations.toLocaleString()} simulated conversations. ${stopEarlyNote(estimate.runs)}`
                               : null}
@@ -1401,13 +1488,16 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
                       </>
                     ) : (
                       <>
-                        <Typography
-                          sx={{ typography: "s2", fontWeight: 600 }}
-                        >{`Up to ${creditsLabel(spend)} · ${spendMinutes} min`}</Typography>
+                        <Typography sx={{ typography: "s2" }}>
+                          {epochBudgetLine({
+                            credits: creditsLabel(spend),
+                            minutes: spendMinutes,
+                          })}
+                        </Typography>
                         <Typography
                           sx={{ typography: "s3", color: "text.subtitle" }}
                         >
-                          From the agent — you set it when you start.
+                          From the agent: you set it when you start.
                         </Typography>
                       </>
                     )}
@@ -1443,6 +1533,58 @@ export default function FixPage({ onClose, issue, rootCause = null }) {
               </Box>
             </Box>
 
+            {/* The agent's rules tab itself, in place: saved to the agent as
+                you change them, so every epoch for it keeps to the same rules. */}
+            <SideDrawer
+              open={rulesOpen}
+              onClose={() => setRulesOpen(false)}
+              width={640}
+            >
+              {rulesOpen && (
+                <Stack sx={{ height: "100%" }}>
+                  <Stack
+                    direction="row"
+                    alignItems="flex-start"
+                    spacing={1}
+                    sx={{
+                      px: 2.5,
+                      py: 2,
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
+                    }}
+                  >
+                    <Box flex={1} minWidth={0}>
+                      <Typography sx={{ typography: "s1", fontWeight: 600 }}>
+                        Agent rules
+                      </Typography>
+                    </Box>
+                    <IconButton
+                      size="small"
+                      onClick={() => setRulesOpen(false)}
+                      aria-label="Close"
+                    >
+                      <Iconify
+                        icon="solar:close-linear"
+                        width={20}
+                        sx={{ color: "text.secondary" }}
+                      />
+                    </IconButton>
+                  </Stack>
+                  <Box sx={{ flex: 1, overflow: "auto", px: 2.5, py: 2 }}>
+                    <ImprovementConstraints
+                      agent={agent}
+                      env={main}
+                      envState={mainState}
+                      limits={agentLimits}
+                      edits={edits}
+                      onChange={setEdits}
+                      model={model}
+                      showTime={false}
+                    />
+                  </Box>
+                </Stack>
+              )}
+            </SideDrawer>
             {needsEnv && (
               <BuildEnvironmentDialog
                 open={buildOpen}
@@ -1543,7 +1685,7 @@ function Diagnosis({ diagnosis, readOnly, onEdit }) {
       </Stack>,
     ],
     diagnosis.suggested && [
-      "Suggested fix",
+      "Suggested change",
       <Typography
         key="suggested"
         sx={{ typography: "s2", color: "text.primary" }}
@@ -1608,7 +1750,7 @@ Diagnosis.propTypes = {
   onEdit: PropTypes.func.isRequired,
 };
 
-function Section({ n, title, meta, action, children }) {
+function Section({ title, meta, action, children }) {
   return (
     <Box
       sx={{
@@ -1625,33 +1767,12 @@ function Section({ n, title, meta, action, children }) {
         sx={{
           px: 2,
           py: 1.25,
-          borderBottom: "1px solid",
-          borderColor: "divider",
+          ...(children && {
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }),
         }}
       >
-        <Box
-          sx={{
-            width: 20,
-            height: 20,
-            borderRadius: "50%",
-            border: "1px solid",
-            borderColor: "divider",
-            display: "grid",
-            placeItems: "center",
-            flexShrink: 0,
-          }}
-        >
-          <Typography
-            sx={{
-              typography: "s3",
-              fontWeight: 600,
-              color: "text.secondary",
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {n}
-          </Typography>
-        </Box>
         <Typography sx={{ typography: "s1", fontWeight: 600, flexShrink: 0 }}>
           {title}
         </Typography>
@@ -1676,7 +1797,6 @@ function Section({ n, title, meta, action, children }) {
   );
 }
 Section.propTypes = {
-  n: PropTypes.number,
   title: PropTypes.string,
   meta: PropTypes.string,
   action: PropTypes.node,
