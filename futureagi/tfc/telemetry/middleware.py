@@ -50,6 +50,8 @@ SENSITIVE_BODY_PATH_PREFIXES = (
     "/saml2_auth/",
     "/simulate/api/harness-jobs/secret-values/",
     "/simulate/api/harness-jobs/secret-files/",
+    "/simulate/api/harness-jobs/sources/",
+    "/simulate/api/harness-environment-designs/documents/",
     # Signed over its raw bytes and may carry committer emails; never read early.
     "/simulate/api/harness/github/webhook/",
     # A transcript import carries the raw transcript, before redaction.
@@ -342,11 +344,7 @@ class OTelContextMiddleware:
                 or (is_error and self.capture_response_on_error)
             ) and not is_sensitive_body_path(request.path)
 
-            if (
-                should_capture
-                and not request.path.startswith(SENSITIVE_BODY_PATH_PREFIXES)
-                and hasattr(response, "content")
-            ):
+            if should_capture and hasattr(response, "content"):
                 self._capture_response_body(span, response, is_error)
 
         except Exception as e:

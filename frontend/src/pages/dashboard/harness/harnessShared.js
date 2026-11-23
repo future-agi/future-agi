@@ -1,3 +1,5 @@
+import { STATUS_TYPES } from "src/utils/statusUtils";
+
 // The stage strings we branch on by name. "completed" is the successful outcome;
 // "failed"/"canceled" are the terminal-failure outcomes (they are not members of
 // `stages`, which only holds pipeline positions). Kept as one enum so callers
@@ -214,6 +216,200 @@ export const displayText = (value, fallback = "") => {
   } catch {
     return fallback;
   }
+};
+
+export const providerCredentialName = (connector) =>
+  connector === "vapi"
+    ? "VAPI_API_KEY"
+    : ["retell", "retell_chat"].includes(connector)
+      ? "RETELL_API_KEY"
+      : null;
+
+export const parseProviderDynamicVariables = (text) => {
+  if (!text.trim()) return {};
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error("Dynamic variables must be valid JSON.");
+  }
+  if (
+    !value ||
+    Array.isArray(value) ||
+    typeof value !== "object" ||
+    Object.entries(value).some(
+      ([name, item]) =>
+        !name || !["string", "number", "boolean"].includes(typeof item),
+    )
+  ) {
+    throw new Error(
+      "Dynamic variables must be a JSON object with string, number, or boolean values.",
+    );
+  }
+  return value;
+};
+// "sha256:<64 hex>" reads as noise in a label; the first 12 hex digits identify it on screen.
+export const shortDigest = (digest) => {
+  const text = String(digest || "");
+  const hex = text.startsWith("sha256:") ? text.slice(7) : text;
+  return hex ? hex.slice(0, 12) : "";
+};
+
+// The adaptation's steps (environment-releases.md §7.5), each done once the builder's tool for it
+// succeeded. A backend may prefix a tool with its server (`mcp__adaptation__run_proof`).
+export const ADAPTATION_STEPS = [
+  { key: "binding", label: "Binding drafted", tool: "submit_binding" },
+  { key: "proof", label: "Binding proved", tool: "run_proof" },
+  {
+    key: "conflicts",
+    label: "Policy conflicts reviewed",
+    tool: "report_conflicts",
+  },
+  { key: "sealed", label: "Approved and sealed", tool: "finish_adaptation" },
+];
+
+// Which steps are done, from the conversation's tool results in order. A new binding voids the
+// proof of the one before it, so an earlier proof never shows a later binding as proved.
+export const adaptationProgress = (conversation) => {
+  const done = new Set();
+  for (const event of conversation?.events || []) {
+    if (event?.kind !== "tool_result" || event?.payload?.is_error) continue;
+    const tool = String(event?.payload?.tool || "");
+    const step = ADAPTATION_STEPS.find(
+      (one) => tool === one.tool || tool.endsWith(`__${one.tool}`),
+    );
+    if (!step) continue;
+    if (step.key === "binding") done.delete("proof");
+    done.add(step.key);
+  }
+  return done;
+};
+
+// A design's steps (environment-releases.md §7.9), each done once the builder's tool for it
+// succeeded. Building starts only after the person approves the proposal, so the first build
+// tool to succeed marks the design approved.
+export const DESIGN_STEPS = [
+  {
+    key: "approved",
+    label: "Design approved",
+    tools: [
+      "create_schema",
+      "define_tool",
+      "add_policy_rule",
+      "import_rows",
+      "save_world",
+    ],
+  },
+  {
+    key: "world",
+    label: "World, tools and rules built",
+    tools: ["save_world"],
+  },
+  {
+    key: "suite",
+    label: "Scenarios written and proved",
+    tools: ["check_design"],
+  },
+  {
+    key: "sealed",
+    label: "Sealed as your environment",
+    tools: ["finish_design"],
+  },
+];
+
+// The failure codes of a design that can be continued from its checkpoint.
+export const CONTINUABLE_DESIGN_CODES = ["design_waiting", "design_unfinished"];
+
+export const designProgress = (conversation) => {
+  const done = new Set();
+  for (const event of conversation?.events || []) {
+    if (event?.kind !== "tool_result" || event?.payload?.is_error) continue;
+    const tool = String(event?.payload?.tool || "");
+    for (const step of DESIGN_STEPS) {
+      if (step.tools.some((one) => tool === one || tool.endsWith(`__${one}`))) {
+        done.add(step.key);
+      }
+    }
+  }
+  return done;
+};
+
+// The request body adaptation and composition share (environment-releases.md §7.6). The
+// agent block is the hosted-job agent in provider_import mode, so each run clones the agent.
+export const releaseUsePayload = ({
+  suiteId,
+  agentVersionId,
+  name,
+  connector,
+  targetId,
+  dynamicVariables,
+  secretRefs,
+  idempotencyKey,
+}) => ({
+  suite_id: suiteId,
+  agent_version_id: agentVersionId,
+  name: name.trim(),
+  idempotency_key: idempotencyKey,
+  agent: {
+    connector,
+    mode: "provider_import",
+    config: {
+      ...(connector === "vapi"
+        ? { assistant_id: targetId.trim() }
+        : { agent_id: targetId.trim() }),
+      ...(connector === "retell_chat" && dynamicVariables.trim()
+        ? { dynamic_variables: parseProviderDynamicVariables(dynamicVariables) }
+        : {}),
+    },
+    secret_refs: secretRefs,
+  },
+});
+
+export const BINDING_MODE_LABELS = {
+  canonical: "Canonical",
+  tool_routed: "Tool-routed",
+  conversation_only: "Conversation only",
+};
+
+export const SCENARIO_ORIGIN_LABELS = {
+  base: "Base",
+  specialized: "Specialized",
+  custom: "Custom",
+};
+
+// Adaptation questions carry `{value, label}` options; older builder questions carry strings.
+export const questionOptions = (payload) =>
+  (Array.isArray(payload?.options) ? payload.options : []).map((option) =>
+    option && typeof option === "object"
+      ? {
+          value: option.value,
+          label: displayText(option.label ?? option.value),
+        }
+      : { value: option, label: displayText(option) },
+  );
+
+// Message ids the user already answered: a question or proposal is settled once a user turn
+// replies to it, so its buttons must not offer a second answer.
+export const answeredMessageIds = (messages = []) =>
+  new Set(
+    (Array.isArray(messages) ? messages : [])
+      .filter((message) => message?.role === "user" && message?.reply_to)
+      .map((message) => String(message.reply_to)),
+  );
+
+export const percent = (rate) =>
+  typeof rate === "number" && Number.isFinite(rate)
+    ? `${Math.round(rate * 100)}%`
+    : "\u2014";
+
+// StatusChip infers its state from the string it is given, and "completed" matches
+// neither "pass" nor "ok". Map the stages explicitly: the terminal outcomes get
+// pass/error/canceled, and everything still in flight reads running.
+export const stageStatus = (stage) => {
+  if (stage === "completed") return STATUS_TYPES.PASS;
+  if (stage === "failed") return STATUS_TYPES.ERROR;
+  if (stage === "canceled") return STATUS_TYPES.CANCELED;
+  return STATUS_TYPES.RUNNING;
 };
 
 // credentials.detected_connectors is how ALK reports what the submitted source talks to.

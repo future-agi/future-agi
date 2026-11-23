@@ -98,12 +98,18 @@ def serialize_conversation(
         conversation=conversation
     ).first()
     # A live job always accepts messages: they wait in order until its sandbox can run chat.
+    terminal = conversation.job.state in _TERMINAL_JOB_STATES
     chat_available = (
         conversation.state != HostedHarnessConversation.State.RETIRED
+        # Only a design's own process answers it: a finished design is continued or started
+        # again, never chatted with.
+        and not (terminal and job_metadata.get("design"))
         and bool(
-            conversation.job.state not in _TERMINAL_JOB_STATES
+            not terminal
             or conversation.latest_workspace_object_key
             or job_metadata.get("authoring_object_key")
+            # A composition's workspace is assembled from its releases (contract §7.8).
+            or job_metadata.get("release_composition")
         )
     )
     return {
@@ -456,6 +462,10 @@ def environment_authoring_revision(job: HostedHarnessJob) -> str:
     revision = str(metadata.get("authoring_revision") or "")
     if revision:
         return revision
+    composition = metadata.get("release_composition")
+    if isinstance(composition, dict):
+        # A composition's accepted files are its suite (contract §7.8).
+        return str(composition["suite"]["digest"])
     object_key = str(metadata.get("authoring_object_key") or "")
     if not object_key:
         return ""
@@ -1237,6 +1247,33 @@ def _project_event(
             "kind": kind,
             **payload,
         }
+        return
+    if kind == "question_answered":
+        # The builder took the reply in the middle of its turn. A design builds for an hour after
+        # its approval, so waiting for turn_completed would leave the question showing as open.
+        try:
+            reply_id = uuid.UUID(str(payload.get("reply_message_id")))
+        except ValueError:
+            raise HostedHarnessError(
+                "conversation_reply_id_invalid",
+                f"{kind} requires the reply's reply_message_id",
+                status_code=422,
+            ) from None
+        if not message_id:
+            raise HostedHarnessError(
+                "conversation_message_id_missing",
+                f"{kind} requires message_id",
+                status_code=422,
+            )
+        conversation.messages.filter(
+            id=reply_id,
+            role=HostedHarnessConversationMessage.Role.USER,
+            reply_to=message_id,
+        ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
+        open_question = (conversation.blocking_input or {}).get("message_id")
+        if str(open_question or "") == str(message_id):
+            conversation.blocking_input = None
+            conversation.state = HostedHarnessConversation.State.RESPONDING
         return
     if kind == "turn_interrupted":
         control_id = payload.get("interrupt_message_id") or payload.get(
@@ -2029,12 +2066,31 @@ def promote_conversation_checkpoint(
     environment = job.environment or job
     if environment.state != HostedHarnessJob.State.COMPLETED:
         return None
+    # A design's checkpoints are for continuing it; what it made is the releases it sealed.
+    if ((environment.payload or {}).get("metadata") or {}).get("design"):
+        return None
     checkpoint = _read_object(object_key)
     if checkpoint is None:
         raise HostedHarnessError(
             "conversation_checkpoint_missing",
             "the chat checkpoint is no longer stored",
             status_code=409,
+        )
+    from simulate.services.harness_releases import composition_of
+
+    if composition_of(environment) is not None:
+        from simulate.services.harness_composition_edits import (
+            promote_composition_checkpoint,
+        )
+
+        return promote_composition_checkpoint(
+            conversation,
+            environment,
+            checkpoint,
+            digest=digest,
+            sequence=sequence,
+            expected_revision=expected_revision,
+            retire_runtime=retire_runtime,
         )
     archive = _authoring_archive(checkpoint)
     from simulate.services import agent_fix_variations, evidence_drafts
@@ -2318,12 +2374,15 @@ def _authoring_archive(checkpoint: bytes) -> bytes:
 
 
 def _bind_added_scenarios(
-    environment: HostedHarnessJob, rows: list[HostedHarnessScenario] | None = None
+    environment: HostedHarnessJob,
+    rows: list[HostedHarnessScenario] | None = None,
+    *,
+    personas: dict[str, dict[str, Any]] | None = None,
 ) -> None:
-    """Give scenarios the chat added the platform identity a Run creates its calls from.
+    """Bind newly added scenarios to the platform identities used by Runs.
 
-    ``rows`` limits it to those scenarios, dropped ones included; by default every live
-    unbound scenario of the environment is bound.
+    If given, rows limits the binding to those scenarios, including dropped ones.
+    Personas supplies the sealed suite's record by key for a composition.
     """
     from simulate.services.alk_simulate_ingestion import (
         ALKSimulateIngestionError,
@@ -2346,7 +2405,11 @@ def _bind_added_scenarios(
         return
     try:
         shared, created = append_alk_sim_scenarios(
-            environment.run_test, [_provision_persona(one) for one in added]
+            environment.run_test,
+            [
+                personas[one.scenario_key] if personas else _provision_persona(one)
+                for one in added
+            ],
         )
     except ALKSimulateIngestionError as exc:
         raise HostedHarnessError("scenario_provision_failed", str(exc)) from exc

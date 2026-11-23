@@ -43,7 +43,6 @@ const {
   useBuildEnvironment,
   useUploadSecretFile,
   useRunSimulation,
-  useAdoptTemplate,
   useAddRunEvaluation,
   useRemoveAppliedEvaluation,
   useEnvironmentRunTest,
@@ -452,18 +451,6 @@ describe("useRunSimulation", () => {
     const out = await result.current.mutateAsync("env-x");
     expect(out.envId).toBe("env-x");
     expect(out.runId).toMatch(/^run-/);
-  });
-});
-
-describe("useAdoptTemplate", () => {
-  it("mints an env id from a template id without echoing the template", async () => {
-    const { Wrapper } = makeWrapper();
-    const { result } = renderHook(() => useAdoptTemplate(), {
-      wrapper: Wrapper,
-    });
-    const out = await result.current.mutateAsync("env-voice-support");
-    expect(out.envId).toMatch(/^env-/);
-    expect(out.templateId).toBeUndefined();
   });
 });
 

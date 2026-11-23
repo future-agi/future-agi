@@ -39,9 +39,11 @@ export default function MyEnvironmentsTab() {
   const onOpen = (env) =>
     navigate(paths.dashboard.simulate.environments.detail(env.id));
   const onRun = (env) =>
-    navigate(
-      `${paths.dashboard.simulate.environments.detail(env.id)}?tab=scenarios`,
-    );
+    env.design
+      ? onOpen(env)
+      : navigate(
+          `${paths.dashboard.simulate.environments.detail(env.id)}?tab=scenarios`,
+        );
   const onDelete = (env) =>
     deleteEnvironment.mutate(env.id, {
       onError: (error) =>

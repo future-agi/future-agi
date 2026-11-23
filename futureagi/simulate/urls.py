@@ -134,6 +134,12 @@ from .views.alk_simulate_ingestion import ALKSimulateIngestionViewSet
 from .views.harness_environment import HarnessEnvironmentViewSet
 from .views.harness_github_webhook import HarnessGitHubWebhookView
 from .views.harness_job import HarnessJobViewSet
+from .views.harness_release import (
+    HarnessAdaptationViewSet,
+    HarnessDesignViewSet,
+    HarnessHostedAgentViewSet,
+    HarnessReleaseViewSet,
+)
 from .views.hosted_harness import (
     HostedHarnessAttemptViewSet,
     HostedHarnessIngressProxyView,
@@ -184,6 +190,16 @@ router.register(
     r"harness-environments",
     HarnessEnvironmentViewSet,
     basename="harness-environment",
+)
+router.register(r"harness-releases", HarnessReleaseViewSet, basename="harness-release")
+router.register(
+    r"harness-adaptations", HarnessAdaptationViewSet, basename="harness-adaptation"
+)
+router.register(
+    r"harness-hosted-agents", HarnessHostedAgentViewSet, basename="harness-hosted-agent"
+)
+router.register(
+    r"harness-environment-designs", HarnessDesignViewSet, basename="harness-design"
 )
 router.register(
     r"harness/attempts",

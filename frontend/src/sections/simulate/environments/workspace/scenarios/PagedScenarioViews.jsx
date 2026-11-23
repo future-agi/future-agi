@@ -42,6 +42,7 @@ export default function PagedScenarioViews({
   showInspector,
   locked,
   lockTooltip,
+  editHint,
   rowHeight,
   readout,
   onOpen,
@@ -141,6 +142,7 @@ export default function PagedScenarioViews({
             onTogglePage={onTogglePage}
             locked={locked}
             lockTooltip={lockTooltip}
+            editHint={editHint}
             rowHeight={rowHeight}
           />
         ) : (
@@ -153,6 +155,7 @@ export default function PagedScenarioViews({
             selection={selection}
             locked={locked}
             lockTooltip={lockTooltip}
+            editHint={editHint}
           />
         )}
       </Box>
@@ -298,6 +301,7 @@ PagedScenarioViews.propTypes = {
   showInspector: PropTypes.bool,
   locked: PropTypes.bool,
   lockTooltip: PropTypes.string,
+  editHint: PropTypes.string,
   rowHeight: PropTypes.string,
   onOpen: PropTypes.func,
   // Set while a search, filter or hidden group narrows the list.

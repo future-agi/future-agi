@@ -3,12 +3,14 @@ import SectionCard from "../components/SectionCard";
 import PanelSourceRepo from "./PanelSourceRepo";
 import PanelHostedPlatform from "./PanelHostedPlatform";
 import PanelCodeUpload from "./PanelCodeUpload";
+import DesignForm from "src/pages/dashboard/harness/DesignForm";
 import { OPTIONS } from "../environmentOptions";
 
 const PANELS = {
   source: PanelSourceRepo,
   hosted: PanelHostedPlatform,
   upload: PanelCodeUpload,
+  design: DesignForm,
 };
 
 // Each panel runs its own inline preflight and stages the build ticket itself

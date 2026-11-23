@@ -36,6 +36,8 @@ import BuilderConsole from "../buildEnvironment/console/BuilderConsole";
 import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
 import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
+import AdaptationProgress from "src/pages/dashboard/harness/AdaptationProgress";
+import DesignProgress from "src/pages/dashboard/harness/DesignProgress";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
@@ -109,6 +111,9 @@ export default function EnvironmentWorkspace() {
   const backedScenarioCount = backed
     ? evalDetailQuery.data?.overview?.scenario_count ?? undefined
     : undefined;
+  // A composition (a released environment bound to an agent) rides on `env` so the
+  // alignment tab, the run picker and the run report can read it without a second fetch.
+  const composition = (backed && evalDetailQuery.data?.composition) || null;
   // While the job is still deriving, the harness bootstrap is only a placeholder
   // (an endpoint-agent stub with whatever scenarios the run has emitted so far, if
   // any) — and useEnvState seeds byEnv once, so seeding it now would freeze that
@@ -251,6 +256,30 @@ export default function EnvironmentWorkspace() {
   const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
   const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
+  // A design (environment-releases.md §7.9) and an adaptation (§7.5) have their own steps:
+  // a sealed design offers the prebuilt environment's options, a finished adaptation opens
+  // the environment it composed. Neither has an agent of its own, so neither runs from here.
+  const metadata = jobQuery.data?.job?.metadata || {};
+  const designJob =
+    metadata.design || metadata.adaptation ? jobQuery.data : null;
+  const designPanel = designJob ? (
+    <Box sx={{ px: 2, pt: 1.5, borderBottom: 1, borderColor: "divider" }}>
+      {metadata.design ? (
+        <DesignProgress
+          job={designJob.job}
+          conversation={designJob.conversation}
+          stage={designJob.status?.stage}
+          failure={designJob.status?.failure}
+        />
+      ) : (
+        <AdaptationProgress
+          job={designJob.job}
+          conversation={designJob.conversation}
+          stage={designJob.status?.stage}
+        />
+      )}
+    </Box>
+  ) : null;
   const usageLimit = jobQuery.data?.usage_limit;
   const hadRemoteUsageLimit = useRef(false);
   useEffect(() => {
@@ -380,6 +409,7 @@ export default function EnvironmentWorkspace() {
         />
         {creditBanner}
         {refusalLine}
+        {designPanel}
         <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
           <BuildingStage
             progress={progress}
@@ -439,7 +469,7 @@ export default function EnvironmentWorkspace() {
         <Suspense fallback={<LoadingScreen />}>
           <Outlet
             context={{
-              env,
+              env: composition ? { ...env, composition } : env,
               envState,
               backed,
               onStartRun: startRun,
@@ -506,8 +536,15 @@ export default function EnvironmentWorkspace() {
   // rename shows
   // everywhere the moment it lands, not only in the Settings field.
   const backedName = evalDetailQuery.data?.overview?.name;
+  const renamed = Boolean(env && backed && backedName);
   const displayEnv =
-    env && backed && backedName ? { ...env, name: backedName } : env;
+    renamed || composition
+      ? {
+          ...env,
+          ...(renamed ? { name: backedName } : {}),
+          ...(composition ? { composition } : {}),
+        }
+      : env;
 
   // Overview summary tiles need the detail's real counts: the job poll (which
   // drives
@@ -580,9 +617,10 @@ export default function EnvironmentWorkspace() {
       <WorkspaceHeader
         env={displayEnv}
         envState={envState}
-        canRun={runnable && !runMutation.isPending && !detailBlock}
+        canRun={!designJob && runnable && !runMutation.isPending && !detailBlock}
         runBlockedReason={runReason(
-          detailBlock ||
+          (designJob && WORKSPACE_COPY.designTooltip) ||
+            detailBlock ||
             blockedReason(
               envState,
               env,
@@ -600,8 +638,9 @@ export default function EnvironmentWorkspace() {
       />
       {creditBanner}
       {refusalLine}
+      {designPanel}
 
-      <SystemBanners env={env} />
+      <SystemBanners env={env} envState={envState} patch={patch} />
       {!detailLoading && !detailFailed && (
         <VersionBar env={env} envState={envState} />
       )}

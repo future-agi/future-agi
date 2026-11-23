@@ -9,25 +9,24 @@ const UI_READY = 60_000;
 const SIMULATE = '/dashboard/simulate';
 const ENVIRONMENTS = `${SIMULATE}/environments`;
 
-// Pinned off the template pages' <Helmet> titles:
-// environments/PrebuiltEnvironments.jsx and environments/UseTemplate.jsx.
-
-// Each Prebuilt template URL and its page title. The template id comes from
-// frontend/src/api/simulate-environments/_fixtures/prebuiltEnvironments.js.
+// Pinned off the Prebuilt page's <Helmet> title: environments/PrebuiltEnvironments.jsx.
+// A template has no page of its own: prebuilt environments are adopted from released
+// environments, so a template id link is not found.
 const TEMPLATE_PAGES = [
   { path: `${ENVIRONMENTS}/templates`, title: 'Prebuilt Environments | Future AGI' },
-  { path: `${ENVIRONMENTS}/templates/env-voice-support`, title: 'Use template | Future AGI' },
 ];
 
 // The Simulate menu of an org created after the cutoff, the ordinary actor
 // (frontend/src/layouts/dashboard/config-navigation.jsx, Simulate section).
 const NEW_ORG_MENU = ['Environment'];
 
-// Pages the router does not register for that org (any agent id will do).
+// Pages the router does not register for that org (any agent id will do), and a
+// template id link, which no org has.
 const HIDDEN_PAGES = [
   `${SIMULATE}/scenarios`,
   `${SIMULATE}/test`,
   `${SIMULATE}/agent-definitions/00000000-0000-0000-0000-000000000000`,
+  `${ENVIRONMENTS}/templates/env-voice-support`,
 ];
 
 test('SIM-E2E-001: Simulate opens on Environments, and an org from after the cutoff sees only Environments', {
@@ -37,17 +36,18 @@ test('SIM-E2E-001: Simulate opens on Environments, and an org from after the cut
     userGoal: 'A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links',
     steps: ['open /dashboard/simulate', 'open the old Harness list, new and job links',
             'open the old Simulator Agent link', 'open the old Personas link', 'open the Personas tab',
-            'open the Prebuilt template links', 'read the Simulate menu',
-            'open the old Agent Definition link', 'open the Scenarios, Run Simulation and Agent Definition links directly'],
+            'open the Prebuilt list', 'read the Simulate menu',
+            'open the old Agent Definition link',
+            'open the Scenarios, Run Simulation, Agent Definition and template id links directly'],
     browserChecks: ['/dashboard/simulate lands on Environments',
                     'harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>',
                     'simulator-agent lands on Environments',
                     'personas lands on the Environments Personas tab',
                     'the Personas tab is selected and shows the persona search',
-                    'both template URLs stay on their URL and open their page by title',
+                    'the Prebuilt list stays on its URL and opens its page by title',
                     'agent-definitions lands on Connected agents',
                     'the Simulate menu is exactly Environment',
-                    '/dashboard/simulate/scenarios, /test and /agent-definitions/<id> land on /404'],
+                    '/dashboard/simulate/scenarios, /test, /agent-definitions/<id> and environments/templates/<id> land on /404'],
   }),
 }, async ({ page, actor }, testInfo) => {
   // 14 browser actions, each its own UI_READY step: 14 × 60s = 840s, plus

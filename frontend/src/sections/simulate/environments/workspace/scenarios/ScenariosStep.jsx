@@ -146,6 +146,8 @@ export default function ScenariosStep({
   const rowsLockTooltip = locked
     ? LOCK_TOOLTIP
     : WORKSPACE_COPY.viewer.scenarios;
+  // A composition's suite is a sealed release; the amend route cannot change it, its chat can.
+  const editHint = env?.composition ? SCENARIOS_COPY.compositionEditHint : null;
   const [view, setView] = useState("table");
   const [rowHeight, setRowHeight] = useState("Short");
   // Repeats (k) for a selection run — how many times each selected scenario is
@@ -518,7 +520,7 @@ export default function ScenariosStep({
           body="Something went wrong loading this environment's scenarios. Try again."
         />
       ) : !hasScenarios ? (
-        <RoutePlaceholder onAdd={() => setAdding(true)} locked={locked} />
+        <RoutePlaceholder onAdd={() => setAdding(true)} locked={rowsLocked || Boolean(editHint)} />
       ) : (
         <ClickAwayListener onClickAway={handleClickAway}>
           <Box
@@ -545,6 +547,7 @@ export default function ScenariosStep({
                 list.
               </Alert>
             )}
+            {editHint && <Alert severity="info" sx={{ mb: 2 }}>{editHint}</Alert>}
             {/* The bulk-action bar covers the toolbar's row while a selection is
                 active. Both sit in one grid cell, the toolbar staying mounted
                 underneath, so the row keeps the toolbar's height (no shift when
@@ -581,7 +584,7 @@ export default function ScenariosStep({
                         search={debouncedQuery}
                         filters={filters}
                       />
-                      {!locked && env?.id && (
+                      {!rowsLocked && !editHint && env?.id && (
                         <ImportEvidenceButton
                           envId={env.id}
                           onImported={openImport}
@@ -590,7 +593,7 @@ export default function ScenariosStep({
                       <AddButton
                         onClick={() => setAdding(true)}
                         contained
-                        locked={locked}
+                        locked={rowsLocked || Boolean(editHint)}
                         short
                       />
                     </>
@@ -611,7 +614,7 @@ export default function ScenariosStep({
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <SelectionBar
                       count={sel.count}
-                      onDelete={bulkDelete}
+                      onDelete={editHint ? undefined : bulkDelete}
                       onClear={sel.clear}
                       onRun={
                         canRun && onStartRun ? handleRunSelected : undefined
@@ -621,6 +624,7 @@ export default function ScenariosStep({
                       }
                       trials={trials}
                       onTrialsChange={setTrials}
+                      composition={env?.composition}
                       matching={{
                         mode: sel.mode,
                         total: pageData.total,
@@ -646,7 +650,7 @@ export default function ScenariosStep({
                 overflow: "hidden",
               }}
             >
-              {!locked && env?.id ? (
+              {!rowsLocked && !editHint && env?.id ? (
                 <DraftImports envId={env.id} onResume={openImport} />
               ) : null}
               <PagedScenarioViews
@@ -666,6 +670,7 @@ export default function ScenariosStep({
                 groupBy={activeGroupBy}
                 locked={rowsLocked}
                 lockTooltip={rowsLockTooltip}
+                editHint={editHint}
                 rowHeight={rowHeight}
                 readout={
                   hasSearchOrFilters || hiddenCount > 0
@@ -706,7 +711,7 @@ export default function ScenariosStep({
           setOpenRow(null);
           setEditing(row);
         }}
-        locked={rowsLocked}
+        locked={rowsLocked || Boolean(editHint)}
         testConditions={
           !!pageData.scenarioEditing?.editable_fields?.includes("faults")
         }

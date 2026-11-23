@@ -29,6 +29,7 @@ export const DERIVING_LABEL = {
 // still building (or failed to build) has no draft, runs, fixes or versions yet.
 const NOT_WHILE_BUILDING = new Set([
   "actors",
+  "composition",
   "runs",
   "improvements",
   "versions",

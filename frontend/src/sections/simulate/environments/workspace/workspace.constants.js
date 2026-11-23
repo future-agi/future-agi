@@ -15,6 +15,7 @@ export const WORKSPACE_TABS = [
     label: "Contract",
     icon: "solar:document-text-linear",
   },
+  { id: "composition", label: "Alignment", icon: "solar:routing-2-linear" },
   { id: "actors", label: "Actors", icon: "solar:users-group-rounded-linear" },
   {
     id: "scenarios",
@@ -77,6 +78,8 @@ export const WORKSPACE_COPY = {
   runningTooltip:
     "A simulation is running. Results land under Runs when it finishes.",
   failedTooltip: "This environment failed to build.",
+  designTooltip:
+    "A designed environment has no agent of its own: use it with your agent or run ours.",
   run: "Run simulation",
   moreActions: "More actions",
   fork: "Fork environment",

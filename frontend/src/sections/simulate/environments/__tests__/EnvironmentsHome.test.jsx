@@ -125,8 +125,8 @@ describe("EnvironmentsHome", () => {
       screen.getByRole("tab", { name: "Build environment" }),
     ).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("Source repository")).toBeInTheDocument();
-    // 2 hero + 5 option cards; tabs are role="tab", not button.
-    expect(screen.getAllByRole("button")).toHaveLength(7);
+    // 2 hero + the design card + 5 option cards; tabs are role="tab", not button.
+    expect(screen.getAllByRole("button")).toHaveLength(8);
     // "Customer Support Line" doubles as a Prebuilt hero chip, so assert a
     // table-only harness-job name to prove the My Environments list is absent.
     expect(screen.queryByText("Billing Chat Agent")).toBeNull();

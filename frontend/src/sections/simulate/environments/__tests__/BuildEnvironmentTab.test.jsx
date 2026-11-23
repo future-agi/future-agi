@@ -36,14 +36,15 @@ describe("BuildEnvironmentTab", () => {
     navigate.mockReset();
   });
 
-  it("renders the two hero cards and five option cards in order", () => {
+  it("renders the two hero cards, the design card and five option cards in order", () => {
     renderTab();
     const cards = screen.getAllByRole("button");
-    expect(cards).toHaveLength(7);
+    expect(cards).toHaveLength(8);
 
     [
       "Prebuilt Environments",
       "Web Environments",
+      "Describe your environment",
       "Source repository",
       "Code upload",
       "Hosted platform",
@@ -60,9 +61,9 @@ describe("BuildEnvironmentTab", () => {
     expect(screen.queryByText("Start from scratch")).toBeNull();
   });
 
-  it("marks prebuilt, web, mcp, and local as coming soon", () => {
+  it("marks web, mcp, and local as coming soon", () => {
     renderTab();
-    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(4);
+    expect(screen.getAllByLabelText("Coming soon")).toHaveLength(3);
   });
 
   it("opens the source panel and ignores coming-soon picks", async () => {
@@ -80,11 +81,11 @@ describe("BuildEnvironmentTab", () => {
     expect(screen.getAllByText("MCP server")).toHaveLength(1);
   });
 
-  it("does not navigate from the Prebuilt hero while it is coming soon", async () => {
+  it("opens the prebuilt environments page from the Prebuilt hero", async () => {
     const user = userEvent.setup();
     renderTab();
 
     await user.click(screen.getByText("Prebuilt Environments"));
-    expect(navigate).not.toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith("/dashboard/simulate/environments/templates");
   });
 });

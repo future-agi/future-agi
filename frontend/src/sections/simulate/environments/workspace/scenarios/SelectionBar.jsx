@@ -28,7 +28,7 @@ import TrialsPicker from "./TrialsPicker";
  * disabled, with the reason on hover, rather than leaving it out.
  */
 export default function SelectionBar({
-  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching,
+  count, trials, onTrialsChange, onRun, runBlockedReason, onDelete, onClear, matching, composition = null,
 }) {
   const k = Math.max(1, Math.min(20, Number(trials) || 1));
   const totalRuns = count * k;
@@ -137,23 +137,24 @@ export default function SelectionBar({
 
       {/* The actions move as one: on a narrow bar they wrap together, right-aligned. */}
       <Stack direction="row" alignItems="center" spacing={1.25} sx={{ ml: "auto", flexShrink: 0 }}>
-        {/* DESTRUCTIVE — Delete */}
-        <CustomTooltip show arrow size="small" title="Delete selected scenarios">
-          <Button
-            size="small"
-            onClick={onDelete}
-            variant="outlined"
-            color="inherit"
-            startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
-            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
-          >
-            Delete
-          </Button>
-        </CustomTooltip>
+        {onDelete && (
+          <CustomTooltip show arrow size="small" title="Delete selected scenarios">
+            <Button
+              size="small"
+              onClick={onDelete}
+              variant="outlined"
+              color="inherit"
+              startIcon={<Iconify icon="solar:trash-bin-trash-linear" width={14} />}
+              sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+            >
+              Delete
+            </Button>
+          </CustomTooltip>
+        )}
 
         {/* TRIALS — reliability dial */}
         {onTrialsChange && (
-          <TrialsPicker trials={k} onChange={onTrialsChange} scenarioCount={count} />
+          <TrialsPicker trials={k} onChange={onTrialsChange} scenarioCount={count} composition={composition} />
         )}
 
         {/* PRIMARY — Run N selected (× k). Unavailable: shown disabled, the
@@ -213,7 +214,7 @@ SelectionBar.propTypes = {
   onRun: PropTypes.func,
   // Why Run is unavailable; shows the button disabled with this on hover.
   runBlockedReason: PropTypes.string,
-  onDelete: PropTypes.func.isRequired,
+  onDelete: PropTypes.func,
   onClear: PropTypes.func.isRequired,
   // Select-all-matching context from the pagination predicate. Absent → a plain
   // page selection with no escalation. { mode, total, pageCount, onSelectAll }.
@@ -223,4 +224,6 @@ SelectionBar.propTypes = {
     pageCount: PropTypes.number,
     onSelectAll: PropTypes.func,
   }),
+  // The composition every run is pinned to, shown beside the repeats.
+  composition: PropTypes.object,
 };

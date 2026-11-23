@@ -97,6 +97,10 @@ from simulate.serializers.harness_job import (
     HarnessRunCreateResponseSerializer,
     HarnessRunCreateSerializer,
 )
+from simulate.serializers.harness_run_report import (
+    HarnessRunReportQuerySerializer,
+    HarnessRunReportSerializer,
+)
 from simulate.serializers.response.run_test import SimulateEvalConfigResponseSerializer
 from simulate.services import (
     harness_actor_reads,
@@ -294,23 +298,31 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
 
-    def _queryset(self, request):
-        return annotate_for_list(
-            scope_jobs(
-                HostedHarnessJob.no_workspace_objects.filter(
-                    organization=request_organization(request),
-                    environment__isnull=True,
-                    deleted=False,
-                ),
-                request,
-            )
+    def _queryset(self, request, *, designs: bool = False, adaptations: bool = False):
+        # The environments workspace is the page of a design and of an adaptation as well.
+        # A design is listed, read and renamed like an environment; an adaptation is only
+        # read (the composition it produces is the environment that gets listed). Neither
+        # takes an environment action: neither has an agent to run or evaluate.
+        jobs = HostedHarnessJob.no_workspace_objects.filter(
+            organization=request_organization(request),
+            environment__isnull=True,
+            deleted=False,
         )
+        if not adaptations:
+            jobs = jobs.exclude(payload__metadata__has_key="adaptation")
+        if not designs:
+            jobs = jobs.exclude(payload__metadata__has_key="design")
+        return annotate_for_list(scope_jobs(jobs, request))
 
-    def _job(self, request, pk):
+    def _job(self, request, pk, *, designs: bool = False, adaptations: bool = False):
         identifier = _uuid_or_none(pk)
         if identifier is None:
             return None
-        return self._queryset(request).filter(id=identifier).first()
+        return (
+            self._queryset(request, designs=designs, adaptations=adaptations)
+            .filter(id=identifier)
+            .first()
+        )
 
     def handle_exception(self, exc):
         if isinstance(exc, HostedHarnessError):
@@ -1302,7 +1314,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 {"detail": "an organization is required"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        jobs = self._queryset(request)
+        jobs = self._queryset(request, designs=True)
         agent_definition_id = request.validated_query_data.get("agent_definition_id")
         if agent_definition_id is not None:
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
@@ -1317,8 +1329,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         Same shape whichever door built it. A section the pipeline has not reached
         yet is null, so the client renders "building" rather than an empty pane. A
         coding agent's read leaves out the held-back cases.
+        Designs and adaptations are also read here.
         """
-        job = self._job(request, pk)
+        job = self._job(request, pk, designs=True, adaptations=True)
         if job is None:
             return Response(
                 {"detail": "Environment not found"},
@@ -1341,7 +1354,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         records how it was built, and editing that would make the provenance the
         contract tab shows a claim rather than a record.
         """
-        job = self._job(request, pk)
+        job = self._job(request, pk, designs=True)
         if job is None:
             return Response(
                 {"detail": "Environment not found"},
@@ -1368,7 +1381,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """
         from simulate.services.hosted_harness import delete_environment
 
-        job = self._job(request, pk)
+        job = self._job(request, pk, designs=True)
         if job is None:
             return Response(
                 {"detail": "Environment not found"},
@@ -1387,6 +1400,94 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def run(self, request, pk=None):
         """Create one new Run for the selected scenarios and trial count."""
         return get_harness_provider().run(request, pk)
+
+    @validated_request(
+        query_serializer=HarnessRunReportQuerySerializer,
+        responses={200: HarnessRunReportSerializer},
+        reject_unknown_fields=True,
+        operation_description=(
+            "The report of one run of a composition, optionally compared with a "
+            "baseline run."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path=r"runs/(?P<run_id>[0-9a-fA-F-]{36})/report",
+    )
+    def run_report(self, request, pk=None, run_id=None):
+        """A composition run's results, coverage and comparability (contract §7.7).
+
+        A run is addressed by its test execution id, as the other run routes
+        are, or by its run id. The baseline may be a run of another composition
+        of this organization: comparing two agents means two compositions.
+        """
+        from django.db.models import Q
+
+        from simulate.services.harness_releases import composition_of
+        from simulate.services.harness_run_report import run_manifest, run_report
+
+        def not_found(message):
+            return Response(
+                build_error_envelope(message, status_code=status.HTTP_404_NOT_FOUND),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        def not_a_composition(message):
+            return Response(
+                build_error_envelope(
+                    message,
+                    status_code=status.HTTP_409_CONFLICT,
+                    code="not_a_composition",
+                ),
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        def find_run(identifier, **scope):
+            identifier = _uuid_or_none(identifier)
+            if identifier is None:
+                return None
+            return (
+                scope_jobs(
+                    HostedHarnessJob.no_workspace_objects.filter(
+                        organization=request_organization(request),
+                        environment__isnull=False,
+                        deleted=False,
+                        **scope,
+                    ),
+                    request,
+                )
+                .filter(Q(test_execution_id=identifier) | Q(run_id=identifier))
+                .first()
+            )
+
+        job = self._job(request, pk)
+        if job is None:
+            return not_found("Environment not found")
+        if composition_of(job) is None:
+            return not_a_composition("Only a composition's runs have a report")
+        run = find_run(run_id, environment=job)
+        manifest = run_manifest(run) if run is not None else None
+        if manifest is None:
+            return not_found("Run not found")
+        baseline_id = request.validated_query_data.get("baseline")
+        baseline_manifest = None
+        if baseline_id is not None:
+            baseline = find_run(baseline_id)
+            if baseline is None:
+                return not_found("Baseline run not found")
+            baseline_manifest = run_manifest(baseline)
+            if baseline_manifest is None:
+                return not_a_composition("The baseline is not a composition's run")
+        return Response(
+            run_report(
+                job,
+                run,
+                manifest,
+                baseline_run_id=str(baseline_id) if baseline_id else None,
+                baseline_manifest=baseline_manifest,
+            )
+        )
 
     def _run_test_job(self, request, pk):
         """The environment and its run test, or the response that refuses the call.
