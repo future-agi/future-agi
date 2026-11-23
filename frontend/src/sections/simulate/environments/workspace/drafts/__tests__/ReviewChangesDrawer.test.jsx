@@ -98,8 +98,19 @@ describe("ReviewChangesDrawer", () => {
     setFlow([change({ decision: "rejected" })]);
     renderDrawer();
     await user.click(screen.getByRole("button", { name: "Restore" }));
+    // The server only takes accepted or rejected, so Restore accepts it.
     expect(decide.mock.lastCall[0].decisions).toEqual([
-      { id: "tool:refund", decision: null },
+      { id: "tool:refund", decision: "accepted" },
+    ]);
+  });
+
+  it("lets an accepted change be rejected instead", async () => {
+    const user = userEvent.setup();
+    setFlow([change({ decision: "accepted" })]);
+    renderDrawer();
+    await user.click(screen.getByRole("button", { name: "Reject instead" }));
+    expect(decide.mock.lastCall[0].decisions).toEqual([
+      { id: "tool:refund", decision: "rejected" },
     ]);
   });
 

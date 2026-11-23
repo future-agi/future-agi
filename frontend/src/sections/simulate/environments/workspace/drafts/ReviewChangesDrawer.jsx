@@ -142,9 +142,8 @@ export default function ReviewChangesDrawer({
     );
 
   const decideChange = (change, decision) => {
-    let said = COPY.announced.undecided;
-    if (decision) said = COPY.announced[decision];
-    else if (change.decision === "rejected") said = COPY.announced.restored;
+    const restored = change.decision === "rejected" && decision === "accepted";
+    const said = restored ? COPY.announced.restored : COPY.announced[decision];
     setAnnounced(said(change.summary));
     sendDecisions([{ id: change.id, decision }]);
   };

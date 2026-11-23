@@ -25,7 +25,7 @@ Outcome.propTypes = {
   children: PropTypes.node,
 };
 
-/** One change's decision: Accept or Reject, then the outcome with a way back. */
+/** One change's decision: Accept or Reject, then the outcome with a way to switch it (the server has no "undecided"). */
 export default function ChangeDecision({
   decision = null,
   rejectReason = null,
@@ -62,14 +62,15 @@ export default function ChangeDecision({
           iconColor="status.success.fg"
           label={COPY.accepted}
         >
-          <Button
+          <HeldButton
             size="small"
             color="inherit"
-            onClick={() => decide(null)}
+            reason={rejectReason}
+            onClick={() => decide("rejected")}
             sx={undoSx}
           >
             {COPY.change}
-          </Button>
+          </HeldButton>
         </Outcome>
       )}
       {decision === "rejected" && (
@@ -82,7 +83,7 @@ export default function ChangeDecision({
             size="small"
             color="inherit"
             reason={restoreReason}
-            onClick={() => decide(null)}
+            onClick={() => decide("accepted")}
             sx={undoSx}
           >
             {COPY.restore}
@@ -121,6 +122,6 @@ ChangeDecision.propTypes = {
   // Why it can't be rejected, or restored, right now.
   rejectReason: PropTypes.string,
   restoreReason: PropTypes.string,
-  // (decision or null): null clears the decision.
+  // ("accepted" | "rejected"): a decided change switches to the other one.
   onDecide: PropTypes.func,
 };

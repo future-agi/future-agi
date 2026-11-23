@@ -692,7 +692,6 @@ export const REVIEW_COPY = {
     accepted: (summary) => `Accepted: ${summary}`,
     rejected: (summary) => `Rejected: ${summary}`,
     restored: (summary) => `Restored: ${summary}`,
-    undecided: (summary) => `Undecided: ${summary}`,
   },
   allAccepted: "Accepted all remaining changes",
   groupTitle: (label, n) => `${label} · ${n}`,
@@ -708,7 +707,7 @@ export const REVIEW_COPY = {
   reject: "Reject",
   accepted: "Accepted",
   rejected: "Rejected",
-  change: "Undo",
+  change: "Reject instead",
   validateFirst: (n) =>
     n > 0
       ? `Validate the ${scenarioWord(n)} affected before you save.`
