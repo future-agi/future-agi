@@ -36,6 +36,7 @@ import {
 import { hashSeed } from "./runStream";
 import { familyOf, transportQualified } from "./testedVersions";
 import { checksStateOf } from "./release";
+import { lastStopOf, stopKindOf } from "./runStop";
 
 const agentVersionWord = (v) => (v?.label ? `${v.label} ` : "");
 
@@ -765,18 +766,51 @@ export const compatibilityOf = ({
   */
   const hostedElsewhere =
     kind === "platform" || (checked && !startsFromCode(agent));
-  if (checked && startsFromCode(agent)) fromCheck("cancel", "cancel", [], "");
-  else if (kind === "platform")
+  /* A real Stop is the evidence (PR #3841): no test call is placed just to
+     check it. The latest stop of this kind of agent here decides the row. */
+  const seenStop = (() => {
+    const s = lastStopOf(envState);
+    return s && s.kind === stopKindOf(agent) ? s : null;
+  })();
+  const onRun = seenStop?.runOrdinal
+    ? `Run ${seenStop.runOrdinal}`
+    : "The last run";
+  if (seenStop?.status === "cleanup_failed")
     add(
       "cancel",
       "partial",
-      `Stopping ends our side; nothing ends the ${provider} call yet, so it runs until it ends on its own. A stopped run reads Cancel requested until ${provider} confirms the call ended.`,
+      `${onRun}'s stop wasn't confirmed after 10 minutes (cleanup failed) — after a stop the agent may keep running, and acting.`,
+      { checkedAt: seenStop.failedAt || seenStop.requestedAt },
     );
-  else if (hostedElsewhere)
+  else if (checked && startsFromCode(agent))
+    fromCheck("cancel", "cancel", [], "");
+  else if (kind === "platform") {
+    if (seenStop?.status === "confirmed")
+      add(
+        "cancel",
+        "supported",
+        `${onRun}'s stop was confirmed: ${provider} reported every call ended.`,
+        { checkedAt: seenStop.confirmedAt },
+      );
+    else if (seenStop?.status === "unconfirmed")
+      add(
+        "cancel",
+        "partial",
+        `Stopping ends our side; on ${onRun} ${provider} still listed a call as open after 5 minutes. A call left open keeps running and ${provider} charges for it. A stopped run reads Stop requested until ${provider} confirms the call ended.`,
+        { checkedAt: seenStop.gaveUpAt || seenStop.requestedAt },
+      );
+    else
+      add(
+        "cancel",
+        "untested",
+        `Measured the first time you stop a run — no test call is placed just to check Stop. Until then, stopping ends our side and ${provider} may keep a call open, and charge for it.`,
+        { measuredOnStop: true },
+      );
+  } else if (hostedElsewhere)
     add(
       "cancel",
       "partial",
-      "We stop sending and stop watching; your service may still finish the request it already has. A stopped run reads Cancel requested, not Cancelled.",
+      "We stop sending and stop watching; your service may still finish the request it already has. A stopped run reads Stop requested, never Stopped.",
     );
   else
     add(
@@ -908,7 +942,9 @@ export const compatibilityOf = ({
         r.status === "unavailable" ||
         r.status === "partial" ||
         r.fixApplied ||
-        r.blockedBy
+        r.blockedBy ||
+        /* Measured by a real run's Stop, not by the check it would wait on. */
+        r.measuredOnStop
       )
         return;
       Object.assign(r, {

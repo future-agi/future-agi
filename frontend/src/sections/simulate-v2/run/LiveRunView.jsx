@@ -72,6 +72,7 @@ import {
   pulse,
 } from "../components/primitives";
 import useRunPlayer from "./useRunPlayer";
+import { stopLiveLineOf, stopOutcome, stopRequested } from "../_mock/runStop";
 import SecretCheckDialog from "./SecretCheckDialog";
 import FixRunNote from "../errorFeed/FixRunNote";
 import { improvementPath } from "../improvements/improvementNav";
@@ -578,8 +579,9 @@ function LiveRun() {
   const [secretsOk, setSecretsOk] = useState(false);
   /* The scenario list's filters — scenario, status, failure domain, actor. */
   const [trialFilter, setTrialFilter] = useState({});
-  /* A platform agent's Stop: "cancelling" until the platform confirms the calls ended. */
-  const [cancelState, setCancelState] = useState(null);
+  /* The run's Stop: requested, then confirmed (or not) by the agent's side. */
+  const [stop, setStop] = useState(null);
+  const stopAgent = withAgent?.values ? withAgent : envState?.agent;
 
   /*
     A scenario paused on a clarifying question (AC-15.13). Long runs are left
@@ -1773,19 +1775,34 @@ function LiveRun() {
                    up (runs.md) — a platform's calls end on its side, ours
                    reset their world and save their evidence. */
                 /* A run with a spend limit says it in its own banner. */
+                /* The stop is recorded as requested, and confirmed only
+                   when the agent's side is seen to stop (TH-8890):
+                   our sandbox gone, or the provider's calls ended. An
+                   agent at its own URL is never confirmed. */
+                const req = stopRequested(stopAgent);
+                setStop(req);
+                recordRun({ id: runId, stop: req });
+                const settle = () => {
+                  const out = stopOutcome(req, params.get("stop"));
+                  setStop(out);
+                  recordRun({ id: runId, stop: out });
+                };
                 /* A platform's calls end on its side: hold the run while
-                   it confirms, say so, then show the results. */
-                if (envState?.agent?.values?.provider) {
+                   it checks, say so, then show the results. */
+                if (req.kind === "provider") {
                   freeze();
-                  setCancelState("cancelling");
-                  setTimeout(() => setCancelState("confirmed"), 2500);
+                  setTimeout(settle, 2500);
                   setTimeout(() => finishNow(), 4500);
                   return undefined;
                 }
-                if (!spend?.cap) {
-                  setCancelState("cancelling");
-                  setTimeout(() => setCancelState("confirmed"), 2500);
+                if (req.kind === "endpoint") {
+                  freeze();
+                  if (params.get("stop") === "cleanup")
+                    setTimeout(settle, 2500);
+                  setTimeout(() => finishNow(), 4500);
+                  return undefined;
                 }
+                setTimeout(settle, 2500);
                 return spend?.cap && spend.reached !== "stopped"
                   ? stopAtLimit()
                   : finishNow();
@@ -2034,7 +2051,7 @@ function LiveRun() {
         onOpen={() => blocked && setFocusId(blocked.taskId)}
       />
 
-      {/* A platform agent: its call limit, a rate-limit pause, and cancelling until confirmed. */}
+      {/* A platform agent's call limit and rate-limit pause; any run's Stop until it's confirmed. */}
       {(() => {
         const provider = envState?.agent?.values?.provider;
         const P = provider
@@ -2042,25 +2059,18 @@ function LiveRun() {
           : null;
         const limit = { vapi: 10, retell: 20 }[provider] || null;
         const share = stats.total ? stats.done / stats.total : 0;
-        const line =
-          cancelState === "cancelling"
-            ? P
-              ? `Stop requested — waiting for ${P} to confirm the calls in progress ended. No new calls start.`
-              : `Stop requested — ${size.voice ? "calls" : "trials"} in progress are finishing up. No new ones start.`
-            : cancelState === "confirmed"
-              ? P
-                ? `Stopped — ${P} confirmed every call ended. Finished calls are kept.`
-                : `Stopped — cleanup finished. Finished ${size.voice ? "calls" : "trials"} are kept.`
-              : !P
-                ? null
-                : phase === "running" &&
-                    stats.total >= 20 &&
-                    share >= 0.4 &&
-                    share < 0.55
-                  ? `Paused — ${P} returned 429 (rate limited). Retrying in 15 s; queued calls hold. Not counted against the agent.`
-                  : phase === "running" && limit && parallel > limit
-                    ? `${P} allows ${limit} calls at once on this account — ${parallel - limit} wait their turn and start as calls finish. Waiting isn't counted against the agent.`
-                    : null;
+        const line = stop
+          ? stopLiveLineOf(stop, { voice: size.voice })
+          : !P
+            ? null
+            : phase === "running" &&
+                stats.total >= 20 &&
+                share >= 0.4 &&
+                share < 0.55
+              ? `Paused — ${P} returned 429 (rate limited). Retrying in 15 s; queued calls hold. Not counted against the agent.`
+              : phase === "running" && limit && parallel > limit
+                ? `${P} allows ${limit} calls at once on this account — ${parallel - limit} wait their turn and start as calls finish. Waiting isn't counted against the agent.`
+                : null;
         if (!line) return null;
         return (
           <Typography

@@ -146,8 +146,10 @@ export function KnownLimits({ report, scenarios, evalCount, provider }) {
     if (a.id === "tools" && /^Tools run in your/.test(d))
       return `tools act in your ${limitBy} account`;
     if (a.id === "reset") return "the agent may remember earlier attempts";
+    if (a.id === "cancel" && /^Measured the first time/.test(d))
+      return `not measured until you stop a run — until then a stop may not end the ${limitBy} call`;
     if (a.id === "cancel")
-      return /nothing ends the/.test(d)
+      return /nothing ends the|still listed a call/.test(d)
         ? `a stop doesn't end the ${limitBy} call yet`
         : "a stop may not end work already sent";
     return lower(firstSentence(d));

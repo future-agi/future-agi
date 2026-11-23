@@ -48,11 +48,20 @@ export const READY_STATUS = {
   blocked: { label: "Blocked", dot: "failed" },
 };
 
+/* Measured by a real run's Stop, not by a check (TH-8890): untested, but a
+   limit to know about, never "run the check". */
+const onStop = (r) => r.status === "untested" && r.measuredOnStop;
+
 const areaStatusOf = (rows) => {
   if (rows.some((r) => r.status === "blocked" || r.status === "deprecated"))
     return "blocked";
-  if (rows.some((r) => r.status === "untested" || r.status === "stale"))
+  if (
+    rows.some(
+      (r) => (r.status === "untested" || r.status === "stale") && !onStop(r),
+    )
+  )
     return "unchecked";
+  if (rows.some(onStop)) return "partial";
   /* Unavailable evidence only matters when a case needs it. */
   if (
     rows.some(

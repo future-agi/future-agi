@@ -156,6 +156,12 @@ export const STATUS_META = {
   /* The run's spending limit, or the person, stopped new scenarios starting. */
   stopped_limit: { role: "warning", label: "Stopped at limit" },
   stopped_early: { role: "neutral", label: "Stopped early" },
+  /* A Stop, until the agent's side confirms it (TH-8890): never "Stopped"
+     before that. */
+  stop_requested: { role: "warning", label: "Stop requested" },
+  stopped: { role: "neutral", label: "Stopped" },
+  stop_unconfirmed: { role: "warning", label: "Stop not confirmed" },
+  cleanup_failed: { role: "danger", label: "Cleanup failed" },
 };
 
 /**

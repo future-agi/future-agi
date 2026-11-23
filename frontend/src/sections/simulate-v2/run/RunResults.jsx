@@ -169,6 +169,7 @@ import { nextEnvLabel, versionName } from "../_mock/envSnapshot";
 import logger from "src/utils/logger";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { proofKindOf } from "../_mock/rsiModel";
+import { stopChipOf, stopNoteOf, stopTipOf } from "../_mock/runStop";
 
 /**
  * Run results.
@@ -1562,17 +1563,23 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
               does not mean passed). How the agent did is the summary chip
               beside it.
             */}
-            <StatusChip
-              status={
-                identity?.budget?.stoppedBy
-                  ? identity.budget.stoppedBy === "stopped"
-                    ? "stopped_early"
-                    : "stopped_limit"
-                  : sourceRun?.status === "interrupted"
-                    ? "interrupted"
-                    : "completed"
-              }
-            />
+            <Tooltip arrow title={stopTipOf(sourceRun?.stop)}>
+              <Box component="span" sx={{ display: "inline-flex" }}>
+                <StatusChip
+                  status={
+                    /* A Stop reads by what the agent's side confirmed. */
+                    stopChipOf(sourceRun?.stop) ||
+                    (identity?.budget?.stoppedBy
+                      ? identity.budget.stoppedBy === "stopped"
+                        ? "stopped_early"
+                        : "stopped_limit"
+                      : sourceRun?.status === "interrupted"
+                        ? "interrupted"
+                        : "completed")
+                  }
+                />
+              </Box>
+            </Tooltip>
             {issueResult && (
               <Tooltip
                 arrow
@@ -2334,6 +2341,51 @@ export default function RunResults({ env, runId, tasks, stats, evals }) {
       {/* ── a fix's first run: what it found, and what else it found ──
           A condition of this page, so a banner under the header (the header
           stays two lines). The fix itself is the header's button. */}
+      {/* A Stop the agent's side hasn't confirmed: what that means for
+          spend and actions (TH-8890). A confirmed stop is just the chip. */}
+      {(() => {
+        const note = stopNoteOf(sourceRun?.stop);
+        if (!note) return null;
+        const bad = ["unconfirmed", "cleanup_failed"].includes(
+          sourceRun.stop.status,
+        );
+        return (
+          <Alert
+            severity={bad ? "warning" : "info"}
+            icon={
+              <Iconify
+                icon={
+                  bad
+                    ? "solar:danger-triangle-linear"
+                    : "solar:stop-circle-linear"
+                }
+                width={16}
+              />
+            }
+            sx={{
+              mx: 2,
+              mt: 1.5,
+              mb: 1,
+              flexShrink: 0,
+              ...(!bad && {
+                bgcolor: "background.neutral",
+                color: "text.primary",
+                border: "1px solid",
+                borderColor: "divider",
+                "& .MuiAlert-icon": { color: "text.secondary" },
+              }),
+            }}
+          >
+            <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+              {note.title}
+            </Typography>
+            <Typography sx={{ typography: "s2", mt: 0.25 }}>
+              {note.body}
+            </Typography>
+          </Alert>
+        );
+      })()}
+
       {fixFirst && issueResult && (
         <Alert
           severity="info"
