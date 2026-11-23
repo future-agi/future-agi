@@ -42,7 +42,8 @@ import {
 } from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
 import {
-  VALIDATE_MS,
+  settleValidating,
+  validateLeftMs,
   validatingOf,
   validatingRunBlock,
 } from "../_mock/validating";
@@ -1087,6 +1088,26 @@ export default function EnvironmentWorkspace() {
     patch({ versionNews: unseen.length ? { ...news, unseen } : null });
   }, [step]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* Validate lands here, on the environment page, whichever tab is open. */
+  const validatingEarly = validatingOf(envState);
+  const settleRef = useRef(null);
+  settleRef.current = () => {
+    const done = settleValidating({ env, envState, patch: storePatch });
+    if (done && !done.failed && !done.review && done.count)
+      enqueueSnackbar(
+        `Validated ${done.count} scenario${done.count === 1 ? "" : "s"} on ${envLabelOf(env, envState)}`,
+        { variant: "success" },
+      );
+  };
+  useEffect(() => {
+    if (!validatingEarly?.startedAt) return undefined;
+    const t = setTimeout(
+      () => settleRef.current?.(),
+      validateLeftMs(validatingEarly),
+    );
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validatingEarly?.startedAt]);
   if (!env) {
     /* Still loading the store — a custom-built env lives only in
        myEnvironments, which is empty until hydrate runs. Showing
@@ -1400,13 +1421,10 @@ export default function EnvironmentWorkspace() {
   /* Any blocking gap holds the run — readiness covers the common ones; the
      inbox may hold others (a Live tool with no safe target, consent). */
   const firstBlockingGap = allGaps.find((g) => g.status === "blocking");
-  /* A Validate in progress holds every run until it finishes. One that has
-     had its time is done (its result lands on the Scenarios tab), so a run
-     isn't held by a tab nobody went back to. */
+  /* A Validate in progress holds every run until it finishes. It lands here,
+     on the environment page, so it ends on time whichever tab is open. */
   const validatingNow = validatingOf(envState);
-  const validateHolds =
-    !!validatingNow &&
-    Date.now() - (Date.parse(validatingNow.startedAt) || 0) < VALIDATE_MS;
+  const validateHolds = !!validatingNow;
   const runBlockedReason = (() => {
     /* An older version is read-only — runs go on the version in use. */
     if (!gates.canRun) return gates.runReason;

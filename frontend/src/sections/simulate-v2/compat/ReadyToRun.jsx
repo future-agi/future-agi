@@ -1,6 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import {
   Box,
@@ -24,6 +24,9 @@ import {
   shortFixLabel,
 } from "./fixKinds";
 import { agentIdOf } from "../_mock/agentRegistry";
+import { getEnvironment } from "../_mock/environments";
+import { runPlanHref } from "../_mock/runPlanLink";
+import { useSimStore } from "../store";
 import { connectedAgentPath } from "../improvements/improvementNav";
 import BuilderFixChat, { builderPromptFor } from "./BuilderFixChat";
 
@@ -279,8 +282,12 @@ export default function ReadyToRun({
   const [chatJobs, setChatJobs] = useState(null);
   const [fixed, setFixed] = useState([]);
   const navigate = useNavigate();
-  const location = useLocation();
   const { envId } = useParams();
+  const { state: simState } = useSimStore();
+  const envName = (
+    getEnvironment(envId) ||
+    simState?.myEnvironments?.find((e) => e.id === envId)
+  )?.name;
   const toggle = (id) => setOpenId((cur) => (cur === id ? null : id));
 
   const areas = readinessOf(report, scenarios, evalCount);
@@ -414,8 +421,12 @@ export default function ReadyToRun({
                     state: {
                       from: "environment",
                       envId,
-                      back: `${location.pathname}${location.search}`,
-                      backLabel: "Back to run plan",
+                      envName,
+                      /* The plan isn't in the URL: back opens it again. */
+                      back: runPlanHref(envId),
+                      backLabel: envName
+                        ? `Run plan: ${envName}`
+                        : "Back to run plan",
                     },
                   },
                 )

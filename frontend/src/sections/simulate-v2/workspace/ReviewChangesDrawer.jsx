@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Box,
@@ -36,8 +36,6 @@ import { castFor, getActor } from "../_mock/actors";
 import { toolSettingOf } from "../_mock/toolEnv";
 import { currentUser } from "../_mock/scenarioProvenance";
 import {
-  VALIDATE_MS,
-  finishValidating,
   startValidating,
   validatingLabel,
   validatingOf,
@@ -166,10 +164,13 @@ export default function ReviewChangesDrawer({
       ),
     });
   const counts = reviewCountsOf(list);
-  /* The version's name starts from the first accepted change (handover:
+  /* The version's name starts from the first accepted change, else the
+     first one not rejected — never from an edit that won't be saved (handover:
      "pre-fill an editable name"); typing replaces it. */
   const firstAccepted =
-    list.find((c) => c.decision === "accepted") || list[0] || null;
+    list.find((c) => c.decision === "accepted") ||
+    list.find((c) => c.decision !== "rejected") ||
+    null;
   const suggestedName = String(firstAccepted?.detail || "")
     .replace(/\.$/, "")
     .slice(0, 80);
@@ -199,16 +200,6 @@ export default function ReviewChangesDrawer({
       ),
     )
     .map((r) => r.id);
-  const startedAt = reviewing ? validating.startedAt : null;
-  useEffect(() => {
-    if (!startedAt) return undefined;
-    const left = Math.max(0, VALIDATE_MS - (Date.now() - Date.parse(startedAt)));
-    const t = setTimeout(() => {
-      finishValidating(patch);
-      patch({ reviewValidated: checkKey });
-    }, left);
-    return () => clearTimeout(t);
-  }, [startedAt, checkKey, patch]);
   const needsCheck = names.length > 0 && checkState !== "passed";
   /* Another Validate (re-proving scenarios) is already running. */
   const otherValidate = validating && !reviewing ? validating : null;
@@ -709,6 +700,7 @@ export default function ReviewChangesDrawer({
                                   ? affectedIds
                                   : names.map((_, k) => `affected-${k}`),
                                 "review",
+                                { checkKey },
                               )
                             }
                             sx={{ minWidth: 0 }}

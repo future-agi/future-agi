@@ -58,12 +58,10 @@ import {
 import { validateScenario } from "../_mock/scenarioValidation";
 import { dropReplacedProposals } from "../_mock/scenarioSources";
 import {
-  VALIDATE_MS,
   validatingOf,
   validatingLabel,
   startValidating,
-  finishValidating,
-  failValidating,
+  failNextValidate,
 } from "../_mock/validating";
 import SelectionBar from "./scenarios/SelectionBar";
 import { PickRouteIllustration } from "./scenarios/RouteThumbs";
@@ -203,8 +201,6 @@ const SHOW_BASELINE_STRIP = false;
 
 /* `?validate=fail` (demo knob): the next Validate on that environment fails.
    Held here, not in the component, so it outlives leaving the tab. */
-const FAIL_NEXT_VALIDATE = new Map();
-const VALIDATE_FAIL_MESSAGE = "the test world couldn't be prepared";
 
 /* Kept as written: the backend sends the scenario's own reason as a ready
    sentence (`row.stateReason`); without one, the per-reason text stands. */
@@ -1369,12 +1365,12 @@ export default function ScenariosStep({
   };
   /* Validate takes a while: it is held on the environment's state
      (envState.validating) while it runs — runs are blocked, the rows being
-     proved say Validating — and lands after VALIDATE_MS. It survives
-     leaving the tab: on the way back, one that has had its time finishes. */
+     proved say Validating — and lands after VALIDATE_MS. The environment
+     page lands it (settleValidating), so it finishes on time on any tab. */
   const startValidate = (rows, from) => {
     if (!rows.length || validating || ro) return;
     if (searchParams.get("validate") === "fail") {
-      FAIL_NEXT_VALIDATE.set(env.id, VALIDATE_FAIL_MESSAGE);
+      failNextValidate(env.id);
       /* Once: Try again then goes through. */
       setSearchParams(
         (prev) => {
@@ -1391,38 +1387,6 @@ export default function ScenariosStep({
       from,
     );
   };
-  const finishValidateRef = useRef(null);
-  finishValidateRef.current = () => {
-    const v = validatingOf(envState);
-    if (!v) return;
-    if (FAIL_NEXT_VALIDATE.has(env.id)) {
-      const message = FAIL_NEXT_VALIDATE.get(env.id);
-      FAIL_NEXT_VALIDATE.delete(env.id);
-      failValidating(patch, v, message);
-      return;
-    }
-    /* The rows as they stand now — anything removed meanwhile is skipped. */
-    const ids = new Set(v.ids);
-    const rows = selected.filter((r) => ids.has(r.id));
-    if (rows.length)
-      replaceRows(
-        reproveScenarios(rows, { env, envState: viewState, toolsOf }),
-      );
-    finishValidating(patch);
-    enqueueSnackbar(
-      `Validated ${rows.length} scenario${rows.length === 1 ? "" : "s"} on ${envDisplay}`,
-      { variant: "success" },
-    );
-  };
-  useEffect(() => {
-    if (!validating?.startedAt) return undefined;
-    const left = Math.max(
-      0,
-      (Date.parse(validating.startedAt) || 0) + VALIDATE_MS - Date.now(),
-    );
-    const t = setTimeout(() => finishValidateRef.current?.(), left);
-    return () => clearTimeout(t);
-  }, [validating?.startedAt]);
   /* Archived, not deleted: it stays in the set, listed and filterable, and
      the set moves to a new version. Undo puts the row back as it was. */
   const archive = (row, note) => {
