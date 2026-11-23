@@ -22567,6 +22567,16 @@ export interface DesignToolArgApi {
   type: string;
 }
 
+export type DesignToolApiStatus =
+  (typeof DesignToolApiStatus)[keyof typeof DesignToolApiStatus];
+
+export const DesignToolApiStatus = {
+  simulated: "simulated",
+  in_process: "in_process",
+  unsupported: "unsupported",
+  unknown: "unknown",
+} as const;
+
 export type DesignToolApiInputsFrom = { [key: string]: string };
 
 export interface DesignToolApi {
@@ -22580,6 +22590,9 @@ export interface DesignToolApi {
   inputs_from: DesignToolApiInputsFrom;
   effects: string;
   refuses: string;
+  tables_read?: string[];
+  tables_changed?: string[];
+  status?: DesignToolApiStatus;
   /** @minLength 1 */
   source: string;
   removed: boolean;
@@ -22608,6 +22621,42 @@ export interface DesignUseCaseApi {
   removed: boolean;
   /** @minimum 0 */
   planned_scenarios: number;
+}
+
+export type DesignBriefApiChannel =
+  (typeof DesignBriefApiChannel)[keyof typeof DesignBriefApiChannel];
+
+export const DesignBriefApiChannel = {
+  chat: "chat",
+  voice: "voice",
+} as const;
+
+export interface DesignAgentApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  version: string;
+}
+
+export interface DesignBriefApi {
+  description: string;
+  channel: DesignBriefApiChannel;
+  agent: DesignAgentApi;
+}
+
+export interface DesignActorApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  role: string;
+}
+
+export interface DesignUnsupportedApi {
+  /** @minLength 1 */
+  tool: string;
+  reaches: string[];
+  removed: boolean;
 }
 
 export type DesignEditApiOp =
@@ -22653,7 +22702,11 @@ export interface DesignReviewApi {
   tools: DesignToolApi[];
   rules: DesignRuleApi[];
   use_cases: DesignUseCaseApi[];
+  brief: DesignBriefApi;
+  actors: DesignActorApi[];
+  unsupported: DesignUnsupportedApi[];
   edits: DesignEditApi[];
+  created_at: string;
   approved_at: string;
 }
 

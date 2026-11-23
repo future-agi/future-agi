@@ -64,10 +64,12 @@ def _columns(schema: Any) -> list[str]:
     items = schema.get("items")
     if isinstance(items, dict) and isinstance(items.get("properties"), dict):
         return sorted(str(name) for name in items["properties"])
+    if schema and all(isinstance(kind, str) for kind in schema.values()):
+        return [str(name) for name in schema]
     return []
 
 
-def _tool(spec: dict[str, Any]) -> dict[str, Any]:
+def _tool(spec: dict[str, Any], status: str) -> dict[str, Any]:
     arg_types = spec.get("arg_types") or {}
     return {
         "id": str(spec.get("name") or ""),
@@ -84,14 +86,63 @@ def _tool(spec: dict[str, Any]) -> dict[str, Any]:
         },
         "effects": str(spec.get("effects") or ""),
         "refuses": str(spec.get("refuses") or ""),
+        "tables_read": _texts(spec.get("tables_read")),
+        "tables_changed": _texts(spec.get("tables_changed")),
+        "status": status,
         "source": "agent_code",
     }
 
 
+def _texts(value: Any) -> list[str]:
+    return (
+        [str(one) for one in value if str(one).strip()]
+        if isinstance(value, list)
+        else []
+    )
+
+
+def _actors(contract: dict[str, Any]) -> list[dict[str, str]]:
+    actors = contract.get("actors")
+    return [
+        {
+            "id": str(one.get("id") or one["name"]),
+            "name": str(one["name"]),
+            "role": str(one.get("role") or ""),
+        }
+        for one in (actors if isinstance(actors, list) else [])
+        if isinstance(one, dict) and one.get("name")
+    ]
+
+
+def _unsupported(contract: dict[str, Any]) -> list[dict[str, Any]]:
+    from simulate.services.harness_tool_reach import tool_status
+
+    reaches: dict[str, list[str]] = {}
+    for dependency in contract.get("dependencies") or []:
+        if not isinstance(dependency, dict) or not dependency.get("name"):
+            continue
+        for tool in dependency.get("used_by") or []:
+            reaches.setdefault(str(tool), []).append(str(dependency["name"]))
+    return [
+        {"tool": row["tool"], "reaches": reaches.get(row["tool"], [])}
+        for row in tool_status(contract)
+        if row["status"] == "unsupported"
+    ]
+
+
 def build_proposal(contract: dict[str, Any], scenario_count: int) -> dict[str, Any]:
+    from simulate.services.harness_tool_reach import tool_status
+
     schema = contract.get("data_schema") or {}
+    statuses = {row["tool"]: row["status"] for row in tool_status(contract)}
     return {
         "scenario_count": max(int(scenario_count or 0), 0),
+        "brief": {
+            "description": str(contract.get("one_liner") or ""),
+            "channel": "voice" if contract.get("modality") == "voice" else "chat",
+        },
+        "actors": _actors(contract),
+        "unsupported": _unsupported(contract),
         "tables": [
             {
                 "id": str(name),
@@ -102,7 +153,7 @@ def build_proposal(contract: dict[str, Any], scenario_count: int) -> dict[str, A
             for name, body in (schema.items() if isinstance(schema, dict) else [])
         ],
         "tools": [
-            _tool(spec)
+            _tool(spec, statuses.get(str(spec["name"]), "unknown"))
             for spec in contract.get("tools") or []
             if isinstance(spec, dict) and spec.get("name")
         ],
@@ -150,6 +201,7 @@ def create_design_review(
             "source_contract_hash": contract_hash(contract),
             "proposal": build_proposal(contract, job.scenario_count),
             "edits": [],
+            "created_at": timezone.now().isoformat(),
             "approved_by": None,
             "approved_at": None,
         },
@@ -216,6 +268,7 @@ def design_document(job: HostedHarnessJob) -> dict[str, Any]:
     review = review_for(job)
     edits = review.get("edits") or []
     view = _effective(review.get("proposal") or {}, edits)
+    removed_tools = {tool["id"] for tool in view.get("tools") or [] if tool["removed"]}
     return {
         "environment_id": str(job.id),
         "status": review.get("status") or AWAITING_APPROVAL,
@@ -226,8 +279,38 @@ def design_document(job: HostedHarnessJob) -> dict[str, Any]:
         "tools": view.get("tools") or [],
         "rules": view.get("rules") or [],
         "use_cases": view.get("use_cases") or [],
+        "brief": {
+            "description": "",
+            "channel": "chat",
+            **(view.get("brief") or {}),
+            "agent": _agent_label(review.get("agent_version_id")),
+        },
+        "actors": view.get("actors") or [],
+        "unsupported": [
+            {**one, "removed": one["tool"] in removed_tools}
+            for one in view.get("unsupported") or []
+        ],
         "edits": [{**edit, "index": index} for index, edit in enumerate(edits)],
+        "created_at": review.get("created_at"),
         "approved_at": review.get("approved_at"),
+    }
+
+
+def _agent_label(agent_version_id: str | None) -> dict[str, str] | None:
+    if not agent_version_id:
+        return None
+    from simulate.models import AgentVersion
+
+    version = (
+        AgentVersion.no_workspace_objects.select_related("agent_definition")
+        .filter(id=agent_version_id)
+        .first()
+    )
+    if version is None:
+        return None
+    return {
+        "name": version.agent_definition.agent_name,
+        "version": version.version_name or f"v{version.version_number}",
     }
 
 
@@ -381,7 +464,11 @@ def impact(job: HostedHarnessJob, kind: str, item_id: str) -> dict[str, Any]:
     elif kind == "table":
         for tool in tools:
             text = " ".join((tool["description"], tool["effects"], tool["refuses"]))
-            if _mentions(text, item_id):
+            if item_id in (tool.get("tables_changed") or []):
+                affected[tool["name"]] = f"changes {item_id}"
+            elif item_id in (tool.get("tables_read") or []):
+                affected[tool["name"]] = f"reads {item_id}"
+            elif _mentions(text, item_id):
                 affected[tool["name"]] = f"reads or changes {item_id}"
     named = [item_id, *affected] if kind in ("tool", "table") else []
     return {

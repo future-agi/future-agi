@@ -44,6 +44,13 @@ class DesignToolSerializer(serializers.Serializer):
     inputs_from = serializers.DictField(child=serializers.CharField())
     effects = serializers.CharField(allow_blank=True)
     refuses = serializers.CharField(allow_blank=True)
+    tables_read = serializers.ListField(child=serializers.CharField(), required=False)
+    tables_changed = serializers.ListField(
+        child=serializers.CharField(), required=False
+    )
+    status = serializers.ChoiceField(
+        choices=("simulated", "in_process", "unsupported", "unknown"), required=False
+    )
     source = serializers.CharField()
     removed = serializers.BooleanField()
 
@@ -63,6 +70,29 @@ class DesignUseCaseSerializer(serializers.Serializer):
     source = serializers.CharField()
     removed = serializers.BooleanField()
     planned_scenarios = serializers.IntegerField(min_value=0)
+
+
+class DesignAgentSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    version = serializers.CharField()
+
+
+class DesignBriefSerializer(serializers.Serializer):
+    description = serializers.CharField(allow_blank=True)
+    channel = serializers.ChoiceField(choices=("chat", "voice"))
+    agent = DesignAgentSerializer(allow_null=True)
+
+
+class DesignActorSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    role = serializers.CharField(allow_blank=True)
+
+
+class DesignUnsupportedSerializer(serializers.Serializer):
+    tool = serializers.CharField()
+    reaches = serializers.ListField(child=serializers.CharField())
+    removed = serializers.BooleanField()
 
 
 class DesignEditSerializer(serializers.Serializer):
@@ -85,7 +115,11 @@ class DesignReviewSerializer(serializers.Serializer):
     tools = DesignToolSerializer(many=True)
     rules = DesignRuleSerializer(many=True)
     use_cases = DesignUseCaseSerializer(many=True)
+    brief = DesignBriefSerializer()
+    actors = DesignActorSerializer(many=True)
+    unsupported = DesignUnsupportedSerializer(many=True)
     edits = DesignEditSerializer(many=True)
+    created_at = serializers.DateTimeField(allow_null=True)
     approved_at = serializers.DateTimeField(allow_null=True)
 
 

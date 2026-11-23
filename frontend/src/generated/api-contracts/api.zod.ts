@@ -47439,6 +47439,11 @@ export const SimulateApiHarnessEnvironmentsDesignReviewResponse = zod.object({
       inputs_from: zod.record(zod.string(), zod.string().min(1)),
       effects: zod.string(),
       refuses: zod.string(),
+      tables_read: zod.array(zod.string().min(1)).optional(),
+      tables_changed: zod.array(zod.string().min(1)).optional(),
+      status: zod
+        .enum(["simulated", "in_process", "unsupported", "unknown"])
+        .optional(),
       source: zod.string().min(1),
       removed: zod.boolean(),
     }),
@@ -47466,6 +47471,28 @@ export const SimulateApiHarnessEnvironmentsDesignReviewResponse = zod.object({
         ),
     }),
   ),
+  brief: zod.object({
+    description: zod.string(),
+    channel: zod.enum(["chat", "voice"]),
+    agent: zod.object({
+      name: zod.string().min(1),
+      version: zod.string().min(1),
+    }),
+  }),
+  actors: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      role: zod.string(),
+    }),
+  ),
+  unsupported: zod.array(
+    zod.object({
+      tool: zod.string().min(1),
+      reaches: zod.array(zod.string().min(1)),
+      removed: zod.boolean(),
+    }),
+  ),
   edits: zod.array(
     zod.object({
       index: zod
@@ -47481,6 +47508,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewResponse = zod.object({
       at: zod.string().min(1),
     }),
   ),
+  created_at: zod.string().datetime({ offset: true }),
   approved_at: zod.string().datetime({ offset: true }),
 });
 
@@ -47546,6 +47574,11 @@ export const SimulateApiHarnessEnvironmentsDesignReviewApproveResponse =
         inputs_from: zod.record(zod.string(), zod.string().min(1)),
         effects: zod.string(),
         refuses: zod.string(),
+        tables_read: zod.array(zod.string().min(1)).optional(),
+        tables_changed: zod.array(zod.string().min(1)).optional(),
+        status: zod
+          .enum(["simulated", "in_process", "unsupported", "unknown"])
+          .optional(),
         source: zod.string().min(1),
         removed: zod.boolean(),
       }),
@@ -47573,6 +47606,28 @@ export const SimulateApiHarnessEnvironmentsDesignReviewApproveResponse =
           ),
       }),
     ),
+    brief: zod.object({
+      description: zod.string(),
+      channel: zod.enum(["chat", "voice"]),
+      agent: zod.object({
+        name: zod.string().min(1),
+        version: zod.string().min(1),
+      }),
+    }),
+    actors: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        role: zod.string(),
+      }),
+    ),
+    unsupported: zod.array(
+      zod.object({
+        tool: zod.string().min(1),
+        reaches: zod.array(zod.string().min(1)),
+        removed: zod.boolean(),
+      }),
+    ),
     edits: zod.array(
       zod.object({
         index: zod
@@ -47588,6 +47643,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewApproveResponse =
         at: zod.string().min(1),
       }),
     ),
+    created_at: zod.string().datetime({ offset: true }),
     approved_at: zod.string().datetime({ offset: true }),
   });
 
@@ -47653,6 +47709,11 @@ export const SimulateApiHarnessEnvironmentsDesignReviewDiscardResponse =
         inputs_from: zod.record(zod.string(), zod.string().min(1)),
         effects: zod.string(),
         refuses: zod.string(),
+        tables_read: zod.array(zod.string().min(1)).optional(),
+        tables_changed: zod.array(zod.string().min(1)).optional(),
+        status: zod
+          .enum(["simulated", "in_process", "unsupported", "unknown"])
+          .optional(),
         source: zod.string().min(1),
         removed: zod.boolean(),
       }),
@@ -47680,6 +47741,28 @@ export const SimulateApiHarnessEnvironmentsDesignReviewDiscardResponse =
           ),
       }),
     ),
+    brief: zod.object({
+      description: zod.string(),
+      channel: zod.enum(["chat", "voice"]),
+      agent: zod.object({
+        name: zod.string().min(1),
+        version: zod.string().min(1),
+      }),
+    }),
+    actors: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        role: zod.string(),
+      }),
+    ),
+    unsupported: zod.array(
+      zod.object({
+        tool: zod.string().min(1),
+        reaches: zod.array(zod.string().min(1)),
+        removed: zod.boolean(),
+      }),
+    ),
     edits: zod.array(
       zod.object({
         index: zod
@@ -47695,6 +47778,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewDiscardResponse =
         at: zod.string().min(1),
       }),
     ),
+    created_at: zod.string().datetime({ offset: true }),
     approved_at: zod.string().datetime({ offset: true }),
   });
 
@@ -47774,6 +47858,11 @@ export const SimulateApiHarnessEnvironmentsDesignReviewEditResponse =
         inputs_from: zod.record(zod.string(), zod.string().min(1)),
         effects: zod.string(),
         refuses: zod.string(),
+        tables_read: zod.array(zod.string().min(1)).optional(),
+        tables_changed: zod.array(zod.string().min(1)).optional(),
+        status: zod
+          .enum(["simulated", "in_process", "unsupported", "unknown"])
+          .optional(),
         source: zod.string().min(1),
         removed: zod.boolean(),
       }),
@@ -47801,6 +47890,28 @@ export const SimulateApiHarnessEnvironmentsDesignReviewEditResponse =
           ),
       }),
     ),
+    brief: zod.object({
+      description: zod.string(),
+      channel: zod.enum(["chat", "voice"]),
+      agent: zod.object({
+        name: zod.string().min(1),
+        version: zod.string().min(1),
+      }),
+    }),
+    actors: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        role: zod.string(),
+      }),
+    ),
+    unsupported: zod.array(
+      zod.object({
+        tool: zod.string().min(1),
+        reaches: zod.array(zod.string().min(1)),
+        removed: zod.boolean(),
+      }),
+    ),
     edits: zod.array(
       zod.object({
         index: zod
@@ -47816,6 +47927,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewEditResponse =
         at: zod.string().min(1),
       }),
     ),
+    created_at: zod.string().datetime({ offset: true }),
     approved_at: zod.string().datetime({ offset: true }),
   });
 
@@ -47877,6 +47989,11 @@ export const SimulateApiHarnessEnvironmentsDesignReviewUndoResponse =
         inputs_from: zod.record(zod.string(), zod.string().min(1)),
         effects: zod.string(),
         refuses: zod.string(),
+        tables_read: zod.array(zod.string().min(1)).optional(),
+        tables_changed: zod.array(zod.string().min(1)).optional(),
+        status: zod
+          .enum(["simulated", "in_process", "unsupported", "unknown"])
+          .optional(),
         source: zod.string().min(1),
         removed: zod.boolean(),
       }),
@@ -47904,6 +48021,28 @@ export const SimulateApiHarnessEnvironmentsDesignReviewUndoResponse =
           ),
       }),
     ),
+    brief: zod.object({
+      description: zod.string(),
+      channel: zod.enum(["chat", "voice"]),
+      agent: zod.object({
+        name: zod.string().min(1),
+        version: zod.string().min(1),
+      }),
+    }),
+    actors: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        role: zod.string(),
+      }),
+    ),
+    unsupported: zod.array(
+      zod.object({
+        tool: zod.string().min(1),
+        reaches: zod.array(zod.string().min(1)),
+        removed: zod.boolean(),
+      }),
+    ),
     edits: zod.array(
       zod.object({
         index: zod
@@ -47919,6 +48058,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewUndoResponse =
         at: zod.string().min(1),
       }),
     ),
+    created_at: zod.string().datetime({ offset: true }),
     approved_at: zod.string().datetime({ offset: true }),
   });
 

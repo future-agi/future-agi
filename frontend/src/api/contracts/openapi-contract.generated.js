@@ -65562,7 +65562,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "tools",
         "rules",
         "use_cases",
+        "brief",
+        "actors",
+        "unsupported",
         "edits",
+        "created_at",
         "approved_at",
       ],
       type: "object",
@@ -65616,11 +65620,32 @@ export const OPENAPI_CONTRACT = Object.freeze({
             $ref: "#/definitions/DesignUseCase",
           },
         },
+        brief: {
+          $ref: "#/definitions/DesignBrief",
+        },
+        actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignActor",
+          },
+        },
+        unsupported: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignUnsupported",
+          },
+        },
         edits: {
           type: "array",
           items: {
             $ref: "#/definitions/DesignEdit",
           },
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
         approved_at: {
           title: "Approved at",
@@ -107585,6 +107610,44 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DesignActor: {
+      required: ["id", "name", "role"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+        },
+      },
+    },
+    DesignBrief: {
+      required: ["description", "channel", "agent"],
+      type: "object",
+      properties: {
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        channel: {
+          title: "Channel",
+          type: "string",
+          enum: ["chat", "voice"],
+        },
+        agent: {
+          $ref: "#/definitions/DesignAgent",
+        },
+      },
+    },
     DesignEdit: {
       required: ["index", "op", "kind", "id", "by", "at"],
       type: "object",
@@ -107750,10 +107813,51 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Refuses",
           type: "string",
         },
+        tables_read: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        tables_changed: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["simulated", "in_process", "unsupported", "unknown"],
+        },
         source: {
           title: "Source",
           type: "string",
           minLength: 1,
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+      },
+    },
+    DesignUnsupported: {
+      required: ["tool", "reaches", "removed"],
+      type: "object",
+      properties: {
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        reaches: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         removed: {
           title: "Removed",
@@ -133494,6 +133598,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
           enum: ["after_reduction"],
         },
       },
+    },
+    DesignAgent: {
+      required: ["name", "version"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        version: {
+          title: "Version",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     DesignToolArg: {
       required: ["name", "type"],
