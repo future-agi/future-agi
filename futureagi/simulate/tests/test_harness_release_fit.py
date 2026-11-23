@@ -674,3 +674,54 @@ def test_a_model_call_that_hits_a_gateway_error_is_tried_once_more(monkeypatch):
 
     assert harness_fit._ask_model("task", {}) == {"pairs": []}
     assert calls == ["https://gw/v1/chat/completions"] * 2
+
+
+@pytest.mark.django_db
+def test_a_run_of_a_case_the_agent_cant_be_scored_on_is_refused(organization):
+    from simulate.services import harness_releases
+
+    environment = _adaptation(organization)
+    environment.payload["metadata"]["release_composition"] = {
+        "binding": {"digest": "sha256:" + "b" * 64},
+        "alignment": {
+            "unscorable": [{"scenario_key": "b", "reason": "needs create_draft"}]
+        },
+    }
+    environment.save(update_fields=["payload"])
+
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_releases.freeze_run_manifest(
+            environment, environment, scenario_keys=["a", "b"], trials=1
+        )
+
+    assert refused.value.code == "scenario_unscorable"
+    assert "b (needs create_draft)" in str(refused.value)
+
+
+@pytest.mark.django_db
+def test_a_release_run_composes_with_its_binding_proof(organization, monkeypatch):
+    from simulate.services import harness_releases
+
+    monkeypatch.setattr(
+        harness_releases, "_release_archives", lambda *args: ([], "true")
+    )
+    run = _adaptation(organization)
+    composition = {
+        "environment": [],
+        "suite": {},
+        "binding": {"mode": "tool_routed"},
+        "binding_proof": {"passed": True},
+    }
+    run.payload["metadata"] = {
+        "release_composition": composition,
+        "run_manifest": {"simulator": {}, "runtime": {}},
+    }
+
+    launch = harness_releases.release_launch_for(run)
+
+    assert ("/work/binding-proof.json", b'{"passed": true}') in launch.uploads
+    assert launch.bundle_command.endswith(" --binding-proof /work/binding-proof.json")
+    del composition["binding_proof"]
+    assert (
+        "--binding-proof" not in harness_releases.release_launch_for(run).bundle_command
+    )
