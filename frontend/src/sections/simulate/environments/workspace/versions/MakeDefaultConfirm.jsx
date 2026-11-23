@@ -29,7 +29,7 @@ export default function MakeDefaultConfirm({
       title={COPY.title(label, COPY.pieces[piece])}
       content={
         <Typography component="span" sx={{ typography: "s2" }}>
-          {COPY.body}
+          {piece === "agent" ? COPY.agentBody : COPY.body}
         </Typography>
       }
       action={

@@ -227,6 +227,9 @@ export const VERSIONS_COPY = {
       suite: "scenario version",
     },
     body: "New runs use it. If this combination hasn't run before, the next run prepares it first.",
+    // The server checks a new agent with the environment first, unless the pair is already certified or can't be checked.
+    agentBody:
+      "If it hasn't been checked with this environment yet, it's checked first. Until the check ends, runs keep using the current default.",
     confirm: "Make default",
     pending: "Making default…",
     error: "Couldn't change the default. Try again in a moment.",
