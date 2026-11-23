@@ -73225,6 +73225,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["agent", "artifacts"],
       type: "object",
       properties: {
+        source_selection: {
+          $ref: "#/definitions/HarnessDesignSourceSelection",
+        },
         schema_version: {
           title: "Schema version",
           type: "string",
@@ -73574,6 +73577,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
       required: ["agent", "artifacts"],
       type: "object",
       properties: {
+        source_selection: {
+          $ref: "#/definitions/HarnessDesignSourceSelection",
+        },
         schema_version: {
           title: "Schema version",
           type: "string",
@@ -115306,6 +115312,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             description: "Any valid JSON value.",
           },
         },
+        source_review: {
+          $ref: "#/definitions/HarnessJobSourceReview",
+        },
         runtime: {
           title: "Runtime",
           type: "object",
@@ -138904,6 +138913,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessEnvironmentTableField",
           },
+        },
+      },
+    },
+    HarnessJobSourceReview: {
+      required: ["id", "state", "revision", "draft_digest", "schema_digest"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        draft_digest: {
+          title: "Draft digest",
+          type: "string",
+        },
+        schema_digest: {
+          title: "Schema digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
         },
       },
     },

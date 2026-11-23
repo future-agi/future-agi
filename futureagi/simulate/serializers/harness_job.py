@@ -8,6 +8,9 @@ from django.conf import settings
 from rest_framework import serializers
 
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB, MAX_SEED
+from simulate.serializers.harness_source_selection import (
+    HarnessDesignSourceSelectionSerializer,
+)
 from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
@@ -553,6 +556,7 @@ CREDENTIAL_VALUE_MAX_CHARS = 65_536
 
 
 class HarnessJobCreateSerializer(serializers.Serializer):
+    source_selection = HarnessDesignSourceSelectionSerializer(required=False)
     # Create refuses a job whose connector has no credentials; preflight reports them as
     # unmet requirements instead, so the readiness panel can tell the user what to add.
     reject_missing_credentials = True
@@ -639,6 +643,10 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             "source_review_receipt",
             "design_source_selection",
             "design_source_pin",
+            "build_source_selection",
+            "build_source_pin",
+            "source_review_documents",
+            "source_review",
             "source_review_id",
         }
         if reserved.intersection(value):
@@ -885,6 +893,7 @@ class HarnessDesignCreateSerializer(HarnessJobCreateSerializer):
     service only. It runs one world at a time."""
 
     agent = None
+    source_selection = None
 
     def validate(self, attrs):
         for name in ("runtime", "security", "retry"):
@@ -1120,11 +1129,20 @@ class HarnessSecretValuesSerializer(serializers.Serializer):
 # ── Read DTO response serializers ───────────────────────────────────────
 
 
+class HarnessJobSourceReviewSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    state = serializers.CharField()
+    revision = serializers.IntegerField()
+    draft_digest = serializers.CharField(allow_blank=True)
+    schema_digest = serializers.CharField(allow_null=True)
+
+
 class HarnessJobInfoSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
     run_id = serializers.UUIDField()
     source = serializers.DictField()
     metadata = serializers.DictField(child=JsonValueField(allow_null=True))
+    source_review = HarnessJobSourceReviewSerializer(required=False)
     runtime = serializers.DictField(required=False)
     run_test_id = serializers.UUIDField(allow_null=True)
     test_execution_id = serializers.UUIDField(allow_null=True)

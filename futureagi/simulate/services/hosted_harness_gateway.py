@@ -46,6 +46,7 @@ from simulate.models import (
     HostedHarnessSecret,
 )
 from simulate.models.hosted_harness import MAX_SCENARIOS_PER_JOB
+from simulate.services import harness_reviewed_builds as reviewed_builds
 from simulate.services.agent_contracts import store_build_contract
 from simulate.services.code_archives import (
     store_commit_archive,
@@ -2688,12 +2689,13 @@ class HostedHarnessGateway:
     ) -> HostedHarnessAttempt:
         from simulate.services.harness_versioning import assembly as bundle_cache
 
+        reviewed = reviewed_builds.launch_material(job)
         _mark_stage(job, "acquiring_source")
         source_archive, commit_sha = HostedSourceAcquirer().acquire(job)
         # A pinned run replays its assembled pair; on a cache miss it certifies it first.
-        assembled, assembly_error = _prepare_assembly(job)
+        assembled, assembly_error = (None, None) if reviewed else _prepare_assembly(job)
         certify = assembled is not None and not assembled.hit
-        authoring_archive = _authoring_archive_for(job)
+        authoring_archive = None if reviewed else _authoring_archive_for(job)
         from simulate.services.harness_designs import design_launch_for
         from simulate.services.harness_releases import (
             adaptation_launch_for,
@@ -2933,6 +2935,8 @@ class HostedHarnessGateway:
             from simulate.services.harness_usage import record_sandbox_runtime
 
             record_sandbox_runtime(attempt, started=True)
+            if reviewed:
+                reviewed.stage(sandbox, dispatch_payload)
             if design is not None and design.receipt is not None:
                 from simulate.services.harness_designs import PRIVATE_CONTROLLER_JOB
 
@@ -3036,6 +3040,7 @@ class HostedHarnessGateway:
                 "tar -xzf /work/authoring.tar.gz -C /work/authoring && "
                 "rm /work/authoring.tar.gz; fi && "
                 + (f"{staged.prepare_command} && " if staged is not None else "")
+                + (f"{reviewed_builds.PRIVATE_PERMISSIONS} && " if reviewed else "")
                 + "tar -xzf /work/source.tar.gz -C /work && "
                 "rm /work/source.tar.gz && "
                 "chown -R svc-control:svc-control /work/source && "
@@ -3144,7 +3149,7 @@ class HostedHarnessGateway:
                     SandboxCommandStep(
                         "if [ ! -f /work/authoring/contract.json ]; then "
                         "python -m fi.alk.harness.hosted_authoring_entrypoint "
-                        "/work/job.json --source /work/source --output /work/authoring "
+                        f"{reviewed_builds.controller_args(job)} --source /work/source --output /work/authoring "
                         + (
                             "--await-harness "
                             if harness_builds
@@ -3175,13 +3180,14 @@ class HostedHarnessGateway:
                             SandboxCommandStep(source_check.removesuffix(" && "))
                         )
                     steps.append(SandboxCommandStep(bundle_command))
-                steps.append(
-                    SandboxCommandStep(
-                        "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
-                        "--source /work/source --output /work/artifacts",
-                        harness=True,
+                if not reviewed:
+                    steps.append(
+                        SandboxCommandStep(
+                            "python -m fi.alk.harness.hosted_entrypoint /work/job.json "
+                            "--source /work/source --output /work/artifacts",
+                            harness=True,
+                        )
                     )
-                )
             command = sandbox.process.execute_session_command(
                 _ENTRYPOINT_SESSION,
                 SandboxCommandRequest(
@@ -3398,7 +3404,7 @@ class HostedHarnessGateway:
                 command=(
                     "umask 077 && "
                     "python -m fi.alk.harness.hosted_chat_entrypoint "
-                    "--job /work/job.json --source /work/source "
+                    f"--job {reviewed_builds.controller_args(job)} --source /work/source "
                     "--workspace /work/authoring "
                     f"--capabilities {_CHAT_CAPABILITIES_PATH} "
                     f"--policy {_CHAT_POLICY_PATH}"
@@ -3640,6 +3646,7 @@ class HostedHarnessGateway:
         source; secret refs name its credentials only, never a value. ``None`` when
         ``claim_ref``'s claim was given up meanwhile; the new sandbox is deleted.
         """
+        reviewed = reviewed_builds.launch_material(job)
         workspace_archive = chat_workspace_for(
             job, conversation, chat_state=load_workspace_archive(conversation)
         )
@@ -3717,20 +3724,19 @@ class HostedHarnessGateway:
                 return None
             sandbox.fs.upload_file(source_archive, "/work/source.tar.gz")
             sandbox.fs.upload_file(workspace_archive, "/work/conversation.tar.gz")
-            sandbox.fs.upload_file(
-                json.dumps(
-                    _with_used_scenario_keys(
-                        _with_egress_allowed_hosts(
-                            _with_simulation_mark(
-                                guest_job_document(job.payload), simulation_mark
-                            ),
-                            allowed_domains,
-                        ),
-                        job,
+            shared = _with_used_scenario_keys(
+                _with_egress_allowed_hosts(
+                    _with_simulation_mark(
+                        guest_job_document(job.payload), simulation_mark
                     ),
-                    sort_keys=True,
-                    separators=(",", ":"),
-                ).encode(),
+                    allowed_domains,
+                ),
+                job,
+            )
+            if reviewed:
+                reviewed.stage(sandbox, shared)
+            sandbox.fs.upload_file(
+                json.dumps(shared, sort_keys=True, separators=(",", ":")).encode(),
                 "/work/job.json",
             )
             sandbox.fs.upload_file(
@@ -3775,7 +3781,8 @@ class HostedHarnessGateway:
                     else ""
                 )
                 + f"chmod 0600 /work/job.json {_CHAT_CAPABILITIES_PATH} "
-                f"{_CHAT_POLICY_PATH}",
+                f"{_CHAT_POLICY_PATH}"
+                + (f" && {reviewed_builds.PRIVATE_PERMISSIONS}" if reviewed else ""),
                 timeout=120,
             )
             if prepared.exit_code:
@@ -3813,7 +3820,7 @@ class HostedHarnessGateway:
                     env=chat_exports,
                     command=(
                         "python -m fi.alk.harness.hosted_chat_entrypoint "
-                        "--job /work/job.json --source /work/source "
+                        f"--job {reviewed_builds.controller_args(job)} --source /work/source "
                         "--workspace /work/authoring "
                         f"--capabilities {_CHAT_CAPABILITIES_PATH} "
                         f"--policy {_CHAT_POLICY_PATH}"
@@ -4192,6 +4199,10 @@ class HostedHarnessGateway:
     @staticmethod
     def _sync_authoring_progress(attempt: HostedHarnessAttempt, sandbox) -> None:
         """Expose safe in-sandbox authoring outputs while the unified command is running."""
+        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
+        if reviewed_builds.sourced(job):
+            # Snapshot-backed builds publish the suite only after the complete bundle is verified.
+            return
 
         def _json(path: str):
             try:
@@ -4273,7 +4284,6 @@ class HostedHarnessGateway:
         invariants = _json("/work/authoring/source-data-invariants.json")
         certified = _json("/work/authoring/generic-harness/certification.json")
         _read_harness_usage(attempt, sandbox)
-        job = HostedHarnessJob.no_workspace_objects.get(id=attempt.job_id)
         metadata = (job.payload or {}).get("metadata") or {}
         if not metadata.get("simulation_only"):
             _record_harness_spend(
@@ -4934,6 +4944,35 @@ class HostedHarnessGateway:
             return self._finish_adaptation(attempt)
         if exit_code in {0, 2} and design_of(job) is not None:
             return self._finish_design(attempt)
+        if exit_code == 0 and reviewed_builds.sourced(job):
+            sandbox = self.client.get(
+                str(attempt.provider_ref),
+                request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS,
+            )
+            packed = sandbox.process.exec(
+                "umask 077 && tar --exclude=./cost.json --exclude=__pycache__ -czf /tmp/reviewed-build.tar.gz -C /work/authoring .",
+                timeout=180,
+            )
+            if packed.exit_code:
+                raise HostedHarnessError(
+                    "source_build_archive_unavailable",
+                    "The reviewed workspace could not be staged.",
+                    status_code=503,
+                    retryable=True,
+                )
+            job = reviewed_builds.complete(
+                attempt, sandbox.fs.download_file("/tmp/reviewed-build.tar.gz", 300)
+            )
+            attempt.terminal_stage = (
+                "completed"
+                if job.state == HostedHarnessJob.State.COMPLETED
+                else "failed"
+            )
+            attempt.terminal_failure = job.failure
+            attempt.save(
+                update_fields=["terminal_stage", "terminal_failure", "updated_at"]
+            )
+            return self._delete_and_record(attempt)
 
         # Event/manifest ingestion runs independently from the provider poll. The attempt object
         # held by the workflow may predate terminal HTTP requests even though both commits are
@@ -5705,6 +5744,9 @@ _SERVER_ONLY_METADATA = (
     "draft_saves",
     "evidence_adds",
     "design_source_selection",
+    "build_source_selection",
+    "build_source_pin",
+    "source_review_documents",
     "design_source_pin",
     "source_review_id",
     "source_review_basis",
@@ -7085,7 +7127,15 @@ def store_authoring_archive(
 ) -> str:
     """Persist fresh authoring output and attach its opaque key to the hosted job."""
     digest = hashlib.sha256(body).hexdigest()
-    object_key = f"harness-authoring/{job.organization_id}/{job.id}/{digest}.tar.gz"
+    source_dir = ""
+    if reviewed_builds.sourced(job):
+        pin = reviewed_builds.check_archive(job, body)
+        source_dir = (
+            hashlib.sha256(json.dumps(pin, sort_keys=True).encode()).hexdigest() + "/"
+        )
+    object_key = (
+        f"harness-authoring/{job.organization_id}/{job.id}/{source_dir}{digest}.tar.gz"
+    )
     put_private(object_key, body, "application/gzip")
     stage_outputs = (
         authoring_stage_outputs_from_archive(body, scenario_limit=job.scenario_count)

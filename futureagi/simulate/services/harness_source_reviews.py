@@ -28,6 +28,24 @@ State = HarnessSourceReview.State
 _REVIEWABLE = {State.READY, State.NEEDS_REPAIR}
 
 
+def _build_selection(owner, kind):
+    key = {
+        Owner.DESIGN: "design_source_selection",
+        Owner.BUILD_JOB: "build_source_selection",
+    }.get(kind)
+    return (owner.payload.get("metadata") or {}).get(key) if key else None
+
+
+def _build_basis(owner, kind, target_table, captured):
+    if kind == Owner.DESIGN:
+        from simulate.services.harness_designs import design_source_basis
+
+        return design_source_basis(owner, target_table, captured)
+    if target_table:
+        raise _conflict("A new connected build infers its record schema.")
+    return {"revision": 1, "schema_digest": None}, None
+
+
 def schema_digest(schema: dict) -> str:
     body = json.dumps(
         schema,
@@ -238,7 +256,7 @@ def _owner_basis(
 
 def _required_basis(row: HarnessSourceReview, owner: HostedHarnessJob) -> None:
     metadata = (owner.payload or {}).get("metadata") or {}
-    if row.owner_kind == Owner.DESIGN and metadata.get("design_source_selection"):
+    if _build_selection(owner, row.owner_kind):
         if (
             row.state != State.READING
             and str(row.id) != metadata.get("source_review_id")
@@ -555,12 +573,9 @@ def create_review(
             _check_batch(captured)
         return tuple(captured)
 
-    if kind == Owner.DESIGN and owner.payload["metadata"].get(
-        "design_source_selection"
-    ):
+    if _build_selection(owner, kind):
         from simulate.services.harness_designs import (
             AWAITING_REVIEW,
-            design_source_basis,
         )
 
         with transaction.atomic():
@@ -568,7 +583,7 @@ def create_review(
                 pk=owner.pk
             )
             metadata = owner.payload["metadata"]
-            selection = metadata["design_source_selection"]
+            selection = _build_selection(owner, kind)
             if owner.current_stage != AWAITING_REVIEW or (
                 web_ids,
                 json.loads(selected),
@@ -598,8 +613,9 @@ def create_review(
                 raise _conflict("This source preview was superseded.")
             captured = capture()
             _check_batch(captured)
-            basis, schema = design_source_basis(
+            basis, schema = _build_basis(
                 owner,
+                kind,
                 scope.get("target_table", selection.get("target_table")),
                 captured,
             )
@@ -775,12 +791,10 @@ def reprepare_review(
                 "target_table": target_table,
             }
             basis, schema = _owner_basis(row.owner, Owner.ENVIRONMENT, scope)
-        elif row.owner_kind == Owner.DESIGN and row.owner.payload["metadata"].get(
-            "design_source_selection"
-        ):
-            from simulate.services.harness_designs import design_source_basis
-
-            basis, schema = design_source_basis(row.owner, target_table, captured)
+        elif _build_selection(row.owner, row.owner_kind):
+            basis, schema = _build_basis(
+                row.owner, row.owner_kind, target_table, captured
+            )
             if schema_repairs and schema is not None:
                 raise _conflict("Schema repairs require an inferred simulation schema.")
         else:
@@ -850,9 +864,7 @@ def _accept(
     ).hexdigest()
     if row.state == State.ACCEPTED:
         if row.acceptance_key == idempotency_key and row.acceptance_digest == digest:
-            if row.owner_kind == Owner.DESIGN and row.owner.payload["metadata"].get(
-                "design_source_selection"
-            ):
+            if _build_selection(row.owner, row.owner_kind):
                 from simulate.services.harness_designs import schedule_reviewed_design
 
                 schedule_reviewed_design(row.owner, request)
@@ -868,9 +880,7 @@ def _accept(
         raise _conflict()
     owner = row.owner
     _required_basis(row, owner)
-    if row.owner_kind == Owner.DESIGN and owner.payload["metadata"].get(
-        "design_source_selection"
-    ):
+    if _build_selection(owner, row.owner_kind):
         from simulate.services.harness_usage import require_harness_authoring
 
         require_harness_authoring(str(owner.organization_id))
@@ -915,19 +925,27 @@ def _accept(
             "revision",
         ]
     )
-    if row.owner_kind == Owner.DESIGN and owner.payload["metadata"].get(
-        "design_source_selection"
-    ):
+    if _build_selection(owner, row.owner_kind):
         from simulate.services.harness_designs import (
             PENDING_DISPATCH,
             schedule_reviewed_design,
         )
 
-        owner.payload["metadata"]["design_source_pin"] = {
+        pin_key = (
+            "design_source_pin"
+            if row.owner_kind == Owner.DESIGN
+            else "build_source_pin"
+        )
+        owner.payload["metadata"][pin_key] = {
             "owner_id": str(owner.id),
             "review_id": str(row.id),
             "id": result["snapshot_id"],
             "digest": row.snapshot_digest,
+            **(
+                {"schema_digest": row.basis["schema_digest"]}
+                if row.owner_kind == Owner.BUILD_JOB
+                else {}
+            ),
         }
         owner.current_stage = PENDING_DISPATCH
         owner.save(update_fields=["payload", "current_stage", "updated_at"])

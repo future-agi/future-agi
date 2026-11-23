@@ -4,7 +4,9 @@ from model_hub.serializers.contracts import JsonObjectRequestField
 from simulate.models import HarnessSourceReview
 from simulate.serializers.harness_environment import (
     HarnessSourceDraftRefSerializer,
-    HarnessSourceSelectionSerializer,
+)
+from simulate.serializers.harness_source_selection import (
+    HarnessDesignSourceSelectionSerializer,
 )
 from tfc.utils.api_serializers import StrictInputSerializer
 
@@ -46,32 +48,6 @@ class SourceSchemaRepairSerializer(StrictInputSerializer):
     )
     separate_entity = serializers.BooleanField(required=False)
     manual_relationships = serializers.BooleanField(required=False)
-
-
-class HarnessDesignSourceSelectionSerializer(StrictInputSerializer):
-    document_ids = serializers.ListField(
-        child=serializers.UUIDField(), required=False, max_length=100, default=list
-    )
-    document_purposes = serializers.DictField(
-        child=serializers.ChoiceField(choices=("policy", "reference", "seed_records")),
-        required=False,
-        default=dict,
-    )
-    knowledge_base = HarnessSourceSelectionSerializer(
-        many=True, required=False, default=list, max_length=100
-    )
-
-    def validate(self, attrs):
-        document_ids = attrs["document_ids"]
-        if len(document_ids) != len(set(document_ids)):
-            raise serializers.ValidationError("Document IDs must be unique.")
-        if not set(attrs["document_purposes"]) <= {
-            str(identifier) for identifier in document_ids
-        }:
-            raise serializers.ValidationError(
-                "A purpose must name a selected document."
-            )
-        return attrs
 
 
 class HarnessSourceReviewCreateSerializer(HarnessDesignSourceSelectionSerializer):

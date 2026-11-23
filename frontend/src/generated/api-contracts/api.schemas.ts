@@ -20527,6 +20527,16 @@ export type HarnessJobReadApiReceiptsItem = { [key: string]: unknown };
 
 export type HarnessJobReadApiUsageLimit = { [key: string]: unknown };
 
+export interface HarnessJobSourceReviewApi {
+  id: string;
+  /** @minLength 1 */
+  state: string;
+  revision: number;
+  draft_digest: string;
+  /** @minLength 1 */
+  schema_digest: string;
+}
+
 export type HarnessJobInfoApiSource = { [key: string]: string };
 
 export type HarnessJobInfoApiMetadata = {
@@ -20540,6 +20550,7 @@ export interface HarnessJobInfoApi {
   run_id: string;
   source: HarnessJobInfoApiSource;
   metadata: HarnessJobInfoApiMetadata;
+  source_review?: HarnessJobSourceReviewApi;
   runtime?: HarnessJobInfoApiRuntime;
   run_test_id: string;
   test_execution_id: string;
@@ -24190,6 +24201,7 @@ export interface HarnessArtifactApi {
 }
 
 export interface HarnessJobCreateApi {
+  source_selection?: HarnessDesignSourceSelectionApi;
   schema_version?: HarnessJobCreateApiSchemaVersion;
   run_id?: string;
   source?: HarnessSourceApi;
@@ -24231,6 +24243,7 @@ export type HarnessPreflightApiMetadata = {
 export type HarnessPreflightApiCredentialValues = { [key: string]: string };
 
 export interface HarnessPreflightApi {
+  source_selection?: HarnessDesignSourceSelectionApi;
   schema_version?: HarnessPreflightApiSchemaVersion;
   run_id?: string;
   source?: HarnessSourceApi;

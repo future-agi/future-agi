@@ -25,6 +25,9 @@ from simulate.serializers.harness_job import (
     HarnessRunPinnedVersionsSerializer,
     HarnessRunWarningSerializer,
 )
+from simulate.serializers.harness_source_selection import (
+    HarnessSourceSelectionSerializer,
+)
 from simulate.serializers.requests.run_test_evals import (
     EvalConfigUpdateRequestSerializer,
 )
@@ -1147,24 +1150,6 @@ class HarnessScenarioListResponseSerializer(serializers.Serializer):
         declared = super().get_fields()
         declared["fields"] = HarnessScenarioFieldSerializer(many=True)
         return declared
-
-
-class HarnessSourceSelectionSerializer(StrictInputSerializer):
-    kind = serializers.ChoiceField(choices=("knowledge_base",))
-    kb_id = serializers.UUIDField()
-    file_ids = serializers.ListField(
-        child=serializers.UUIDField(), required=False, allow_empty=False, max_length=100
-    )
-    whole_collection = serializers.BooleanField(required=False, default=False)
-
-    def validate(self, attrs):
-        if attrs.get("whole_collection") == ("file_ids" in attrs):
-            raise serializers.ValidationError(
-                "Choose either whole_collection or explicit file_ids."
-            )
-        if len(set(attrs.get("file_ids", []))) != len(attrs.get("file_ids", [])):
-            raise serializers.ValidationError("file_ids must be unique.")
-        return attrs
 
 
 class HarnessSourceDraftRefSerializer(StrictInputSerializer):

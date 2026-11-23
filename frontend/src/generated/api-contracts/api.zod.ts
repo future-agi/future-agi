@@ -52480,6 +52480,15 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
       zod.string(),
       zod.object({}).passthrough().describe("Any valid JSON value."),
     ),
+    source_review: zod
+      .object({
+        id: zod.string().uuid(),
+        state: zod.string().min(1),
+        revision: zod.number(),
+        draft_digest: zod.string(),
+        schema_digest: zod.string().min(1),
+      })
+      .optional(),
     runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
@@ -52658,6 +52667,18 @@ export const SimulateApiHarnessJobsListResponse = zod.array(
 selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
+export const simulateApiHarnessJobsCreateBodySourceSelectionDocumentIdsDefault =
+  [];
+export const simulateApiHarnessJobsCreateBodySourceSelectionDocumentIdsMax = 100;
+
+export const simulateApiHarnessJobsCreateBodySourceSelectionDocumentPurposesDefault =
+  {};
+export const simulateApiHarnessJobsCreateBodySourceSelectionKnowledgeBaseItemFileIdsMax = 100;
+
+export const simulateApiHarnessJobsCreateBodySourceSelectionKnowledgeBaseItemWholeCollectionDefault =
+  false;
+export const simulateApiHarnessJobsCreateBodySourceSelectionKnowledgeBaseDefault =
+  [];
 export const simulateApiHarnessJobsCreateBodySchemaVersionDefault = `futureagi.harness-job.v1`;
 
 export const simulateApiHarnessJobsCreateBodySourceRepositoryRegExp =
@@ -52767,6 +52788,42 @@ export const simulateApiHarnessJobsCreateBodyMetadataDefault = {};
 export const simulateApiHarnessJobsCreateBodyCredentialValuesMaxOne = 65536;
 
 export const SimulateApiHarnessJobsCreateBody = zod.object({
+  source_selection: zod
+    .object({
+      document_ids: zod
+        .array(zod.string().uuid())
+        .max(simulateApiHarnessJobsCreateBodySourceSelectionDocumentIdsMax)
+        .default(
+          simulateApiHarnessJobsCreateBodySourceSelectionDocumentIdsDefault,
+        ),
+      document_purposes: zod
+        .record(zod.string(), zod.enum(["policy", "reference", "seed_records"]))
+        .default(
+          simulateApiHarnessJobsCreateBodySourceSelectionDocumentPurposesDefault,
+        ),
+      knowledge_base: zod
+        .array(
+          zod.object({
+            kind: zod.enum(["knowledge_base"]),
+            kb_id: zod.string().uuid(),
+            file_ids: zod
+              .array(zod.string().uuid())
+              .max(
+                simulateApiHarnessJobsCreateBodySourceSelectionKnowledgeBaseItemFileIdsMax,
+              )
+              .optional(),
+            whole_collection: zod
+              .boolean()
+              .default(
+                simulateApiHarnessJobsCreateBodySourceSelectionKnowledgeBaseItemWholeCollectionDefault,
+              ),
+          }),
+        )
+        .default(
+          simulateApiHarnessJobsCreateBodySourceSelectionKnowledgeBaseDefault,
+        ),
+    })
+    .optional(),
   schema_version: zod
     .enum(["futureagi.harness-job.v1"])
     .default(simulateApiHarnessJobsCreateBodySchemaVersionDefault),
@@ -53019,6 +53076,18 @@ export const SimulateApiHarnessJobsCreateBody = zod.object({
 selects its managed sandbox runtime.
  * @summary Provider-neutral control plane for hosted ALK harness jobs.
  */
+export const simulateApiHarnessJobsPreflightBodySourceSelectionDocumentIdsDefault =
+  [];
+export const simulateApiHarnessJobsPreflightBodySourceSelectionDocumentIdsMax = 100;
+
+export const simulateApiHarnessJobsPreflightBodySourceSelectionDocumentPurposesDefault =
+  {};
+export const simulateApiHarnessJobsPreflightBodySourceSelectionKnowledgeBaseItemFileIdsMax = 100;
+
+export const simulateApiHarnessJobsPreflightBodySourceSelectionKnowledgeBaseItemWholeCollectionDefault =
+  false;
+export const simulateApiHarnessJobsPreflightBodySourceSelectionKnowledgeBaseDefault =
+  [];
 export const simulateApiHarnessJobsPreflightBodySchemaVersionDefault = `futureagi.harness-job.v1`;
 
 export const simulateApiHarnessJobsPreflightBodySourceRepositoryRegExp =
@@ -53128,6 +53197,42 @@ export const simulateApiHarnessJobsPreflightBodyMetadataDefault = {};
 export const simulateApiHarnessJobsPreflightBodyCredentialValuesMaxOne = 65536;
 
 export const SimulateApiHarnessJobsPreflightBody = zod.object({
+  source_selection: zod
+    .object({
+      document_ids: zod
+        .array(zod.string().uuid())
+        .max(simulateApiHarnessJobsPreflightBodySourceSelectionDocumentIdsMax)
+        .default(
+          simulateApiHarnessJobsPreflightBodySourceSelectionDocumentIdsDefault,
+        ),
+      document_purposes: zod
+        .record(zod.string(), zod.enum(["policy", "reference", "seed_records"]))
+        .default(
+          simulateApiHarnessJobsPreflightBodySourceSelectionDocumentPurposesDefault,
+        ),
+      knowledge_base: zod
+        .array(
+          zod.object({
+            kind: zod.enum(["knowledge_base"]),
+            kb_id: zod.string().uuid(),
+            file_ids: zod
+              .array(zod.string().uuid())
+              .max(
+                simulateApiHarnessJobsPreflightBodySourceSelectionKnowledgeBaseItemFileIdsMax,
+              )
+              .optional(),
+            whole_collection: zod
+              .boolean()
+              .default(
+                simulateApiHarnessJobsPreflightBodySourceSelectionKnowledgeBaseItemWholeCollectionDefault,
+              ),
+          }),
+        )
+        .default(
+          simulateApiHarnessJobsPreflightBodySourceSelectionKnowledgeBaseDefault,
+        ),
+    })
+    .optional(),
   schema_version: zod
     .enum(["futureagi.harness-job.v1"])
     .default(simulateApiHarnessJobsPreflightBodySchemaVersionDefault),
@@ -53524,6 +53629,15 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
       zod.string(),
       zod.object({}).passthrough().describe("Any valid JSON value."),
     ),
+    source_review: zod
+      .object({
+        id: zod.string().uuid(),
+        state: zod.string().min(1),
+        revision: zod.number(),
+        draft_digest: zod.string(),
+        schema_digest: zod.string().min(1),
+      })
+      .optional(),
     runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),
@@ -53761,6 +53875,15 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
       zod.string(),
       zod.object({}).passthrough().describe("Any valid JSON value."),
     ),
+    source_review: zod
+      .object({
+        id: zod.string().uuid(),
+        state: zod.string().min(1),
+        revision: zod.number(),
+        draft_digest: zod.string(),
+        schema_digest: zod.string().min(1),
+      })
+      .optional(),
     runtime: zod.record(zod.string(), zod.string()).optional(),
     run_test_id: zod.string().uuid(),
     test_execution_id: zod.string().uuid(),

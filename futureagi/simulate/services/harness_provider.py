@@ -9,6 +9,7 @@ The hosted gateway independently selects Daytona or E2B through
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import re
 import uuid
@@ -359,6 +360,9 @@ def _public_metadata(value):
                 "source_review_receipt",
                 "design_source_pin",
                 "design_source_selection",
+                "build_source_selection",
+                "build_source_pin",
+                "source_review_documents",
             }
             and not key.endswith("_object_key")
         }
@@ -383,19 +387,26 @@ def _metadata_for_read(job: HostedHarnessJob) -> dict[str, Any]:
     if (
         isinstance(metadata, dict)
         and metadata.get("source_review_id")
-        and job.payload["metadata"].get("design_source_selection")
+        and (
+            job.payload["metadata"].get("design_source_selection")
+            or job.payload["metadata"].get("build_source_selection")
+        )
     ):
         from simulate.models import HarnessSourceReview
 
-        metadata["source_review"] = (
+        summary = (
             HarnessSourceReview.objects.filter(
                 pk=metadata["source_review_id"],
                 organization_id=job.organization_id,
                 workspace_id=job.workspace_id,
             )
-            .values("state", "revision", "draft_digest")
+            .values("state", "revision", "draft_digest", "basis__schema_digest")
             .first()
         )
+        if summary:
+            summary["id"] = str(metadata["source_review_id"])
+            summary["schema_digest"] = summary.pop("basis__schema_digest")
+            metadata["source_review"] = summary
     renamed = str(job.name or "").strip()
     if isinstance(metadata, dict) and renamed:
         # A name set through the rename endpoint wins, as on the environments list.
@@ -582,12 +593,18 @@ def serialize_job(job: HostedHarnessJob) -> dict[str, Any]:
     conversation = HostedHarnessConversation.no_workspace_objects.filter(
         job=job
     ).first()
+    public_metadata = _metadata_for_read(job)
     return {
         "job": {
             "job_id": str(job.id),
             "run_id": str(job.run_id),
             "source": job.payload["source"],
-            "metadata": _metadata_for_read(job),
+            "metadata": public_metadata,
+            **(
+                {"source_review": public_metadata["source_review"]}
+                if public_metadata.get("source_review")
+                else {}
+            ),
             "runtime": {
                 "parallelism": _requested_parallelism,
                 "cpu_units": _runtime.get("cpu_units"),
@@ -1837,6 +1854,20 @@ class HostedHarnessProvider:
 
         # Taken out first: values never reach the checks, the digest or the job.
         secret_values = payload.pop("credential_values", None) or {}
+        selection = payload.pop("source_selection", None)
+        if selection is not None:
+            from simulate.services.harness_source_reviews import require_source_scope
+
+            require_source_scope(request, write=True)
+            if not selection.get("document_ids") and not selection.get(
+                "knowledge_base"
+            ):
+                return Response(
+                    {"detail": "Choose files or organization knowledge."}, status=422
+                )
+            payload["metadata"]["build_source_selection"] = json.loads(
+                json.dumps(selection, default=str)
+            )
         client_digest = canonical_digest(payload)
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
@@ -1895,7 +1926,8 @@ class HostedHarnessProvider:
         )
 
         try:
-            require_harness_run_usage(str(organization.id), payload)
+            if not selection:
+                require_harness_run_usage(str(organization.id), payload)
         except Exception as exc:
             response = _usage_limit_response(exc)
             if response is not None:
@@ -1911,11 +1943,12 @@ class HostedHarnessProvider:
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         try:
-            require_harness_source_call_usage(
-                str(organization.id),
-                payload,
-                source_analysis[0] if source_analysis else (),
-            )
+            if not selection:
+                require_harness_source_call_usage(
+                    str(organization.id),
+                    payload,
+                    source_analysis[0] if source_analysis else (),
+                )
         except Exception as exc:
             response = _usage_limit_response(exc)
             if response is not None:
@@ -1960,7 +1993,7 @@ class HostedHarnessProvider:
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)
-                job, _ = create_hosted_job(
+                job, created = create_hosted_job(
                     organization,
                     payload,
                     idempotency_key=idempotency_key,
@@ -1968,6 +2001,19 @@ class HostedHarnessProvider:
                     on_create=on_create,
                     request_digest=client_digest,
                 )
+                if selection and created:
+                    from simulate.services.harness_designs import AWAITING_REVIEW
+                    from simulate.services.harness_source_reviews import create_review
+
+                    job.current_stage = AWAITING_REVIEW
+                    job.save(update_fields=["current_stage", "updated_at"])
+                    create_review(
+                        request,
+                        scope={"kind": "build_job", "id": str(job.id)},
+                        idempotency_key="build-selection",
+                        **selection,
+                    )
+                    job.refresh_from_db()
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
         except Exception as exc:
@@ -1980,6 +2026,8 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness scheduler is unavailable"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        if selection:
+            return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
         try:
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(
