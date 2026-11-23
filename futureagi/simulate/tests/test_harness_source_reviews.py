@@ -40,6 +40,28 @@ def test_schema_digest_matches_the_utf8_canonical_vector():
     )
 
 
+def test_environment_with_multiple_tables_requires_a_destination(monkeypatch):
+    monkeypatch.setattr(reviews.drafts, "fresh_draft", lambda *_: None)
+    owner = SimpleNamespace(
+        environment_version=SimpleNamespace(
+            documents={
+                "contract": {
+                    "data_schema": {
+                        "customers": {"customer_id": "UUID"},
+                        "orders": {"customer_id": "UUID", "total": "NUMERIC"},
+                    }
+                }
+            }
+        )
+    )
+    assert reviews._environment_schema(owner, None) == (None, ["customers", "orders"])
+    schema, _tables = reviews._environment_schema(owner, "orders")
+    assert schema["fields"] == [
+        {"name": "customer_id", "data_type": "string", "required": False},
+        {"name": "total", "data_type": "number", "required": False},
+    ]
+
+
 @pytest.fixture
 def mock_processor(monkeypatch):
     calls = []

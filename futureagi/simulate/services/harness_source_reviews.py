@@ -250,16 +250,23 @@ def _check_batch(captured) -> None:
 def _stage(
     row: HarnessSourceReview, capture, schema: dict | None
 ) -> HarnessSourceReview:
+    reading = HarnessSourceReview.objects.filter(
+        pk=row.id, state=State.READING, revision=row.revision
+    )
     if schema is None:
-        row.state = State.NEEDS_REPAIR
-        row.revision += 1
-        row.preview = {
+        preview = {
             "destination_tables": row.basis["destination_tables"],
             "diagnostics": [
                 {"code": "source_schema_ambiguous", "severity": "blocking", "span": {}}
             ],
         }
-        row.save(update_fields=["state", "revision", "preview"])
+        if not reading.filter(expires_at__gt=timezone.now()).update(
+            state=State.NEEDS_REPAIR,
+            revision=row.revision + 1,
+            preview=preview,
+        ):
+            raise _conflict()
+        row.refresh_from_db()
         return row
     try:
         captured = capture()
@@ -305,9 +312,7 @@ def _stage(
                 status_code=503,
                 retryable=True,
             ) from None
-        updated = HarnessSourceReview.objects.filter(
-            pk=row.id, state=State.READING, expires_at__gt=timezone.now()
-        ).update(
+        updated = reading.filter(expires_at__gt=timezone.now()).update(
             state=State.NEEDS_REPAIR
             if any(
                 item.get("severity") == "blocking"
@@ -323,9 +328,7 @@ def _stage(
         if not updated:
             raise _conflict()
     except (HostedHarnessError, PermissionDenied):
-        HarnessSourceReview.objects.filter(pk=row.id, state=State.READING).update(
-            state=State.NEEDS_REPAIR, revision=row.revision + 1
-        )
+        reading.update(state=State.NEEDS_REPAIR, revision=row.revision + 1)
         raise
     return row
 
