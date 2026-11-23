@@ -2915,7 +2915,9 @@ def _select_platform_evals(
     payload: dict[str, Any],
     modality: str,
 ) -> None:
-    """Bind the guest's chosen platform evals to this run, or refuse an unknown name."""
+    """Bind the guest's chosen platform evals to this run, or only suggest them while
+    suggestions are on; an unknown name is refused either way."""
+    from simulate.services.harness_eval_suggestions import store_suggested_evals
     from simulate.services.harness_evals import (
         UnknownEvalSelection,
         create_selected_eval_configs,
@@ -2924,13 +2926,11 @@ def _select_platform_evals(
     chosen = payload.get("chosen_evals") or []
     if not chosen:
         return
-    if getattr(settings, "HARNESS_EVAL_SUGGESTIONS_ENABLED", False):
-        from simulate.services.harness_evals import store_suggested_evals
-
-        store_suggested_evals(job, list(chosen))
-        return
     try:
-        create_selected_eval_configs(run_test, list(chosen), modality)
+        if getattr(settings, "HARNESS_EVAL_SUGGESTIONS_ENABLED", False):
+            store_suggested_evals(job, run_test, list(chosen), modality)
+        else:
+            create_selected_eval_configs(run_test, list(chosen), modality)
     except UnknownEvalSelection as unknown:
         raise HostedHarnessError(
             "eval_selection_unknown",

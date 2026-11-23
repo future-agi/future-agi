@@ -635,8 +635,7 @@ def environment_detail(
     """The whole environment, section by section, from what the job already holds.
 
     A section is ``None`` until the stage that produces it has finished, so a
-    caller can tell "not built yet" from "built with nothing in it". Nothing is
-    computed that ALK did not write; the contract is passed through whole.
+    caller can tell "not built yet" from "built with nothing in it".
     """
     evidence = _environment_evidence(job)
     contract = evidence.contract
@@ -709,7 +708,7 @@ def environment_detail(
         "scenarios": scenarios,
         "evaluations": {
             "selected": selected,
-            "suggested": _suggested_evals(job, selected),
+            "suggested": _suggested_evals(job),
             "results": _results(receipts),
         },
         "settings": _settings(job),
@@ -1018,10 +1017,10 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
     construction here.
     """
     from simulate.services.eval_config_edit import has_own_mapping
+    from simulate.services.harness_eval_suggestions import eval_requirement
     from simulate.services.harness_evals import (
         _required_keys,
         eval_entry,
-        eval_requirement,
         selected_eval_configs,
     )
 
@@ -1073,19 +1072,17 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
                 "id": str(config.id),
                 "runnable": True,
                 "editable": has_own_mapping(config),
-                **eval_requirement(job, config.id),
+                **eval_requirement(config),
             }
         )
     return rows
 
 
-def _suggested_evals(
-    job: HostedHarnessJob, selected: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    from simulate.services.harness_evals import suggested_evals
+def _suggested_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
+    from simulate.services.harness_eval_suggestions import suggested_evals
 
     return suggested_evals(
-        job, {str(row["name"]) for row in selected}, eval_modality(job)
+        job, job.run_test if job.run_test_id else None, eval_modality(job)
     )
 
 

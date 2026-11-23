@@ -1585,41 +1585,30 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         the verdicts they were given, so adding an eval does not backfill a
         column onto past results.
         """
+        from simulate.services.harness_eval_suggestions import (
+            add_eval_with_requirement,
+        )
         from simulate.services.harness_evals import (
             EvalSelectionFull,
             EvalSelectionRefused,
-            add_selected_eval,
         )
 
         job, refusal = self._run_test_job(request, pk)
         if refusal is not None:
             return refusal
         try:
-            added = add_selected_eval(
-                job.run_test, request.validated_data["name"], eval_modality(job)
+            add_eval_with_requirement(
+                job.run_test,
+                request.validated_data["name"],
+                eval_modality(job),
+                required=request.validated_data.get("required"),
+                pass_threshold=request.validated_data.get("pass_threshold"),
             )
         except EvalSelectionFull as full:
             return Response({"detail": str(full)}, status=status.HTTP_409_CONFLICT)
         except EvalSelectionRefused as refused:
             return Response(
                 {"detail": str(refused)}, status=status.HTTP_400_BAD_REQUEST
-            )
-        if (
-            "required" in request.validated_data
-            or "pass_threshold" in request.validated_data
-        ):
-            from simulate.services.harness_evals import (
-                DEFAULT_PASS_THRESHOLD,
-                set_eval_requirement,
-            )
-
-            set_eval_requirement(
-                job,
-                added.id,
-                required=request.validated_data.get("required", False),
-                pass_threshold=request.validated_data.get(
-                    "pass_threshold", DEFAULT_PASS_THRESHOLD
-                ),
             )
         _touch_content(job)
         return Response(environment_detail(job), status=status.HTTP_201_CREATED)
@@ -1970,9 +1959,8 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         responses={200: HarnessEnvironmentDetailSerializer},
         reject_unknown_fields=True,
         operation_description=(
-            "Set whether one added eval must pass, and the score it must reach. "
-            "A failing required eval is flagged beside the task result; it does "
-            "not change the sub-goals' verdict."
+            "Set whether one added eval is required, and the score from 0 to 1 "
+            "it must reach. Either may be sent alone."
         ),
     )
     @action(
@@ -1981,30 +1969,29 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         url_path=r"evaluations/(?P<eval_config_id>[0-9a-fA-F-]{36})/requirement",
     )
     def eval_requirement(self, request, pk=None, eval_config_id=None):
-        from simulate.models.eval_config import SimulateEvalConfig
-        from simulate.services.harness_evals import set_eval_requirement
+        from simulate.services.harness_eval_suggestions import set_eval_requirement
 
         job, refusal = self._run_test_job(request, pk)
         if refusal is not None:
             return refusal
         config_id = _uuid_or_none(eval_config_id)
-        exists = (
-            config_id is not None
-            and SimulateEvalConfig.objects.filter(
-                id=config_id, run_test_id=job.run_test_id, deleted=False
-            ).exists()
+        updated = (
+            set_eval_requirement(
+                job.run_test,
+                config_id,
+                required=request.validated_data.get("required"),
+                pass_threshold=request.validated_data.get("pass_threshold"),
+            )
+            if config_id is not None
+            else None
         )
-        if not exists:
+        if updated is None:
             return Response(
-                {"detail": "Evaluation not found"},
+                build_error_envelope(
+                    "Evaluation not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
                 status=status.HTTP_404_NOT_FOUND,
             )
-        set_eval_requirement(
-            job,
-            config_id,
-            required=request.validated_data["required"],
-            pass_threshold=request.validated_data["pass_threshold"],
-        )
         _touch_content(job)
         return Response(environment_detail(job))
 

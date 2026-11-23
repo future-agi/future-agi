@@ -237,15 +237,14 @@ class HarnessEnvironmentOverviewSerializer(HarnessEnvironmentFieldsSerializer):
 
 
 class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
-    """The one thing adding an eval takes: which eval, by its exact name."""
+    """Which eval to add, by its exact name, and optionally whether it is required
+    and the score from 0 to 1 it must reach."""
 
     name = serializers.CharField(
         max_length=255, allow_blank=False, trim_whitespace=True
     )
     required = serializers.BooleanField(required=False)
-    pass_threshold = serializers.IntegerField(
-        min_value=0, max_value=100, required=False
-    )
+    pass_threshold = serializers.FloatField(min_value=0, max_value=1, required=False)
 
 
 class HarnessEnvironmentRunEvaluationQueuedSerializer(serializers.Serializer):
@@ -999,7 +998,7 @@ class HarnessEnvironmentSelectedEvalSerializer(HarnessEnvironmentOfferedEvalSeri
     runnable = serializers.BooleanField()
     editable = serializers.BooleanField()
     required = serializers.BooleanField()
-    pass_threshold = serializers.IntegerField(min_value=0, max_value=100)
+    pass_threshold = serializers.FloatField(min_value=0, max_value=1)
 
 
 class HarnessEnvironmentSuggestedEvalSerializer(
@@ -1008,14 +1007,21 @@ class HarnessEnvironmentSuggestedEvalSerializer(
     """An eval the build suggests but nobody has added yet; it scores nothing until added."""
 
     required = serializers.BooleanField()
-    pass_threshold = serializers.IntegerField(min_value=0, max_value=100)
+    pass_threshold = serializers.FloatField(min_value=0, max_value=1)
 
 
 class HarnessEnvironmentEvalRequirementSerializer(serializers.Serializer):
-    """Whether an added eval must pass, and the score it must reach."""
+    """Whether an added eval must pass, and the score from 0 to 1 it must reach.
 
-    required = serializers.BooleanField()
-    pass_threshold = serializers.IntegerField(min_value=0, max_value=100)
+    Either may be left out; a body with neither is refused."""
+
+    required = serializers.BooleanField(required=False)
+    pass_threshold = serializers.FloatField(min_value=0, max_value=1, required=False)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError("Nothing to change")
+        return attrs
 
 
 class HarnessEnvironmentResultSerializer(serializers.Serializer):

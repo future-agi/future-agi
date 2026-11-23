@@ -631,8 +631,11 @@ def bind_eval_config(
         # the first binding stored: the run's modality decides the sources, and
         # a contract authored since then can have changed it.
         existing.mapping = mapping
+        existing.config = template.config or {}
         existing.error_localizer = True
-        existing.save(update_fields=["deleted", "deleted_at", "mapping", "updated_at"])
+        existing.save(
+            update_fields=["deleted", "deleted_at", "mapping", "config", "updated_at"]
+        )
     return existing
 
 
@@ -683,10 +686,10 @@ def _tenant_known_names(organization, workspace, names: set[str]) -> set[str]:
     return known
 
 
-def create_selected_eval_configs(
+def eligible_selections(
     run_test: RunTest, chosen: list[str], modality: str
-) -> list[SimulateEvalConfig]:
-    """Bind the guest's chosen eval names to this run.
+) -> list[tuple[str, EvalTemplate, dict[str, str]]]:
+    """The guest's chosen eval names this run can bind, each with its template and mapping.
 
     Raises only on a name this tenant never could have been offered. A name
     that was offered at launch but has since gone stale — a template
@@ -778,7 +781,14 @@ def create_selected_eval_configs(
             )
             continue
         survivors.append((name, template, mapping))
+    return survivors
 
+
+def create_selected_eval_configs(
+    run_test: RunTest, chosen: list[str], modality: str
+) -> list[SimulateEvalConfig]:
+    """Bind the guest's chosen eval names to this run, at most ``MOST_SELECTED_EVALS``."""
+    survivors = eligible_selections(run_test, chosen, modality)
     kept = survivors[:MOST_SELECTED_EVALS]
     dropped = survivors[MOST_SELECTED_EVALS:]
     if dropped:
@@ -812,7 +822,7 @@ def selected_eval_configs(
     return [config for config in configs if config.mapping] if mapping_only else configs
 
 
-def _bound_eval_names(run_test: RunTest) -> set[str]:
+def bound_eval_names(run_test: RunTest) -> set[str]:
     """Every name already bound to this run, under both names a row can carry.
 
     A row ingestion creates for one of the harness's own result columns is
@@ -837,7 +847,7 @@ def addable_evals(run_test: RunTest, modality: str) -> list[dict[str, Any]]:
     already reports natively is never offered a second time under a second id,
     and no row the picker shows can be refused as a duplicate.
     """
-    bound = _bound_eval_names(run_test)
+    bound = bound_eval_names(run_test)
     return [
         entry
         for entry in offered_evals(run_test.organization, run_test.workspace, modality)
@@ -974,85 +984,3 @@ def _tool_evaluation_on(run_test_id) -> bool:
         .values_list("enable_tool_evaluation", flat=True)
         .first()
     )
-
-
-SUGGESTED_EVALS_KEY = "suggested_evals"
-EVAL_REQUIREMENTS_KEY = "eval_requirements"
-DEFAULT_PASS_THRESHOLD = 80
-
-
-def _metadata(job: Any) -> dict[str, Any]:
-    return ((job.payload or {}).get("metadata") or {}) if job is not None else {}
-
-
-def eval_requirement(job: Any, config_id: Any) -> dict[str, Any]:
-    stored = (_metadata(job).get(EVAL_REQUIREMENTS_KEY) or {}).get(str(config_id))
-    stored = stored if isinstance(stored, dict) else {}
-    threshold = stored.get("pass_threshold")
-    return {
-        "required": bool(stored.get("required")),
-        "pass_threshold": (
-            int(threshold)
-            if isinstance(threshold, (int, float)) and not isinstance(threshold, bool)
-            else DEFAULT_PASS_THRESHOLD
-        ),
-    }
-
-
-def set_eval_requirement(
-    job: Any, config_id: Any, *, required: bool, pass_threshold: int
-) -> None:
-    from simulate.models import HostedHarnessJob
-
-    with transaction.atomic():
-        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
-            id=job.id
-        )
-        payload = dict(locked.payload or {})
-        metadata = dict(payload.get("metadata") or {})
-        requirements = dict(metadata.get(EVAL_REQUIREMENTS_KEY) or {})
-        requirements[str(config_id)] = {
-            "required": bool(required),
-            "pass_threshold": int(pass_threshold),
-        }
-        metadata[EVAL_REQUIREMENTS_KEY] = requirements
-        payload["metadata"] = metadata
-        locked.payload = payload
-        locked.save(update_fields=["payload", "updated_at"])
-    job.payload = locked.payload
-
-
-def store_suggested_evals(job: Any, names: list[str]) -> None:
-    wanted = []
-    for name in names or []:
-        text = str(name or "").strip()
-        if text and text not in wanted:
-            wanted.append(text)
-    payload = dict(job.payload or {})
-    payload["metadata"] = {
-        **(payload.get("metadata") or {}),
-        SUGGESTED_EVALS_KEY: wanted,
-    }
-    job.payload = payload
-    job.save(update_fields=["payload", "updated_at"])
-
-
-def suggested_evals(
-    job: Any, selected_names: set[str], modality: str
-) -> list[dict[str, Any]]:
-    names = [
-        str(name)
-        for name in _metadata(job).get(SUGGESTED_EVALS_KEY) or []
-        if str(name) not in selected_names
-    ]
-    if not names:
-        return []
-    offered = {
-        entry["name"]: entry
-        for entry in offered_evals(job.organization, job.workspace, modality)
-    }
-    return [
-        {**offered[name], "required": False, "pass_threshold": DEFAULT_PASS_THRESHOLD}
-        for name in names
-        if name in offered
-    ]
