@@ -591,8 +591,13 @@ def _shown_fields(fields: list[str]) -> list[str]:
 
 def _summary(action: str, item: Item, fields: list[str]) -> str:
     noun = item.kind.replace("_", " ")
-    # A rule's key is a hash of its text, so the text names it; who last edited an item is not a change to it.
-    name = f'"{item.value}"' if item.kind == "rule" else item.key
+    # A rule's key is a hash of its text, so the text names it; a scenario reads by its name, its key when it has none.
+    if item.kind == "rule":
+        name = f'"{item.value}"'
+    elif item.kind == "scenario" and isinstance(item.value, dict) and str(item.value.get("name") or "").strip():
+        name = str(item.value["name"]).strip()
+    else:
+        name = item.key
     shown = _shown_fields(fields)
     if action == "changed" and shown:
         return f"Change {', '.join(shown)} of {noun} {name}"
