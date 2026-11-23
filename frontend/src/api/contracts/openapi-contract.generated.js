@@ -65520,7 +65520,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     DesignEditRequest: {
-      required: ["op", "kind"],
+      required: ["op", "kind", "id"],
       type: "object",
       properties: {
         op: {

@@ -47900,8 +47900,7 @@ export const SimulateApiHarnessEnvironmentsDesignReviewEditBody = zod.object({
   id: zod
     .string()
     .min(1)
-    .max(simulateApiHarnessEnvironmentsDesignReviewEditBodyIdMax)
-    .optional(),
+    .max(simulateApiHarnessEnvironmentsDesignReviewEditBodyIdMax),
   text: zod
     .string()
     .min(1)

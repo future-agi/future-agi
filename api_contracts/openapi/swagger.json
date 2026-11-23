@@ -154341,7 +154341,8 @@
         "DesignEditRequest": {
             "required": [
                 "op",
-                "kind"
+                "kind",
+                "id"
             ],
             "type": "object",
             "properties": {

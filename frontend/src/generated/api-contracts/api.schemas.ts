@@ -22787,7 +22787,7 @@ export interface DesignEditRequestApi {
    * @minLength 1
    * @maxLength 255
    */
-  id?: string;
+  id: string;
   /**
    * @minLength 1
    * @maxLength 2000
