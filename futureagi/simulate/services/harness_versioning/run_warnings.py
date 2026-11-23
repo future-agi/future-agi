@@ -39,8 +39,13 @@ from simulate.services.hosted_harness import (
 _NO_VERSIONS = {"agent": None, "environment": None, "suite": None}
 
 
-def _warning(code: str, message: str, piece: str | None) -> dict[str, Any]:
-    return {"code": code, "message": message, "piece": piece}
+def _warning(
+    code: str, message: str, piece: str | None, scenario_keys: list[str] | None = None
+) -> dict[str, Any]:
+    warning: dict[str, Any] = {"code": code, "message": message, "piece": piece}
+    if scenario_keys is not None:
+        warning["scenario_keys"] = scenario_keys
+    return warning
 
 
 def _prepares(pins: ResolvedPins) -> bool:
@@ -262,6 +267,7 @@ def run_warnings(
                 f" {len(unproved)} scenario{'s' if len(unproved) != 1 else ''} are graded on;"
                 f" prove {_names(shown)} again",
                 "suite",
+                scenario_keys=unproved,
             )
         )
     agent_version = pins.agent_version

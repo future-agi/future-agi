@@ -1620,6 +1620,27 @@ def test_an_accepted_scenario_edit_saved_on_the_suite_warns_the_next_run(
     assert _needs_revalidation(version, suite) == [key]
 
 
+def test_the_prove_again_warning_lists_every_scenario_beyond_the_five_it_names(
+    user, workspace, storage, monkeypatch
+):
+    """The sentence names five and counts the rest; the warning still carries every key, for the run plan's list."""
+    from simulate.services.harness_versioning import run_warnings as warnings_module
+    from simulate.services.hosted_harness import resolve_run_pins
+
+    environment = _with_world(user, workspace, "cand-revalidate-keys", storage)
+    keys = [f"case-{n}" for n in range(1, 8)]
+    monkeypatch.setattr(warnings_module, "_needs_revalidation", lambda *_: keys)
+
+    [warning] = [
+        one
+        for one in warnings_module.run_warnings(environment, resolve_run_pins(environment))
+        if one["code"] == "scenarios_need_revalidation"
+    ]
+
+    assert warning["message"].endswith("prove case-1, case-2, case-3, case-4, case-5, 2 more again")
+    assert warning["scenario_keys"] == keys
+
+
 def test_a_case_validated_again_after_the_change_is_not_asked_to_be_proved_again(
     user, workspace, storage
 ):
