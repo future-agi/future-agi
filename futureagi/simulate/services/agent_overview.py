@@ -1,20 +1,27 @@
+import operator
+from functools import reduce
 from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
 from django.db.models import (
+    BooleanField,
     Case,
     CharField,
     Count,
+    Exists,
     F,
     OuterRef,
+    Q,
     QuerySet,
     Subquery,
+    Value,
     When,
     Window,
 )
 from django.db.models.fields.json import KT
 from django.db.models.functions import Coalesce, RowNumber
 
+from simulate.constants.agent_filters import AGENT_SOURCE_VALUES
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
@@ -29,6 +36,23 @@ if TYPE_CHECKING:
     from django_stubs_ext import WithAnnotations
 
 ENVIRONMENTS_PER_ROW = 5
+
+_OBSERVE_LINKED = Q(
+    observability_provider__enabled=True,
+    observability_provider__deleted=False,
+    observability_provider__project__deleted=False,
+)
+_ENVIRONMENT_CONDITIONS = {
+    "with": Q(_in_environment=True),
+    "without": Q(_in_environment=False),
+}
+_OBSERVE_CONDITIONS = {"linked": Q(_observed=True), "not_linked": Q(_observed=False)}
+_FILTER_CONDITIONS = {
+    "agent_type": lambda value: Q(agent_type=value),
+    "source": lambda value: Q(_source__in=AGENT_SOURCE_VALUES[value]),
+    "environments": _ENVIRONMENT_CONDITIONS.__getitem__,
+    "observe": _OBSERVE_CONDITIONS.__getitem__,
+}
 
 
 class _JobOwner(TypedDict):
@@ -101,6 +125,7 @@ def annotate_agent_rows(
             ),
             0,
         ),
+        _in_environment=Exists(environments),
     ).annotate(
         _source=Case(
             When(_agent_kind="source", then=F("_build_source_kind")),
@@ -114,8 +139,28 @@ def annotate_agent_rows(
             ),
             default=F("provider"),
             output_field=CharField(),
-        )
+        ),
+        _observed=Case(
+            When(
+                _agent_kind="source",
+                production_project__deleted=False,
+                then=Value(True),
+            ),
+            When(_agent_kind="source", then=Value(False)),
+            When(_OBSERVE_LINKED, then=Value(True)),
+            default=Value(False),
+            output_field=BooleanField(),
+        ),
     )
+
+
+def filter_agent_rows(
+    queryset: QuerySet[AgentDefinition], filters: dict[str, list[str]]
+) -> QuerySet[AgentDefinition]:
+    for field, condition in _FILTER_CONDITIONS.items():
+        if values := filters.get(field):
+            queryset = queryset.filter(reduce(operator.or_, map(condition, values)))
+    return queryset
 
 
 def environment_refs(agents: list[AgentDefinition]) -> dict[UUID, list[dict[str, str]]]:

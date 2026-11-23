@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1205,
+  endpointCount: 1207,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1147,11 +1147,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/test-executions/{test_execution_id}/rerun-calls/": ["post"],
       "/simulate/test-executions/{test_execution_id}/transcripts/": ["get"],
       "/simulate/v3/call-executions/{call_execution_id}/": ["get"],
+      "/simulate/v3/call-executions/{call_execution_id}/workers/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
       "/simulate/v3/test-executions/{test_execution_id}/reliability/": ["get"],
       "/simulate/v3/test-executions/{test_execution_id}/traces/": ["get"],
+      "/simulate/v3/test-executions/{test_execution_id}/trial-routes/": ["get"],
     },
     telemetry: {
       "/telemetry/heartbeat/": ["post"],
@@ -2604,11 +2606,13 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/test-executions/{test_execution_id}/rerun-calls/": ["post"],
   "/simulate/test-executions/{test_execution_id}/transcripts/": ["get"],
   "/simulate/v3/call-executions/{call_execution_id}/": ["get"],
+  "/simulate/v3/call-executions/{call_execution_id}/workers/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/analytics/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/calls/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/export/": ["post"],
   "/simulate/v3/test-executions/{test_execution_id}/reliability/": ["get"],
   "/simulate/v3/test-executions/{test_execution_id}/traces/": ["get"],
+  "/simulate/v3/test-executions/{test_execution_id}/trial-routes/": ["get"],
   "/telemetry/heartbeat/": ["post"],
   "/telemetry/register/": ["post"],
   "/tracer/alerts/": ["get", "post"],
