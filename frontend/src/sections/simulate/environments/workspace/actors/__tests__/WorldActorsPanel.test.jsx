@@ -11,6 +11,7 @@ import { CLEAN, cast, typedActor } from "./castFixtures";
 
 const mutate = vi.fn();
 const acceptMutate = vi.fn();
+const roleMutate = vi.fn();
 const resetEdit = vi.fn();
 const refetch = vi.fn();
 let editState;
@@ -58,6 +59,10 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
       realHooks
         ? real.useAcceptUnresolved(...args)
         : { mutate: acceptMutate, reset: vi.fn(), isPending: false },
+    useSetFileRole: (...args) =>
+      realHooks
+        ? real.useSetFileRole(...args)
+        : { mutate: roleMutate, reset: vi.fn(), isPending: false },
     useUploadEnvironmentFile: (...args) =>
       realHooks
         ? real.useUploadEnvironmentFile(...args)
@@ -444,6 +449,33 @@ describe("WorldActorsPanel", () => {
     viewState = null;
     answer = CLEAN;
     asked = undefined;
+  });
+
+  it("lists every attached file with its role, evaluator-only ones too, and changes a role at the cast's revision", () => {
+    roleMutate.mockReset();
+    actorsData = cast([MANAGER], {
+      revision: 5,
+      knowledge_sources: {
+        files: ["knowledge/refunds.md"],
+        records: [],
+        roles: {
+          "knowledge/refunds.md": "policy",
+          "knowledge/answer-key.md": "evaluator_only",
+        },
+      },
+    });
+    render(<WorldActorsPanel envId="env-1" />);
+    const card = within(screen.getByTestId("file-roles"));
+    expect(card.getByLabelText("answer-key.md")).toHaveTextContent(
+      "Evaluator only",
+    );
+    fireEvent.mouseDown(card.getByLabelText("refunds.md"));
+    fireEvent.click(screen.getByRole("option", { name: "Seed records" }));
+    expect(roleMutate).toHaveBeenCalledWith({
+      path: "knowledge/refunds.md",
+      role: "seed_records",
+      revision: 5,
+    });
   });
 
   it("shows a skeleton while loading, with no count and nothing to add yet", () => {

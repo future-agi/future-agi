@@ -18,6 +18,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     useSetActorLimits: () => ({ mutate: vi.fn(), reset: vi.fn() }),
     useAcceptUnresolved: () => ({ mutate: vi.fn(), reset: vi.fn() }),
     useUploadEnvironmentFile: () => ({ mutateAsync: vi.fn(), reset: vi.fn() }),
+    useSetFileRole: () => ({ mutate: vi.fn(), reset: vi.fn() }),
   };
 });
 

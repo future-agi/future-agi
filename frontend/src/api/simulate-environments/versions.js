@@ -114,6 +114,11 @@ const acceptUnresolvedPath = (envId) =>
 const environmentFilesPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/files/", { id: envId });
 
+const fileRolePath = (envId) =>
+  apiPath("/simulate/api/harness-environments/{id}/files/role/", {
+    id: envId,
+  });
+
 const actorValidationPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/actor-validation/", {
     id: envId,
@@ -361,6 +366,16 @@ export const uploadEnvironmentFile = async (
   if (revision != null) form.append("expected_revision", String(revision));
   return (await axios.post(environmentFilesPath(envId), form)).data;
 };
+
+// Give one attached file its role (policy, seed_records or evaluator_only); resolves to the cast.
+export const setFileRole = async (envId, { path, role, revision }) =>
+  (
+    await axios.post(fileRolePath(envId), {
+      path,
+      role,
+      ...(revision != null ? { expected_revision: revision } : {}),
+    })
+  ).data;
 
 export const environmentVersionsKey = (envId) => [
   "harness-env-versions",
@@ -1094,6 +1109,7 @@ export const useSetActorLimits = (envId) =>
   useCastChange(envId, setActorLimits);
 export const useUploadEnvironmentFile = (envId) =>
   useCastChange(envId, uploadEnvironmentFile);
+export const useSetFileRole = (envId) => useCastChange(envId, setFileRole);
 export const useAcceptUnresolved = (envId) =>
   useCastChange(envId, acceptUnresolved);
 

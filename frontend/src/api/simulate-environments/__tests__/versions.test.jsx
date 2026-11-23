@@ -37,6 +37,7 @@ const {
   useValidateDrafts,
   useDiscardDraft,
   useEditActor,
+  useSetFileRole,
   useActorCheck,
   checkActor,
   actorsKey,
@@ -1726,5 +1727,36 @@ describe("checkActor", () => {
       },
       { op: "delete", actor_id: "manager" },
     ]);
+  });
+});
+
+describe("useSetFileRole", () => {
+  it("sends the path, role and expected revision, and seeds the cast with the answer", async () => {
+    const cast = { actors: [], revision: 8 };
+    axios.post.mockResolvedValue({ data: cast });
+    const queryClient = new QueryClient();
+    const { result } = renderHook(() => useSetFileRole("env-1"), {
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+    await act(() =>
+      result.current.mutateAsync({
+        path: "knowledge/refunds.md",
+        role: "evaluator_only",
+        revision: 7,
+      }),
+    );
+    expect(axios.post).toHaveBeenCalledWith(
+      "/simulate/api/harness-environments/env-1/files/role/",
+      {
+        path: "knowledge/refunds.md",
+        role: "evaluator_only",
+        expected_revision: 7,
+      },
+    );
+    expect(queryClient.getQueryData(actorsKey("env-1"))).toEqual(cast);
   });
 });
