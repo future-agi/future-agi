@@ -751,6 +751,11 @@ export default function ScenariosStep({
       />
       <ScenarioDrawer
         envId={env?.id}
+        onLifecycleChange={(lifecycle) =>
+          setOpenRow((prev) =>
+            prev && lifecycle ? { ...prev, lifecycle } : prev,
+          )
+        }
         row={openRow}
         onClose={() => setOpenRow(null)}
         onEdit={(row) => {

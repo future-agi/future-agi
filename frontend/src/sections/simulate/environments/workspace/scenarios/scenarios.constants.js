@@ -91,6 +91,23 @@ export const LIFECYCLE_COPY = {
     elsewhere: "Another validation is running. Validate this one when it ends.",
     nothing: "Nothing to validate",
   },
+  archive: {
+    action: "Archive",
+    restore: "Restore",
+    title: "Archive this scenario?",
+    body: "It stops running and counting. Find it again with State: Archived, and restore it any time.",
+    note: "Note (optional)",
+    cancel: "Cancel",
+    archived: "Archived. It no longer runs.",
+    restoredLive: "Restored. It runs again.",
+    restoredDraft: "Restored into the unsaved changes. Save to run it.",
+    errors: {
+      scenario_unsaved:
+        "This scenario only exists in the unsaved changes. Remove it instead.",
+      scenario_files_missing:
+        "Its files are no longer in this version. Ask the builder chat to bring it back.",
+    },
+  },
   mustPass: "Must pass",
   statusTitle: "Status",
   stateLabel: "State",

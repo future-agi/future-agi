@@ -7,6 +7,7 @@ import { personaSubline } from "./personaLabels";
 import { SCENARIO_SHAPE } from "./scenarios.shapes";
 import { ACTORS_COPY } from "../actors/actors.constants";
 import { LifecycleHeaderLine, LifecycleSection } from "./ScenarioLifecycle";
+import ArchiveScenarioButton from "./ArchiveScenarioButton";
 import {
   TEST_CONDITIONS_COPY,
   testConditionRoute,
@@ -37,6 +38,7 @@ export default function ScenarioDrawer({
   onEdit,
   locked = false,
   testConditions = false,
+  onLifecycleChange,
 }) {
   return (
     <SideDrawer open={!!row} onClose={onClose} width={680}>
@@ -64,6 +66,13 @@ export default function ScenarioDrawer({
               </Typography>
               <LifecycleHeaderLine envId={envId} row={row} locked={locked} />
             </Stack>
+            {!locked && envId && (
+              <ArchiveScenarioButton
+                envId={envId}
+                row={row}
+                onChanged={onLifecycleChange}
+              />
+            )}
             {!locked && onEdit && (
               <Button
                 size="small"
@@ -96,6 +105,8 @@ ScenarioDrawer.propTypes = {
   locked: PropTypes.bool,
   // Whether the server takes test conditions; without them a scenario that has none shows no row for them.
   testConditions: PropTypes.bool,
+  // Gets the scenario's new lifecycle after an archive or restore, so the open drawer shows it.
+  onLifecycleChange: PropTypes.func,
 };
 
 function ScenarioSheet({ row, testConditions = false }) {
