@@ -1853,6 +1853,12 @@ INSIGHTS_EVIDENCE_STORE = (
     os.getenv("INSIGHTS_EVIDENCE_STORE", "").strip().lower() or "local"
 )
 INSIGHTS_EVIDENCE_BUCKET = os.getenv("INSIGHTS_EVIDENCE_BUCKET", "").strip()
+# Which object storage holds the evidence bucket: empty follows STORAGE_BACKEND;
+# "gcs" puts it on GCS (GCS_HMAC_* keys) while the rest of the platform stays
+# where STORAGE_BACKEND says, e.g. a deployment whose uploads are still on S3.
+INSIGHTS_EVIDENCE_STORAGE_BACKEND = (
+    os.getenv("INSIGHTS_EVIDENCE_STORAGE_BACKEND", "").strip().lower()
+)
 INSIGHTS_EVIDENCE_CACHE_DIR = os.getenv("INSIGHTS_EVIDENCE_CACHE_DIR", "").strip()
 INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = max(
     1, int(os.getenv("INSIGHTS_EVIDENCE_CACHE_MAX_BYTES") or 2 * 1024**3)
