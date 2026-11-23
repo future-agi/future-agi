@@ -707,7 +707,11 @@ def environment_detail(
             environment, personas, stores, contract=contract, rules=rules
         ),
         "scenarios": scenarios,
-        "evaluations": {"selected": selected, "results": _results(receipts)},
+        "evaluations": {
+            "selected": selected,
+            "suggested": _suggested_evals(job, selected),
+            "results": _results(receipts),
+        },
         "settings": _settings(job),
         "actors_tab": _actors_tab(contract_section),
     }
@@ -1017,6 +1021,7 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
     from simulate.services.harness_evals import (
         _required_keys,
         eval_entry,
+        eval_requirement,
         selected_eval_configs,
     )
 
@@ -1068,9 +1073,20 @@ def _selected_evals(job: HostedHarnessJob) -> list[dict[str, Any]]:
                 "id": str(config.id),
                 "runnable": True,
                 "editable": has_own_mapping(config),
+                **eval_requirement(job, config.id),
             }
         )
     return rows
+
+
+def _suggested_evals(
+    job: HostedHarnessJob, selected: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    from simulate.services.harness_evals import suggested_evals
+
+    return suggested_evals(
+        job, {str(row["name"]) for row in selected}, eval_modality(job)
+    )
 
 
 def _scenario_column_labels(run_test, configs) -> dict[str, str]:

@@ -242,6 +242,10 @@ class HarnessEnvironmentAddEvaluationSerializer(serializers.Serializer):
     name = serializers.CharField(
         max_length=255, allow_blank=False, trim_whitespace=True
     )
+    required = serializers.BooleanField(required=False)
+    pass_threshold = serializers.IntegerField(
+        min_value=0, max_value=100, required=False
+    )
 
 
 class HarnessEnvironmentRunEvaluationQueuedSerializer(serializers.Serializer):
@@ -994,6 +998,24 @@ class HarnessEnvironmentSelectedEvalSerializer(HarnessEnvironmentOfferedEvalSeri
     id = serializers.UUIDField()
     runnable = serializers.BooleanField()
     editable = serializers.BooleanField()
+    required = serializers.BooleanField()
+    pass_threshold = serializers.IntegerField(min_value=0, max_value=100)
+
+
+class HarnessEnvironmentSuggestedEvalSerializer(
+    HarnessEnvironmentOfferedEvalSerializer
+):
+    """An eval the build suggests but nobody has added yet; it scores nothing until added."""
+
+    required = serializers.BooleanField()
+    pass_threshold = serializers.IntegerField(min_value=0, max_value=100)
+
+
+class HarnessEnvironmentEvalRequirementSerializer(serializers.Serializer):
+    """Whether an added eval must pass, and the score it must reach."""
+
+    required = serializers.BooleanField()
+    pass_threshold = serializers.IntegerField(min_value=0, max_value=100)
 
 
 class HarnessEnvironmentResultSerializer(serializers.Serializer):
@@ -1008,6 +1030,7 @@ class HarnessEnvironmentEvaluationsSerializer(serializers.Serializer):
     """What will judge the runs, and what each run was judged as."""
 
     selected = HarnessEnvironmentSelectedEvalSerializer(many=True)
+    suggested = HarnessEnvironmentSuggestedEvalSerializer(many=True, required=False)
     results = HarnessEnvironmentResultSerializer(many=True)
 
 

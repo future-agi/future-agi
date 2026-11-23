@@ -55,6 +55,11 @@ VIEWER_REFUSALS = [
     ),
     ("delete", f"{ENVIRONMENT}evaluations/{OTHER}/", "remove evaluations"),
     ("patch", f"{ENVIRONMENT}evaluations/{OTHER}/", "edit evaluations"),
+    (
+        "patch",
+        f"{ENVIRONMENT}evaluations/{OTHER}/requirement/",
+        "edit evaluations",
+    ),
     ("post", "/simulate/agent-definitions/create/", "create an agent"),
     ("put", f"{AGENT}edit/", "edit an agent"),
     ("post", f"{AGENT}versions/create/", "create an agent version"),

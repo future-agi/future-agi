@@ -82,6 +82,7 @@ from simulate.serializers.harness_environment import (
     HarnessEnvironmentDetailSerializer,
     HarnessEnvironmentDetailV2Serializer,
     HarnessEnvironmentEvalEditSerializer,
+    HarnessEnvironmentEvalRequirementSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
     HarnessEnvironmentRenameSerializer,
@@ -1594,7 +1595,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         if refusal is not None:
             return refusal
         try:
-            add_selected_eval(
+            added = add_selected_eval(
                 job.run_test, request.validated_data["name"], eval_modality(job)
             )
         except EvalSelectionFull as full:
@@ -1602,6 +1603,23 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         except EvalSelectionRefused as refused:
             return Response(
                 {"detail": str(refused)}, status=status.HTTP_400_BAD_REQUEST
+            )
+        if (
+            "required" in request.validated_data
+            or "pass_threshold" in request.validated_data
+        ):
+            from simulate.services.harness_evals import (
+                DEFAULT_PASS_THRESHOLD,
+                set_eval_requirement,
+            )
+
+            set_eval_requirement(
+                job,
+                added.id,
+                required=request.validated_data.get("required", False),
+                pass_threshold=request.validated_data.get(
+                    "pass_threshold", DEFAULT_PASS_THRESHOLD
+                ),
             )
         _touch_content(job)
         return Response(environment_detail(job), status=status.HTTP_201_CREATED)
@@ -1945,6 +1963,50 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         config.save(update_fields=["deleted", "deleted_at", "updated_at"])
         _touch_content(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @viewer_denied("edit evaluations")
+    @validated_request(
+        request_serializer=HarnessEnvironmentEvalRequirementSerializer,
+        responses={200: HarnessEnvironmentDetailSerializer},
+        reject_unknown_fields=True,
+        operation_description=(
+            "Set whether one added eval must pass, and the score it must reach. "
+            "A failing required eval is flagged beside the task result; it does "
+            "not change the sub-goals' verdict."
+        ),
+    )
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path=r"evaluations/(?P<eval_config_id>[0-9a-fA-F-]{36})/requirement",
+    )
+    def eval_requirement(self, request, pk=None, eval_config_id=None):
+        from simulate.models.eval_config import SimulateEvalConfig
+        from simulate.services.harness_evals import set_eval_requirement
+
+        job, refusal = self._run_test_job(request, pk)
+        if refusal is not None:
+            return refusal
+        config_id = _uuid_or_none(eval_config_id)
+        exists = (
+            config_id is not None
+            and SimulateEvalConfig.objects.filter(
+                id=config_id, run_test_id=job.run_test_id, deleted=False
+            ).exists()
+        )
+        if not exists:
+            return Response(
+                {"detail": "Evaluation not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        set_eval_requirement(
+            job,
+            config_id,
+            required=request.validated_data["required"],
+            pass_threshold=request.validated_data["pass_threshold"],
+        )
+        _touch_content(job)
+        return Response(environment_detail(job))
 
     @viewer_denied("edit evaluations")
     @validated_request(

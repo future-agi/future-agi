@@ -2924,6 +2924,11 @@ def _select_platform_evals(
     chosen = payload.get("chosen_evals") or []
     if not chosen:
         return
+    if getattr(settings, "HARNESS_EVAL_SUGGESTIONS_ENABLED", False):
+        from simulate.services.harness_evals import store_suggested_evals
+
+        store_suggested_evals(job, list(chosen))
+        return
     try:
         create_selected_eval_configs(run_test, list(chosen), modality)
     except UnknownEvalSelection as unknown:
