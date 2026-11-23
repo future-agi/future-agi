@@ -8,6 +8,11 @@ const saveMutate = vi.fn();
 const discardMutate = vi.fn();
 const saveReset = vi.fn();
 const discardReset = vi.fn();
+const queryClient = { invalidateQueries: vi.fn() };
+vi.mock("@tanstack/react-query", async (original) => ({
+  ...(await original()),
+  useQueryClient: () => queryClient,
+}));
 vi.mock("src/api/simulate-environments/versions", async () => {
   const actual = await vi.importActual(
     "src/api/simulate-environments/versions",
