@@ -291,8 +291,10 @@ def test_a_patch_batch_past_the_time_budget_stops_diffing(
 ):
     older, newer = _pair(
         agent,
-        {"agents/support/a.py": "a = 1\n", "agents/support/b.py": "b = 1\n"},
-        {"agents/support/a.py": "a = 2\n", "agents/support/b.py": "b = 2\n"},
+        # Contents differ from the sibling budget test: patches are cached by blob,
+        # so a shared pair could be served from that test's cache entry.
+        {"agents/support/a.py": "a = 3\n", "agents/support/b.py": "b = 3\n"},
+        {"agents/support/a.py": "a = 4\n", "agents/support/b.py": "b = 4\n"},
     )
 
     with _past_the_budget_after_the_first_file():

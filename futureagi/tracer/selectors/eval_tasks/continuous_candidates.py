@@ -46,6 +46,9 @@ _MAX_STATEMENT_TIMEOUT_MS = 30_000
 _READ_SETTINGS = {
     "max_execution_time": 30,
     "max_threads": 2,
+    # Parallel primary-key analysis over many parts with large IN sets holds
+    # untracked per-thread memory; one index-analysis thread bounds it.
+    "max_threads_for_indexes": 1,
     "max_memory_usage": 36 * 1024 * 1024 * 1024,
     "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
     "read_overflow_mode": "throw",

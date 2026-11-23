@@ -116,6 +116,12 @@ del _runtime_numeric_setting_specs
 _validate_runtime_numeric_settings(_runtime_numeric_settings)
 globals().update(_runtime_numeric_settings)
 
+# B10 resolves the current source policy through the maintained optional-EE
+# boundary on every call. Missing policy support fails closed, never unlimited.
+METRICS_RETENTION_DAYS_PROVIDER = (
+    "tfc.capabilities.retention.current_trace_retention_days"
+)
+
 # Optional ClickHouse cluster whose entries intentionally expose each physical
 # replica as one read shard. Dashboard heavy reads use it only after validating
 # the identifier in the query builder; an empty value keeps the local-table
@@ -1157,6 +1163,9 @@ AGENT_FIX_WORST_CASE_USD_PER_EVAL = os.getenv(
 # Failing cases a fix needs at launch. A third are held back, and a fix proven only on the
 # cases it was made on can pass by chance, so this leaves the 4 that verifying it takes.
 AGENT_FIX_MIN_FAILING_CASES = int(os.getenv("AGENT_FIX_MIN_FAILING_CASES", "12"))
+# Scenarios an environment's suite may hold from Error Feed issues: each one guards every
+# later epoch there, so Run Epoch from an issue asks for older ones to go first.
+AGENT_FIX_ISSUE_SCENARIOS_MAX = int(os.getenv("AGENT_FIX_ISSUE_SCENARIOS_MAX", "36"))
 # Models the engine may call through its fix's API; Future AGI pays for them. The list holds
 # the engine's planner, coder and reviewer, and the backups its profile moves to when one
 # loses a call.
@@ -1833,6 +1842,12 @@ INSIGHTS_EVIDENCE_STORE = (
     os.getenv("INSIGHTS_EVIDENCE_STORE", "").strip().lower() or "local"
 )
 INSIGHTS_EVIDENCE_BUCKET = os.getenv("INSIGHTS_EVIDENCE_BUCKET", "").strip()
+# Which object storage holds the evidence bucket: empty follows STORAGE_BACKEND;
+# "gcs" puts it on GCS (GCS_HMAC_* keys) while the rest of the platform stays
+# where STORAGE_BACKEND says, e.g. a deployment whose uploads are still on S3.
+INSIGHTS_EVIDENCE_STORAGE_BACKEND = (
+    os.getenv("INSIGHTS_EVIDENCE_STORAGE_BACKEND", "").strip().lower()
+)
 INSIGHTS_EVIDENCE_CACHE_DIR = os.getenv("INSIGHTS_EVIDENCE_CACHE_DIR", "").strip()
 INSIGHTS_EVIDENCE_CACHE_MAX_BYTES = max(
     1, int(os.getenv("INSIGHTS_EVIDENCE_CACHE_MAX_BYTES") or 2 * 1024**3)
