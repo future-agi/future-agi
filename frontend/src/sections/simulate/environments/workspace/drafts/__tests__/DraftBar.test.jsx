@@ -132,10 +132,14 @@ describe("DraftBar", () => {
   it("saves every open piece with the parent and revision it shows", async () => {
     render(<DraftBar env={ENV} />);
     await userEvent.click(saveButton());
-    expect(saveMutate).toHaveBeenCalledWith([
-      { piece: "environment", parentId: "e2", revision: 3 },
-      { piece: "suite", parentId: "s3", revision: 1 },
-    ]);
+    expect(saveMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        drafts: [
+          { piece: "environment", parentId: "e2", revision: 3 },
+          { piece: "suite", parentId: "s3", revision: 1 },
+        ],
+      }),
+    );
   });
 
   it("keeps Save off with the reason in view when the drafts are out of date", async () => {
@@ -228,11 +232,13 @@ describe("DraftBar", () => {
 
   describe("validate before save", () => {
     const DIGEST = "sha256:review";
+    // Decided changes where checks can run: the server asks for Validate before Save.
     const decided = () => {
       state.review = {
         review_digest: DIGEST,
         counts: { total: 3, accepted: 1, rejected: 1, undecided: 1 },
       };
+      state.drafts = { ...both(), validation_required: true };
     };
     const withValidation = (validation, candidates = null) => {
       state.drafts = { ...both(), validation, candidates };
@@ -259,7 +265,10 @@ describe("DraftBar", () => {
       const { default: useSimulationAccess } = await import(
         "src/sections/simulate/environments/hooks/useSimulationAccess"
       );
-      useSimulationAccess.mockReturnValueOnce({ canEdit: false, canRun: false });
+      useSimulationAccess.mockReturnValueOnce({
+        canEdit: false,
+        canRun: false,
+      });
       decided();
       render(<DraftBar env={ENV} />);
 

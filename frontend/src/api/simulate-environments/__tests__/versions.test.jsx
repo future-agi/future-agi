@@ -1406,6 +1406,32 @@ describe("drafts", () => {
     });
   });
 
+  it("says when a save must go through Validate", () => {
+    expect(toDrafts({ validation_required: true }).validationRequired).toBe(
+      true,
+    );
+    // A server from before the flag: a plain Save is tried, and its refusal asks for Validate.
+    expect(toDrafts({}).validationRequired).toBe(false);
+  });
+
+  it("sends the reviewed digest and the name with a plain save", async () => {
+    axios.post.mockResolvedValue({ data: { saved: {}, versions: RESPONSE } });
+    const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
+    await act(() =>
+      result.current.mutateAsync({
+        drafts: PIECES,
+        reviewDigest: "d-1",
+        name: "Refund window",
+      }),
+    );
+    expect(axios.post).toHaveBeenCalledWith(SAVE_PATH, {
+      drafts: BODY,
+      idempotency_key: "key-1",
+      expected_review_digest: "d-1",
+      name: "Refund window",
+    });
+  });
+
   it("reads the drafts under their key, and not while versioning is off", async () => {
     axios.get.mockResolvedValue({ data: DRAFTS });
     const { result } = renderHook(() => useDrafts("env-1"), { wrapper });
@@ -1427,7 +1453,7 @@ describe("drafts", () => {
     const spy = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
-    await act(() => result.current.mutateAsync(PIECES));
+    await act(() => result.current.mutateAsync({ drafts: PIECES }));
 
     expect(axios.post).toHaveBeenCalledWith(SAVE_PATH, {
       drafts: BODY,
@@ -1449,7 +1475,9 @@ describe("drafts", () => {
     axios.post.mockResolvedValue({ data: {} });
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
     await act(() =>
-      result.current.mutateAsync([{ piece: "suite", parentId: null }]),
+      result.current.mutateAsync({
+        drafts: [{ piece: "suite", parentId: null }],
+      }),
     );
     expect(axios.post.mock.calls[0][1].drafts).toEqual([
       { piece: "suite", expected_parent_id: null },
@@ -1461,8 +1489,10 @@ describe("drafts", () => {
     axios.post.mockResolvedValueOnce({ data: {} });
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
-    await act(() => result.current.mutateAsync(PIECES));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
+    await act(() => result.current.mutateAsync({ drafts: PIECES }));
 
     const keys = axios.post.mock.calls.map(([, body]) => body.idempotency_key);
     expect(keys).toEqual(["key-1", "key-1"]);
@@ -1477,9 +1507,13 @@ describe("drafts", () => {
     axios.post.mockResolvedValue({ data: {} });
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
 
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
-    await act(() => result.current.mutateAsync(PIECES.slice(0, 1)));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
+    await act(() => result.current.mutateAsync({ drafts: PIECES.slice(0, 1) }));
 
     const keys = axios.post.mock.calls.map(([, body]) => body.idempotency_key);
     expect(keys).toEqual(["key-1", "key-2", "key-3"]);
@@ -1493,7 +1527,9 @@ describe("drafts", () => {
       const { result } = renderHook(() => useSaveDrafts("env-1"), {
         wrapper,
       });
-      await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
+      await act(() =>
+        result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+      );
       expect(invalidated(spy)).toEqual([{ queryKey: draftsKey("env-1") }]);
     },
   );
@@ -1509,12 +1545,16 @@ describe("drafts", () => {
     });
     const spy = vi.spyOn(client, "invalidateQueries");
     const { result } = renderHook(() => useSaveDrafts("env-1"), { wrapper });
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
     expect(invalidated(spy)).toEqual([
       { queryKey: environmentVersionsKey("env-1") },
     ]);
     spy.mockClear();
-    await act(() => result.current.mutateAsync(PIECES).catch(() => {}));
+    await act(() =>
+      result.current.mutateAsync({ drafts: PIECES }).catch(() => {}),
+    );
     expect(spy).not.toHaveBeenCalled();
   });
 

@@ -205,11 +205,17 @@ export const getDrafts = async (envId) =>
 
 // Each draft carries the default it started from and the revision the user
 // saw; a newer edit or default refuses the save (409).
-export const saveDrafts = async (envId, { drafts, idempotencyKey }) =>
+// A plain Save; reviewed drafts carry the review digest the person saw and the new version's name.
+export const saveDrafts = async (
+  envId,
+  { drafts, idempotencyKey, reviewDigest, name },
+) =>
   (
     await axios.post(saveDraftsPath(envId), {
       drafts,
       idempotency_key: idempotencyKey,
+      ...(reviewDigest ? { expected_review_digest: reviewDigest } : {}),
+      ...(name ? { name } : {}),
     })
   ).data;
 
@@ -864,6 +870,8 @@ export const toDrafts = (data = {}) => {
     pieces,
     any: pieces.length > 0,
     stale: pieces.some((piece) => drafts[piece].stale),
+    // Whether a Save must go through Validate; false from a server that doesn't send it, whose refusal then asks.
+    validationRequired: data?.validation_required === true,
     // Where the validation of the reviewed changes stands, and what it built.
     validation: data?.validation
       ? {
@@ -986,19 +994,22 @@ export function useSaveDrafts(envId) {
   const pending = useRef(null);
   return useMutation({
     meta: { errorHandled: true },
-    mutationFn: (drafts) => {
+    mutationFn: ({ drafts, reviewDigest, name }) => {
       const body = drafts.map(({ piece, parentId, revision }) => ({
         piece,
         expected_parent_id: parentId ?? null,
         ...(revision != null ? { expected_revision: revision } : {}),
       }));
-      const signature = JSON.stringify(body);
+      // A changed name or digest is a different save, so it gets its own key.
+      const signature = JSON.stringify([body, reviewDigest, name]);
       if (pending.current?.signature !== signature) {
         pending.current = { signature, key: harnessIdempotencyKey() };
       }
       return saveDrafts(envId, {
         drafts: body,
         idempotencyKey: pending.current.key,
+        reviewDigest,
+        name,
       });
     },
     onSuccess: (data) => {

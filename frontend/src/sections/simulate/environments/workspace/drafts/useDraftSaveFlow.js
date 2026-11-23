@@ -69,12 +69,11 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
   if (!enabled || !drafts?.any)
     return { open: false, drafts, review: review.data };
 
-  const counts = review.data?.counts;
-  // A change accepted or rejected in review makes a new version: it is validated before it can be saved.
-  const decided = (counts?.accepted ?? 0) + (counts?.rejected ?? 0) > 0;
+  // The server says when a Save must go through Validate (a reviewed change, where checks can run). Where they
+  // can't, reviewed changes save as they are.
   const validation = drafts.validation;
   const needsValidate =
-    decided ||
+    drafts.validationRequired ||
     save.error?.error === "validation_required" ||
     Boolean(validation);
   const validationState = validation?.state ?? null;
@@ -145,15 +144,20 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
       if (options) saveValidated.mutate(vars, options);
       else saveValidated.mutate(vars);
     },
-    onSave: () => {
+    // A plain Save; from the review it carries the digest the person saw and the version's name.
+    onSave: (name, options) => {
       discard.reset();
-      save.mutate(
-        drafts.pieces.map((piece) => ({
+      const vars = {
+        drafts: drafts.pieces.map((piece) => ({
           piece,
           parentId: drafts[piece].parentId,
           revision: drafts[piece].revision,
         })),
-      );
+        reviewDigest: digest,
+        name: name?.trim() || undefined,
+      };
+      if (options) save.mutate(vars, options);
+      else save.mutate(vars);
     },
     onDiscard: (options) => {
       save.reset();

@@ -101,7 +101,9 @@ export default function ReviewChangesDrawer({
   const counts = reviewCounts(changes);
   const piece = pieceOf(changes);
   const savedLabel = versions?.defaults?.[piece]?.label || "";
-  const ready = Boolean(flow.canSaveValidated);
+  // Where the server doesn't ask for Validate (checks can't run here), the reviewed changes save as they are.
+  const direct = !flow.needsValidate;
+  const ready = direct || Boolean(flow.canSaveValidated);
 
   // Accept all goes away once it's done; what's left to do is Validate or Save.
   useEffect(() => {
@@ -109,12 +111,12 @@ export default function ReviewChangesDrawer({
     focusSave.current = false;
     saveRef.current?.focus();
   }, [counts.undecided]);
-  // Once Validate is ready, suggest a name from the changes; the person can change it.
+  // Once Save is ready and the changes have loaded, suggest a name from them; the person can change it.
   useEffect(() => {
-    if (ready && !name) setName(suggestedName(changes));
-    // Only when Validate first lands on ready.
+    if (ready && !name && changes.length) setName(suggestedName(changes));
+    // Only when Save first becomes ready, or the changes first load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready]);
+  }, [ready, changes.length > 0]);
 
   const sendDecisions = (decisions) =>
     decide.mutate(
@@ -177,7 +179,7 @@ export default function ReviewChangesDrawer({
     onOpenTab?.(tab);
   };
   const save = () =>
-    flow.onSaveValidated(name, {
+    (direct ? flow.onSave : flow.onSaveValidated)(name, {
       onSuccess: (data) => {
         const notActive = data?.not_active?.length ?? 0;
         enqueueSnackbar(notActive ? COPY.notActive(notActive) : COPY.saved, {

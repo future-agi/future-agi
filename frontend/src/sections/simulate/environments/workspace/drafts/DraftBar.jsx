@@ -71,7 +71,7 @@ export default function DraftBar({
 
   const onValidate = flow.onValidate;
   const onSaveValidated = () => flow.onSaveValidated(versionName);
-  const onSave = flow.onSave;
+  const onSave = () => flow.onSave();
   const onDiscard = () => {
     setConfirming(false);
     flow.onDiscard();

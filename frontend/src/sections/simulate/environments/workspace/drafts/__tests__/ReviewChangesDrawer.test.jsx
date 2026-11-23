@@ -47,10 +47,12 @@ const setFlow = (changes, overrides = {}) => {
     open: true,
     review: { drafts: { environment: { id: "d1", revision: 3 } }, changes },
     reviewQuery: { isLoading: false, isError: false, refetch: vi.fn() },
+    needsValidate: true,
     canSaveValidated: false,
     validating: false,
     pending: false,
     onValidate: vi.fn(),
+    onSave: vi.fn(),
     onSaveValidated: vi.fn(),
     onDiscard: vi.fn(),
     ...overrides,
@@ -167,6 +169,25 @@ describe("ReviewChangesDrawer", () => {
       "1 scenario won't run yet. Their reasons are on the Scenarios tab.",
       { variant: "warning" },
     );
+  });
+
+  it("saves without Validate when the server doesn't ask for it", async () => {
+    const user = userEvent.setup();
+    setFlow(
+      [change({ decision: "accepted", summary: "Refund window to 14 days" })],
+      { needsValidate: false },
+    );
+    renderDrawer();
+    expect(screen.queryByRole("button", { name: "Validate" })).toBeNull();
+    expect(screen.getByLabelText(/Name this version/)).toHaveValue(
+      "Refund window to 14 days",
+    );
+    await user.click(screen.getByRole("button", { name: /^Save/ }));
+    expect(flow.onSave).toHaveBeenCalledWith(
+      "Refund window to 14 days",
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
+    expect(flow.onSaveValidated).not.toHaveBeenCalled();
   });
 
   it("holds Save for a name over the limit", async () => {
