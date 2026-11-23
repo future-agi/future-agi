@@ -3,7 +3,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   parseDocsLine, ticketIds, classifyTicket, isDocsSkipped, prNumberFromQueueRef,
-  prNumbersFromCommits, evaluate, shouldFail, renderPrComment, renderRelease,
+  prNumbersFromCommits, evaluate, shouldFail, renderPrComment, renderRelease, gateMode,
 } from './docs-declaration.mjs'
 
 // The inline check this script replaces, kept verbatim as the oracle for the line rules.
@@ -165,7 +165,7 @@ test('warn vs enforce', () => {
   assert.equal(shouldFail(warnOnly, 'enforce'), true)
   assert.equal(shouldFail(err, 'warn'), true)
   assert.equal(shouldFail({ errors: [], warnings: [] }, 'enforce'), false)
-  assert.match(renderPrComment(warnOnly, 'warn'), /will block merges once/)
+  assert.match(renderPrComment(warnOnly, 'warn'), /block merges from Tue 1 Dec/)
   assert.match(renderPrComment(err, 'warn'), /needs a fix/)
   assert.match(renderPrComment({ errors: [], warnings: [] }, 'warn'), /all good/)
 })
@@ -179,4 +179,13 @@ test('release comment lists only unmerged docs PRs', () => {
   assert.match(body, /#1 feat: a: future-agi\/docs#10 \(open\)/)
   assert.doesNotMatch(body, /#2 feat: b/)
   assert.match(renderRelease([rows[1]], 'enforce'), /every docs PR linked from this release has merged/)
+})
+
+test('gate turns hard at the start of Tue 1 Dec IST unless overridden', () => {
+  assert.equal(gateMode(undefined, new Date('2026-11-30T18:29:59Z')), 'warn')
+  assert.equal(gateMode('', new Date('2026-11-30T18:30:00Z')), 'enforce')
+  assert.equal(gateMode(undefined, new Date('2027-01-15T00:00:00Z')), 'enforce')
+  assert.equal(gateMode('warn', new Date('2027-01-15T00:00:00Z')), 'warn')
+  assert.equal(gateMode('enforce', new Date('2026-11-24T00:00:00Z')), 'enforce')
+  assert.equal(gateMode('bogus', new Date('2026-11-24T00:00:00Z')), 'warn')
 })

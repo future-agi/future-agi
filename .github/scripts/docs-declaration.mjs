@@ -14,7 +14,7 @@
 //     release PR lists every shipped feature whose docs PR has not merged
 //
 // The original line rules always fail. The newer rules (docs PR state, unlabelled tickets,
-// release) warn until DOCS_GATE_MODE=enforce.
+// release) warn until ENFORCE_FROM, then fail. DOCS_GATE_MODE=warn|enforce overrides the date.
 //
 // Modes:
 //   pr        the PR check (pull_request, merge_group)
@@ -23,7 +23,7 @@
 //   replay    read-only verdicts for merged PRs: --since YYYY-MM-DD [--base dev] [--tickets file.json]
 //
 // Env: GITHUB_TOKEN, GITHUB_REPOSITORY, GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_STEP_SUMMARY,
-//      LINEAR_API_KEY (optional: without it Linear is skipped), DOCS_GATE_MODE (warn|enforce)
+//      LINEAR_API_KEY (optional: without it Linear is skipped), DOCS_GATE_MODE (warn|enforce; unset = by date)
 
 import fs from 'node:fs'
 import { pathToFileURL } from 'node:url'
@@ -121,6 +121,13 @@ export function evaluate({ decl, docsPrs = [], tickets = [] }) {
   return { errors, warnings }
 }
 
+// The tech team was told the gate blocks from Tuesday 1 December 2026 (IST).
+export const ENFORCE_FROM = '2026-12-01T00:00:00+05:30'
+export function gateMode(override, now = new Date()) {
+  if (override === 'warn' || override === 'enforce') return override
+  return now >= new Date(ENFORCE_FROM) ? 'enforce' : 'warn'
+}
+
 export function shouldFail({ errors, warnings }, mode) {
   return errors.length > 0 || (mode === 'enforce' && warnings.length > 0)
 }
@@ -128,7 +135,7 @@ export function shouldFail({ errors, warnings }, mode) {
 export function renderPrComment({ errors, warnings }, mode) {
   if (!errors.length && !warnings.length) return `${PR_MARKER}\n✅ **Docs declaration:** all good.`
   const failing = shouldFail({ errors, warnings }, mode)
-  const lines = [PR_MARKER, failing ? '❌ **Docs declaration needs a fix**' : '⚠️ **Docs declaration: warnings** (these will block merges once `DOCS_GATE_MODE=enforce`)', '']
+  const lines = [PR_MARKER, failing ? '❌ **Docs declaration needs a fix**' : '⚠️ **Docs declaration: warnings** (these block merges from Tue 1 Dec)', '']
   for (const e of errors) lines.push(`- ${e}`)
   for (const w of warnings) lines.push(`- ${w}`)
   if (errors.length) lines.push('', '```', USAGE, '```')
@@ -138,7 +145,7 @@ export function renderPrComment({ errors, warnings }, mode) {
 // ── IO ────────────────────────────────────────────────────────────────────────
 
 const env = process.env
-const MODE = env.DOCS_GATE_MODE === 'enforce' ? 'enforce' : 'warn'
+const MODE = gateMode(env.DOCS_GATE_MODE)
 const REPO = env.GITHUB_REPOSITORY || 'future-agi/future-agi'
 let DRY = false
 const log = (...a) => console.log(...a)
@@ -392,7 +399,7 @@ async function releasePrs(base, head) {
 export function renderRelease(rows, mode) {
   const pending = rows.filter(r => r.docs.some(d => !d.merged))
   if (!pending.length) return `${RELEASE_MARKER}\n✅ **Docs ready for release:** every docs PR linked from this release has merged.`
-  const head = mode === 'enforce' ? '❌ **Docs not ready for release**' : '⚠️ **Docs not ready for release** (this will block once `DOCS_GATE_MODE=enforce`)'
+  const head = mode === 'enforce' ? '❌ **Docs not ready for release**' : '⚠️ **Docs not ready for release** (this blocks the release from Tue 1 Dec)'
   const lines = [RELEASE_MARKER, head, '', 'Merge these docs PRs, then re-run this check:', '']
   for (const r of pending) lines.push(`- #${r.number} ${r.title}: ${r.docs.filter(d => !d.merged).map(d => `${DOCS_REPO}#${d.number} (${d.found ? d.state : 'not found'})`).join(', ')}`)
   return lines.join('\n')
