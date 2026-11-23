@@ -21320,7 +21320,7 @@ export interface HarnessEnvironmentSelectedEvalApi {
   required: boolean;
   /**
    * @minimum 0
-   * @maximum 100
+   * @maximum 1
    */
   pass_threshold: number;
 }
@@ -21365,7 +21365,7 @@ export interface HarnessEnvironmentSuggestedEvalApi {
   required: boolean;
   /**
    * @minimum 0
-   * @maximum 100
+   * @maximum 1
    */
   pass_threshold: number;
 }
@@ -22975,7 +22975,7 @@ export interface HarnessEnvironmentAddEvaluationApi {
   required?: boolean;
   /**
    * @minimum 0
-   * @maximum 100
+   * @maximum 1
    */
   pass_threshold?: number;
 }
@@ -23160,12 +23160,12 @@ export interface SimulateEvalConfigResponseApi {
 }
 
 export interface HarnessEnvironmentEvalRequirementApi {
-  required: boolean;
+  required?: boolean;
   /**
    * @minimum 0
-   * @maximum 100
+   * @maximum 1
    */
-  pass_threshold: number;
+  pass_threshold?: number;
 }
 
 export type EvidenceImportListItemApiSourceKind =

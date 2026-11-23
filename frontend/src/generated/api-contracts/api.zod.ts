@@ -41469,10 +41469,10 @@ export const SimulateApiHarnessEnvironmentsReadQueryParams = zod.object({
 });
 
 export const simulateApiHarnessEnvironmentsReadResponseEvaluationsSelectedItemPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsReadResponseEvaluationsSelectedItemPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsReadResponseEvaluationsSelectedItemPassThresholdMax = 1;
 
 export const simulateApiHarnessEnvironmentsReadResponseEvaluationsSuggestedItemPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsReadResponseEvaluationsSuggestedItemPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsReadResponseEvaluationsSuggestedItemPassThresholdMax = 1;
 
 export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
   id: zod.string().uuid(),
@@ -42281,10 +42281,10 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateBody = zod.object({
 });
 
 export const simulateApiHarnessEnvironmentsPartialUpdateResponseEvaluationsSelectedItemPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsPartialUpdateResponseEvaluationsSelectedItemPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsPartialUpdateResponseEvaluationsSelectedItemPassThresholdMax = 1;
 
 export const simulateApiHarnessEnvironmentsPartialUpdateResponseEvaluationsSuggestedItemPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsPartialUpdateResponseEvaluationsSuggestedItemPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsPartialUpdateResponseEvaluationsSuggestedItemPassThresholdMax = 1;
 
 export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
   id: zod.string().uuid(),
@@ -48914,7 +48914,7 @@ export const SimulateApiHarnessEnvironmentsAddEvaluationParams = zod.object({
 export const simulateApiHarnessEnvironmentsAddEvaluationBodyNameMax = 255;
 
 export const simulateApiHarnessEnvironmentsAddEvaluationBodyPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsAddEvaluationBodyPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsAddEvaluationBodyPassThresholdMax = 1;
 
 export const SimulateApiHarnessEnvironmentsAddEvaluationBody = zod.object({
   name: zod
@@ -48980,10 +48980,10 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationBody 
   });
 
 export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseEvaluationsSelectedItemPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseEvaluationsSelectedItemPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseEvaluationsSelectedItemPassThresholdMax = 1;
 
 export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseEvaluationsSuggestedItemPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseEvaluationsSuggestedItemPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponseEvaluationsSuggestedItemPassThresholdMax = 1;
 
 export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationResponse =
   zod.object({
@@ -49979,7 +49979,7 @@ export const SimulateApiHarnessEnvironmentsRemoveEvaluationParams = zod.object({
 });
 
 /**
- * Set whether one added eval must pass, and the score it must reach. A failing required eval is flagged beside the task result; it does not change the sub-goals' verdict.
+ * Set whether one added eval is required, and the score from 0 to 1 it must reach. Either may be sent alone.
  */
 export const SimulateApiHarnessEnvironmentsEvaluationsEvalRequirementParams =
   zod.object({
@@ -49988,11 +49988,11 @@ export const SimulateApiHarnessEnvironmentsEvaluationsEvalRequirementParams =
   });
 
 export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirementBodyPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirementBodyPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirementBodyPassThresholdMax = 1;
 
 export const SimulateApiHarnessEnvironmentsEvaluationsEvalRequirementBody =
   zod.object({
-    required: zod.boolean(),
+    required: zod.boolean().optional(),
     pass_threshold: zod
       .number()
       .min(
@@ -50000,14 +50000,15 @@ export const SimulateApiHarnessEnvironmentsEvaluationsEvalRequirementBody =
       )
       .max(
         simulateApiHarnessEnvironmentsEvaluationsEvalRequirementBodyPassThresholdMax,
-      ),
+      )
+      .optional(),
   });
 
 export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseEvaluationsSelectedItemPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseEvaluationsSelectedItemPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseEvaluationsSelectedItemPassThresholdMax = 1;
 
 export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseEvaluationsSuggestedItemPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseEvaluationsSuggestedItemPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponseEvaluationsSuggestedItemPassThresholdMax = 1;
 
 export const SimulateApiHarnessEnvironmentsEvaluationsEvalRequirementResponse =
   zod.object({
@@ -52933,7 +52934,7 @@ export const SimulateApiHarnessEnvironmentsRunsAddRunEvaluationParams =
 export const simulateApiHarnessEnvironmentsRunsAddRunEvaluationBodyNameMax = 255;
 
 export const simulateApiHarnessEnvironmentsRunsAddRunEvaluationBodyPassThresholdMin = 0;
-export const simulateApiHarnessEnvironmentsRunsAddRunEvaluationBodyPassThresholdMax = 100;
+export const simulateApiHarnessEnvironmentsRunsAddRunEvaluationBodyPassThresholdMax = 1;
 
 export const SimulateApiHarnessEnvironmentsRunsAddRunEvaluationBody =
   zod.object({

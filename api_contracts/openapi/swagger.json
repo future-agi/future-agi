@@ -54503,7 +54503,7 @@
         "/simulate/api/harness-environments/{id}/evaluations/{eval_config_id}/requirement/": {
             "patch": {
                 "operationId": "simulate_api_harness-environments_evaluations_eval_requirement",
-                "description": "Set whether one added eval must pass, and the score it must reach. A failing required eval is flagged beside the task result; it does not change the sub-goals' verdict.",
+                "description": "Set whether one added eval is required, and the score from 0 to 1 it must reach. Either may be sent alone.",
                 "parameters": [
                     {
                         "name": "data",
@@ -150335,8 +150335,8 @@
                 },
                 "pass_threshold": {
                     "title": "Pass threshold",
-                    "type": "integer",
-                    "maximum": 100,
+                    "type": "number",
+                    "maximum": 1,
                     "minimum": 0
                 }
             }
@@ -150426,8 +150426,8 @@
                 },
                 "pass_threshold": {
                     "title": "Pass threshold",
-                    "type": "integer",
-                    "maximum": 100,
+                    "type": "number",
+                    "maximum": 1,
                     "minimum": 0
                 }
             }
@@ -154816,8 +154816,8 @@
                 },
                 "pass_threshold": {
                     "title": "Pass threshold",
-                    "type": "integer",
-                    "maximum": 100,
+                    "type": "number",
+                    "maximum": 1,
                     "minimum": 0
                 }
             }
@@ -155199,10 +155199,6 @@
             }
         },
         "HarnessEnvironmentEvalRequirement": {
-            "required": [
-                "required",
-                "pass_threshold"
-            ],
             "type": "object",
             "properties": {
                 "required": {
@@ -155211,8 +155207,8 @@
                 },
                 "pass_threshold": {
                     "title": "Pass threshold",
-                    "type": "integer",
-                    "maximum": 100,
+                    "type": "number",
+                    "maximum": 1,
                     "minimum": 0
                 }
             }

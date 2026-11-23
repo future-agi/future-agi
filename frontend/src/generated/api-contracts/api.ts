@@ -63574,7 +63574,7 @@ export const getSimulateApiHarnessEnvironmentsEvaluationsEvalRequirementUrl = (
 };
 
 /**
- * Set whether one added eval must pass, and the score it must reach. A failing required eval is flagged beside the task result; it does not change the sub-goals' verdict.
+ * Set whether one added eval is required, and the score from 0 to 1 it must reach. Either may be sent alone.
  */
 export const simulateApiHarnessEnvironmentsEvaluationsEvalRequirement = async (
   id: string,

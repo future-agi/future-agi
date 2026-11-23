@@ -72438,8 +72438,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         pass_threshold: {
           title: "Pass threshold",
-          type: "integer",
-          maximum: 100,
+          type: "number",
+          maximum: 1,
           minimum: 0,
         },
       },
@@ -72626,7 +72626,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentEvalRequirement: {
-      required: ["required", "pass_threshold"],
       type: "object",
       properties: {
         required: {
@@ -72635,8 +72634,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         pass_threshold: {
           title: "Pass threshold",
-          type: "integer",
-          maximum: 100,
+          type: "number",
+          maximum: 1,
           minimum: 0,
         },
       },
@@ -137981,8 +137980,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         pass_threshold: {
           title: "Pass threshold",
-          type: "integer",
-          maximum: 100,
+          type: "number",
+          maximum: 1,
           minimum: 0,
         },
       },
@@ -138062,8 +138061,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         pass_threshold: {
           title: "Pass threshold",
-          type: "integer",
-          maximum: 100,
+          type: "number",
+          maximum: 1,
           minimum: 0,
         },
       },
