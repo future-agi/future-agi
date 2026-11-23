@@ -262,6 +262,19 @@ describe("VersionsPanel", () => {
     );
   });
 
+  it("gives the exact time when the row has keyboard focus", async () => {
+    const user = userEvent.setup();
+    render(<VersionsPanel env={ENV} />);
+    const target = row("environment", "v2");
+    for (let i = 0; i < 20 && document.activeElement !== target; i += 1) {
+      await user.tab();
+    }
+    expect(target).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      fDateTime(VERSIONS.environment[0].created_at),
+    );
+  });
+
   it("lists agent, environment and scenario versions with their badges and origin", () => {
     render(<VersionsPanel env={ENV} />);
 

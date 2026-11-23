@@ -46,6 +46,10 @@ export default function HistoryEntry({
 }) {
   const { piece, version, badges, originLine } = entry;
   const [menu, setMenu] = useState(null);
+  // The exact time shows on hovering the time, or while the row has keyboard
+  // focus, so it isn't mouse-only.
+  const [timeHovered, setTimeHovered] = useState(false);
+  const [rowFocused, setRowFocused] = useState(false);
   // Open while asking; holds the default the reader saw when it opened, so
   // a refresh meanwhile can't change what the server checks against.
   const [confirming, setConfirming] = useState(null);
@@ -93,6 +97,8 @@ export default function HistoryEntry({
         <ButtonBase
           onClick={onToggle}
           aria-expanded={expanded}
+          onFocusVisible={() => setRowFocused(true)}
+          onBlur={() => setRowFocused(false)}
           // The ripple swept grey across the whole row on every click; the
           // hover shade and focus outline are enough.
           disableRipple
@@ -171,7 +177,13 @@ export default function HistoryEntry({
                 {meta.length > 0 && version.createdAt && " · "}
                 {version.createdAt && (
                   // Relative to read at a glance; the exact time on hover.
-                  <Tooltip title={fDateTime(version.createdAt)} arrow>
+                  <Tooltip
+                    title={fDateTime(version.createdAt)}
+                    arrow
+                    open={timeHovered || rowFocused}
+                    onOpen={() => setTimeHovered(true)}
+                    onClose={() => setTimeHovered(false)}
+                  >
                     <span>{relativeTime(version.createdAt)}</span>
                   </Tooltip>
                 )}

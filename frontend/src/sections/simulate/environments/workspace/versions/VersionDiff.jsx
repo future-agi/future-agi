@@ -78,7 +78,7 @@ function WordingGroup({ title, change }) {
           component="del"
           sx={{
             ...line,
-            color: "text.disabled",
+            color: "text.secondary",
             textDecoration: "line-through",
           }}
         >
