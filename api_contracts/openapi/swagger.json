@@ -53880,6 +53880,7 @@
                         "required": false,
                         "type": "string",
                         "enum": [
+                            "",
                             "goal",
                             "sub_goal",
                             "accent",

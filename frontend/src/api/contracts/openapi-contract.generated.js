@@ -29833,6 +29833,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             schema: {
               type: "string",
               enum: [
+                "",
                 "goal",
                 "sub_goal",
                 "accent",

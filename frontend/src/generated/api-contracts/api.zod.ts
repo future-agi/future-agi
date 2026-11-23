@@ -46954,7 +46954,7 @@ export const SimulateApiHarnessEnvironmentsCompareRunsQueryParams = zod.object({
     .min(1)
     .describe("2-8 comma-separated run ids; the first is the baseline."),
   group_by: zod
-    .enum(["goal", "sub_goal", "accent", "age", "attack", "task", "status"])
+    .enum(["", "goal", "sub_goal", "accent", "age", "attack", "task", "status"])
     .default(simulateApiHarnessEnvironmentsCompareRunsQueryGroupByDefault),
   page: zod
     .number()

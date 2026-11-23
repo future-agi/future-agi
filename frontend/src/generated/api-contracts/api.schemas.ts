@@ -47249,6 +47249,7 @@ export type SimulateApiHarnessEnvironmentsCompareRunsGroupBy =
   (typeof SimulateApiHarnessEnvironmentsCompareRunsGroupBy)[keyof typeof SimulateApiHarnessEnvironmentsCompareRunsGroupBy];
 
 export const SimulateApiHarnessEnvironmentsCompareRunsGroupBy = {
+  "": "",
   goal: "goal",
   sub_goal: "sub_goal",
   accent: "accent",

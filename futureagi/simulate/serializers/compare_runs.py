@@ -36,7 +36,7 @@ class HarnessCompareRunsQuerySerializer(RunCallFiltersSerializer):
         help_text="2-8 comma-separated run ids; the first is the baseline."
     )
     group_by = serializers.ChoiceField(
-        choices=list(GROUP_FIELDS), allow_blank=True, required=False, default=""
+        choices=["", *GROUP_FIELDS], allow_blank=True, required=False, default=""
     )
     ordering = serializers.ChoiceField(
         choices=["movement", "scenario"], required=False, default="movement"
