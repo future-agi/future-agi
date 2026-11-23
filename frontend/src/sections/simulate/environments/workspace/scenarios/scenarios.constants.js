@@ -82,7 +82,11 @@ export const LIFECYCLE_COPY = {
     reproveAllHint:
       "Proves every scenario again in a test sandbox. It doesn't start a paid run.",
     validating: "Validating…",
-    progress: (proved, total) => `Validating · proved ${proved} of ${total}`,
+    progress: (n) => `Validating ${n} ${n === 1 ? "scenario" : "scenarios"}`,
+    reproveConfirmTitle: (n) =>
+      n > 0 ? `Re-prove all ${n} scenarios?` : "Re-prove every scenario?",
+    reproveConfirmBody:
+      "Each one is proved again in a test sandbox, including the ones already proved. Runs are blocked until it finishes. It doesn't start a paid run.",
     done: (proved, total) =>
       Number.isInteger(total) && total > 0
         ? `Validation finished · proved ${proved} of ${total}`
@@ -124,6 +128,13 @@ export const LIFECYCLE_COPY = {
       `Cited by ${keys.length === 1 ? "1 scenario" : `${keys.length} scenarios`}: ${keys.join(", ")}`,
   },
   sourcesLabel: "Sources",
+  citation: {
+    confirmed: "Confirmed",
+    changed: "Changed since",
+    unconfirmed: "Couldn't be confirmed",
+  },
+  keptRuns: "Runs, but not proved.",
+  notMeasured: "Not measured at run time",
   mustPass: "Must pass",
   statusTitle: "Status",
   stateLabel: "State",

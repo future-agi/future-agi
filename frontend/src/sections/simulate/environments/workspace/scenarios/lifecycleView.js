@@ -61,6 +61,21 @@ export const wrongWayRows = (lifecycle) => {
   }));
 };
 
+// Proved, but a check reads evidence this agent doesn't give, so that part isn't measured when it runs.
+export const isNotMeasured = (lifecycle) =>
+  lifecycle?.warning === "evidence_not_captured";
+
+// Only rules and files are checked against the environment; other sources (a chat, a person) have no state.
+const CHECKED_SOURCES = new Set(["rule", "file"]);
+
+// Whether a cited rule or file was found, changed since, or couldn't be confirmed; null for other sources.
+export const citationState = (source, lifecycle) => {
+  if (!CHECKED_SOURCES.has(source?.kind)) return null;
+  if (!source.resolved) return "unconfirmed";
+  if ((lifecycle?.source_changed ?? []).includes(source.ref)) return "changed";
+  return "confirmed";
+};
+
 export const countsLine = (counts) => {
   if (!counts) return null;
   const legacy = counts.legacy_without_control ?? 0;

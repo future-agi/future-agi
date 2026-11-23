@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "src/utils/test-utils";
+import { render, screen, waitFor, within } from "src/utils/test-utils";
 
 const validateScenarios = vi.fn();
 const getScenarioValidation = vi.fn();
@@ -58,9 +58,20 @@ beforeEach(() => {
 });
 
 describe("ValidateScenariosButton", () => {
-  it("asks to prove every scenario again for Re-prove all", async () => {
-    renderButton({ reproveAll: true, label: "Re-prove all" });
+  it("confirms with the count before proving every scenario again", async () => {
+    renderButton({ reproveAll: true, label: "Re-prove all", confirmCount: 54 });
     await pressWhenReady("Re-prove all");
+    expect(
+      await screen.findByText("Re-prove all 54 scenarios?"),
+    ).toBeInTheDocument();
+    expect(validateScenarios).not.toHaveBeenCalled();
+    await userEvent
+      .setup()
+      .click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "Re-prove all",
+        }),
+      );
     await waitFor(() =>
       expect(validateScenarios).toHaveBeenCalledWith("env-1", {
         reproveAll: true,
@@ -68,6 +79,7 @@ describe("ValidateScenariosButton", () => {
     );
   });
 
+  // Proofs land only when the validation ends, so it says how many it is proving, not how many are done.
   it("follows a validation already running instead of starting another", async () => {
     getRunningScenarioValidation.mockResolvedValue({
       ...NOTHING_RUNNING,
@@ -80,7 +92,7 @@ describe("ValidateScenariosButton", () => {
     });
     renderButton();
     expect(
-      await screen.findByRole("button", { name: "Validating · proved 2 of 5" }),
+      await screen.findByRole("button", { name: "Validating 3 scenarios" }),
     ).toBeDisabled();
     expect(getScenarioValidation).toHaveBeenCalledWith("env-1", "val-9");
     expect(validateScenarios).not.toHaveBeenCalled();

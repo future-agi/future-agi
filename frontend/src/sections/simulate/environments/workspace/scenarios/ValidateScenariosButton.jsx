@@ -11,6 +11,7 @@ import {
 import { useSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import {
   useRunningScenarioValidation,
   useScenarioValidation,
@@ -29,10 +30,13 @@ export default function ValidateScenariosButton({
   reproveAll = false,
   label = COPY.all,
   quiet = false,
+  confirmCount = 0,
 }) {
   const { enqueueSnackbar } = useSnackbar();
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [validationJobId, setValidationJobId] = useState(null);
+  // Re-prove all redoes proved scenarios too and blocks runs meanwhile, so it asks first.
+  const [confirming, setConfirming] = useState(false);
   const [message, setMessage] = useState(null);
   const start = useValidateScenarios(envId);
   const liveQuery = useRunningScenarioValidation(envId);
@@ -106,9 +110,14 @@ export default function ValidateScenariosButton({
     ? null
     : message || ended || (elsewhere ? COPY.elsewhere : null);
 
+  // Proofs are recorded only when the validation ends, so while it runs the status says how many it is proving,
+  // never how many are done.
+  const proving = scoped
+    ? keys.length
+    : Math.max((status.data?.total ?? 0) - (status.data?.proved ?? 0), 0);
   const text = running
-    ? Number.isInteger(status.data?.total) && status.data.total > 0
-      ? COPY.progress(status.data.proved, status.data.total)
+    ? proving > 0
+      ? COPY.progress(proving)
       : COPY.validating
     : nothing
       ? COPY.nothing
@@ -128,7 +137,7 @@ export default function ValidateScenariosButton({
             variant={quiet ? "text" : "outlined"}
             color="inherit"
             disabled={running || elsewhere || nothing || liveQuery.isLoading}
-            onClick={onClick}
+            onClick={reproveAll ? () => setConfirming(true) : onClick}
             startIcon={
               quiet ? null : (
                 <Iconify icon="solar:shield-check-linear" width={16} />
@@ -152,6 +161,25 @@ export default function ValidateScenariosButton({
           {said}
         </Typography>
       </Fade>
+      {reproveAll && (
+        <ConfirmDialog
+          open={confirming}
+          onClose={() => setConfirming(false)}
+          title={COPY.reproveConfirmTitle(confirmCount)}
+          content={COPY.reproveConfirmBody}
+          action={
+            <Button
+              variant="contained"
+              onClick={() => {
+                setConfirming(false);
+                onClick();
+              }}
+            >
+              {COPY.reproveAll}
+            </Button>
+          }
+        />
+      )}
     </Stack>
   );
 }
@@ -162,4 +190,6 @@ ValidateScenariosButton.propTypes = {
   reproveAll: PropTypes.bool,
   label: PropTypes.string,
   quiet: PropTypes.bool,
+  // How many scenarios Re-prove all would prove, for its confirm.
+  confirmCount: PropTypes.number,
 };

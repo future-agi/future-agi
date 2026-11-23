@@ -308,6 +308,12 @@ export default function ScenariosStep({
 
   // Only versioned environments carry lifecycle counts; unversioned ones show no line and no State filter.
   const countsText = countsLine(pageData.proofCounts);
+  // Every scenario not archived, which is what Re-prove all proves again.
+  const reproveCount = pageData.proofCounts
+    ? (pageData.proofCounts.proved ?? 0) +
+      (pageData.proofCounts.kept_as_written ?? 0) +
+      (pageData.proofCounts.not_proved ?? 0)
+    : 0;
   const hiddenCount = hiddenGroupIds.length;
   const hasSearchOrFilters =
     query.length > 0 || filterCount > 0 || Boolean(stateFilter);
@@ -678,6 +684,7 @@ export default function ScenariosStep({
                       reproveAll
                       quiet
                       label={LIFECYCLE_COPY.validate.reproveAll}
+                      confirmCount={reproveCount}
                     />
                   </Stack>
                 )}

@@ -5,9 +5,30 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 
 import { LIFECYCLE_COPY } from "./scenarios.constants";
-import { lifecycleChip, wrongWayRows } from "./lifecycleView";
+import { citationState, lifecycleChip, wrongWayRows } from "./lifecycleView";
+
+const CITATION_ROLES = {
+  confirmed: "success",
+  changed: "warning",
+  unconfirmed: "danger",
+};
+
+function CitationBadge({ state }) {
+  if (!state) return null;
+  return (
+    <StatusBadge
+      status={state}
+      role={CITATION_ROLES[state]}
+      label={LIFECYCLE_COPY.citation[state]}
+      size="sm"
+      dot={false}
+    />
+  );
+}
+CitationBadge.propTypes = { state: PropTypes.string };
 import ValidateScenariosButton from "./ValidateScenariosButton";
 import SourceCompareDialog from "./SourceCompareDialog";
+import { NotMeasuredChip } from "./ScenarioTableCells";
 
 // A rule or file the scenario cites changed: say where, and open the before and after.
 function SourceChangedLine({ envId, lifecycle }) {
@@ -74,6 +95,7 @@ export function LifecycleHeaderLine({ envId, row, locked = false }) {
           dot={false}
         />
       )}
+      <NotMeasuredChip lifecycle={lifecycle} />
       {lifecycle.must_pass && (
         <StatusBadge
           status="must_pass"
@@ -101,7 +123,12 @@ LifecycleHeaderLine.propTypes = {
 
 const stateText = (lifecycle) => {
   const chip = lifecycleChip(lifecycle);
-  if (chip) return chip.hover ? `${chip.label}. ${chip.hover}` : chip.label;
+  if (chip) {
+    // Kept as written still runs; say so before the reason, so it doesn't read as blocked.
+    const runs =
+      chip.key === "kept_as_written" ? ` ${LIFECYCLE_COPY.keptRuns}` : "";
+    return `${chip.label}.${runs}${chip.hover ? ` ${chip.hover}` : ""}`;
+  }
   return lifecycle.state === "validated"
     ? LIFECYCLE_COPY.validatedLabel
     : LIFECYCLE_COPY.activeLabel;
@@ -130,8 +157,19 @@ export function LifecycleSection({ envId, lifecycle, Row, sectionSx }) {
           <Row label={LIFECYCLE_COPY.sourcesLabel}>
             <Stack spacing={0.5}>
               {lifecycle.sources.map((one, index) => (
-                <Box key={`${one.kind}-${one.ref}-${index}`}>
-                  <Typography className="sd-val">{one.label}</Typography>
+                <Box
+                  key={`${one.kind}-${one.ref}-${index}`}
+                  data-testid="citation"
+                >
+                  <Stack direction="row" alignItems="flex-start" spacing={1}>
+                    <Typography
+                      className="sd-val"
+                      sx={{ flex: 1, minWidth: 0 }}
+                    >
+                      {one.label}
+                    </Typography>
+                    <CitationBadge state={citationState(one, lifecycle)} />
+                  </Stack>
                   {one.problem && (
                     <Typography
                       sx={{ typography: "s3", color: "status.warning.fg" }}

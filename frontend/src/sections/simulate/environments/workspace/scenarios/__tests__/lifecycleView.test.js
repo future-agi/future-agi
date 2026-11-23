@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  citationState,
   countsLine,
+  isNotMeasured,
   isRunnable,
   lifecycleChip,
   wrongWayRows,
@@ -84,5 +86,43 @@ describe("countsLine", () => {
       "6 proved · 0 kept as written · 4 not proved · 3 without a wrong-way example",
     );
     expect(countsLine(null)).toBeNull();
+  });
+});
+
+describe("citationState", () => {
+  it("reads a cited rule or file as confirmed, changed since, or not confirmed", () => {
+    const lifecycle = { source_changed: ["R6"] };
+    expect(
+      citationState({ kind: "rule", ref: "R2", resolved: true }, lifecycle),
+    ).toBe("confirmed");
+    expect(
+      citationState({ kind: "rule", ref: "R6", resolved: true }, lifecycle),
+    ).toBe("changed");
+    expect(
+      citationState(
+        { kind: "file", ref: "file:policy.pdf", resolved: false },
+        lifecycle,
+      ),
+    ).toBe("unconfirmed");
+    expect(
+      citationState(
+        { kind: "requirement", ref: "", resolved: true },
+        lifecycle,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("isNotMeasured", () => {
+  it("flags only a check reading evidence the agent doesn't give", () => {
+    expect(
+      isNotMeasured({ state: "active", warning: "evidence_not_captured" }),
+    ).toBe(true);
+    expect(
+      isNotMeasured({
+        state: "kept_as_written",
+        warning: "no_negative_control",
+      }),
+    ).toBe(false);
   });
 });

@@ -8,11 +8,12 @@ import { DRAFTS_COPY } from "../workspace.constants";
 import { SUB_TASK_SHAPE } from "./scenarios.shapes";
 import { normaliseSubTasks } from "./scenarioEditor.constants";
 import {
+  LIFECYCLE_COPY,
   hasUnsavedChange,
   isUnsavedAddition,
   unsavedReasonId,
 } from "./scenarios.constants";
-import { lifecycleChip } from "./lifecycleView";
+import { isNotMeasured, lifecycleChip } from "./lifecycleView";
 
 const LIFECYCLE_ICONS = {
   draft: "solar:shield-warning-linear",
@@ -25,10 +26,29 @@ const LIFECYCLE_ICON_COLORS = {
   neutral: "text.secondary",
 };
 
+// A proved scenario whose check reads evidence this agent doesn't give, the server's reason on hover.
+export function NotMeasuredChip({ lifecycle }) {
+  if (!isNotMeasured(lifecycle)) return null;
+  return (
+    <Tooltip arrow title={lifecycle.warning_text || ""}>
+      <span data-testid="not-measured-chip">
+        <StatusBadge
+          status="not_measured"
+          role="warning"
+          label={LIFECYCLE_COPY.notMeasured}
+          size="sm"
+          dot={false}
+        />
+      </span>
+    </Tooltip>
+  );
+}
+NotMeasuredChip.propTypes = { lifecycle: PropTypes.object };
+
 // A row's state as one small mark, its name and reason on hover. Active rows get none.
 export function LifecycleMark({ lifecycle }) {
   const chip = lifecycleChip(lifecycle);
-  if (!chip) return null;
+  if (!chip) return <NotMeasuredChip lifecycle={lifecycle} />;
   const title = chip.hover ? `${chip.label}: ${chip.hover}` : chip.label;
   return (
     <Tooltip arrow title={title}>
