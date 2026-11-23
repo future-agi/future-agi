@@ -83,18 +83,18 @@ export const stopLiveLineOf = (stop, { voice = false } = {}) => {
   switch (stop.status) {
     case "requested":
       if (stop.kind === "provider")
-        return `Stop requested — waiting for ${P} to confirm the calls in progress ended. No new calls start.`;
+        return `Stop requested: waiting for ${P} to confirm the calls in progress ended. No new calls start.`;
       if (stop.kind === "endpoint")
-        return `Stop requested — we stopped sending and watching. Your service may still finish what it already received, and we can't see it stop.`;
-      return `Stop requested — ${items} in progress are finishing up. No new ones start.`;
+        return `Stop requested: we stopped sending and watching. Your service may still finish what it already received, and we can't see it stop.`;
+      return `Stop requested: ${items} in progress are finishing up. No new ones start.`;
     case "confirmed":
       return stop.kind === "provider"
-        ? `Stopped — ${P} confirmed every call ended. Finished calls are kept.`
-        : `Stopped — cleanup finished. Finished ${items} are kept.`;
+        ? `Stopped: ${P} confirmed every call ended. Finished calls are kept.`
+        : `Stopped: cleanup finished. Finished ${items} are kept.`;
     case "unconfirmed":
-      return `Stop not confirmed — ${P} still listed a call as open after ${PROVIDER_CHECK_MIN} minutes. Finished calls are kept.`;
+      return `Stop not confirmed: ${P} still listed a call as open after ${PROVIDER_CHECK_MIN} minutes. Finished calls are kept.`;
     case "cleanup_failed":
-      return `Cleanup failed — the stop wasn't confirmed after ${CLEANUP_FAILED_MIN} minutes. Finished ${items} are kept.`;
+      return `Cleanup failed: the stop wasn't confirmed after ${CLEANUP_FAILED_MIN} minutes. Finished ${items} are kept.`;
     default:
       return null;
   }
@@ -124,13 +124,13 @@ export const stopNoteOf = (stop) => {
   if (stop.status === "unconfirmed")
     return {
       title: `Stop requested at ${at} · ${P} didn't confirm`,
-      body: `${P} still listed a call from this run as open after ${PROVIDER_CHECK_MIN} minutes. An open call keeps running and ${P} charges for it — check your ${P} dashboard. Finished calls are kept.`,
+      body: `${P} still listed a call from this run as open after ${PROVIDER_CHECK_MIN} minutes. An open call keeps running and ${P} charges for it. Check your ${P} dashboard. Finished calls are kept.`,
     };
   return {
     title: `Stop requested at ${at} · cleanup failed`,
     body:
       stop.kind === "provider"
-        ? `The stop wasn't confirmed after ${CLEANUP_FAILED_MIN} minutes. A call may still be open on ${P}, and ${P} charges for it — check your ${P} dashboard. Finished calls are kept.`
+        ? `The stop wasn't confirmed after ${CLEANUP_FAILED_MIN} minutes. A call may still be open on ${P}, and ${P} charges for it. Check your ${P} dashboard. Finished calls are kept.`
         : `The stop wasn't confirmed after ${CLEANUP_FAILED_MIN} minutes, so the agent may still be running. Finished trials are kept.`,
   };
 };

@@ -165,11 +165,11 @@ export function KnownLimits({ report, scenarios, evalCount, provider }) {
       return `tools act in your ${limitBy} account`;
     if (a.id === "reset") return "the agent may remember earlier attempts";
     if (a.id === "cancel" && /^Measured the first time/.test(d))
-      return `not measured until you stop a run — until then a stop may not end the ${limitBy} call`;
+      return `not measured until you stop a run. Until then, a stop may not end the ${limitBy} call`;
     if (a.id === "cancel" && /still listed a call/.test(d))
-      return `on the last stop, ${limitBy} didn't confirm every call ended — an open call keeps charging`;
+      return `on the last stop, ${limitBy} didn't confirm every call ended. An open call keeps charging`;
     if (a.id === "cancel" && /cleanup failed/.test(d))
-      return "the last stop wasn't confirmed (cleanup failed) — the agent may keep running";
+      return "the last stop wasn't confirmed (cleanup failed). The agent may keep running";
     if (a.id === "cancel")
       return /nothing ends the/.test(d)
         ? `a stop doesn't end the ${limitBy} call yet`
