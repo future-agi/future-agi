@@ -42,6 +42,34 @@ export const useSourceCapabilities = (envId) =>
     enabled: Boolean(envId),
   });
 
+export const useEnvironmentSourceReview = (reviewId) =>
+  useQuery({
+    queryKey: ["harness-source-review", reviewId],
+    queryFn: async () =>
+      (
+        await axios.get(
+          apiPath("/simulate/api/harness-source-reviews/{id}/", {
+            id: reviewId,
+          }),
+        )
+      ).data,
+    enabled: Boolean(reviewId),
+    refetchOnMount: "always",
+  });
+
+export const useReprepareEnvironmentSourceReview = () =>
+  useMutation({
+    mutationFn: async ({ reviewId, ...body }) =>
+      (
+        await axios.post(
+          apiPath("/simulate/api/harness-source-reviews/{id}/reprepare/", {
+            id: reviewId,
+          }),
+          body,
+        )
+      ).data,
+  });
+
 export const usePrepareKbSource = (envId) =>
   useMutation({
     mutationFn: async (body) =>

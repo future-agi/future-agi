@@ -26,9 +26,11 @@ import {
 import { useKnowledgeBaseList } from "src/api/knowledge-base/files";
 import {
   useAcceptSource,
+  useEnvironmentSourceReview,
   useEnvironmentSources,
   usePrepareKbSource,
   usePrepareUploadSource,
+  useReprepareEnvironmentSourceReview,
   useSourceCapabilities,
 } from "src/api/simulate-environments/sourceImports";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
@@ -42,6 +44,14 @@ const errorText = (error) =>
 
 const mebibytes = (bytes) => `${bytes / (1024 * 1024)} MiB`;
 
+const preparedFromReview = (review) => ({
+  import_ref: review.id,
+  revision: review.revision,
+  draft_digest: review.draft_digest,
+  draft: review.preview,
+  capabilities: review.scope,
+});
+
 export default function SourcesPanel({ env, locked }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -50,7 +60,12 @@ export default function SourcesPanel({ env, locked }) {
   const { canEdit } = useSimulationAccess();
   const readOnly = locked || !canEdit;
   const [pickerOpen, setPickerOpen] = useState(false);
+  const reviewStorageKey = `harness-environment-source-review:${env.id}`;
+  const [restoreId, setRestoreId] = useState(() =>
+    sessionStorage.getItem(reviewStorageKey),
+  );
   const [prepared, setPrepared] = useState(null);
+  const [targetTable, setTargetTable] = useState("");
   const [testedAgent, setTestedAgent] = useState(false);
   const [acceptedMappingIndexes, setAcceptedMappingIndexes] = useState([]);
   const [acceptedRuleIds, setAcceptedRuleIds] = useState([]);
@@ -66,20 +81,29 @@ export default function SourcesPanel({ env, locked }) {
   } = useEnvironmentSources(env.id);
   const { data: capabilities, error: capabilitiesError } =
     useSourceCapabilities(env.id);
+  const {
+    data: restored,
+    error: restoreError,
+    isFetching: restoreFetching,
+  } = useEnvironmentSourceReview(restoreId);
   const { data: knowledgeBases = [], isLoading: knowledgeLoading } =
     useKnowledgeBaseList();
   const prepareKb = usePrepareKbSource(env.id);
   const prepareUpload = usePrepareUploadSource(env.id);
+  const reprepare = useReprepareEnvironmentSourceReview();
   const accept = useAcceptSource(env.id);
 
+  const restoring = Boolean(restoreId && !restoreError);
   const pending =
-    prepareKb.isPending || prepareUpload.isPending || accept.isPending;
+    restoring ||
+    prepareKb.isPending ||
+    prepareUpload.isPending ||
+    reprepare.isPending ||
+    accept.isPending;
+  const reviewError =
+    prepareKb.error || prepareUpload.error || reprepare.error || accept.error;
   const operationError =
-    prepareKb.error ||
-    prepareUpload.error ||
-    accept.error ||
-    summaryError ||
-    capabilitiesError;
+    summaryError || capabilitiesError || (!prepared && reviewError);
   const staleReview =
     prepared &&
     capabilities &&
@@ -92,22 +116,64 @@ export default function SourcesPanel({ env, locked }) {
   );
   const preparedSources = prepared?.draft?.sources || [];
   const proposals = prepared?.draft?.proposals || {};
+  const destinationTables = prepared?.draft?.destination_tables || [];
+  const canAccept = Boolean(
+    capabilities &&
+      prepared?.draft_digest &&
+      !readOnly &&
+      !pending &&
+      !blocking &&
+      !staleReview,
+  );
 
-  const openPrepared = useCallback((result) => {
-    const mappings = result?.draft?.proposals?.field_mappings || [];
-    const modes = {};
-    mappings.forEach((proposal) => {
-      if (proposal.mapping?.personal_data) {
-        modes[proposal.source_id] = "synthetic_replace";
-      }
-    });
-    setTestedAgent(false);
-    setAcceptedMappingIndexes(mappings.map((_, index) => index));
-    setAcceptedRuleIds([]);
-    setAcceptedRelationshipIndexes([]);
-    setPersonalDataModes(modes);
-    setPrepared(result);
-  }, []);
+  const closePrepared = useCallback(() => {
+    sessionStorage.removeItem(reviewStorageKey);
+    setRestoreId(null);
+    setPrepared(null);
+    setTargetTable("");
+  }, [reviewStorageKey]);
+
+  const openPrepared = useCallback(
+    (result) => {
+      const mappings = result?.draft?.proposals?.field_mappings || [];
+      const modes = {};
+      mappings.forEach((proposal) => {
+        if (proposal.mapping?.personal_data) {
+          modes[proposal.source_id] = "synthetic_replace";
+        }
+      });
+      setTestedAgent(false);
+      setAcceptedMappingIndexes(mappings.map((_, index) => index));
+      setAcceptedRuleIds([]);
+      setAcceptedRelationshipIndexes([]);
+      setPersonalDataModes(modes);
+      setTargetTable("");
+      sessionStorage.setItem(reviewStorageKey, result.import_ref);
+      setRestoreId(null);
+      setPrepared(result);
+    },
+    [reviewStorageKey],
+  );
+
+  useEffect(() => {
+    if (!restored || restoreFetching || restoreError) return;
+    if (
+      restored.scope.kind !== "environment" ||
+      restored.scope.id !== env.id ||
+      !["ready", "needs_repair"].includes(restored.state)
+    ) {
+      closePrepared();
+      return;
+    }
+    openPrepared(preparedFromReview(restored));
+  }, [
+    closePrepared,
+    env.id,
+    openPrepared,
+    restoreError,
+    restoreFetching,
+    restored,
+  ]);
 
   const completedKnowledgeBases = useMemo(
     () =>
@@ -158,6 +224,7 @@ export default function SourcesPanel({ env, locked }) {
       !selection ||
       !capabilities ||
       prepared ||
+      restoring ||
       prepareKb.isPending ||
       consumedSelection.current === location.key
     )
@@ -172,6 +239,7 @@ export default function SourcesPanel({ env, locked }) {
     prepareKb.isPending,
     prepareSelection,
     prepared,
+    restoring,
   ]);
 
   const onUpload = (event) => {
@@ -200,8 +268,22 @@ export default function SourcesPanel({ env, locked }) {
     );
   };
 
+  const prepareForTable = () => {
+    const { import_ref: reviewId, revision } = prepared;
+    const tableIndex = destinationTables.indexOf(targetTable);
+    reprepare.mutate(
+      {
+        reviewId,
+        expected_revision: revision,
+        target_table: targetTable,
+        idempotency_key: `${reviewId}:${revision}:${tableIndex}`,
+      },
+      { onSuccess: (result) => openPrepared(preparedFromReview(result)) },
+    );
+  };
+
   const acceptPrepared = () => {
-    if (readOnly || staleReview) return;
+    if (!canAccept) return;
     const basis = prepared.capabilities;
     accept.mutate(
       {
@@ -209,6 +291,7 @@ export default function SourcesPanel({ env, locked }) {
         expected_environment_version_id: basis.environment_version_id,
         expected_draft: basis.draft,
         expected_draft_digest: prepared.draft_digest,
+        expected_revision: prepared.revision,
         review: buildSourceReview(prepared.draft, {
           testedAgent,
           acceptedMappingIndexes,
@@ -220,7 +303,7 @@ export default function SourcesPanel({ env, locked }) {
       {
         onSuccess: (result) => {
           const affected = result.validation?.affected_scenarios?.length || 0;
-          setPrepared(null);
+          closePrepared();
           setMessage(
             `Source added to the Environment draft. Validation: ${
               result.validation?.status || "not reported"
@@ -244,6 +327,11 @@ export default function SourcesPanel({ env, locked }) {
       {message && <Alert severity="success">{message}</Alert>}
       {operationError && (
         <Alert severity="error">{errorText(operationError)}</Alert>
+      )}
+      {restoreError && (
+        <Alert severity="warning">
+          The saved review could not be opened. Prepare the sources again.
+        </Alert>
       )}
       {!capabilities?.participant_visibility_enabled && (
         <Alert severity="info">
@@ -373,14 +461,34 @@ export default function SourcesPanel({ env, locked }) {
 
       <Dialog
         open={Boolean(prepared)}
-        onClose={() => !pending && setPrepared(null)}
+        onClose={() => !pending && closePrepared()}
         fullWidth
       >
         <DialogTitle>Review source use</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2}>
-            {accept.error && (
-              <Alert severity="error">{errorText(accept.error)}</Alert>
+            {reviewError && (
+              <Alert severity="error">{errorText(reviewError)}</Alert>
+            )}
+            {destinationTables.length > 0 && (
+              <FormControl size="small">
+                <InputLabel id="source-destination-table-label">
+                  Destination table
+                </InputLabel>
+                <Select
+                  labelId="source-destination-table-label"
+                  label="Destination table"
+                  value={targetTable}
+                  disabled={readOnly || pending || staleReview}
+                  onChange={(event) => setTargetTable(event.target.value)}
+                >
+                  {destinationTables.map((table) => (
+                    <MenuItem key={table} value={table}>
+                      {table}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
             )}
             {preparedSources.map((source) => (
               <Box key={source.pin.source_id}>
@@ -486,53 +594,77 @@ export default function SourcesPanel({ env, locked }) {
                 ))}
               </Box>
             )}
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={testedAgent}
-                  onChange={(event) => setTestedAgent(event.target.checked)}
-                />
-              }
-              label={
-                testedAgent
-                  ? "Visible to the tested agent"
-                  : "Evaluator-only (recommended for sensitive data)"
-              }
-            />
-            {(prepared?.draft?.diagnostics || []).map((diagnostic, index) => (
-              <Alert
-                key={`${diagnostic.code}-${index}`}
-                severity={
-                  diagnostic.severity === "blocking" ? "error" : "warning"
+            {!destinationTables.length && (
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={testedAgent}
+                    onChange={(event) => setTestedAgent(event.target.checked)}
+                  />
                 }
-              >
-                {diagnostic.message}
-              </Alert>
-            ))}
+                label={
+                  testedAgent
+                    ? "Visible to the tested agent"
+                    : "Evaluator-only (recommended for sensitive data)"
+                }
+              />
+            )}
+            {(prepared?.draft?.diagnostics || [])
+              .filter(
+                (diagnostic) => diagnostic.code !== "source_schema_ambiguous",
+              )
+              .map((diagnostic, index) => (
+                <Alert
+                  key={`${diagnostic.code}-${index}`}
+                  severity={
+                    diagnostic.severity === "blocking" ? "error" : "warning"
+                  }
+                >
+                  {diagnostic.message || diagnostic.code}
+                </Alert>
+              ))}
             {staleReview && (
               <Alert severity="warning">
                 The Environment changed. Close this review and prepare the
                 sources again.
               </Alert>
             )}
-            <Typography variant="body2" color="text.secondary">
-              Only the checked mappings, relationships, and supported policy
-              rules will be added. Blocking diagnostics must be fixed before
-              this source can be added.
-            </Typography>
+            {!destinationTables.length && (
+              <Typography variant="body2" color="text.secondary">
+                Only the checked mappings, relationships, and supported policy
+                rules will be added. Blocking diagnostics must be fixed before
+                this source can be added.
+              </Typography>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button disabled={pending} onClick={() => setPrepared(null)}>
+          <Button disabled={pending} onClick={closePrepared}>
             Cancel
           </Button>
-          <Button
-            variant="contained"
-            disabled={readOnly || pending || blocking || staleReview}
-            onClick={acceptPrepared}
-          >
-            Add to draft
-          </Button>
+          {destinationTables.length > 0 ? (
+            <Button
+              variant="contained"
+              disabled={
+                !capabilities ||
+                readOnly ||
+                pending ||
+                staleReview ||
+                !targetTable
+              }
+              onClick={prepareForTable}
+            >
+              Prepare for this table
+            </Button>
+          ) : (
+            <Button
+              variant="contained"
+              disabled={!canAccept}
+              onClick={acceptPrepared}
+            >
+              Add to draft
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
     </Stack>

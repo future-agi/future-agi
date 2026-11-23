@@ -26,7 +26,7 @@ export default function WorldToolsPanel({
         </Box>
       )}
       {backed && env.versioning?.enabled && (
-        <SourcesPanel env={env} locked={locked} />
+        <SourcesPanel key={env.id} env={env} locked={locked} />
       )}
       <WorldInternalsSection
         env={env}
