@@ -7,24 +7,33 @@ adaptation; our own hosted agent through the binding the platform builds for it.
 
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from simulate.models import HostedHarnessJob
 from simulate.serializers.harness_job import HarnessJobReadSerializer
 from simulate.serializers.harness_release import (
+    HarnessAdaptationDesignSerializer,
     HarnessHostedAgentRequestSerializer,
     HarnessHostedAgentResponseSerializer,
     HarnessReleaseAgentRequestSerializer,
+    HarnessReleaseFitRequestSerializer,
+    HarnessReleaseFitResponseSerializer,
     HarnessReleaseListResponseSerializer,
 )
+from simulate.services.harness_fit import adaptation_design, release_fit
 from simulate.services.harness_provider import (
     HostedHarnessProvider,
     request_organization,
     request_workspace,
 )
 from simulate.services.harness_releases import (
+    adaptation_of,
+    approve_adaptation,
     create_hosted_agent_composition,
     list_releases,
+    organization_agent_version,
     visible_suite,
 )
 from simulate.services.hosted_harness import HostedHarnessError
@@ -52,6 +61,30 @@ class HarnessReleaseViewSet(viewsets.ViewSet):
             return _no_organization()
         return Response({"results": list_releases(organization)})
 
+    @validated_request(
+        request_serializer=HarnessReleaseFitRequestSerializer,
+        responses={200: HarnessReleaseFitResponseSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=False, methods=["post"])
+    def fit(self, request):
+        """How a connected agent fits a release suite: its tools paired with the world's and
+        the cases that pairing can measure. Nothing is built."""
+        organization = request_organization(request)
+        if organization is None:
+            return _no_organization()
+        data = request.validated_data
+        try:
+            return Response(
+                release_fit(
+                    visible_suite(organization, data["suite_id"]),
+                    organization_agent_version(organization, data["agent_version_id"]),
+                    data.get("pairing"),
+                )
+            )
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+
 
 class HarnessAdaptationViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
@@ -64,6 +97,52 @@ class HarnessAdaptationViewSet(viewsets.ViewSet):
     def create(self, request):
         """Adapt an agent to a release suite. The job is followed like any harness job."""
         return HostedHarnessProvider().create_adaptation(request)
+
+    @validated_request(
+        responses={
+            200: HarnessAdaptationDesignSerializer,
+            404: ApiTextErrorResponseSerializer,
+        },
+    )
+    @action(detail=True, methods=["get"])
+    def design(self, request, pk=None):
+        """Review the design: what the adaptation takes from the ready world, before it's built."""
+        organization = request_organization(request)
+        if organization is None:
+            return _no_organization()
+        job = HostedHarnessJob.no_workspace_objects.filter(
+            id=pk, organization=organization, deleted=False
+        ).first()
+        if job is None or adaptation_of(job) is None:
+            return Response(
+                build_error_envelope(
+                    "adaptation not found", status_code=status.HTTP_404_NOT_FOUND
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            return Response(adaptation_design(job))
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+
+    @validated_request(
+        responses={
+            202: HarnessJobReadSerializer,
+            404: ApiTextErrorResponseSerializer,
+            409: ApiTextErrorResponseSerializer,
+        },
+    )
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """Approve and build: the design is taken once the mapping has been checked on every case."""
+        organization = request_organization(request)
+        if organization is None:
+            return _no_organization()
+        try:
+            job = approve_adaptation(organization, pk)
+        except HostedHarnessError as exc:
+            return Response(exc.as_dict(), status=exc.status_code)
+        return Response({"id": str(job.id)}, status=status.HTTP_202_ACCEPTED)
 
 
 class HarnessHostedAgentViewSet(viewsets.ViewSet):

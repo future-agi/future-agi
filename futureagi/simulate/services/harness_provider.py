@@ -1475,6 +1475,7 @@ class HostedHarnessProvider:
         other, whose payload carries `metadata.adaptation`."""
         from simulate.services.harness_releases import (
             adaptation_payload,
+            connected_agent_connection,
             organization_agent_version,
             visible_suite,
         )
@@ -1490,16 +1491,21 @@ class HostedHarnessProvider:
             )
         data = request.validated_data
         try:
+            agent_version = organization_agent_version(
+                organization, data["agent_version_id"]
+            )
             payload = adaptation_payload(
                 organization,
                 suite=visible_suite(organization, data["suite_id"]),
                 # Re-validated as a hosted job agent; the request serializer only shapes it.
-                agent=request.data["agent"],
-                agent_version=organization_agent_version(
-                    organization, data["agent_version_id"]
-                ),
+                # Without one, the connected agent's own connection is used.
+                agent=request.data.get("agent")
+                or connected_agent_connection(organization, agent_version),
+                agent_version=agent_version,
                 name=data["name"],
                 parallelism=data.get("parallelism"),
+                pairing=data.get("pairing"),
+                mode=data.get("mode", "review"),
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)

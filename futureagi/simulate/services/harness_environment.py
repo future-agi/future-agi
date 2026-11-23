@@ -42,6 +42,7 @@ from simulate.constants.harness_environment import (
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
     RUN_KIND_SIMULATE,
+    STATUS_AWAITING_APPROVAL,
     STATUS_BUILDING,
     STATUS_COMPLETED,
     STATUS_FAILED,
@@ -215,21 +216,37 @@ def _blank_as_null(expression: Any) -> NullIf:
 
 
 def status_counts(queryset: QuerySet[HostedHarnessJob]) -> dict[str, int]:
-    statuses = (STATUS_BUILDING, STATUS_RUNNING, STATUS_COMPLETED, STATUS_FAILED)
+    statuses = (
+        STATUS_AWAITING_APPROVAL,
+        STATUS_BUILDING,
+        STATUS_RUNNING,
+        STATUS_COMPLETED,
+        STATUS_FAILED,
+    )
     return queryset.order_by().aggregate(
         **{status: Count("id", filter=_status_q(status)) for status in statuses}
     )
 
 
+# An adaptation in review whose design nobody has approved yet: nothing is built until it is.
+_AWAITING_Q = Q(payload__metadata__adaptation__mode="review") & ~Q(
+    payload__metadata__adaptation__has_key="approved_at"
+)
+
+
 def _status_q(status: str) -> Q:
     known = _TERMINAL_FAILED | _RUN_STATES | {HostedHarnessJob.State.COMPLETED}
+    if status == STATUS_AWAITING_APPROVAL:
+        return ~Q(state__in=known) & _AWAITING_Q
     if status == STATUS_COMPLETED:
         return Q(state=HostedHarnessJob.State.COMPLETED)
     if status == STATUS_FAILED:
         return Q(state__in=_TERMINAL_FAILED)
     if status == STATUS_RUNNING:
         return Q(state__in=_RUN_STATES)
-    return ~Q(state__in=known)
+    # By id: a negated JSON lookup is NULL, not true, on a job that has no adaptation.
+    awaiting = HostedHarnessJob.no_workspace_objects.filter(_AWAITING_Q).values("id")
+    return ~Q(state__in=known) & ~Q(id__in=awaiting)
 
 
 def _voice_q() -> Q:
@@ -471,6 +488,9 @@ def status_for(job: HostedHarnessJob) -> str:
         return STATUS_FAILED
     if job.state in _RUN_STATES:
         return STATUS_RUNNING
+    adaptation = ((job.payload or {}).get("metadata") or {}).get("adaptation") or {}
+    if adaptation.get("mode") == "review" and not adaptation.get("approved_at"):
+        return STATUS_AWAITING_APPROVAL
     return STATUS_BUILDING
 
 

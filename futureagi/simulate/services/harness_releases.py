@@ -19,12 +19,14 @@ import json
 import re
 import shlex
 import tarfile
+import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import structlog
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -49,6 +51,8 @@ from simulate.services.hosted_harness import (
 )
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import ensure_bucket, get_storage_client
+
+logger = structlog.get_logger(__name__)
 
 ENVIRONMENT_RELEASE_SCHEMA = "futureagi.environment-release.v1"
 SUITE_RELEASE_SCHEMA = "futureagi.suite-release.v1"
@@ -346,6 +350,9 @@ def list_releases(organization) -> list[dict[str, Any]]:
                 "suites": [
                     _suite_summary(suite) for suite in suites.get(environment.id, [])
                 ],
+                "catalogue": (environment.manifest.get("metadata") or {}).get(
+                    "catalogue"
+                ),
             }
         )
     return results
@@ -1145,6 +1152,58 @@ def adaptation_of(job: HostedHarnessJob) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def connected_agent_connection(
+    organization, agent_version: AgentVersion
+) -> dict[str, Any]:
+    """How a run reaches the hosted agent of a version connected on the Agents page, as an
+    adaptation's `agent`: the provider and its agent id from the definition, the provider key
+    from the version's stored credentials, minted as a secret ref so no value travels further.
+    Only Retell and Vapi agents are adapted (contract §7.5)."""
+    from simulate.services.harness_agent_versions import (
+        _own_provider_row,
+        _row_values,
+        _version_values,
+    )
+    from simulate.services.harness_credentials import mint_secret_refs
+
+    definition = agent_version.agent_definition
+    provider = str(definition.provider or "").strip().lower()
+    if provider not in ("retell", "vapi"):
+        raise _error(
+            "adaptation_agent_unsupported",
+            "only Retell and Vapi agents can be adapted to a ready environment yet",
+            409,
+        )
+    target = str(definition.assistant_id or "").strip()
+    if not target:
+        raise _error(
+            "adaptation_agent_unsupported",
+            "the agent has no provider agent id; reconnect it on the Agents page",
+            409,
+        )
+    key_name = "VAPI_API_KEY" if provider == "vapi" else "RETELL_API_KEY"
+    values = _version_values(organization.id, agent_version.id) or {}
+    if not values.get(key_name):
+        values = _row_values(_own_provider_row(agent_version.id))
+    if not values.get(key_name):
+        raise _error(
+            "provider_credentials_missing",
+            f"the agent's version holds no {key_name}; add it on the Agents page",
+            409,
+        )
+    if provider == "vapi":
+        connector, config = "vapi", {"assistant_id": target}
+    else:
+        chat = str(definition.agent_type or "").lower() == "text"
+        connector, config = ("retell_chat" if chat else "retell"), {"agent_id": target}
+    return {
+        "connector": connector,
+        "mode": "provider_import",
+        "config": config,
+        "secret_refs": mint_secret_refs(organization, {key_name: values[key_name]}),
+    }
+
+
 def adaptation_payload(
     organization,
     *,
@@ -1153,9 +1212,14 @@ def adaptation_payload(
     agent_version: AgentVersion,
     name: str,
     parallelism: int | None = None,
+    pairing: dict[str, str | None] | None = None,
+    mode: str = "review",
 ) -> dict[str, Any]:
     """The validated hosted job payload of an adaptation of `agent` to `suite`. `parallelism` is
-    the composition's, kept until adaptation completes (unset: what the deployment admits)."""
+    the composition's, kept until adaptation completes (unset: what the deployment admits).
+    `pairing` is the tool pairing the person reviewed. `mode` "review" waits for the person to
+    approve the design; "run" drafts and checks the binding without a session and runs the
+    measurable cases once it is sealed."""
     from simulate.serializers.harness_job import HarnessJobCreateSerializer
 
     if suite.organization_id not in (None, organization.id):
@@ -1200,6 +1264,8 @@ def adaptation_payload(
         "agent": agent_reference(
             agent_version, connector, payload["agent"].get("config") or {}
         ),
+        **({"pairing": pairing} if pairing else {}),
+        "mode": mode,
     }
     return json.loads(json.dumps(payload, default=str))
 
@@ -1226,6 +1292,8 @@ def adaptation_launch_for(job: HostedHarnessJob) -> AdaptationLaunch | None:
         command=(
             "python -m fi.alk.harness.adaptation hosted --job /work/job.json "
             f"--releases {RELEASES_ROOT} --output {ADAPTATION_OUTPUT}"
+            # Run mode drafts the binding in the control process; no builder session.
+            + (" --auto" if adaptation.get("mode") == "run" else "")
         ),
     )
 
@@ -1369,4 +1437,109 @@ def complete_adaptation(job: HostedHarnessJob, output: Path | None) -> HostedHar
         HostedHarnessConversation.no_workspace_objects.filter(job=locked).update(
             blocking_input=None, updated_at=now
         )
+    adaptation = (locked.payload.get("metadata") or {}).get("adaptation") or {}
+    if adaptation.get("mode") == "run" and (adaptation_result or {}).get(
+        "composition_id"
+    ):
+        locked = _run_measurable(locked, adaptation_result["composition_id"])
     return locked
+
+
+# How agent-learning-kit's adaptation workbench opens its approval question (`approval_question`).
+ADAPTATION_APPROVAL_PREFIX = "Use this binding for "
+
+
+def approve_adaptation(organization, job_id) -> HostedHarnessJob:
+    """Approve and build: answer the open approval question of an adaptation in review yes. It
+    is open once the mapping has been checked on every case; until then there's nothing to
+    approve."""
+    from simulate.models import HostedHarnessConversation
+    from simulate.services.hosted_harness_conversation import enqueue_message
+
+    job = HostedHarnessJob.no_workspace_objects.filter(
+        id=job_id, organization=organization, deleted=False
+    ).first()
+    if job is None or adaptation_of(job) is None:
+        raise _error("adaptation_not_found", "adaptation not found", 404)
+    question = (
+        HostedHarnessConversation.no_workspace_objects.filter(job=job)
+        .values_list("blocking_input", flat=True)
+        .first()
+    ) or {}
+    if not str(question.get("prompt") or "").startswith(ADAPTATION_APPROVAL_PREFIX):
+        raise _error(
+            "adaptation_not_awaiting_approval",
+            "the mapping is still being checked on every case; approve it once it has been",
+            409,
+        )
+    enqueue_message(
+        job,
+        content="yes",
+        client_request_id=f"approve-{question['message_id']}",
+        kind="user_response",
+        reply_to=uuid.UUID(question["message_id"]),
+    )
+    with transaction.atomic():
+        locked = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+            id=job.id
+        )
+        locked.payload["metadata"]["adaptation"]["approved_at"] = (
+            timezone.now().isoformat()
+        )
+        locked.save(update_fields=["payload", "updated_at"])
+    return locked
+
+
+def _run_measurable(job: HostedHarnessJob, composition_id: str) -> HostedHarnessJob:
+    """Start the run an adaptation was asked to make: the composition's measurable cases, once.
+    The run is recorded on the adaptation as `adaptation_result.run`; a run that can't start
+    leaves the composition Ready to run by hand."""
+    from django.conf import settings
+
+    from simulate.services.hosted_harness import create_selected_harness_run
+    from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+    environment = HostedHarnessJob.no_workspace_objects.get(id=composition_id)
+    composition = composition_of(environment) or {}
+    unscorable = {
+        one["scenario_key"]
+        for one in (composition.get("alignment") or {}).get("unscorable") or []
+    }
+    suite = _visible(
+        HarnessSuiteRelease, environment.organization, composition["suite"]["digest"]
+    )
+    keys = [
+        entry["key"]
+        for entry in suite.manifest["scenarios"]
+        if entry["key"] not in unscorable
+    ]
+    try:
+        run, created = create_selected_harness_run(
+            environment,
+            scenario_keys=keys,
+            trials=1,
+            idempotency_key=f"adaptation-run:{job.id}",
+        )
+        if created:
+            retry = run.payload["retry"]
+            start_hosted_harness_gateway_workflow(
+                str(run.id),
+                str(getattr(settings, "HARNESS_PUBLIC_BASE_URL", "") or "").rstrip("/"),
+                retry["max_infrastructure_attempts"],
+                retry["initial_backoff_seconds"],
+                retry["max_backoff_seconds"],
+            )
+    except Exception:
+        logger.exception("adaptation_run_not_started", adaptation_id=str(job.id))
+        return job
+    metadata = job.payload["metadata"]
+    metadata["adaptation_result"] = {
+        **metadata["adaptation_result"],
+        "run": {
+            "job_id": str(run.id),
+            "run_test_id": str(run.run_test_id),
+            "test_execution_id": str(run.test_execution_id),
+        },
+    }
+    job.save(update_fields=["payload", "updated_at"])
+    return job

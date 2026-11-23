@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-# The list's four status-pill states; the pipeline's finer stage travels alongside as ``stage``.
+# The list's status-pill states; the pipeline's finer stage travels alongside as ``stage``.
+# An adaptation in review is awaiting approval until the person approves its design.
+STATUS_AWAITING_APPROVAL = "awaiting_approval"
 STATUS_BUILDING = "building"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
