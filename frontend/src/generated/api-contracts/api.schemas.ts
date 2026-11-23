@@ -19881,7 +19881,9 @@ export interface HarnessEnvironmentWorldTableApi {
   fields: HarnessEnvironmentTableFieldApi[];
 }
 
-export type HarnessEnvironmentWorldApiRuntime = { [key: string]: string };
+export type HarnessEnvironmentWorldApiRuntime = {
+  [key: string]: { [key: string]: unknown };
+};
 
 export interface HarnessEnvironmentWorldApi {
   runtime: HarnessEnvironmentWorldApiRuntime;
@@ -20012,9 +20014,13 @@ export interface HarnessEnvironmentDoorProblemApi {
   message: string;
 }
 
-export type HarnessEnvironmentScenarioApiFixture = { [key: string]: string };
+export type HarnessEnvironmentScenarioApiFixture = {
+  [key: string]: { [key: string]: unknown };
+};
 
-export type HarnessEnvironmentScenarioApiPersona = { [key: string]: string };
+export type HarnessEnvironmentScenarioApiPersona = {
+  [key: string]: { [key: string]: unknown };
+};
 
 export interface HarnessEnvironmentScenarioApi {
   /** @minLength 1 */
@@ -20137,13 +20143,21 @@ export interface HarnessEnvironmentAgentSettingsApi {
   credential_files: HarnessEnvironmentCredentialFileApi[];
 }
 
-export type HarnessEnvironmentSettingsApiSource = { [key: string]: string };
+export type HarnessEnvironmentSettingsApiSource = {
+  [key: string]: { [key: string]: unknown };
+};
 
-export type HarnessEnvironmentSettingsApiRuntime = { [key: string]: string };
+export type HarnessEnvironmentSettingsApiRuntime = {
+  [key: string]: { [key: string]: unknown };
+};
 
-export type HarnessEnvironmentSettingsApiSecurity = { [key: string]: string };
+export type HarnessEnvironmentSettingsApiSecurity = {
+  [key: string]: { [key: string]: unknown };
+};
 
-export type HarnessEnvironmentSettingsApiArtifacts = { [key: string]: string };
+export type HarnessEnvironmentSettingsApiArtifacts = {
+  [key: string]: { [key: string]: unknown };
+};
 
 export interface HarnessEnvironmentSettingsApi {
   /** @minLength 1 */
@@ -21070,7 +21084,7 @@ export interface HarnessCapabilityEvidenceApi {
 }
 
 /**
- * The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.
+ * The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check.
  */
 export type HarnessCapabilityFixApiCategory =
   (typeof HarnessCapabilityFixApiCategory)[keyof typeof HarnessCapabilityFixApiCategory];
@@ -21080,6 +21094,7 @@ export const HarnessCapabilityFixApiCategory = {
   message_mapping: "message_mapping",
   tool_routing: "tool_routing",
   evidence: "evidence",
+  agent_version: "agent_version",
 } as const;
 
 export type HarnessCapabilityFixRecheckApiScope =
@@ -21110,7 +21125,7 @@ export interface HarnessCapabilityFixRecheckApi {
 export interface HarnessCapabilityFixApi {
   /** @minLength 1 */
   type: string;
-  /** The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check. */
+  /** The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check. */
   category: HarnessCapabilityFixApiCategory;
   /** @minLength 1 */
   target: string;
@@ -21950,14 +21965,18 @@ export const HarnessReviewChangeApiDecision = {
   rejected: "rejected",
 } as const;
 
-export type HarnessReviewChangeApiPatchItem = { [key: string]: string };
+export type HarnessReviewChangeApiPatchItem = {
+  [key: string]: { [key: string]: unknown };
+};
 
 /**
- * The scenario keys this change touches, or `all`.
+ * Plain text string or array of content-part objects.
  */
-export type HarnessReviewChangeApiAffects = { [key: string]: unknown };
+export type HarnessReviewChangeApiAffects = string | unknown[];
 
-export type HarnessReviewChangeApiSourcesItem = { [key: string]: string };
+export type HarnessReviewChangeApiSourcesItem = {
+  [key: string]: { [key: string]: unknown };
+};
 
 export type HarnessReviewChangeApiRowsItem = { [key: string]: string };
 
@@ -21980,7 +21999,7 @@ export interface HarnessReviewChangeApi {
   /** @minLength 1 */
   summary: string;
   decision: HarnessReviewChangeApiDecision;
-  /** The scenario keys this change touches, or `all`. */
+  /** Plain text string or array of content-part objects. */
   affects: HarnessReviewChangeApiAffects;
   /** Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row). */
   sources: HarnessReviewChangeApiSourcesItem[];
@@ -23167,6 +23186,8 @@ export interface HarnessRunWarningApi {
   /** @minLength 1 */
   message: string;
   piece: HarnessRunWarningApiPiece | null;
+  /** Every scenario the warning is about, when it names scenarios. */
+  scenario_keys?: string[];
 }
 
 export interface HarnessBlockedScenarioApi {

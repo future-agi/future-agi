@@ -109949,8 +109949,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             type: "object",
             additionalProperties: {
-              type: "string",
+              type: "object",
               "x-nullable": true,
+              "x-json-value": true,
+              description: "Any valid JSON value.",
             },
           },
         },
@@ -109979,8 +109981,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         affects: {
           title: "Affects",
-          description: "The scenario keys this change touches, or `all`.",
           type: "object",
+          "x-string-or-array": true,
+          description: "Plain text string or array of content-part objects.",
         },
         sources: {
           description:
@@ -109989,8 +109992,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             type: "object",
             additionalProperties: {
-              type: "string",
+              type: "object",
               "x-nullable": true,
+              "x-json-value": true,
+              description: "Any valid JSON value.",
             },
           },
         },
@@ -110889,8 +110894,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Fixture",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           "x-nullable": true,
         },
@@ -110918,8 +110925,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Persona",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           "x-nullable": true,
         },
@@ -110972,8 +110981,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Source",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         agent: {
@@ -110983,8 +110994,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Runtime",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           "x-nullable": true,
         },
@@ -110992,8 +111005,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Security",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           "x-nullable": true,
         },
@@ -111001,8 +111016,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Artifacts",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
           "x-nullable": true,
         },
@@ -111030,8 +111047,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Runtime",
           type: "object",
           additionalProperties: {
-            type: "string",
+            type: "object",
             "x-nullable": true,
+            "x-json-value": true,
+            description: "Any valid JSON value.",
           },
         },
         personas: {
@@ -112435,6 +112454,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["agent", "environment", "suite"],
           "x-nullable": true,
+        },
+        scenario_keys: {
+          description:
+            "Every scenario the warning is about, when it names scenarios.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -133638,9 +133666,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         category: {
           title: "Category",
           description:
-            "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+            "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check.",
           type: "string",
-          enum: ["startup", "message_mapping", "tool_routing", "evidence"],
+          enum: [
+            "startup",
+            "message_mapping",
+            "tool_routing",
+            "evidence",
+            "agent_version",
+          ],
           "x-nullable": true,
         },
         target: {
