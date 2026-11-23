@@ -23756,6 +23756,13 @@ export interface HarnessSourceAcceptApi {
    * @maxLength 128
    */
   expected_draft_digest: string;
+  /** @minimum 1 */
+  expected_revision?: number;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key?: string;
   review: HarnessSourceAcceptApiReview;
 }
 
@@ -23772,6 +23779,8 @@ export type HarnessSourceAcceptResponseApiValidation = {
 };
 
 export interface HarnessSourceAcceptResponseApi {
+  review_id: string;
+  accepted_revision: number;
   draft: HarnessSourceAcceptResponseApiDraft;
   /** @minLength 1 */
   snapshot_digest: string;
@@ -23810,7 +23819,9 @@ export type HarnessSourcePrepareResponseApiSuggestedPurposes = {
 export interface HarnessSourcePrepareResponseApi {
   /** @minLength 1 */
   import_ref: string;
+  revision: number;
   /** @minLength 1 */
+  state: string;
   draft_digest: string;
   draft: HarnessSourcePrepareResponseApiDraft;
   suggested_purposes: HarnessSourcePrepareResponseApiSuggestedPurposes;
@@ -24846,6 +24857,114 @@ export interface HarnessReleaseApi {
 
 export interface HarnessReleaseListResponseApi {
   results: HarnessReleaseApi[];
+}
+
+export type HarnessSourceReviewCreateApiDocumentPurposes = {
+  [key: string]: "policy" | "reference" | "seed_records";
+};
+
+export type HarnessSourceScopeApiKind =
+  (typeof HarnessSourceScopeApiKind)[keyof typeof HarnessSourceScopeApiKind];
+
+export const HarnessSourceScopeApiKind = {
+  environment: "environment",
+  design: "design",
+  build_job: "build_job",
+} as const;
+
+export interface HarnessSourceScopeApi {
+  kind: HarnessSourceScopeApiKind;
+  id: string;
+  /** @minimum 1 */
+  revision?: number;
+  /**
+   * @minLength 1
+   * @pattern \Asha256:[0-9a-f]{64}$
+   */
+  schema_digest?: string;
+  environment_version_id?: string;
+  expected_draft?: HarnessSourceDraftRefApi;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  target_table?: string;
+}
+
+export interface HarnessSourceReviewCreateApi {
+  scope: HarnessSourceScopeApi;
+  /** @maxItems 100 */
+  document_ids?: string[];
+  document_purposes?: HarnessSourceReviewCreateApiDocumentPurposes;
+  knowledge_base?: HarnessSourceSelectionApi[];
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key: string;
+}
+
+export type HarnessSourceReviewReadApiState =
+  (typeof HarnessSourceReviewReadApiState)[keyof typeof HarnessSourceReviewReadApiState];
+
+export const HarnessSourceReviewReadApiState = {
+  reading: "reading",
+  needs_repair: "needs_repair",
+  ready: "ready",
+  accepted: "accepted",
+  cancelled: "cancelled",
+  expired: "expired",
+} as const;
+
+export type HarnessSourceReviewReadApiScope = { [key: string]: unknown };
+
+export type HarnessSourceReviewReadApiPreview = { [key: string]: unknown };
+
+export type HarnessSourceReviewReadApiReceipt = { [key: string]: unknown };
+
+export interface HarnessSourceReviewReadApi {
+  id: string;
+  state: HarnessSourceReviewReadApiState;
+  revision: number;
+  scope: HarnessSourceReviewReadApiScope;
+  /** @minLength 1 */
+  draft_digest: string;
+  preview: HarnessSourceReviewReadApiPreview;
+  receipt: HarnessSourceReviewReadApiReceipt;
+  expires_at: string;
+}
+
+export type HarnessSourceReviewAcceptApiDecisions = { [key: string]: unknown };
+
+export interface HarnessSourceReviewAcceptApi {
+  /** @minimum 1 */
+  expected_revision: number;
+  /**
+   * @minLength 1
+   * @pattern \Asha256:[0-9a-f]{64}$
+   */
+  expected_draft_digest: string;
+  /**
+   * @minLength 1
+   * @pattern \Asha256:[0-9a-f]{64}$
+   */
+  expected_schema_digest: string;
+  decisions: HarnessSourceReviewAcceptApiDecisions;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key: string;
+}
+
+export interface HarnessSourceReviewCancelApi {
+  /** @minimum 1 */
+  expected_revision: number;
+  /**
+   * @minLength 1
+   * @pattern \Asha256:[0-9a-f]{64}$
+   */
+  expected_draft_digest: string;
 }
 
 export type HarnessManifestApiSchemaVersion =

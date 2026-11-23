@@ -51209,6 +51209,8 @@ export const simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyE
 
 export const simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyExpectedDraftDigestMax = 128;
 
+export const simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyIdempotencyKeyMax = 128;
+
 export const SimulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBody =
   zod.object({
     import_ref: zod
@@ -51232,11 +51234,21 @@ export const SimulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBody 
       .max(
         simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyExpectedDraftDigestMax,
       ),
+    expected_revision: zod.number().min(1).optional(),
+    idempotency_key: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportBodyIdempotencyKeyMax,
+      )
+      .optional(),
     review: zod.object({}).passthrough(),
   });
 
 export const SimulateApiHarnessEnvironmentsSourcesImportsAcceptSourceImportResponse =
   zod.object({
+    review_id: zod.string().uuid(),
+    accepted_revision: zod.number(),
     draft: zod.object({}).passthrough(),
     snapshot_digest: zod.string().min(1),
     sources: zod.object({}).passthrough(),
@@ -51290,7 +51302,9 @@ export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBody
 export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse =
   zod.object({
     import_ref: zod.string().min(1),
-    draft_digest: zod.string().min(1),
+    revision: zod.number(),
+    state: zod.string().min(1),
+    draft_digest: zod.string(),
     draft: zod.object({}).passthrough(),
     suggested_purposes: zod.object({}).passthrough(),
     capabilities: zod.object({
@@ -51324,7 +51338,9 @@ export const SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBody
 export const SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadResponse =
   zod.object({
     import_ref: zod.string().min(1),
-    draft_digest: zod.string().min(1),
+    revision: zod.number(),
+    state: zod.string().min(1),
+    draft_digest: zod.string(),
     draft: zod.object({}).passthrough(),
     suggested_purposes: zod.object({}).passthrough(),
     capabilities: zod.object({
@@ -54435,6 +54451,184 @@ export const SimulateApiHarnessReleasesListResponse = zod.object({
       ),
     }),
   ),
+});
+
+export const simulateApiHarnessSourceReviewsCreateBodyScopeSchemaDigestRegExp =
+  new RegExp("\\Asha256:[0-9a-f]{64}$");
+export const simulateApiHarnessSourceReviewsCreateBodyScopeExpectedDraftRevisionMin = 0;
+
+export const simulateApiHarnessSourceReviewsCreateBodyScopeTargetTableMax = 255;
+
+export const simulateApiHarnessSourceReviewsCreateBodyDocumentIdsDefault = [];
+export const simulateApiHarnessSourceReviewsCreateBodyDocumentIdsMax = 100;
+
+export const simulateApiHarnessSourceReviewsCreateBodyDocumentPurposesDefault =
+  {};
+export const simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseItemFileIdsMax = 100;
+
+export const simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseItemWholeCollectionDefault =
+  false;
+export const simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseDefault = [];
+export const simulateApiHarnessSourceReviewsCreateBodyIdempotencyKeyMax = 128;
+
+export const SimulateApiHarnessSourceReviewsCreateBody = zod.object({
+  scope: zod.object({
+    kind: zod.enum(["environment", "design", "build_job"]),
+    id: zod.string().uuid(),
+    revision: zod.number().min(1).optional(),
+    schema_digest: zod
+      .string()
+      .min(1)
+      .regex(simulateApiHarnessSourceReviewsCreateBodyScopeSchemaDigestRegExp)
+      .optional(),
+    environment_version_id: zod.string().uuid().optional(),
+    expected_draft: zod
+      .object({
+        id: zod.string().uuid(),
+        revision: zod
+          .number()
+          .min(
+            simulateApiHarnessSourceReviewsCreateBodyScopeExpectedDraftRevisionMin,
+          ),
+      })
+      .optional(),
+    target_table: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessSourceReviewsCreateBodyScopeTargetTableMax)
+      .optional(),
+  }),
+  document_ids: zod
+    .array(zod.string().uuid())
+    .max(simulateApiHarnessSourceReviewsCreateBodyDocumentIdsMax)
+    .default(simulateApiHarnessSourceReviewsCreateBodyDocumentIdsDefault),
+  document_purposes: zod
+    .record(zod.string(), zod.enum(["policy", "reference", "seed_records"]))
+    .default(simulateApiHarnessSourceReviewsCreateBodyDocumentPurposesDefault),
+  knowledge_base: zod
+    .array(
+      zod.object({
+        kind: zod.enum(["knowledge_base"]),
+        kb_id: zod.string().uuid(),
+        file_ids: zod
+          .array(zod.string().uuid())
+          .max(
+            simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseItemFileIdsMax,
+          )
+          .optional(),
+        whole_collection: zod
+          .boolean()
+          .default(
+            simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseItemWholeCollectionDefault,
+          ),
+      }),
+    )
+    .default(simulateApiHarnessSourceReviewsCreateBodyKnowledgeBaseDefault),
+  idempotency_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessSourceReviewsCreateBodyIdempotencyKeyMax),
+});
+
+export const SimulateApiHarnessSourceReviewsReadParams = zod.object({
+  id: zod.string(),
+});
+
+export const SimulateApiHarnessSourceReviewsReadResponse = zod.object({
+  id: zod.string().uuid(),
+  state: zod.enum([
+    "reading",
+    "needs_repair",
+    "ready",
+    "accepted",
+    "cancelled",
+    "expired",
+  ]),
+  revision: zod.number(),
+  scope: zod.object({}).passthrough(),
+  draft_digest: zod.string().min(1),
+  preview: zod.object({}).passthrough(),
+  receipt: zod.object({}).passthrough(),
+  expires_at: zod.string().datetime({ offset: true }),
+});
+
+export const SimulateApiHarnessSourceReviewsAcceptParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessSourceReviewsAcceptBodyExpectedDraftDigestRegExp =
+  new RegExp("\\Asha256:[0-9a-f]{64}$");
+
+export const simulateApiHarnessSourceReviewsAcceptBodyExpectedSchemaDigestRegExp =
+  new RegExp("\\Asha256:[0-9a-f]{64}$");
+export const simulateApiHarnessSourceReviewsAcceptBodyIdempotencyKeyMax = 128;
+
+export const SimulateApiHarnessSourceReviewsAcceptBody = zod.object({
+  expected_revision: zod.number().min(1),
+  expected_draft_digest: zod
+    .string()
+    .min(1)
+    .regex(simulateApiHarnessSourceReviewsAcceptBodyExpectedDraftDigestRegExp),
+  expected_schema_digest: zod
+    .string()
+    .min(1)
+    .regex(simulateApiHarnessSourceReviewsAcceptBodyExpectedSchemaDigestRegExp),
+  decisions: zod.record(zod.string(), zod.unknown()),
+  idempotency_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessSourceReviewsAcceptBodyIdempotencyKeyMax),
+});
+
+export const SimulateApiHarnessSourceReviewsAcceptResponse = zod.object({
+  id: zod.string().uuid(),
+  state: zod.enum([
+    "reading",
+    "needs_repair",
+    "ready",
+    "accepted",
+    "cancelled",
+    "expired",
+  ]),
+  revision: zod.number(),
+  scope: zod.object({}).passthrough(),
+  draft_digest: zod.string().min(1),
+  preview: zod.object({}).passthrough(),
+  receipt: zod.object({}).passthrough(),
+  expires_at: zod.string().datetime({ offset: true }),
+});
+
+export const SimulateApiHarnessSourceReviewsCancelParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessSourceReviewsCancelBodyExpectedDraftDigestRegExp =
+  new RegExp("\\Asha256:[0-9a-f]{64}$");
+
+export const SimulateApiHarnessSourceReviewsCancelBody = zod.object({
+  expected_revision: zod.number().min(1),
+  expected_draft_digest: zod
+    .string()
+    .min(1)
+    .regex(simulateApiHarnessSourceReviewsCancelBodyExpectedDraftDigestRegExp),
+});
+
+export const SimulateApiHarnessSourceReviewsCancelResponse = zod.object({
+  id: zod.string().uuid(),
+  state: zod.enum([
+    "reading",
+    "needs_repair",
+    "ready",
+    "accepted",
+    "cancelled",
+    "expired",
+  ]),
+  revision: zod.number(),
+  scope: zod.object({}).passthrough(),
+  draft_digest: zod.string().min(1),
+  preview: zod.object({}).passthrough(),
+  receipt: zod.object({}).passthrough(),
+  expires_at: zod.string().datetime({ offset: true }),
 });
 
 export const SimulateApiHarnessAttemptsArtifactsArtifactManifestParams =

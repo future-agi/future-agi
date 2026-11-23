@@ -53304,6 +53304,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "202": {
                         "description": "",
                         "schema": {
@@ -53351,6 +53357,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "201": {
                         "description": "",
                         "schema": {
@@ -53400,6 +53412,12 @@
                     }
                 ],
                 "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
                     "202": {
                         "description": "",
                         "schema": {
@@ -56606,6 +56624,179 @@
                 ]
             },
             "parameters": []
+        },
+        "/simulate/api/harness-source-reviews/": {
+            "post": {
+                "operationId": "simulate_api_harness-source-reviews_create",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceReviewCreate"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "201": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceReviewRead"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": []
+        },
+        "/simulate/api/harness-source-reviews/{id}/": {
+            "get": {
+                "operationId": "simulate_api_harness-source-reviews_read",
+                "description": "",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceReviewRead"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-source-reviews/{id}/accept/": {
+            "post": {
+                "operationId": "simulate_api_harness-source-reviews_accept",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceReviewAccept"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceReviewRead"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-source-reviews/{id}/cancel/": {
+            "post": {
+                "operationId": "simulate_api_harness-source-reviews_cancel",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceReviewCancel"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceReviewRead"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
         },
         "/simulate/api/harness/attempts/{id}/artifacts/manifest/": {
             "post": {
@@ -156618,6 +156809,17 @@
                     "maxLength": 128,
                     "minLength": 1
                 },
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
                 "review": {
                     "title": "Review",
                     "type": "object"
@@ -156626,6 +156828,8 @@
         },
         "HarnessSourceAcceptResponse": {
             "required": [
+                "review_id",
+                "accepted_revision",
                 "draft",
                 "snapshot_digest",
                 "sources",
@@ -156634,6 +156838,15 @@
             ],
             "type": "object",
             "properties": {
+                "review_id": {
+                    "title": "Review id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "accepted_revision": {
+                    "title": "Accepted revision",
+                    "type": "integer"
+                },
                 "draft": {
                     "title": "Draft",
                     "type": "object",
@@ -156716,6 +156929,8 @@
         "HarnessSourcePrepareResponse": {
             "required": [
                 "import_ref",
+                "revision",
+                "state",
                 "draft_digest",
                 "draft",
                 "suggested_purposes",
@@ -156728,10 +156943,18 @@
                     "type": "string",
                     "minLength": 1
                 },
-                "draft_digest": {
-                    "title": "Draft digest",
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer"
+                },
+                "state": {
+                    "title": "State",
                     "type": "string",
                     "minLength": 1
+                },
+                "draft_digest": {
+                    "title": "Draft digest",
+                    "type": "string"
                 },
                 "draft": {
                     "title": "Draft",
@@ -158972,6 +159195,222 @@
                     "items": {
                         "$ref": "#/definitions/HarnessRelease"
                     }
+                }
+            }
+        },
+        "HarnessSourceScope": {
+            "required": [
+                "kind",
+                "id"
+            ],
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "environment",
+                        "design",
+                        "build_job"
+                    ]
+                },
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "schema_digest": {
+                    "title": "Schema digest",
+                    "type": "string",
+                    "pattern": "\\Asha256:[0-9a-f]{64}$",
+                    "minLength": 1
+                },
+                "environment_version_id": {
+                    "title": "Environment version id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "expected_draft": {
+                    "$ref": "#/definitions/HarnessSourceDraftRef"
+                },
+                "target_table": {
+                    "title": "Target table",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessSourceReviewCreate": {
+            "required": [
+                "scope",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "$ref": "#/definitions/HarnessSourceScope"
+                },
+                "document_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "default": [],
+                    "maxItems": 100
+                },
+                "document_purposes": {
+                    "title": "Document purposes",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "enum": [
+                            "policy",
+                            "reference",
+                            "seed_records"
+                        ]
+                    },
+                    "default": {}
+                },
+                "knowledge_base": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessSourceSelection"
+                    },
+                    "default": []
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessSourceReviewRead": {
+            "required": [
+                "id",
+                "state",
+                "revision",
+                "scope",
+                "draft_digest",
+                "preview",
+                "receipt",
+                "expires_at"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "state": {
+                    "title": "State",
+                    "type": "string",
+                    "enum": [
+                        "reading",
+                        "needs_repair",
+                        "ready",
+                        "accepted",
+                        "cancelled",
+                        "expired"
+                    ]
+                },
+                "revision": {
+                    "title": "Revision",
+                    "type": "integer"
+                },
+                "scope": {
+                    "title": "Scope",
+                    "type": "object"
+                },
+                "draft_digest": {
+                    "title": "Draft digest",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "preview": {
+                    "title": "Preview",
+                    "type": "object"
+                },
+                "receipt": {
+                    "title": "Receipt",
+                    "type": "object",
+                    "x-nullable": true
+                },
+                "expires_at": {
+                    "title": "Expires at",
+                    "type": "string",
+                    "format": "date-time"
+                }
+            }
+        },
+        "HarnessSourceReviewAccept": {
+            "required": [
+                "expected_revision",
+                "expected_draft_digest",
+                "expected_schema_digest",
+                "decisions",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "expected_draft_digest": {
+                    "title": "Expected draft digest",
+                    "type": "string",
+                    "pattern": "\\Asha256:[0-9a-f]{64}$",
+                    "minLength": 1
+                },
+                "expected_schema_digest": {
+                    "title": "Expected schema digest",
+                    "type": "string",
+                    "pattern": "\\Asha256:[0-9a-f]{64}$",
+                    "minLength": 1
+                },
+                "decisions": {
+                    "title": "Decisions",
+                    "type": "object",
+                    "additionalProperties": true
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                }
+            }
+        },
+        "HarnessSourceReviewCancel": {
+            "required": [
+                "expected_revision",
+                "expected_draft_digest"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "expected_draft_digest": {
+                    "title": "Expected draft digest",
+                    "type": "string",
+                    "pattern": "\\Asha256:[0-9a-f]{64}$",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },

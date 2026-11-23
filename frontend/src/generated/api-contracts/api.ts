@@ -725,6 +725,10 @@ import type {
   HarnessSourceCapabilitiesApi,
   HarnessSourcePrepareApi,
   HarnessSourcePrepareResponseApi,
+  HarnessSourceReviewAcceptApi,
+  HarnessSourceReviewCancelApi,
+  HarnessSourceReviewCreateApi,
+  HarnessSourceReviewReadApi,
   HarnessSourceSummaryApi,
   HarnessSourceUploadResponseApi,
   HarnessStartingRecordReworkApi,
@@ -61970,6 +61974,11 @@ export type simulateApiHarnessEnvironmentDesignsCreateResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessEnvironmentDesignsCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentDesignsCreateResponse404 = {
   data: ApiTextErrorResponseApi;
   status: 404;
@@ -61982,7 +61991,7 @@ export type simulateApiHarnessEnvironmentDesignsCreateResponse422 = {
 
 export type simulateApiHarnessEnvironmentDesignsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 202 | 404 | 422>;
+  status: Exclude<HTTPStatusCodes, 202 | 403 | 404 | 422>;
 };
 
 export type simulateApiHarnessEnvironmentDesignsCreateResponseSuccess =
@@ -61990,6 +61999,7 @@ export type simulateApiHarnessEnvironmentDesignsCreateResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentDesignsCreateResponseError = (
+  | simulateApiHarnessEnvironmentDesignsCreateResponse403
   | simulateApiHarnessEnvironmentDesignsCreateResponse404
   | simulateApiHarnessEnvironmentDesignsCreateResponse422
   | simulateApiHarnessEnvironmentDesignsCreateResponseDefault
@@ -62030,6 +62040,11 @@ export type simulateApiHarnessEnvironmentDesignsDocumentsResponse201 = {
   status: 201;
 };
 
+export type simulateApiHarnessEnvironmentDesignsDocumentsResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentDesignsDocumentsResponse413 = {
   data: ApiTextErrorResponseApi;
   status: 413;
@@ -62042,7 +62057,7 @@ export type simulateApiHarnessEnvironmentDesignsDocumentsResponse415 = {
 
 export type simulateApiHarnessEnvironmentDesignsDocumentsResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201 | 413 | 415>;
+  status: Exclude<HTTPStatusCodes, 201 | 403 | 413 | 415>;
 };
 
 export type simulateApiHarnessEnvironmentDesignsDocumentsResponseSuccess =
@@ -62050,6 +62065,7 @@ export type simulateApiHarnessEnvironmentDesignsDocumentsResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentDesignsDocumentsResponseError = (
+  | simulateApiHarnessEnvironmentDesignsDocumentsResponse403
   | simulateApiHarnessEnvironmentDesignsDocumentsResponse413
   | simulateApiHarnessEnvironmentDesignsDocumentsResponse415
   | simulateApiHarnessEnvironmentDesignsDocumentsResponseDefault
@@ -62097,6 +62113,11 @@ export type simulateApiHarnessEnvironmentDesignsContinueDesignResponse202 = {
   status: 202;
 };
 
+export type simulateApiHarnessEnvironmentDesignsContinueDesignResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
 export type simulateApiHarnessEnvironmentDesignsContinueDesignResponse404 = {
   data: ApiTextErrorResponseApi;
   status: 404;
@@ -62110,7 +62131,7 @@ export type simulateApiHarnessEnvironmentDesignsContinueDesignResponse409 = {
 export type simulateApiHarnessEnvironmentDesignsContinueDesignResponseDefault =
   {
     data: ManagementAPIErrorResponseApi;
-    status: Exclude<HTTPStatusCodes, 202 | 404 | 409>;
+    status: Exclude<HTTPStatusCodes, 202 | 403 | 404 | 409>;
   };
 
 export type simulateApiHarnessEnvironmentDesignsContinueDesignResponseSuccess =
@@ -62118,6 +62139,7 @@ export type simulateApiHarnessEnvironmentDesignsContinueDesignResponseSuccess =
     headers: ApiResponseHeaders;
   };
 export type simulateApiHarnessEnvironmentDesignsContinueDesignResponseError = (
+  | simulateApiHarnessEnvironmentDesignsContinueDesignResponse403
   | simulateApiHarnessEnvironmentDesignsContinueDesignResponse404
   | simulateApiHarnessEnvironmentDesignsContinueDesignResponse409
   | simulateApiHarnessEnvironmentDesignsContinueDesignResponseDefault
@@ -66092,6 +66114,195 @@ export const simulateApiHarnessReleasesList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessSourceReviewsCreateResponse201 = {
+  data: HarnessSourceReviewReadApi;
+  status: 201;
+};
+
+export type simulateApiHarnessSourceReviewsCreateResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessSourceReviewsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 403>;
+};
+
+export type simulateApiHarnessSourceReviewsCreateResponseSuccess =
+  simulateApiHarnessSourceReviewsCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessSourceReviewsCreateResponseError = (
+  | simulateApiHarnessSourceReviewsCreateResponse403
+  | simulateApiHarnessSourceReviewsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessSourceReviewsCreateResponse =
+  | simulateApiHarnessSourceReviewsCreateResponseSuccess
+  | simulateApiHarnessSourceReviewsCreateResponseError;
+
+export const getSimulateApiHarnessSourceReviewsCreateUrl = () => {
+  return `/simulate/api/harness-source-reviews/`;
+};
+
+export const simulateApiHarnessSourceReviewsCreate = async (
+  harnessSourceReviewCreateApi: HarnessSourceReviewCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessSourceReviewsCreateResponse> => {
+  return apiMutator<simulateApiHarnessSourceReviewsCreateResponse>(
+    getSimulateApiHarnessSourceReviewsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessSourceReviewCreateApi),
+    },
+  );
+};
+
+export type simulateApiHarnessSourceReviewsReadResponse200 = {
+  data: HarnessSourceReviewReadApi;
+  status: 200;
+};
+
+export type simulateApiHarnessSourceReviewsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessSourceReviewsReadResponseSuccess =
+  simulateApiHarnessSourceReviewsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessSourceReviewsReadResponseError =
+  simulateApiHarnessSourceReviewsReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessSourceReviewsReadResponse =
+  | simulateApiHarnessSourceReviewsReadResponseSuccess
+  | simulateApiHarnessSourceReviewsReadResponseError;
+
+export const getSimulateApiHarnessSourceReviewsReadUrl = (id: string) => {
+  return `/simulate/api/harness-source-reviews/${id}/`;
+};
+
+export const simulateApiHarnessSourceReviewsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessSourceReviewsReadResponse> => {
+  return apiMutator<simulateApiHarnessSourceReviewsReadResponse>(
+    getSimulateApiHarnessSourceReviewsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessSourceReviewsAcceptResponse200 = {
+  data: HarnessSourceReviewReadApi;
+  status: 200;
+};
+
+export type simulateApiHarnessSourceReviewsAcceptResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessSourceReviewsAcceptResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessSourceReviewsAcceptResponseSuccess =
+  simulateApiHarnessSourceReviewsAcceptResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessSourceReviewsAcceptResponseError = (
+  | simulateApiHarnessSourceReviewsAcceptResponse403
+  | simulateApiHarnessSourceReviewsAcceptResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessSourceReviewsAcceptResponse =
+  | simulateApiHarnessSourceReviewsAcceptResponseSuccess
+  | simulateApiHarnessSourceReviewsAcceptResponseError;
+
+export const getSimulateApiHarnessSourceReviewsAcceptUrl = (id: string) => {
+  return `/simulate/api/harness-source-reviews/${id}/accept/`;
+};
+
+export const simulateApiHarnessSourceReviewsAccept = async (
+  id: string,
+  harnessSourceReviewAcceptApi: HarnessSourceReviewAcceptApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessSourceReviewsAcceptResponse> => {
+  return apiMutator<simulateApiHarnessSourceReviewsAcceptResponse>(
+    getSimulateApiHarnessSourceReviewsAcceptUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessSourceReviewAcceptApi),
+    },
+  );
+};
+
+export type simulateApiHarnessSourceReviewsCancelResponse200 = {
+  data: HarnessSourceReviewReadApi;
+  status: 200;
+};
+
+export type simulateApiHarnessSourceReviewsCancelResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessSourceReviewsCancelResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessSourceReviewsCancelResponseSuccess =
+  simulateApiHarnessSourceReviewsCancelResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessSourceReviewsCancelResponseError = (
+  | simulateApiHarnessSourceReviewsCancelResponse403
+  | simulateApiHarnessSourceReviewsCancelResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessSourceReviewsCancelResponse =
+  | simulateApiHarnessSourceReviewsCancelResponseSuccess
+  | simulateApiHarnessSourceReviewsCancelResponseError;
+
+export const getSimulateApiHarnessSourceReviewsCancelUrl = (id: string) => {
+  return `/simulate/api/harness-source-reviews/${id}/cancel/`;
+};
+
+export const simulateApiHarnessSourceReviewsCancel = async (
+  id: string,
+  harnessSourceReviewCancelApi: HarnessSourceReviewCancelApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessSourceReviewsCancelResponse> => {
+  return apiMutator<simulateApiHarnessSourceReviewsCancelResponse>(
+    getSimulateApiHarnessSourceReviewsCancelUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessSourceReviewCancelApi),
     },
   );
 };

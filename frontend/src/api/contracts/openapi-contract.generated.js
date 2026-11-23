@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1216,
+  endpointCount: 1220,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29499,6 +29499,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           202: {
             $ref: "#/definitions/HarnessJobRead",
           },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
           404: {
             $ref: "#/definitions/ApiTextErrorResponse",
           },
@@ -29521,6 +29524,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           201: {
             $ref: "#/definitions/HarnessDesignDocumentResponse",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           413: {
             $ref: "#/definitions/ApiTextErrorResponse",
@@ -29546,6 +29552,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           202: {
             $ref: "#/definitions/HarnessJobRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           404: {
             $ref: "#/definitions/ApiTextErrorResponse",
@@ -31066,6 +31075,89 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessReleaseListResponse",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/": {
+      post: {
+        operationId: "simulate_api_harness-source-reviews_create",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceReviewCreate",
+        },
+        queryParameters: {},
+        responses: {
+          201: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/": {
+      get: {
+        operationId: "simulate_api_harness-source-reviews_read",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/accept/": {
+      post: {
+        operationId: "simulate_api_harness-source-reviews_accept",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceReviewAccept",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/cancel/": {
+      post: {
+        operationId: "simulate_api_harness-source-reviews_cancel",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceReviewCancel",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -74244,6 +74336,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           maxLength: 128,
           minLength: 1,
         },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
         review: {
           title: "Review",
           type: "object",
@@ -74252,6 +74355,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     HarnessSourceAcceptResponse: {
       required: [
+        "review_id",
+        "accepted_revision",
         "draft",
         "snapshot_digest",
         "sources",
@@ -74260,6 +74365,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       type: "object",
       properties: {
+        review_id: {
+          title: "Review id",
+          type: "string",
+          format: "uuid",
+        },
+        accepted_revision: {
+          title: "Accepted revision",
+          type: "integer",
+        },
         draft: {
           title: "Draft",
           type: "object",
@@ -74347,6 +74461,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     HarnessSourcePrepareResponse: {
       required: [
         "import_ref",
+        "revision",
+        "state",
         "draft_digest",
         "draft",
         "suggested_purposes",
@@ -74359,10 +74475,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          minLength: 1,
+        },
         draft_digest: {
           title: "Draft digest",
           type: "string",
-          minLength: 1,
         },
         draft: {
           title: "Draft",
@@ -74374,6 +74498,164 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         capabilities: {
           $ref: "#/definitions/HarnessSourceCapabilities",
+        },
+      },
+    },
+    HarnessSourceReviewAccept: {
+      required: [
+        "expected_revision",
+        "expected_draft_digest",
+        "expected_schema_digest",
+        "decisions",
+        "idempotency_key",
+      ],
+      type: "object",
+      properties: {
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        expected_draft_digest: {
+          title: "Expected draft digest",
+          type: "string",
+          pattern: "\\Asha256:[0-9a-f]{64}$",
+          minLength: 1,
+        },
+        expected_schema_digest: {
+          title: "Expected schema digest",
+          type: "string",
+          pattern: "\\Asha256:[0-9a-f]{64}$",
+          minLength: 1,
+        },
+        decisions: {
+          title: "Decisions",
+          type: "object",
+          additionalProperties: true,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    HarnessSourceReviewCancel: {
+      required: ["expected_revision", "expected_draft_digest"],
+      type: "object",
+      properties: {
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        expected_draft_digest: {
+          title: "Expected draft digest",
+          type: "string",
+          pattern: "\\Asha256:[0-9a-f]{64}$",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessSourceReviewCreate: {
+      required: ["scope", "idempotency_key"],
+      type: "object",
+      properties: {
+        scope: {
+          $ref: "#/definitions/HarnessSourceScope",
+        },
+        document_ids: {
+          type: "array",
+          items: {
+            type: "string",
+            format: "uuid",
+          },
+          default: [],
+          maxItems: 100,
+        },
+        document_purposes: {
+          title: "Document purposes",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            enum: ["policy", "reference", "seed_records"],
+          },
+          default: {},
+        },
+        knowledge_base: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessSourceSelection",
+          },
+          default: [],
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+      },
+    },
+    HarnessSourceReviewRead: {
+      required: [
+        "id",
+        "state",
+        "revision",
+        "scope",
+        "draft_digest",
+        "preview",
+        "receipt",
+        "expires_at",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: [
+            "reading",
+            "needs_repair",
+            "ready",
+            "accepted",
+            "cancelled",
+            "expired",
+          ],
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+        },
+        scope: {
+          title: "Scope",
+          type: "object",
+        },
+        draft_digest: {
+          title: "Draft digest",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        preview: {
+          title: "Preview",
+          type: "object",
+        },
+        receipt: {
+          title: "Receipt",
+          type: "object",
+          "x-nullable": true,
+        },
+        expires_at: {
+          title: "Expires at",
+          type: "string",
+          format: "date-time",
         },
       },
     },
@@ -116431,6 +116713,47 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Whole collection",
           type: "boolean",
           default: false,
+        },
+      },
+    },
+    HarnessSourceScope: {
+      required: ["kind", "id"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["environment", "design", "build_job"],
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          format: "uuid",
+        },
+        revision: {
+          title: "Revision",
+          type: "integer",
+          minimum: 1,
+        },
+        schema_digest: {
+          title: "Schema digest",
+          type: "string",
+          pattern: "\\Asha256:[0-9a-f]{64}$",
+          minLength: 1,
+        },
+        environment_version_id: {
+          title: "Environment version id",
+          type: "string",
+          format: "uuid",
+        },
+        expected_draft: {
+          $ref: "#/definitions/HarnessSourceDraftRef",
+        },
+        target_table: {
+          title: "Target table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
         },
       },
     },
