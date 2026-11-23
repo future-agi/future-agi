@@ -6,10 +6,16 @@ import {
   Button,
   ButtonBase,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import Iconify from "src/components/iconify";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -25,7 +31,7 @@ import {
 import ViewerLock from "../../components/ViewerLock";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ReviewSection from "./ReviewSection";
-import ReviewLine, { LineAction } from "./ReviewLine";
+import ReviewLine from "./ReviewLine";
 import ReviewBrief, { ReviewBanner } from "./ReviewBrief";
 import ToolChip from "./ToolChip";
 import {
@@ -168,6 +174,9 @@ export default function DesignReviewStage({ envId }) {
   const tableSource = (table) => sourceLabel(table.source);
   const toolCommon = commonSource(mapTools.map(toolSource));
   const tableCommon = commonSource(tables.map(tableSource));
+  const useCaseCommon = commonSource(
+    useCases.map((useCase) => sourceLabel(useCase.source)),
+  );
   const ruleCommon = commonSource(
     rules
       .filter((rule) => !rule.edited)
@@ -193,7 +202,7 @@ export default function DesignReviewStage({ envId }) {
       kind === "tool" && item.source === "agent_code"
         ? REVIEW_COPY.agentStillCalls
         : null;
-    if (kind !== "tool" && kind !== "table") {
+    if (kind !== "tool") {
       commitRemove({ kind, item, label, note });
       return;
     }
@@ -291,29 +300,6 @@ export default function DesignReviewStage({ envId }) {
     />
   );
 
-  const usageRow = (label, list) => (
-    <Stack direction="row" alignItems="flex-start" spacing={1}>
-      <Typography
-        sx={{
-          typography: "s3",
-          color: "text.tertiary",
-          width: 56,
-          flexShrink: 0,
-          pt: 0.375,
-        }}
-      >
-        {label}
-      </Typography>
-      <Stack
-        direction="row"
-        flexWrap="wrap"
-        sx={{ gap: 0.75, flex: 1, minWidth: 0 }}
-      >
-        {list.map(chip)}
-      </Stack>
-    </Stack>
-  );
-
   const leftOutLines = leftOut.map((one) => (
     <ReviewLine key={`left-${one.tool}`}>
       <Box component="span" sx={{ color: "text.secondary" }}>
@@ -321,6 +307,17 @@ export default function DesignReviewStage({ envId }) {
       </Box>
     </ReviewLine>
   ));
+
+  const chipList = (list) =>
+    list.length ? (
+      <Stack direction="row" flexWrap="wrap" sx={{ gap: 0.75 }}>
+        {list.map(chip)}
+      </Stack>
+    ) : (
+      <Typography sx={{ typography: "s1", color: "text.disabled" }}>
+        {REVIEW_COPY.none}
+      </Typography>
+    );
 
   const recordsAndTools = () => {
     const { byTable, none } = tableUsage(tables, mapTools);
@@ -338,101 +335,90 @@ export default function DesignReviewStage({ envId }) {
           .filter(Boolean)
           .join(" · ")}
       >
-        {tables.map((table) => (
-          <Stack
-            key={table.id}
-            direction="row"
-            alignItems="flex-start"
-            spacing={2}
-            sx={{ px: 1.5, py: 1 }}
-          >
-            <Stack
-              direction="row"
-              alignItems="flex-start"
-              spacing={0.5}
-              sx={{ width: 240, flexShrink: 0, minWidth: 0 }}
-            >
-              <Box sx={{ minWidth: 0 }}>
-                <Typography noWrap sx={{ typography: "s1", fontWeight: 500 }}>
-                  {table.name}
-                </Typography>
-                <Typography
-                  noWrap
-                  title={table.columns.join(", ")}
-                  sx={{ typography: "s3", color: "text.tertiary" }}
+        <Table size="small">
+          <TableHead>
+            <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
+              <TableCell sx={{ width: 200 }}>
+                {REVIEW_COPY.tableHeader.table}
+              </TableCell>
+              <TableCell sx={{ width: 110 }}>
+                {REVIEW_COPY.tableHeader.columns}
+              </TableCell>
+              <TableCell>{REVIEW_COPY.tableHeader.changedBy}</TableCell>
+              <TableCell>{REVIEW_COPY.tableHeader.readBy}</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {tables.map((table) => {
+              const { changes, reads } = byTable.get(table.name);
+              return (
+                <TableRow
+                  key={table.id}
+                  hover
+                  sx={{
+                    height: ROW_HEIGHT.default,
+                    "& td": { verticalAlign: "top", py: 1 },
+                  }}
                 >
-                  {[
-                    REVIEW_COPY.columns(table.columns),
-                    tableSource(table) !== tableCommon
-                      ? tableSource(table)
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </Typography>
-              </Box>
-              {editable && (
-                <LineAction
-                  icon="solar:trash-bin-minimalistic-linear"
-                  label={REVIEW_COPY.removeNamed(table.name)}
-                  onClick={() => remove("table", table, table.name)}
-                  disabled={busy}
-                />
-              )}
-            </Stack>
-            <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0, pt: 0.25 }}>
-              {(() => {
-                const { changes, reads } = byTable.get(table.name);
-                if (!changes.length && !reads.length)
-                  return (
+                  <TableCell>
+                    <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                      {table.name}
+                    </Typography>
+                    {tableSource(table) !== tableCommon && (
+                      <Typography
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        {tableSource(table)}
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Tooltip arrow title={table.columns.join(", ")}>
+                      <Typography
+                        component="span"
+                        sx={{ typography: "s1", color: "text.secondary" }}
+                      >
+                        {REVIEW_COPY.columns(table.columns)}
+                      </Typography>
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell>{chipList(changes)}</TableCell>
+                  <TableCell>{chipList(reads)}</TableCell>
+                </TableRow>
+              );
+            })}
+            {none.map((tool) => (
+              <TableRow
+                key={`no-table-${tool.id}`}
+                hover
+                sx={{
+                  height: ROW_HEIGHT.default,
+                  "& td": { verticalAlign: "top", py: 1 },
+                }}
+              >
+                <TableCell>
+                  <Typography
+                    sx={{ typography: "s1", color: "text.secondary" }}
+                  >
+                    {REVIEW_COPY.noTable}
+                  </Typography>
+                </TableCell>
+                <TableCell />
+                <TableCell colSpan={2}>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    {chip(tool)}
                     <Typography
                       sx={{ typography: "s3", color: "text.tertiary" }}
                     >
-                      {REVIEW_COPY.noToolUsesIt}
+                      {REVIEW_COPY.noTableWhy[tool.status] ||
+                        REVIEW_COPY.noTableWhy.unknown}
                     </Typography>
-                  );
-                return (
-                  <>
-                    {changes.length > 0 &&
-                      usageRow(REVIEW_COPY.changesLabel, changes)}
-                    {reads.length > 0 &&
-                      usageRow(REVIEW_COPY.readsLabel, reads)}
-                  </>
-                );
-              })()}
-            </Stack>
-          </Stack>
-        ))}
-        {none.length > 0 && (
-          <Stack direction="row" spacing={2} sx={{ px: 1.5, py: 1 }}>
-            <Typography
-              sx={{
-                typography: "s1",
-                color: "text.secondary",
-                width: 240,
-                flexShrink: 0,
-              }}
-            >
-              {REVIEW_COPY.noTable}
-            </Typography>
-            <Stack spacing={0.75} sx={{ flex: 1, minWidth: 0 }}>
-              {none.map((tool) => (
-                <Stack
-                  key={tool.id}
-                  direction="row"
-                  alignItems="center"
-                  spacing={1}
-                >
-                  {chip(tool)}
-                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                    {REVIEW_COPY.noTableWhy[tool.status] ||
-                      REVIEW_COPY.noTableWhy.unknown}
-                  </Typography>
-                </Stack>
-              ))}
-            </Stack>
-          </Stack>
-        )}
+                  </Stack>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
         {leftOutLines}
       </ReviewSection>
     );
@@ -447,14 +433,7 @@ export default function DesignReviewStage({ envId }) {
       >
         {tables.length ? (
           tables.map((table) => (
-            <ReviewLine
-              key={table.id}
-              onRemove={
-                editable ? () => remove("table", table, table.name) : undefined
-              }
-              removeLabel={REVIEW_COPY.removeNamed(table.name)}
-              disabled={busy}
-            >
+            <ReviewLine key={table.id}>
               <Box component="span" sx={{ fontWeight: 500 }}>
                 {table.name}
               </Box>
@@ -516,10 +495,17 @@ export default function DesignReviewStage({ envId }) {
                   tables: tables.length,
                   tools: tools.length,
                   rules: rules.length,
-                  scenarios: emptyWorld ? 0 : scenarioTotal,
+                  useCases: useCases.length,
                 })
               : REVIEW_COPY.approved}
           </Typography>
+          {waiting && !emptyWorld && scenarioTotal > 0 && (
+            <Typography
+              sx={{ typography: "s1", color: "text.secondary", mt: 0.25 }}
+            >
+              {REVIEW_COPY.writtenAfterApproval(scenarioTotal, useCases.length)}
+            </Typography>
+          )}
         </Box>
         <Box sx={{ flexShrink: 0 }}>{approveControl}</Box>
       </Stack>
@@ -534,32 +520,40 @@ export default function DesignReviewStage({ envId }) {
             {pending.map((one) => {
               const tool = tools.find((item) => item.name === one.tool);
               return (
-                <ReviewLine key={one.tool}>
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Box component="span" sx={{ fontWeight: 500 }}>
-                        {one.tool}
-                      </Box>
-                      <Box
-                        component="span"
-                        sx={{ color: "text.secondary", ml: 0.75 }}
-                      >
-                        {REVIEW_COPY.unsupportedWhy(one.reaches)}
-                      </Box>
+                <Stack
+                  key={one.tool}
+                  direction="row"
+                  alignItems="center"
+                  spacing={1}
+                  sx={{
+                    px: 1.5,
+                    minHeight: ROW_HEIGHT.default,
+                    "&:hover": { bgcolor: "action.hover" },
+                  }}
+                >
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Box component="span" sx={{ fontWeight: 500 }}>
+                      {one.tool}
                     </Box>
-                    {editable && tool && (
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        disabled={busy}
-                        onClick={() => removeTool(tool)}
-                        sx={actionSx}
-                      >
-                        {REVIEW_COPY.leaveOut}
-                      </Button>
-                    )}
-                  </Stack>
-                </ReviewLine>
+                    <Box
+                      component="span"
+                      sx={{ color: "text.secondary", ml: 0.75 }}
+                    >
+                      {REVIEW_COPY.unsupportedWhy(one.reaches)}
+                    </Box>
+                  </Box>
+                  {editable && tool && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={busy}
+                      onClick={() => removeTool(tool)}
+                      sx={actionSx}
+                    >
+                      {REVIEW_COPY.leaveOut}
+                    </Button>
+                  )}
+                </Stack>
               );
             })}
           </ReviewSection>
@@ -633,8 +627,9 @@ export default function DesignReviewStage({ envId }) {
         </ReviewSection>
 
         <ReviewSection
-          label={REVIEW_COPY.scenarios}
-          count={emptyWorld ? 0 : scenarioTotal}
+          label={REVIEW_COPY.useCases}
+          count={useCases.length}
+          source={useCaseCommon ? sourceWords(useCaseCommon) : null}
         >
           {emptyWorld || !useCases.length ? (
             <ReviewLine empty>{REVIEW_COPY.noScenarios}</ReviewLine>
@@ -649,15 +644,7 @@ export default function DesignReviewStage({ envId }) {
                 }
                 disabled={busy}
               >
-                <Box
-                  component="span"
-                  sx={{ fontVariantNumeric: "tabular-nums" }}
-                >
-                  {useCase.planned_scenarios}
-                </Box>
-                <Box component="span" sx={{ ml: 0.75 }}>
-                  {useCase.text}
-                </Box>
+                {useCase.text}
               </ReviewLine>
             ))
           )}

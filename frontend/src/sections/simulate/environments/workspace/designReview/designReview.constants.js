@@ -20,12 +20,12 @@ export const sourceWords = (source) =>
 
 export const REVIEW_COPY = {
   title: "Review the design",
-  summary: ({ tables, tools, rules, scenarios }) =>
+  summary: ({ tables, tools, rules, useCases }) =>
     `${[
       plural(tables, "record"),
       plural(tools, "tool"),
       plural(rules, "rule"),
-      plural(scenarios, "scenario"),
+      plural(useCases, "use case"),
     ].join(" · ")}. Nothing is built until you approve.`,
   approve: "Approve and build",
   continue: "Continue",
@@ -71,12 +71,23 @@ export const REVIEW_COPY = {
   tools: "Tools",
   rules: "Rules",
   people: "People",
-  scenarios: "Scenarios",
+  useCases: "Use cases",
+  writtenAfterApproval: (scenarios, useCases) =>
+    `${plural(scenarios, "scenario")} ${scenarios === 1 ? "is" : "are"} written after you approve${
+      scenarios === useCases
+        ? ", one per use case"
+        : ", spread across these use cases"
+    }.`,
   columns: (columns) => plural(columns.length, "column"),
   noToolUsesIt: "No tool uses it",
   noTable: "No table",
-  changesLabel: "Changes",
-  readsLabel: "Reads",
+  none: "None",
+  tableHeader: {
+    table: "Table",
+    columns: "Columns",
+    changedBy: "Changed by",
+    readBy: "Read by",
+  },
   noTableWhy: {
     in_process: "runs inside the agent",
     simulated: "touches no table",

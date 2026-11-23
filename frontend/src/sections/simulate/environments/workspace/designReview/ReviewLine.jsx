@@ -3,7 +3,7 @@ import { Box, IconButton, Stack, Tooltip, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { REVIEW_COPY } from "./designReview.constants";
 
-export function LineAction({ icon, label, onClick, disabled = false }) {
+function LineAction({ icon, label, onClick, disabled = false }) {
   return (
     <Tooltip arrow title={label}>
       <span>
@@ -60,8 +60,22 @@ export default function ReviewLine({
       >
         {children}
       </Typography>
+      <Box sx={{ flex: 1 }} />
+      {source && (
+        <Typography
+          noWrap
+          sx={{
+            typography: "s3",
+            color: "text.tertiary",
+            flexShrink: 0,
+            pl: 1.5,
+          }}
+        >
+          {source}
+        </Typography>
+      )}
       {(onEdit || onRemove) && (
-        <Stack direction="row" sx={{ flexShrink: 0 }}>
+        <Stack direction="row" sx={{ flexShrink: 0, ml: 1 }}>
           {onEdit && (
             <LineAction
               icon="solar:pen-linear"
@@ -79,20 +93,6 @@ export default function ReviewLine({
             />
           )}
         </Stack>
-      )}
-      <Box sx={{ flex: 1 }} />
-      {source && (
-        <Typography
-          noWrap
-          sx={{
-            typography: "s3",
-            color: "text.tertiary",
-            flexShrink: 0,
-            pl: 1.5,
-          }}
-        >
-          {source}
-        </Typography>
       )}
     </Stack>
   );
