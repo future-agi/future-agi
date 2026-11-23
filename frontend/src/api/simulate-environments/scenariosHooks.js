@@ -65,6 +65,8 @@ const toPage = (data) => ({
   // Proved, kept as written and not proved over the whole suite; the lifecycle counts carry the
   // same three keys plus the four states and replace the proof counts when present.
   proofCounts: data?.lifecycle_counts ?? data?.proof_counts ?? null,
+  // The scenario fields only the grader reads, decided by the environment's rules.
+  privateFields: Array.isArray(data?.private_fields) ? data.private_fields : [],
 });
 
 export function useHarnessScenarios({

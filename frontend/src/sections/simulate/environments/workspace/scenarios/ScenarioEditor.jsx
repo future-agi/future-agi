@@ -10,9 +10,11 @@ import {
   Slider,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
 } from "@mui/material";
 
 import { ConfirmDialog } from "src/components/custom-dialog";
+import StatusBadge from "src/components/status-badge/StatusBadge";
 import SideDrawer from "../../components/SideDrawer";
 import {
   focusBuilderChat,
@@ -50,7 +52,14 @@ export default function ScenarioEditor({
   noiseOptions = [],
   levelLabels = {},
   env,
+  privateFields = [],
 }) {
+  // A field only the grader reads says so on its label and its hint.
+  const isPrivate = (field) => privateFields.includes(field);
+  const labelFor = (label, field) =>
+    isPrivate(field) ? `${label} · ${EDITOR_COPY.gradingOnly}` : label;
+  const hintFor = (hint, field) =>
+    isPrivate(field) ? `${hint} ${EDITOR_COPY.gradingOnlyHint}` : hint;
   const [saveError, setSaveError] = useState("");
   // The server's problems with the test conditions, each naming the fault (`index`) and its field.
   const [faultProblems, setFaultProblems] = useState([]);
@@ -312,31 +321,34 @@ export default function ScenarioEditor({
           />
           <TextField
             size="small"
-            label="Passes when"
+            label={labelFor("Passes when", "tests")}
             multiline
             minRows={2}
             value={draft.tests || ""}
             disabled={!canEdit("tests")}
             onChange={(e) => set("tests")(e.target.value)}
-            helperText={
+            helperText={hintFor(
               canEdit("tests")
                 ? "What a pass looks like. Evals grade against this."
-                : READ_ONLY_HINT
-            }
+                : READ_ONLY_HINT,
+              "tests",
+            )}
           />
           <TextField
             size="small"
-            label="Sub-goals"
+            label={labelFor("Sub-goals", "sub_goals")}
             multiline
             minRows={3}
             value={draft.subGoalsText || ""}
             disabled
-            helperText={READ_ONLY_HINT}
+            helperText={hintFor(READ_ONLY_HINT, "sub_goals")}
           />
 
           <SectionHeader
             title={EDITOR_COPY.personaSection}
             hint="Who is on the other end of the run."
+            tag={EDITOR_COPY.simulatedPeopleSee}
+            tagHint={EDITOR_COPY.simulatedPeopleSeeHint}
           />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
             <TextField
@@ -557,6 +569,8 @@ export default function ScenarioEditor({
 }
 
 ScenarioEditor.propTypes = {
+  // The scenario fields only the grader reads (the list's `private_fields`).
+  privateFields: PropTypes.arrayOf(PropTypes.string),
   open: PropTypes.bool,
   onClose: PropTypes.func,
   row: SCENARIO_SHAPE,
@@ -635,18 +649,33 @@ PersonaField.propTypes = {
   multiple: PropTypes.bool,
 };
 
-function SectionHeader({ title, hint }) {
+function SectionHeader({ title, hint, tag, tagHint }) {
   return (
     <Box>
-      <Typography
-        sx={{
-          typography: "m3",
-          fontWeight: "fontWeightMedium",
-          color: "text.primary",
-        }}
-      >
-        {title}
-      </Typography>
+      <Stack direction="row" alignItems="center" spacing={1}>
+        <Typography
+          sx={{
+            typography: "m3",
+            fontWeight: "fontWeightMedium",
+            color: "text.primary",
+          }}
+        >
+          {title}
+        </Typography>
+        {tag && (
+          <Tooltip arrow title={tagHint || ""}>
+            <span>
+              <StatusBadge
+                status="audience"
+                role="neutral"
+                label={tag}
+                size="sm"
+                dot={false}
+              />
+            </span>
+          </Tooltip>
+        )}
+      </Stack>
       {hint && (
         <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
           {hint}
@@ -655,4 +684,9 @@ function SectionHeader({ title, hint }) {
     </Box>
   );
 }
-SectionHeader.propTypes = { title: PropTypes.string, hint: PropTypes.string };
+SectionHeader.propTypes = {
+  title: PropTypes.string,
+  hint: PropTypes.string,
+  tag: PropTypes.string,
+  tagHint: PropTypes.string,
+};

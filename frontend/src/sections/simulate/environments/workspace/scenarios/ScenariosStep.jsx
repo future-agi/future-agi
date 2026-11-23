@@ -776,6 +776,7 @@ export default function ScenariosStep({
         noiseOptions={noiseOptions}
         levelLabels={pageData.levelLabels}
         env={env}
+        privateFields={pageData.privateFields}
       />
       <ConfirmDialog
         open={!!pendingDelete}

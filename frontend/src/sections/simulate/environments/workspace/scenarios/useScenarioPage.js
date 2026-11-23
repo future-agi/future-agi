@@ -24,6 +24,7 @@ import { selectableRowIds } from "./scenarios.constants";
  */
 export const PAGE_SIZE = 25;
 const EMPTY_LABELS = {};
+const EMPTY_FIELDS = [];
 
 export default function useScenarioPage({
   jobId,
@@ -109,5 +110,6 @@ export default function useScenarioPage({
     levelLabels,
     // Lifecycle counts over the whole suite; null on an environment that is not versioned.
     proofCounts: data?.proofCounts ?? null,
+    privateFields: data?.privateFields ?? EMPTY_FIELDS,
   };
 }
