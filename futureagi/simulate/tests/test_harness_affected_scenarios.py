@@ -1374,6 +1374,15 @@ def test_a_production_only_tool_holds_its_cases_for_another_agent_version_too(
     sent = [one["scenario_key"] for one in _run_metadata(run)["execution_manifest"]]
 
     assert (routing["status"], routing["reason_code"]) == ("blocked", "production_only")
+    # Only a new agent version moves the tool off production: the fix opens the agent's versions, never a re-check.
+    assert routing["fix"] == {
+        "type": "production_only",
+        "category": "agent_version",
+        "target": REFUND,
+        "action": f"Upload a new agent version that serves {REFUND} from its tools service, or remove it",
+        "would": f"{REFUND} runs in the test world instead of reaching production",
+        "recheck": None,
+    }
     assert not set(REFUND_KEYS) & set(sent)
     assert set(LOOKUP_KEYS) <= set(sent)
 
