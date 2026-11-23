@@ -31,13 +31,23 @@ export const createHarnessDesign = async (payload) =>
   ).data;
 
 // One document for a design: answers 201 `{id, name, content_type, sha256, size}`.
-export const uploadHarnessDesignDocument = async (file) => {
+export const uploadHarnessDesignDocument = async (
+  file,
+  { signal, onProgress } = {},
+) => {
   const form = new FormData();
   form.append("file", file);
   return (
     await axios.post(
       apiPath("/simulate/api/harness-environment-designs/documents/"),
       form,
+      {
+        signal,
+        onUploadProgress: ({ loaded, total }) => {
+          if (total)
+            onProgress?.(Math.min(99, Math.round((loaded / total) * 100)));
+        },
+      },
     )
   ).data;
 };

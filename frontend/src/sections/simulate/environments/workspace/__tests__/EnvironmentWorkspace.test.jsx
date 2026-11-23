@@ -255,17 +255,11 @@ describe("EnvironmentWorkspace route shell", () => {
       await screen.findByText("Refund Copilot", { selector: "p" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Ready")).toBeInTheDocument();
-    [
-      "Overview",
-      "World & tools",
-      "Contract",
-      "Scenarios",
-      "Evaluations",
-      "Settings",
-    ].forEach((label) =>
-      expect(
-        screen.getByRole("tab", { name: new RegExp(label) }),
-      ).toBeInTheDocument(),
+    ["Overview", "Contract", "Scenarios", "Evaluations", "Settings"].forEach(
+      (label) =>
+        expect(
+          screen.getByRole("tab", { name: new RegExp(label) }),
+        ).toBeInTheDocument(),
     );
     expect(screen.queryByRole("tab", { name: /Runs/ })).toBeNull();
   });
@@ -984,8 +978,7 @@ describe("EnvironmentWorkspace unsaved changes", () => {
         Object.assign(new Error("Not found"), { statusCode: 404 }),
       );
     });
-  const saveButton = () =>
-    screen.findByRole("button", { name: /^Review and save/ });
+  const saveButton = () => screen.findByRole("button", { name: "Save" });
 
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
@@ -1000,24 +993,21 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     const bar = await screen.findByTestId("draft-bar");
-    expect(bar.parentElement).toHaveTextContent(/shared across agent versions/);
+    expect(bar.previousElementSibling).toHaveTextContent(
+      /shared across agent versions/,
+    );
     expect(await saveButton()).toBeEnabled();
   });
 
-  it("opens the review from the bar", async () => {
+  it("opens the draft in the Versions tab from the bar", async () => {
     getHarnessJob.mockResolvedValue(VERSIONED);
     renderWorkspace("/dashboard/simulate/environments/job-done");
     await userEvent.click(
-      // The bar waits on the job, the drafts and then the review.
-      await screen.findByRole(
-        "button",
-        { name: /unsaved edit/ },
-        { timeout: 5000 },
-      ),
+      await screen.findByRole("button", { name: "View changes" }),
     );
-    expect(
-      await screen.findByRole("dialog", { name: "Review changes" }),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent(
+      "/dashboard/simulate/environments/job-done?tab=versions&version=environment%3Aed",
+    );
   });
 
   it("shows no bar without drafts", async () => {
@@ -1046,7 +1036,7 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     expect(await saveButton()).toBeDisabled();
   });
 
-  it("holds Save while a rebuild is queued, and offers Stop in the composer", async () => {
+  it("holds Save and Discard while a rebuild is queued, and offers Stop in the composer", async () => {
     serve({ environment: DRAFT, suite: null, set_aside: [] });
     const drafts = axios.get.getMockImplementation();
     axios.get.mockImplementation((url) =>
@@ -1072,7 +1062,9 @@ describe("EnvironmentWorkspace unsaved changes", () => {
     const reason = "An update is running; try again when it finishes";
     expect(await screen.findByText(reason)).toBeVisible();
     expect(await saveButton()).toBeDisabled();
-    expect(await saveButton()).toHaveAccessibleDescription(reason);
+    expect(
+      screen.getByRole("button", { name: "Discard" }),
+    ).toHaveAccessibleDescription(reason);
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
   });
 

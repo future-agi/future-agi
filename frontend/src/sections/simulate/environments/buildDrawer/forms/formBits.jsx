@@ -1,3 +1,4 @@
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import PropTypes from "prop-types";
 import { useEffect, useRef, useState } from "react";
 import { enqueueSnackbar } from "notistack";
@@ -23,7 +24,7 @@ import {
 } from "../../panels/scenarioCountRules";
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { PARALLELISM_COPY } from "../../parallelism.constants";
-import { sampleAgentFor, useConnectMode } from "../connectNewAgent";
+import { useConnectMode } from "../connectNewAgent";
 import {
   BTN_SX,
   INPUT_SX,
@@ -33,10 +34,6 @@ import {
   chipSx,
   focusRing,
 } from "../drawerStyles";
-import BuildFilesField from "./shared/BuildFilesField";
-import BuildTestField from "./shared/BuildTestField";
-import { BUILD_TEST_MIN } from "./shared/buildFiles";
-import { uploadsLabel, useFileUploads } from "./shared/useFileUploads";
 
 /*
   The pieces every setup form in the Build environment drawer is made of,
@@ -845,36 +842,25 @@ export function FormCard({
   uiOnly = false,
 }) {
   const connect = useConnectMode();
-  const sample = useUiOnlyBuild(
-    connect
-      ? [{ label: connect.item.name, detail: "Reached with these details" }]
-      : [],
-  );
-  const shown = connect ? sample : build;
-  // Held here only: no build payload carries them yet.
-  const [testRequest, setTestRequest] = useState("");
-  const uploads = useFileUploads();
+  const { canEdit } = useSimulationAccess();
+  const supported = !connect && !uiOnly;
   useEffect(() => {
-    onBusyChange?.(shown.committing);
-  }, [shown.committing, onBusyChange]);
+    onBusyChange?.(build.committing);
+  }, [build.committing, onBusyChange]);
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const countOk = isValidScenarioCount(scenarioCount);
-  // Only a UI-only build waits on it; a wired build never receives it.
-  const testOk = !uiOnly || testRequest.trim().length >= BUILD_TEST_MIN;
-  const footerHint = connect
-    ? hint || null
+  const footerHint = !supported
+    ? "This setup is unavailable."
     : hint ||
-      (!testOk
-        ? "Say what this environment should test"
-        : !countOk
-          ? `Scenarios to generate: 1 to ${MAX_SCENARIOS.toLocaleString()}`
-          : !build.readyToSubmit
-            ? build.status === "done" || build.status === "error"
-              ? "Fix what preflight found, then run it again"
-              : "Run preflight first"
-            : null);
-  const disabled = !!footerHint;
+      (!countOk
+        ? `Scenarios to generate: 1 to ${MAX_SCENARIOS.toLocaleString()}`
+        : !build.readyToSubmit
+          ? build.status === "done" || build.status === "error"
+            ? "Fix what preflight found, then run it again"
+            : "Run preflight first"
+          : null);
+  const disabled = !canEdit || !!footerHint;
 
   return (
     <Box
@@ -899,31 +885,23 @@ export function FormCard({
         )}
         <Stack spacing={1.75}>{children}</Stack>
         <Stack spacing={1.25} sx={{ mt: 1.75 }}>
-          {!connect && (
+          {supported && (
             <>
-              <BuildTestField
-                required={uiOnly}
-                flagged={!uiOnly}
-                value={testRequest}
-                onChange={setTestRequest}
-              />
               <ScenarioRow value={scenarioCount} onChange={onScenarioCount} />
               <ParallelRow build={build} />
-              <BuildFilesField flagged={!uiOnly} uploads={uploads} />
+              <PreflightRow
+                build={build}
+                canRun={canRun && canEdit}
+                blockedReason={blockedReason}
+                onRun={onRun}
+              />
+              <CreditExhaustionBanner
+                error={build.creditExhaustion.error}
+                onUpgrade={build.creditExhaustion.onUpgrade}
+                onDismiss={build.creditExhaustion.onDismiss}
+              />
             </>
           )}
-          <PreflightRow
-            build={shown}
-            canRun={canRun}
-            blockedReason={blockedReason}
-            onRun={connect ? sample.runPreflight : onRun}
-            readyTitle={connect ? "Ready to connect" : undefined}
-          />
-          <CreditExhaustionBanner
-            error={shown.creditExhaustion.error}
-            onUpgrade={shown.creditExhaustion.onUpgrade}
-            onDismiss={shown.creditExhaustion.onDismiss}
-          />
         </Stack>
       </Box>
       <Stack
@@ -942,7 +920,7 @@ export function FormCard({
         }}
       >
         <Box flex={1} />
-        {shown.committing ? (
+        {build.committing ? (
           <Stack direction="row" alignItems="center" spacing={1}>
             <CircularProgress
               size={13}
@@ -964,24 +942,12 @@ export function FormCard({
           size="medium"
           variant="contained"
           color="primary"
-          disabled={
-            disabled || shown.committing || uploads.uploading.length > 0
-          }
-          onClick={
-            connect
-              ? () =>
-                  connect.onConnected(
-                    sampleAgentFor(connect.item, connect.modality),
-                  )
-              : build.commitBuild
-          }
+          disabled={disabled || build.committing}
+          onClick={build.commitBuild}
           startIcon={<Iconify icon="solar:link-circle-linear" width={14} />}
           sx={{ ...BTN_SX, flexShrink: 0 }}
         >
-          {connect
-            ? "Connect agent"
-            : uploadsLabel(uploads, "Connect and build") ||
-              "Connect and build environment"}
+          Connect and build environment
         </Button>
       </Stack>
     </Box>

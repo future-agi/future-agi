@@ -4,7 +4,8 @@
 // least this many characters.
 export const BUILD_TEST_MIN = 10;
 
-export const BUILD_FILES_ACCEPT = ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf";
+export const BUILD_FILES_ACCEPT =
+  ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf,.docx";
 
 export const extOf = (name) =>
   String(name || "")

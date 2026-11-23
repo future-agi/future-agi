@@ -8,7 +8,6 @@ export const SCRATCH_ITEM = {
   icon: "solar:document-add-linear",
   setup: {
     panel: "scratch",
-    uiOnly: true,
     flush: true,
     subtitle:
       "Describe the world to test in. Connect the agent when it's ready.",

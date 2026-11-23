@@ -1,11 +1,10 @@
 import PropTypes from "prop-types";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Autocomplete,
   Box,
   Button,
-  Chip,
   CircularProgress,
   Dialog,
   DialogContent,
@@ -18,19 +17,17 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
-import Iconify from "src/components/iconify";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import {
   createHarnessDesign,
-  uploadHarnessDesignDocument,
   useHarnessReleases,
 } from "src/api/harness/releases";
 import { paths } from "src/routes/paths";
+import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
+import BuildFilesField from "src/sections/simulate/environments/buildDrawer/forms/shared/BuildFilesField";
+import { useFileUploads } from "src/sections/simulate/environments/buildDrawer/forms/shared/useFileUploads";
 
 import { errorMessage } from "./harnessShared";
-
-const DOCUMENT_TYPES = ".pdf,.docx,.xlsx,.csv,.tsv,.json,.jsonl,.txt,.md";
-const DOCUMENT_MAX_BYTES = 25 * 1024 * 1024;
 
 const MODALITIES = [
   { value: "chat", label: "Chat" },
@@ -39,10 +36,13 @@ const MODALITIES = [
 
 // The design request (environment-releases.md §7.9): requirements, and optionally a root release
 // to customize and the person's documents. The harness asks for anything else it needs.
-export default function DesignForm({ template = null, onCancel = null }) {
+export default function DesignForm({
+  template = null,
+  onCancel = null,
+  onBusyChange,
+}) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const fileInput = useRef(null);
   const { data: releases = [] } = useHarnessReleases({ enabled: !template });
   // A customization is a new root: only root releases can be templates.
   const templates = useMemo(
@@ -57,16 +57,21 @@ export default function DesignForm({ template = null, onCancel = null }) {
   );
   const [requirements, setRequirements] = useState("");
   const [modality, setModality] = useState("chat");
-  // Each document is uploaded when it is picked; the design lists the ones that arrived.
-  const [documents, setDocuments] = useState([]);
+  const uploads = useFileUploads();
+  const { canEdit } = useSimulationAccess();
   const [submitting, setSubmitting] = useState(false);
+  useEffect(() => {
+    onBusyChange?.(submitting);
+    return () => onBusyChange?.(false);
+  }, [onBusyChange, submitting]);
   const [error, setError] = useState("");
-  const [idempotencyKey] = useState(harnessIdempotencyKey);
-  const uploading = documents.some((one) => one.state === "uploading");
+  const request = useRef(null);
   const ready =
+    canEdit &&
     Boolean(name.trim() && requirements.trim()) &&
     (!chosen || Boolean(suiteId)) &&
-    !uploading &&
+    !uploads.uploading.length &&
+    !uploads.failed.length &&
     !submitting;
 
   const choose = (release) => {
@@ -74,55 +79,24 @@ export default function DesignForm({ template = null, onCancel = null }) {
     setSuiteId(release?.suites?.[0]?.id || "");
   };
 
-  const pick = (files) => {
-    Array.from(files || []).forEach((file) => {
-      const key = `${file.name}-${file.size}-${file.lastModified}`;
-      if (file.size > DOCUMENT_MAX_BYTES) {
-        setDocuments((all) => [
-          ...all,
-          { key, name: file.name, state: "error", error: "Larger than 25 MB" },
-        ]);
-        return;
-      }
-      setDocuments((all) => [
-        ...all,
-        { key, name: file.name, state: "uploading" },
-      ]);
-      uploadHarnessDesignDocument(file)
-        .then((stored) =>
-          setDocuments((all) =>
-            all.map((one) =>
-              one.key === key
-                ? { ...one, state: "uploaded", id: stored.id }
-                : one,
-            ),
-          ),
-        )
-        .catch((requestError) =>
-          setDocuments((all) =>
-            all.map((one) =>
-              one.key === key
-                ? { ...one, state: "error", error: errorMessage(requestError) }
-                : one,
-            ),
-          ),
-        );
-    });
-  };
-
   const submit = async () => {
     setSubmitting(true);
     setError("");
     try {
-      const created = await createHarnessDesign({
+      const body = {
         name: name.trim(),
         requirements: requirements.trim(),
         modality,
         ...(chosen ? { template_suite_id: suiteId } : {}),
-        document_ids: documents
-          .filter((one) => one.state === "uploaded")
-          .map((one) => one.id),
-        idempotency_key: idempotencyKey,
+        document_ids: uploads.done.map(({ documentId }) => documentId),
+      };
+      const signature = JSON.stringify(body);
+      if (request.current?.signature !== signature) {
+        request.current = { signature, key: harnessIdempotencyKey() };
+      }
+      const created = await createHarnessDesign({
+        ...body,
+        idempotency_key: request.current.key,
       });
       queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
       navigate(
@@ -201,70 +175,7 @@ export default function DesignForm({ template = null, onCancel = null }) {
           ))}
         </TextField>
       )}
-      <Box>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            startIcon={<Iconify icon="solar:paperclip-linear" width={16} />}
-            onClick={() => fileInput.current?.click()}
-            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
-          >
-            Add documents
-          </Button>
-          <Typography variant="caption" color="text.secondary">
-            Product lists, schedules, policies or FAQs: PDF, Word, Excel, CSV,
-            JSON or text, up to 25 MB each.
-          </Typography>
-        </Stack>
-        <input
-          ref={fileInput}
-          type="file"
-          multiple
-          hidden
-          accept={DOCUMENT_TYPES}
-          aria-label="Documents"
-          onChange={(event) => {
-            pick(event.target.files);
-            event.target.value = "";
-          }}
-        />
-        {documents.length > 0 && (
-          <Stack
-            direction="row"
-            spacing={0.75}
-            useFlexGap
-            flexWrap="wrap"
-            sx={{ mt: 1 }}
-          >
-            {documents.map((one) => (
-              <Chip
-                key={one.key}
-                size="small"
-                variant="outlined"
-                color={one.state === "error" ? "error" : "default"}
-                data-state={one.state}
-                label={
-                  one.state === "error" ? `${one.name}: ${one.error}` : one.name
-                }
-                icon={
-                  one.state === "uploading" ? (
-                    <CircularProgress size={12} />
-                  ) : one.state === "uploaded" ? (
-                    <Iconify icon="solar:check-circle-linear" width={14} />
-                  ) : undefined
-                }
-                onDelete={() =>
-                  setDocuments((all) =>
-                    all.filter((item) => item.key !== one.key),
-                  )
-                }
-              />
-            ))}
-          </Stack>
-        )}
-      </Box>
+      {canEdit && <BuildFilesField uploads={uploads} />}
       <Typography variant="caption" color="text.secondary">
         The harness asks what it still needs, one question at a time, and
         proposes the design for your approval before it builds anything. The
@@ -300,6 +211,7 @@ export default function DesignForm({ template = null, onCancel = null }) {
 DesignForm.propTypes = {
   template: PropTypes.object,
   onCancel: PropTypes.func,
+  onBusyChange: PropTypes.func,
 };
 
 export function DesignDialog({ open, onClose, template }) {

@@ -173,7 +173,7 @@ describe("GitHub", () => {
       screen.getByRole("textbox", { name: "GitHub App installation ID" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: "Use an access token" }),
-    ).toBeEnabled();
+      screen.queryByRole("radio", { name: "Use an access token" }),
+    ).not.toBeInTheDocument();
   });
 });

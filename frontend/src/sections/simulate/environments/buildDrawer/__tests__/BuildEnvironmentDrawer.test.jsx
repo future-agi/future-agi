@@ -8,35 +8,12 @@ import {
   within,
 } from "src/utils/test-utils";
 
+const navigate = vi.hoisted(() => vi.fn());
+
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
-  return { ...actual, useNavigate: () => vi.fn() };
+  return { ...actual, useNavigate: () => navigate };
 });
-
-vi.mock("src/api/agents/connectedAgents", () => ({
-  useConnectedAgents: () => ({
-    data: {
-      items: [
-        {
-          id: "a1",
-          name: "Billing line",
-          modality: "voice",
-          source: "vapi",
-          latestLabel: "v3",
-        },
-        {
-          id: "a2",
-          name: "Returns chat",
-          modality: "text",
-          source: "github",
-          latestLabel: null,
-        },
-      ],
-      total: 2,
-    },
-    isLoading: false,
-  }),
-}));
 
 vi.mock("src/api/harness/harness", () => ({
   preflightHarnessJob: vi.fn(),
@@ -85,11 +62,7 @@ describe("BuildEnvironmentDrawer catalog", () => {
   it("opens on every way in, Code first", () => {
     render();
     expect(screen.getByText("Build environment")).toBeInTheDocument();
-    for (const name of [
-      "Use a prebuilt world",
-      "Connect your agent",
-      "Your agents",
-    ]) {
+    for (const name of ["Use a prebuilt world", "Connect your agent"]) {
       expect(screen.getByRole("heading", { name })).toBeInTheDocument();
     }
     expect(screen.getByRole("tab", { name: /Code 22/ })).toHaveAttribute(
@@ -128,35 +101,15 @@ describe("BuildEnvironmentDrawer catalog", () => {
     expect(screen.getByText(/No way to connect matches/)).toBeInTheDocument();
   });
 
-  it("shows three prebuilt worlds and the SaaS sandbox, UI only", async () => {
-    render();
-    expect(
-      await screen.findByRole("listitem", { name: "Customer Support Line" }),
-    ).toBeInTheDocument();
-    const sandbox = screen.getByRole("button", { name: "SaaS sandbox" });
-    expect(within(sandbox).getByText("UI only")).toBeInTheDocument();
-    expect(within(sandbox).queryByText("Coming soon")).toBeNull();
-  });
-
-  it("lists the connected agents, filtered by type", () => {
-    render();
-    expect(row("Billing line")).toHaveTextContent("Vapi · v3");
-    expect(row("Returns chat")).toHaveTextContent("GitHub · No version yet");
-    fireEvent.click(screen.getByRole("button", { name: /^Voice 1/ }));
-    expect(screen.queryByRole("listitem", { name: "Returns chat" })).toBeNull();
-  });
-
-  it("offers every start, flagging the ones without an API as UI only", () => {
-    render();
-    expect(
-      screen.getByRole("button", { name: /Build from scratch/ }),
-    ).toBeEnabled();
-    const code = row("Build from code");
-    expect(within(code).getByText("UI only")).toBeInTheDocument();
-    expect(within(code).queryByText("Coming soon")).toBeNull();
-    expect(
-      within(code).getByRole("button", { name: "Open setup" }),
-    ).toBeEnabled();
+  it("opens the released template gallery and omits the sample worlds and agents", () => {
+    const onClose = render();
+    expect(screen.queryByText("Customer Support Line")).not.toBeInTheDocument();
+    expect(screen.queryByText("Your agents")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Browse templates" }));
+    expect(onClose).toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/templates",
+    );
   });
 
   it("closes from its own close button", () => {
@@ -196,7 +149,9 @@ describe("BuildEnvironmentDrawer setup", () => {
     const onClose = render();
     connect("GitHub");
     expect(screen.getByText("Repository link")).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Connect GitHub" })).toBeEnabled();
+    expect(
+      screen.queryByRole("radio", { name: "Connect GitHub" }),
+    ).not.toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Back to build environment" }),
     );

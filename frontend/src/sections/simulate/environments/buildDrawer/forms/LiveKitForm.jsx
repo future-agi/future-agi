@@ -1,12 +1,14 @@
 import PropTypes from "prop-types";
 import { Stack, Typography } from "@mui/material";
 import { AGENT_TYPES } from "src/sections/agents/constants";
+import { COUNTRY_BY_ISO } from "../../components/countryCodes";
 import usePanelBuild from "../../hooks/usePanelBuild";
 import { DEFAULT_SCENARIOS } from "../../panels/scenarioCountRules";
 import { T12 } from "../drawerStyles";
 import useDrawerForm from "./useDrawerForm";
-import { Field, FormCard, HintLine, ToggleRow } from "./formBits";
+import { Field, FormCard, HintLine } from "./formBits";
 import LiveKitRoomConfig from "./extras/LiveKitRoomConfig";
+import VoiceContact, { contactNumberError } from "./VoiceContact";
 
 /** A LiveKit agent, by its project: we join its rooms as the caller. */
 export default function LiveKitForm({ onBusyChange }) {
@@ -20,6 +22,9 @@ export default function LiveKitForm({ onBusyChange }) {
       systemPrompt: "",
       repoUrl: "",
       agentSpeaksFirst: false,
+      simMode: "web",
+      countryIso: "US",
+      contactNumber: "",
       scenarioCount: DEFAULT_SCENARIOS,
     },
     build,
@@ -33,30 +38,71 @@ export default function LiveKitForm({ onBusyChange }) {
     repoUrl,
     agentSpeaksFirst,
     scenarioCount,
+    simMode,
+    countryIso,
+    contactNumber,
   } = form;
-  const missing = !livekitUrl.trim()
-    ? "Add the server URL"
-    : !key.trim() || !apiSecret.trim()
-      ? "Add the API key and secret"
-      : !agentName.trim()
-        ? "Add the agent name"
-        : !systemPrompt.trim()
-          ? "Paste the agent's system prompt"
-          : null;
+  const phone = simMode === "phone";
+  const phoneError = phone
+    ? contactNumberError(countryIso, contactNumber)
+    : null;
+  const routing = [livekitUrl, key, apiSecret, agentName].map((value) =>
+    value.trim(),
+  );
+  const missing = !systemPrompt.trim()
+    ? "Paste the agent's system prompt"
+    : phone
+      ? phoneError ||
+        (routing.some(Boolean) && !routing.every(Boolean)
+          ? "Fill all routing fields or leave them blank"
+          : null)
+      : !livekitUrl.trim()
+        ? "Add the server URL"
+        : !key.trim() || !apiSecret.trim()
+          ? "Add the API key and secret"
+          : !agentName.trim()
+            ? "Add the agent name"
+            : null;
 
   const buildSource = () => ({
     kind: "platform",
     agentType: AGENT_TYPES.VOICE,
     provider: "livekit",
     scenarioCount: Number(scenarioCount) || undefined,
-    agentId: agentName.trim(),
-    apiKey: key.trim(),
-    apiSecret: apiSecret.trim(),
-    livekitUrl: livekitUrl.trim(),
+    ...(phone
+      ? {
+          agentMode: "prompt",
+          preflightOnlyCredentials: true,
+          ...(routing.every(Boolean)
+            ? {
+                verifyAgentName: agentName.trim(),
+                apiKey: key.trim(),
+                apiSecret: apiSecret.trim(),
+                livekitUrl: livekitUrl.trim(),
+              }
+            : {}),
+        }
+      : {
+          agentId: agentName.trim(),
+          apiKey: key.trim(),
+          apiSecret: apiSecret.trim(),
+          livekitUrl: livekitUrl.trim(),
+        }),
     prompt: systemPrompt.trim(),
     ...(repoUrl.trim() ? { repoUrl: repoUrl.trim() } : {}),
     callDirection: "inbound",
-    contact: { mode: "web", inboundCalls: true, agentSpeaksFirst },
+    contact: {
+      mode: simMode,
+      inboundCalls: true,
+      agentSpeaksFirst,
+      ...(phone
+        ? {
+            countryIso,
+            countryCode: COUNTRY_BY_ISO[countryIso]?.dial || "",
+            contactNumber,
+          }
+        : {}),
+    },
   });
 
   return (
@@ -79,7 +125,7 @@ export default function LiveKitForm({ onBusyChange }) {
       </Typography>
       <Field
         label="LiveKit server URL"
-        required
+        required={!phone}
         mono
         value={livekitUrl}
         onChange={set("livekitUrl")}
@@ -89,7 +135,7 @@ export default function LiveKitForm({ onBusyChange }) {
       <Stack direction="row" spacing={1.5}>
         <Field
           label="API key"
-          required
+          required={!phone}
           mono
           type="password"
           value={key}
@@ -100,7 +146,7 @@ export default function LiveKitForm({ onBusyChange }) {
         />
         <Field
           label="API secret"
-          required
+          required={!phone}
           mono
           type="password"
           value={apiSecret}
@@ -112,7 +158,7 @@ export default function LiveKitForm({ onBusyChange }) {
       </Stack>
       <Field
         label="Agent name"
-        required
+        required={!phone}
         mono
         value={agentName}
         onChange={set("agentName")}
@@ -129,13 +175,8 @@ export default function LiveKitForm({ onBusyChange }) {
         placeholder="You are a friendly returns agent for Acme…"
         helper="LiveKit doesn't expose your agent's prompt, so paste it here. It seeds scenarios and the judge. It never changes the live agent."
       />
-      <ToggleRow
-        title="Agent speaks first"
-        body="The simulator waits for its greeting."
-        checked={agentSpeaksFirst}
-        onChange={set("agentSpeaksFirst")}
-      />
-      <LiveKitRoomConfig />
+      <VoiceContact form={form} set={set} phoneError={phoneError} inboundOnly />
+      {!phone && <LiveKitRoomConfig />}
       <Field
         label="GitHub repo (optional)"
         mono

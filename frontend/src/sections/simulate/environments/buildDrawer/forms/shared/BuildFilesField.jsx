@@ -43,7 +43,7 @@ export default function BuildFilesField({
         {flagged && <UiOnlyFlag feature="environmentFiles" />}
       </Stack>
       <Typography sx={{ ...T12, color: "text.secondary", mb: 0.75 }}>
-        Your policy and records, used instead of generated ones.
+        Add policies, reference documents or records for review.
       </Typography>
       <Box
         onDragOver={(e) => {

@@ -7,8 +7,11 @@ import {
   useRef,
   useState,
 } from "react";
+import { useNavigate } from "react-router-dom";
+import { paths } from "src/routes/paths";
 import { enqueueSnackbar } from "notistack";
 import {
+  Alert,
   Box,
   Button,
   IconButton,
@@ -19,7 +22,6 @@ import {
 } from "@mui/material";
 import { alpha, useTheme } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
-import { usePrebuiltEnvironments } from "src/api/simulate-environments/prebuilt";
 import SideDrawer from "../components/SideDrawer";
 import DrawerCatalog from "./DrawerCatalog";
 import ConnectSection from "./ConnectSection";
@@ -32,12 +34,10 @@ import {
 } from "./connectNewAgent";
 import LogoTile from "./LogoTile";
 import UiOnlyFlag from "../components/UiOnlyFlag";
-import { worldsFrom } from "./worlds";
 import { BTN_SX, T12, T14 } from "./drawerStyles";
 import { FORMS_BY_PANEL } from "./forms/formsByPanel";
-import WorldsBrowser from "./starts/WorldsBrowser";
 import { QuietTag } from "./starts/startBits";
-import { SANDBOX_ITEM, SCRATCH_ITEM, worldItem } from "./starts/startItems";
+import { SCRATCH_ITEM } from "./starts/startItems";
 
 const DRAWER_WIDTH = 960;
 
@@ -91,13 +91,10 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
   // { kind: "setup", item, at, connect? } or { kind: "connect", modality,
   // onConnected, at }. `at` keys a layer, so opening a way again starts fresh.
   const [layers, setLayers] = useState([]);
-  // "catalog", or "worlds" while browsing every prebuilt world.
-  const [view, setView] = useState("catalog");
+  const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   // Agents connected from here, which the agent pickers list first.
   const [samples, setSamples] = useState([]);
-  const { data: templates } = usePrebuiltEnvironments();
-  const worlds = useMemo(() => worldsFrom(templates || []), [templates]);
   const nextAt = useRef(0);
   const backRef = useRef(null);
   const scrollBoxes = useRef(new Map());
@@ -163,7 +160,6 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
 
   const finish = () => {
     setLayers([]);
-    setView("catalog");
     setSamples([]);
     onClose();
   };
@@ -181,10 +177,6 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
       back();
       return;
     }
-    if (view === "worlds") {
-      setView("catalog");
-      return;
-    }
     finish();
   };
   const closeAll = () => {
@@ -197,9 +189,7 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
     const isTop = layer === top;
     const backLabel = under
       ? `Back to ${titleOf(under)}`
-      : view === "worlds"
-        ? "Back to prebuilt worlds"
-        : "Back to build environment";
+      : "Back to build environment";
     const item = layer.kind === "setup" ? layer.item : null;
     const setup = item?.setup;
     return (
@@ -244,82 +234,44 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
     );
   };
 
-  let header;
-  if (view === "worlds") {
-    header = (
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1.5}
-        sx={{ ...headerSx, px: 3, py: 2 }}
+  const header = (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1.5}
+      sx={{ ...headerSx, px: 3, py: 2 }}
+    >
+      <Box flex={1} minWidth={0}>
+        <Typography sx={{ ...T14, fontWeight: 600 }}>
+          Build environment
+        </Typography>
+        <Typography noWrap sx={{ ...T12, color: "text.secondary" }}>
+          Connect an agent or design an environment from scratch.
+        </Typography>
+      </Box>
+      <Button
+        size="small"
+        variant="contained"
+        color="primary"
+        onClick={() => pick(SCRATCH_ITEM)}
+        startIcon={<Iconify icon="solar:document-add-linear" width={14} />}
+        sx={{ ...BTN_SX, flexShrink: 0 }}
       >
-        <CloseButton
-          label="Back to build environment"
-          icon="solar:alt-arrow-left-linear"
-          onClick={() => setView("catalog")}
-        />
-        <Box flex={1} minWidth={0}>
-          <Typography sx={{ ...T14, fontWeight: 600 }}>
-            Prebuilt worlds
-            <Box
-              component="span"
-              sx={{ color: "text.secondary", fontWeight: 500, ml: 0.75 }}
-            >
-              {worlds.length + 1}
-            </Box>
-          </Typography>
-          <Typography noWrap sx={{ ...T12, color: "text.secondary" }}>
-            Tables, tools and rules, as designed. Try one now with its sample
-            agent, or use it with one of your agents.
-          </Typography>
-        </Box>
-        <CloseButton label="Close" onClick={closeAll} />
-      </Stack>
-    );
-  } else {
-    header = (
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1.5}
-        sx={{ ...headerSx, px: 3, py: 2 }}
-      >
-        <Box flex={1} minWidth={0}>
-          <Typography sx={{ ...T14, fontWeight: 600 }}>
-            Build environment
-          </Typography>
-          <Typography noWrap sx={{ ...T12, color: "text.secondary" }}>
-            Every environment belongs to one agent. Pick yours, or connect one,
-            then start from its own world or one of these.
-          </Typography>
-        </Box>
-        <Button
-          size="small"
-          variant="contained"
-          color="primary"
-          onClick={() => pick(SCRATCH_ITEM)}
-          startIcon={<Iconify icon="solar:document-add-linear" width={14} />}
-          sx={{ ...BTN_SX, flexShrink: 0 }}
-        >
-          Build from scratch
-        </Button>
-        <CloseButton label="Close" onClick={closeAll} />
-      </Stack>
-    );
-  }
+        Build from scratch
+      </Button>
+      <CloseButton label="Close" onClick={closeAll} />
+    </Stack>
+  );
 
-  // The list stays mounted under the layers, so back returns to the same tab,
-  // search and scroll position.
-  const list =
-    view === "worlds" ? (
-      <WorldsBrowser
-        worlds={worlds}
-        onOpenWorld={(w) => pick(worldItem(w))}
-        onOpenSandbox={() => pick(SANDBOX_ITEM)}
-      />
-    ) : (
-      <DrawerCatalog onPick={pick} onBrowseWorlds={() => setView("worlds")} />
-    );
+  const list = (
+    <DrawerCatalog
+      onPick={pick}
+      onBrowseWorlds={() => {
+        closeAll();
+        navigate(paths.dashboard.simulate.environments.templates);
+      }}
+    />
+  );
   const scrollSx = { flex: 1, minHeight: 0, overflow: "auto" };
 
   const layerBody = (layer) => {
@@ -333,6 +285,9 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
           />
         </Box>
       );
+    }
+    if (layer.item.setup.uiOnly || layer.connect) {
+      return <Alert severity="info">This setup is unavailable.</Alert>;
     }
     const Form = FORMS_BY_PANEL[layer.item.setup.panel];
     const form = <Form item={layer.item} onBusyChange={setBusy} />;

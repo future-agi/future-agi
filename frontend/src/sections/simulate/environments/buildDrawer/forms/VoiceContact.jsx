@@ -43,7 +43,12 @@ CountryCode.propTypes = {
  * How a voice agent is reached in simulation, as the design's ContactInformation:
  * over the web or by a real call, and who speaks first.
  */
-export default function VoiceContact({ form, set, phoneError }) {
+export default function VoiceContact({
+  form,
+  set,
+  phoneError,
+  inboundOnly = false,
+}) {
   const phone = form.simMode === "phone";
   return (
     <Stack spacing={1}>
@@ -89,12 +94,14 @@ export default function VoiceContact({ form, set, phoneError }) {
               sx={{ flex: 1 }}
             />
           </Stack>
-          <ToggleRow
-            title="Inbound Calls"
-            body="Allows the agent to take inbound calls."
-            checked={form.inboundCalls}
-            onChange={set("inboundCalls")}
-          />
+          {!inboundOnly && (
+            <ToggleRow
+              title="Inbound Calls"
+              body="Allows the agent to take inbound calls."
+              checked={form.inboundCalls}
+              onChange={set("inboundCalls")}
+            />
+          )}
         </>
       )}
       <ToggleRow
@@ -110,4 +117,5 @@ VoiceContact.propTypes = {
   form: PropTypes.object.isRequired,
   set: PropTypes.func.isRequired,
   phoneError: PropTypes.string,
+  inboundOnly: PropTypes.bool,
 };
