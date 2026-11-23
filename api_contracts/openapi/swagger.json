@@ -49035,12 +49035,63 @@
                         "name": "agent_type",
                         "in": "query",
                         "required": false,
-                        "type": "string",
-                        "enum": [
-                            "voice",
-                            "text"
-                        ],
-                        "x-nullable": true
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "voice",
+                                "text"
+                            ]
+                        },
+                        "collectionFormat": "multi"
+                    },
+                    {
+                        "name": "source",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "github",
+                                "archive",
+                                "livekit",
+                                "vapi",
+                                "retell",
+                                "bland",
+                                "eleven_labs",
+                                "phone"
+                            ]
+                        },
+                        "collectionFormat": "multi"
+                    },
+                    {
+                        "name": "environments",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "with",
+                                "without"
+                            ]
+                        },
+                        "collectionFormat": "multi"
+                    },
+                    {
+                        "name": "observe",
+                        "in": "query",
+                        "required": false,
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": [
+                                "linked",
+                                "not_linked"
+                            ]
+                        },
+                        "collectionFormat": "multi"
                     },
                     {
                         "name": "agent_definition_id",

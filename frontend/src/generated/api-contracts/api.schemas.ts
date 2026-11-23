@@ -45953,7 +45953,10 @@ export type SdkApiV1SimulationRunsListParams = {
 
 export type SimulateAgentDefinitionsListParams = {
   search?: string;
-  agent_type?: SimulateAgentDefinitionsListAgentType;
+  agent_type?: SimulateAgentDefinitionsListAgentTypeItem[];
+  source?: SimulateAgentDefinitionsListSourceItem[];
+  environments?: SimulateAgentDefinitionsListEnvironmentsItem[];
+  observe?: SimulateAgentDefinitionsListObserveItem[];
   agent_definition_id?: string;
   /**
    * @minimum 1
@@ -45965,12 +45968,42 @@ export type SimulateAgentDefinitionsListParams = {
   limit?: number;
 };
 
-export type SimulateAgentDefinitionsListAgentType =
-  (typeof SimulateAgentDefinitionsListAgentType)[keyof typeof SimulateAgentDefinitionsListAgentType];
+export type SimulateAgentDefinitionsListAgentTypeItem =
+  (typeof SimulateAgentDefinitionsListAgentTypeItem)[keyof typeof SimulateAgentDefinitionsListAgentTypeItem];
 
-export const SimulateAgentDefinitionsListAgentType = {
+export const SimulateAgentDefinitionsListAgentTypeItem = {
   voice: "voice",
   text: "text",
+} as const;
+
+export type SimulateAgentDefinitionsListSourceItem =
+  (typeof SimulateAgentDefinitionsListSourceItem)[keyof typeof SimulateAgentDefinitionsListSourceItem];
+
+export const SimulateAgentDefinitionsListSourceItem = {
+  github: "github",
+  archive: "archive",
+  livekit: "livekit",
+  vapi: "vapi",
+  retell: "retell",
+  bland: "bland",
+  eleven_labs: "eleven_labs",
+  phone: "phone",
+} as const;
+
+export type SimulateAgentDefinitionsListEnvironmentsItem =
+  (typeof SimulateAgentDefinitionsListEnvironmentsItem)[keyof typeof SimulateAgentDefinitionsListEnvironmentsItem];
+
+export const SimulateAgentDefinitionsListEnvironmentsItem = {
+  with: "with",
+  without: "without",
+} as const;
+
+export type SimulateAgentDefinitionsListObserveItem =
+  (typeof SimulateAgentDefinitionsListObserveItem)[keyof typeof SimulateAgentDefinitionsListObserveItem];
+
+export const SimulateAgentDefinitionsListObserveItem = {
+  linked: "linked",
+  not_linked: "not_linked",
 } as const;
 
 export type SimulateAgentDefinitionsBuildPreflightListParams = {

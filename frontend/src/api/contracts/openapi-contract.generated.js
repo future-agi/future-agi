@@ -27309,8 +27309,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
           agent_type: {
             required: false,
             schema: {
-              type: "string",
-              enum: ["voice", "text"],
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["voice", "text"],
+              },
+            },
+          },
+          source: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: [
+                  "github",
+                  "archive",
+                  "livekit",
+                  "vapi",
+                  "retell",
+                  "bland",
+                  "eleven_labs",
+                  "phone",
+                ],
+              },
+            },
+          },
+          environments: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["with", "without"],
+              },
+            },
+          },
+          observe: {
+            required: false,
+            schema: {
+              type: "array",
+              items: {
+                type: "string",
+                enum: ["linked", "not_linked"],
+              },
             },
           },
           agent_definition_id: {
