@@ -267,13 +267,17 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
       );
     }
     if (REPAIR_FIELD[r.repair.id]) return edit(REPAIR_FIELD[r.repair.id]);
+    /* The URL is in the agent's own code (Karthik's review #17): the fix is
+       a new agent version, same as the run plan says — not a setting here. */
     if (r.repair.id === "tools") {
-      onSaveValues(
-        {
-          connection: { ...spec, toolsRedirected: true },
-          ...clearedCheckPatch(agent.values, "tools"),
+      setParams(
+        (p) => {
+          const next = new URLSearchParams(p);
+          next.set("tab", "versions");
+          next.delete("fix");
+          return next;
         },
-        "Its tools now read their address from the environment — re-check to confirm.",
+        { replace: false },
       );
     }
   };
@@ -704,7 +708,9 @@ export default function ConnectionCheckSection({ agent, onSaveValues }) {
                             : { color: "text.primary", borderColor: "divider" }
                         }
                       >
-                        {r.repair.label}
+                        {r.repair.id === "tools" && isGitAgent(agent)
+                          ? "Sync the fixed commit"
+                          : r.repair.label}
                       </Button>
                     </Stack>
                   )}

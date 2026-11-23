@@ -17,6 +17,7 @@ import { PAIR_CHECK_LIMIT_MIN } from "../_mock/compatibility";
 import { ago } from "../agents/agentViewUtils";
 import {
   CODE_FIX,
+  codeFixOf,
   fieldFixOf,
   fixKindOf,
   fixLabelOf,
@@ -422,7 +423,7 @@ export default function ReadyToRun({
           }
           sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
         >
-          {CODE_FIX.action}
+          {codeFixOf(fixKit?.agent).action}
         </Button>
       );
     if (kind === "link" && onFix)
@@ -592,7 +593,7 @@ export default function ReadyToRun({
                           </Button>
                         </Stack>
                       ) : kind === "code" ? (
-                        CODE_FIX.fix
+                        codeFixOf(fixKit?.agent).fix
                       ) : (
                         shortFixLabel(fixLabelOf(r))
                       ),

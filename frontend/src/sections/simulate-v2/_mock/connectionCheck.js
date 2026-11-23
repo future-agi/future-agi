@@ -308,8 +308,8 @@ export const runConnectionCheck = (agent, spec, tools = []) => {
     add(
       "tools",
       "failed",
-      `${stillLive[0]} still reaches production — its URL is hard-coded, so scenarios that need it can't run against the test world.`,
-      { id: "tools", label: "Point it at the test world" },
+      `${stillLive[0]} still reaches production: its URL is hard-coded in the agent's code, so scenarios that need it can't run against the test world. Read the URL from the environment in the code, then make a new agent version (a synced commit or an upload).`,
+      { id: "tools", label: "Upload a new agent version" },
     );
   else {
     /* A redirected tool is the proof the fix needs — name it, not another. */

@@ -1,3 +1,4 @@
+import { isGitAgent } from "../_mock/codeRefs";
 /*
   Which fix a Ready to run row offers, so a fix is made where it shows (the
   run plan) whenever it's small enough: one connection field, pointing the
@@ -21,6 +22,17 @@ export const CODE_FIX = {
   fix: "Read the URL from the environment in the agent's code, then upload a new agent version.",
   note: "the fix is in the agent's code",
 };
+
+/* A code agent from GitHub gets its next version from a commit: push the
+   fix, then Sync. Anything else uploads a new version. */
+export const codeFixOf = (agent) =>
+  isGitAgent(agent)
+    ? {
+        ...CODE_FIX,
+        action: "Sync the fixed commit",
+        fix: "Read the URL from the environment in the agent's code, push the fix, then Sync to pick up the new commit.",
+      }
+    : CODE_FIX;
 
 /** "field" | "tools" | "release" | "rebuild" | "code" | "link" | null */
 export const fixKindOf = (row, kit) => {
