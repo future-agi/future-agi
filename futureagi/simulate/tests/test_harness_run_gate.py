@@ -79,6 +79,32 @@ def test_certified_pair_without_proofs_starts_prove_job(user, workspace, storage
     assert "only" in _proving_jobs(environment)
 
 
+def test_an_agent_fix_s_own_run_is_gated_by_readiness_not_by_lifecycle(
+    user, workspace, storage
+):
+    """The cases an agent fix wrote are what its run measures: unproved, they go out instead of starting a validation,
+    while the same run asked for by a person validates first."""
+    from simulate.services.hosted_harness import create_selected_harness_run
+
+    environment = _environment(user, workspace, storage, "gate-agent-fix")
+    _suite(environment, _ten())
+    _without_proofs(environment)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        _run(environment, KEYS, key="person")
+    run, _ = create_selected_harness_run(
+        environment,
+        scenario_keys=KEYS,
+        trials=1,
+        idempotency_key="agent-fix",
+        for_agent_fix=True,
+    )
+
+    assert refused.value.code == "pair_validating"
+    chosen = run.payload["metadata"]["readiness_selection"]
+    assert (chosen["running"], chosen["held_back"]["count"]) == (len(KEYS), 0)
+
+
 def test_some_cases_proved_run_those(user, workspace, storage):
     environment = _environment(user, workspace, storage, "gate-some")
     _suite(environment, _ten())
