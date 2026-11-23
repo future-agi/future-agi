@@ -89,7 +89,11 @@ export default function ScenarioDrawer({
             )}
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            <ScenarioSheet row={row} testConditions={testConditions} />
+            <ScenarioSheet
+              envId={envId}
+              row={row}
+              testConditions={testConditions}
+            />
           </Box>
         </Stack>
       )}
@@ -109,7 +113,7 @@ ScenarioDrawer.propTypes = {
   onLifecycleChange: PropTypes.func,
 };
 
-function ScenarioSheet({ row, testConditions = false }) {
+function ScenarioSheet({ envId, row, testConditions = false }) {
   const persona = row.persona?.name ? row.persona : null;
   const goals = normaliseSubTasks(row.subTasks);
   const problem = row.doorProblem;
@@ -267,6 +271,7 @@ function ScenarioSheet({ row, testConditions = false }) {
   return (
     <Stack spacing={3} sx={{ px: 3, py: 3, "& .sd-val": VAL_SX }}>
       <LifecycleSection
+        envId={envId}
         lifecycle={row.lifecycle}
         Row={Row}
         sectionSx={SECTION_HEAD}
@@ -294,6 +299,7 @@ function ScenarioSheet({ row, testConditions = false }) {
 }
 
 ScenarioSheet.propTypes = {
+  envId: PropTypes.string,
   row: SCENARIO_SHAPE,
   testConditions: PropTypes.bool,
 };

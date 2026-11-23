@@ -1,11 +1,47 @@
 import PropTypes from "prop-types";
-import { Box, Stack, Typography } from "@mui/material";
+import { useState } from "react";
+import { Box, Button, Stack, Typography } from "@mui/material";
 
 import StatusBadge from "src/components/status-badge/StatusBadge";
 
 import { LIFECYCLE_COPY } from "./scenarios.constants";
 import { lifecycleChip, wrongWayRows } from "./lifecycleView";
 import ValidateScenariosButton from "./ValidateScenariosButton";
+import SourceCompareDialog from "./SourceCompareDialog";
+
+// A rule or file the scenario cites changed: say where, and open the before and after.
+function SourceChangedLine({ envId, lifecycle }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Stack direction="row" alignItems="center" spacing={1}>
+      <Typography className="sd-val" sx={{ flex: 1, minWidth: 0 }}>
+        {LIFECYCLE_COPY.sourceChanged.line(lifecycle.source_changed_version)}
+      </Typography>
+      {envId && lifecycle.source_changed_version_id && (
+        <Button
+          size="small"
+          variant="outlined"
+          color="inherit"
+          onClick={() => setOpen(true)}
+          sx={{ flexShrink: 0 }}
+        >
+          {LIFECYCLE_COPY.sourceChanged.compare}
+        </Button>
+      )}
+      <SourceCompareDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        envId={envId}
+        versionId={lifecycle.source_changed_version_id}
+        sources={lifecycle.sources ?? []}
+      />
+    </Stack>
+  );
+}
+SourceChangedLine.propTypes = {
+  envId: PropTypes.string,
+  lifecycle: PropTypes.object,
+};
 
 const RESULT_ROLES = {
   caught: "success",
@@ -72,7 +108,7 @@ const stateText = (lifecycle) => {
 };
 
 // The Status sheet: why the scenario is in its state, whether it is proved, and each wrong-way example.
-export function LifecycleSection({ lifecycle, Row, sectionSx }) {
+export function LifecycleSection({ envId, lifecycle, Row, sectionSx }) {
   if (!lifecycle) return null;
   const examples = wrongWayRows(lifecycle);
   const proof = lifecycle.proof;
@@ -90,6 +126,11 @@ export function LifecycleSection({ lifecycle, Row, sectionSx }) {
         <Row label={LIFECYCLE_COPY.stateLabel}>
           <Typography className="sd-val">{stateText(lifecycle)}</Typography>
         </Row>
+        {lifecycle.source_changed?.length > 0 && (
+          <Row label={LIFECYCLE_COPY.sourceChanged.label}>
+            <SourceChangedLine envId={envId} lifecycle={lifecycle} />
+          </Row>
+        )}
         {proof && (
           <Row label={LIFECYCLE_COPY.proofLabel}>
             <Typography className="sd-val">
@@ -149,6 +190,7 @@ export function LifecycleSection({ lifecycle, Row, sectionSx }) {
   );
 }
 LifecycleSection.propTypes = {
+  envId: PropTypes.string,
   lifecycle: PropTypes.object,
   Row: PropTypes.elementType.isRequired,
   sectionSx: PropTypes.object,

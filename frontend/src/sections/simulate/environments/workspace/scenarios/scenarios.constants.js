@@ -108,6 +108,21 @@ export const LIFECYCLE_COPY = {
         "Its files are no longer in this version. Ask the builder chat to bring it back.",
     },
   },
+  sourceChanged: {
+    label: "Source changed",
+    line: (version) =>
+      `A rule or file it cites changed in environment v${version}.`,
+    compare: "Compare",
+    title: (from, to) => `What changed between environment v${from} and v${to}`,
+    rule: "Rule",
+    before: (version) => `Before (v${version})`,
+    after: (version) => `After (v${version})`,
+    missing: "Not in this version.",
+    loading: "Reading both versions…",
+    failed: "Couldn't read the change. Try again.",
+    citedBy: (keys) =>
+      `Cited by ${keys.length === 1 ? "1 scenario" : `${keys.length} scenarios`}: ${keys.join(", ")}`,
+  },
   mustPass: "Must pass",
   statusTitle: "Status",
   stateLabel: "State",
