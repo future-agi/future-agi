@@ -40,6 +40,7 @@ import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
 import DraftBar from "./drafts/DraftBar";
+import ReviewChangesDrawer from "./drafts/ReviewChangesDrawer";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
@@ -134,6 +135,8 @@ export default function EnvironmentWorkspace() {
   const pendingSubmission = useRef(null);
   // { ids, trials, initialPicks, seed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
+  // The review of the unsaved changes, opened from the unsaved-changes bar.
+  const [reviewOpen, setReviewOpen] = useState(false);
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
@@ -606,6 +609,7 @@ export default function EnvironmentWorkspace() {
         onViewChanges={(piece, id) =>
           setTab("versions", { version: `${piece}:${id}` })
         }
+        onReview={() => setReviewOpen(true)}
       />
 
       {/* A template-seeded env is read-only until forked — the banner states the
@@ -685,6 +689,13 @@ export default function EnvironmentWorkspace() {
         </ChatSplitPane>
       </Box>
       {runDialogEl}
+      <ReviewChangesDrawer
+        open={reviewOpen}
+        env={env}
+        canEdit={!locked}
+        onClose={() => setReviewOpen(false)}
+        onOpenTab={setTab}
+      />
     </Box>
   );
 }

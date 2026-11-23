@@ -11,7 +11,7 @@ import {
 
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { relativeTime } from "src/utils/format-time";
-import { DRAFTS_COPY as COPY } from "../workspace.constants";
+import { DRAFTS_COPY as COPY, REVIEW_COPY } from "../workspace.constants";
 import { changeCount } from "./changeCount";
 import useDraftSaveFlow from "./useDraftSaveFlow";
 
@@ -32,6 +32,7 @@ export default function DraftBar({
   busy = false,
   rebuilding = false,
   onViewChanges,
+  onReview,
 }) {
   const flow = useDraftSaveFlow(env);
   const [confirming, setConfirming] = useState(false);
@@ -149,13 +150,24 @@ export default function DraftBar({
           {latest.updatedAt &&
             ` — ${COPY.lastEdited(latest.lastEditedBy, relativeTime(latest.updatedAt))}`}
         </Typography>
-        <Button
-          size="small"
-          color="inherit"
-          onClick={() => onViewChanges?.(drafts.pieces[0], open[0].id)}
-        >
-          {COPY.viewChanges}
-        </Button>
+        {onReview ? (
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            onClick={onReview}
+          >
+            {REVIEW_COPY.reviewAndSave}
+          </Button>
+        ) : (
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => onViewChanges?.(drafts.pieces[0], open[0].id)}
+          >
+            {COPY.viewChanges}
+          </Button>
+        )}
         <Button
           size="small"
           variant="outlined"
@@ -269,4 +281,6 @@ DraftBar.propTypes = {
   rebuilding: PropTypes.bool,
   // (piece, draft version id): show that draft in the Versions tab.
   onViewChanges: PropTypes.func,
+  // Open the review of every change, where they are accepted, validated and saved.
+  onReview: PropTypes.func,
 };
