@@ -1947,8 +1947,13 @@ class TestAgentReading:
         _launch(gateway, job)
 
         assert _job_metadata(job)["agent_reading"] == "before_certify"
-        command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.agent_reading_command() + assembly.certify_command()
+        steps = gateway.client.sandbox.process.session_request.steps
+        # The reading runs first, as the sandbox user like the bundle author, and never fails the certify after it.
+        assert [one.command for one in steps] == [
+            assembly.agent_reading_command().removesuffix("; "),
+            *(one.command for one in assembly.certify_steps()),
+        ]
+        assert not steps[0].harness
 
     def test_a_default_move_never_reads(self, user, workspace, storage, gateway):
         environment = _not_built_with(
@@ -1979,8 +1984,11 @@ class TestAgentReading:
         assert started.state == "validating"
         assert _job_metadata(started.job)["agent_reading"] == "only"
         assert attempt.terminal_stage != "completed"
-        command = gateway.client.sandbox.process.session_request.command
-        assert command == assembly.agent_reading_command() + "true"
+        steps = gateway.client.sandbox.process.session_request.steps
+        # A reading-only check reads the version and certifies nothing.
+        assert [one.command for one in steps] == [
+            assembly.agent_reading_command().removesuffix("; ")
+        ]
 
     def test_the_read_document_is_stored_and_the_check_settles(
         self,

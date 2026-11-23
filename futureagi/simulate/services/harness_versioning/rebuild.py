@@ -398,6 +398,16 @@ def _queue(
         }
     nudge.state = State.QUEUED
     nudge.save()
+    if nudge.target == Target.ENVIRONMENT:
+        from simulate.services.hosted_harness_gateway import (
+            push_provider_profile_into_live_sandbox,
+        )
+
+        # The turn may run in a sandbox still warm from the build, which holds
+        # the provider's definition as it was then.
+        transaction.on_commit(
+            partial(push_provider_profile_into_live_sandbox, locked, _trigger(nudge))
+        )
     schedule_nudge_check(locked.id)
 
 
@@ -841,6 +851,14 @@ def briefing(environment: HostedHarnessJob, nudge: HarnessNudge) -> str:
                 or "none listed"
             ),
         ]
+        definition_changes = nudges.definition_changes(facts)
+        if definition_changes:
+            head.append(
+                "Changes read from the agent's definition: "
+                + "; ".join(definition_changes)
+                + ". The provider's definition in the workspace is already the"
+                " new one: re-read it."
+            )
     if nudge.target == Target.SUITE and _added_sub_goals(nudge):
         head.append(
             "Every sub-goal the environment added must be named by at least one"
@@ -1683,6 +1701,15 @@ def land_nudge_result(
         )
         setattr(nudge, f"result_{nudge.target}_version", version)
         nudge.save(update_fields=[f"result_{nudge.target}_version", "updated_at"])
+        if nudge.target == Target.ENVIRONMENT:
+            from simulate.services.agent_contracts import (
+                store_environment_version_contract,
+            )
+
+            # The agent version the world was rebuilt for keeps its contract.
+            transaction.on_commit(
+                partial(store_environment_version_contract, version.id)
+            )
     logger.info("harness_nudge_landed nudge=%s version=%s", nudge.id, version.id)
     return nudge
 
@@ -2019,6 +2046,7 @@ def retry_deferred_activations(version_id: Any) -> dict[str, str]:
         _activate,
         _busy,
         _record_activation,
+        production_requests,
     )
     from simulate.services.harness_versioning.versions import UNREADY_STATES
 
@@ -2040,7 +2068,12 @@ def retry_deferred_activations(version_id: Any) -> dict[str, str]:
     _record_activation(version_id, waiting)
     if not ready:
         return {}
-    moved = {str(one) for one in _activate(version, ready)}
+    moved = {
+        str(one)
+        for one in _activate(
+            version, ready, by_production=production_requests(version_id)
+        )
+    }
     return {one: "activated" if one in moved else "not_moved" for one in ready}
 
 

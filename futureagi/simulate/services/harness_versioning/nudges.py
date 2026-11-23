@@ -398,23 +398,28 @@ def _file(
 
 
 def _compare(
-    repository: str, base_sha: str, new_sha: str, organization_id: Any
+    repository: str,
+    base_sha: str,
+    new_sha: str,
+    organization_id: Any,
+    workspace_id: Any = None,
 ) -> tuple[str | None, Any]:
-    """``(unavailable, body)`` of one public compare, cached for a few minutes; within
-    the organization's share of the hourly comparisons."""
+    """``(unavailable, body)`` of one public compare, cached for a few minutes; read
+    with the workspace's credential."""
     from simulate.services import harness_github
 
     key = f"harness:gh-compare:{repository.lower()}:{base_sha}:{new_sha}"
     cached = cache.get(key)
     if cached is not None:
         return None, cached
-    response = harness_github.github_get(
-        f"/repos/{repository}/compare/{base_sha}...{new_sha}",
-        accept="application/vnd.github+json",
-        purpose="compare",
-        owner=str(organization_id),
-    )
-    if response.status in ("rate_limited", "budget"):
+    with harness_github.read_credential(organization_id, workspace_id) as credential:
+        response = harness_github.github_get(
+            f"/repos/{repository}/compare/{base_sha}...{new_sha}",
+            accept="application/vnd.github+json",
+            credential=credential,
+            purpose="compare",
+        )
+    if response.status == "rate_limited":
         return "rate_limited", None
     if response.status != "ok" or not isinstance(response.body, Mapping):
         return "github_error", None
@@ -483,7 +488,7 @@ def _github_file(one: Mapping[str, Any], *, inverted: bool) -> dict[str, Any] | 
 
 
 def _github_files(
-    base: Any, new: Any, organization_id: Any
+    base: Any, new: Any, organization_id: Any, workspace_id: Any = None
 ) -> tuple[str | None, list, bool, bool]:
     """``(unavailable, files, truncated, reversed)`` between two commits."""
     from simulate.services.harness_github import safe_repository
@@ -500,13 +505,17 @@ def _github_files(
         return "no_commit", [], False, False
     if not safe_repository(repository):
         return "github_error", [], False, False
-    unavailable, body = _compare(repository, base_sha, new_sha, organization_id)
+    unavailable, body = _compare(
+        repository, base_sha, new_sha, organization_id, workspace_id
+    )
     if unavailable is not None:
         return unavailable, [], False, False
     inverted = body["status"] == "behind"
     if inverted:
         # A roll back to an ancestor: the forward compare of the two, read backwards.
-        unavailable, body = _compare(repository, new_sha, base_sha, organization_id)
+        unavailable, body = _compare(
+            repository, new_sha, base_sha, organization_id, workspace_id
+        )
         if unavailable is not None:
             return unavailable, [], False, False
     elif body["status"] not in ("ahead", "identical"):
@@ -867,6 +876,27 @@ def _no_facts(source: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _compatibility(environment: HostedHarnessJob, new: AgentVersion) -> dict[str, Any]:
+    """How the offered version fits the world this environment was built from; a
+    reason, never a failure, when a document can't be read."""
+    from simulate.services.agent_compatibility import (
+        UNMEASURED,
+        environment_compatibility,
+    )
+
+    try:
+        return environment_compatibility(environment, new)
+    except Exception as exc:  # noqa: BLE001 - a reason on the card, never a retry
+        logger.warning(
+            "harness_nudge_compatibility_failed environment=%s version=%s error=%s",
+            environment.id,
+            new.id,
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return {"status": UNMEASURED, "reason": "compatibility_error", "base": None}
+
+
 def diff_facts(
     environment: HostedHarnessJob, base: AgentVersion | None, new: AgentVersion
 ) -> dict[str, Any]:
@@ -885,6 +915,7 @@ def diff_facts(
     }
     if base_runtime is None:
         return facts
+    facts["compatibility"] = _compatibility(environment, new)
     if (
         base_runtime.prompt_hash
         and new_runtime.prompt_hash
@@ -901,7 +932,10 @@ def diff_facts(
         try:
             if kind == "github":
                 unavailable, files, truncated, inverted = _github_files(
-                    base_runtime, new_runtime, environment.organization_id
+                    base_runtime,
+                    new_runtime,
+                    environment.organization_id,
+                    getattr(environment, "workspace_id", None),
                 )
                 facts.update(files_truncated=truncated, reversed=inverted)
             elif kind == "archive":
@@ -1029,6 +1063,31 @@ def _names(names: list[str]) -> str:
     return f"{shown} and {more} more" if more > 0 else shown
 
 
+def definition_changes(facts: Mapping[str, Any]) -> list[str]:
+    """What the two stored agent documents say changed: tools by name, the model,
+    the prompt. Empty when the documents weren't compared."""
+    fit = facts.get("compatibility") or {}
+    parts = []
+    if fit.get("tools_added"):
+        parts.append(f"tools added {_names(list(fit['tools_added']))}")
+    if fit.get("tools_removed"):
+        parts.append(f"tools removed {_names(list(fit['tools_removed']))}")
+    if fit.get("tools_changed"):
+        parts.append(
+            "tools changed "
+            + _names([str(one.get("name")) for one in fit["tools_changed"]])
+        )
+    if fit.get("services_added"):
+        parts.append(f"outside services {_names(list(fit['services_added']))}")
+    if fit.get("rules_added"):
+        parts.append(f"{len(fit['rules_added'])} new rule(s)")
+    if fit.get("model_changed"):
+        parts.append("model")
+    if fit.get("prompt_changed") and not facts.get("prompt_changed"):
+        parts.append("prompt")
+    return parts
+
+
 def _changes(facts: Mapping[str, Any]) -> str:
     variables = facts.get("variables") or {}
     names = sorted({name for values in variables.values() for name in values or []})
@@ -1041,6 +1100,7 @@ def _changes(facts: Mapping[str, Any]) -> str:
             if facts.get("settings_changed")
             else ""
         ),
+        *definition_changes(facts),
     ]
     text = "; ".join(part for part in parts if part)
     return text or "source"
