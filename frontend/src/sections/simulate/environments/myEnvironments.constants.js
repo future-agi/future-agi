@@ -1,6 +1,7 @@
 export const AWAITING_APPROVAL_STAGE = "awaiting_approval";
 
 export const ENV_STATUS = {
+  AWAITING_APPROVAL: "awaiting_approval",
   BUILDING: "building",
   NOT_RUN: "not_run",
   RUNNING: "running",
@@ -34,6 +35,7 @@ export const BUILD_STATUS = {
 // The label and status role (theme.palette.status.<role>) of each run-state
 // pill; StatusBadge turns the role into colours.
 export const STATUS_META = {
+  awaiting_approval: { label: "Awaiting approval", role: "warning" },
   building: { label: "Building", role: "info" },
   not_run: { label: "Not run yet", role: "neutral" },
   running: { label: "Running", role: "info" },

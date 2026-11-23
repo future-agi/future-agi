@@ -5,6 +5,7 @@ import {
   terminalStages,
 } from "src/pages/dashboard/harness/harnessShared";
 import {
+  AWAITING_APPROVAL_STAGE,
   ENV_STATUS,
   BUILD_STATUS,
   NOT_PROVIDED,
@@ -29,6 +30,7 @@ const FINALIZING_STAGES = new Set([
 const STAGE_LED_STAGES = new Set([
   ...FINALIZING_STAGES,
   HARNESS_STAGE.CANCELED,
+  AWAITING_APPROVAL_STAGE,
 ]);
 
 // The harness pipeline reports fine-grained stages; the table only needs the
@@ -37,6 +39,7 @@ const STAGE_LED_STAGES = new Set([
 // terminal ones is still assembling the environment. A finished build is Ready,
 // never Completed: more simulations can always run in it (PRD §7.1).
 export const stageToStatus = (stage) => {
+  if (stage === AWAITING_APPROVAL_STAGE) return ENV_STATUS.AWAITING_APPROVAL;
   if (stage === HARNESS_STAGE.COMPLETED) return ENV_STATUS.READY;
   if (stage === HARNESS_STAGE.FAILED) return ENV_STATUS.FAILED;
   if (stage === HARNESS_STAGE.CANCELED) return ENV_STATUS.CANCELLED;

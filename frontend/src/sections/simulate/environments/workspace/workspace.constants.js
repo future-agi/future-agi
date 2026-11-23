@@ -70,6 +70,9 @@ export const GAP_AREA_TO_TAB = {
 export const WORKSPACE_COPY = {
   back: "All environments",
   live: "Ready",
+  awaitingApprovalLabel: "Awaiting approval",
+  awaitingApprovalTooltip:
+    "The design is waiting for your approval. Nothing is built until you approve it.",
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",
   failedLabel: "Failed",
