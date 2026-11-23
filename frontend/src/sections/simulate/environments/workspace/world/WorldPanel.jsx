@@ -5,6 +5,7 @@ import EmptyState from "src/components/empty-state";
 import CapabilityGraph from "../overview/CapabilityGraph";
 import ConnectOnlyWorld from "./ConnectOnlyWorld";
 import ToolsCard from "./ToolsCard";
+import WorldFactsCard from "./WorldFactsCard";
 import WorldMapCard from "./WorldMapCard";
 import {
   MONO,
@@ -12,18 +13,33 @@ import {
   hasNoWorld,
   repoOriginOf,
   toolNamesOf,
+  withToolEvidence,
+  withTypedColumns,
 } from "./world.constants";
 
 export default function WorldPanel({ env, envState, graphData }) {
   const toolStatus = Array.isArray(env?.toolStatus) ? env.toolStatus : [];
-  const tables = Array.isArray(env?.worldTables) ? env.worldTables : [];
+  const tables = withTypedColumns(
+    Array.isArray(env?.worldTables) ? env.worldTables : [],
+    env?.dataSchemaColumns,
+  );
+  const tools = withToolEvidence(toolStatus, env);
+  const hasFacts = Boolean(
+    env?.dataStore || env?.refusalSignature || env?.runtime,
+  );
   const noWorld = hasNoWorld(env);
   const origin = repoOriginOf(env);
   const toolCount = toolStatus.length || toolNamesOf(env).length;
   const answered = toolStatus.filter((t) => t.status === "simulated").length;
   const showGraph = Boolean(envState?.agent) || toolCount > 0;
 
-  if (!noWorld && !tables.length && !toolStatus.length && !showGraph) {
+  if (
+    !noWorld &&
+    !tables.length &&
+    !toolStatus.length &&
+    !showGraph &&
+    !hasFacts
+  ) {
     return (
       <Box sx={{ p: 2 }}>
         <EmptyState
@@ -96,7 +112,16 @@ export default function WorldPanel({ env, envState, graphData }) {
         />
       )}
 
-      {toolStatus.length > 0 && <ToolsCard tools={toolStatus} sx={{ mb: 2 }} />}
+      {hasFacts && (
+        <WorldFactsCard
+          dataStore={env.dataStore}
+          refusalSignature={env.refusalSignature}
+          runtime={env.runtime}
+          sx={{ mb: 2 }}
+        />
+      )}
+
+      {tools.length > 0 && <ToolsCard tools={tools} sx={{ mb: 2 }} />}
     </Box>
   );
 }
@@ -107,6 +132,11 @@ WorldPanel.propTypes = {
     toolStatus: PropTypes.arrayOf(PropTypes.object),
     worldTables: PropTypes.arrayOf(PropTypes.object),
     worldTotalRows: PropTypes.number,
+    dataSchemaColumns: PropTypes.object,
+    dataStore: PropTypes.object,
+    refusalSignature: PropTypes.string,
+    runtime: PropTypes.object,
+    toolEntrypoints: PropTypes.arrayOf(PropTypes.object),
     stores: PropTypes.array,
     detailReady: PropTypes.bool,
     source: PropTypes.shape({

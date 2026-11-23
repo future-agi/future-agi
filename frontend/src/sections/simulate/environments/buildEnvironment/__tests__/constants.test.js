@@ -14,6 +14,13 @@ describe("provenance constants", () => {
     "code",
     "config",
     "prompt",
+    "provider_system_prompt",
+    "provider_tool_list",
+    "system_prompt",
+    "tool_list",
+    "file",
+    "platform_builtin",
+    "provider_field",
     "doc",
     "callGraph",
     "policy",
@@ -21,7 +28,7 @@ describe("provenance constants", () => {
     "inferred",
   ];
 
-  it("declares the eight origin kinds", () => {
+  it("declares every origin kind", () => {
     expect(Object.keys(ORIGIN_KINDS)).toEqual(ids);
   });
 

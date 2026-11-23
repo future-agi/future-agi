@@ -11,13 +11,71 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import OriginChip from "../../components/OriginChip";
 import SectionCard from "../../components/SectionCard";
 import ViewerLock from "../../components/ViewerLock";
-import { CONTRACT_LISTS_COPY as L, MONO_FONT } from "./contract.constants";
+import {
+  CONTRACT_LISTS_COPY as L,
+  MONO_FONT,
+  RULE_DETAIL_COPY,
+} from "./contract.constants";
+
+const detailFor = (details, text) => {
+  const matches = (details || []).filter((detail) => detail?.text === text);
+  return matches.length === 1 ? matches[0] : null;
+};
+
+function ItemText({ text, detail }) {
+  const meta = [
+    detail?.enforced_by?.length
+      ? RULE_DETAIL_COPY.enforcedBy(detail.enforced_by)
+      : null,
+    detail?.sub_goal ? RULE_DETAIL_COPY.checkedBy(detail.sub_goal) : null,
+  ].filter(Boolean);
+  return (
+    <Box sx={{ minWidth: 0 }}>
+      {detail?.short && (
+        <Typography
+          sx={{
+            typography: "s1",
+            fontWeight: 500,
+            fontFamily: MONO_FONT,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {detail.short}
+        </Typography>
+      )}
+      <Typography
+        sx={{
+          typography: detail?.short ? "s3" : "s1",
+          color: detail?.short ? "text.secondary" : "text.primary",
+        }}
+      >
+        {text}
+      </Typography>
+      {meta.length > 0 && (
+        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}>
+          {meta.join(" · ")}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+ItemText.propTypes = {
+  text: PropTypes.string.isRequired,
+  detail: PropTypes.shape({
+    short: PropTypes.string,
+    enforced_by: PropTypes.arrayOf(PropTypes.string),
+    sub_goal: PropTypes.string,
+  }),
+};
 
 export default function ContractListCard({
   list,
   items,
+  details,
   showActions = false,
   blockedReason = null,
   onAdd,
@@ -60,41 +118,57 @@ export default function ContractListCard({
             <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
           }
         >
-          {items.map((text, index) => (
-            <Box
-              key={`${index}:${text}`}
-              sx={{
-                display: "grid",
-                gridTemplateColumns: showActions ? "40px 1fr auto" : "40px 1fr",
-                columnGap: 1.5,
-                alignItems: "center",
-                px: 1.5,
-                py: 1,
-              }}
-            >
-              <Typography
+          {items.map((text, index) => {
+            const detail = detailFor(details, text);
+            const origin = detail?.origin;
+            return (
+              <Box
+                key={`${index}:${text}`}
                 sx={{
-                  typography: "s3",
-                  fontFamily: MONO_FONT,
-                  fontWeight: 500,
-                  color: "text.tertiary",
+                  display: "grid",
+                  gridTemplateColumns: [
+                    "40px",
+                    "minmax(0, 1fr)",
+                    origin ? "auto" : null,
+                    showActions ? "auto" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" "),
+                  columnGap: 1.5,
+                  alignItems: "center",
+                  px: 1.5,
+                  py: 1,
                 }}
               >
-                {list.id(index + 1)}
-              </Typography>
-              <Typography sx={{ typography: "s1", minWidth: 0 }}>
-                {text}
-              </Typography>
-              {showActions && (
-                <RowMenu
-                  label={L.rowActions(list.noun, index + 1)}
-                  blockedReason={blockedReason}
-                  onEdit={() => onEdit(index, text)}
-                  onRemove={() => onRemove(index, text)}
-                />
-              )}
-            </Box>
-          ))}
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontFamily: MONO_FONT,
+                    fontWeight: 500,
+                    color: "text.tertiary",
+                  }}
+                >
+                  {list.id(index + 1)}
+                </Typography>
+                <ItemText text={text} detail={detail} />
+                {origin && (
+                  <OriginChip
+                    origin={origin.kind}
+                    file={origin.path || origin.field}
+                    line={origin.line}
+                  />
+                )}
+                {showActions && (
+                  <RowMenu
+                    label={L.rowActions(list.noun, index + 1)}
+                    blockedReason={blockedReason}
+                    onEdit={() => onEdit(index, text)}
+                    onRemove={() => onRemove(index, text)}
+                  />
+                )}
+              </Box>
+            );
+          })}
         </Stack>
       )}
     </SectionCard>
@@ -161,6 +235,15 @@ ContractListCard.propTypes = {
     noun: PropTypes.string,
   }).isRequired,
   items: PropTypes.arrayOf(PropTypes.string).isRequired,
+  details: PropTypes.arrayOf(
+    PropTypes.shape({
+      text: PropTypes.string,
+      short: PropTypes.string,
+      origin: PropTypes.object,
+      enforced_by: PropTypes.arrayOf(PropTypes.string),
+      sub_goal: PropTypes.string,
+    }),
+  ),
   showActions: PropTypes.bool,
   blockedReason: PropTypes.string,
   onAdd: PropTypes.func,

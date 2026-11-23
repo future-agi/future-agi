@@ -27,7 +27,7 @@ import SourceReadCard from "./SourceReadCard";
 import NextStepsChecklist from "./NextStepsChecklist";
 import StateSummary from "./StateSummary";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
-import { DependsOnCard, SeededDataCard } from "./WorldCards";
+import { DependsOnCard, SeededDataCard, StartingDataCard } from "./WorldCards";
 import ConnectOnlyWorld from "../world/ConnectOnlyWorld";
 import { hasNoWorld } from "../world/world.constants";
 
@@ -84,6 +84,7 @@ export default function OverviewPanel({
   const degradeReasons = parallelism?.degrade_reasons || [];
 
   const seeded = Boolean(backedWorld) && worldTables(env).length > 0;
+  const startingData = Boolean(backedWorld) && env.baseEnvironment != null;
 
   const hasDerivedWorld =
     (env.rules?.length || 0) > 0 ||
@@ -190,6 +191,8 @@ export default function OverviewPanel({
 
       <AgentSummarySection
         subject={env.testSubject}
+        systemPrompt={env.systemPrompt}
+        systemPromptOrigin={env.systemPromptOrigin}
         onManageVersions={
           canManageVersions ? () => setAgentDrawerOpen(true) : undefined
         }
@@ -233,6 +236,7 @@ export default function OverviewPanel({
                 ? env.useCases ?? []
                 : env.useCases ?? contract.useCases
             }
+            details={env.useCaseDetails}
           />
         </Grid>
         <Grid item xs={12} md={5}>
@@ -254,7 +258,13 @@ export default function OverviewPanel({
           <ConnectOnlyWorld env={env} />
           <DependsOnCard
             dependsOn={dependsFromContract(backedWorld.dependencies)}
+            runtimeDependsOn={dependsFromContract(
+              backedWorld.runtimeDependencies,
+            )}
           />
+          {startingData && (
+            <StartingDataCard baseEnvironment={env.baseEnvironment} />
+          )}
         </Stack>
       ) : (
         <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
@@ -270,8 +280,18 @@ export default function OverviewPanel({
                   ? dependsFromContract(backedWorld.dependencies)
                   : contract.dependsOn
               }
+              runtimeDependsOn={
+                backedWorld
+                  ? dependsFromContract(backedWorld.runtimeDependencies)
+                  : []
+              }
             />
           </Grid>
+          {startingData && (
+            <Grid item xs={12}>
+              <StartingDataCard baseEnvironment={env.baseEnvironment} />
+            </Grid>
+          )}
         </Grid>
       )}
 
@@ -342,5 +362,6 @@ OverviewPanel.propTypes = {
     stores: PropTypes.array,
     amendments: PropTypes.array,
     dependencies: PropTypes.array,
+    runtimeDependencies: PropTypes.array,
   }),
 };

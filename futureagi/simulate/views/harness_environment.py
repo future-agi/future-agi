@@ -78,7 +78,9 @@ from simulate.serializers.harness_environment import (
     HarnessDraftsSerializer,
     HarnessEnvironmentAddEvaluationSerializer,
     HarnessEnvironmentAvailableEvalsSerializer,
+    HarnessEnvironmentDetailQuerySerializer,
     HarnessEnvironmentDetailSerializer,
+    HarnessEnvironmentDetailV2Serializer,
     HarnessEnvironmentEvalEditSerializer,
     HarnessEnvironmentListQuerySerializer,
     HarnessEnvironmentListResponseSerializer,
@@ -141,7 +143,7 @@ from simulate.services.harness_verify import require_default_suite, start_verify
 from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from simulate.views.harness_starting_records import HarnessStartingRecordsMixin
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import ManagementAPIAutoSchema, validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import (
     ApiErrorWithDetailsResponseSerializer,
@@ -284,6 +286,21 @@ def _editable_import(job, identifier):
             status_code=409,
         )
     return evidence_import
+
+
+class HarnessEnvironmentDetailAutoSchema(ManagementAPIAutoSchema):
+    def get_response_serializers(self):
+        return {
+            **super().get_response_serializers(),
+            200: HarnessEnvironmentDetailSerializer,
+        }
+
+    def get_responses(self):
+        responses = super().get_responses()
+        responses["200"]["x-contract-version-2"] = self.serializer_to_schema(
+            HarnessEnvironmentDetailV2Serializer()
+        )
+        return responses
 
 
 class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
@@ -1427,7 +1444,10 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         response.data["status_counts"] = status_counts(self._scoped_jobs(request))
         return response
 
-    @swagger_auto_schema(responses={200: HarnessEnvironmentDetailSerializer})
+    @validated_request(
+        query_serializer=HarnessEnvironmentDetailQuerySerializer,
+        auto_schema=HarnessEnvironmentDetailAutoSchema,
+    )
     def retrieve(self, request, pk=None):
         """One environment: overview, contract, world, scenarios, evaluations, settings.
 
@@ -1441,9 +1461,14 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 {"detail": "Environment not found"},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response(
-            detail_without(environment_detail(job), _held_back_from(request, job))
+        version = request.validated_query_data["contract_version"]
+        detail = detail_without(
+            environment_detail(job, contract_version=version),
+            _held_back_from(request, job),
         )
+        if version == 2:
+            return Response(HarnessEnvironmentDetailV2Serializer(detail).data)
+        return Response(detail)
 
     @viewer_denied("edit an environment")
     @validated_request(

@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { Box, Button, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
@@ -6,6 +7,7 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 import { VOICE_CHAT_PROVIDERS } from "src/sections/agents/constants";
 import { AGENT_SUMMARY_COPY, CONNECTOR_LABEL } from "./overview.constants";
 import { CONNECTED_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
+import PromptDrawer from "./PromptDrawer";
 
 // The agent definition's provider, named the way the Agents pages name it;
 // harness connector names cover the rest.
@@ -15,7 +17,13 @@ const providerLabel = (provider) =>
   provider;
 
 // With `onManageVersions`, a "Manage versions" action opens the agent versions.
-export default function AgentSummarySection({ subject, onManageVersions }) {
+export default function AgentSummarySection({
+  subject,
+  onManageVersions,
+  systemPrompt,
+  systemPromptOrigin,
+}) {
+  const [promptOpen, setPromptOpen] = useState(false);
   const title = subject
     ? AGENT_SUMMARY_COPY.agentTitle(subject.name, subject.active_version)
     : AGENT_SUMMARY_COPY.noAgentTitle;
@@ -96,6 +104,18 @@ export default function AgentSummarySection({ subject, onManageVersions }) {
             </Typography>
           )}
         </Box>
+        {systemPrompt && (
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            startIcon={<Iconify icon="solar:document-text-linear" width={16} />}
+            onClick={() => setPromptOpen(true)}
+            sx={{ flexShrink: 0 }}
+          >
+            {AGENT_SUMMARY_COPY.viewPrompt}
+          </Button>
+        )}
         {subject?.id && (
           <Button
             component={RouterLink}
@@ -121,6 +141,15 @@ export default function AgentSummarySection({ subject, onManageVersions }) {
           </Button>
         )}
       </Stack>
+      {systemPrompt && (
+        <PromptDrawer
+          open={promptOpen}
+          onClose={() => setPromptOpen(false)}
+          agentName={subject?.name}
+          prompt={systemPrompt}
+          origin={systemPromptOrigin}
+        />
+      )}
     </Box>
   );
 }
@@ -133,4 +162,6 @@ AgentSummarySection.propTypes = {
     active_version: PropTypes.string,
   }),
   onManageVersions: PropTypes.func,
+  systemPrompt: PropTypes.string,
+  systemPromptOrigin: PropTypes.object,
 };

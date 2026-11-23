@@ -20,6 +20,48 @@ export const TOOLS_CARD_COPY = {
   notReset: "Not reset by the test world",
   groupCount: (n) => (n === 1 ? "1 tool" : `${n} tools`),
   expand: (name) => `Show the contract of ${name}`,
+  reportedEffect: "Reported effect",
+  effectKind: {
+    read: "Reads data",
+    write: "Changes data",
+    external: "Calls an outside service",
+    control: "Steers the conversation",
+  },
+  effectWhy: "Why",
+  checked: "Checked",
+  availability: {
+    certified: "Certified",
+    runtime_only: "Runtime only",
+    rejected: "Rejected",
+  },
+  availabilityTip: (probeMode, reason) =>
+    [probeMode && `Probed as ${probeMode.replaceAll("_", " ")}`, reason]
+      .filter(Boolean)
+      .join(". "),
+  source: "Source",
+  sourceFile: (source) =>
+    source.line_start
+      ? `${source.path}:${source.line_start}-${source.line_end}`
+      : source.path,
+  providerFunction: "Provider function",
+  providerParameters: "Parameters",
+};
+
+export const CODE_BLOCK_COPY = {
+  copy: (label) => `Copy ${label.toLowerCase()}`,
+  copied: "Copied to clipboard",
+  copyFailed: "Couldn't copy it",
+};
+
+export const WORLD_FACTS_COPY = {
+  title: "Data store",
+  subtitle: "Where the world's records live, as the build read it",
+  refusal: "When nothing matches, the agent hears",
+  runtime: "Runtime",
+  runtimeFile: "world.runtime",
+  showRuntime: "Show the runtime",
+  hideRuntime: "Hide the runtime",
+  masked: "••••••",
 };
 
 export const TOOL_STATUS_ORDER = [
@@ -158,4 +200,64 @@ export function toolNamesOf(env) {
   const status = env?.toolStatus;
   if (Array.isArray(status) && status.length) return status.map((t) => t.tool);
   return (env?.tools || []).map((t) => t.name).filter(Boolean);
+}
+
+const SECRET_KEY = /(password|secret|token|credential|api[_-]?key)/i;
+const EMBEDDED_STORE_KINDS = new Set(["in_process", "in_memory", "none"]);
+
+export function storeFacts(dataStore) {
+  if (!dataStore || typeof dataStore !== "object") return [];
+  const embedded = EMBEDDED_STORE_KINDS.has(dataStore.kind);
+  return Object.entries(dataStore)
+    .filter(
+      ([key, value]) =>
+        value !== "" && value != null && !(embedded && SECRET_KEY.test(key)),
+    )
+    .map(([key, value]) => ({
+      key,
+      label: key.replaceAll("_", " "),
+      value: SECRET_KEY.test(key)
+        ? WORLD_FACTS_COPY.masked
+        : typeof value === "object"
+          ? JSON.stringify(value)
+          : String(value),
+    }));
+}
+
+export function withToolEvidence(toolStatus = [], env) {
+  const declared = Object.fromEntries(
+    (env?.tools || []).filter((t) => t?.name).map((t) => [t.name, t]),
+  );
+  const entrypoints = Object.fromEntries(
+    (env?.toolEntrypoints || []).filter((e) => e?.tool).map((e) => [e.tool, e]),
+  );
+  return toolStatus.map((t) => ({
+    ...t,
+    declared: declared[t.tool] || null,
+    entrypoint: entrypoints[t.tool] || null,
+  }));
+}
+
+export function columnType(column) {
+  return [
+    column.type,
+    column.pk ? "PK" : null,
+    column.nullable === false ? "NOT NULL" : null,
+    column.references ? `references ${column.references}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+export function withTypedColumns(tables = [], columns) {
+  if (!columns || typeof columns !== "object") return tables;
+  return tables.map((table) => {
+    const typed = columns[table.name];
+    return Array.isArray(typed) && typed.length
+      ? {
+          ...table,
+          fields: typed.map((c) => ({ name: c.name, type: columnType(c) })),
+        }
+      : table;
+  });
 }

@@ -4,6 +4,7 @@ import Iconify from "src/components/iconify";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import SectionCard from "../../components/SectionCard";
 import MockBadge from "../../components/MockBadge";
+import OriginChip from "../../components/OriginChip";
 import { ENV_SHAPE, OVERVIEW_COPY, ruleRowsFor } from "./overview.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -18,33 +19,85 @@ export function ToolsCard({ env, agentConnected }) {
     <SectionCard
       dense
       title={OVERVIEW_COPY.toolsTitle}
-      subtitle={agentConnected ? OVERVIEW_COPY.toolsConnected(tools.length) : OVERVIEW_COPY.toolsDisconnected}
+      subtitle={
+        agentConnected
+          ? OVERVIEW_COPY.toolsConnected(tools.length)
+          : OVERVIEW_COPY.toolsDisconnected
+      }
     >
       {!agentConnected ? (
-        <Stack direction="row" alignItems="center" spacing={1.5} sx={{ p: 1.5 }}>
-          <Iconify icon="solar:settings-minimalistic-linear" width={16} sx={{ color: "text.subtitle", flexShrink: 0 }} />
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.5}
+          sx={{ p: 1.5 }}
+        >
+          <Iconify
+            icon="solar:settings-minimalistic-linear"
+            width={16}
+            sx={{ color: "text.subtitle", flexShrink: 0 }}
+          />
           <Box flex={1} minWidth={0}>
-            <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>{OVERVIEW_COPY.noToolsTitle}</Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>{OVERVIEW_COPY.noToolsBody}</Typography>
+            <Typography
+              sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
+            >
+              {OVERVIEW_COPY.noToolsTitle}
+            </Typography>
+            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+              {OVERVIEW_COPY.noToolsBody}
+            </Typography>
           </Box>
           <Button
-            size="small" variant="outlined" color="inherit" disabled aria-label={OVERVIEW_COPY.connectAgent}
+            size="small"
+            variant="outlined"
+            color="inherit"
+            disabled
+            aria-label={OVERVIEW_COPY.connectAgent}
           >
             {OVERVIEW_COPY.connectAgent}
           </Button>
         </Stack>
       ) : (
         <Stack
-          divider={<Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />}
+          divider={
+            <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
+          }
           sx={{ maxHeight: 360, overflowY: "auto" }}
         >
           {tools.map((t) => (
-            <Stack key={t.name} direction="row" alignItems="center" spacing={2} sx={{ px: 1.5, minHeight: ROW_HEIGHT.twoLine }}>
+            <Stack
+              key={t.name}
+              direction="row"
+              alignItems="center"
+              spacing={2}
+              sx={{ px: 1.5, minHeight: ROW_HEIGHT.twoLine }}
+            >
               <Box flex={1} minWidth={0}>
-                <Typography sx={{ typography: "s1", fontWeight: "fontWeightRegular", fontFamily: MONO }}>{t.name}</Typography>
-                <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{t.desc}</Typography>
+                <Typography
+                  sx={{
+                    typography: "s1",
+                    fontWeight: "fontWeightRegular",
+                    fontFamily: MONO,
+                  }}
+                >
+                  {t.name}
+                </Typography>
+                <Typography
+                  noWrap
+                  sx={{ typography: "s3", color: "text.subtitle" }}
+                >
+                  {t.desc}
+                </Typography>
               </Box>
-              <Typography noWrap sx={{ typography: "s3", color: "text.subtitle", flexShrink: 0, fontFamily: MONO }}>
+              <Typography
+                noWrap
+                sx={{
+                  typography: "s3",
+                  color: "text.subtitle",
+                  flexShrink: 0,
+                  fontFamily: MONO,
+                }}
+              >
                 {t.args?.length ? t.args.join(", ") : OVERVIEW_COPY.noArguments}
               </Typography>
             </Stack>
@@ -54,10 +107,12 @@ export function ToolsCard({ env, agentConnected }) {
     </SectionCard>
   );
 }
-ToolsCard.propTypes = { env: ENV_SHAPE.isRequired, agentConnected: PropTypes.bool };
+ToolsCard.propTypes = {
+  env: ENV_SHAPE.isRequired,
+  agentConnected: PropTypes.bool,
+};
 
-// The hard rules told to the agent and graded afterwards. ALK reports the rule
-// text only; where each rule was read from is not sent yet, so no origin is shown.
+// The hard rules told to the agent and graded afterwards.
 export function HardRulesCard({ env }) {
   const rules = ruleRowsFor(env);
   return (
@@ -70,14 +125,45 @@ export function HardRulesCard({ env }) {
       <Stack sx={{ p: 1.5 }} spacing={1.25}>
         {rules.length === 0 && (
           <Stack direction="row" alignItems="center" spacing={1.25}>
-            <Iconify icon="solar:shield-check-linear" width={15} sx={{ color: "text.subtitle", flexShrink: 0 }} />
-            <Typography sx={{ typography: "s1", color: "text.subtitle" }}>{OVERVIEW_COPY.noRules}</Typography>
+            <Iconify
+              icon="solar:shield-check-linear"
+              width={15}
+              sx={{ color: "text.subtitle", flexShrink: 0 }}
+            />
+            <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
+              {OVERVIEW_COPY.noRules}
+            </Typography>
           </Stack>
         )}
         {rules.map((r) => (
-          <Stack key={r.id} direction="row" spacing={1.25} alignItems="flex-start">
-            <Iconify icon="solar:shield-check-linear" width={15} sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }} />
-            <Typography sx={{ typography: "s1", color: "text.secondary", flex: 1, minWidth: 0 }}>{r.subject}</Typography>
+          <Stack
+            key={r.id}
+            direction="row"
+            spacing={1.25}
+            alignItems="flex-start"
+          >
+            <Iconify
+              icon="solar:shield-check-linear"
+              width={15}
+              sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }}
+            />
+            <Typography
+              sx={{
+                typography: "s1",
+                color: "text.secondary",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {r.subject}
+            </Typography>
+            {r.origin && (
+              <OriginChip
+                origin={r.origin.kind}
+                file={r.origin.path || r.origin.field}
+                line={r.origin.line}
+              />
+            )}
           </Stack>
         ))}
       </Stack>
@@ -87,27 +173,73 @@ export function HardRulesCard({ env }) {
 HardRulesCard.propTypes = { env: ENV_SHAPE.isRequired };
 
 // What the environment is actually for.
-export function UseCasesCard({ useCases }) {
+export function UseCasesCard({ useCases, details }) {
   return (
-    <SectionCard dense title={OVERVIEW_COPY.useCasesTitle} subtitle={OVERVIEW_COPY.useCasesSubtitle}>
+    <SectionCard
+      dense
+      title={OVERVIEW_COPY.useCasesTitle}
+      subtitle={OVERVIEW_COPY.useCasesSubtitle}
+    >
       <Stack sx={{ p: 1.5 }} spacing={1}>
-        {(useCases || []).map((u) => (
-          <Stack key={u} direction="row" spacing={1.25} alignItems="flex-start">
-            <Box sx={{ width: 4, height: 4, borderRadius: "50%", bgcolor: "text.subtitle", flexShrink: 0, mt: "7px" }} />
-            <Typography sx={{ typography: "s1", color: "text.secondary" }}>{u}</Typography>
-          </Stack>
-        ))}
+        {(useCases || []).map((u) => {
+          const origin = (details || []).find(
+            (detail) => detail.text === u,
+          )?.origin;
+          return (
+            <Stack
+              key={u}
+              direction="row"
+              spacing={1.25}
+              alignItems="flex-start"
+            >
+              <Box
+                sx={{
+                  width: 4,
+                  height: 4,
+                  borderRadius: "50%",
+                  bgcolor: "text.subtitle",
+                  flexShrink: 0,
+                  mt: "7px",
+                }}
+              />
+              <Typography
+                sx={{
+                  typography: "s1",
+                  color: "text.secondary",
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              >
+                {u}
+              </Typography>
+              {origin && (
+                <OriginChip
+                  origin={origin.kind}
+                  file={origin.path || origin.field}
+                  line={origin.line}
+                />
+              )}
+            </Stack>
+          );
+        })}
       </Stack>
     </SectionCard>
   );
 }
-UseCasesCard.propTypes = { useCases: PropTypes.arrayOf(PropTypes.string) };
+UseCasesCard.propTypes = {
+  useCases: PropTypes.arrayOf(PropTypes.string),
+  details: PropTypes.arrayOf(PropTypes.object),
+};
 
 // Facts changed after reading the source, each with its stated reason.
 export function AmendmentsCard({ amendments }) {
   const rows = amendments || [];
   return (
-    <SectionCard dense title={OVERVIEW_COPY.amendmentsTitle} subtitle={OVERVIEW_COPY.amendmentsSubtitle}>
+    <SectionCard
+      dense
+      title={OVERVIEW_COPY.amendmentsTitle}
+      subtitle={OVERVIEW_COPY.amendmentsSubtitle}
+    >
       {rows.length === 0 ? (
         <Box sx={{ p: 1.5 }}>
           <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
@@ -115,23 +247,39 @@ export function AmendmentsCard({ amendments }) {
           </Typography>
         </Box>
       ) : (
-      <Stack sx={{ p: 1.5 }} spacing={1.25}>
-        {rows.map((a) => (
-          <Box
-            key={a.subject}
-            sx={{
-              p: 1.5, borderRadius: 1, bgcolor: "status.warning.bg",
-            }}
-          >
-            <Typography sx={{ typography: "s1", fontWeight: "fontWeightRegular", fontFamily: MONO }}>{a.subject}</Typography>
-            <Typography sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}>{a.note}</Typography>
-          </Box>
-        ))}
-      </Stack>
+        <Stack sx={{ p: 1.5 }} spacing={1.25}>
+          {rows.map((a) => (
+            <Box
+              key={a.subject}
+              sx={{
+                p: 1.5,
+                borderRadius: 1,
+                bgcolor: "status.warning.bg",
+              }}
+            >
+              <Typography
+                sx={{
+                  typography: "s1",
+                  fontWeight: "fontWeightRegular",
+                  fontFamily: MONO,
+                }}
+              >
+                {a.subject}
+              </Typography>
+              <Typography
+                sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+              >
+                {a.note}
+              </Typography>
+            </Box>
+          ))}
+        </Stack>
       )}
     </SectionCard>
   );
 }
 AmendmentsCard.propTypes = {
-  amendments: PropTypes.arrayOf(PropTypes.shape({ subject: PropTypes.string, note: PropTypes.string })),
+  amendments: PropTypes.arrayOf(
+    PropTypes.shape({ subject: PropTypes.string, note: PropTypes.string }),
+  ),
 };

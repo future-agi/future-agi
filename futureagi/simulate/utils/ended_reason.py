@@ -31,6 +31,12 @@ _SDK_TO_CANONICAL = {
     "cancelled": "cancelled",
 }
 
+_TERMINATE_REASONS = frozenset({"assistant-ended-call", "customer-ended-call"})
+_TRUNCATE_REASONS = frozenset(
+    {"cancelled", "max-duration-reached", "no-answer", "silence-timed-out"}
+)
+_VOICE_ONLY_REASONS = frozenset({"no-answer", "silence-timed-out"})
+
 
 def canonical_ended_reasons() -> list[str]:
     """Every canonical reason a hosted call can end with, sorted.
@@ -40,6 +46,17 @@ def canonical_ended_reasons() -> list[str]:
     untranslated and will not appear here.
     """
     return sorted(set(_SDK_TO_CANONICAL.values()))
+
+
+def ended_reason_groups(*, voice: bool) -> dict[str, list[str]]:
+    """Classify hosted end reasons by whether they settle or truncate a run."""
+    truncate = _TRUNCATE_REASONS
+    if not voice:
+        truncate -= _VOICE_ONLY_REASONS
+    return {
+        "terminate_reasons": sorted(_TERMINATE_REASONS),
+        "truncate_reasons": sorted(truncate),
+    }
 
 
 def to_canonical_ended_reason(value):

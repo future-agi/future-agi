@@ -243,7 +243,7 @@ const broadErrorResponseSchemas = operations.flatMap(
 );
 
 const unsupportedSchemaKeys = [];
-function walkSchema(value, pathParts = []) {
+function walkSchema(value, pathParts = [], propertyNames = false) {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value)) {
     value.forEach((item, index) => walkSchema(item, [...pathParts, index]));
@@ -252,10 +252,10 @@ function walkSchema(value, pathParts = []) {
 
   Object.entries(value).forEach(([key, child]) => {
     const nextPath = [...pathParts, key];
-    if (UNSUPPORTED_SWAGGER_2_SCHEMA_KEYS.has(key)) {
+    if (!propertyNames && UNSUPPORTED_SWAGGER_2_SCHEMA_KEYS.has(key)) {
       unsupportedSchemaKeys.push(nextPath.join("/"));
     }
-    walkSchema(child, nextPath);
+    walkSchema(child, nextPath, !propertyNames && key === "properties");
   });
 }
 walkSchema(swagger);

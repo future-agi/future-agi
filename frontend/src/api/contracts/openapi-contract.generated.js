@@ -29528,10 +29528,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/api/harness-environments/{id}/": {
       get: {
         operationId: "simulate_api_harness-environments_read",
-        runtimeRequestValidation: false,
+        runtimeRequestValidation: true,
         runtimeResponseValidation: false,
         requestBody: null,
-        queryParameters: {},
+        queryParameters: {
+          contract_version: {
+            required: false,
+            schema: {
+              type: "integer",
+              enum: [1, 2],
+              default: 1,
+            },
+          },
+        },
         responses: {
           200: {
             $ref: "#/definitions/HarnessEnvironmentDetail",
@@ -113542,12 +113551,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        domain: {
+          title: "Domain",
+          type: "object",
+          "x-nullable": true,
+        },
+        system_prompt: {
+          title: "System prompt",
+          type: "string",
+          "x-nullable": true,
+        },
+        system_prompt_origin: {
+          $ref: "#/definitions/HarnessEnvironmentOrigin",
+        },
         system_prompt_excerpt: {
           title: "System prompt excerpt",
           type: "string",
           "x-nullable": true,
         },
         tools: {
+          description:
+            "ALK tool specifications, including origin, legacy effect text, optional effect_kind (read, write, external, control), and effect_evidence {origin, excerpt}.",
           type: "array",
           items: {
             type: "object",
@@ -113562,11 +113586,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "x-nullable": true,
         },
+        real_use_case_details: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentContractItem",
+          },
+          "x-nullable": true,
+        },
         hard_constraints: {
           type: "array",
           items: {
             type: "string",
             minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        hard_constraint_details: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentContractItem",
           },
           "x-nullable": true,
         },
@@ -113583,6 +113621,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         runtime_dependencies: {
+          description:
+            "Runtime dependencies with used_by containing only consumers identified by ALK.",
           type: "array",
           items: {
             type: "object",
@@ -113595,6 +113635,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true,
         },
         tool_entrypoints: {
+          description:
+            "Implementation seams with source code where available, implementation_origin, and provider_function {url, parameters} for provider functions. Parameters retain the provider JSON Schema after secret redaction.",
           type: "array",
           items: {
             type: "object",
@@ -113603,8 +113645,48 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         data_store: {
           title: "Data store",
+          description:
+            "ALK datastore facts. configured_by remains a string; optional location and configuration {source, ref, section} carry observed configuration evidence.",
           type: "object",
           "x-nullable": true,
+        },
+        data_schema: {
+          title: "Data schema",
+          type: "object",
+          "x-nullable": true,
+        },
+        base_environment: {
+          title: "Base environment",
+          type: "object",
+          "x-nullable": true,
+        },
+        refusal_signature: {
+          title: "Refusal signature",
+          type: "string",
+          "x-nullable": true,
+        },
+        data_schema_columns: {
+          title: "Data schema columns",
+          type: "object",
+          additionalProperties: {
+            type: "array",
+            items: {
+              $ref: "#/definitions/HarnessEnvironmentSchemaColumn",
+            },
+          },
+          "x-nullable": true,
+        },
+        data_schema_tables: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentSchemaTable",
+          },
+        },
+        tool_certification: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentToolCertification",
+          },
         },
         open_questions: {
           type: "array",
@@ -113619,6 +113701,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
           items: {
             $ref: "#/definitions/HarnessEnvironmentAmendment",
           },
+        },
+        amendment_details: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentAmendmentDetail",
+          },
+          "x-nullable": true,
+        },
+        actors: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentActor",
+          },
+          "x-nullable": true,
         },
         sub_goals: {
           type: "array",
@@ -114025,7 +114121,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         seed: {
           title: "Seed",
-          type: "integer",
+          description:
+            "Decimal string preserving the full internal integer seed without JavaScript precision loss.",
+          type: "string",
+          minLength: 1,
           "x-nullable": true,
         },
         enable_tool_evaluation: {
@@ -137015,6 +137114,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentActor: {
+      required: ["name", "role", "origin"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          minLength: 1,
+        },
+        origin: {
+          $ref: "#/definitions/HarnessEnvironmentOrigin",
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentAmendment: {
       required: ["subject", "note"],
       type: "object",
@@ -137029,6 +137148,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
         },
       },
+    },
+    HarnessEnvironmentAmendmentDetail: {
+      required: ["subject", "kind", "reason"],
+      type: "object",
+      properties: {
+        subject: {
+          title: "Subject",
+          type: "string",
+          minLength: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["unreachable_tool", "contract_change"],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+      },
+      "x-nullable": true,
     },
     HarnessEnvironmentCallActor: {
       required: ["id", "name", "role", "channel", "persona", "scenarios_count"],
@@ -137070,7 +137211,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessEnvironmentCatalogueSubGoal: {
-      required: ["name", "what", "kind", "claim", "check"],
+      required: ["name", "what", "kind", "claim", "check", "output", "overlay"],
       type: "object",
       properties: {
         name: {
@@ -137095,10 +137236,57 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Check",
           type: "string",
         },
+        output: {
+          title: "Output",
+          type: "string",
+        },
+        overlay: {
+          title: "Overlay",
+          type: "string",
+        },
       },
     },
+    HarnessEnvironmentContractItem: {
+      required: ["text"],
+      type: "object",
+      properties: {
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        short: {
+          title: "Short",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        origin: {
+          $ref: "#/definitions/HarnessEnvironmentOrigin",
+        },
+        enforced_by: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        sub_goal: {
+          title: "Sub goal",
+          type: "string",
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentEndConditions: {
-      required: ["max_turns", "max_duration_seconds", "clock", "ended_reasons"],
+      required: [
+        "max_turns",
+        "max_duration_seconds",
+        "clock",
+        "ended_reasons",
+        "terminate_reasons",
+        "truncate_reasons",
+      ],
       type: "object",
       properties: {
         max_turns: {
@@ -137122,6 +137310,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
             type: "string",
             minLength: 1,
           },
+        },
+        terminate_reasons: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        truncate_reasons: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        seed: {
+          $ref: "#/definitions/HarnessEnvironmentSeed",
         },
       },
     },
@@ -137176,6 +137381,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentOrigin: {
+      required: ["kind"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        path: {
+          title: "Path",
+          type: "string",
+        },
+        field: {
+          title: "Field",
+          type: "string",
+        },
+        line: {
+          title: "Line",
+          type: "integer",
+          "x-nullable": true,
+        },
+        sha256: {
+          title: "Sha256",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
     HarnessEnvironmentProvenance: {
       required: [
         "source",
@@ -137229,6 +137465,104 @@ export const OPENAPI_CONTRACT = Object.freeze({
             minLength: 1,
             "x-nullable": true,
           },
+        },
+      },
+    },
+    HarnessEnvironmentSchemaColumn: {
+      required: ["name", "type"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
+        },
+        enum: {
+          type: "array",
+          items: {
+            type: "string",
+          },
+          "x-nullable": true,
+        },
+        pk: {
+          title: "Pk",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        nullable: {
+          title: "Nullable",
+          type: "boolean",
+          "x-nullable": true,
+        },
+        references: {
+          title: "References",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    HarnessEnvironmentSchemaTable: {
+      required: ["name", "columns", "primary_key", "foreign_keys"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentSchemaColumn",
+          },
+        },
+        primary_key: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        foreign_keys: {
+          type: "array",
+          items: {
+            type: "object",
+          },
+        },
+      },
+    },
+    HarnessEnvironmentToolCertification: {
+      required: ["tool", "availability", "probe_mode", "reason"],
+      type: "object",
+      properties: {
+        tool: {
+          title: "Tool",
+          type: "string",
+          minLength: 1,
+        },
+        availability: {
+          title: "Availability",
+          type: "string",
+          enum: ["certified", "runtime_only", "rejected"],
+        },
+        probe_mode: {
+          title: "Probe mode",
+          type: "string",
+          enum: [
+            "read_only",
+            "disposable_world",
+            "provider_sandbox",
+            "runtime_only",
+          ],
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
         },
       },
     },
@@ -137640,6 +137974,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         claim: {
           title: "Claim",
+          type: "string",
+        },
+        output: {
+          title: "Output",
+          type: "string",
+        },
+        overlay: {
+          title: "Overlay",
           type: "string",
         },
       },
@@ -147576,6 +147918,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentSeed: {
+      required: ["value", "controls"],
+      type: "object",
+      properties: {
+        value: {
+          title: "Value",
+          description:
+            "Decimal string preserving the full integer seed without JavaScript precision loss. The internal harness seed remains an integer.",
+          type: "string",
+          minLength: 1,
+        },
+        controls: {
+          description:
+            "Platform-derived scope for the supported hosted ALK runtime, not an ALK-reported capability. scenario_world_rng controls world initialization randomness, not model responses or conversation replay.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     HarnessFaultBounds: {
       required: ["on_call", "delay_seconds", "status", "message"],
       type: "object",
@@ -147841,6 +148205,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         rows: {
           title: "Rows",
           type: "integer",
+        },
+        internal: {
+          title: "Internal",
+          type: "boolean",
+        },
+        columns: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessEnvironmentSchemaColumn",
+          },
+          "x-nullable": true,
         },
       },
     },

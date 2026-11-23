@@ -49,6 +49,11 @@ export const CONTRACT_COPY = {
       stepped: "Stepped: the chat moves forward one turn at a time.",
     },
     clockNoteDefault: "How time is measured in a run.",
+    seedValue: (value) => `World seed · ${value}`,
+    seedControls: (controls) =>
+      controls.includes("scenario_world_rng")
+        ? "Controls how the world's records are set up at the start of each run. It does not make conversations or results repeat exactly."
+        : "What this seed controls was not reported. It does not make conversations or results repeat exactly.",
     notAuthored: "Not authored yet",
     // A built environment's build writes them; a template or fork is never built.
     notAuthoredBuilt:
@@ -155,4 +160,20 @@ export const CONTRACT_EDIT_COPY = {
   submit: "Ask the builder",
   removeAction: (noun) => `Remove ${noun}`,
   sent: "The builder is updating the contract. The change shows as a draft for you to save.",
+};
+
+export const RULE_DETAIL_COPY = {
+  enforcedBy: (by) => `Enforced by ${by.join(", ")}`,
+  checkedBy: (goal) => `Checked by ${goal}`,
+};
+
+export const SUB_GOALS_COPY = {
+  title: (n) => `Sub-goals (${n})`,
+  subtitle: "What a run is checked on, and how each check reports",
+  output: (output) => output.replaceAll("_", "/"),
+};
+
+export const ACTORS_COPY = {
+  title: (n) => `Actors (${n})`,
+  subtitle: "Other parties the agent's instructions name",
 };

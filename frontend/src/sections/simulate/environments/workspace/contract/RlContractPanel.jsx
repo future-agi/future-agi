@@ -9,6 +9,7 @@ import { WORKSPACE_COPY } from "../workspace.constants";
 import { Label } from "./ContractPart";
 import ContractListCard from "./ContractListCard";
 import ContractEditDialog from "./ContractEditDialog";
+import { SubGoalsCard } from "./ContractFactsCards";
 import { contractInstruction } from "./contractInstructions";
 import {
   CONTRACT_COPY,
@@ -39,12 +40,17 @@ function realEpisode(env) {
       note: EC.durationNote,
     },
   ].filter(Boolean);
+  const reasonRows = (reasons) =>
+    (reasons || []).map((reason) => ({ when: reason, note: "" }));
   return {
-    ends: (ec.ended_reasons || []).map((reason) => ({
-      when: reason,
-      note: "",
-    })),
-    cutOff,
+    ends: reasonRows(ec.terminate_reasons ?? ec.ended_reasons),
+    cutOff: [...reasonRows(ec.truncate_reasons), ...cutOff],
+    seed: ec.seed
+      ? {
+          title: EC.seedValue(ec.seed.value),
+          note: EC.seedControls(ec.seed.controls || []),
+        }
+      : null,
     clock: {
       mode: ec.clock || "-",
       note: EC.clockNote[ec.clock] || EC.clockNoteDefault,
@@ -89,6 +95,7 @@ export default function RlContractPanel({
       <ContractListCard
         list={CONTRACT_LISTS_COPY.rules}
         items={rules}
+        details={env?.ruleDetails}
         showActions={showActions}
         blockedReason={blockedReason}
         onAdd={() => open("rule", "add")()}
@@ -101,6 +108,7 @@ export default function RlContractPanel({
         <ContractListCard
           list={CONTRACT_LISTS_COPY.useCases}
           items={useCases}
+          details={env?.useCaseDetails}
           showActions={showActions}
           blockedReason={blockedReason}
           onAdd={() => open("useCase", "add")()}
@@ -109,6 +117,8 @@ export default function RlContractPanel({
           sx={{ mb: 2 }}
         />
       )}
+
+      <SubGoalsCard subGoals={env?.subGoals} sx={{ mb: 2 }} />
 
       <SectionCard title={EC.title} subtitle={EC.subtitle} sx={{ mb: 2 }}>
         {!episode ? (
@@ -168,6 +178,42 @@ export default function RlContractPanel({
                 </Typography>
               </Box>
             </Stack>
+            {episode.seed && (
+              <Stack
+                direction="row"
+                spacing={1.5}
+                alignItems="flex-start"
+                sx={{
+                  px: 1.5,
+                  py: 1.25,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Iconify
+                  icon="solar:dice-linear"
+                  width={16}
+                  sx={{ color: "text.tertiary", flexShrink: 0, mt: "1px" }}
+                />
+                <Box minWidth={0}>
+                  <Typography
+                    sx={{
+                      typography: "s1",
+                      fontWeight: 500,
+                      overflowWrap: "anywhere",
+                      userSelect: "text",
+                    }}
+                  >
+                    {episode.seed.title}
+                  </Typography>
+                  <Typography
+                    sx={{ typography: "s1", color: "text.secondary" }}
+                  >
+                    {episode.seed.note}
+                  </Typography>
+                </Box>
+              </Stack>
+            )}
           </>
         )}
       </SectionCard>
@@ -227,11 +273,20 @@ RlContractPanel.propTypes = {
   env: PropTypes.shape({
     rules: PropTypes.arrayOf(PropTypes.string),
     useCases: PropTypes.arrayOf(PropTypes.string),
+    ruleDetails: PropTypes.arrayOf(PropTypes.object),
+    useCaseDetails: PropTypes.arrayOf(PropTypes.object),
+    subGoals: PropTypes.arrayOf(PropTypes.object),
     endConditions: PropTypes.shape({
       max_turns: PropTypes.number,
       max_duration_seconds: PropTypes.number,
       clock: PropTypes.string,
       ended_reasons: PropTypes.arrayOf(PropTypes.string),
+      terminate_reasons: PropTypes.arrayOf(PropTypes.string),
+      truncate_reasons: PropTypes.arrayOf(PropTypes.string),
+      seed: PropTypes.shape({
+        value: PropTypes.string,
+        controls: PropTypes.arrayOf(PropTypes.string),
+      }),
     }),
   }).isRequired,
   backed: PropTypes.bool,

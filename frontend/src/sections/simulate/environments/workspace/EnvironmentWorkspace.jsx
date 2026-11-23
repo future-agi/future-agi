@@ -563,6 +563,8 @@ export default function EnvironmentWorkspace() {
           stores: backedDetail.world?.stores ?? [],
           amendments: backedDetail.contract?.amendments ?? [],
           dependencies: backedDetail.contract?.dependencies ?? [],
+          runtimeDependencies:
+            backedDetail.contract?.runtime_dependencies ?? [],
         }
       : undefined;
   // Real capability-graph branches for a backed env: tools names,

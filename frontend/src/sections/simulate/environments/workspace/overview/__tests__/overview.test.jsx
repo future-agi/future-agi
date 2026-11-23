@@ -95,6 +95,119 @@ describe("OverviewPanel", () => {
 
   const BACKED_WORLD = { stores: [], amendments: [], dependencies: [] };
 
+  it("shows where each use case was read from", async () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        useCases: ["Book a guest ride"],
+        useCaseDetails: [
+          {
+            text: "Book a guest ride",
+            origin: { kind: "provider_tool_list", field: "book_ride" },
+          },
+        ],
+      },
+      backedWorld: BACKED_WORLD,
+    });
+
+    expect(screen.getByText("Book a guest ride")).toBeInTheDocument();
+    expect(screen.getByText("Tool list")).toBeInTheDocument();
+    expect(screen.getByText("book_ride")).toBeInTheDocument();
+    await userEvent.hover(screen.getByText("Tool list"));
+    expect(
+      await screen.findByText("from provider tool list"),
+    ).toBeInTheDocument();
+  });
+
+  it("badges a hard rule only with the origin ALK reported for it", () => {
+    render(
+      <HardRulesCard
+        env={{
+          ...MOCK_WORLD,
+          ruleDetails: [
+            {
+              text: MOCK_WORLD.rules[0],
+              origin: {
+                kind: "provider_system_prompt",
+                field: "system_prompt",
+              },
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText("System prompt")).toHaveLength(1);
+    expect(screen.getByText("system_prompt")).toBeInTheDocument();
+  });
+
+  it("lists the services the agent calls apart from what the environment builds", () => {
+    renderPanel({
+      backedWorld: {
+        ...BACKED_WORLD,
+        runtimeDependencies: [
+          {
+            name: "retell",
+            kind: "transport",
+            what: "Retell voice platform",
+            used_by: [],
+          },
+          {
+            name: "elevenlabs",
+            kind: "transport",
+            what: "Voice synthesis",
+            used_by: ["response_engine"],
+          },
+        ],
+      },
+    });
+
+    expect(screen.queryByText(/No dependencies recorded/)).toBeNull();
+    expect(screen.getByText("Services the agent calls")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Built and torn down with the environment"),
+    ).toBeNull();
+    expect(screen.getByText("retell")).toBeInTheDocument();
+    expect(screen.getByText("used by response_engine")).toBeInTheDocument();
+    expect(screen.getAllByText(/^used by/)).toHaveLength(1);
+  });
+
+  it("says no dependencies were recorded when both lists are empty", () => {
+    renderPanel({
+      backedWorld: { ...BACKED_WORLD, runtimeDependencies: [] },
+    });
+
+    expect(screen.getByText(/No dependencies recorded/)).toBeInTheDocument();
+  });
+
+  it("counts each starting-data collection and shows the data on request", async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        baseEnvironment: {
+          patients: [{ id: "p1" }, { id: "p2" }],
+          notes: "free text",
+        },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+
+    expect(screen.getByText("Starting data")).toBeInTheDocument();
+    expect(screen.getByText("patients")).toBeInTheDocument();
+    expect(screen.getByText("2 records")).toBeInTheDocument();
+    expect(screen.queryByText("notes")).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Show the starting data" }),
+    );
+    expect(await screen.findByText(/"id": "p1"/)).toBeInTheDocument();
+  });
+
+  it("shows no starting data for an environment that has none", () => {
+    renderPanel({ backedWorld: BACKED_WORLD });
+    expect(screen.queryByText("Starting data")).toBeNull();
+  });
+
   it("adds the real domain, direction, source and mode to the facts of a backed voice env", () => {
     renderPanel({
       env: {

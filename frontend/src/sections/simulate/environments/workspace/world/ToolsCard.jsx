@@ -3,7 +3,10 @@ import { useState } from "react";
 import { Box, Collapse, Stack, Tooltip, Typography } from "@mui/material";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import Iconify from "src/components/iconify";
+import OriginChip from "../../components/OriginChip";
 import SectionCard from "../../components/SectionCard";
+import ToneChip from "../contract/ToneChip";
+import CodeBlock from "./CodeBlock";
 import {
   MONO,
   TOOLS_CARD_COPY as T,
@@ -114,6 +117,7 @@ export default function ToolsCard({ tools, sx }) {
                     >
                       {tool.description}
                     </Typography>
+                    <ToolTags tool={tool} />
                     {tool.runs_at && (
                       <Tooltip arrow title={tool.runs_at}>
                         <Box
@@ -153,6 +157,81 @@ export default function ToolsCard({ tools, sx }) {
   );
 }
 
+function ToolTags({ tool }) {
+  const origin = tool.declared?.origin;
+  const certification = tool.declared?.certification;
+  const availability = T.availability[certification?.availability];
+  return (
+    <>
+      {origin && (
+        <OriginChip
+          origin={origin.kind}
+          file={origin.path || origin.field}
+          line={origin.line}
+          showPath={false}
+        />
+      )}
+      {availability && (
+        <ToneChip
+          label={availability}
+          tooltip={
+            T.availabilityTip(certification.probe_mode, certification.reason) ||
+            undefined
+          }
+        />
+      )}
+    </>
+  );
+}
+
+function ToolCode({ tool }) {
+  const entry = tool.entrypoint;
+  const evidence = tool.declared?.effectEvidence;
+  const effectKind = T.effectKind[tool.declared?.effectKind];
+  const provider = entry?.provider_function;
+  const blocks = [
+    evidence?.excerpt &&
+      effectKind && {
+        key: "effect",
+        label: `${T.effectWhy}: ${effectKind.toLowerCase()}`,
+        file: evidence.origin?.path || evidence.origin?.field || "",
+        code: evidence.excerpt,
+      },
+    entry?.source?.code && {
+      key: "source",
+      label: T.source,
+      file: T.sourceFile(entry.source),
+      code: entry.source.code,
+    },
+    provider && {
+      key: "provider",
+      label: T.providerFunction,
+      file: provider.url || "",
+      code: JSON.stringify(provider.parameters ?? {}, null, 2),
+    },
+  ].filter(Boolean);
+  if (!blocks.length) return null;
+  return (
+    <Stack
+      spacing={1}
+      sx={{
+        px: 1.5,
+        pb: 1.5,
+        bgcolor: "background.neutral",
+      }}
+    >
+      {blocks.map((block) => (
+        <CodeBlock
+          key={block.key}
+          label={block.label}
+          file={block.file}
+          code={block.code}
+        />
+      ))}
+    </Stack>
+  );
+}
+
 export function ToolDetail({ tool }) {
   const args = tool.arguments || [];
   const returned = tool.returns || [];
@@ -168,78 +247,103 @@ export function ToolDetail({ tool }) {
   const text = (value) => (
     <Typography sx={{ typography: "s1" }}>{value}</Typography>
   );
+  const effectKind = T.effectKind[tool.declared?.effectKind];
+  const certification = tool.declared?.certification;
+  const availability = T.availability[certification?.availability];
   return (
-    <Box
-      sx={{
-        px: 1.5,
-        py: 1.5,
-        bgcolor: "background.neutral",
-        borderTop: "1px solid",
-        borderColor: "divider",
-        display: "grid",
-        gridTemplateColumns: "140px minmax(0, 1fr)",
-        rowGap: 1,
-        columnGap: 1.5,
-      }}
-    >
-      {field(
-        T.arguments,
-        args.length ? (
-          <Stack spacing={0.25}>
-            {args.map((one) => (
-              <Typography
-                key={one.name}
-                sx={{ typography: "s1", fontFamily: MONO }}
-              >
-                {inputLine(one.name, one.type, one.unit)}
-              </Typography>
-            ))}
-          </Stack>
-        ) : (
-          text(T.noInputs)
-        ),
-      )}
-      {field(
-        T.returns,
-        returned.length ? (
-          <Stack spacing={0.25}>
-            {returned.map((one) => (
-              <Typography
-                key={one.name}
-                sx={{ typography: "s1", fontFamily: MONO }}
-              >
-                {returnLine(one.name, one.kind)}
-              </Typography>
-            ))}
-          </Stack>
-        ) : (
-          text(T.returnsNotDeclared)
-        ),
-      )}
-      {field(
-        T.changes,
-        <Stack spacing={0.25}>
-          {text(effectLabel(tool.effect))}
-          {tool.tables?.label && (
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {tool.tables.label}
-            </Typography>
-          )}
-          {tool.effects && (
-            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-              {tool.effects}
-            </Typography>
-          )}
-        </Stack>,
-      )}
-      {tool.refuses && field(T.refusesWhen, text(tool.refuses))}
-      {requires.length > 0 && field(T.needsFirst, text(requires.join(", ")))}
-      {tool.reset_between_trials != null &&
-        field(
-          T.resetLabel,
-          text(tool.reset_between_trials ? T.reset : T.notReset),
+    <>
+      <Box
+        sx={{
+          px: 1.5,
+          py: 1.5,
+          bgcolor: "background.neutral",
+          borderTop: "1px solid",
+          borderColor: "divider",
+          display: "grid",
+          gridTemplateColumns: "140px minmax(0, 1fr)",
+          rowGap: 1,
+          columnGap: 1.5,
+        }}
+      >
+        {field(
+          T.arguments,
+          args.length ? (
+            <Stack spacing={0.25}>
+              {args.map((one) => (
+                <Typography
+                  key={one.name}
+                  sx={{ typography: "s1", fontFamily: MONO }}
+                >
+                  {inputLine(one.name, one.type, one.unit)}
+                </Typography>
+              ))}
+            </Stack>
+          ) : (
+            text(T.noInputs)
+          ),
         )}
-    </Box>
+        {field(
+          T.returns,
+          returned.length ? (
+            <Stack spacing={0.25}>
+              {returned.map((one) => (
+                <Typography
+                  key={one.name}
+                  sx={{ typography: "s1", fontFamily: MONO }}
+                >
+                  {returnLine(one.name, one.kind)}
+                </Typography>
+              ))}
+            </Stack>
+          ) : (
+            text(T.returnsNotDeclared)
+          ),
+        )}
+        {field(
+          T.changes,
+          <Stack spacing={0.25}>
+            {text(effectLabel(tool.effect))}
+            {tool.tables?.label && (
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {tool.tables.label}
+              </Typography>
+            )}
+            {tool.effects && (
+              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                {tool.effects}
+              </Typography>
+            )}
+          </Stack>,
+        )}
+        {tool.refuses && field(T.refusesWhen, text(tool.refuses))}
+        {requires.length > 0 && field(T.needsFirst, text(requires.join(", ")))}
+        {tool.reset_between_trials != null &&
+          field(
+            T.resetLabel,
+            text(tool.reset_between_trials ? T.reset : T.notReset),
+          )}
+        {effectKind && field(T.reportedEffect, text(effectKind))}
+        {availability &&
+          field(
+            T.checked,
+            <Stack spacing={0.25}>
+              {text(availability)}
+              {T.availabilityTip(
+                certification.probe_mode,
+                certification.reason,
+              ) && (
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {T.availabilityTip(
+                    certification.probe_mode,
+                    certification.reason,
+                  )}
+                </Typography>
+              )}
+            </Stack>,
+          )}
+      </Box>
+      <ToolCode tool={tool} />
+    </>
   );
 }
 
@@ -271,7 +375,35 @@ const TOOL_SHAPE = PropTypes.shape({
     changed: PropTypes.arrayOf(PropTypes.string),
     label: PropTypes.string,
   }),
+  declared: PropTypes.shape({
+    origin: PropTypes.object,
+    effectKind: PropTypes.string,
+    effectEvidence: PropTypes.shape({
+      origin: PropTypes.object,
+      excerpt: PropTypes.string,
+    }),
+    certification: PropTypes.shape({
+      availability: PropTypes.string,
+      probe_mode: PropTypes.string,
+      reason: PropTypes.string,
+    }),
+  }),
+  entrypoint: PropTypes.shape({
+    source: PropTypes.shape({
+      path: PropTypes.string,
+      line_start: PropTypes.number,
+      line_end: PropTypes.number,
+      code: PropTypes.string,
+    }),
+    provider_function: PropTypes.shape({
+      url: PropTypes.string,
+      parameters: PropTypes.object,
+    }),
+  }),
 });
+
+ToolTags.propTypes = { tool: TOOL_SHAPE.isRequired };
+ToolCode.propTypes = { tool: TOOL_SHAPE.isRequired };
 
 ToolDetail.propTypes = { tool: TOOL_SHAPE.isRequired };
 ToolsCard.propTypes = {
