@@ -56,12 +56,16 @@ from simulate.serializers.call_workers_v3 import (
     TrialRoutesResponseSerializer,
 )
 from simulate.serializers.harness_environment import HarnessCapabilityReportSerializer
-from simulate.serializers.harness_job import HarnessRunReadinessSelectionSerializer
+from simulate.serializers.harness_job import (
+    HarnessRunReadinessSelectionSerializer,
+    RunStopSerializer,
+)
 from simulate.serializers.hosted_harness import HARNESS_FAILURE_DOMAINS
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.run_dashboard_v3 import RunDashboardV3Serializer
 from simulate.serializers.test_execution import CallExecutionDetailSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
+from simulate.services.harness_cancel import stop_summary
 from simulate.services.harness_evals import runnable_eval_config_ids
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.harness_versioning.versions import actors_enabled
@@ -334,6 +338,12 @@ class RunExecutionSerializer(serializers.Serializer):
         allow_null=True,
         required=False,
         help_text="Said when the run replayed a build without its environment's actors.",
+    )
+    stop = RunStopSerializer(
+        allow_null=True,
+        required=False,
+        help_text="The run's Stop and how far it got confirmed; null for a run never"
+        " stopped.",
     )
     selected_scenario_keys = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
@@ -832,6 +842,7 @@ def _execution_payload(
         "resume": asdict(resume_state(execution)),
         "summary": summary,
         "fix_run": fix_run,
+        "stop": stop_summary(job) if job is not None else None,
         # Said when the run replayed a build without its environment's actors.
         "build_notice": (
             ((job.payload or {}).get("metadata") or {}).get("assembly") or {}

@@ -773,3 +773,138 @@ main()
 export function seedStopJourney(opts: { organizationId: string; workspaceId: string }): StopJourneySeed {
   return runInlineSeed<StopJourneySeed>('e2e-stop-', STOP_JOURNEY_SEED_SCRIPT, opts);
 }
+
+const STOP_CONFIRMATION_SEED_SCRIPT = `
+import json
+import os
+import uuid
+from datetime import timedelta
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tfc.settings.settings")
+import django
+django.setup()
+from django.utils import timezone
+
+from accounts.models import Organization
+from accounts.models.workspace import Workspace
+from model_hub.models.choices import StatusType
+from simulate.models import (
+    AgentDefinition,
+    HostedHarnessAttempt,
+    HostedHarnessJob,
+    RunTest,
+    Scenarios,
+)
+from simulate.models.test_execution import CallExecution, TestExecution
+
+
+def job(organization, workspace, run_test, name, payload, **fields):
+    return HostedHarnessJob.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        run_test=run_test,
+        name=name,
+        run_id=uuid.uuid4(),
+        idempotency_key=uuid.uuid4().hex,
+        request_digest=uuid.uuid4().hex,
+        schema_version="1.6",
+        seed=1,
+        artifact_level="standard",
+        max_artifact_bytes=1024,
+        deadline_at=timezone.now() + timedelta(hours=1),
+        scenario_count=1,
+        payload={**payload, "metadata": {"name": name}},
+        **fields,
+    )
+
+
+def running_run(organization, workspace, run_test, agent, environment, scenario, name, payload):
+    execution = TestExecution.objects.create(
+        run_test=run_test,
+        agent_definition=agent,
+        status=TestExecution.ExecutionStatus.RUNNING,
+        total_scenarios=1,
+        total_calls=1,
+    )
+    run_job = job(organization, workspace, run_test, name, payload, environment=environment,
+                  test_execution=execution)
+    HostedHarnessJob.no_workspace_objects.filter(id=run_job.id).update(
+        state=HostedHarnessJob.State.RUNNING, current_stage="running", current_attempt_number=1,
+    )
+    HostedHarnessAttempt.no_workspace_objects.create(
+        job=run_job, attempt_number=1, token_hash=uuid.uuid4().hex, fence_hash=uuid.uuid4().hex,
+        expires_at=timezone.now() + timedelta(hours=1), state=HostedHarnessAttempt.State.RUNNING,
+    )
+    CallExecution.objects.create(
+        test_execution=execution,
+        scenario=scenario,
+        status=CallExecution.CallStatus.ONGOING,
+        simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        started_at=timezone.now(),
+    )
+    return execution, run_job
+
+
+def main():
+    organization = Organization.objects.get(id=os.environ["SEED_ORG_ID"])
+    workspace = Workspace.objects.get(id=os.environ["SEED_WORKSPACE_ID"])
+    suffix = os.environ["SEED_SUFFIX"]
+    agent = AgentDefinition.objects.create(
+        agent_name=f"e2e-stopc-agent-{suffix}",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        description="e2e SIM stop confirmation seed",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+    scenario = Scenarios.objects.create(
+        name=f"e2e-stopc-scenario-{suffix}",
+        description="e2e SIM stop confirmation scenario",
+        source="test",
+        scenario_type=Scenarios.ScenarioTypes.DATASET,
+        organization=organization,
+        workspace=workspace,
+        agent_definition=agent,
+        status=StatusType.COMPLETED.value,
+    )
+    run_test = RunTest.objects.create(
+        name=f"e2e-stopc-run-{suffix}", agent_definition=agent, organization=organization, workspace=workspace,
+    )
+    run_test.scenarios.add(scenario)
+    environment = job(organization, workspace, run_test, f"e2e-stopc-env-{suffix}", {"source": {"kind": "archive"}})
+    HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+        state=HostedHarnessJob.State.COMPLETED, current_stage="completed",
+    )
+    remote, remote_job = running_run(
+        organization, workspace, run_test, agent, environment, scenario, f"e2e-stopc-env-{suffix}",
+        {"source": {"kind": "remote"}, "agent": {"connector": "http", "config": {}}},
+    )
+    sandboxed, sandboxed_job = running_run(
+        organization, workspace, run_test, agent, environment, scenario, f"e2e-stopc-env-{suffix}",
+        {"source": {"kind": "archive"}},
+    )
+    print(json.dumps({
+        "environmentId": str(environment.id),
+        "runTestId": str(run_test.id),
+        "remoteExecutionId": str(remote.id),
+        "remoteJobId": str(remote_job.id),
+        "sandboxedExecutionId": str(sandboxed.id),
+        "sandboxedJobId": str(sandboxed_job.id),
+    }))
+
+
+main()
+`;
+
+export interface StopConfirmationSeed {
+  environmentId: string;
+  runTestId: string;
+  remoteExecutionId: string;
+  remoteJobId: string;
+  sandboxedExecutionId: string;
+  sandboxedJobId: string;
+}
+
+export function seedStopConfirmationJourney(opts: { organizationId: string; workspaceId: string }): StopConfirmationSeed {
+  return runInlineSeed<StopConfirmationSeed>('e2e-stopc-', STOP_CONFIRMATION_SEED_SCRIPT, opts);
+}
