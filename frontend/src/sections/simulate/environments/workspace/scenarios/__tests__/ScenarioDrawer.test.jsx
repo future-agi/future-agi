@@ -404,3 +404,27 @@ describe("ScenarioDrawer status", () => {
     expect(screen.getAllByText(/Kept as written/).length).toBeGreaterThan(0);
   });
 });
+
+describe("ScenarioDrawer sources", () => {
+  it("shows where a scenario comes from, as the server words it", () => {
+    open({
+      ...API_ROW,
+      lifecycle: {
+        state: "active",
+        must_pass: false,
+        negative_controls: [],
+        sources: [
+          {
+            kind: "evidence_case",
+            ref: "E-12",
+            label: "Based on evidence case E-12, not an exact replay",
+            problem: "",
+          },
+        ],
+      },
+    });
+    expect(
+      screen.getByText("Based on evidence case E-12, not an exact replay"),
+    ).toBeInTheDocument();
+  });
+});

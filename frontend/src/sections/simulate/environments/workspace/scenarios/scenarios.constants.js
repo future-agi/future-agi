@@ -123,6 +123,7 @@ export const LIFECYCLE_COPY = {
     citedBy: (keys) =>
       `Cited by ${keys.length === 1 ? "1 scenario" : `${keys.length} scenarios`}: ${keys.join(", ")}`,
   },
+  sourcesLabel: "Sources",
   mustPass: "Must pass",
   statusTitle: "Status",
   stateLabel: "State",

@@ -126,6 +126,24 @@ export function LifecycleSection({ envId, lifecycle, Row, sectionSx }) {
         <Row label={LIFECYCLE_COPY.stateLabel}>
           <Typography className="sd-val">{stateText(lifecycle)}</Typography>
         </Row>
+        {lifecycle.sources?.length > 0 && (
+          <Row label={LIFECYCLE_COPY.sourcesLabel}>
+            <Stack spacing={0.5}>
+              {lifecycle.sources.map((one, index) => (
+                <Box key={`${one.kind}-${one.ref}-${index}`}>
+                  <Typography className="sd-val">{one.label}</Typography>
+                  {one.problem && (
+                    <Typography
+                      sx={{ typography: "s3", color: "status.warning.fg" }}
+                    >
+                      {one.problem}
+                    </Typography>
+                  )}
+                </Box>
+              ))}
+            </Stack>
+          </Row>
+        )}
         {lifecycle.source_changed?.length > 0 && (
           <Row label={LIFECYCLE_COPY.sourceChanged.label}>
             <SourceChangedLine envId={envId} lifecycle={lifecycle} />
