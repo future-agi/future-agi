@@ -114,6 +114,9 @@ describe("SourcesPanel", () => {
       return { data: prepared };
     });
     const rendering = mount();
+    expect(
+      screen.getByText(/preserves the original version and source files/),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Upload file" })).toBeEnabled(),
     );
@@ -135,6 +138,12 @@ describe("SourcesPanel", () => {
         expected_revision: 2,
       }),
     );
+    expect(api.post).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByText(
+        /Source added to the Environment draft. Save creates a new Environment version/,
+      ),
+    ).toBeInTheDocument();
     rendering.unmount();
     mount();
     expect(await screen.findByText("Draft")).toBeInTheDocument();
@@ -163,113 +172,137 @@ describe("SourcesPanel", () => {
     );
   });
 
-  it.each(["upload", "Knowledge Base"])(
-    "repairs a durable %s after reloading and without sending the source again",
-    async (method) => {
-      const selection = { kb_id: "authorized-kb", file_ids: ["ready-file"] };
-      const reviewPath =
-        "/simulate/api/harness-source-reviews/unstaged-review/";
-      api.get.mockImplementation(async (path) => ({
-        data: path.endsWith("/capabilities/")
-          ? basis
-          : path === reviewPath
-            ? {
-                ...serverReview,
-                id: ambiguous.import_ref,
-                state: ambiguous.state,
-                draft_digest: null,
-                preview: ambiguous.draft,
-              }
-            : { sources: [] },
-      }));
-      api.post
-        .mockResolvedValueOnce({ data: ambiguous })
-        .mockRejectedValueOnce(new Error("Source preparation timed out"))
-        .mockResolvedValueOnce({
-          data: { ...serverReview, id: ambiguous.import_ref, revision: 3 },
-        });
-      const isUpload = method === "upload";
-      const file = new File(["name\nApproved owner"], "customers.csv");
-      const rendering = mount(
-        isUpload ? undefined : { environmentSourceSelection: selection },
-      );
-      if (isUpload) {
-        await waitFor(() =>
-          expect(
-            screen.getByRole("button", { name: "Upload file" }),
-          ).toBeEnabled(),
-        );
-        fireEvent.change(screen.getByLabelText("Environment source files"), {
-          target: { files: [file] },
-        });
-      }
-      expect(
-        await screen.findByRole("combobox", { name: "Destination table" }),
-      ).toBeInTheDocument();
-      expect(sessionStorage.getItem(reviewStorageKey)).toBe(
-        ambiguous.import_ref,
-      );
-      expect(api.post).toHaveBeenCalledTimes(1);
-      rendering.unmount();
+  it("repairs a mixed upload after reloading without sending the sources again", async () => {
+    const reviewPath = "/simulate/api/harness-source-reviews/unstaged-review/";
+    api.get.mockImplementation(async (path) => ({
+      data: path.endsWith("/capabilities/")
+        ? basis
+        : path === reviewPath
+          ? {
+              ...serverReview,
+              id: ambiguous.import_ref,
+              state: ambiguous.state,
+              draft_digest: null,
+              preview: ambiguous.draft,
+            }
+          : { sources: [] },
+    }));
+    api.post
+      .mockResolvedValueOnce({ data: ambiguous })
+      .mockRejectedValueOnce(new Error("Source preparation timed out"))
+      .mockResolvedValueOnce({
+        data: {
+          ...serverReview,
+          id: ambiguous.import_ref,
+          revision: 3,
+          preview: {
+            ...serverReview.preview,
+            sources: [
+              ...serverReview.preview.sources,
+              {
+                filename: "customers.csv",
+                pin: { source_id: "customers", role: "seed_records" },
+              },
+            ],
+          },
+        },
+      });
+    const csv = new File(["name\nApproved owner"], "customers.csv");
+    const guide = new File(["A guide"], "guide.pdf");
+    const rendering = mount();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Upload file" })).toBeEnabled(),
+    );
+    fireEvent.change(screen.getByLabelText("Environment source files"), {
+      target: { files: [csv, guide] },
+    });
+    expect(
+      await screen.findByRole("combobox", { name: "Scenario data table" }),
+    ).toBeInTheDocument();
+    expect(sessionStorage.getItem(reviewStorageKey)).toBe(ambiguous.import_ref);
+    expect(api.post).toHaveBeenCalledTimes(1);
+    const [path, form] = api.post.mock.lastCall;
+    expect(path).toBe(
+      "/simulate/api/harness-environments/env-1/sources/uploads/prepare/",
+    );
+    expect(form.getAll("files")).toEqual([csv, guide]);
+    expect(form.has("purpose")).toBe(false);
+    rendering.unmount();
 
-      mount();
-      const select = await screen.findByRole("combobox", {
-        name: "Destination table",
-      });
-      const prepare = screen.getByRole("button", {
-        name: "Prepare for this table",
-      });
-      expect(prepare).toBeDisabled();
-      expect(screen.queryByRole("button", { name: "Add to draft" })).toBeNull();
-      fireEvent.mouseDown(select);
-      fireEvent.click(screen.getByRole("option", { name: "customers" }));
-      fireEvent.click(prepare);
-      expect(
-        await screen.findByText("Source preparation timed out"),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("combobox", { name: "Destination table" }),
-      ).toHaveTextContent("customers");
-      fireEvent.click(prepare);
-      expect(await screen.findByText("reference.txt")).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Add to draft" }),
-      ).toBeEnabled();
+    mount();
+    const select = await screen.findByRole("combobox", {
+      name: "Scenario data table",
+    });
+    const prepare = screen.getByRole("button", {
+      name: "Prepare for this table",
+    });
+    expect(prepare).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Add to draft" })).toBeNull();
+    fireEvent.mouseDown(select);
+    fireEvent.click(screen.getByRole("option", { name: "customers" }));
+    fireEvent.click(prepare);
+    expect(
+      await screen.findByText("Source preparation timed out"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Scenario data table" }),
+    ).toHaveTextContent("customers");
+    fireEvent.click(prepare);
+    expect(await screen.findByText("reference.txt")).toBeInTheDocument();
+    expect(screen.getByText("Structured scenario data")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to draft" })).toBeEnabled();
 
-      expect(api.get).toHaveBeenCalledWith(reviewPath);
-      const body = {
-        expected_revision: 2,
-        target_table: "customers",
-        idempotency_key: "unstaged-review:2:0",
-      };
-      expect(api.post).toHaveBeenCalledTimes(3);
-      expect(api.post).toHaveBeenNthCalledWith(
-        2,
-        `${reviewPath}reprepare/`,
-        body,
-      );
-      expect(api.post).toHaveBeenNthCalledWith(
-        3,
-        `${reviewPath}reprepare/`,
-        body,
-      );
-      api.post.mockResolvedValueOnce({
-        data: { validation: { status: "structural_only" } },
-      });
-      fireEvent.click(screen.getByRole("button", { name: "Add to draft" }));
-      expect(
-        await screen.findByText(/Source added to the Environment draft/),
-      ).toBeInTheDocument();
-      expect(api.post).toHaveBeenLastCalledWith(
-        "/simulate/api/harness-environments/env-1/sources/imports/accept/",
-        expect.objectContaining({
-          import_ref: ambiguous.import_ref,
-          expected_revision: 3,
-          expected_draft_digest: prepared.draft_digest,
-        }),
-      );
-    },
-  );
+    expect(api.get).toHaveBeenCalledWith(reviewPath);
+    const body = {
+      expected_revision: 2,
+      target_table: "customers",
+      idempotency_key: "unstaged-review:2:0",
+    };
+    expect(api.post).toHaveBeenCalledTimes(3);
+    expect(api.post).toHaveBeenNthCalledWith(
+      2,
+      `${reviewPath}reprepare/`,
+      body,
+    );
+    expect(api.post).toHaveBeenNthCalledWith(
+      3,
+      `${reviewPath}reprepare/`,
+      body,
+    );
+    api.post.mockResolvedValueOnce({
+      data: { validation: { status: "structural_only" } },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add to draft" }));
+    expect(
+      await screen.findByText(/Source added to the Environment draft/),
+    ).toBeInTheDocument();
+    expect(api.post).toHaveBeenLastCalledWith(
+      "/simulate/api/harness-environments/env-1/sources/imports/accept/",
+      expect.objectContaining({
+        import_ref: ambiguous.import_ref,
+        expected_revision: 3,
+        expected_draft_digest: prepared.draft_digest,
+      }),
+    );
+  });
+
+  it("sends an explicit policy purpose for PDF uploads", async () => {
+    api.post.mockResolvedValue({ data: prepared });
+    mount();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Upload file" })).toBeEnabled(),
+    );
+    fireEvent.mouseDown(
+      screen.getByRole("combobox", { name: "Upload purpose" }),
+    );
+    fireEvent.click(screen.getByRole("option", { name: "Policy PDF" }));
+    const input = screen.getByLabelText("Environment source files");
+    expect(input).toHaveAttribute("accept", ".pdf");
+    const file = new File(["Policy"], "policy.pdf");
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(await screen.findByText("reference.txt")).toBeInTheDocument();
+    expect(api.post.mock.lastCall[1].get("purpose")).toBe("policy");
+  });
 
   it("reopens an unaccepted review from the server after reloading", async () => {
     api.post.mockResolvedValue({ data: prepared });

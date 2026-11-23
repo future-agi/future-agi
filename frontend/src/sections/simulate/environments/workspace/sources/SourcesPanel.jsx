@@ -44,6 +44,12 @@ const errorText = (error) =>
 
 const mebibytes = (bytes) => `${bytes / (1024 * 1024)} MiB`;
 
+const sourcePurposeLabels = {
+  reference: "Reference",
+  policy: "Policy",
+  seed_records: "Structured scenario data",
+};
+
 const preparedFromReview = (review) => ({
   import_ref: review.id,
   revision: review.revision,
@@ -72,7 +78,7 @@ export default function SourcesPanel({ env, locked }) {
   const [acceptedRelationshipIndexes, setAcceptedRelationshipIndexes] =
     useState([]);
   const [personalDataModes, setPersonalDataModes] = useState({});
-  const [uploadPurpose, setUploadPurpose] = useState("reference");
+  const [uploadPurpose, setUploadPurpose] = useState("automatic");
   const [message, setMessage] = useState("");
   const {
     data: summary,
@@ -246,21 +252,11 @@ export default function SourcesPanel({ env, locked }) {
     const files = [...(event.target.files || [])];
     event.target.value = "";
     if (!files.length || !capabilities) return;
-    const extensions = files.map((file) =>
-      file.name.split(".").pop()?.toLowerCase(),
-    );
-    const purpose = extensions.every((extension) =>
-      ["csv", "json"].includes(extension),
-    )
-      ? "seed_records"
-      : extensions.every((extension) => extension === "txt")
-        ? "reference"
-        : uploadPurpose;
     setMessage("");
     prepareUpload.mutate(
       {
         files,
-        purpose,
+        purpose: uploadPurpose === "policy" ? "policy" : undefined,
         versionId: capabilities.environment_version_id,
         draft: capabilities.draft,
       },
@@ -305,9 +301,10 @@ export default function SourcesPanel({ env, locked }) {
           const affected = result.validation?.affected_scenarios?.length || 0;
           closePrepared();
           setMessage(
-            `Source added to the Environment draft. Validation: ${
-              result.validation?.status || "not reported"
-            }. ${affected} affected scenario${affected === 1 ? "" : "s"} were not executed. Use Save to create a version.`,
+            "Source added to the Environment draft. Save creates a new Environment version." +
+              (affected
+                ? ` Review ${affected} existing scenario${affected === 1 ? "" : "s"} after saving.`
+                : ""),
           );
         },
       },
@@ -319,8 +316,9 @@ export default function SourcesPanel({ env, locked }) {
       <Box>
         <Typography variant="h5">Sources</Typography>
         <Typography color="text.secondary">
-          Add files or Knowledge Base content to this Environment. Nothing
-          becomes live until you save the draft.
+          Use files and Knowledge Base content as input for scenarios. Adding a
+          source updates the draft. Save creates a new Environment version and
+          preserves the original version and source files.
         </Typography>
       </Box>
 
@@ -354,9 +352,8 @@ export default function SourcesPanel({ env, locked }) {
             onChange={(event) => setUploadPurpose(event.target.value)}
             disabled={readOnly || pending}
           >
-            <MenuItem value="reference">Reference</MenuItem>
+            <MenuItem value="automatic">Automatic by file type</MenuItem>
             <MenuItem value="policy">Policy PDF</MenuItem>
-            <MenuItem value="seed_records">Seed records</MenuItem>
           </Select>
         </FormControl>
         <input
@@ -365,7 +362,7 @@ export default function SourcesPanel({ env, locked }) {
           type="file"
           aria-label="Environment source files"
           multiple
-          accept=".pdf,.txt,.csv,.json"
+          accept={uploadPurpose === "policy" ? ".pdf" : ".pdf,.txt,.csv,.json"}
           onChange={onUpload}
         />
         <Button
@@ -388,7 +385,9 @@ export default function SourcesPanel({ env, locked }) {
 
       {capabilities && (
         <Typography variant="body2" color="text.secondary">
-          Upload: {capabilities.upload.formats.join(", ").toUpperCase()}, up to{" "}
+          CSV and JSON are used as structured scenario data. PDF and TXT can be
+          used as references. Upload:{" "}
+          {capabilities.upload.formats.join(", ").toUpperCase()}, up to{" "}
           {capabilities.upload.max_files} files,{" "}
           {mebibytes(capabilities.upload.max_file_bytes)} per file and{" "}
           {mebibytes(capabilities.upload.max_total_bytes)} total. Knowledge
@@ -415,7 +414,10 @@ export default function SourcesPanel({ env, locked }) {
                 alignItems="center"
               >
                 <Typography>{source.source_id}</Typography>
-                <Chip size="small" label={source.purpose} />
+                <Chip
+                  size="small"
+                  label={sourcePurposeLabels[source.purpose] || source.purpose}
+                />
                 {summary.draft && (
                   <Chip size="small" color="warning" label="Draft" />
                 )}
@@ -473,11 +475,11 @@ export default function SourcesPanel({ env, locked }) {
             {destinationTables.length > 0 && (
               <FormControl size="small">
                 <InputLabel id="source-destination-table-label">
-                  Destination table
+                  Scenario data table
                 </InputLabel>
                 <Select
                   labelId="source-destination-table-label"
-                  label="Destination table"
+                  label="Scenario data table"
                   value={targetTable}
                   disabled={readOnly || pending || staleReview}
                   onChange={(event) => setTargetTable(event.target.value)}
@@ -494,7 +496,7 @@ export default function SourcesPanel({ env, locked }) {
               <Box key={source.pin.source_id}>
                 <Typography fontWeight={600}>{source.filename}</Typography>
                 <Typography color="text.secondary">
-                  Proposed purpose: {source.pin.role}
+                  {sourcePurposeLabels[source.pin.role] || source.pin.role}
                 </Typography>
               </Box>
             ))}
