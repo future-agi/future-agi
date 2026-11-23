@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Box,
+  Stack,
   Typography,
   Button,
   ClickAwayListener,
@@ -33,8 +34,9 @@ import {
   publishScenarioSelection,
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
-import { SCENARIOS_COPY } from "./scenarios.constants";
+import { LIFECYCLE_COPY, SCENARIOS_COPY } from "./scenarios.constants";
 import { countsLine } from "./lifecycleView";
+import ValidateScenariosButton from "./ValidateScenariosButton";
 import { DRAFTS_COPY } from "../workspace.constants";
 import { withServedLabels } from "./scenarioEditor.constants";
 import { ENV_SHAPE, ENV_STATE_SHAPE } from "./scenarios.shapes";
@@ -645,17 +647,41 @@ export default function ScenariosStep({
             </Box>
 
             {countsText && (
-              <Typography
-                data-testid="lifecycle-counts"
-                sx={{
-                  typography: "s3",
-                  color: "text.secondary",
-                  fontVariantNumeric: "tabular-nums",
-                  pb: 1,
-                }}
+              <Stack
+                direction="row"
+                alignItems="center"
+                flexWrap="wrap"
+                columnGap={1}
+                rowGap={0.5}
+                sx={{ pb: 1, flexShrink: 0 }}
               >
-                {countsText}
-              </Typography>
+                <Typography
+                  data-testid="lifecycle-counts"
+                  sx={{
+                    typography: "s3",
+                    color: "text.secondary",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {countsText}
+                </Typography>
+                {!locked && env?.id && (
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    spacing={0.5}
+                    sx={{ ml: "auto" }}
+                  >
+                    <ValidateScenariosButton envId={env.id} />
+                    <ValidateScenariosButton
+                      envId={env.id}
+                      reproveAll
+                      quiet
+                      label={LIFECYCLE_COPY.validate.reproveAll}
+                    />
+                  </Stack>
+                )}
+              </Stack>
             )}
 
             {/* The table's own bordered box, its edges on the toolbar's. */}

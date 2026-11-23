@@ -75,6 +75,22 @@ export const LIFECYCLE_COPY = {
     { value: "archived", label: "Archived" },
     { value: "source_changed", label: "Source changed" },
   ],
+  validate: {
+    all: "Validate cases not yet proved",
+    one: "Validate scenario against the environment",
+    reproveAll: "Re-prove all",
+    reproveAllHint:
+      "Proves every scenario again in a test sandbox. It doesn't start a paid run.",
+    validating: "Validating…",
+    progress: (proved, total) => `Validating · proved ${proved} of ${total}`,
+    done: (proved, total) =>
+      Number.isInteger(total) && total > 0
+        ? `Validation finished · proved ${proved} of ${total}`
+        : "Validation finished",
+    noResults: "Validation finished but recorded no results. Try again.",
+    elsewhere: "Another validation is running. Validate this one when it ends.",
+    nothing: "Nothing to validate",
+  },
   wrongWay: {
     title: "Wrong-way examples",
     caught: "Caught",

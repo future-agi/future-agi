@@ -56,6 +56,11 @@ vi.mock("src/api/simulate-environments/scenarios", async () => {
       columns: [],
       cells: [],
     })),
+    // The Validate buttons read the running validation on a versioned suite.
+    getRunningScenarioValidation: vi.fn(async () => ({
+      job_id: null,
+      to_prove: 0,
+    })),
   };
 });
 const { listScenarios, amendScenarios } = await import(
