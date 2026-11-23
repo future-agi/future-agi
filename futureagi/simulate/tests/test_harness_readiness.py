@@ -678,7 +678,9 @@ class TestRows:
         assert routing["targets"] == [
             {"kind": "tool", "name": "issue_refund", "result": "failed"}
         ]
-        assert routing["fix"]["action"] == "Point issue_refund at the test world"
+        assert routing["fix"]["action"] == (
+            "Upload a new agent version that serves issue_refund from its tools service, or remove it"
+        )
 
 
 class TestPairs:
@@ -1383,12 +1385,12 @@ class TestDoneWhen:
         assert routing["reason_code"] == "production_only"
         assert routing["reason"] == production_only_reason("issue_refund")
         assert routing["fix"] == {
-            "type": "tool_routing",
-            "category": "tool_routing",
+            "type": "production_only",
+            "category": "agent_version",
             "target": "issue_refund",
-            "action": "Point issue_refund at the test world",
-            "would": "issue_refund lands in the test world and its check passes",
-            # Certified already: the fix is a new version, checked on its own.
+            "action": "Upload a new agent version that serves issue_refund from its tools service, or remove it",
+            "would": "issue_refund runs in the test world instead of reaching production",
+            # Only a new agent version moves the tool off production: nothing to re-check.
             "recheck": None,
         }
         assert {

@@ -526,7 +526,13 @@ _AGENT_GAP_FIXES: dict[str, tuple[str, str]] = {
         " arguments the agent sends, or test it in an environment built for them",
         "{target} takes the agent's arguments in the test world and its check passes",
     ),
+    "production_only": (
+        "Upload a new agent version that serves {target} from its tools service, or remove it",
+        "{target} runs in the test world instead of reaching production",
+    ),
 }
+# Gaps only a new agent version closes: the fix opens the agent's versions, not the tool's routing.
+_AGENT_VERSION_FIXES = frozenset({"production_only"})
 
 # Each fixable row's kind of repair: the screen its fix opens.
 _CATEGORIES: dict[str, FixCategory] = {
@@ -761,7 +767,7 @@ def _fix(pairing: Pairing, row: RowView, *, certified: bool) -> Fix | None:
         # Only a new agent or environment version changes the documents compared.
         return {
             "type": code,
-            "category": "tool_routing",
+            "category": "agent_version" if code in _AGENT_VERSION_FIXES else "tool_routing",
             "target": names[0] if names else None,
             "action": action.format(target=", ".join(names)),
             "would": would.format(target=", ".join(names)),

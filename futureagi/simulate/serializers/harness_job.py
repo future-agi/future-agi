@@ -891,6 +891,11 @@ class HarnessRunWarningSerializer(serializers.Serializer):
     piece = serializers.ChoiceField(
         choices=("agent", "environment", "suite"), allow_null=True
     )
+    scenario_keys = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="Every scenario the warning is about, when it names scenarios.",
+    )
 
 
 class HarnessCapabilityExcludedSerializer(serializers.Serializer):

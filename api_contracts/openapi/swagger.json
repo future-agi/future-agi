@@ -143886,8 +143886,10 @@
                     "title": "Runtime",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "personas": {
@@ -144193,8 +144195,10 @@
                     "title": "Fixture",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     },
                     "x-nullable": true
                 },
@@ -144222,8 +144226,10 @@
                     "title": "Persona",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     },
                     "x-nullable": true
                 },
@@ -144530,8 +144536,10 @@
                     "title": "Source",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     }
                 },
                 "agent": {
@@ -144541,8 +144549,10 @@
                     "title": "Runtime",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     },
                     "x-nullable": true
                 },
@@ -144550,8 +144560,10 @@
                     "title": "Security",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     },
                     "x-nullable": true
                 },
@@ -144559,8 +144571,10 @@
                     "title": "Artifacts",
                     "type": "object",
                     "additionalProperties": {
-                        "type": "string",
-                        "x-nullable": true
+                        "type": "object",
+                        "x-nullable": true,
+                        "x-json-value": true,
+                        "description": "Any valid JSON value."
                     },
                     "x-nullable": true
                 },
@@ -146918,13 +146932,14 @@
                 },
                 "category": {
                     "title": "Category",
-                    "description": "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+                    "description": "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check.",
                     "type": "string",
                     "enum": [
                         "startup",
                         "message_mapping",
                         "tool_routing",
-                        "evidence"
+                        "evidence",
+                        "agent_version"
                     ],
                     "x-nullable": true
                 },
@@ -148857,8 +148872,10 @@
                     "items": {
                         "type": "object",
                         "additionalProperties": {
-                            "type": "string",
-                            "x-nullable": true
+                            "type": "object",
+                            "x-nullable": true,
+                            "x-json-value": true,
+                            "description": "Any valid JSON value."
                         }
                     }
                 },
@@ -148890,8 +148907,9 @@
                 },
                 "affects": {
                     "title": "Affects",
-                    "description": "The scenario keys this change touches, or `all`.",
-                    "type": "object"
+                    "type": "object",
+                    "x-string-or-array": true,
+                    "description": "Plain text string or array of content-part objects."
                 },
                 "sources": {
                     "description": "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
@@ -148899,8 +148917,10 @@
                     "items": {
                         "type": "object",
                         "additionalProperties": {
-                            "type": "string",
-                            "x-nullable": true
+                            "type": "object",
+                            "x-nullable": true,
+                            "x-json-value": true,
+                            "description": "Any valid JSON value."
                         }
                     }
                 },
@@ -151400,6 +151420,14 @@
                         "suite"
                     ],
                     "x-nullable": true
+                },
+                "scenario_keys": {
+                    "description": "Every scenario the warning is about, when it names scenarios.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 }
             }
         },

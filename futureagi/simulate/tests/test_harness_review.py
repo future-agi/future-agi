@@ -247,6 +247,30 @@ def test_a_scenario_summary_names_its_check_files_in_words_and_never_its_index_e
     ]
 
 
+def test_a_scenario_summary_names_the_scenario_by_its_name_and_by_its_key_without_one():
+    named = {"name": "Refund a late order", "tests": "refunds once"}
+    unnamed = {"tests": "looks up"}
+    default = _tree(
+        {},
+        **{
+            "scenarios/refund_late/scenario.json": named,
+            "scenarios/lookup/scenario.json": unnamed,
+        },
+    )
+    draft = _tree(
+        {},
+        **{
+            "scenarios/refund_late/scenario.json": {**named, "tests": "refunds twice"},
+            "scenarios/lookup/scenario.json": {**unnamed, "tests": "looks up twice"},
+        },
+    )
+
+    assert sorted(one["summary"] for one in compute_changes(default, draft)) == [
+        "Change tests of scenario Refund a late order",
+        "Change tests of scenario lookup",
+    ]
+
+
 def test_an_actor_share_change_names_its_values_and_grades_nothing():
     from simulate.services.harness_versioning.review_items import graded
 

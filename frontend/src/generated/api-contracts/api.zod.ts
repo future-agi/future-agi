@@ -39326,7 +39326,10 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
     }),
   }),
   world: zod.object({
-    runtime: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     personas: zod.array(
       zod.object({
         name: zod.string().optional(),
@@ -39382,7 +39385,10 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
       use_case: zod.string().min(1),
       branch: zod.string().min(1),
       tests: zod.string().min(1),
-      fixture: zod.record(zod.string(), zod.string()),
+      fixture: zod.record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      ),
       steps: zod.number(),
       sub_goals: zod.array(
         zod.object({
@@ -39511,7 +39517,10 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         code: zod.enum(["fault_unreachable", "actor_no_door"]),
         message: zod.string().min(1),
       }),
-      persona: zod.record(zod.string(), zod.string()),
+      persona: zod.record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      ),
       situation: zod.string().min(1),
       outcome: zod.string().min(1),
       status: zod.string().min(1),
@@ -39554,7 +39563,10 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
   }),
   settings: zod.object({
     schema_version: zod.string().min(1),
-    source: zod.record(zod.string(), zod.string()),
+    source: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     agent: zod.object({
       connector: zod.string().min(1),
       mode: zod.string().min(1),
@@ -39568,9 +39580,18 @@ export const SimulateApiHarnessEnvironmentsReadResponse = zod.object({
         }),
       ),
     }),
-    runtime: zod.record(zod.string(), zod.string()),
-    security: zod.record(zod.string(), zod.string()),
-    artifacts: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
+    security: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
+    artifacts: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     scenario_count: zod.number(),
     seed: zod.number(),
     enable_tool_evaluation: zod.boolean(),
@@ -39919,7 +39940,10 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
     }),
   }),
   world: zod.object({
-    runtime: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     personas: zod.array(
       zod.object({
         name: zod.string().optional(),
@@ -39975,7 +39999,10 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
       use_case: zod.string().min(1),
       branch: zod.string().min(1),
       tests: zod.string().min(1),
-      fixture: zod.record(zod.string(), zod.string()),
+      fixture: zod.record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      ),
       steps: zod.number(),
       sub_goals: zod.array(
         zod.object({
@@ -40104,7 +40131,10 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         code: zod.enum(["fault_unreachable", "actor_no_door"]),
         message: zod.string().min(1),
       }),
-      persona: zod.record(zod.string(), zod.string()),
+      persona: zod.record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      ),
       situation: zod.string().min(1),
       outcome: zod.string().min(1),
       status: zod.string().min(1),
@@ -40147,7 +40177,10 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
   }),
   settings: zod.object({
     schema_version: zod.string().min(1),
-    source: zod.record(zod.string(), zod.string()),
+    source: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     agent: zod.object({
       connector: zod.string().min(1),
       mode: zod.string().min(1),
@@ -40161,9 +40194,18 @@ export const SimulateApiHarnessEnvironmentsPartialUpdateResponse = zod.object({
         }),
       ),
     }),
-    runtime: zod.record(zod.string(), zod.string()),
-    security: zod.record(zod.string(), zod.string()),
-    artifacts: zod.record(zod.string(), zod.string()),
+    runtime: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
+    security: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
+    artifacts: zod.record(
+      zod.string(),
+      zod.object({}).passthrough().describe("Any valid JSON value."),
+    ),
     scenario_count: zod.number(),
     seed: zod.number(),
     enable_tool_evaluation: zod.boolean(),
@@ -44740,9 +44782,15 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
       fix: zod.object({
         type: zod.string().min(1),
         category: zod
-          .enum(["startup", "message_mapping", "tool_routing", "evidence"])
+          .enum([
+            "startup",
+            "message_mapping",
+            "tool_routing",
+            "evidence",
+            "agent_version",
+          ])
           .describe(
-            "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+            "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check.",
           ),
         target: zod.string().min(1),
         action: zod.string().min(1),
@@ -44856,9 +44904,15 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
           fix: zod.object({
             type: zod.string().min(1),
             category: zod
-              .enum(["startup", "message_mapping", "tool_routing", "evidence"])
+              .enum([
+                "startup",
+                "message_mapping",
+                "tool_routing",
+                "evidence",
+                "agent_version",
+              ])
               .describe(
-                "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+                "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check.",
               ),
             target: zod.string().min(1),
             action: zod.string().min(1),
@@ -45321,9 +45375,15 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
         fix: zod.object({
           type: zod.string().min(1),
           category: zod
-            .enum(["startup", "message_mapping", "tool_routing", "evidence"])
+            .enum([
+              "startup",
+              "message_mapping",
+              "tool_routing",
+              "evidence",
+              "agent_version",
+            ])
             .describe(
-              "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+              "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check.",
             ),
           target: zod.string().min(1),
           action: zod.string().min(1),
@@ -45442,9 +45502,10 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
                   "message_mapping",
                   "tool_routing",
                   "evidence",
+                  "agent_version",
                 ])
                 .describe(
-                  "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+                  "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check.",
                 ),
               target: zod.string().min(1),
               action: zod.string().min(1),
@@ -46531,17 +46592,26 @@ export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
         document: zod.string().min(1),
         action: zod.enum(["added", "removed", "changed"]),
         fields: zod.array(zod.string().min(1)),
-        patch: zod.array(zod.record(zod.string(), zod.string())),
+        patch: zod.array(
+          zod.record(
+            zod.string(),
+            zod.object({}).passthrough().describe("Any valid JSON value."),
+          ),
+        ),
         base_digest: zod.string().min(1),
         draft_digest: zod.string().min(1),
         summary: zod.string().min(1),
         decision: zod.enum(["accepted", "rejected"]),
         affects: zod
-          .object({})
-          .passthrough()
-          .describe("The scenario keys this change touches, or `all`."),
+          .union([zod.string(), zod.array(zod.unknown())])
+          .describe("Plain text string or array of content-part objects."),
         sources: zod
-          .array(zod.record(zod.string(), zod.string()))
+          .array(
+            zod.record(
+              zod.string(),
+              zod.object({}).passthrough().describe("Any valid JSON value."),
+            ),
+          )
           .describe(
             "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
           ),
@@ -46648,17 +46718,26 @@ export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResp
         document: zod.string().min(1),
         action: zod.enum(["added", "removed", "changed"]),
         fields: zod.array(zod.string().min(1)),
-        patch: zod.array(zod.record(zod.string(), zod.string())),
+        patch: zod.array(
+          zod.record(
+            zod.string(),
+            zod.object({}).passthrough().describe("Any valid JSON value."),
+          ),
+        ),
         base_digest: zod.string().min(1),
         draft_digest: zod.string().min(1),
         summary: zod.string().min(1),
         decision: zod.enum(["accepted", "rejected"]),
         affects: zod
-          .object({})
-          .passthrough()
-          .describe("The scenario keys this change touches, or `all`."),
+          .union([zod.string(), zod.array(zod.unknown())])
+          .describe("Plain text string or array of content-part objects."),
         sources: zod
-          .array(zod.record(zod.string(), zod.string()))
+          .array(
+            zod.record(
+              zod.string(),
+              zod.object({}).passthrough().describe("Any valid JSON value."),
+            ),
+          )
           .describe(
             "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
           ),
@@ -47744,7 +47823,10 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
       }),
     }),
     world: zod.object({
-      runtime: zod.record(zod.string(), zod.string()),
+      runtime: zod.record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      ),
       personas: zod.array(
         zod.object({
           name: zod.string().optional(),
@@ -47800,7 +47882,10 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
         use_case: zod.string().min(1),
         branch: zod.string().min(1),
         tests: zod.string().min(1),
-        fixture: zod.record(zod.string(), zod.string()),
+        fixture: zod.record(
+          zod.string(),
+          zod.object({}).passthrough().describe("Any valid JSON value."),
+        ),
         steps: zod.number(),
         sub_goals: zod.array(
           zod.object({
@@ -47931,7 +48016,10 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           code: zod.enum(["fault_unreachable", "actor_no_door"]),
           message: zod.string().min(1),
         }),
-        persona: zod.record(zod.string(), zod.string()),
+        persona: zod.record(
+          zod.string(),
+          zod.object({}).passthrough().describe("Any valid JSON value."),
+        ),
         situation: zod.string().min(1),
         outcome: zod.string().min(1),
         status: zod.string().min(1),
@@ -47974,7 +48062,10 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
     }),
     settings: zod.object({
       schema_version: zod.string().min(1),
-      source: zod.record(zod.string(), zod.string()),
+      source: zod.record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      ),
       agent: zod.object({
         connector: zod.string().min(1),
         mode: zod.string().min(1),
@@ -47988,9 +48079,18 @@ export const SimulateApiHarnessEnvironmentsEvaluationsSetToolCallEvaluationRespo
           }),
         ),
       }),
-      runtime: zod.record(zod.string(), zod.string()),
-      security: zod.record(zod.string(), zod.string()),
-      artifacts: zod.record(zod.string(), zod.string()),
+      runtime: zod.record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      ),
+      security: zod.record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      ),
+      artifacts: zod.record(
+        zod.string(),
+        zod.object({}).passthrough().describe("Any valid JSON value."),
+      ),
       scenario_count: zod.number(),
       seed: zod.number(),
       enable_tool_evaluation: zod.boolean(),
@@ -50854,6 +50954,12 @@ export const SimulateApiHarnessEnvironmentsRunPlanResponse = zod.object({
       code: zod.string().min(1),
       message: zod.string().min(1),
       piece: zod.enum(["agent", "environment", "suite"]).nullable(),
+      scenario_keys: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe(
+          "Every scenario the warning is about, when it names scenarios.",
+        ),
     }),
   ),
   bundle_cached: zod
@@ -67779,9 +67885,10 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
                   "message_mapping",
                   "tool_routing",
                   "evidence",
+                  "agent_version",
                 ])
                 .describe(
-                  "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+                  "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check.",
                 ),
               target: zod.string().min(1),
               action: zod.string().min(1),
@@ -67876,9 +67983,10 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
                       "message_mapping",
                       "tool_routing",
                       "evidence",
+                      "agent_version",
                     ])
                     .describe(
-                      "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, or the environment's data and reset; null for a re-check.",
+                      "The kind of repair: the agent's start and credentials, its message mapping, a tool's routing, the environment's data and reset, or a new agent version; null for a re-check.",
                     ),
                   target: zod.string().min(1),
                   action: zod.string().min(1),
