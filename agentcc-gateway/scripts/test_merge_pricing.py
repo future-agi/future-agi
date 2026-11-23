@@ -101,5 +101,28 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(counts["flags carried"], 1)
 
 
+class CostCalculationTest(unittest.TestCase):
+    def test_embedding_input_only_cost(self):
+        # 0.02 USD per 1M tokens => 2e-8 per token
+        entry = {"input_cost_per_token": 0.02 / 1_000_000}
+        cost = mp.calculate_cost(entry, input_tokens=250_000)
+        self.assertAlmostEqual(cost, 0.005)
+
+    def test_image_embedding_cost(self):
+        entry = {"input_per_image": 0.01}
+        cost = mp.calculate_cost(entry, image_count=3)
+        self.assertAlmostEqual(cost, 0.03)
+
+    def test_input_and_output_cost(self):
+        entry = {
+            "input_cost_per_token": 1e-6,  # $1 per 1M tokens
+            "output_cost_per_token": 2e-6, # $2 per 1M tokens
+        }
+        cost = mp.calculate_cost(entry, input_tokens=500_000, output_tokens=250_000)
+        expected = 0.5 * 1e-6 * 1_000_000 + 0.25 * 2e-6 * 1_000_000  # = 0.5 + 0.5 = 1.0
+        # Simplify: input 500k *1e-6 = 0.5, output 250k*2e-6 = 0.5
+        self.assertAlmostEqual(cost, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()
