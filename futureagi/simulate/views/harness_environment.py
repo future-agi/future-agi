@@ -9,9 +9,16 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.authentication import viewer_denied
 from model_hub.models.develop_dataset import Dataset
-from simulate.models import AgentDefinition, EvidenceImport, HostedHarnessJob
+from simulate.models import (
+    AgentDefinition,
+    AgentVersion,
+    EvidenceImport,
+    HostedHarnessJob,
+)
 from simulate.pydantic_schemas.evidence_import import DatasetColumns
+from simulate.selectors.agent_fix_issue import issue_scenarios
 from simulate.selectors.evidence_import import (
     environment_evidence_import,
     evidence_dataset,
@@ -55,6 +62,8 @@ from simulate.serializers.harness_actors import (
 )
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
+    HarnessAgentPolicyResponseSerializer,
+    HarnessAgentPolicySerializer,
     HarnessAgentVersionCreateSerializer,
     HarnessCapabilityCasePageSerializer,
     HarnessCapabilityCasesQuerySerializer,
@@ -155,7 +164,10 @@ from simulate.services.hosted_harness import HostedHarnessError, VersionPicks
 from simulate.views.harness_starting_records import HarnessStartingRecordsMixin
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
-from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorWithDetailsResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.errors import format_validation_error
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.utils.workspace_scope import (
@@ -286,6 +298,22 @@ def _uuid_or_none(value):
         return None
 
 
+def _editable_import(job, identifier):
+    """An import this page may draft, add or discard. An Error Feed issue's import
+    belongs to its epoch, whose page finishes it."""
+    evidence_import = environment_evidence_import(job, identifier)
+    if evidence_import is None:
+        raise NotFound("Evidence import not found")
+    if evidence_import.source_issue_id is not None:
+        raise HostedHarnessError(
+            "evidence_import_of_issue",
+            "This import belongs to an epoch from an Error Feed issue. Review it on"
+            " that epoch's page.",
+            status_code=409,
+        )
+    return evidence_import
+
+
 class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     """The environments surface: list, delete, and start a simulation.
 
@@ -323,7 +351,11 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
 
     def handle_exception(self, exc):
         if isinstance(exc, HostedHarnessError):
-            return Response(refusal_body(exc, self.request), status=exc.status_code)
+            return Response(
+                refusal_body(exc, self.request),
+                status=exc.status_code,
+                headers=exc.headers(),
+            )
         response = _usage_limit_response(exc)
         if response is not None:
             return response
@@ -367,6 +399,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         against = request.validated_query_data.get("against")
         return Response(version_reads.version_diff(job, piece, identifier, against))
 
+    @viewer_denied("change an environment's default version")
     @validated_request(
         request_serializer=HarnessDefaultMoveSerializer,
         responses={
@@ -433,6 +466,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             raise version_reads.version_not_found()
         return found[0]
 
+    @viewer_denied("discard an agent version")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={200: HarnessVersionsSerializer},
@@ -458,6 +492,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         discard_agent_version(version, by_environment=job.id)
         return Response(version_reads.list_versions(job))
 
+    @viewer_denied("retry an agent version check")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={202: HarnessVersionsSerializer},
@@ -485,6 +520,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             version_reads.list_versions(job), status=status.HTTP_202_ACCEPTED
         )
 
+    @viewer_denied("create an agent version")
     @validated_request(
         request_serializer=HarnessAgentVersionCreateSerializer,
         responses={202: HarnessAgentCredentialsResponseSerializer},
@@ -524,6 +560,50 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             status=status.HTTP_202_ACCEPTED,
         )
 
+    @viewer_denied("change whether an environment follows production")
+    @validated_request(
+        request_serializer=HarnessAgentPolicySerializer,
+        responses={
+            200: HarnessAgentPolicyResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            409: ApiErrorWithDetailsResponseSerializer,
+            502: ApiErrorWithDetailsResponseSerializer,
+            503: ApiErrorWithDetailsResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"], url_path="agent-policy")
+    def agent_policy(self, request, pk=None):
+        """Follow the agent's production version, or pin this environment to one."""
+        from simulate.services.agent_versions import set_environment_policy
+        from simulate.services.harness_agent_versions import environment_policy
+
+        version_reads.require_versioning()
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        locked = set_environment_policy(
+            job, user=request.user, **request.validated_data
+        )
+        version = (
+            AgentVersion.no_workspace_objects.filter(id=locked.agent_version_id).first()
+            if locked.agent_version_id is not None
+            else None
+        )
+        return Response(
+            HarnessAgentPolicyResponseSerializer(
+                {
+                    "policy": environment_policy(locked),
+                    "agent_version": (
+                        version_reads.agent_version_item(locked, version)
+                        if version is not None
+                        else None
+                    ),
+                }
+            ).data
+        )
+
     @validated_request(responses={200: HarnessSuiteMemberSerializer(many=True)})
     @action(
         detail=True,
@@ -531,8 +611,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         url_path=r"versions/suite/(?P<version_id>[0-9a-fA-F-]{36})/members",
     )
     def suite_members(self, request, pk=None, version_id=None):
-        """The scenarios in one suite version, by number; a coding agent's read leaves
-        out the held-back cases."""
+        """The scenarios in one suite version, by number, each with the Error Feed
+        issue it came from, if any; a coding agent's read leaves out the held-back
+        cases."""
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
@@ -541,8 +622,19 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         if identifier is None:
             raise version_reads.version_not_found()
         hidden = _held_back_from(request, job, identifier)
-        members = version_reads.suite_members(job, identifier)
-        return Response(members_without(members, hidden))
+        members = members_without(version_reads.suite_members(job, identifier), hidden)
+        issues = issue_scenarios(job, [member["scenario_key"] for member in members])
+        return Response(
+            [
+                {
+                    **member,
+                    "issue_cluster_id": issue.cluster_id if issue else None,
+                    "issue_project_id": issue.project_id if issue else None,
+                }
+                for member in members
+                for issue in [issues.get(member["scenario_key"])]
+            ]
+        )
 
     @validated_request(
         request_serializer=HarnessVerifyCreateSerializer,
@@ -902,6 +994,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             result, status=status.HTTP_202_ACCEPTED if running else status.HTTP_200_OK
         )
 
+    @viewer_denied("save environment drafts")
     @validated_request(
         responses={200: HarnessSourceChangesSerializer},
         operation_id="simulate_api_harness-environments_source_changes",
@@ -1112,6 +1205,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         # The cases saved as Draft: they do not run until validated.
         return Response({**saved, "not_active": not_active(job)})
 
+    @viewer_denied("discard environment drafts")
     @swagger_auto_schema(
         responses={204: "Discarded"},
         operation_id="simulate_api_harness-environments_discard_draft",
@@ -1248,9 +1342,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         identifier = _uuid_or_none(import_id)
         if job is None or identifier is None:
             return self._not_found()
-        evidence_import = environment_evidence_import(job, identifier)
-        if evidence_import is None:
-            raise NotFound("Evidence import not found")
+        evidence_import = _editable_import(job, identifier)
         discard_evidence_import(evidence_import)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1276,9 +1368,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         identifier = _uuid_or_none(import_id)
         if job is None or identifier is None:
             return self._not_found()
-        evidence_import = environment_evidence_import(job, identifier)
-        if evidence_import is None:
-            raise NotFound("Evidence import not found")
+        evidence_import = _editable_import(job, identifier)
         start_drafting(
             evidence_import,
             [str(case_id) for case_id in request.validated_data["case_ids"]],
@@ -1314,9 +1404,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         identifier = _uuid_or_none(import_id)
         if job is None or identifier is None:
             return self._not_found()
-        evidence_import = environment_evidence_import(job, identifier)
-        if evidence_import is None:
-            raise NotFound("Evidence import not found")
+        evidence_import = _editable_import(job, identifier)
         body = request.validated_data
         saved = add_to_suite(
             evidence_import,
@@ -1354,6 +1442,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         states = request.validated_query_data.get("state")
         return Response(list_nudges(job, states=states))
 
+    @viewer_denied("answer a rebuild prompt")
     @validated_request(
         request_serializer=HarnessNudgeAnswerSerializer,
         responses={200: HarnessNudgeSerializer},
@@ -1387,6 +1476,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         )
 
+    @viewer_denied("dismiss a rebuild prompt")
     @validated_request(
         request_serializer=EmptyRequestSerializer,
         responses={200: HarnessNudgeSerializer},
@@ -1661,6 +1751,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             detail_without(environment_detail(job), _held_back_from(request, job))
         )
 
+    @viewer_denied("edit an environment")
     @validated_request(
         request_serializer=HarnessEnvironmentRenameSerializer,
         responses={200: HarnessEnvironmentDetailSerializer},
@@ -1687,6 +1778,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         job.save(update_fields=["name", "content_updated_at", "updated_at"])
         return Response(environment_detail(job))
 
+    @viewer_denied("delete an environment")
     @swagger_auto_schema(responses={204: "Deleted"})
     def destroy(self, request, pk=None):
         """Soft-delete an environment, cancelling its run first if one is live.
@@ -1708,6 +1800,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         delete_environment(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @viewer_denied("start a paid run")
     @validated_request(
         request_serializer=HarnessRunCreateSerializer,
         responses={202: HarnessRunCreateResponseSerializer},
@@ -1758,6 +1851,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             {"evaluations": addable_evals(job.run_test, eval_modality(job))}
         )
 
+    @viewer_denied("add evaluations")
     @validated_request(
         request_serializer=HarnessEnvironmentAddEvaluationSerializer,
         responses={201: HarnessEnvironmentDetailSerializer},
@@ -1793,6 +1887,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         _touch_content(job)
         return Response(environment_detail(job), status=status.HTTP_201_CREATED)
 
+    @viewer_denied("add evaluations to a run")
     @validated_request(
         request_serializer=HarnessEnvironmentAddEvaluationSerializer,
         responses={202: HarnessEnvironmentRunEvaluationQueuedSerializer},
@@ -1941,6 +2036,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             _touch_content(job)
         return Response(counts, status=status.HTTP_202_ACCEPTED)
 
+    @viewer_denied("run evaluations")
     @validated_request(
         request_serializer=HarnessEnvironmentRunEvaluationsSerializer,
         responses={202: HarnessEnvironmentRunEvaluationsQueuedSerializer},
@@ -2087,6 +2183,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
 
     # Pinned: the PATCH below shares this action's path, and DRF names the
     # operations of a two-method action after the path and the method.
+    @viewer_denied("remove evaluations")
     @swagger_auto_schema(
         responses={204: "Removed"},
         operation_id="simulate_api_harness-environments_remove_evaluation",
@@ -2130,6 +2227,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         _touch_content(job)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @viewer_denied("edit evaluations")
     @validated_request(
         request_serializer=HarnessEnvironmentEvalEditSerializer,
         responses={200: SimulateEvalConfigResponseSerializer},
@@ -2223,6 +2321,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         return Response(SimulateEvalConfigSimpleSerializer(config).data)
 
+    @viewer_denied("change the tool call evaluation")
     @validated_request(
         request_serializer=HarnessEnvironmentToolCallEvaluationSerializer,
         responses={200: HarnessEnvironmentDetailSerializer},

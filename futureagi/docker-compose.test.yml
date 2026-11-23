@@ -6,6 +6,8 @@
 services:
   test-db:
     image: postgres:16-alpine
+    # The metrics pinned-reader tests PREPARE their guard transaction.
+    command: ["postgres", "-c", "max_prepared_transactions=16"]
     environment:
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_password

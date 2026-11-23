@@ -11,7 +11,6 @@ from .agent_definition import (
 from .agent_version import (
     AgentVersionActivateResponseSerializer,
     AgentVersionCreateResponseSerializer,
-    AgentVersionDeleteResponseSerializer,
     AgentVersionListResponseSerializer,
     AgentVersionResponseSerializer,
     AgentVersionRestoreResponseSerializer,
@@ -93,7 +92,6 @@ __all__ = [
     "AgentVersionListResponseSerializer",
     "AgentVersionCreateResponseSerializer",
     "AgentVersionActivateResponseSerializer",
-    "AgentVersionDeleteResponseSerializer",
     "AgentVersionRestoreResponseSerializer",
     "ScenarioResponseSerializer",
     "ScenarioListResponseSerializer",

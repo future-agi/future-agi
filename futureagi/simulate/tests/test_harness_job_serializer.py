@@ -139,3 +139,49 @@ def test_a_readiness_fix_can_open_the_agent_s_versions():
     category = _swagger_definitions()["HarnessCapabilityFix"]["properties"]["category"]
 
     assert "agent_version" in category["enum"]
+
+
+def _source_errors(source):
+    data = _create_data(parallelism=1)
+    data["source"] = {**data["source"], **source}
+    serializer = HarnessJobCreateSerializer(data=data)
+    serializer.is_valid()
+    return serializer.errors.get("source", {})
+
+
+_GITHUB = {"kind": "github", "repository": "acme/agent", "visibility": "public"}
+
+
+def test_subfolder_is_refused_until_the_sandbox_reads_it(settings):
+    settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = False
+
+    errors = _source_errors({**_GITHUB, "subfolder": "agents/support"})
+
+    assert "not supported yet" in str(errors["subfolder"][0])
+    assert "subfolder" not in _source_errors({**_GITHUB, "subfolder": ""})
+
+
+def test_subfolder_only_on_a_github_source(settings):
+    settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = True
+
+    errors = _source_errors({"subfolder": "agents/support"})
+
+    assert "only a github source" in str(errors["subfolder"][0])
+
+
+@pytest.mark.parametrize(
+    "subfolder", ["agents/support", "my..agent", "a-b_c.d/e", "", None]
+)
+def test_subfolder_accepts_a_relative_folder(settings, subfolder):
+    settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = True
+
+    assert "subfolder" not in _source_errors({**_GITHUB, "subfolder": subfolder})
+
+
+@pytest.mark.parametrize(
+    "subfolder", ["/agents", "agents/", "../agents", "agents/../x", ".", "a//b", "a b"]
+)
+def test_subfolder_refuses_an_unsafe_path(settings, subfolder):
+    settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = True
+
+    assert "subfolder" in _source_errors({**_GITHUB, "subfolder": subfolder})

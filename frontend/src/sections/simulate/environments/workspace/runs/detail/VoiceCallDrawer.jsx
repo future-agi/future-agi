@@ -275,9 +275,14 @@ export default function VoiceCallDrawer({
 
   return (
     <Box sx={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      {task.outcomeReason ? (
+      {task.outcomeReason || data?.processing_skipped ? (
         <Box sx={{ pt: 1.5 }}>
           <OutcomeReason reason={task.outcomeReason} />
+          <OutcomeReason
+            reason={
+              data?.processing_skipped ? data.processing_skip_reason : null
+            }
+          />
         </Box>
       ) : null}
       <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>

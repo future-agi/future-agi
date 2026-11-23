@@ -24,7 +24,6 @@ from rest_framework.test import APIClient
 from accounts.models import Organization, Workspace
 from accounts.services.simulate_access import restrict_simulate_to_environments
 from accounts.tests.test_rbac_regressions import (
-    WORKSPACE_WRITE_DENIED,
     _member_client,
     _viewer_client,
 )
@@ -699,7 +698,7 @@ class TestRefusals:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_an_unknown_source_kind_is_refused(self, client, environment, project):
-        response = _create(client, environment, project, source_kind="trace")
+        response = _create(client, environment, project, source_kind="screenshot")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -711,7 +710,7 @@ class TestRefusals:
         response = _start(viewer, environment, project, {SESSION: _evidence()})
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert WORKSPACE_WRITE_DENIED in str(response.data)
+        assert response.data["code"] == "viewer_read_only"
         assert not EvidenceImport.no_workspace_objects.exists()
 
     def test_a_member_can(self, organization, workspace, environment, project):

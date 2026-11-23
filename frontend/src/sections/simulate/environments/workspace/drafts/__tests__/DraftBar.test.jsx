@@ -255,6 +255,22 @@ describe("DraftBar", () => {
       });
     });
 
+    it("keeps Validate and Discard locked for a viewer", async () => {
+      const { default: useSimulationAccess } = await import(
+        "src/sections/simulate/environments/hooks/useSimulationAccess"
+      );
+      useSimulationAccess.mockReturnValueOnce({ canEdit: false, canRun: false });
+      decided();
+      render(<DraftBar env={ENV} />);
+
+      expect(
+        screen.getByRole("button", { name: DRAFTS_COPY.validate }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: DRAFTS_COPY.discard }),
+      ).toBeDisabled();
+    });
+
     it("keeps Save off while validating", () => {
       decided();
       withValidation({ state: "validating" });

@@ -38,6 +38,7 @@ from simulate.models import (
 from simulate.services.canonical_json import canonical_digest
 from simulate.services.harness_versioning import archives, hashing
 from simulate.services.hosted_harness import HostedHarnessError
+from simulate.services.hosted_sandbox.base import SandboxCommandStep
 
 logger = structlog.get_logger(__name__)
 
@@ -1423,23 +1424,37 @@ def agent_reading(sandbox: Any) -> dict[str, Any] | None:
     return document
 
 
-def certify_command(*, prove: bool = False, deadline_at: float | None = None) -> str:
+def certify_steps(
+    *, prove: bool = False, deadline_at: float | None = None
+) -> tuple[SandboxCommandStep, ...]:
     """Certify the pinned pair into ``/work/bundle`` and make it the run's bundle.
 
     Certifying writes ``/work/runtime-validation.json`` itself once the bundle is in place
     and never fetches a provider profile. With ``prove`` it also proves every scenario before
-    sealing, into ``SCENARIO_PROOFS_PATH``.
+    sealing, into ``SCENARIO_PROOFS_PATH``. The certify entrypoint is the harness step: it runs
+    the suite's customer processes, so it alone may run each as its own OS user.
     """
     proving = f" --prove-scenarios{_deadline_flag(deadline_at)}" if prove else ""
     return (
-        "if [ -f /work/authoring/scenarios.json ]; then "
-        f"cp /work/authoring/scenarios.json {SUITE_INDEX_PATH}; fi && "
-        "python -m "
-        "fi.alk.harness.hosted_authoring_entrypoint "
-        f"{CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
-        f"--certify-only --bundle-output /work/bundle{proving}{AGENT_DOCUMENT_FLAG} "
-        "&& rm -rf /work/authoring/environment-bundle "
-        "&& cp -a /work/bundle /work/authoring/environment-bundle"
+        SandboxCommandStep(
+            "if [ -f /work/authoring/scenarios.json ]; then "
+            f"cp /work/authoring/scenarios.json {SUITE_INDEX_PATH}; fi"
+        ),
+        SandboxCommandStep(
+            "python -m fi.alk.harness.hosted_authoring_entrypoint "
+            f"{CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
+            f"--certify-only --bundle-output /work/bundle{proving}{AGENT_DOCUMENT_FLAG}",
+            harness=True,
+        ),
+        SandboxCommandStep("rm -rf /work/authoring/environment-bundle"),
+        SandboxCommandStep("cp -a /work/bundle /work/authoring/environment-bundle"),
+    )
+
+
+def certify_command(*, prove: bool = False, deadline_at: float | None = None) -> str:
+    """The certify steps as one command, for a provider that runs them as one."""
+    return " && ".join(
+        step.command for step in certify_steps(prove=prove, deadline_at=deadline_at)
     )
 
 

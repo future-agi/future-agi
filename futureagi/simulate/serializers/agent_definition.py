@@ -11,6 +11,7 @@ from simulate.models.agent_definition import AgentTypeChoices
 from simulate.services.agent_definition import is_masked, sync_provider_credentials
 from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
+from tfc.permissions.utils import cached_is_read_only_user
 from tracer.models.observability_provider import ProviderChoices
 from tracer.services.observability_switch import observability_is_on
 
@@ -161,10 +162,13 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             except AgentVersion.credentials.RelatedObjectDoesNotExist:
                 pass
 
+        hide_keys = cached_is_read_only_user(self.context)
         if creds:
             if creds.provider_type == "livekit":
                 data["livekit_url"] = creds.server_url
-                data["livekit_api_key"] = creds.get_masked_api_key()
+                data["livekit_api_key"] = (
+                    "" if hide_keys else creds.get_masked_api_key()
+                )
                 data["livekit_agent_name"] = creds.agent_name
                 data["livekit_config_json"] = creds.config_json or {}
                 data["livekit_max_concurrency"] = (
@@ -173,7 +177,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                 data["api_key"] = ""
                 data["assistant_id"] = ""
             else:
-                data["api_key"] = creds.get_masked_api_key()
+                data["api_key"] = "" if hide_keys else creds.get_masked_api_key()
                 data["assistant_id"] = creds.assistant_id or data.get(
                     "assistant_id", ""
                 )
