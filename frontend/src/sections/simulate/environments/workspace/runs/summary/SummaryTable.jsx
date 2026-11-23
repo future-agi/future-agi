@@ -15,6 +15,7 @@ import CustomTooltip from "src/components/tooltip";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import { STATUS_META, runColor } from "../runs.constants";
 import StatusChip from "../StatusChip";
+import { stopTipOf } from "../runStop";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
 import { neutralCheckboxSx } from "../detail/trace/traceTable.constants";
@@ -227,7 +228,11 @@ function SummaryRow({
       <TableCell>
         {/* Same shape as the product's "Run status" cell: the status, then Stop. */}
         <Stack direction="row" alignItems="center" spacing={1}>
-          {row.runState ? <StatusChip status={row.runState} /> : DASH}
+          {row.runState ? (
+            <StatusChip status={row.runState} tip={stopTipOf(row.stop)} />
+          ) : (
+            DASH
+          )}
           <StopRunControl
             executionId={row.executionId}
             stoppable={row.stoppable}

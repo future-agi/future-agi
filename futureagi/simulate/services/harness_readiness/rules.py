@@ -24,9 +24,11 @@ from simulate.services.harness_readiness.catalogue import (
 )
 from simulate.services.harness_readiness.evidence import (
     Evidence,
+    cancel_connection,
     connection,
     hidden_material,
     observed,
+    provider_label,
     readings,
 )
 from simulate.services.harness_readiness.findings import (
@@ -270,7 +272,12 @@ def rows(
             certified=evidence.source == "pair_certificate"
             and stale != "harness_version",
         )
-        row["consequence"] = consequence(row, connection(pairing.runtime))
+        where = (
+            cancel_connection(pairing.runtime)
+            if capability.id == "cancel"
+            else connection(pairing.runtime)
+        )
+        row["consequence"] = consequence(row, where, provider_label(pairing.runtime))
         rows.append(row)
     return rows
 
@@ -573,12 +580,13 @@ _CONSEQUENCES: dict[str, dict[str, str]] = {
     },
     "reset": {
         "supported": "Every trial starts from the same starting point, agent included",
-        "partial": "The world resets between trials; the agent may carry its own memory",
+        "partial": "World resets: the agent may remember earlier attempts",
         "partial:isolation_not_run": "The world resets between trials, but cases run at"
         " the same time were not shown to stay apart",
         "blocked": "Trials can see each other's changes, so repeated results are not"
         " independent",
         "unavailable": "No starting records of ours to reset for this connection",
+        "unavailable:live_system": "A live system isn't assumed resettable",
     },
 }
 _SHARED_CONSEQUENCES: dict[Status, str] = {
@@ -602,6 +610,22 @@ _CANCEL_BY_CONNECTION = {
 _CANCEL_CONFIRMED = (
     "A Stop ends the agent with its test sandbox, so a stopped run spends nothing more"
 )
+_CANCEL_PROVIDER_CONFIRMED = (
+    "A Stop ends the provider's call too, so a stopped run spends nothing more"
+)
+_CANCEL_CLEANUP_FAILED = (
+    "The last stop wasn't confirmed (cleanup failed); the agent may keep running"
+)
+_CANCEL_PROVIDER = {
+    "untested": "Not measured until you stop a run; until then a stop may not end the"
+    " {provider} call",
+    "provider_call_open": "On the last stop, {provider} didn't confirm every call"
+    " ended; an open call keeps charging",
+    "provider_unchecked": "Not measured yet: we couldn't check with {provider} that"
+    " the last stop's calls ended",
+    "partial": "Stopping ends our side of the call; {provider} may keep the call open"
+    " and charge for it",
+}
 _UNMEASURED = (
     "No check measures this yet; results that depend on it are not verified either way"
 )
@@ -652,7 +676,9 @@ _OBSERVED: dict[str, dict[str, str]] = {
 }
 
 
-def consequence(row: RowView, where: str | None = None) -> str:
+def consequence(
+    row: RowView, where: str | None = None, provider: str | None = None
+) -> str:
     """What ``row``'s status means for the cases, in plain words; ``where`` is the
     agent's connection, which decides where it starts and what a Stop can end."""
     if not row["measured"]:
@@ -670,8 +696,21 @@ def consequence(row: RowView, where: str | None = None) -> str:
         return "The agent runs on its own side and its start checks passed, so every case can begin"
     if row["id"] == "cancel":
         if row["status"] == "supported":
-            return _CANCEL_CONFIRMED
-        return _CANCEL_BY_CONNECTION.get(where or "", _CANCEL_BY_CONNECTION["provider"])
+            return (
+                _CANCEL_CONFIRMED if where == "sandbox" else _CANCEL_PROVIDER_CONFIRMED
+            )
+        if row["reason_code"] == "cleanup_failed":
+            return _CANCEL_CLEANUP_FAILED
+        if where is None or where == "provider":
+            key = (
+                row["reason_code"]
+                if row["reason_code"] in _CANCEL_PROVIDER
+                else "untested"
+                if row["status"] == "untested"
+                else "partial"
+            )
+            return _CANCEL_PROVIDER[key].format(provider=provider or "the provider")
+        return _CANCEL_BY_CONNECTION[where]
     own = _CONSEQUENCES.get(row["id"], {})
     status = row["status"]
     text = (

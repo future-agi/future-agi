@@ -124,7 +124,7 @@ def _livekit_room_request(
     return payload if isinstance(payload, dict) else {}
 
 
-def _cleanup_hosted_phone_rooms(
+def cleanup_livekit_rooms(
     *, room_prefixes: tuple[str, ...], url: str, api_key: str, api_secret: str
 ) -> HostedPhoneRoomCleanup:
     matched: list[str] = []
@@ -216,7 +216,7 @@ def cleanup_hosted_phone_rooms(job) -> HostedPhoneRoomCleanup:
         )
         if prefix
     )
-    return _cleanup_hosted_phone_rooms(
+    return cleanup_livekit_rooms(
         room_prefixes=room_prefixes,
         url=telephony["LIVEKIT_URL"],
         api_key=telephony["LIVEKIT_API_KEY"],
