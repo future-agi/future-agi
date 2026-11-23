@@ -1425,14 +1425,16 @@ def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
     """The agent under test, as the platform recorded it for this environment's run."""
     from simulate.models import RunTest
 
-    if not job.run_test_id:
-        return None
     run_test = (
         RunTest.objects.filter(id=job.run_test_id, deleted=False)
         .select_related("agent_definition")
         .first()
+        if job.run_test_id
+        else None
     )
     definition = getattr(run_test, "agent_definition", None)
+    if definition is None and job.agent_version is not None:
+        definition = job.agent_version.agent_definition
     if definition is None:
         return None
     # The environment's own pin; an unpinned environment runs the agent's active version.
