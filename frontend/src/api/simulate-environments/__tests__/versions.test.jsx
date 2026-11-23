@@ -56,6 +56,8 @@ const {
   isVersioningDisabled,
   isStuck,
   movingAgent,
+  refreshDrafts,
+  draftReviewKey,
 } = await import("../versions");
 const { harnessEnvironmentKey, harnessJobQuery } = await import(
   "../environment"
@@ -1811,5 +1813,16 @@ describe("useSetFileRole", () => {
       },
     );
     expect(queryClient.getQueryData(actorsKey("env-1"))).toEqual(cast);
+  });
+});
+
+describe("draft review cache", () => {
+  it("reads the review again whenever the drafts are refreshed", () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(draftReviewKey("env-1"), { changes: [] });
+    refreshDrafts(queryClient, "env-1");
+    expect(
+      queryClient.getQueryState(draftReviewKey("env-1")).isInvalidated,
+    ).toBe(true);
   });
 });

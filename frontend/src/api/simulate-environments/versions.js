@@ -896,7 +896,8 @@ export function useDrafts(envId, { enabled = true } = {}) {
   });
 }
 
-export const draftReviewKey = (envId) => ["harness-draft-review", envId];
+// Under the drafts key, so every refresh of the drafts reads the review again.
+export const draftReviewKey = (envId) => [...draftsKey(envId), "review"];
 
 // What the open drafts change and the decisions taken on them.
 export function useDraftReview(envId, { enabled = true } = {}) {
