@@ -994,7 +994,6 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             result, status=status.HTTP_202_ACCEPTED if running else status.HTTP_200_OK
         )
 
-    @viewer_denied("save environment drafts")
     @validated_request(
         responses={200: HarnessSourceChangesSerializer},
         operation_id="simulate_api_harness-environments_source_changes",
@@ -1157,6 +1156,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             return self._not_found()
         return Response(scenario_revisions(job, key))
 
+    @viewer_denied("save environment drafts")
     @validated_request(
         request_serializer=HarnessDraftSaveSerializer,
         responses={200: HarnessDraftSaveResponseSerializer},

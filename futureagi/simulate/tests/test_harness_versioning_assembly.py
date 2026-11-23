@@ -1859,7 +1859,7 @@ def test_certify_is_today_s_command_with_only_its_entrypoint_a_harness_step():
         f"cp /work/authoring/scenarios.json {assembly.SUITE_INDEX_PATH}; fi && "
         "python -m fi.alk.harness.hosted_authoring_entrypoint "
         f"{assembly.CERTIFY_JOB_PATH} --source /work/source --output /work/authoring "
-        "--certify-only --bundle-output /work/bundle "
+        f"--certify-only --bundle-output /work/bundle{assembly.AGENT_DOCUMENT_FLAG} "
         "&& rm -rf /work/authoring/environment-bundle "
         "&& cp -a /work/bundle /work/authoring/environment-bundle"
     )
