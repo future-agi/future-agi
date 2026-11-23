@@ -90,22 +90,23 @@ export default function VersionsPanel({ env }) {
   const [picked, setPicked] = useState(null);
   const [kind, setKind] = useState("environment");
   // A link (the version bar) may name the kind to show; used once, so the
-  // reader's own pick isn't undone.
+  // reader's own pick isn't undone. It's the newer ask, so it also drops a
+  // version link left in the URL from an earlier visit.
   const linkedKind = params.get("kind");
   useEffect(() => {
     if (!linkedKind) return;
     if (VERSION_PIECES.includes(linkedKind)) setKind(linkedKind);
     const q = new URLSearchParams(params);
     q.delete("kind");
+    q.delete("version");
     setParams(q, { replace: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkedKind]);
+  }, [linkedKind, params, setParams]);
   useEffect(() => {
-    if (!linkedId) return;
+    if (!linkedId || linkedKind) return;
     setPicked({ piece: linkedPiece, id: linkedId });
     // Show the linked version's kind, or the filter would hide its row.
     if (VERSION_PIECES.includes(linkedPiece)) setKind(linkedPiece);
-  }, [linkedPiece, linkedId]);
+  }, [linkedPiece, linkedId, linkedKind]);
   // Held here so a refusal outlives the refresh that re-renders the row.
   const move = useMoveDefault(env?.id);
   const entries = useMemo(() => timelineEntries(data), [data]);

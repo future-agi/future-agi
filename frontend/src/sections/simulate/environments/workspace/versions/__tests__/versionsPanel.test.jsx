@@ -978,6 +978,28 @@ describe("VersionsPanel", () => {
     }
   });
 
+  it("lets a bar link's kind win over an older version link still in the URL", () => {
+    // Left over from a View changes link, then the bar's Agent was clicked.
+    window.history.pushState(
+      {},
+      "",
+      "/?tab=versions&version=suite:s1&kind=agent",
+    );
+    try {
+      render(<VersionsPanel env={ENV} />);
+      expect(screen.getByRole("button", { name: "Agent" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      expect(screen.queryByTestId("version-detail")).toBeNull();
+      expect(new URLSearchParams(window.location.search).has("version")).toBe(
+        false,
+      );
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
   it("ignores a link to a version that is no longer listed", () => {
     window.history.pushState({}, "", "/?tab=versions&version=suite:gone");
     try {
