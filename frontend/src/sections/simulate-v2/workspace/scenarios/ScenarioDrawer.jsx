@@ -41,6 +41,20 @@ export default function ScenarioDrawer({
 }) {
   const [menuEl, setMenuEl] = useState(null);
   const [archiveEl, setArchiveEl] = useState(null);
+  /* Which citation's Compare is open — per scenario, so opening another
+     row starts closed. */
+  const [cite, setCite] = useState(null);
+  const citeOpen = cite && cite.rowId === row?.id ? cite.key : null;
+  const openCite = (key) => setCite(key ? { rowId: row?.id, key } : null);
+  /* "Source changed" → its row under Cites, opened. */
+  const compareFromNotice = (key) => {
+    openCite(key);
+    requestAnimationFrame(() =>
+      document
+        .getElementById("scenario-cites")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+    );
+  };
   const can = !!onAction && !locked && !!row;
   /* The one thing the state asks for (Re-prove, Rewrite, Update, Restore) is
      a button; Add (for a proposed scenario) and Archive sit in the menu. */
@@ -202,9 +216,15 @@ export default function ScenarioDrawer({
             )}
           </Box>
           <Box sx={{ flex: 1, overflow: "auto" }}>
-            {/* Grounded in a file that has a newer version waiting. */}
-            {row.citedSource && (
-              <SourceChangedNotice row={row} env={env} locked={locked} />
+            {/* A file it cites has a newer version waiting — the headline;
+                the change and what to do about it are under Cites. */}
+            {env && (
+              <SourceChangedNotice
+                row={row}
+                env={env}
+                envState={envState}
+                onCompare={compareFromNotice}
+              />
             )}
             <ScenarioDetail
               bare
@@ -214,6 +234,8 @@ export default function ScenarioDrawer({
               state={state}
               onAction={onAction}
               locked={locked}
+              citeOpen={citeOpen}
+              onCiteOpen={openCite}
             />
             {/* Made from production traces: its sources and the chain to now. */}
             {row.traceImport && (

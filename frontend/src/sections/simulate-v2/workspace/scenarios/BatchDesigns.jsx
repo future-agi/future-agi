@@ -118,24 +118,6 @@ function Avatar({ batch, size = 22 }) {
 }
 Avatar.propTypes = { batch: PropTypes.object, size: PropTypes.number };
 
-function BatchBody({ batch, view, tableProps, renderList }) {
-  return view === "table" ? (
-    <ScenarioTable
-      {...tableProps}
-      rows={batch.rows}
-      groups={batch.innerGroups}
-    />
-  ) : (
-    renderList(batch.innerGroups)
-  );
-}
-BatchBody.propTypes = {
-  batch: PropTypes.object,
-  view: PropTypes.string,
-  tableProps: PropTypes.object,
-  renderList: PropTypes.func,
-};
-
 function Tag({ children }) {
   return <Chip size="small" label={children} sx={{ flexShrink: 0 }} />;
 }
@@ -144,238 +126,220 @@ Tag.propTypes = { children: PropTypes.node };
 /* ── v8 · containers ────────────────────────────────────────────────────── */
 
 /**
- * One group per batch, newest first, each in its own frame (a one-off, by
- * request — the design system keeps tables unboxed): the header (who added
- * the batch, how and when, Hide) is the frame's top strip, and the batch's
- * scenarios follow beneath a single rule, rows divided by hairlines. Wide
- * columns scroll inside the frame, so it always shows where a batch ends.
+ * A batch's headline: who added it, how and when, its build yield, Add all
+ * for a batch of proposals, and Hide / Show. In the table it is a row
+ * spanning the columns, under the list's one header; in the list it tops
+ * the batch's frame.
  */
-function BatchContainer({
+function BatchHeader({
   batch,
   version,
   latest,
-  view,
-  tableProps,
-  renderList,
   flash,
+  open,
+  onToggle,
   summary = null,
   onAddAll = null,
 }) {
-  const [open, setOpen] = useState(true);
   /* A batch of proposals: Add all lives on its header, once. */
   const allProposed =
     batch.rows.length > 0 && batch.rows.every((r) => r.proposed);
   return (
-    <Box
+    /* The counts and actions drop to a second line when the pane is
+       narrow, rather than squeezing the headline to nothing. */
+    <Stack
       id={`batch-${batch.meta.batchId}`}
+      direction="row"
+      alignItems="center"
+      onClick={onToggle}
       sx={{
         /* Clear of the sticky toolbar when the history jumps here. */
         scrollMarginTop: "calc(var(--scn-head, 64px) + 8px)",
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px",
-        /* clip, not hidden: rounds the corners without breaking the
-           table's sticky pinned columns. */
-        overflow: "clip",
-        /* The frame draws the bottom edge. */
-        "& tbody tr:last-of-type > td": { borderBottom: 0 },
+        px: 1.5,
+        py: 1.25,
+        cursor: "pointer",
+        minWidth: 0,
+        flexWrap: "wrap",
+        columnGap: 1.5,
+        rowGap: 1,
+        transition: "background-color 200ms",
+        /* Picked in the history — a brief tint so the eye lands on it. */
+        ...(flash && { bgcolor: "action.selected" }),
       }}
     >
-      {/* The counts and actions drop to a second line when the pane is
-          narrow, rather than squeezing the headline to nothing. */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        onClick={() => setOpen((v) => !v)}
-        sx={{
-          px: 1.5,
-          py: 1.25,
-          cursor: "pointer",
-          minWidth: 0,
-          flexWrap: "wrap",
-          columnGap: 1.5,
-          rowGap: 1,
-          transition: "background-color 200ms",
-          /* Picked in the history — a brief tint so the eye lands on it. */
-          ...(flash && { bgcolor: "action.selected" }),
-        }}
-      >
-        <Avatar batch={batch} size={30} />
-        <Box sx={{ flex: "1 1 220px", minWidth: 0 }}>
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography
-              noWrap
-              sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.3 }}
-            >
-              {headline(batch)}
-            </Typography>
-            {latest && <Tag>Latest</Tag>}
-          </Stack>
-          {/* How it came in, with its mark, and when — the exact time on
-              hover; after a build, its yield on the same line (the reason
-              for the rest on hover). */}
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={0.625}
-            sx={{ mt: 0.25, minWidth: 0, color: "text.tertiary" }}
+      <Avatar batch={batch} size={30} />
+      <Box sx={{ flex: "1 1 220px", minWidth: 0 }}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography
+            noWrap
+            sx={{ typography: "s1", fontWeight: 600, lineHeight: 1.3 }}
           >
-            <Tooltip
-              arrow
-              placement="bottom-start"
-              title={`${sourceOf(batch.meta.source).label} · ${stampOf(batch.meta.addedAt)}`}
-            >
-              <Stack
-                direction="row"
-                alignItems="center"
-                spacing={0.625}
-                sx={{ minWidth: 0 }}
-              >
-                <Iconify
-                  icon={sourceOf(batch.meta.source).icon}
-                  width={12}
-                  sx={{ flexShrink: 0 }}
-                />
-                <Typography noWrap sx={{ typography: "s3", color: "inherit" }}>
-                  {cap(howAndWhen(batch, version))}
-                </Typography>
-              </Stack>
-            </Tooltip>
-            {summary?.lead && (
-              <Typography
-                noWrap
-                sx={{ typography: "s3", color: "inherit", flexShrink: 0 }}
-              >
-                {`· ${summary.lead}`}
-              </Typography>
-            )}
-            {summary?.held && (
-              <>
-                <Typography sx={{ typography: "s3", color: "inherit" }}>
-                  ·
-                </Typography>
-                <Tooltip arrow title={summary.why || ""}>
-                  <ButtonBase
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      summary.onHeld?.();
-                    }}
-                    sx={{
-                      typography: "s3",
-                      color: "text.secondary",
-                      flexShrink: 0,
-                      textDecoration: "underline dotted",
-                      textUnderlineOffset: 3,
-                      "&:hover": { color: "text.primary" },
-                    }}
-                  >
-                    {summary.held}
-                  </ButtonBase>
-                </Tooltip>
-              </>
-            )}
-          </Stack>
-        </Box>
+            {headline(batch)}
+          </Typography>
+          {latest && <Tag>Latest</Tag>}
+        </Stack>
+        {/* How it came in, with its mark, and when — the exact time on
+            hover; after a build, its yield on the same line (the reason
+            for the rest on hover). */}
         <Stack
           direction="row"
           alignItems="center"
-          spacing={1.5}
-          sx={{ ml: "auto" }}
+          spacing={0.625}
+          sx={{ mt: 0.25, minWidth: 0, color: "text.tertiary" }}
         >
-          {allProposed && onAddAll && (
-            <Button
-              size="small"
-              variant="contained"
-              color="primary"
-              onClick={() => onAddAll(batch.rows)}
-              sx={{ flexShrink: 0 }}
+          <Tooltip
+            arrow
+            placement="bottom-start"
+            title={`${sourceOf(batch.meta.source).label} · ${stampOf(batch.meta.addedAt)}`}
+          >
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.625}
+              sx={{ minWidth: 0 }}
             >
-              {batch.rows.length === 1 ? "Add" : `Add all ${batch.rows.length}`}
-            </Button>
+              <Iconify
+                icon={sourceOf(batch.meta.source).icon}
+                width={12}
+                sx={{ flexShrink: 0 }}
+              />
+              <Typography noWrap sx={{ typography: "s3", color: "inherit" }}>
+                {cap(howAndWhen(batch, version))}
+              </Typography>
+            </Stack>
+          </Tooltip>
+          {summary?.lead && (
+            <Typography
+              noWrap
+              sx={{ typography: "s3", color: "inherit", flexShrink: 0 }}
+            >
+              {`· ${summary.lead}`}
+            </Typography>
           )}
-          {/* The same Hide / Show control as the timeline (v1) — an outlined
-            button that says how many it folds away. */}
-          <Stack
-            direction="row"
-            alignItems="center"
-            spacing={0.75}
-            {...clickable(
-              (e) => {
-                e.stopPropagation();
-                setOpen((v) => !v);
-              },
-              { expanded: open },
-            )}
+          {summary?.held && (
+            <>
+              <Typography sx={{ typography: "s3", color: "inherit" }}>
+                ·
+              </Typography>
+              <Tooltip arrow title={summary.why || ""}>
+                <ButtonBase
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    summary.onHeld?.();
+                  }}
+                  sx={{
+                    typography: "s3",
+                    color: "text.secondary",
+                    flexShrink: 0,
+                    textDecoration: "underline dotted",
+                    textUnderlineOffset: 3,
+                    "&:hover": { color: "text.primary" },
+                  }}
+                >
+                  {summary.held}
+                </ButtonBase>
+              </Tooltip>
+            </>
+          )}
+        </Stack>
+      </Box>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{ ml: "auto" }}
+      >
+        {allProposed && onAddAll && (
+          <Button
+            size="small"
+            variant="contained"
+            color="primary"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddAll(batch.rows);
+            }}
+            sx={{ flexShrink: 0 }}
+          >
+            {batch.rows.length === 1 ? "Add" : `Add all ${batch.rows.length}`}
+          </Button>
+        )}
+        {/* The same Hide / Show control as the timeline (v1) — an outlined
+          button that says how many it folds away. */}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          {...clickable(
+            (e) => {
+              e.stopPropagation();
+              onToggle();
+            },
+            { expanded: open },
+          )}
+          sx={{
+            ...focusRing,
+            px: 1.25,
+            py: 0.5,
+            borderRadius: "6px",
+            flexShrink: 0,
+            cursor: "pointer",
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            transition: "border-color 120ms, background-color 120ms",
+            "&:hover": {
+              borderColor: (t) => alpha(t.palette.text.primary, 0.4),
+              bgcolor: "action.hover",
+            },
+          }}
+        >
+          <Typography
             sx={{
-              ...focusRing,
-              px: 1.25,
-              py: 0.5,
-              borderRadius: "6px",
-              flexShrink: 0,
-              cursor: "pointer",
-              border: "1px solid",
-              borderColor: "divider",
-              bgcolor: "background.paper",
-              transition: "border-color 120ms, background-color 120ms",
-              "&:hover": {
-                borderColor: (t) => alpha(t.palette.text.primary, 0.4),
-                bgcolor: "action.hover",
-              },
+              typography: "s2",
+              fontWeight: 600,
+              fontSize: 12,
+              color: "text.primary",
+              whiteSpace: "nowrap",
             }}
           >
-            <Typography
-              sx={{
-                typography: "s2",
-                fontWeight: 600,
-                fontSize: 12,
-                color: "text.primary",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {open
-                ? `Hide ${batch.rows.length}`
-                : `Show ${batch.rows.length} scenarios`}
-            </Typography>
-            <Iconify
-              icon={
-                open
-                  ? "solar:alt-arrow-up-linear"
-                  : "solar:alt-arrow-down-linear"
-              }
-              width={14}
-              sx={{ color: "text.tertiary" }}
-            />
-          </Stack>
+            {open
+              ? `Hide ${batch.rows.length}`
+              : `Show ${batch.rows.length} scenarios`}
+          </Typography>
+          <Iconify
+            icon={
+              open ? "solar:alt-arrow-up-linear" : "solar:alt-arrow-down-linear"
+            }
+            width={14}
+            sx={{ color: "text.tertiary" }}
+          />
         </Stack>
       </Stack>
-      {open && (
-        <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
-          <BatchBody
-            batch={batch}
-            view={view}
-            tableProps={
-              allProposed ? { ...tableProps, inProposal: true } : tableProps
-            }
-            renderList={renderList}
-          />
-        </Box>
-      )}
-    </Box>
+    </Stack>
   );
 }
-BatchContainer.propTypes = {
+BatchHeader.propTypes = {
   /* { lead, held?, why?, onHeld? } - a build yield. */
   summary: PropTypes.object,
   batch: PropTypes.object,
   version: PropTypes.string,
   latest: PropTypes.bool,
-  view: PropTypes.string,
-  tableProps: PropTypes.object,
-  renderList: PropTypes.func,
   flash: PropTypes.bool,
+  open: PropTypes.bool,
+  onToggle: PropTypes.func,
   onAddAll: PropTypes.func,
 };
 
+const allProposedOf = (b) =>
+  b.rows.length > 0 && b.rows.every((r) => r.proposed);
+
+/**
+ * Every batch, newest first, in one frame (a one-off, by request — the
+ * design system keeps tables unboxed). In the table the columns' header
+ * shows once, at the top; each batch is a headline row spanning the table
+ * with its scenarios beneath, so the columns line up from batch to batch.
+ * Wide columns scroll inside the frame. The list keeps a frame per batch.
+ */
 export function BatchContainers({
   batches,
   view,
@@ -387,28 +351,75 @@ export function BatchContainers({
   summaryOf,
   onAddAll,
 }) {
+  /* Folded batches, by id — every batch starts open. */
+  const [folded, setFolded] = useState(() => new Set());
+  const toggle = (id) =>
+    setFolded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const headerOf = (b, i) => {
+    const open = !folded.has(b.meta.batchId);
+    return (
+      <BatchHeader
+        batch={b}
+        version={versionOf ? versionOf(b) : null}
+        latest={
+          latestId ? b.meta.batchId === latestId : i === 0 && batches.length > 1
+        }
+        flash={flashId === b.meta.batchId}
+        open={open}
+        onToggle={() => toggle(b.meta.batchId)}
+        summary={summaryOf ? summaryOf(b) : null}
+        /* A trace draft is added only through its review. */
+        onAddAll={
+          onAddAll && !b.rows.some((r) => r.traceImport) ? onAddAll : null
+        }
+      />
+    );
+  };
+  const frameSx = {
+    border: "1px solid",
+    borderColor: "divider",
+    borderRadius: "8px",
+    /* clip, not hidden: rounds the corners without breaking the
+       table's sticky pinned columns. */
+    overflow: "clip",
+    /* The frame draws the bottom edge. */
+    "& tbody tr:last-of-type > td": { borderBottom: 0 },
+  };
+
+  if (view === "table") {
+    return (
+      <Box sx={frameSx}>
+        <ScenarioTable
+          {...tableProps}
+          batches={batches.map((b, i) => ({
+            id: b.meta.batchId,
+            header: headerOf(b, i),
+            open: !folded.has(b.meta.batchId),
+            rows: b.rows,
+            groups: b.innerGroups,
+            inProposal: allProposedOf(b),
+          }))}
+        />
+      </Box>
+    );
+  }
+
   return (
     <Stack spacing={2}>
       {batches.map((b, i) => (
-        <BatchContainer
-          key={b.meta.batchId}
-          batch={b}
-          version={versionOf ? versionOf(b) : null}
-          latest={
-            latestId
-              ? b.meta.batchId === latestId
-              : i === 0 && batches.length > 1
-          }
-          view={view}
-          tableProps={tableProps}
-          renderList={renderList}
-          flash={flashId === b.meta.batchId}
-          summary={summaryOf ? summaryOf(b) : null}
-          /* A trace draft is added only through its review. */
-          onAddAll={
-            onAddAll && !b.rows.some((r) => r.traceImport) ? onAddAll : null
-          }
-        />
+        <Box key={b.meta.batchId} sx={frameSx}>
+          {headerOf(b, i)}
+          {!folded.has(b.meta.batchId) && (
+            <Box sx={{ borderTop: "1px solid", borderColor: "divider" }}>
+              {renderList(b.innerGroups)}
+            </Box>
+          )}
+        </Box>
       ))}
     </Stack>
   );

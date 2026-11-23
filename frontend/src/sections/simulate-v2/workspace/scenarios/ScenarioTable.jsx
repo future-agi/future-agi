@@ -1,6 +1,14 @@
 import PropTypes from "prop-types";
 import { SHOW_TAGS } from "./scenarioOrgFlags";
-import { Fragment, useContext, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Box,
   Stack,
@@ -76,6 +84,10 @@ const laterThanPinned = (row, envVersion) =>
     versionNumber(row.addedInEnv) > versionNumber(envVersion)
   );
 
+/* Pre-grouped rows (section-header rows between them), or one flat section. */
+const sectionsOf = (g, r) =>
+  g?.length ? g : [{ id: "all", label: null, rows: r || [] }];
+
 /* The identity columns stay put while the rest scrolls sideways. */
 const PIN_LEFT = { select: 0, "#": 40, scenario: 80 };
 const PINNED_SX = {
@@ -136,7 +148,7 @@ const COLUMNS = [
     label: "Must pass",
     w: 84,
     align: "center",
-    tip: "Must pass: a run fails if this scenario fails. Optional scenarios show nothing.",
+    tip: "Must pass: reported on its own in every run, and an Epoch can't ship a change that breaks it. A run never fails or stops because of it. Optional scenarios show nothing.",
   },
   {
     id: "runs",
@@ -482,6 +494,10 @@ RunDots.propTypes = { history: PropTypes.array };
 export default function ScenarioTable({
   rows,
   groups,
+  /* Several additions under one header: [{ id, header, open, rows, groups,
+     inProposal }]. Each batch's headline is a row spanning the table, its
+     scenarios follow under the same columns — one header for the list. */
+  batches = null,
   env,
   envState,
   envVersion,
@@ -498,7 +514,7 @@ export default function ScenarioTable({
   const vl = (label) => (envState ? envLabelOf(env, envState, label) : label);
   /* Caller-side cast: a scenario that includes one reads "With <Name>". */
   const callers = useMemo(() => callerCastOf(env, envState), [env, envState]);
-  const { stateOf, onStateAction, onOpen, historyOf, latestOf } =
+  const { stateOf, onStateAction, onOpen, historyOf, latestOf, validatingIds } =
     useContext(ScenarioRowContext);
   /*
     Two shapes come in: pre-grouped (list view mirror) or a flat rows
@@ -506,17 +522,44 @@ export default function ScenarioTable({
     between them so the table reads the same use-case story as the
     list; if not, fall back to a flat table.
   */
-  const sections = useMemo(
+  /* One table, one header: a lone set of rows is a single headless batch. */
+  const parts = useMemo(
     () =>
-      groups?.length ? groups : [{ id: "all", label: null, rows: rows || [] }],
-    [groups, rows],
+      batches
+        ? batches.map((b) => ({ ...b, sections: sectionsOf(b.groups, b.rows) }))
+        : [
+            {
+              id: "all",
+              header: null,
+              open: true,
+              inProposal,
+              sections: sectionsOf(groups, rows),
+            },
+          ],
+    [batches, groups, rows, inProposal],
   );
 
+  /* Select-all covers the rows on show — a folded batch's rows aren't. */
   const allIds = useMemo(
     () =>
-      sections.flatMap((s) => (s.rows || []).map((r) => r.id)).filter(Boolean),
-    [sections],
+      parts
+        .filter((b) => b.open !== false)
+        .flatMap((b) => b.sections)
+        .flatMap((s) => (s.rows || []).map((r) => r.id))
+        .filter(Boolean),
+    [parts],
   );
+
+  /* A batch's headline stays on screen while the columns scroll sideways:
+     pinned left at the pane's width. */
+  const [paneW, setPaneW] = useState(null);
+  const paneObserver = useRef(null);
+  const paneRef = useCallback((el) => {
+    paneObserver.current?.disconnect();
+    if (!el || typeof ResizeObserver === "undefined") return;
+    paneObserver.current = new ResizeObserver(() => setPaneW(el.clientWidth));
+    paneObserver.current.observe(el);
+  }, []);
 
   /*
     Selection is a bulk-action affordance, not a run gate — every scenario in
@@ -534,7 +577,7 @@ export default function ScenarioTable({
   };
 
   /* Uncontrolled only: drop ids for rows that are gone. Controlled tables
-     (one per batch, sharing one selection) leave pruning to the parent. */
+     leave pruning to the parent. */
   useEffect(() => {
     if (isControlled) return;
     const cleaned = Array.from(selected).filter((id) => allIds.includes(id));
@@ -548,7 +591,7 @@ export default function ScenarioTable({
     else next.add(id);
     commit(next);
   };
-  /* Select-all affects only this batch's rows. */
+  /* Select-all affects only the rows this table shows. */
   const hereSelected = allIds.filter((id) => selected.has(id)).length;
   const toggleAll = () => {
     const next = new Set(selected);
@@ -569,8 +612,8 @@ export default function ScenarioTable({
   };
   /* The runs column says how many runs its dots cover — the environment's last
      eight, or fewer while it has fewer. */
-  const firstRow =
-    (rows && rows[0]) || groups?.find((g) => g.rows?.length)?.rows[0];
+  const firstRow = parts.flatMap((b) => b.sections).find((g) => g.rows?.length)
+    ?.rows[0];
   const runsShown =
     historyOf && firstRow ? (historyOf(firstRow) || []).length : 0;
   /* No runs yet: the runs column would be "No runs yet" on every row — leave it out. */
@@ -580,8 +623,368 @@ export default function ScenarioTable({
       ? `Last ${runsShown} run${runsShown === 1 ? "" : "s"}`
       : c.label;
 
+  /* A batch's group label rows and scenario rows, under the shared header.
+     Inside a batch of proposals the header already says where they came
+     from and that they're proposed, so the rows don't repeat it. */
+  const bodyOf = (secs, inProp) =>
+    secs.map((section) => (
+      <Fragment key={section.id}>
+        {section.label && (
+          <TableRow>
+            <TableCell
+              colSpan={columns.length}
+              sx={{
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                py: 1,
+                px: 2,
+              }}
+            >
+              {/* Pinned like the identity columns, so a heading never scrolls out of view. */}
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                sx={{
+                  position: "sticky",
+                  left: 16,
+                  width: "fit-content",
+                  maxWidth: 960,
+                }}
+              >
+                <Typography
+                  noWrap
+                  sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
+                >
+                  {section.label}
+                </Typography>
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    fontWeight: 600,
+                    color: "text.tertiary",
+                    fontVariantNumeric: "tabular-nums",
+                    flexShrink: 0,
+                  }}
+                >
+                  {section.rows.length}
+                </Typography>
+              </Stack>
+            </TableCell>
+          </TableRow>
+        )}
+
+        {section.rows.map((row) => {
+          counter += 1;
+          const idx = counter;
+          const p = row.persona;
+          const archived = !!archivedOf(row);
+          /* The sub-goals it's graded on — a stored list (a generated or edited
+                   scenario) wins, the same list a run scores, so the count before a
+                   run is the denominator after it. */
+          const goals =
+            (row.subTasks?.length
+              ? row.subTasks
+              : subGoalsOfScenario(row, env, envState)) || [];
+          const headline = row.summary || scenarioTitle(row.title) || row.name;
+          const adm = admissionOf(row, env);
+          const personaMeta = [p?.ageGroup, !p?.ageGroup && p?.role]
+            .filter(Boolean)
+            .join(" · ");
+          const withLine = withLineOf(subActorsOf(row, callers, env));
+          const open = onOpen ? () => onOpen(row) : undefined;
+          const stop = (e) => e.stopPropagation();
+          return (
+            <TableRow
+              key={row.id}
+              hover
+              className={selected.has(row.id) ? "scn-selected" : undefined}
+              {...clickable(open, { role: "row" })}
+              sx={{
+                ...focusRing,
+                cursor: open ? "pointer" : "default",
+                ...(selected.has(row.id) && {
+                  bgcolor: "action.selected",
+                }),
+                /* Archived rows stay listed, dimmed; the state and the actions keep full strength. */
+                /* On the cell's content, so a pinned cell keeps its solid background. */
+                ...(archived && { "& .scn-dim > *": { opacity: 0.45 } }),
+              }}
+            >
+              <TableCell
+                padding="checkbox"
+                className="scn-pin scn-pin-0"
+                sx={{ ...cellSx, pl: 1.5 }}
+                onClick={stop}
+              >
+                <Checkbox
+                  size="small"
+                  checked={selected.has(row.id)}
+                  onChange={() => toggle(row.id)}
+                  disabled={locked}
+                  sx={selectableCheckboxSx}
+                />
+              </TableCell>
+              <TableCell
+                className="scn-pin scn-pin-1"
+                sx={{
+                  ...cellSx,
+                  px: 1,
+                  typography: "s3",
+                  color: "text.tertiary",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                {idx}
+              </TableCell>
+
+              {/* SCENARIO — what it is, in words, and how many sub-goals
+                        grade it. The id-style name is on hover and inside. */}
+              <TableCell
+                className="scn-dim scn-pin scn-pin-2 scn-pin-last"
+                sx={cellSx}
+              >
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.75}
+                  sx={{ minWidth: 0 }}
+                >
+                  <Tooltip
+                    arrow
+                    enterDelay={400}
+                    title={row.name && row.name !== headline ? row.name : ""}
+                  >
+                    <Typography
+                      noWrap
+                      sx={{
+                        typography: "s2",
+                        fontWeight: 500,
+                        minWidth: 120,
+                        flexShrink: 1,
+                      }}
+                    >
+                      {headline}
+                    </Typography>
+                  </Tooltip>
+                  {row.newTool && (
+                    <Tooltip
+                      arrow
+                      title={
+                        laterThanPinned(row, envVersion)
+                          ? `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}. Runs on ${vl(envVersion)} leave it out.`
+                          : `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}`
+                      }
+                    >
+                      <Typography
+                        noWrap
+                        sx={{
+                          typography: "s3",
+                          color: "text.secondary",
+                          flexShrink: 0,
+                          px: 0.5,
+                          border: "1px solid",
+                          borderColor: "divider",
+                          borderRadius: "4px",
+                        }}
+                      >
+                        {laterThanPinned(row, envVersion)
+                          ? `Needs environment ${vl(row.addedInEnv)}`
+                          : "New"}
+                      </Typography>
+                    </Tooltip>
+                  )}
+                  {/* Where it came from — links back when there is somewhere to go. */}
+                  {!(inProp && row.proposed) && (
+                    <>
+                      <SourceBadge
+                        scenario={row}
+                        env={env}
+                        envState={envState}
+                      />
+                      <ProposedTag row={row} />
+                    </>
+                  )}
+                  {!adm.admitted && (
+                    <Tooltip arrow title={`Set aside — ${adm.reason}`}>
+                      <Box sx={{ display: "flex", flexShrink: 0 }}>
+                        <Iconify
+                          icon="solar:shield-cross-bold"
+                          width={14}
+                          sx={{ color: "status.danger.fg" }}
+                        />
+                      </Box>
+                    </Tooltip>
+                  )}
+                  {/* Not proved is a given for a proposal — it's
+                            proved when it's added. */}
+                  {stateOf &&
+                    !row.proposed &&
+                    (validatingIds?.has(row.id) ? (
+                      <Tooltip
+                        arrow
+                        title="Validate is proving this scenario again — its state updates when it finishes"
+                      >
+                        <Typography
+                          noWrap
+                          sx={{
+                            typography: "s3",
+                            color: "text.tertiary",
+                            flexShrink: 0,
+                          }}
+                        >
+                          Validating
+                        </Typography>
+                      </Tooltip>
+                    ) : (
+                      <Box
+                        onClick={stop}
+                        sx={{ display: "inline-flex", flexShrink: 0 }}
+                      >
+                        <StatusCell state={stateOf(row)} />
+                      </Box>
+                    ))}
+                </Stack>
+                {/* Someone on the caller's side comes in (TH-8651). */}
+                {withLine && (
+                  <Typography
+                    noWrap
+                    title={withLine}
+                    sx={{ typography: "s3", color: "text.tertiary" }}
+                  >
+                    {withLine}
+                  </Typography>
+                )}
+              </TableCell>
+
+              {/* PERSONA — who calls, in one line. */}
+              <TableCell className="scn-dim" sx={cellSx}>
+                <Stack
+                  direction="row"
+                  alignItems="center"
+                  spacing={0.5}
+                  sx={{ minWidth: 0 }}
+                >
+                  {p?.libraryId != null && (
+                    <Tooltip
+                      arrow
+                      title={
+                        p.edited
+                          ? "From the persona library, edited here"
+                          : "From the persona library"
+                      }
+                    >
+                      <Box sx={{ display: "flex", flexShrink: 0 }}>
+                        <Iconify
+                          icon="solar:users-group-rounded-linear"
+                          width={14}
+                          sx={{ color: "text.tertiary" }}
+                        />
+                      </Box>
+                    </Tooltip>
+                  )}
+                  <Typography
+                    noWrap
+                    sx={{
+                      typography: "s2",
+                      color: "text.secondary",
+                      minWidth: 0,
+                    }}
+                  >
+                    {p?.name || "—"}
+                    {personaMeta && (
+                      <Box
+                        component="span"
+                        sx={{ color: "text.tertiary" }}
+                      >{` · ${personaMeta}`}</Box>
+                    )}
+                  </Typography>
+                </Stack>
+              </TableCell>
+
+              {/* TAGS · GROUPS — one line; the drawer edits them. */}
+              <TableCell sx={cellSx}>
+                <OneLine
+                  text={[
+                    ...(SHOW_TAGS ? envState?.scenarioTags || [] : [])
+                      .filter((t) => (row.tagIds || []).includes(t.id))
+                      .map((t) => t.name),
+                    ...(envState?.scenarioGroups || [])
+                      .filter((g) => g.ids.includes(row.id))
+                      .map((g) => `▸ ${g.name}`),
+                  ].join(" · ")}
+                />
+              </TableCell>
+
+              {/* SUB-GOALS — met in the latest run, of all. */}
+              <TableCell align="right" sx={cellSx}>
+                <SubGoalsCell
+                  total={goals.length}
+                  latest={latestOf ? latestOf(row) : null}
+                  env={env}
+                  envState={envState}
+                />
+              </TableCell>
+
+              {/* REQUIREMENT — the must-pass badge; optional rows show nothing. */}
+              <TableCell align="center" sx={cellSx} onClick={stop}>
+                <MustPassBadge
+                  row={row}
+                  locked={locked || !!row.archived}
+                  onToggle={
+                    onStateAction
+                      ? () => onStateAction("blocker", row, !row.critical)
+                      : undefined
+                  }
+                />
+              </TableCell>
+
+              {/* LAST RUNS — how it's been doing (once there are runs). */}
+              {runsShown > 0 && (
+                <TableCell sx={cellSx}>
+                  <RunDots history={historyOf ? historyOf(row) : null} />
+                </TableCell>
+              )}
+
+              {/* BRIEF and PASSES WHEN — one line each, the whole text on hover. */}
+              <TableCell className="scn-dim" sx={cellSx}>
+                <OneLine text={briefLineOf(row)} />
+              </TableCell>
+              <TableCell className="scn-dim" sx={cellSx}>
+                <OneLine
+                  text={
+                    row.expected || row.outcome
+                      ? asSentence(row.expected || row.outcome)
+                      : ""
+                  }
+                />
+              </TableCell>
+
+              {/* Every row action, in the ⋯ menu. */}
+              <TableCell
+                align="right"
+                sx={{ ...cellSx, whiteSpace: "nowrap", pr: 1 }}
+                onClick={stop}
+              >
+                <AddAction row={row} onAction={onStateAction} locked={locked} />
+                <RowMenu
+                  row={row}
+                  state={stateOf ? stateOf(row) : null}
+                  archived={archived}
+                  locked={locked}
+                  onEdit={onEdit}
+                  onStateAction={onStateAction}
+                  onRemove={onRemove}
+                />
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </Fragment>
+    ));
+
   return (
-    <Box sx={{ overflowX: "auto" }}>
+    <Box ref={paneRef} sx={{ overflowX: "auto" }}>
       {/* Wider than most panes, so it scrolls sideways; the checkbox, #
           and Scenario stay pinned so a row never loses its name. */}
       <Table
@@ -645,350 +1048,37 @@ export default function ScenarioTable({
         </TableHead>
 
         <TableBody>
-          {sections.map((section) => (
-            <Fragment key={section.id}>
-              {section.label && (
+          {parts.map((part, partIdx) => (
+            <Fragment key={part.id}>
+              {part.header && (
                 <TableRow>
                   <TableCell
                     colSpan={columns.length}
+                    padding="none"
                     sx={{
+                      p: 0,
                       borderBottom: "1px solid",
                       borderColor: "divider",
-                      py: 1,
-                      px: 2,
+                      ...(partIdx > 0 && {
+                        borderTop: "1px solid",
+                        borderTopColor: "divider",
+                      }),
                     }}
                   >
-                    {/* Pinned like the identity columns, so a heading never scrolls out of view. */}
-                    <Stack
-                      direction="row"
-                      alignItems="center"
-                      spacing={1}
+                    <Box
                       sx={{
                         position: "sticky",
-                        left: 16,
-                        width: "fit-content",
-                        maxWidth: 960,
+                        left: 0,
+                        width: paneW || "100%",
+                        maxWidth: "100%",
                       }}
                     >
-                      <Typography
-                        noWrap
-                        sx={{ typography: "s2", fontWeight: 600, minWidth: 0 }}
-                      >
-                        {section.label}
-                      </Typography>
-                      <Typography
-                        sx={{
-                          typography: "s3",
-                          fontWeight: 600,
-                          color: "text.tertiary",
-                          fontVariantNumeric: "tabular-nums",
-                          flexShrink: 0,
-                        }}
-                      >
-                        {section.rows.length}
-                      </Typography>
-                    </Stack>
+                      {part.header}
+                    </Box>
                   </TableCell>
                 </TableRow>
               )}
-
-              {section.rows.map((row) => {
-                counter += 1;
-                const idx = counter;
-                const p = row.persona;
-                const archived = !!archivedOf(row);
-                /* The sub-goals it's graded on — a stored list (a generated or edited
-                   scenario) wins, the same list a run scores, so the count before a
-                   run is the denominator after it. */
-                const goals =
-                  (row.subTasks?.length
-                    ? row.subTasks
-                    : subGoalsOfScenario(row, env, envState)) || [];
-                const headline =
-                  row.summary || scenarioTitle(row.title) || row.name;
-                const adm = admissionOf(row, env);
-                const personaMeta = [p?.ageGroup, !p?.ageGroup && p?.role]
-                  .filter(Boolean)
-                  .join(" · ");
-                const withLine = withLineOf(subActorsOf(row, callers, env));
-                const open = onOpen ? () => onOpen(row) : undefined;
-                const stop = (e) => e.stopPropagation();
-                return (
-                  <TableRow
-                    key={row.id}
-                    hover
-                    className={
-                      selected.has(row.id) ? "scn-selected" : undefined
-                    }
-                    {...clickable(open, { role: "row" })}
-                    sx={{
-                      ...focusRing,
-                      cursor: open ? "pointer" : "default",
-                      ...(selected.has(row.id) && {
-                        bgcolor: "action.selected",
-                      }),
-                      /* Archived rows stay listed, dimmed; the state and the actions keep full strength. */
-                      /* On the cell's content, so a pinned cell keeps its solid background. */
-                      ...(archived && { "& .scn-dim > *": { opacity: 0.45 } }),
-                    }}
-                  >
-                    <TableCell
-                      padding="checkbox"
-                      className="scn-pin scn-pin-0"
-                      sx={{ ...cellSx, pl: 1.5 }}
-                      onClick={stop}
-                    >
-                      <Checkbox
-                        size="small"
-                        checked={selected.has(row.id)}
-                        onChange={() => toggle(row.id)}
-                        disabled={locked}
-                        sx={selectableCheckboxSx}
-                      />
-                    </TableCell>
-                    <TableCell
-                      className="scn-pin scn-pin-1"
-                      sx={{
-                        ...cellSx,
-                        px: 1,
-                        typography: "s3",
-                        color: "text.tertiary",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {idx}
-                    </TableCell>
-
-                    {/* SCENARIO — what it is, in words, and how many sub-goals
-                        grade it. The id-style name is on hover and inside. */}
-                    <TableCell
-                      className="scn-dim scn-pin scn-pin-2 scn-pin-last"
-                      sx={cellSx}
-                    >
-                      <Stack
-                        direction="row"
-                        alignItems="center"
-                        spacing={0.75}
-                        sx={{ minWidth: 0 }}
-                      >
-                        <Tooltip
-                          arrow
-                          enterDelay={400}
-                          title={
-                            row.name && row.name !== headline ? row.name : ""
-                          }
-                        >
-                          <Typography
-                            noWrap
-                            sx={{
-                              typography: "s2",
-                              fontWeight: 500,
-                              minWidth: 120,
-                              flexShrink: 1,
-                            }}
-                          >
-                            {headline}
-                          </Typography>
-                        </Tooltip>
-                        {row.newTool && (
-                          <Tooltip
-                            arrow
-                            title={
-                              laterThanPinned(row, envVersion)
-                                ? `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}. Runs on ${vl(envVersion)} leave it out.`
-                                : `Added when environment ${vl(row.addedInEnv)} learned ${row.newTool}`
-                            }
-                          >
-                            <Typography
-                              noWrap
-                              sx={{
-                                typography: "s3",
-                                color: "text.secondary",
-                                flexShrink: 0,
-                                px: 0.5,
-                                border: "1px solid",
-                                borderColor: "divider",
-                                borderRadius: "4px",
-                              }}
-                            >
-                              {laterThanPinned(row, envVersion)
-                                ? `Needs environment ${vl(row.addedInEnv)}`
-                                : "New"}
-                            </Typography>
-                          </Tooltip>
-                        )}
-                        {/* Where it came from — links back when there is somewhere to go. */}
-                        {!(inProposal && row.proposed) && (
-                          <>
-                            <SourceBadge
-                              scenario={row}
-                              env={env}
-                              envState={envState}
-                            />
-                            <ProposedTag row={row} />
-                          </>
-                        )}
-                        {!adm.admitted && (
-                          <Tooltip arrow title={`Set aside — ${adm.reason}`}>
-                            <Box sx={{ display: "flex", flexShrink: 0 }}>
-                              <Iconify
-                                icon="solar:shield-cross-bold"
-                                width={14}
-                                sx={{ color: "status.danger.fg" }}
-                              />
-                            </Box>
-                          </Tooltip>
-                        )}
-                        {/* Not proved is a given for a proposal — it's
-                            proved when it's added. */}
-                        {stateOf && !row.proposed && (
-                          <Box
-                            onClick={stop}
-                            sx={{ display: "inline-flex", flexShrink: 0 }}
-                          >
-                            <StatusCell state={stateOf(row)} />
-                          </Box>
-                        )}
-                      </Stack>
-                      {/* Someone on the caller's side comes in (TH-8651). */}
-                      {withLine && (
-                        <Typography
-                          noWrap
-                          title={withLine}
-                          sx={{ typography: "s3", color: "text.tertiary" }}
-                        >
-                          {withLine}
-                        </Typography>
-                      )}
-                    </TableCell>
-
-                    {/* PERSONA — who calls, in one line. */}
-                    <TableCell className="scn-dim" sx={cellSx}>
-                      <Stack
-                        direction="row"
-                        alignItems="center"
-                        spacing={0.5}
-                        sx={{ minWidth: 0 }}
-                      >
-                        {p?.libraryId != null && (
-                          <Tooltip
-                            arrow
-                            title={
-                              p.edited
-                                ? "From the persona library, edited here"
-                                : "From the persona library"
-                            }
-                          >
-                            <Box sx={{ display: "flex", flexShrink: 0 }}>
-                              <Iconify
-                                icon="solar:users-group-rounded-linear"
-                                width={14}
-                                sx={{ color: "text.tertiary" }}
-                              />
-                            </Box>
-                          </Tooltip>
-                        )}
-                        <Typography
-                          noWrap
-                          sx={{
-                            typography: "s2",
-                            color: "text.secondary",
-                            minWidth: 0,
-                          }}
-                        >
-                          {p?.name || "—"}
-                          {personaMeta && (
-                            <Box
-                              component="span"
-                              sx={{ color: "text.tertiary" }}
-                            >{` · ${personaMeta}`}</Box>
-                          )}
-                        </Typography>
-                      </Stack>
-                    </TableCell>
-
-                    {/* TAGS · GROUPS — one line; the drawer edits them. */}
-                    <TableCell sx={cellSx}>
-                      <OneLine
-                        text={[
-                          ...(SHOW_TAGS ? envState?.scenarioTags || [] : [])
-                            .filter((t) => (row.tagIds || []).includes(t.id))
-                            .map((t) => t.name),
-                          ...(envState?.scenarioGroups || [])
-                            .filter((g) => g.ids.includes(row.id))
-                            .map((g) => `▸ ${g.name}`),
-                        ].join(" · ")}
-                      />
-                    </TableCell>
-
-                    {/* SUB-GOALS — met in the latest run, of all. */}
-                    <TableCell align="right" sx={cellSx}>
-                      <SubGoalsCell
-                        total={goals.length}
-                        latest={latestOf ? latestOf(row) : null}
-                        env={env}
-                        envState={envState}
-                      />
-                    </TableCell>
-
-                    {/* REQUIREMENT — the must-pass badge; optional rows show nothing. */}
-                    <TableCell align="center" sx={cellSx} onClick={stop}>
-                      <MustPassBadge
-                        row={row}
-                        locked={locked || !!row.archived}
-                        onToggle={
-                          onStateAction
-                            ? () => onStateAction("blocker", row, !row.critical)
-                            : undefined
-                        }
-                      />
-                    </TableCell>
-
-                    {/* LAST RUNS — how it's been doing (once there are runs). */}
-                    {runsShown > 0 && (
-                      <TableCell sx={cellSx}>
-                        <RunDots history={historyOf ? historyOf(row) : null} />
-                      </TableCell>
-                    )}
-
-                    {/* BRIEF and PASSES WHEN — one line each, the whole text on hover. */}
-                    <TableCell className="scn-dim" sx={cellSx}>
-                      <OneLine text={briefLineOf(row)} />
-                    </TableCell>
-                    <TableCell className="scn-dim" sx={cellSx}>
-                      <OneLine
-                        text={
-                          row.expected || row.outcome
-                            ? asSentence(row.expected || row.outcome)
-                            : ""
-                        }
-                      />
-                    </TableCell>
-
-                    {/* Every row action, in the ⋯ menu. */}
-                    <TableCell
-                      align="right"
-                      sx={{ ...cellSx, whiteSpace: "nowrap", pr: 1 }}
-                      onClick={stop}
-                    >
-                      <AddAction
-                        row={row}
-                        onAction={onStateAction}
-                        locked={locked}
-                      />
-                      <RowMenu
-                        row={row}
-                        state={stateOf ? stateOf(row) : null}
-                        archived={archived}
-                        locked={locked}
-                        onEdit={onEdit}
-                        onStateAction={onStateAction}
-                        onRemove={onRemove}
-                      />
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {part.open !== false && bodyOf(part.sections, part.inProposal)}
             </Fragment>
           ))}
         </TableBody>
@@ -999,7 +1089,8 @@ export default function ScenarioTable({
 
 ScenarioTable.propTypes = {
   inProposal: PropTypes.bool,
-  rows: PropTypes.array.isRequired,
+  batches: PropTypes.array,
+  rows: PropTypes.array,
   rowHeight: PropTypes.string,
   groups: PropTypes.array,
   env: PropTypes.object,

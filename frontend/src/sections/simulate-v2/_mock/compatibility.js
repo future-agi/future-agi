@@ -609,13 +609,16 @@ export const compatibilityOf = ({
     add(
       "toolRouting",
       "blocked",
-      `${prod.join(", ")} still reaches production — its URL is hard-coded. Cases that need it can't run against the test world.`,
+      `${prod.join(", ")} still reaches production — its URL is hard-coded in the agent's code. Cases that need it can't run against the test world.`,
       {
         affected: [...new Set(prod.flatMap(needs))],
         repair: "connection",
         blocks: true,
         checkId: "tools",
         fixId: "tools",
+        /* The URL is in the agent's own code: neither the builder chat nor
+           a setting here can change it — a new agent version does (#17). */
+        fixIn: "code",
       },
     );
   else if (checked) {

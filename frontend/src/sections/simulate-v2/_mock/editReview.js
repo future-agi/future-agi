@@ -55,6 +55,32 @@ export const sourceLabelOf = (c) => {
   return "By hand";
 };
 
+/* "11:43" today, "21 Nov, 11:43" on another day. */
+const timeOf = (iso, now = new Date()) => {
+  const d = new Date(iso || "");
+  if (Number.isNaN(d.getTime())) return null;
+  const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (d.toDateString() === now.toDateString()) return hm;
+  const day = d.toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    ...(d.getFullYear() !== now.getFullYear() && { year: "numeric" }),
+  });
+  return `${day}, ${hm}`;
+};
+
+/**
+ * Who made an edit and when: "Vel · 11:43". The author is the edit's own
+ * `by` when it was recorded; otherwise `me` (the signed-in person) — every
+ * unsaved edit is in their draft. First name only.
+ */
+export const whoWhenOf = (c, me) => {
+  const who = String(c?.by || me || "")
+    .trim()
+    .split(/\s+/)[0];
+  return [who || null, timeOf(c?.at)].filter(Boolean).join(" · ") || null;
+};
+
 /** Where an edit came from, as somewhere to go: the chat message, the file, or its tab. */
 export const sourceLinkOf = (c, envState) => {
   if (c.source === "chat") return { kind: "chat", label: "Open in chat" };

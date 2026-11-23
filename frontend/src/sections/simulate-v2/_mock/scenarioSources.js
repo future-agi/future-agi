@@ -46,6 +46,43 @@ export const asProposal = (row, source, at = new Date().toISOString()) => ({
   proposed: row.proposed || { at, source },
 });
 
+/* The name a proposal is matched on — the same scenario proposed again. */
+const proposalKey = (row) =>
+  String(row?.title || row?.summary || row?.name || "")
+    .trim()
+    .toLowerCase();
+
+/**
+ * Proposing a scenario again replaces the older proposal that is still
+ * waiting: an older row that is still proposed (never added) with the same
+ * name as a newer proposal is dropped, so one group shows, not two. Added
+ * scenarios are never touched. Order is kept; the newest proposal (later
+ * `proposed.at`, or later in the list on a tie) wins.
+ */
+export const dropReplacedProposals = (rows = []) => {
+  const newest = new Map();
+  rows.forEach((r) => {
+    if (!r?.proposed) return;
+    const key = proposalKey(r);
+    if (!key) return;
+    const at = Date.parse(r.proposed.at || "") || 0;
+    const cur = newest.get(key);
+    if (!cur || at >= cur.at) newest.set(key, { at, batchId: r.batchId });
+  });
+  if (!newest.size) return rows;
+  /* Rows of one addition never replace each other — only a later one does. */
+  const sameAddition = (r, n) =>
+    r.batchId && n.batchId
+      ? r.batchId === n.batchId
+      : (Date.parse(r.proposed.at || "") || 0) === n.at;
+  const out = rows.filter((r) => {
+    if (!r?.proposed) return true;
+    const key = proposalKey(r);
+    return !key || sameAddition(r, newest.get(key));
+  });
+  return out.length === rows.length ? rows : out;
+};
+
 /* ── personal data ───────────────────────────────────────────────────────── */
 
 const TEXT_FIELDS = [

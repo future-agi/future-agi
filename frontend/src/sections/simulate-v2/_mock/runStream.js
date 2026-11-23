@@ -1375,6 +1375,10 @@ const RECOVERY = {
     ["reused", 0.5],
     ["failed", 0.5],
   ],
+  unavailable: [
+    ["escalated", 0.5],
+    ["failed", 0.5],
+  ],
   permission: [
     ["escalated", 0.6],
     ["failed", 0.4],
@@ -1411,6 +1415,7 @@ const KIND_LABEL = {
   slow: "answered slowly",
   after_commit: "committed, then timed out before answering",
   permission: "was denied permission",
+  unavailable: "was unavailable",
   missing: "found no such record",
   duplicate: "delivered the same event twice",
   stale: "returned an out-of-date read",
@@ -1520,14 +1525,22 @@ function injectToolFaults({ seed, sc, callLog, toolFaults, stage }) {
  * it is drawn the same way as a fault profile. Mutates the call log.
  */
 function applyTestCondition({ seed, sc, callLog, stage }) {
-  const { tool, kind, commit } = sc.testCondition;
-  /* "Approval refused" is a permission denial worded as the refusal it is. */
-  const base = kind === "approval_refused" ? "permission" : kind;
+  const { tool, kind, commit, call = "first" } = sc.testCondition;
+  /* Older saves: "Approval refused" reads as needing approval; a timeout
+     with commit "after" is a lost answer (the five backend kinds, 23 Nov). */
+  const base =
+    kind === "approval_refused"
+      ? "permission"
+      : kind === "timeout" && commit === "after"
+        ? "after_commit"
+        : kind;
   if (!RECOVERY[base]) return null;
-  let c = callLog.calls.find((x) => x.name === tool);
-  if (!c) {
-    c = {
-      id: `${sc.id}-condition`,
+  /* Which call it hits: the first, every one, or call number N. */
+  const ofTool = callLog.calls.filter((x) => x.name === tool);
+  const n = Number(call) >= 2 ? Number(call) : 1;
+  while (ofTool.length < (call === "every" ? 1 : n)) {
+    const c = {
+      id: `${sc.id}-condition-${ofTool.length + 1}`,
       name: tool,
       args: {},
       status: "ok",
@@ -1536,38 +1549,36 @@ function applyTestCondition({ seed, sc, callLog, stage }) {
       wrote: /refund|issue|create|update|cancel|book/.test(tool),
     };
     callLog.calls.push(c);
+    ofTool.push(c);
   }
-  /* A timeout on a write names its commit point: "after" lands the write and
-     the agent only sees the timeout (a lost response); otherwise nothing lands. */
-  const lost = kind === "timeout" && c.wrote && commit === "after";
-  const effective = lost ? "after_commit" : base;
+  const targets = call === "every" ? ofTool : [ofTool[n - 1]];
   const v = unit(`${seed}:${sc.id}:condition`);
   let cum = 0;
-  const outcome = (RECOVERY[effective].find(([, p]) => {
+  const outcome = (RECOVERY[base].find(([, p]) => {
     cum += p;
     return v < cum;
-  }) || RECOVERY[effective][RECOVERY[effective].length - 1])[0];
-  let note = faultNote(c.name, effective, outcome, stage, c.wrote);
+  }) || RECOVERY[base][RECOVERY[base].length - 1])[0];
+  const c = targets[0];
+  const which =
+    call === "every" ? " (every call)" : n > 1 ? ` (call ${n})` : "";
+  let note = faultNote(c.name, base, outcome, stage, c.wrote);
   if (kind === "approval_refused")
     note = note.replace(
       "was denied permission",
       "needed approval, and approval was refused",
     );
-  note = `Test condition: ${note}`;
-  c.status = effective;
-  c.fault = {
-    kind: effective,
-    outcome,
-    note,
-    condition: true,
-    ...(kind === "approval_refused" && { refused: true }),
-  };
-  if (kind === "timeout" && c.wrote) c.committed = lost;
+  note = `Test condition${which}: ${note}`;
+  targets.forEach((t) => {
+    t.status = base;
+    t.fault = { kind: base, outcome, note, condition: true };
+    if (base === "after_commit" || (base === "timeout" && t.wrote))
+      t.committed = base === "after_commit";
+  });
   return {
     hit: {
       callId: c.id,
       tool: c.name,
-      kind: effective,
+      kind: base,
       outcome,
       note,
       condition: true,

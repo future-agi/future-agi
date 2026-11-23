@@ -56,6 +56,15 @@ import {
   rejectedNote,
 } from "../_mock/addScenarios";
 import { validateScenario } from "../_mock/scenarioValidation";
+import { dropReplacedProposals } from "../_mock/scenarioSources";
+import {
+  VALIDATE_MS,
+  validatingOf,
+  validatingLabel,
+  startValidating,
+  finishValidating,
+  failValidating,
+} from "../_mock/validating";
 import SelectionBar from "./scenarios/SelectionBar";
 import { PickRouteIllustration } from "./scenarios/RouteThumbs";
 import {
@@ -133,6 +142,7 @@ import {
 } from "../_mock/scenarioStates";
 import { subGoalUsageOf } from "../_mock/scenarioSubGoals";
 import { ArchiveControl } from "./scenarios/ScenarioStateBits";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import { suiteLogPatch } from "../_mock/suiteLog";
 import { applyEditBump } from "../_mock/scenarioEdits";
 import { setBlocker } from "../_mock/releaseBlocker";
@@ -191,6 +201,81 @@ import useVersionChange from "./useVersionChange";
 /* The "No baseline yet" strip on the Scenarios tab (user, 20 Nov: off). */
 const SHOW_BASELINE_STRIP = false;
 
+/* `?validate=fail` (demo knob): the next Validate on that environment fails.
+   Held here, not in the component, so it outlives leaving the tab. */
+const FAIL_NEXT_VALIDATE = new Map();
+const VALIDATE_FAIL_MESSAGE = "the test world couldn't be prepared";
+
+/* Kept as written: the backend sends the scenario's own reason as a ready
+   sentence (`row.stateReason`); without one, the per-reason text stands. */
+const withStateReason = (row, state) =>
+  state?.id === "kept" &&
+  typeof row?.stateReason === "string" &&
+  row.stateReason.trim()
+    ? { ...state, why: row.stateReason.trim() }
+    : state;
+
+/*
+  Validate's status, one quiet line over the proof counts: in progress
+  (which scenarios, never "N of M" — the backend can't say how many are
+  done), or the last whole Validate that didn't finish, with Try again.
+*/
+function ValidateStatusLine({ validating, failed, onRetry }) {
+  if (!validating && !failed) return null;
+  return (
+    <Stack
+      direction="row"
+      alignItems="center"
+      spacing={1}
+      role="status"
+      sx={{ px: 0.25, mb: 1, minHeight: 24 }}
+    >
+      <Iconify
+        icon={
+          validating
+            ? "solar:hourglass-line-linear"
+            : "solar:danger-triangle-linear"
+        }
+        width={16}
+        sx={{
+          color: validating ? "text.tertiary" : "status.warning.fg",
+          flexShrink: 0,
+        }}
+      />
+      <Typography
+        sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
+      >
+        {validating
+          ? `${validatingLabel(validating)} — runs are blocked until it finishes`
+          : `Validate didn't finish — ${failed.message}. Nothing changed; scenarios keep their state.`}
+      </Typography>
+      {!validating && onRetry && (
+        <Button
+          size="small"
+          color="inherit"
+          onClick={onRetry}
+          sx={{
+            height: 24,
+            typography: "s3",
+            fontWeight: 600,
+            color: "text.primary",
+            minWidth: 0,
+            px: 0.75,
+            flexShrink: 0,
+          }}
+        >
+          Try again
+        </Button>
+      )}
+    </Stack>
+  );
+}
+ValidateStatusLine.propTypes = {
+  validating: PropTypes.object,
+  failed: PropTypes.object,
+  onRetry: PropTypes.func,
+};
+
 export default function ScenariosStep({
   env,
   envState,
@@ -205,7 +290,7 @@ export default function ScenariosStep({
 }) {
   /* `?add=production` (from an agent's Production tab) lands straight on
      that Add scenarios route. */
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const addRoute = searchParams.get("add");
   /* `?viewAs=v2` shows the suite as an older environment version reads it —
      its statuses and proofs against that world, and read-only, since edits
@@ -375,6 +460,19 @@ export default function ScenariosStep({
     () => envState?.scenarios || [],
     [envState?.scenarios],
   );
+  /* A Validate in progress, or the last one that failed as a whole. */
+  const validating = validatingOf(envState);
+  const validateFailed = envState?.validateFailed || null;
+  const [reproveAllOpen, setReproveAllOpen] = useState(false);
+  /* The same scenario proposed again replaces the older proposal still
+     waiting — whichever route proposed it (the builder chat appends its own
+     batches), so one group shows, not two. */
+  useEffect(() => {
+    if (locked) return;
+    const pruned = dropReplacedProposals(selected);
+    if (pruned !== selected) patch({ scenarios: pruned });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, locked]);
   /* The scenario version a batch made ("v3"), read from the times its rows
      were stored with — a seeded row with none was in the first set. The
      times a batch header shows for those are display-only. */
@@ -463,12 +561,15 @@ export default function ScenariosStep({
       new Map(
         selected.map((r) => [
           r.id,
-          scenarioStateFor(r, statusById.get(r.id), {
-            env,
-            envState: viewState,
-            tools: requiredToolsOf(r, knownTools),
-            agentLabel,
-          }),
+          withStateReason(
+            r,
+            scenarioStateFor(r, statusById.get(r.id), {
+              env,
+              envState: viewState,
+              tools: requiredToolsOf(r, knownTools),
+              agentLabel,
+            }),
+          ),
         ]),
       ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -476,14 +577,19 @@ export default function ScenariosStep({
   );
   const stateOf = (r) =>
     stateById.get(r.id) ||
-    scenarioStateFor(r, statusOf(r), {
-      env,
-      envState: viewState,
-      tools: toolsOf(r),
-      agentLabel,
-    });
+    withStateReason(
+      r,
+      scenarioStateFor(r, statusOf(r), {
+        env,
+        envState: viewState,
+        tools: toolsOf(r),
+        agentLabel,
+      }),
+    );
   /* Archived rows stay listed but don't run or count. */
   const live = liveScenarios(selected);
+  /* Re-prove all: every scenario in the set — a proposal is proved when it's added. */
+  const reprovableAll = live.filter((r) => !r.proposed);
   const archivedCount = selected.length - live.length;
   /* Proved only when its solution really ran here; a case saved as written
      without a proof run is counted apart from one whose proof failed. */
@@ -571,6 +677,8 @@ export default function ScenariosStep({
     usageOf: (id) => usage.get(id),
     onStateAction: (kind, row, arg) => onStateAction(kind, row, arg),
     onOpen: (row) => setOpenId(row.id),
+    /* The rows a Validate in progress is proving — their state reads Validating. */
+    validatingIds: validating ? new Set(validating.ids) : null,
   };
 
   const q = query.trim().toLowerCase();
@@ -916,7 +1024,7 @@ export default function ScenariosStep({
           ...blockedRows,
         ];
         patch({
-          scenarios: [...selected, ...all],
+          scenarios: dropReplacedProposals([...selected, ...all]),
           importHistory: history,
         });
         enqueueSnackbar(
@@ -928,7 +1036,7 @@ export default function ScenariosStep({
       }
       if (!kept) {
         patch({
-          scenarios: [...selected, ...blockedRows],
+          scenarios: dropReplacedProposals([...selected, ...blockedRows]),
           importHistory: history,
         });
         enqueueSnackbar(
@@ -962,7 +1070,11 @@ export default function ScenariosStep({
          whichever add route was used last. A proposal isn't part of the set
          yet, so it writes no new version — adding it does (approve below). */
       const nextScenarios = {
-        scenarios: [...grouped, ...fresh2, ...blockedRows],
+        scenarios: dropReplacedProposals([
+          ...grouped,
+          ...fresh2,
+          ...blockedRows,
+        ]),
         importHistory: history,
         ...(!envState.scenarioSource && { scenarioSource: source }),
       };
@@ -1246,7 +1358,7 @@ export default function ScenariosStep({
     patch({ scenarios: selected.map((s) => byId.get(s.id) || s) });
   };
   const reprove = (rows) => {
-    if (!rows.length) return;
+    if (!rows.length || validating) return;
     replaceRows(reproveScenarios(rows, { env, envState: viewState, toolsOf }));
     enqueueSnackbar(
       rows.length === 1
@@ -1255,6 +1367,62 @@ export default function ScenariosStep({
       { variant: "success" },
     );
   };
+  /* Validate takes a while: it is held on the environment's state
+     (envState.validating) while it runs — runs are blocked, the rows being
+     proved say Validating — and lands after VALIDATE_MS. It survives
+     leaving the tab: on the way back, one that has had its time finishes. */
+  const startValidate = (rows, from) => {
+    if (!rows.length || validating || ro) return;
+    if (searchParams.get("validate") === "fail") {
+      FAIL_NEXT_VALIDATE.set(env.id, VALIDATE_FAIL_MESSAGE);
+      /* Once: Try again then goes through. */
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("validate");
+          return next;
+        },
+        { replace: true },
+      );
+    }
+    startValidating(
+      patch,
+      rows.map((r) => r.id),
+      from,
+    );
+  };
+  const finishValidateRef = useRef(null);
+  finishValidateRef.current = () => {
+    const v = validatingOf(envState);
+    if (!v) return;
+    if (FAIL_NEXT_VALIDATE.has(env.id)) {
+      const message = FAIL_NEXT_VALIDATE.get(env.id);
+      FAIL_NEXT_VALIDATE.delete(env.id);
+      failValidating(patch, v, message);
+      return;
+    }
+    /* The rows as they stand now — anything removed meanwhile is skipped. */
+    const ids = new Set(v.ids);
+    const rows = selected.filter((r) => ids.has(r.id));
+    if (rows.length)
+      replaceRows(
+        reproveScenarios(rows, { env, envState: viewState, toolsOf }),
+      );
+    finishValidating(patch);
+    enqueueSnackbar(
+      `Validated ${rows.length} scenario${rows.length === 1 ? "" : "s"} on ${envDisplay}`,
+      { variant: "success" },
+    );
+  };
+  useEffect(() => {
+    if (!validating?.startedAt) return undefined;
+    const left = Math.max(
+      0,
+      (Date.parse(validating.startedAt) || 0) + VALIDATE_MS - Date.now(),
+    );
+    const t = setTimeout(() => finishValidateRef.current?.(), left);
+    return () => clearTimeout(t);
+  }, [validating?.startedAt]);
   /* Archived, not deleted: it stays in the set, listed and filterable, and
      the set moves to a new version. Undo puts the row back as it was. */
   const archive = (row, note) => {
@@ -1437,8 +1605,16 @@ export default function ScenariosStep({
   /* What each state asks for, from the table, the list and the drawer alike. */
   const onStateAction = (kind, row, arg) => {
     if (ro && kind !== "subgoal") return;
-    if (kind === "reprove") reprove([row]);
-    else if (kind === "rewrite" || kind === "edit") {
+    if (kind === "reprove") {
+      if (validating) {
+        enqueueSnackbar(
+          `${validatingLabel(validating)} — try again once it finishes.`,
+          { variant: "info" },
+        );
+        return;
+      }
+      reprove([row]);
+    } else if (kind === "rewrite" || kind === "edit") {
       setOpenId(null);
       setEditing(row);
     } else if (kind === "archive") archive(row, arg);
@@ -1616,7 +1792,8 @@ export default function ScenariosStep({
           !ro &&
             review.reprovable.length > 0 && {
               label: `Validate ${review.reprovable.length}`,
-              onClick: () => reprove(review.reprovable),
+              disabled: !!validating,
+              onClick: () => startValidate(review.reprovable, "review"),
             },
         ].filter(Boolean),
       },
@@ -2452,6 +2629,25 @@ export default function ScenariosStep({
                       />
                     </Box>
                   )}
+                  {/* A Validate in progress, or one that failed as a whole —
+                      one quiet line, no progress bar. */}
+                  {!asOfBatch && (
+                    <ValidateStatusLine
+                      validating={validating}
+                      failed={validateFailed}
+                      onRetry={
+                        ro
+                          ? null
+                          : () =>
+                              startValidate(
+                                live.filter((r) =>
+                                  (validateFailed?.ids || []).includes(r.id),
+                                ),
+                                "reprove",
+                              )
+                      }
+                    />
+                  )}
                   {/* The proof counts sit on this line, not in the toolbar,
                       so the toolbar's Add scenarios stays on screen. */}
                   {!asOfBatch && (
@@ -2460,7 +2656,7 @@ export default function ScenariosStep({
                       trailing={
                         <Tooltip
                           arrow
-                          title="A case counts as proved only when its solution really ran on this environment version. Kept as written: saved as written, never proved. Not proved: its proof failed or no longer holds."
+                          title="Proved: its solution really ran on this environment version. Kept as written: it runs, but nothing has proved its check can fail — each scenario says why. Not proved: its proof failed or no longer holds."
                         >
                           <Typography
                             noWrap
@@ -2483,41 +2679,59 @@ export default function ScenariosStep({
                             {review?.reprovable?.length > 0 && (
                               <Tooltip
                                 arrow
-                                title="Runs each one's proof in a test sandbox — no paid agent run. Scenarios that don't pass stay Not proved."
+                                title={
+                                  validating
+                                    ? `${validatingLabel(validating)} — wait for it to finish.`
+                                    : "Runs each one's proof in a test sandbox — no paid agent run. Scenarios that don't pass stay Not proved."
+                                }
                               >
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => reprove(review.reprovable)}
-                                  sx={{
-                                    height: 24,
-                                    typography: "s3",
-                                    color: "text.primary",
-                                    borderColor: "divider",
-                                  }}
-                                >
-                                  Validate cases not yet proved
-                                </Button>
+                                <span>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    disabled={!!validating}
+                                    onClick={() =>
+                                      startValidate(review.reprovable, "review")
+                                    }
+                                    sx={{
+                                      height: 24,
+                                      typography: "s3",
+                                      color: "text.primary",
+                                      borderColor: "divider",
+                                    }}
+                                  >
+                                    Validate cases not yet proved
+                                  </Button>
+                                </span>
                               </Tooltip>
                             )}
                             <Tooltip
                               arrow
-                              title="Proves every scenario again, including the ones already proved."
+                              title={
+                                validating
+                                  ? `${validatingLabel(validating)} — wait for it to finish.`
+                                  : "Proves every scenario again, including the ones already proved."
+                              }
                             >
-                              <Button
-                                size="small"
-                                color="inherit"
-                                onClick={() => reprove(live)}
-                                sx={{
-                                  height: 24,
-                                  typography: "s3",
-                                  color: "text.secondary",
-                                  minWidth: 0,
-                                  px: 0.75,
-                                }}
-                              >
-                                Re-prove all
-                              </Button>
+                              <span>
+                                <Button
+                                  size="small"
+                                  color="inherit"
+                                  disabled={
+                                    !!validating || !reprovableAll.length
+                                  }
+                                  onClick={() => setReproveAllOpen(true)}
+                                  sx={{
+                                    height: 24,
+                                    typography: "s3",
+                                    color: "text.secondary",
+                                    minWidth: 0,
+                                    px: 0.75,
+                                  }}
+                                >
+                                  Re-prove all
+                                </Button>
+                              </span>
                             </Tooltip>
                           </>
                         )
@@ -2525,6 +2739,32 @@ export default function ScenariosStep({
                     />
                   )}
                   {containers}
+                  <ConfirmDialog
+                    open={reproveAllOpen}
+                    onClose={() => setReproveAllOpen(false)}
+                    title={`Re-prove all ${reprovableAll.length} scenario${reprovableAll.length === 1 ? "" : "s"}?`}
+                    content={
+                      <Typography
+                        sx={{ typography: "s2", color: "text.secondary" }}
+                      >
+                        Every scenario is validated again, including proved
+                        ones. Runs are blocked until it finishes.
+                      </Typography>
+                    }
+                    action={
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="primary"
+                        onClick={() => {
+                          setReproveAllOpen(false);
+                          startValidate(reprovableAll, "reprove");
+                        }}
+                      >
+                        Re-prove all
+                      </Button>
+                    }
+                  />
                   {/* Opens from the right edge like Figma's version history, and
                     stays open while you scroll and click the batches. */}
                   <SideDrawer

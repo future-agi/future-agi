@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   Box,
   Button,
+  ButtonBase,
   CircularProgress,
   IconButton,
   Stack,
@@ -56,6 +57,24 @@ const ago = (iso) => {
       : `${Math.round(h / 24)} d ago`;
 };
 
+/* What a file is used by, by name: the scenarios, rules and tables that cite it. */
+const USE_SHOWN = 8;
+const usedByLinesOf = (u) =>
+  [
+    [
+      "Scenarios",
+      u.scenarios.map((r) => r.title || r.name || r.task || r.id),
+    ],
+    [
+      "Rules",
+      u.rules.map((r) => {
+        const t = String(r.to || "");
+        return `${r.id}${t ? `: ${t.length > 72 ? `${t.slice(0, 72)}…` : t}` : ""}`;
+      }),
+    ],
+    ["Tables", u.tables.map((t) => t.name || t.table || t.label || t.id)],
+  ].filter(([, names]) => names.length);
+
 /**
  * World & tools → Sources (roadmap data.md "Manage evidence and data after
  * import"): every file and organization source this world is built from —
@@ -96,6 +115,8 @@ export default function SourcesSection({
   const isReading = (x) => (x?.readUntil || 0) > now;
   /* A source whose Knowledge base file changed, being reviewed. */
   const [refreshing, setRefreshing] = useState(null);
+  /* The row whose "Used by" is open, listing what uses the file by name. */
+  const [usedOpen, setUsedOpen] = useState(null);
   /* The open source lives in the URL (?source=), so a citation in builder chat can open it. */
   const [params, setParams] = useSearchParams();
   const open = params.get("source");
@@ -276,6 +297,7 @@ export default function SourcesSection({
           {sources.map((s) => {
             const u = usageOf(s, envState);
             const n = u.rules.length + u.scenarios.length + u.tables.length;
+            const usesShown = usedOpen === s.id && n > 0;
             const refresh = kbRefreshOf(s);
             const pd = personalDataOf(s);
             const choosing = pd.has && !pd.choice;
@@ -393,15 +415,43 @@ export default function SourcesSection({
                         on the row, so a later KB edit can't pass for it. */}
                     {`${s.kb ? "your copy" : `v${s.version}`}${s.pendingRefresh ? ` · v${s.pendingRefresh.v} kept` : ""}`}
                   </Typography>
-                  <Typography
-                    noWrap
-                    sx={{
-                      typography: "s2",
-                      color: n ? "text.primary" : "text.tertiary",
-                    }}
-                  >
-                    {n ? `${n} item${n === 1 ? "" : "s"}` : "Nothing yet"}
-                  </Typography>
+                  {n ? (
+                    <ButtonBase
+                      aria-expanded={usesShown}
+                      aria-label={`${usesShown ? "Hide" : "Show"} what uses ${s.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setUsedOpen((cur) => (cur === s.id ? null : s.id));
+                      }}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      sx={{
+                        justifySelf: "start",
+                        typography: "s2",
+                        color: "text.primary",
+                        gap: 0.25,
+                        whiteSpace: "nowrap",
+                        "&:hover": { color: "primary.main" },
+                      }}
+                    >
+                      {`${n} item${n === 1 ? "" : "s"}`}
+                      <Iconify
+                        icon={
+                          usesShown
+                            ? "solar:alt-arrow-up-linear"
+                            : "solar:alt-arrow-down-linear"
+                        }
+                        width={12}
+                        sx={{ color: "text.tertiary" }}
+                      />
+                    </ButtonBase>
+                  ) : (
+                    <Typography
+                      noWrap
+                      sx={{ typography: "s2", color: "text.tertiary" }}
+                    >
+                      Nothing yet
+                    </Typography>
+                  )}
                   {/* Remove a file from its row (#96) — the confirmation
                       says what still uses it. */}
                   {!readOnly ? (
@@ -432,6 +482,62 @@ export default function SourcesSection({
                     <span />
                   )}
                 </Box>
+                {usesShown && (
+                  <Box
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    sx={{
+                      mx: 2,
+                      mb: 1,
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: "8px",
+                      cursor: "default",
+                    }}
+                  >
+                    {usedByLinesOf(u).map(([label, names]) => (
+                      <Box
+                        key={label}
+                        sx={{
+                          display: "grid",
+                          gridTemplateColumns: "88px minmax(0, 1fr)",
+                          columnGap: 1.5,
+                          px: 1.5,
+                          py: 0.75,
+                          "& + &": {
+                            borderTop: "1px solid",
+                            borderColor: "divider",
+                          },
+                        }}
+                      >
+                        <Typography
+                          sx={{ typography: "s3", color: "text.tertiary" }}
+                        >
+                          {`${label} · ${names.length}`}
+                        </Typography>
+                        <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+                          {names.slice(0, USE_SHOWN).map((name, k) => (
+                            <Typography
+                              key={`${name}-${k}`}
+                              noWrap
+                              title={name}
+                              sx={{ typography: "s3", color: "text.secondary" }}
+                            >
+                              {name}
+                            </Typography>
+                          ))}
+                          {names.length > USE_SHOWN && (
+                            <Typography
+                              sx={{ typography: "s3", color: "text.tertiary" }}
+                            >
+                              {`and ${names.length - USE_SHOWN} more`}
+                            </Typography>
+                          )}
+                        </Stack>
+                      </Box>
+                    ))}
+                  </Box>
+                )}
                 {(refresh || s.revoked || choosing) && (
                   <Stack
                     spacing={0.5}

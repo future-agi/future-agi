@@ -40,6 +40,7 @@ import {
   createActorPatch,
   relationsOf,
   actorKindOf,
+  CALLER_KINDS,
   primaryActorOf,
   actorEditPatch,
   resetActorPatch,
@@ -753,8 +754,10 @@ function ActorRow({
 
       <Collapse in={open} unmountOnExit>
         {/* Two spec tables side by side: their part in the run, and what
-            they see. "What they do" is the line under the name, and "Can
-            approve" is the Approves row, so neither repeats. */}
+            they see. "What they do" is the line under the name. Their part
+            uses the editor's own field names, row for row (#23): How they
+            join, When they come in, Actions they may take, Can approve —
+            so actions and approval aren't repeated under what they see. */}
         <Box
           sx={{
             px: 2.5,
@@ -767,11 +770,31 @@ function ActorRow({
         >
           <SpecCard title="Their part">
             {actor.tests && <SpecRow label="Tests">{actor.tests}</SpecRow>}
-            <SpecRow label="Enters">
+            {sideOf(actor) === "caller" && (
+              <SpecRow label="How they join">
+                {CALLER_KINDS.find((k) => k.id === actor.kind)?.label ||
+                  "Someone nearby"}
+              </SpecRow>
+            )}
+            <SpecRow label="When they come in">
               {sideOf(actor) === "caller" && arrivalLineOf(actor)
                 ? comes.charAt(0).toUpperCase() + comes.slice(1)
                 : `${entry.label} — ${entry.blurb}`}
             </SpecRow>
+            {sideOf(actor) !== "caller" && (
+              <SpecRow label="Actions they may take">
+                {actions.length ? (
+                  <Box
+                    component="span"
+                    sx={{ fontFamily: "ui-monospace, Menlo, monospace" }}
+                  >
+                    {actions.map((x) => x.name).join(", ")}
+                  </Box>
+                ) : (
+                  "None — they only talk"
+                )}
+              </SpecRow>
+            )}
             {sideOf(actor) === "caller" && actor.voice && (
               <SpecRow label="Voice">
                 {[
@@ -786,7 +809,7 @@ function ActorRow({
             )}
             {actor.canApprove && (
               <SpecRow
-                label="Approves"
+                label="Can approve"
                 trailing={
                   onBranches ? (
                     <TextAction onClick={onBranches}>
@@ -846,7 +869,12 @@ function ActorRow({
           </SpecCard>
           <SpecCard title={`What ${actor.name || "they"} sees`}>
             {view.sees
-              .filter((r) => !(actor.canApprove && /approve/i.test(r.label)))
+              .filter(
+                (r) =>
+                  /* In Their part already, under the editor's names. */
+                  !(sideOf(actor) !== "caller" && r.label === "Can do") &&
+                  !(actor.canApprove && /approve/i.test(r.label)),
+              )
               .map((r) => (
                 <SpecRow key={r.label} label={r.label}>
                   {r.text}
@@ -913,7 +941,7 @@ function SpecRow({ label, children, trailing = null }) {
     <Box
       sx={{
         display: "grid",
-        gridTemplateColumns: "88px minmax(0, 1fr) auto",
+        gridTemplateColumns: "112px minmax(0, 1fr) auto",
         columnGap: 1.5,
         alignItems: "baseline",
         px: 1.5,

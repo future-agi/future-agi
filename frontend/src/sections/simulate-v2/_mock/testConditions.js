@@ -1,42 +1,79 @@
 /*
   Test conditions on one scenario (world.md, Set the test conditions): a
-  tool the scenario uses misbehaves on purpose — payments time out, the
-  item isn't found, approval is required. The run applies it to that
+  tool the scenario uses misbehaves on purpose. The run applies it to that
   scenario only and records it as an injected failure, never as an outage.
 
-  A timeout on a write names where it applies — the write didn't commit, or
-  it committed and only the response was lost. They are different tests.
+  The five kinds the backend runs (Karthik's review, 23 Nov, #22). A lost
+  answer is its own kind, not a sub-choice of a timeout: the call ran — a
+  write landed — and only the answer never came back.
 
-  Saved on the scenario: row.testCondition = { tool, kind, commit? }, with
-  commit "before" | "after" only for a timeout on a write tool.
+  Saved on the scenario: row.testCondition = { tool, kind, call }, with
+  call "first" (the default) | "every" | a call number (2, 3…).
 */
 import { replicationOf } from "./replication";
-import { sideEffectOf } from "./toolEnv";
 
 export const CONDITIONS = [
-  { kind: "timeout", label: "Times out" },
-  { kind: "error", label: "Returns an error" },
-  { kind: "missing", label: "Finds no such record" },
+  { kind: "timeout", label: "Times out before it runs" },
+  { kind: "after_commit", label: "Runs, then the answer is lost" },
+  { kind: "unavailable", label: "Unavailable" },
+  { kind: "error", label: "Answers with an error" },
   { kind: "permission", label: "Needs approval first" },
-  { kind: "approval_refused", label: "Approval refused" },
 ];
 
-/* Where a timeout on a write applies: before it commits, or after. */
-export const COMMIT_POINTS = [
-  { id: "before", label: "Didn't commit" },
-  { id: "after", label: "Committed, response lost" },
+/*
+  Kinds saved before the five above. Read, never offered: a lost answer was
+  a timeout with commit "after"; a refused approval reads as needing one;
+  "no such record" has no backend kind, so it shows as it was.
+*/
+const RETIRED = {
+  missing: "Finds no such record",
+  approval_refused: "Approval refused",
+};
+
+/** Which call it hits: the first (default), every one, or call number N. */
+export const CALLS = [
+  { id: "first", label: "First call" },
+  { id: "every", label: "Every call" },
+  { id: "nth", label: "Call number…" },
 ];
 
-/** Whether a timeout on this tool needs a commit point — only a write can have committed. */
-export const takesCommitPoint = (tool, kind) =>
-  kind === "timeout" && !!tool && sideEffectOf({ name: tool }) === "write";
-
-export const conditionLabelOf = (c) => {
+/** A saved condition as the five kinds read it; old shapes mapped across. */
+export const normalizeCondition = (c) => {
   if (!c) return null;
-  const base = `${c.tool} · ${(CONDITIONS.find((x) => x.kind === c.kind)?.label || c.kind).toLowerCase()}`;
-  if (!takesCommitPoint(c.tool, c.kind)) return base;
-  const point = COMMIT_POINTS.find((x) => x.id === (c.commit || "before"));
-  return `${base} — ${point.label.toLowerCase()}`;
+  const kind =
+    c.kind === "timeout" && c.commit === "after"
+      ? "after_commit"
+      : c.kind === "approval_refused"
+        ? "permission"
+        : c.kind;
+  const n = Number(c.call);
+  const call =
+    c.call === "every"
+      ? "every"
+      : Number.isInteger(n) && n > 1
+        ? n
+        : "first";
+  return { tool: c.tool, kind, call };
+};
+
+/** A kind that's no longer offered — kept as saved, shown under its old name. */
+export const isRetiredKind = (kind) => !!RETIRED[kind];
+
+export const callLabelOf = (call) =>
+  call === "every"
+    ? "every call"
+    : typeof call === "number" && call > 1
+      ? `call ${call}`
+      : "first call";
+
+/** A kind's name, offered or retired. */
+export const kindLabelOf = (kind) =>
+  CONDITIONS.find((x) => x.kind === kind)?.label || RETIRED[kind] || kind;
+
+export const conditionLabelOf = (raw) => {
+  const c = normalizeCondition(raw);
+  if (!c) return null;
+  return `${c.tool} · ${kindLabelOf(c.kind).toLowerCase()} · ${callLabelOf(c.call)}`;
 };
 
 /**

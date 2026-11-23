@@ -48,6 +48,7 @@ import { scenarioTitle } from "../_mock/scenarios";
 import { wrongWayExamplesOf } from "../_mock/wrongWay";
 import SourceBadge from "../workspace/scenarios/SourceBadge";
 import ScenarioOrgPart from "../workspace/scenarios/ScenarioOrgPart";
+import ScenarioCites from "../workspace/scenarios/ScenarioCites";
 
 /**
  * A scenario, in full.
@@ -79,6 +80,8 @@ export default function ScenarioDetail({
   onAction,
   locked = false,
   bare = false,
+  citeOpen,
+  onCiteOpen,
 }) {
   const [open, setOpen] = useState(defaultOpen || bare);
   const [showInternals, setShowInternals] = useState(false);
@@ -153,6 +156,8 @@ export default function ScenarioDetail({
         usageOf={usageOf}
         onMark={onMark}
         onAction={onAction}
+        citeOpen={citeOpen}
+        onCiteOpen={onCiteOpen}
       />
     );
   }
@@ -433,6 +438,8 @@ ScenarioDetail.propTypes = {
   onAction: PropTypes.func,
   locked: PropTypes.bool,
   bare: PropTypes.bool,
+  citeOpen: PropTypes.string,
+  onCiteOpen: PropTypes.func,
 };
 
 const GUTTER = 128;
@@ -707,6 +714,8 @@ function DrawerSheet({
   onMark,
   onAction,
   locked = false,
+  citeOpen,
+  onCiteOpen,
 }) {
   const navigate = useNavigate();
   const [details, setDetails] = useState(false);
@@ -1117,6 +1126,24 @@ function DrawerSheet({
         )}
       </Part>
 
+      {/* What it rests on — each rule and file, and whether it still holds.
+          Where it came from is Source, under History. */}
+      {env?.id && (
+        <Box id="scenario-cites">
+          <Part title="Cites">
+            <ScenarioCites
+              row={row}
+              env={env}
+              envState={envState}
+              goals={goals}
+              locked={locked}
+              openKey={citeOpen}
+              onOpen={onCiteOpen}
+            />
+          </Part>
+        </Box>
+      )}
+
       {/* history — only when there is some */}
       {showHistory && (
         <Part title="History">
@@ -1168,6 +1195,8 @@ DrawerSheet.propTypes = {
   usageOf: PropTypes.func,
   onMark: PropTypes.func,
   onAction: PropTypes.func,
+  citeOpen: PropTypes.string,
+  onCiteOpen: PropTypes.func,
 };
 
 /* One figure across the top: what it counts, the count, and a quiet line under it. */
@@ -1477,7 +1506,7 @@ function SubGoalList({ goals, usageOf, versionOf, onMark, onOpenShared }) {
                           color: "text.subtitle",
                         }}
                       >
-                        {versionOf(g.id).replace(/^.*@/, "@")}
+                        {versionOf(g.id).replace(/^.*@/, "v")}
                       </Typography>
                     </Tooltip>
                   )}
@@ -1710,15 +1739,28 @@ const canRunAnswer = (state, env) => {
     };
   if (state.id === "stale")
     return { verdict: "Yes — but stale", text: state.why };
+  /* A check in progress is the one time the answer is "Re-checking". */
+  if (state.proof?.id === "checking")
+    return { verdict: "Re-checking", text: state.why };
+  /* Kept as written runs — it just isn't proved. Its reason, as sent. */
+  if (state.id === "kept")
+    return {
+      verdict: "Yes — runs, but not proved",
+      text: String(state.why || "").replace(/^Kept as written:\s*/, ""),
+      sep: ". ",
+    };
   if (state.canRun === true)
     return { verdict: "Yes", text: canRunMeaning(env) };
+  /* Restored after a save removed it: it waits for a new proof. */
+  if (state.removedIn)
+    return { verdict: "Not until it's proved again", text: state.why };
   if (state.canRun === false)
     return {
       verdict: state.id === "later" ? "Not on this version" : "No",
       text: state.why,
       bad: state.id !== "later",
     };
-  return { verdict: "Re-checking", text: state.why };
+  return { verdict: "Not known", text: state.why };
 };
 
 const correctAnswer = (state, rule) => {
@@ -1759,7 +1801,7 @@ const correctAnswer = (state, rule) => {
 };
 
 /* "Yes — …", with the rule id it rests on, quietly, when there is one. */
-function Answer({ verdict, text, ruleRef, ruleText, bad = false }) {
+function Answer({ verdict, text, ruleRef, ruleText, bad = false, sep }) {
   return (
     <Typography
       sx={{
@@ -1778,7 +1820,10 @@ function Answer({ verdict, text, ruleRef, ruleText, bad = false }) {
       >
         {verdict}
       </Box>
-      {text && ` — ${text.replace(/\.$/, "")}`}
+      {text &&
+        (sep
+          ? `${sep}${text.charAt(0).toUpperCase()}${text.slice(1)}`
+          : ` — ${text.replace(/\.$/, "")}`)}
       {ruleRef && (
         <>
           {" · "}
@@ -1808,6 +1853,7 @@ Answer.propTypes = {
   ruleRef: PropTypes.string,
   ruleText: PropTypes.string,
   bad: PropTypes.bool,
+  sep: PropTypes.string,
 };
 
 /* Both questions answered yes, in one line — the why on hover. */

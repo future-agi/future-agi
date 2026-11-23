@@ -68,6 +68,11 @@ export const BEHAVIOURS = [
   AI agents and the agent's own sub-agents are all actors. People and
   external agents are simulated; sub-agents are your agent's real workers —
   listed with the cast because they act in the same world, never simulated.
+
+  23 Nov (#23): the kind is no longer picked in the actor editor — a run
+  never read it. What an actor may do is its actions and Can approve. The
+  kind stays on seeded and saved actors, where it names what they are and
+  keeps one rule: an external agent can't approve (mayApprove).
 */
 export const ACTOR_KINDS = [
   {
@@ -187,6 +192,9 @@ export const roleOf = (a) =>
       ? "external system"
       : CALLER_KINDS.find((k) => k.id === a?.kind)?.label.toLowerCase() ||
         "person");
+
+/** Whether this actor's "approved" can count here: never another company's agent. */
+export const mayApprove = (a) => a?.kind !== "external-agent";
 
 export const actorKindOf = (a) =>
   ACTOR_KINDS.find((k) => k.id === (a?.kind || "person")) ||
@@ -798,7 +806,7 @@ export const actorContextOf = (actor, envState) => {
     })),
     /* Actions picked in the editor, and tools an older cast listed. */
     tools: [...new Set([...(actor.actions || []), ...(actor.tools || [])])],
-    canApprove: !!actor.canApprove,
+    canApprove: !!actor.canApprove && mayApprove(actor),
     approvalScope: actor.approvalScope || "",
   };
 };

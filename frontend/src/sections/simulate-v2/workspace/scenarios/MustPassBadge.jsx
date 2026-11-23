@@ -16,7 +16,8 @@ import Iconify from "src/components/iconify";
    bar or the editor. */
 const SUBTLE = { light: "#f5f3ff", dark: "rgba(120,87,252,0.14)" };
 const FG = { light: "#573fcc", dark: "#b8afff" };
-const MUST_PASS_TIP = "Must pass: a run fails if this scenario fails";
+const MUST_PASS_TIP =
+  "Must pass: reported on its own in every run, and an Epoch can't ship a change that breaks it. A run never fails or stops because of it.";
 
 export default function MustPassBadge({
   row,

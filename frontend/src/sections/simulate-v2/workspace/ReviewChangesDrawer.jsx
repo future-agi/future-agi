@@ -20,6 +20,7 @@ import {
   diffOf,
   sourceLabelOf,
   sourceLinkOf,
+  whoWhenOf,
   acceptRestPatch,
   decidePatch,
   decisionOf,
@@ -33,6 +34,14 @@ import {
 import { focusChatAt } from "./reviewChangesBus";
 import { castFor, getActor } from "../_mock/actors";
 import { toolSettingOf } from "../_mock/toolEnv";
+import { currentUser } from "../_mock/scenarioProvenance";
+import {
+  VALIDATE_MS,
+  finishValidating,
+  startValidating,
+  validatingLabel,
+  validatingOf,
+} from "../_mock/validating";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -167,20 +176,43 @@ export default function ReviewChangesDrawer({
   const [nameTouched, setNameTouched] = useState(false);
   const shownName = nameTouched ? note : note || suggestedName;
   const names = cost?.scenarioNames || [];
-  /* data.md §4: save after the affected scenario checks pass — checked
-     here, before the save, and again whenever the changes move. */
-  const checkKey = `${list.length}:${names.join("|")}`;
-  const [check, setCheck] = useState({ key: null, state: "idle" });
-  const checkState = check.key === checkKey ? check.state : "idle";
+  /* data.md §4 + backend: Save is refused until Validate has run on the
+     affected scenarios — here, before the save, and again whenever the
+     changes move. Validate lives on the environment's state, so it carries
+     on when the drawer closes; the key it passed for is kept there too. */
+  const checkKey = `${list.map((c) => `${c.at}${c.decision === "rejected" ? "-" : ""}`).join(",")}:${names.join("|")}`;
+  const validating = validatingOf(envState);
+  const reviewing = validating?.from === "review";
+  const checkState =
+    envState?.reviewValidated === checkKey
+      ? "passed"
+      : reviewing
+        ? "running"
+        : "idle";
+  /* The scenario ids behind the names, matched the way the names were made. */
+  const affectedIds = (envState?.scenarios || [])
+    .filter((r) =>
+      names.includes(
+        [r.title || r.name || r.task || r.id, r.persona?.name]
+          .filter(Boolean)
+          .join(" · "),
+      ),
+    )
+    .map((r) => r.id);
+  const startedAt = reviewing ? validating.startedAt : null;
   useEffect(() => {
-    if (checkState !== "running") return undefined;
-    const t = setTimeout(
-      () => setCheck({ key: checkKey, state: "passed" }),
-      1200,
-    );
+    if (!startedAt) return undefined;
+    const left = Math.max(0, VALIDATE_MS - (Date.now() - Date.parse(startedAt)));
+    const t = setTimeout(() => {
+      finishValidating(patch);
+      patch({ reviewValidated: checkKey });
+    }, left);
     return () => clearTimeout(t);
-  }, [checkState, checkKey]);
+  }, [startedAt, checkKey, patch]);
   const needsCheck = names.length > 0 && checkState !== "passed";
+  /* Another Validate (re-proving scenarios) is already running. */
+  const otherValidate = validating && !reviewing ? validating : null;
+  const me = currentUser()?.name;
   if (!open) return <SideDrawer open={false} onClose={onClose} />;
   const groups = [
     ...EDIT_AREAS,
@@ -435,6 +467,7 @@ export default function ReviewChangesDrawer({
                       const rj = rejectableOf(list, i);
                       const rs = restorableOf(list, i);
                       const src = sourceLabelOf(c);
+                      const whoWhen = whoWhenOf(c, me);
                       const link = sourceLinkOf(c, envState);
                       /* A rejected edit is already out of the world: read its diff as it was. */
                       const diff = diffOf(
@@ -506,7 +539,9 @@ export default function ReviewChangesDrawer({
                                   color: "text.tertiary",
                                 }}
                               >
-                                {[src, link.where].filter(Boolean).join(" · ")}
+                                {[src, whoWhen, link.where]
+                                  .filter(Boolean)
+                                  .join(" · ")}
                               </Typography>
                             </Box>
                             <Tooltip arrow title={link.label}>
@@ -642,25 +677,46 @@ export default function ReviewChangesDrawer({
                     <Tooltip arrow title={cost?.comparability || ""}>
                       <Typography sx={{ typography: "s2", flex: 1 }}>
                         {checkState === "passed"
-                          ? `${names.length} affected scenario${names.length === 1 ? "" : "s"} checked — all pass`
+                          ? `${names.length} affected scenario${names.length === 1 ? "" : "s"} validated — all pass`
                           : checkState === "running"
-                            ? `Checking ${names.length} affected scenario${names.length === 1 ? "" : "s"}…`
-                            : `Check the ${names.length} affected scenario${names.length === 1 ? "" : "s"} before you save`}
+                            ? `${validatingLabel(validating)}…`
+                            : `Validate the ${names.length} affected scenario${names.length === 1 ? "" : "s"} before you save`}
                       </Typography>
                     </Tooltip>
                     {checkState !== "passed" && (
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        color="inherit"
-                        disabled={checkState === "running"}
-                        onClick={() =>
-                          setCheck({ key: checkKey, state: "running" })
+                      <Tooltip
+                        arrow
+                        title={
+                          otherValidate
+                            ? `${validatingLabel(otherValidate)} already — this one can start once it finishes.`
+                            : ""
                         }
-                        sx={{ minWidth: 0 }}
                       >
-                        Run checks
-                      </Button>
+                        <span>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            color="inherit"
+                            disabled={
+                              checkState === "running" ||
+                              !!otherValidate ||
+                              !canEdit
+                            }
+                            onClick={() =>
+                              startValidating(
+                                patch,
+                                affectedIds.length
+                                  ? affectedIds
+                                  : names.map((_, k) => `affected-${k}`),
+                                "review",
+                              )
+                            }
+                            sx={{ minWidth: 0 }}
+                          >
+                            Validate
+                          </Button>
+                        </span>
+                      </Tooltip>
                     )}
                     <Button
                       variant="outlined"
@@ -788,7 +844,9 @@ export default function ReviewChangesDrawer({
                     : !counts.accepted
                       ? "Every change is rejected — Discard all puts the world back."
                       : needsCheck
-                        ? "Run the affected scenario checks first."
+                        ? checkState === "running"
+                          ? "Saves once Validate finishes."
+                          : "Validate the affected scenarios first."
                         : cost?.text || ""
                 }
               >

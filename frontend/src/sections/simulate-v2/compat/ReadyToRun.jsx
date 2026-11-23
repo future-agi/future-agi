@@ -1,5 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import {
   Box,
@@ -14,7 +15,15 @@ import { StatusDot } from "../components/primitives";
 import { readinessOf } from "../_mock/readiness";
 import { PAIR_CHECK_LIMIT_MIN } from "../_mock/compatibility";
 import { ago } from "../agents/agentViewUtils";
-import { fieldFixOf, fixKindOf, fixLabelOf, shortFixLabel } from "./fixKinds";
+import {
+  CODE_FIX,
+  fieldFixOf,
+  fixKindOf,
+  fixLabelOf,
+  shortFixLabel,
+} from "./fixKinds";
+import { agentIdOf } from "../_mock/agentRegistry";
+import { connectedAgentPath } from "../improvements/improvementNav";
 import BuilderFixChat, { builderPromptFor } from "./BuilderFixChat";
 
 /*
@@ -46,6 +55,8 @@ const sentenceOf = (t) => {
   return x ? `${x.charAt(0).toUpperCase()}${x.slice(1)}` : "";
 };
 const BUILDER = ["tools", "release", "rebuild"];
+/* Made on the agent's own page: a change there, or a new version of its code. */
+const ON_AGENT = ["link", "code"];
 /* A stated limit of where the agent runs: nothing to fix. */
 const isLimit = (a) =>
   a.status === "partial" &&
@@ -266,6 +277,9 @@ export default function ReadyToRun({
   const [values, setValues] = useState({});
   const [chatJobs, setChatJobs] = useState(null);
   const [fixed, setFixed] = useState([]);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { envId } = useParams();
   const toggle = (id) => setOpenId((cur) => (cur === id ? null : id));
 
   const areas = readinessOf(report, scenarios, evalCount);
@@ -315,7 +329,7 @@ export default function ReadyToRun({
   const showCheck =
     !checked ||
     fixed.length > 0 ||
-    !blockers.some((a) => kindOf(a) && kindOf(a) !== "link");
+    !blockers.some((a) => kindOf(a) && !ON_AGENT.includes(kindOf(a)));
   const checkButton = onCheck && showCheck && (
     <Button
       size="small"
@@ -381,6 +395,34 @@ export default function ReadyToRun({
           sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
         >
           Fix with builder chat
+        </Button>
+      );
+    /* A URL in the agent's own code: a new version of the agent fixes it —
+       its Versions tab, where Upload / Sync saves the next one. Back
+       returns to this run plan. */
+    if (kind === "code" && (fixKit?.agent?.key || onFix))
+      return (
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() =>
+            fixKit?.agent?.key
+              ? navigate(
+                  connectedAgentPath(agentIdOf(fixKit.agent.key), "versions"),
+                  {
+                    state: {
+                      from: "environment",
+                      envId,
+                      back: `${location.pathname}${location.search}`,
+                      backLabel: "Back to run plan",
+                    },
+                  },
+                )
+              : onFix(a.fixRow)
+          }
+          sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+        >
+          {CODE_FIX.action}
         </Button>
       );
     if (kind === "link" && onFix)
@@ -458,6 +500,7 @@ export default function ReadyToRun({
                 </Typography>
                 <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                   {lower(firstSentence(detail))}
+                  {kind === "code" ? ` · ${CODE_FIX.note}` : ""}
                   {n
                     ? ` · blocks ${n === report.scope?.requested && n > 1 ? `all ${n}` : n}`
                     : ""}
@@ -548,6 +591,8 @@ export default function ReadyToRun({
                             Save and re-check
                           </Button>
                         </Stack>
+                      ) : kind === "code" ? (
+                        CODE_FIX.fix
                       ) : (
                         shortFixLabel(fixLabelOf(r))
                       ),

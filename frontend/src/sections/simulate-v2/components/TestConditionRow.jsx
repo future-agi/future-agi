@@ -2,12 +2,26 @@ import PropTypes from "prop-types";
 import { useState } from "react";
 import { Button, MenuItem, Stack, TextField, Typography } from "@mui/material";
 import {
-  COMMIT_POINTS,
+  CALLS,
   CONDITIONS,
   conditionLabelOf,
   conditionSupportOf,
-  takesCommitPoint,
+  isRetiredKind,
+  kindLabelOf,
+  normalizeCondition,
 } from "../_mock/testConditions";
+
+/* What each kind does to the call, in one line under the picker. */
+const KIND_NOTE = {
+  timeout:
+    "The call never runs. The agent sees a timeout and nothing has changed.",
+  after_commit:
+    "The call runs and a write lands, but the agent never gets the answer. A retry that writes twice fails.",
+  unavailable: "The tool can't be reached at all — every attempt fails fast.",
+  error: "The tool answers, with an error instead of a result.",
+  permission:
+    "The tool refuses until someone approves — the agent has to ask for it.",
+};
 
 /*
   One scenario's tool behaviour: none, or one tool it uses misbehaving on
@@ -21,13 +35,23 @@ export default function TestConditionRow({
   locked,
   onChange,
 }) {
-  const current = row.testCondition || null;
+  const current = normalizeCondition(row.testCondition);
   const [editing, setEditing] = useState(false);
   const [tool, setTool] = useState(current?.tool || tools[0] || "");
   const [kind, setKind] = useState(current?.kind || CONDITIONS[0].kind);
-  const [commit, setCommit] = useState(current?.commit || "before");
+  /* "first" | "every" | "nth", with the number kept beside it. */
+  const [call, setCall] = useState(
+    typeof current?.call === "number" ? "nth" : current?.call || "first",
+  );
+  const [nth, setNth] = useState(
+    typeof current?.call === "number" ? String(current.call) : "2",
+  );
   const support = conditionSupportOf(env, envState);
-  const pointed = takesCommitPoint(tool, kind);
+  /* A kind saved before the five: shown as it was, not offered again. */
+  const retired = isRetiredKind(kind);
+  const n = Number(nth);
+  const nthOk = Number.isInteger(n) && n >= 2 && n <= 99;
+  const savedCall = call === "nth" ? n : call;
 
   if (!editing)
     return (
@@ -64,10 +88,17 @@ export default function TestConditionRow({
 
   return (
     <Stack spacing={0.75}>
-      <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1}
+        flexWrap="wrap"
+        useFlexGap
+      >
         <TextField
           select
           size="small"
+          label="Tool"
           value={tool}
           onChange={(e) => setTool(e.target.value)}
           sx={{ minWidth: 180 }}
@@ -81,40 +112,64 @@ export default function TestConditionRow({
         <TextField
           select
           size="small"
+          label="Condition"
           value={kind}
           onChange={(e) => setKind(e.target.value)}
-          sx={{ minWidth: 180 }}
+          sx={{ minWidth: 220 }}
+          SelectProps={{
+            renderValue: (v) =>
+              isRetiredKind(v)
+                ? `${kindLabelOf(v)} (no longer offered)`
+                : kindLabelOf(v),
+          }}
         >
           {CONDITIONS.map((c) => (
             <MenuItem key={c.kind} value={c.kind}>
               {c.label}
             </MenuItem>
           ))}
+          {retired && (
+            <MenuItem value={kind} disabled>
+              {`${kindLabelOf(kind)} (no longer offered)`}
+            </MenuItem>
+          )}
         </TextField>
-        {pointed && (
+        <TextField
+          select
+          size="small"
+          label="Which call"
+          value={call}
+          onChange={(e) => setCall(e.target.value)}
+          sx={{ minWidth: 150 }}
+        >
+          {CALLS.map((c) => (
+            <MenuItem key={c.id} value={c.id}>
+              {c.label}
+            </MenuItem>
+          ))}
+        </TextField>
+        {call === "nth" && (
           <TextField
-            select
             size="small"
-            value={commit}
-            onChange={(e) => setCommit(e.target.value)}
-            sx={{ minWidth: 200 }}
-          >
-            {COMMIT_POINTS.map((c) => (
-              <MenuItem key={c.id} value={c.id}>
-                {c.label}
-              </MenuItem>
-            ))}
-          </TextField>
+            type="number"
+            label="Call number"
+            value={nth}
+            onChange={(e) => setNth(e.target.value)}
+            error={!nthOk}
+            inputProps={{ min: 2, max: 99, "aria-label": "Call number" }}
+            sx={{ width: 110 }}
+          />
         )}
         <Button
           size="small"
           variant="contained"
           color="primary"
-          disabled={!tool}
+          disabled={!tool || retired || (call === "nth" && !nthOk)}
+          title={retired ? "Pick one of the conditions on offer" : ""}
           onClick={() => {
             onChange({
               ...row,
-              testCondition: { tool, kind, ...(pointed && { commit }) },
+              testCondition: { tool, kind, call: savedCall },
             });
             setEditing(false);
           }}
@@ -142,13 +197,19 @@ export default function TestConditionRow({
           Cancel
         </Button>
       </Stack>
-      {pointed && (
-        <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-          {commit === "after"
-            ? "The write lands, but the agent only sees a timeout. A retry that creates a second record fails."
-            : "The write never lands. The agent sees a timeout and nothing has changed."}
-        </Typography>
-      )}
+      <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+        {retired
+          ? "This condition is no longer offered — pick one of the five to save."
+          : `${KIND_NOTE[kind] || ""} ${
+              call === "every"
+                ? "Every call to it fails this way."
+                : call === "nth"
+                  ? nthOk
+                    ? `Calls before number ${n} behave normally.`
+                    : "Call number is 2 or more."
+                  : "Only the first call fails; later ones behave normally."
+            }`.trim()}
+      </Typography>
     </Stack>
   );
 }

@@ -27,7 +27,6 @@ import {
   MODALITIES,
   BEHAVIOURS,
   FALLBACKS,
-  ACTOR_KINDS,
   LOUDNESS,
   VOICE_GENDERS,
   VOICE_AGES,
@@ -36,6 +35,7 @@ import {
   SIDES,
   sideOf,
   roleOf,
+  mayApprove,
   callerKindsFor,
   arrivalsFor,
   worldActionsOf,
@@ -114,7 +114,7 @@ const permissionConflictsOf = (form, actions) => {
       fix: "Remove",
       apply: (f) => ({ ...f, actions: f.actions.filter((x) => x !== t) }),
     }));
-  if (form.canApprove && form.kind === "external-agent")
+  if (form.canApprove && !mayApprove(form))
     out.push({
       id: "approve-external",
       text: `${who} belongs to another company, so its "approved" can't authorise a change in this world.`,
@@ -228,9 +228,11 @@ function ActorForm({
     (s) => s.inEnv && !s.archived,
   );
   const others = cast.filter((a) => a.id !== actor?.id);
-  const kinds = caller
-    ? callerKindsFor(voiceEnv ? "voice" : "chat")
-    : ACTOR_KINDS.filter((k) => k.id !== "sub-agent");
+  /* How a caller-side actor joins the call. A world actor has no kind to
+     pick — it did nothing in a run (#23); what they may do is the actions
+     and Can approve below. */
+  const joins = caller ? callerKindsFor(voiceEnv ? "voice" : "chat") : [];
+  const approvable = mayApprove(form);
 
   const onName = (e) => {
     const name = e.target.value;
@@ -375,32 +377,27 @@ function ActorForm({
             ))}
           </TextField>
         )}
-        <TextField
-          select
-          size="small"
-          label="Kind"
-          value={form.kind}
-          onChange={(e) => {
-            const kind = e.target.value;
-            setForm((f) => ({
-              ...f,
-              kind,
-              ...(kind === "approver" && { canApprove: true }),
-            }));
-          }}
-          fullWidth
-        >
-          {kinds.map((k) => (
-            <MenuItem key={k.id} value={k.id} sx={{ display: "block" }}>
-              <Typography sx={{ typography: "s2", fontWeight: 600 }}>
-                {k.label}
-              </Typography>
-              <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
-                {k.note}
-              </Typography>
-            </MenuItem>
-          ))}
-        </TextField>
+        {caller && (
+          <TextField
+            select
+            size="small"
+            label="How they join"
+            value={form.kind}
+            onChange={set("kind")}
+            fullWidth
+          >
+            {joins.map((k) => (
+              <MenuItem key={k.id} value={k.id} sx={{ display: "block" }}>
+                <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+                  {k.label}
+                </Typography>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {k.note}
+                </Typography>
+              </MenuItem>
+            ))}
+          </TextField>
+        )}
         <TextField
           size="small"
           label="Name"
@@ -495,7 +492,7 @@ function ActorForm({
             <TextField
               select
               size="small"
-              label="When they enter"
+              label="When they come in"
               value={form.entry}
               onChange={set("entry")}
               fullWidth
@@ -578,7 +575,7 @@ function ActorForm({
 
         {!caller && (
           <Box>
-            <Label>What they&apos;re allowed to do</Label>
+            <Label>Actions they may take</Label>
             {worldActions.length === 0 && unknown.length === 0 ? (
               <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
                 This environment has no actions yet — add tools on the Tools
@@ -632,22 +629,33 @@ function ActorForm({
                 ))}
               </Stack>
             )}
-            <FormControlLabel
-              control={
-                <Switch
-                  size="small"
-                  checked={form.canApprove}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, canApprove: e.target.checked }))
-                  }
-                />
+            {/* Another company's agent can't authorise a change here, so
+                the switch stays off for it (a saved "on" shows as a conflict). */}
+            <Tooltip
+              arrow
+              placement="top-start"
+              title={
+                approvable || form.canApprove
+                  ? ""
+                  : "Another company's agent — its \"approved\" can't authorise a change in this world."
               }
-              label={
-                <Typography sx={{ typography: "s2" }}>
-                  Can approve requests
-                </Typography>
-              }
-            />
+            >
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={form.canApprove}
+                    disabled={!approvable && !form.canApprove}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, canApprove: e.target.checked }))
+                    }
+                  />
+                }
+                label={
+                  <Typography sx={{ typography: "s2" }}>Can approve</Typography>
+                }
+              />
+            </Tooltip>
             {form.canApprove && (
               <Stack spacing={1.25} sx={{ mt: 1 }}>
                 <TextField

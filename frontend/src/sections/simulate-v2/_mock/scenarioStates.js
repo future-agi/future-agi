@@ -34,6 +34,8 @@ import {
   failedAdmissionGate,
 } from "./admissionGates";
 import { backForAgentOf, staleForAgentOf } from "./decoupled";
+import { envSnapshotsOf } from "./envSnapshot";
+import { stateReasonOf } from "./scenarioStateReasons";
 
 /* Outdated is the one state that earns colour — the existing red, used
    sparingly. Everything else stays neutral. */
@@ -156,10 +158,9 @@ export const ruleChangesOnFlow = (row, { env, envState, tools } = {}) => {
  * agentLabel }.
  */
 export const scenarioStateFor = (row, status, ctx = {}) => {
-  const raw = baseStateFor(row, status, ctx);
-  const base = raw;
+  const base = baseStateFor(row, status, ctx);
   /* Never proved, but saved and still runnable: Kept as written. */
-  const state =
+  const keptState =
     base.id === "recheck" &&
     base.canRun !== false &&
     !row?.provedAt &&
@@ -175,6 +176,18 @@ export const scenarioStateFor = (row, status, ctx = {}) => {
               : "Kept as written: no wrong-way example to prove the check can fail.",
         }
       : base;
+  /* The backend's own sentence for why, shown verbatim — every screen that
+     reads `why` gets it. A restore after a save removed it says its own. */
+  const reasonKind =
+    keptState.id === "kept"
+      ? "kept"
+      : keptState.label === "Not proved" && !keptState.removedIn
+        ? "notProved"
+        : null;
+  const reason = reasonKind ? stateReasonOf(row, reasonKind) : null;
+  const state = reason
+    ? { ...keptState, why: reason, reasonFromBackend: true }
+    : keptState;
   /* Blocked on an earlier agent version, and its tool is back: say so on
      the row, with the history it kept. */
   if (
@@ -200,6 +213,21 @@ const baseStateFor = (row, status, ctx = {}) => {
       why: archived.note
         ? `Archived by hand — ${archived.note.replace(/\.$/, "")}.`
         : "Archived by hand. Restore it to run and count it again.",
+    };
+  }
+  /* Restored after a save had already removed it: the proof it carried is
+     of a set it left, so it is Not proved until validated again. */
+  const removedIn = removedInVersionOf(row, ctx);
+  if (removedIn) {
+    return {
+      id: "recheck",
+      ...SCENARIO_STATES.recheck,
+      note: "restored after a save removed it — validate it again",
+      canRun: false,
+      correct: null,
+      proof: status,
+      removedIn,
+      why: `Restored after it was removed in ${removedIn} — prove it again before it counts.`,
     };
   }
   /* A proposal nobody has reviewed or added isn't validated yet: Draft. */
@@ -329,13 +357,70 @@ export const archiveScenario = (row, note) => {
   };
 };
 
+/**
+ * Restore an archived scenario. Counted, so the suite version keeps climbing
+ * — restoring is a change too.
+ *
+ * What it comes back as depends on whether a save already removed it:
+ *   · still in the saved set (archived, nothing saved since) — it comes
+ *     straight back with its proof: "Restored. It runs again." (handover)
+ *   · a save already dropped it from the set — Not proved, "Restored after
+ *     it was removed in {version}", until it is validated again.
+ * Which one is read at render time (`removedInVersionOf`), from when it was
+ * archived against the versions saved since; `restoredFrom` keeps that.
+ */
 export const restoreScenario = (row) => {
-  const { retired, archived, ...rest } = row;
-  /* Counted so the suite version keeps climbing — restoring is a change too.
-     It comes back Not proved: validate it to run it (handover, 20 Nov). */
-  /* The saved set still holds it, so it comes straight back with its
-     proof: "Restored. It runs again." (handover). */
-  return { ...rest, restores: (row.restores || 0) + 1 };
+  const { retired, archived, archivedAt, stateReason, ...rest } = row;
+  const was = archivedOf(row);
+  return {
+    ...rest,
+    restores: (row.restores || 0) + 1,
+    restoredFrom: {
+      at: new Date().toISOString(),
+      archivedAt:
+        (typeof was === "object" && was?.at) ||
+        archivedAt ||
+        retired?.at ||
+        null,
+      removedIn: row.removedInVersion || null,
+    },
+  };
+};
+
+const ms = (iso) => Date.parse(iso || "") || 0;
+
+/**
+ * The saved version that dropped a restored scenario from the set — "scenarios
+ * v4" or "env v3 · scenarios v5" — or null when nothing was saved between the
+ * archive and the restore (it never left the saved set), or when it has been
+ * proved again since the restore.
+ *
+ * Versions don't list their scenario ids, so "removed by a save" is read from
+ * time: the first snapshot made at or after the archive and before the
+ * restore. An explicit `row.removedInVersion` wins.
+ */
+export const removedInVersionOf = (row, { env, envState } = {}) => {
+  const from = row?.restoredFrom;
+  if (!from || archivedOf(row)) return null;
+  const restoredAt = ms(from.at);
+  const provedSince = Math.max(
+    ms(row.provedAt),
+    row.validation?.pass ? ms(row.validation.at) : 0,
+  );
+  if (restoredAt && provedSince > restoredAt) return null;
+  if (from.removedIn || row.removedInVersion)
+    return from.removedIn || row.removedInVersion;
+  const archivedAt = ms(from.archivedAt);
+  if (!archivedAt || !env || !envState) return null;
+  const snap = envSnapshotsOf(env, envState).find(
+    (s) =>
+      Math.max(s.endMs || 0, ms(s.at)) >= archivedAt &&
+      (!restoredAt || (s.startMs || ms(s.at)) < restoredAt),
+  );
+  if (!snap) return null;
+  return snap.scenChanged && !snap.envChanged
+    ? `scenarios ${snap.scenLabel}`
+    : snap.name;
 };
 
 /** Live rows — the ones a run takes and the counts mean. */
@@ -352,7 +437,9 @@ export const reproveScenarios = (rows, { env, envState, toolsOf }) =>
       envState,
       tools: toolsOf ? toolsOf(rows[i]) : [],
     });
-    const done = { ...r, subGoalsUnproved: false };
+    /* Proved again: a restore after a save removed it is answered. */
+    const { restoredFrom, ...proved } = r;
+    const done = { ...proved, subGoalsUnproved: false };
     return flow.length
       ? {
           ...done,

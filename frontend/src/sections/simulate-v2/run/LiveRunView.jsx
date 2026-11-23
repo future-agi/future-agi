@@ -2460,11 +2460,11 @@ function TaskRow({ task, active, stale = null, onClick }) {
             >
               {scenarioTitle(task.title) || task.name}
             </Typography>
-            {/* Marked critical — information for the reader, never a gate. */}
+            {/* Marked must pass — reported on its own; never fails or stops the run. */}
             {task.critical && (
               <Tooltip
                 arrow
-                title={`Critical scenario${task.blockerReason ? ` — ${task.blockerReason}` : ""}. Counted in the run summary; it blocks nothing.`}
+                title={`Must pass${task.blockerReason ? ` — ${task.blockerReason}` : ""}. Reported on its own in every run, and an Epoch can't ship a change that breaks it. The run never fails or stops because of it.`}
               >
                 <Box sx={{ display: "flex", flexShrink: 0 }}>
                   <Iconify

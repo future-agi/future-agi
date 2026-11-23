@@ -41,6 +41,11 @@ import {
   rejectedNote,
 } from "../_mock/addScenarios";
 import { asProposal } from "../_mock/scenarioSources";
+import {
+  VALIDATE_MS,
+  validatingOf,
+  validatingRunBlock,
+} from "../_mock/validating";
 import { currentUser } from "../_mock/scenarioProvenance";
 import { getEnvironment } from "../_mock/environments";
 import { getSurface } from "../_mock/surfaces";
@@ -1395,12 +1400,20 @@ export default function EnvironmentWorkspace() {
   /* Any blocking gap holds the run — readiness covers the common ones; the
      inbox may hold others (a Live tool with no safe target, consent). */
   const firstBlockingGap = allGaps.find((g) => g.status === "blocking");
+  /* A Validate in progress holds every run until it finishes. One that has
+     had its time is done (its result lands on the Scenarios tab), so a run
+     isn't held by a tab nobody went back to. */
+  const validatingNow = validatingOf(envState);
+  const validateHolds =
+    !!validatingNow &&
+    Date.now() - (Date.parse(validatingNow.startedAt) || 0) < VALIDATE_MS;
   const runBlockedReason = (() => {
     /* An older version is read-only — runs go on the version in use. */
     if (!gates.canRun) return gates.runReason;
     if (viewingOlder) return "Back to current to run";
     if (versionBuilding)
       return `Environment ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)} is building — runs start when ready`;
+    if (validateHolds) return validatingRunBlock(validatingNow);
     if (!readiness.ready) return readiness.reason;
     if (firstBlockingGap) return `${firstBlockingGap.title} — see Needs input`;
     if (runnable === 0) {
@@ -1416,7 +1429,8 @@ export default function EnvironmentWorkspace() {
     runnable > 0 &&
     !firstBlockingGap &&
     !viewingOlder &&
-    !versionBuilding;
+    !versionBuilding &&
+    !validateHolds;
 
   /*
     The one thing standing between this environment and a run, as a banner
