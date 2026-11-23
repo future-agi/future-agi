@@ -24,6 +24,7 @@ from simulate.services.harness_readiness.catalogue import (
 )
 from simulate.services.harness_readiness.evidence import (
     Evidence,
+    cancel_connection,
     connection,
     hidden_material,
     observed,
@@ -271,9 +272,12 @@ def rows(
             certified=evidence.source == "pair_certificate"
             and stale != "harness_version",
         )
-        row["consequence"] = consequence(
-            row, connection(pairing.runtime), provider_label(pairing.runtime)
+        where = (
+            cancel_connection(pairing.runtime)
+            if capability.id == "cancel"
+            else connection(pairing.runtime)
         )
+        row["consequence"] = consequence(row, where, provider_label(pairing.runtime))
         rows.append(row)
     return rows
 
@@ -690,8 +694,6 @@ def consequence(
         and where in ("remote", "provider")
     ):
         return "The agent runs on its own side and its start checks passed, so every case can begin"
-    if row["id"] == "cancel" and provider == "LiveKit":
-        where = "sandbox"
     if row["id"] == "cancel":
         if row["status"] == "supported":
             return (
@@ -699,7 +701,7 @@ def consequence(
             )
         if row["reason_code"] == "cleanup_failed":
             return _CANCEL_CLEANUP_FAILED
-        if where in (None, "provider"):
+        if where is None or where == "provider":
             key = (
                 row["reason_code"]
                 if row["reason_code"] in _CANCEL_PROVIDER

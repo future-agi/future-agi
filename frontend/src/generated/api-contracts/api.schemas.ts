@@ -27233,6 +27233,10 @@ export interface RunStopApi {
   confirmed_by: RunStopApiConfirmedBy;
   /** Why the provider could not be checked, when confirmed_by is provider_unchecked. */
   reason: RunStopApiReason;
+  /** How long the provider check waits for open calls to end. */
+  check_window_minutes: number;
+  /** How long a stop stays unverified before it reads cleanup_failed. */
+  cleanup_grace_minutes: number;
 }
 
 export interface TestExecutionItemResponseApi {

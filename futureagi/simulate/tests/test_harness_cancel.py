@@ -6,7 +6,12 @@ import pytest
 import requests
 from django.utils import timezone
 
-from simulate.models import HostedHarnessJob
+from simulate.models import (
+    CallExecution,
+    HostedHarnessExecution,
+    HostedHarnessJob,
+    HostedHarnessReceipt,
+)
 from simulate.services import harness_cancel
 from simulate.services.harness_cancel import (
     Confirmation,
@@ -18,12 +23,17 @@ from simulate.services.harness_cancel import (
     provider_connector,
     record_confirmation,
     record_overdue_cleanup_failure,
+    run_call_ids,
     stop_summaries,
     stop_summary,
+    treated_as_sandbox,
 )
 from simulate.services.harness_provider import serialize_job
 from simulate.services.phone_telephony import HostedPhoneRoomCleanupError
 from simulate.tasks.hosted_harness_cancel import confirm_hosted_harness_provider_cancel
+from simulate.tests.test_cancelled_call_journey import (  # noqa: F401 - fixture
+    running_run as running_run,
+)
 from simulate.tests.test_harness_agent_versions import (  # noqa: F401 - fixture
     scheduled as scheduled,
 )
@@ -93,6 +103,66 @@ class TestConnector:
         self, agent, expected
     ):
         assert provider_connector({"agent": agent}) == expected
+
+    @pytest.mark.parametrize(
+        ("connector", "expected"),
+        [("livekit", True), (" LiveKit ", True), ("vapi", False), (None, False)],
+    )
+    def test_only_a_livekit_agent_is_treated_as_a_sandbox_agent(
+        self, connector, expected
+    ):
+        assert treated_as_sandbox(connector) is expected
+
+
+class TestRunCallIds:
+    def _receive(self, run, attempt, execution, call_id):
+        CallExecution.no_workspace_objects.filter(
+            id=execution.call_execution_id
+        ).update(customer_call_id=call_id)
+        HostedHarnessReceipt.no_workspace_objects.create(
+            job=run,
+            attempt=attempt,
+            scenario=execution.source_scenario,
+            execution=execution,
+            attempt_number=attempt.attempt_number,
+            digest="sha256:" + "0" * 64,
+            status="completed",
+            body={},
+        )
+
+    def test_every_call_received_with_its_provider_id_gives_the_ids(self, running_run):
+        run, attempt = running_run
+        executions = HostedHarnessExecution.no_workspace_objects.filter(job=run)
+        for number, execution in enumerate(executions):
+            self._receive(run, attempt, execution, f"call-{number}")
+
+        assert sorted(run_call_ids(run)) == ["call-0", "call-1"]
+
+    def test_a_call_still_without_a_receipt_falls_back_to_the_time_window(
+        self, running_run
+    ):
+        run, attempt = running_run
+        first, _ = HostedHarnessExecution.no_workspace_objects.filter(job=run)
+        self._receive(run, attempt, first, "call-0")
+
+        assert run_call_ids(run) is None
+
+    def test_a_received_call_without_a_provider_id_falls_back(self, running_run):
+        run, attempt = running_run
+        for execution in HostedHarnessExecution.no_workspace_objects.filter(job=run):
+            self._receive(run, attempt, execution, None)
+
+        assert run_call_ids(run) is None
+
+    def test_a_stale_id_from_an_earlier_attempt_without_a_receipt_falls_back(
+        self, running_run
+    ):
+        run, _ = running_run
+        CallExecution.no_workspace_objects.filter(
+            hosted_harness_execution__job=run
+        ).update(customer_call_id="old-call")
+
+        assert run_call_ids(run) is None
 
 
 class TestConfirmCancel:
@@ -307,6 +377,32 @@ class TestVapiCalls:
         ):
             assert provider_calls(job) is ProviderCalls.ACTIVE
 
+    @pytest.mark.parametrize(
+        ("statuses", "outcome"),
+        [
+            (["ended", "ended"], ProviderCalls.ENDED),
+            (["ended", "in-progress"], ProviderCalls.ACTIVE),
+        ],
+    )
+    def test_known_call_ids_are_read_one_by_one_not_by_time_window(
+        self, job, statuses, outcome
+    ):
+        calls = iter(_response({"status": status}) for status in statuses)
+        with (
+            patch.object(harness_cancel, "run_call_ids", return_value=["c1", "c2"]),
+            patch.object(
+                harness_cancel, "_job_secrets", return_value={"VAPI_API_KEY": "k"}
+            ),
+            patch.object(
+                harness_cancel.requests, "get", side_effect=lambda *a, **k: next(calls)
+            ) as get,
+        ):
+            assert provider_calls(job) is outcome
+
+        urls = [call.args[0] for call in get.call_args_list]
+        assert urls == ["https://api.vapi.ai/call/c1", "https://api.vapi.ai/call/c2"]
+        assert all("params" not in call.kwargs for call in get.call_args_list)
+
 
 class TestRetellCalls:
     @pytest.fixture
@@ -359,6 +455,30 @@ class TestRetellCalls:
         read, _ = self._read(job, body)
 
         assert read is outcome
+
+    @pytest.mark.parametrize(
+        ("status", "outcome"),
+        [("ended", ProviderCalls.ENDED), ("ongoing", ProviderCalls.ACTIVE)],
+    )
+    def test_known_call_ids_are_read_one_by_one_not_by_time_window(
+        self, job, status, outcome
+    ):
+        with (
+            patch.object(harness_cancel, "run_call_ids", return_value=["call-9"]),
+            patch.object(
+                harness_cancel, "_job_secrets", return_value={"RETELL_API_KEY": "k"}
+            ),
+            patch.object(
+                harness_cancel.requests,
+                "get",
+                return_value=_response({"call_status": status}),
+            ) as get,
+            patch.object(harness_cancel.requests, "post") as post,
+        ):
+            assert provider_calls(job) is outcome
+
+        assert get.call_args.args[0] == "https://api.retellai.com/v2/get-call/call-9"
+        post.assert_not_called()
 
 
 class TestLiveKitRooms:
@@ -633,6 +753,8 @@ class TestReadApi:
                 "confirmed_at": job.cancel_confirmed_at.isoformat(),
                 "confirmed_by": "sandbox_absent",
                 "reason": None,
+                "check_window_minutes": 5,
+                "cleanup_grace_minutes": 10,
             }
         }
         assert stop_summaries([]) == {}

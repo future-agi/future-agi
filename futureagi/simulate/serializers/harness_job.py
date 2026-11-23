@@ -1341,3 +1341,9 @@ class RunStopSerializer(serializers.Serializer):
         help_text="Why the provider could not be checked, when confirmed_by is"
         " provider_unchecked.",
     )
+    check_window_minutes = serializers.IntegerField(
+        help_text="How long the provider check waits for open calls to end."
+    )
+    cleanup_grace_minutes = serializers.IntegerField(
+        help_text="How long a stop stays unverified before it reads cleanup_failed."
+    )

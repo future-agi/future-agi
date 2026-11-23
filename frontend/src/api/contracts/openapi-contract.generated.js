@@ -137694,6 +137694,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "confirmed_at",
         "confirmed_by",
         "reason",
+        "check_window_minutes",
+        "cleanup_grace_minutes",
       ],
       type: "object",
       properties: {
@@ -137758,6 +137760,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "too_many_calls",
           ],
           "x-nullable": true,
+        },
+        check_window_minutes: {
+          title: "Check window minutes",
+          description:
+            "How long the provider check waits for open calls to end.",
+          type: "integer",
+        },
+        cleanup_grace_minutes: {
+          title: "Cleanup grace minutes",
+          description:
+            "How long a stop stays unverified before it reads cleanup_failed.",
+          type: "integer",
         },
       },
       "x-nullable": true,

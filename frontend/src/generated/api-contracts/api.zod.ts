@@ -60258,6 +60258,16 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
               .describe(
                 "Why the provider could not be checked, when confirmed_by is provider_unchecked.",
               ),
+            check_window_minutes: zod
+              .number()
+              .describe(
+                "How long the provider check waits for open calls to end.",
+              ),
+            cleanup_grace_minutes: zod
+              .number()
+              .describe(
+                "How long a stop stays unverified before it reads cleanup_failed.",
+              ),
           })
           .optional()
           .describe(
@@ -65675,6 +65685,14 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
           ])
           .describe(
             "Why the provider could not be checked, when confirmed_by is provider_unchecked.",
+          ),
+        check_window_minutes: zod
+          .number()
+          .describe("How long the provider check waits for open calls to end."),
+        cleanup_grace_minutes: zod
+          .number()
+          .describe(
+            "How long a stop stays unverified before it reads cleanup_failed.",
           ),
       })
       .optional()

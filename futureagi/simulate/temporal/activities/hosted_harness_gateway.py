@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.db import DatabaseError
 from django.utils import timezone
 from temporalio import activity
 
@@ -137,7 +138,7 @@ async def cancel_hosted_harness_attempt(
         )
         try:
             await _run_db(record_overdue_cleanup_failure, input.attempt_id)
-        except Exception:
+        except DatabaseError:
             activity.logger.exception(
                 "hosted harness cleanup failure not recorded; attempt_id=%s",
                 input.attempt_id,

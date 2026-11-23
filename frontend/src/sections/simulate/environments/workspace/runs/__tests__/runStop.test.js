@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { stopLiveLineOf, stopNoteOf, stopTipOf } from "../runStop";
 
 const at = "2026-11-23T11:42:00Z";
+const windows = { check_window_minutes: 5, cleanup_grace_minutes: 10 };
 const vapi = (status, confirmed_by = null) => ({
+  ...windows,
   status,
   kind: "provider",
   provider: "Vapi",
@@ -49,6 +51,7 @@ describe("runStop", () => {
 
   it("says an agent at its own URL can't be confirmed", () => {
     const note = stopNoteOf({
+      ...windows,
       status: "requested",
       kind: "endpoint",
       provider: null,
@@ -58,8 +61,10 @@ describe("runStop", () => {
     expect(note.body).toMatch(/^This agent runs at its own URL/);
   });
 
-  it("says a cleanup that failed may leave the agent running", () => {
+  it("says a cleanup that failed may leave the agent running, after the backend's window", () => {
     const note = stopNoteOf({
+      ...windows,
+      cleanup_grace_minutes: 12,
       status: "cleanup_failed",
       kind: "sandbox",
       provider: null,
@@ -67,7 +72,7 @@ describe("runStop", () => {
       confirmed_by: "cleanup_failed",
     });
     expect(note.body).toBe(
-      "The stop wasn't confirmed after 10 minutes, so the agent may still be running. Finished trials are kept.",
+      "The stop wasn't confirmed after 12 minutes, so the agent may still be running. Finished trials are kept.",
     );
   });
 
@@ -84,6 +89,7 @@ describe("runStop", () => {
 
   it("words a LiveKit stop like a code agent's, confirmed by its room being gone", () => {
     const stop = {
+      ...windows,
       status: "confirmed",
       kind: "sandbox",
       provider: "LiveKit",

@@ -10,7 +10,12 @@ import structlog
 from django.db import transaction
 from django.utils import timezone
 
-from simulate.models import HostedHarnessAttempt, HostedHarnessJob
+from simulate.models import (
+    HostedHarnessAttempt,
+    HostedHarnessExecution,
+    HostedHarnessJob,
+)
+from simulate.serializers.harness_job import CONNECTOR_ALIASES, LIVEKIT_ALIASES
 
 logger = structlog.get_logger(__name__)
 
@@ -40,9 +45,9 @@ _TERMINAL = frozenset(
 )
 _SANDBOX_SOURCES = frozenset({"github", "archive"})
 _TARGET_FIELDS = {"vapi": "assistant_id", "retell": "agent_id"}
-_KEY_ALIASES = {"vapi": "VAPI_API_KEY", "retell": "RETELL_API_KEY"}
 _LIVEKIT = "livekit"
-_PROVIDER_CONNECTORS = frozenset({*_TARGET_FIELDS, _LIVEKIT})
+_SANDBOX_LIKE_CONNECTORS = frozenset({_LIVEKIT})
+_PROVIDER_CONNECTORS = frozenset({*_TARGET_FIELDS, *_SANDBOX_LIKE_CONNECTORS})
 _PROVIDER_NAMES = {
     "vapi": "Vapi",
     "retell": "Retell",
@@ -50,6 +55,7 @@ _PROVIDER_NAMES = {
     "phone": "the phone line",
 }
 _VAPI_CALLS_URL = "https://api.vapi.ai/call"
+_RETELL_CALL_URL = "https://api.retellai.com/v2/get-call"
 _VAPI_WEB_CALL = "vapi.websocketCall"
 _VAPI_ENDED = frozenset({"ended"})
 _VAPI_PAGE_LIMIT = 100
@@ -57,6 +63,7 @@ _RETELL_CALLS_URL = "https://api.retellai.com/v3/list-calls"
 _RETELL_ENDED = frozenset({"ended", "not_connected", "error"})
 _RETELL_PAGE_LIMIT = 1000
 _REQUEST_TIMEOUT_SECONDS = 10
+_CALL_ID_LOOKUP_LIMIT = 25
 
 
 class ProviderCalls(StrEnum):
@@ -86,6 +93,12 @@ class RunStop(TypedDict):
     confirmed_at: str | None
     confirmed_by: str | None
     reason: str | None
+    check_window_minutes: int
+    cleanup_grace_minutes: int
+
+
+def treated_as_sandbox(connector: Any) -> bool:
+    return str(connector or "").strip().lower() in _SANDBOX_LIKE_CONNECTORS
 
 
 def is_unchecked(by: str | None) -> bool:
@@ -123,7 +136,7 @@ def stop_kind(payload: Mapping[str, Any]) -> str:
 
     source_kind = str((payload.get("source") or {}).get("kind") or "")
     connector = provider_connector(payload)
-    if source_kind in _SANDBOX_SOURCES or connector == _LIVEKIT:
+    if source_kind in _SANDBOX_SOURCES or treated_as_sandbox(connector):
         return "sandbox"
     if connector or uses_platform_phone_telephony(payload):
         return "provider"
@@ -140,22 +153,29 @@ def stop_summary(job: HostedHarnessJob) -> RunStop | None:
     payload = job.payload or {}
     kind = stop_kind(payload)
     connector = provider_connector(payload)
-    agent = payload.get("agent") if isinstance(payload.get("agent"), Mapping) else {}
+    agent = payload.get("agent")
+    named = agent.get("connector") if isinstance(agent, Mapping) else None
     by = job.cancel_confirmed_by or None
     reason = next((key for key, value in _UNCHECKED.items() if value == by), None)
-    return {
-        "status": cancel_status(job),
-        "kind": kind,
-        "provider": provider_name(agent.get("connector"))
-        if kind == "provider" or connector == _LIVEKIT
+    return RunStop(
+        status=cancel_status(job),
+        kind=kind,
+        provider=provider_name(named)
+        if kind == "provider" or treated_as_sandbox(connector)
         else None,
-        "requested_at": job.cancel_requested_at.isoformat(),
-        "confirmed_at": job.cancel_confirmed_at.isoformat()
+        requested_at=job.cancel_requested_at.isoformat(),
+        confirmed_at=job.cancel_confirmed_at.isoformat()
         if job.cancel_confirmed_at
         else None,
-        "confirmed_by": Confirmation.PROVIDER_UNCHECKED if reason else by,
-        "reason": reason,
-    }
+        confirmed_by=Confirmation.PROVIDER_UNCHECKED if reason else by,
+        reason=reason,
+        check_window_minutes=_minutes(PROVIDER_CHECK_WINDOW),
+        cleanup_grace_minutes=_minutes(CLEANUP_GRACE),
+    )
+
+
+def _minutes(window: timedelta) -> int:
+    return int(window.total_seconds() // 60)
 
 
 def stop_summaries(test_execution_ids: Iterable[Any]) -> dict[str, RunStop]:
@@ -169,7 +189,12 @@ def stop_summaries(test_execution_ids: Iterable[Any]) -> dict[str, RunStop]:
         "cancel_confirmed_at",
         "cancel_confirmed_by",
     )
-    return {str(job.test_execution_id): stop_summary(job) for job in jobs}
+    stops: dict[str, RunStop] = {}
+    for job in jobs:
+        stop = stop_summary(job)
+        if stop is not None:
+            stops[str(job.test_execution_id)] = stop
+    return stops
 
 
 def provider_connector(payload: Mapping[str, Any]) -> str | None:
@@ -239,7 +264,7 @@ def provider_calls(job: HostedHarnessJob) -> ProviderCalls:
     if connector is None:
         return ProviderCalls.UNKNOWN
     config = payload["agent"].get("config") or {}
-    if connector == _LIVEKIT:
+    if treated_as_sandbox(connector):
         return _livekit_rooms(job, config)
     target = str(config.get(_TARGET_FIELDS[connector]) or "").strip()
     attempt = HostedHarnessAttempt.no_workspace_objects.filter(
@@ -249,11 +274,19 @@ def provider_calls(job: HostedHarnessJob) -> ProviderCalls:
         return ProviderCalls.NO_TARGET
     if attempt is None:
         return ProviderCalls.UNKNOWN
-    api_key = _job_secrets(job).get(_KEY_ALIASES[connector])
+    api_key = _job_secrets(job).get(CONNECTOR_ALIASES[connector][0])
     if not api_key:
         return ProviderCalls.NO_KEY
-    reader = _vapi_calls if connector == "vapi" else _retell_calls
+    call_ids = run_call_ids(job)
     try:
+        if call_ids is not None:
+            by_id = _vapi_call_ended if connector == "vapi" else _retell_call_ended
+            return (
+                ProviderCalls.ENDED
+                if all(by_id(api_key, call_id) for call_id in call_ids)
+                else ProviderCalls.ACTIVE
+            )
+        reader = _vapi_calls if connector == "vapi" else _retell_calls
         return reader(api_key, target, attempt.created_at)
     except requests.HTTPError as error:
         if _key_rejected(error):
@@ -273,6 +306,19 @@ def provider_calls(job: HostedHarnessJob) -> ProviderCalls:
             error=type(error).__name__,
         )
         return ProviderCalls.ACTIVE
+
+
+def run_call_ids(job: HostedHarnessJob) -> list[str] | None:
+    rows = list(
+        HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
+            "call_execution__customer_call_id", "receipt__id"
+        )
+    )
+    if not rows or len(rows) > _CALL_ID_LOOKUP_LIMIT:
+        return None
+    if any(not call_id or receipt is None for call_id, receipt in rows):
+        return None
+    return [str(call_id) for call_id, _ in rows]
 
 
 def _key_rejected(error: requests.HTTPError) -> bool:
@@ -301,10 +347,11 @@ def _livekit_rooms(job: HostedHarnessJob, config: Mapping[str, Any]) -> Provider
         cleanup_livekit_rooms,
     )
 
+    url_alias, key_alias, secret_alias = LIVEKIT_ALIASES
     resolved = _job_secrets(job)
-    url = str(resolved.get("LIVEKIT_URL") or config.get("livekit_url") or "").strip()
-    api_key = str(resolved.get("LIVEKIT_API_KEY") or "").strip()
-    api_secret = str(resolved.get("LIVEKIT_API_SECRET") or "").strip()
+    url = str(resolved.get(url_alias) or config.get("livekit_url") or "").strip()
+    api_key = str(resolved.get(key_alias) or "").strip()
+    api_secret = str(resolved.get(secret_alias) or "").strip()
     if not (url and api_key and api_secret):
         return ProviderCalls.NO_KEY
     try:
@@ -343,7 +390,7 @@ def _vapi_calls(api_key: str, assistant_id: str, since: datetime) -> ProviderCal
         params={
             "assistantId": assistant_id,
             "createdAtGe": since.isoformat(),
-            "limit": _VAPI_PAGE_LIMIT,
+            "limit": str(_VAPI_PAGE_LIMIT),
         },
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=_REQUEST_TIMEOUT_SECONDS,
@@ -399,3 +446,25 @@ def _retell_calls(api_key: str, agent_id: str, since: datetime) -> ProviderCalls
     ):
         return ProviderCalls.ACTIVE
     return ProviderCalls.ENDED
+
+
+def _vapi_call_ended(api_key: str, call_id: str) -> bool:
+    response = requests.get(
+        f"{_VAPI_CALLS_URL}/{call_id}",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    call = response.json()
+    return isinstance(call, Mapping) and call.get("status") in _VAPI_ENDED
+
+
+def _retell_call_ended(api_key: str, call_id: str) -> bool:
+    response = requests.get(
+        f"{_RETELL_CALL_URL}/{call_id}",
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    call = response.json()
+    return isinstance(call, Mapping) and call.get("call_status") in _RETELL_ENDED

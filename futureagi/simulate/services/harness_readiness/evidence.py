@@ -650,7 +650,7 @@ def _reset(evidence: Evidence, runtime: HarnessAgentVersionRuntime | None) -> Re
     if (
         runtime is not None
         and not _started_in_sandbox(runtime)
-        and not _livekit(runtime)
+        and not _treated_as_sandbox(runtime)
     ):
         return Reading(
             "limited",
@@ -668,8 +668,10 @@ def _reset(evidence: Evidence, runtime: HarnessAgentVersionRuntime | None) -> Re
     return Reading("passed", evidence=seen)
 
 
-def _livekit(runtime: HarnessAgentVersionRuntime) -> bool:
-    return (runtime.agent_payload or {}).get("connector") == "livekit"
+def _treated_as_sandbox(runtime: HarnessAgentVersionRuntime) -> bool:
+    from simulate.services.harness_cancel import treated_as_sandbox
+
+    return treated_as_sandbox((runtime.agent_payload or {}).get("connector"))
 
 
 def _live_system(runtime: HarnessAgentVersionRuntime) -> bool:
@@ -692,6 +694,12 @@ def provider_label(runtime: HarnessAgentVersionRuntime | None) -> str | None:
     if runtime is None or connection(runtime) != "provider":
         return None
     return provider_name((runtime.agent_payload or {}).get("connector"))
+
+
+def cancel_connection(runtime: HarnessAgentVersionRuntime | None) -> str | None:
+    if runtime is not None and _treated_as_sandbox(runtime):
+        return "sandbox"
+    return connection(runtime)
 
 
 def connection(runtime: HarnessAgentVersionRuntime | None) -> str | None:
@@ -741,19 +749,15 @@ def _cancel(pairing: Pairing) -> Reading:
         {"check": "stop_requested", "result": stopped.isoformat()}
     ]
     confirmed_by = attempt.job.cancel_confirmed_by
+    confirmed_at = (attempt.job.cancel_confirmed_at or stopped).isoformat()
     if confirmed_by == HostedHarnessJob.CancelConfirmation.CLEANUP_FAILED:
-        seen.append(
-            {
-                "check": "cleanup_failed",
-                "result": attempt.job.cancel_confirmed_at.isoformat(),
-            }
-        )
+        seen.append({"check": "cleanup_failed", "result": confirmed_at})
         return Reading(
             "limited",
             "cleanup_failed",
             "The last Stop could not confirm that our test sandbox was removed",
             evidence=seen,
-            checked_at=attempt.job.cancel_confirmed_at.isoformat(),
+            checked_at=confirmed_at,
         )
     if attempt.cleanup_verified_at is None:
         return Reading(
@@ -768,19 +772,17 @@ def _cancel(pairing: Pairing) -> Reading:
     )
     if connection(pairing.runtime) != "sandbox":
         if confirmed_by == HostedHarnessJob.CancelConfirmation.PROVIDER_CALL_ENDED:
-            confirmed_at = attempt.job.cancel_confirmed_at.isoformat()
             seen.append({"check": "provider_call_ended", "result": confirmed_at})
             return Reading("passed", evidence=seen, checked_at=confirmed_at)
         if confirmed_by == HostedHarnessJob.CancelConfirmation.PROVIDER_CALL_OPEN:
-            gave_up = attempt.job.cancel_confirmed_at.isoformat()
-            seen.append({"check": confirmed_by, "result": gave_up})
+            seen.append({"check": confirmed_by, "result": confirmed_at})
             return Reading(
                 "limited",
                 confirmed_by,
                 "The last Stop ended our side; the provider did not confirm every"
                 " call ended",
                 evidence=seen,
-                checked_at=gave_up,
+                checked_at=confirmed_at,
             )
         if is_unchecked(confirmed_by):
             return Reading(

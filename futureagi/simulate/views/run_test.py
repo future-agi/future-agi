@@ -5837,7 +5837,9 @@ class RunTestExecutionsView(APIView):
             version_labels = run_version_labels(
                 [test_execution.id for test_execution in result_page]
             )
-            stops = stop_summaries(test_execution.id for test_execution in result_page)
+            stops = stop_summaries(
+                test_execution.id for test_execution in result_page or []
+            )
 
             for test_execution in result_page:
                 # Use annotated values instead of querying
