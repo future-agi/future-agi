@@ -900,13 +900,20 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     @action(detail=True, methods=["post"], url_path="sources/imports/prepare")
     def prepare_source_import(self, request, pk=None):
         """Capture authorized KB bytes and prepare a source review."""
-        from simulate.services.harness_sources import prepare_source_import
+        from simulate.services.harness_sources import (
+            prepare_source_import,
+            reprepare_environment_import,
+        )
 
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
         body = request.validated_data
+        if "import_ref" in body:
+            return Response(
+                reprepare_environment_import(request, job, body, body["expected_draft"])
+            )
         return Response(
             prepare_source_import(
                 request,
@@ -933,13 +940,24 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     )
     def prepare_source_upload(self, request, pk=None):
         """Capture one direct upload and prepare the same source review."""
-        from simulate.services.harness_sources import prepare_upload_import
+        from simulate.services.harness_sources import (
+            prepare_upload_import,
+            reprepare_environment_import,
+        )
 
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
         body = request.validated_data
+        expected_draft = {
+            "id": body.get("expected_draft_id"),
+            "revision": body["expected_draft_revision"],
+        }
+        if "import_ref" in body:
+            return Response(
+                reprepare_environment_import(request, job, body, expected_draft)
+            )
         return Response(
             prepare_upload_import(
                 job,
@@ -947,10 +965,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
                 target_table=body.get("target_table"),
                 purpose=body.get("purpose"),
                 expected_environment_version_id=body["expected_environment_version_id"],
-                expected_draft={
-                    "id": body.get("expected_draft_id"),
-                    "revision": body["expected_draft_revision"],
-                },
+                expected_draft=expected_draft,
             )
         )
 

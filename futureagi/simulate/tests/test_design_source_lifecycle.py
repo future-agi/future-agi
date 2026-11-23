@@ -111,6 +111,75 @@ def _request(user, workspace):
     )
 
 
+@pytest.mark.django_db
+def test_environment_file_survives_reload_through_repair_and_accept(
+    user, workspace, request, settings, alk_source_cli
+):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    from simulate.tests.test_harness_versioning_rollback import _built
+
+    settings.HARNESS_VERSIONING_ENABLED = True
+    request.getfixturevalue("_object_storage")
+    req = _request(user, workspace)
+    env = _built(user, workspace, "retained-source")
+    version = env.environment_version
+    version.documents["contract"]["data_schema"] = {
+        "other": {"other_id": "INTEGER"},
+        "orders": {"id": "TEXT", "amount": "INTEGER"},
+    }
+    version.save(update_fields=["documents"])
+    selectors = {
+        "expected_environment_version_id": str(version.id),
+        "expected_draft": {"id": None, "revision": 0},
+    }
+    first = harness_sources.prepare_upload_import(
+        env,
+        SimpleUploadedFile("orders.csv", b"id,amount\n001,25\n"),
+        purpose="seed_records",
+        **selectors,
+    )
+    assert first["state"] == "needs_repair" and first["draft_digest"] == ""
+    retained = reviews.get_review(req, first["import_ref"])
+    repaired = harness_sources.reprepare_environment_import(
+        req,
+        env,
+        {
+            **selectors,
+            "import_ref": retained["id"],
+            "expected_revision": retained["revision"],
+            "target_table": "orders",
+            "idempotency_key": "repair",
+        },
+        selectors["expected_draft"],
+    )
+    assert repaired["state"] == "ready"
+    preview = repaired["draft"]
+    source_id = preview["sources"][0]["pin"]["source_id"]
+    result = harness_sources.accept_source_import(
+        req,
+        env,
+        import_ref=repaired["import_ref"],
+        expected_revision=repaired["revision"],
+        expected_draft_digest=repaired["draft_digest"],
+        review={
+            "record_reviews": [
+                {
+                    "source_id": source_id,
+                    "visibility": "agent_visible",
+                    "fields": [
+                        item["mapping"]
+                        for item in preview["proposals"]["field_mappings"]
+                    ],
+                }
+            ]
+        },
+        **selectors,
+    )
+    assert result["accepted_revision"] == repaired["revision"]
+    assert result["snapshot_digest"].startswith("sha256:")
+
+
 def _create(request, key, **kwargs):
     serializer = HarnessDesignRequestSerializer(
         data={

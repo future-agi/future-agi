@@ -89,6 +89,22 @@ class HarnessSourceReviewCancelSerializer(StrictInputSerializer):
     )
 
 
+class HarnessSourceReviewReprepareSerializer(StrictInputSerializer):
+    expected_revision = serializers.IntegerField(min_value=1)
+    idempotency_key = serializers.CharField(max_length=128)
+    target_table = serializers.CharField(required=False, max_length=255)
+    schema_repairs = SourceSchemaRepairSerializer(
+        many=True, required=False, allow_empty=False, max_length=100
+    )
+
+    def validate(self, attrs):
+        if ("target_table" in attrs) == ("schema_repairs" in attrs):
+            raise serializers.ValidationError(
+                "Choose a destination table or provide schema repairs."
+            )
+        return attrs
+
+
 class HarnessSourceReviewAcceptSerializer(HarnessSourceReviewCancelSerializer):
     expected_draft_digest = serializers.RegexField(r"\Asha256:[0-9a-f]{64}\Z")
     expected_schema_digest = serializers.RegexField(r"\Asha256:[0-9a-f]{64}\Z")

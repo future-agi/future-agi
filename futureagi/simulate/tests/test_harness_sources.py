@@ -9,6 +9,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Files, KnowledgeBaseFile
+from simulate.services import harness_source_reviews as reviews
 from simulate.services import harness_sources
 from simulate.services.harness_versioning import archives, drafts, versions
 from simulate.services.hosted_harness import HostedHarnessError
@@ -259,7 +260,32 @@ def test_upload_prepare_keeps_csv_and_json_in_one_review(
     assert ambiguous["draft_digest"] == ""
     assert ambiguous["draft"]["destination_tables"] == ["customers", "orders"]
     assert not seen
-    prepared = upload("orders")
+    request = SimpleNamespace(
+        user=user, organization=user.organization, workspace=workspace, headers={}
+    )
+    reloaded = reviews.get_review(request, ambiguous["import_ref"])
+    args = {
+        "expected_revision": reloaded["revision"],
+        "idempotency_key": "choose-orders",
+        "target_table": "orders",
+    }
+    prepared = reviews.reprepare_review(request, reloaded["id"], **args)
+    assert prepared["id"] == reloaded["id"]
+    assert prepared["revision"] == reloaded["revision"] + 1
+    assert reviews.reprepare_review(request, reloaded["id"], **args) == prepared
+    with pytest.raises(HostedHarnessError, match="changed"):
+        reviews.reprepare_review(
+            request, reloaded["id"], **{**args, "target_table": "customers"}
+        )
+    other = _built(user, workspace, "source-other-environment")
+    with pytest.raises(HostedHarnessError, match="not found"):
+        reviews.reprepare_review(
+            request,
+            reloaded["id"],
+            environment=other,
+            expected_draft=drafts.NO_DRAFT,
+            **args,
+        )
     assert seen["destination_schema"] == {
         "fields": [{"name": "order_id", "data_type": "integer", "required": False}]
     }

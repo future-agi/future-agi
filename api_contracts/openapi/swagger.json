@@ -55352,6 +55352,28 @@
                 "description": "Capture one direct upload and prepare the same source review.",
                 "parameters": [
                     {
+                        "name": "import_ref",
+                        "in": "formData",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    {
+                        "name": "expected_revision",
+                        "in": "formData",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 1
+                    },
+                    {
+                        "name": "idempotency_key",
+                        "in": "formData",
+                        "required": false,
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1
+                    },
+                    {
                         "name": "expected_environment_version_id",
                         "in": "formData",
                         "required": true,
@@ -56768,6 +56790,55 @@
                         "required": true,
                         "schema": {
                             "$ref": "#/definitions/HarnessSourceReviewCancel"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceReviewRead"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-source-reviews/{id}/reprepare/": {
+            "post": {
+                "operationId": "simulate_api_harness-source-reviews_reprepare",
+                "description": "",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessSourceReviewReprepare"
                         }
                     }
                 ],
@@ -156959,11 +157030,26 @@
         "HarnessSourcePrepare": {
             "required": [
                 "expected_environment_version_id",
-                "expected_draft",
-                "selection"
+                "expected_draft"
             ],
             "type": "object",
             "properties": {
+                "import_ref": {
+                    "title": "Import ref",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
                 "expected_environment_version_id": {
                     "title": "Expected environment version id",
                     "type": "string",
@@ -159514,6 +159600,38 @@
                     "pattern": "\\Asha256:[0-9a-f]{64}$",
                     "minLength": 1,
                     "x-nullable": true
+                }
+            }
+        },
+        "HarnessSourceReviewReprepare": {
+            "required": [
+                "expected_revision",
+                "idempotency_key"
+            ],
+            "type": "object",
+            "properties": {
+                "expected_revision": {
+                    "title": "Expected revision",
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "idempotency_key": {
+                    "title": "Idempotency key",
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                },
+                "target_table": {
+                    "title": "Target table",
+                    "type": "string",
+                    "maxLength": 255,
+                    "minLength": 1
+                },
+                "schema_repairs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SourceSchemaRepair"
+                    }
                 }
             }
         },

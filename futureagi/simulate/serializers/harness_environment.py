@@ -1172,11 +1172,33 @@ class HarnessSourceDraftRefSerializer(StrictInputSerializer):
     revision = serializers.IntegerField(min_value=0)
 
 
-class HarnessSourcePrepareSerializer(StrictInputSerializer):
+class _SourcePrepareSerializer(StrictInputSerializer):
+    import_ref = serializers.UUIDField(required=False)
+    expected_revision = serializers.IntegerField(required=False, min_value=1)
+    idempotency_key = serializers.CharField(required=False, max_length=128)
     expected_environment_version_id = serializers.UUIDField()
     target_table = serializers.CharField(required=False, max_length=255)
+
+    def validate(self, attrs):
+        supplied = set(attrs) & {"import_ref", "expected_revision", "idempotency_key"}
+        if supplied and (len(supplied) != 3 or "target_table" not in attrs):
+            raise serializers.ValidationError(
+                "A repair requires import_ref, expected_revision, idempotency_key and target_table."
+            )
+        return attrs
+
+
+class HarnessSourcePrepareSerializer(_SourcePrepareSerializer):
     expected_draft = HarnessSourceDraftRefSerializer()
-    selection = HarnessSourceSelectionSerializer()
+    selection = HarnessSourceSelectionSerializer(required=False)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if ("selection" in attrs) == ("import_ref" in attrs):
+            raise serializers.ValidationError(
+                "Supply a Knowledge Base selection or repair an existing import."
+            )
+        return attrs
 
 
 class HarnessSourceFileListInspector(FieldInspector):
@@ -1200,9 +1222,7 @@ class HarnessSourceFileListInspector(FieldInspector):
         return NotHandled
 
 
-class HarnessSourceUploadPrepareSerializer(StrictInputSerializer):
-    expected_environment_version_id = serializers.UUIDField()
-    target_table = serializers.CharField(required=False, max_length=255)
+class HarnessSourceUploadPrepareSerializer(_SourcePrepareSerializer):
     expected_draft_id = serializers.UUIDField(required=False, allow_null=True)
     expected_draft_revision = serializers.IntegerField(min_value=0)
     purpose = serializers.ChoiceField(
@@ -1217,6 +1237,13 @@ class HarnessSourceUploadPrepareSerializer(StrictInputSerializer):
     )
 
     def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if "import_ref" in attrs:
+            if set(attrs) & {"file", "files", "purpose"}:
+                raise serializers.ValidationError(
+                    "Existing imports reuse their retained files and purposes."
+                )
+            return attrs
         file = attrs.pop("file", None)
         files = attrs.get("files")
         if (file is None) == (files is None):

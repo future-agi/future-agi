@@ -729,6 +729,7 @@ import type {
   HarnessSourceReviewCancelApi,
   HarnessSourceReviewCreateApi,
   HarnessSourceReviewReadApi,
+  HarnessSourceReviewReprepareApi,
   HarnessSourceSummaryApi,
   HarnessSourceUploadResponseApi,
   HarnessStartingRecordReworkApi,
@@ -66303,6 +66304,56 @@ export const simulateApiHarnessSourceReviewsCancel = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessSourceReviewCancelApi),
+    },
+  );
+};
+
+export type simulateApiHarnessSourceReviewsReprepareResponse200 = {
+  data: HarnessSourceReviewReadApi;
+  status: 200;
+};
+
+export type simulateApiHarnessSourceReviewsReprepareResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessSourceReviewsReprepareResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessSourceReviewsReprepareResponseSuccess =
+  simulateApiHarnessSourceReviewsReprepareResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessSourceReviewsReprepareResponseError = (
+  | simulateApiHarnessSourceReviewsReprepareResponse403
+  | simulateApiHarnessSourceReviewsReprepareResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessSourceReviewsReprepareResponse =
+  | simulateApiHarnessSourceReviewsReprepareResponseSuccess
+  | simulateApiHarnessSourceReviewsReprepareResponseError;
+
+export const getSimulateApiHarnessSourceReviewsReprepareUrl = (id: string) => {
+  return `/simulate/api/harness-source-reviews/${id}/reprepare/`;
+};
+
+export const simulateApiHarnessSourceReviewsReprepare = async (
+  id: string,
+  harnessSourceReviewReprepareApi: HarnessSourceReviewReprepareApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessSourceReviewsReprepareResponse> => {
+  return apiMutator<simulateApiHarnessSourceReviewsReprepareResponse>(
+    getSimulateApiHarnessSourceReviewsReprepareUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessSourceReviewReprepareApi),
     },
   );
 };

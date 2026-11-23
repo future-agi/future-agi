@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1220,
+  endpointCount: 1221,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -31150,6 +31150,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: {
           $ref: "#/definitions/HarnessSourceReviewCancel",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessSourceReviewRead",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-source-reviews/{id}/reprepare/": {
+      post: {
+        operationId: "simulate_api_harness-source-reviews_reprepare",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/HarnessSourceReviewReprepare",
         },
         queryParameters: {},
         responses: {
@@ -74447,13 +74469,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessSourcePrepare: {
-      required: [
-        "expected_environment_version_id",
-        "expected_draft",
-        "selection",
-      ],
+      required: ["expected_environment_version_id", "expected_draft"],
       type: "object",
       properties: {
+        import_ref: {
+          title: "Import ref",
+          type: "string",
+          format: "uuid",
+        },
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
         expected_environment_version_id: {
           title: "Expected environment version id",
           type: "string",
@@ -74677,6 +74711,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Expires at",
           type: "string",
           format: "date-time",
+        },
+      },
+    },
+    HarnessSourceReviewReprepare: {
+      required: ["expected_revision", "idempotency_key"],
+      type: "object",
+      properties: {
+        expected_revision: {
+          title: "Expected revision",
+          type: "integer",
+          minimum: 1,
+        },
+        idempotency_key: {
+          title: "Idempotency key",
+          type: "string",
+          maxLength: 128,
+          minLength: 1,
+        },
+        target_table: {
+          title: "Target table",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        schema_repairs: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/SourceSchemaRepair",
+          },
         },
       },
     },

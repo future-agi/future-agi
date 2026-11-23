@@ -51321,6 +51321,8 @@ export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportPara
     id: zod.string(),
   });
 
+export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyIdempotencyKeyMax = 128;
+
 export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyTargetTableMax = 255;
 
 export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyExpectedDraftRevisionMin = 0;
@@ -51332,6 +51334,15 @@ export const simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBody
 
 export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBody =
   zod.object({
+    import_ref: zod.string().uuid().optional(),
+    expected_revision: zod.number().min(1).optional(),
+    idempotency_key: zod
+      .string()
+      .min(1)
+      .max(
+        simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyIdempotencyKeyMax,
+      )
+      .optional(),
     expected_environment_version_id: zod.string().uuid(),
     target_table: zod
       .string()
@@ -51348,21 +51359,23 @@ export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBody
           simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodyExpectedDraftRevisionMin,
         ),
     }),
-    selection: zod.object({
-      kind: zod.enum(["knowledge_base"]),
-      kb_id: zod.string().uuid(),
-      file_ids: zod
-        .array(zod.string().uuid())
-        .max(
-          simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodySelectionFileIdsMax,
-        )
-        .optional(),
-      whole_collection: zod
-        .boolean()
-        .default(
-          simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodySelectionWholeCollectionDefault,
-        ),
-    }),
+    selection: zod
+      .object({
+        kind: zod.enum(["knowledge_base"]),
+        kb_id: zod.string().uuid(),
+        file_ids: zod
+          .array(zod.string().uuid())
+          .max(
+            simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodySelectionFileIdsMax,
+          )
+          .optional(),
+        whole_collection: zod
+          .boolean()
+          .default(
+            simulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportBodySelectionWholeCollectionDefault,
+          ),
+      })
+      .optional(),
   });
 
 export const SimulateApiHarnessEnvironmentsSourcesImportsPrepareSourceImportResponse =
@@ -51393,6 +51406,9 @@ export const SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadPara
 
 export const SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBody =
   zod.object({
+    import_ref: zod.string().uuid().optional(),
+    expected_revision: zod.number().optional(),
+    idempotency_key: zod.string().optional(),
     expected_environment_version_id: zod.string().uuid(),
     target_table: zod.string().optional(),
     expected_draft_id: zod.string().uuid().optional(),
@@ -54732,6 +54748,95 @@ export const SimulateApiHarnessSourceReviewsCancelBody = zod.object({
 });
 
 export const SimulateApiHarnessSourceReviewsCancelResponse = zod.object({
+  id: zod.string().uuid(),
+  state: zod.enum([
+    "reading",
+    "needs_repair",
+    "ready",
+    "accepted",
+    "cancelled",
+    "expired",
+  ]),
+  revision: zod.number(),
+  scope: zod.object({}).passthrough(),
+  draft_digest: zod.string().min(1),
+  preview: zod.object({}).passthrough(),
+  receipt: zod.object({}).passthrough(),
+  expires_at: zod.string().datetime({ offset: true }),
+});
+
+export const SimulateApiHarnessSourceReviewsReprepareParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessSourceReviewsReprepareBodyIdempotencyKeyMax = 128;
+
+export const simulateApiHarnessSourceReviewsReprepareBodyTargetTableMax = 255;
+
+export const simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemSourceIdMax = 255;
+
+export const simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemTextFieldsItemMax = 255;
+
+export const simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemTextFieldsMax = 256;
+
+export const simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemIdentityFieldsItemMax = 255;
+
+export const simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemIdentityFieldsMax = 256;
+
+export const SimulateApiHarnessSourceReviewsReprepareBody = zod.object({
+  expected_revision: zod.number().min(1),
+  idempotency_key: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessSourceReviewsReprepareBodyIdempotencyKeyMax),
+  target_table: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessSourceReviewsReprepareBodyTargetTableMax)
+    .optional(),
+  schema_repairs: zod
+    .array(
+      zod.object({
+        source_id: zod
+          .string()
+          .min(1)
+          .max(
+            simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemSourceIdMax,
+          ),
+        text_fields: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .max(
+                simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemTextFieldsItemMax,
+              ),
+          )
+          .max(
+            simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemTextFieldsMax,
+          )
+          .optional(),
+        identity_fields: zod
+          .array(
+            zod
+              .string()
+              .min(1)
+              .max(
+                simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemIdentityFieldsItemMax,
+              ),
+          )
+          .max(
+            simulateApiHarnessSourceReviewsReprepareBodySchemaRepairsItemIdentityFieldsMax,
+          )
+          .optional(),
+        separate_entity: zod.boolean().optional(),
+        manual_relationships: zod.boolean().optional(),
+      }),
+    )
+    .optional(),
+});
+
+export const SimulateApiHarnessSourceReviewsReprepareResponse = zod.object({
   id: zod.string().uuid(),
   state: zod.enum([
     "reading",

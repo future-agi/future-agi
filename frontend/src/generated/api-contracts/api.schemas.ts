@@ -23822,6 +23822,14 @@ export interface HarnessSourceAcceptResponseApi {
 }
 
 export interface HarnessSourcePrepareApi {
+  import_ref?: string;
+  /** @minimum 1 */
+  expected_revision?: number;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key?: string;
   expected_environment_version_id: string;
   /**
    * @minLength 1
@@ -23829,7 +23837,7 @@ export interface HarnessSourcePrepareApi {
    */
   target_table?: string;
   expected_draft: HarnessSourceDraftRefApi;
-  selection: HarnessSourceSelectionApi;
+  selection?: HarnessSourceSelectionApi;
 }
 
 export type HarnessSourcePrepareResponseApiDraft = { [key: string]: unknown };
@@ -25002,6 +25010,22 @@ export interface HarnessSourceReviewCancelApi {
    * @pattern \Asha256:[0-9a-f]{64}$
    */
   expected_draft_digest: string;
+}
+
+export interface HarnessSourceReviewReprepareApi {
+  /** @minimum 1 */
+  expected_revision: number;
+  /**
+   * @minLength 1
+   * @maxLength 128
+   */
+  idempotency_key: string;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  target_table?: string;
+  schema_repairs?: SourceSchemaRepairApi[];
 }
 
 export type HarnessManifestApiSchemaVersion =
@@ -46898,6 +46922,9 @@ export type SimulateApiHarnessEnvironmentsRunsRunReportParams = {
 
 export type SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyOne =
   {
+    import_ref?: string;
+    expected_revision?: number;
+    idempotency_key?: string;
     expected_environment_version_id: string;
     target_table?: string;
     expected_draft_id?: string;
@@ -46910,6 +46937,9 @@ export type SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyO
 
 export type SimulateApiHarnessEnvironmentsSourcesUploadsPrepareSourceUploadBodyTwo =
   {
+    import_ref?: string;
+    expected_revision?: number;
+    idempotency_key?: string;
     expected_environment_version_id: string;
     target_table?: string;
     expected_draft_id?: string;

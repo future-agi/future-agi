@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import timedelta
 from uuid import UUID
@@ -12,6 +13,8 @@ from django.utils import timezone
 from minio.error import S3Error
 from rest_framework.exceptions import PermissionDenied
 
+from model_hub.services.kb_snapshot import CapturedKnowledgeBaseSource
+from model_hub.utils.kb_download import authorized_knowledge_base
 from simulate.models import HarnessSourceReview, HostedHarnessJob
 from simulate.services import harness_sources as sources
 from simulate.services.harness_provider import request_organization, request_workspace
@@ -272,27 +275,52 @@ def _check_batch(captured) -> None:
         )
 
 
+def _store_staging(row, staged):
+    body = sources._canonical(staged)
+    row.staged_digest = hashlib.sha256(body).hexdigest()
+    key = _staging_key(row)
+    try:
+        sources._schedule_staging_expiry(key)
+        sources._put_private(key, body)
+    except Exception:
+        raise HostedHarnessError(
+            "source_processor_unavailable",
+            "Source storage is temporarily unavailable.",
+            status_code=503,
+            retryable=True,
+        ) from None
+
+
+def _retained_inputs(captured):
+    return [
+        {
+            "source_id": item.source_id,
+            "filename": item.filename,
+            "role": item.role,
+            "media_type": item.media_type,
+            "origin": item.origin,
+            "content": base64.b64encode(item.content).decode(),
+            **(
+                {"original": base64.b64encode(item.original_content).decode()}
+                if item.content != item.original_content
+                else {}
+            ),
+        }
+        for item in captured
+    ]
+
+
 def _stage(
-    row: HarnessSourceReview, capture, schema: dict | None, schema_repairs=()
+    row: HarnessSourceReview,
+    capture,
+    schema: dict | None,
+    schema_repairs=(),
+    *,
+    repair_request=None,
 ) -> HarnessSourceReview:
     reading = HarnessSourceReview.objects.filter(
         pk=row.id, state=State.READING, revision=row.revision
     )
-    if schema is None and "destination_tables" in row.basis:
-        preview = {
-            "destination_tables": row.basis["destination_tables"],
-            "diagnostics": [
-                {"code": "source_schema_ambiguous", "severity": "blocking", "span": {}}
-            ],
-        }
-        if not reading.filter(expires_at__gt=timezone.now()).update(
-            state=State.NEEDS_REPAIR,
-            revision=row.revision + 1,
-            preview=preview,
-        ):
-            raise _conflict()
-        row.refresh_from_db()
-        return row
     try:
         captured = capture()
         _check_batch(captured)
@@ -306,6 +334,32 @@ def _stage(
             raise HostedHarnessError(
                 "source_duplicate", "An input is selected twice.", status_code=422
             )
+        if schema is None and "destination_tables" in row.basis:
+            _store_staging(
+                row,
+                {
+                    "review_id": str(row.id),
+                    "retained_inputs": _retained_inputs(captured),
+                },
+            )
+            if not reading.filter(expires_at__gt=timezone.now()).update(
+                state=State.NEEDS_REPAIR,
+                revision=row.revision + 1,
+                staged_digest=row.staged_digest,
+                preview={
+                    "destination_tables": row.basis["destination_tables"],
+                    "diagnostics": [
+                        {
+                            "code": "source_schema_ambiguous",
+                            "severity": "blocking",
+                            "span": {},
+                        }
+                    ],
+                },
+            ):
+                raise _conflict()
+            row.refresh_from_db()
+            return row
         draft = (
             sources.prepare_draft(captured, schema, schema_repairs)
             if schema_repairs
@@ -336,27 +390,17 @@ def _stage(
             ],
             "review_id": str(row.id),
         }
-        body = sources._canonical(staged)
-        row.staged_digest = hashlib.sha256(body).hexdigest()
-        key = _staging_key(row)
-        try:
-            sources._schedule_staging_expiry(key)
-            sources._put_private(key, body)
-        except Exception:
-            raise HostedHarnessError(
-                "source_processor_unavailable",
-                "Source storage is temporarily unavailable.",
-                status_code=503,
-                retryable=True,
-            ) from None
+        blocking = any(
+            item.get("severity") == "blocking" for item in draft.get("diagnostics", [])
+        )
+        if blocking:
+            staged["retained_inputs"] = _retained_inputs(captured)
+        if repair_request is not None:
+            staged["repair_request"] = repair_request
+        _store_staging(row, staged)
         updated = reading.filter(expires_at__gt=timezone.now()).update(
             basis=basis,
-            state=State.NEEDS_REPAIR
-            if any(
-                item.get("severity") == "blocking"
-                for item in draft.get("diagnostics", [])
-            )
-            else State.READY,
+            state=State.NEEDS_REPAIR if blocking else State.READY,
             revision=row.revision + 1,
             staged_digest=row.staged_digest,
             draft_digest=draft["draft_digest"],
@@ -624,6 +668,104 @@ def get_review(request, review_id) -> dict:
     )
 
 
+def reprepare_review(
+    request,
+    review_id,
+    *,
+    expected_revision,
+    idempotency_key,
+    target_table=None,
+    schema_repairs=(),
+    environment=None,
+    expected_draft=None,
+):
+    scope = require_source_scope(request, write=True)
+    if environment:
+        scope["owner_id"] = environment.id
+    repair_request = schema_digest(
+        {
+            "key": idempotency_key,
+            "expected_revision": expected_revision,
+            "target_table": target_table,
+            "schema_repairs": schema_repairs,
+        }
+    )
+    with _accepting_review(review_id, scope) as row:
+        if environment and (
+            row.owner_kind != Owner.ENVIRONMENT
+            or row.basis["draft"] != sources._ref_value(expected_draft)
+        ):
+            raise _conflict()
+        if row.state not in _REVIEWABLE or not row.staged_digest:
+            raise _conflict()
+        staged = _read_staging(row)
+        if staged["review_id"] != str(row.id):
+            raise _conflict()
+        if staged.get("repair_request") == repair_request:
+            return public_review(row)
+        if (
+            row.state != State.NEEDS_REPAIR
+            or row.revision != expected_revision
+            or not staged.get("retained_inputs")
+        ):
+            raise _conflict(
+                "This source preview changed. Reload it before choosing a repair."
+            )
+        _required_basis(row, row.owner)
+        captured = []
+        kb_files = defaultdict(set)
+        for item in staged["retained_inputs"]:
+            origin = item["origin"]
+            if origin.get("kind") == "knowledge_base":
+                kb_files[origin["kb_id"]].add(origin["file_id"])
+            captured.append(
+                CapturedKnowledgeBaseSource(
+                    source_id=item["source_id"],
+                    filename=item["filename"],
+                    role=item["role"],
+                    media_type=item["media_type"],
+                    origin=origin,
+                    content=base64.b64decode(item["content"]),
+                    original_content=base64.b64decode(
+                        item.get("original", item["content"])
+                    ),
+                )
+            )
+        for kb_id, file_ids in kb_files.items():
+            kb = authorized_knowledge_base(request, kb_id)
+            if kb.files.filter(pk__in=file_ids).count() != len(file_ids):
+                raise _not_found()
+        if row.owner_kind == Owner.ENVIRONMENT and target_table and not schema_repairs:
+            scope = {
+                **row.basis,
+                "expected_draft": row.basis["draft"],
+                "target_table": target_table,
+            }
+            basis, schema = _owner_basis(row.owner, Owner.ENVIRONMENT, scope)
+        elif row.owner_kind == Owner.DESIGN and row.owner.payload["metadata"].get(
+            "design_source_selection"
+        ):
+            from simulate.services.harness_designs import design_source_basis
+
+            basis, schema = design_source_basis(row.owner, target_table, captured)
+            if schema_repairs and schema is not None:
+                raise _conflict("Schema repairs require an inferred simulation schema.")
+        else:
+            raise _conflict("This review does not support that repair.")
+        row.basis = basis
+        row.state = State.READING
+        row.save(update_fields=["state", "basis"])
+        return public_review(
+            _stage(
+                row,
+                lambda: captured,
+                schema,
+                schema_repairs,
+                repair_request=repair_request,
+            )
+        )
+
+
 def cancel_review(
     request, review_id, *, expected_revision, expected_draft_digest
 ) -> dict:
@@ -685,6 +827,7 @@ def _accept(
         raise _conflict("This source review has already been accepted.")
     if (
         row.state not in _REVIEWABLE
+        or not row.draft_digest
         or not row.staged_digest
         or (row.revision, row.draft_digest)
         != (expected_revision, expected_draft_digest)

@@ -9,6 +9,7 @@ from simulate.serializers.harness_source_review import (
     HarnessSourceReviewCancelSerializer,
     HarnessSourceReviewCreateSerializer,
     HarnessSourceReviewReadSerializer,
+    HarnessSourceReviewReprepareSerializer,
 )
 from simulate.services import harness_source_reviews
 from simulate.services.hosted_harness import HostedHarnessError
@@ -45,6 +46,20 @@ class HarnessSourceReviewViewSet(viewsets.ViewSet):
     @validated_request(responses={200: HarnessSourceReviewReadSerializer})
     def retrieve(self, request, pk=None):
         return Response(harness_source_reviews.get_review(request, pk))
+
+    @viewer_denied("repair environment source review")
+    @validated_request(
+        request_serializer=HarnessSourceReviewReprepareSerializer,
+        responses={200: HarnessSourceReviewReadSerializer},
+        reject_unknown_fields=True,
+    )
+    @action(detail=True, methods=["post"])
+    def reprepare(self, request, pk=None):
+        return Response(
+            harness_source_reviews.reprepare_review(
+                request, pk, **request.validated_data
+            )
+        )
 
     @viewer_denied("accept environment sources")
     @validated_request(

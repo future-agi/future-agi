@@ -239,6 +239,35 @@ def prepare_source_import(
     return _prepare_captured(environment, captured, current_ref, target_table)
 
 
+def reprepare_environment_import(request, environment, body, expected_draft):
+    from simulate.services.harness_source_reviews import reprepare_review
+
+    current = _require_import_basis(
+        environment, body["expected_environment_version_id"], expected_draft
+    )
+    review = reprepare_review(
+        request,
+        body["import_ref"],
+        environment=environment,
+        expected_draft=current,
+        target_table=body["target_table"],
+        expected_revision=body["expected_revision"],
+        idempotency_key=body["idempotency_key"],
+    )
+    return {
+        "import_ref": review["id"],
+        "revision": review["revision"],
+        "state": review["state"],
+        "draft_digest": review["draft_digest"] or "",
+        "draft": review["preview"],
+        "suggested_purposes": {
+            item["pin"]["source_id"]: item["pin"]["role"]
+            for item in review["preview"].get("sources", [])
+        },
+        "capabilities": source_capabilities(environment),
+    }
+
+
 def capture_kb(request, selection: dict) -> tuple[CapturedKnowledgeBaseSource, ...]:
     try:
         return capture_knowledge_base_selection(
