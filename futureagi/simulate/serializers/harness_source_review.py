@@ -88,6 +88,18 @@ class HarnessSourceReviewAcceptSerializer(HarnessSourceReviewCancelSerializer):
     idempotency_key = serializers.CharField(max_length=128)
 
 
+class HarnessSourceScenarioGenerationSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    review_id = serializers.UUIDField()
+    state = serializers.ChoiceField(
+        choices=("queued", "running", "completed", "failed", "stale")
+    )
+    source_digest = serializers.CharField()
+    generated_scenarios = serializers.JSONField()
+    suite_draft = serializers.JSONField(allow_null=True)
+    error = serializers.CharField(allow_null=True)
+
+
 class HarnessSourceReviewReadSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     state = serializers.ChoiceField(choices=HarnessSourceReview.State.choices)
@@ -97,3 +109,6 @@ class HarnessSourceReviewReadSerializer(serializers.Serializer):
     preview = serializers.JSONField()
     receipt = serializers.JSONField(allow_null=True)
     expires_at = serializers.DateTimeField()
+    scenario_generation = HarnessSourceScenarioGenerationSerializer(
+        required=False, allow_null=True
+    )

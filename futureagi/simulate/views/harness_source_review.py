@@ -10,6 +10,7 @@ from simulate.serializers.harness_source_review import (
     HarnessSourceReviewCreateSerializer,
     HarnessSourceReviewReadSerializer,
     HarnessSourceReviewReprepareSerializer,
+    HarnessSourceScenarioGenerationSerializer,
 )
 from simulate.services import harness_source_reviews
 from simulate.services.hosted_harness import HostedHarnessError
@@ -46,6 +47,13 @@ class HarnessSourceReviewViewSet(viewsets.ViewSet):
     @validated_request(responses={200: HarnessSourceReviewReadSerializer})
     def retrieve(self, request, pk=None):
         return Response(harness_source_reviews.get_review(request, pk))
+
+    @validated_request(responses={200: HarnessSourceScenarioGenerationSerializer})
+    @action(detail=True, methods=["get"], url_path="scenario-generation")
+    def scenario_generation(self, request, pk=None):
+        from simulate.services.harness_source_generation import state_for_request
+
+        return Response(state_for_request(request, pk))
 
     @viewer_denied("repair environment source review")
     @validated_request(

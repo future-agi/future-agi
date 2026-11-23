@@ -1,5 +1,6 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 
@@ -48,3 +49,28 @@ class HarnessSourceReview(models.Model):
                 name="harness_source_review_idempotency",
             ),
         ]
+
+
+class HarnessSourceScenarioGeneration(models.Model):
+    class State(models.TextChoices):
+        QUEUED = "queued", "Queued"
+        RUNNING = "running", "Running"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+        STALE = "stale", "Stale"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    review = models.OneToOneField(
+        HarnessSourceReview,
+        on_delete=models.CASCADE,
+        related_name="scenario_generation",
+    )
+    reviewer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL
+    )
+    state = models.CharField(max_length=12, choices=State.choices, default=State.QUEUED)
+    requested_count = models.PositiveIntegerField()
+    source_digest = models.CharField(max_length=71)
+    basis = models.JSONField()
+    result = models.JSONField(default=dict)
+    error = models.CharField(max_length=128, blank=True)

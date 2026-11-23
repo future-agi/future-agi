@@ -9,8 +9,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Files, KnowledgeBaseFile
+from simulate.services import harness_source_generation, harness_sources
 from simulate.services import harness_source_reviews as reviews
-from simulate.services import harness_sources
 from simulate.services.harness_versioning import archives, drafts, versions
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_harness_versioning_backfill import (
@@ -59,10 +59,11 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
         headers={},
     )
     prepared_draft = {"draft_digest": "sha256:prepared", "sources": []}
+    trusted_scenarios = []
 
     def alk(payload):
         if payload["operation"] == "prepare":
-            assert payload["destination_schema"] == {"fields": []}
+            assert "destination_schema" not in payload
             content = base64.b64decode(payload["sources"][0]["content_base64"])
             prepared_draft["sources"] = [
                 {
@@ -76,6 +77,16 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
                 }
             ]
             return {"ok": True, "result": {"draft": prepared_draft}}
+        if payload["operation"] == "generate_scenarios":
+            assert payload["requested_count"] == len(trusted_scenarios)
+            return {
+                "ok": True,
+                "result": {
+                    "snapshot_id": "snapshot-kb",
+                    "snapshot_digest": "sha256:" + "a" * 64,
+                    "scenarios": trusted_scenarios,
+                },
+            }
         pin = prepared_draft["sources"][0]["pin"]
         return {
             "ok": True,
@@ -158,6 +169,42 @@ def test_kb_reference_import_writes_private_snapshot_and_environment_draft(
         ]
         == accepted["draft"]
     )
+    generation = reviews.HarnessSourceScenarioGeneration.objects.get(
+        review_id=prepared["import_ref"]
+    )
+    assert (
+        reviews.get_review(request, prepared["import_ref"])["scenario_generation"][
+            "state"
+        ]
+        == "queued"
+    )
+    original_suite_id = environment.suite_version_id
+    templates = versions.suite_documents(drafts.edit_sides(environment)["suite"])
+    source_id = prepared_draft["sources"][0]["pin"]["source_id"]
+    for number, template in enumerate(templates, start=1):
+        case = {
+            "id": f"grounded-case-{number}",
+            "purpose": "Use the approved support reference.",
+            "citations": [{"source_id": source_id, "page": 1, "row": None}],
+            "proof_digest": "sha256:" + str(number) * 64,
+        }
+        native = {
+            **{key: value for key, value in template.items() if key != "folder"},
+            "scenario_key": f"grounded-{number}",
+            "name": f"grounded_{number}",
+            "fixture": {"origin": "seed", "reviewed_source": case},
+        }
+        trusted_scenarios.append(
+            {"scenario": {}, "native": native, "source_case": case}
+        )
+    completed = harness_source_generation.process(generation.id)
+    assert completed["state"] == "completed"
+    assert len(completed["generated_scenarios"]) == len(templates)
+    environment.refresh_from_db()
+    assert environment.suite_version_id == original_suite_id
+    suite_draft = drafts.fresh_draft(environment, "suite")
+    assert len((suite_draft.documents or {})["scenarios"]) == len(templates) * 2
+    suite_draft.delete()
     source_draft = drafts.fresh_draft(environment, "environment")
     files = archives.read_archive(archives.get_archive(source_draft.archive_object_key))
     assert b"REFERENCE_SENTINEL" in files["sources/tested-agent.json"]

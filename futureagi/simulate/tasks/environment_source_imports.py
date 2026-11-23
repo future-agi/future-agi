@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 from django.db import transaction
-from django.db.models import F
 from django.utils import timezone
 
 from simulate.models import HarnessSourceReview
@@ -26,19 +25,19 @@ def expire_environment_source_import(object_key: str) -> dict[str, bool]:
         staged_digest=match["digest"],
     )
     with transaction.atomic():
-        rows = list(reviews.select_for_update().only("expires_at"))
+        rows = list(reviews.select_for_update())
         if any(row.expires_at > timezone.now() for row in rows):
             return {"expired": False}
-        reviews.filter(
-            state__in=[
-                HarnessSourceReview.State.READING,
-                HarnessSourceReview.State.READY,
-                HarnessSourceReview.State.NEEDS_REPAIR,
-            ]
-        ).update(
-            state=HarnessSourceReview.State.EXPIRED,
-            revision=F("revision") + 1,
-            preview={},
-        )
+        from simulate.services.harness_source_reviews import _expire
+
+        for row in rows:
+            _expire(row)
     remove_private(object_key)
     return {"expired": True}
+
+
+@temporal_activity(time_limit=600, max_retries=20, retry_delay=60, queue="default")
+def generate_environment_source_scenarios(generation_id: str) -> dict:
+    from simulate.services.harness_source_generation import process
+
+    return process(generation_id)

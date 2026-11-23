@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import pytest
 from django.db import close_old_connections, connection, transaction
+from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
 from accounts.models.workspace import Workspace
@@ -153,6 +154,57 @@ def _accept_args(review):
         "decisions": {},
         "idempotency_key": "one-accept-attempt",
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("action", "review_state", "job_state", "failure_code"),
+    [
+        ("cancel", "cancelled", "canceled", "source_review_cancelled"),
+        ("expire", "expired", "failed", "source_review_expired"),
+    ],
+)
+def test_terminal_review_ends_parked_owner(
+    action,
+    review_state,
+    job_state,
+    failure_code,
+    user,
+    workspace,
+):
+    owner, request, scope = _case(user, workspace, "build_job")
+    row = reviews.HarnessSourceReview.objects.create(
+        organization=user.organization,
+        workspace=workspace,
+        owner=owner,
+        owner_kind=reviews.Owner.BUILD_JOB,
+        state=reviews.State.READY,
+        basis={"schema_digest": scope["schema_digest"]},
+        expires_at=timezone.now() + timedelta(minutes=5),
+        draft_digest=_DIGEST,
+    )
+    owner.payload["metadata"].update(
+        {"source_review_id": str(row.id), "build_source_selection": {}}
+    )
+    owner.current_stage = "awaiting_source_review"
+    owner.state = owner.State.QUEUED
+    owner.save(update_fields=["payload", "current_stage", "state", "updated_at"])
+    if action == "cancel":
+        result = reviews.cancel_review(
+            request,
+            row.id,
+            expected_revision=row.revision,
+            expected_draft_digest=row.draft_digest,
+        )
+    else:
+        row.expires_at = timezone.now() - timedelta(seconds=1)
+        row.save(update_fields=["expires_at"])
+        result = reviews.get_review(request, row.id)
+    owner.refresh_from_db()
+    assert result["state"] == review_state
+    assert owner.state == job_state
+    assert owner.terminal_at is not None
+    assert owner.failure["code"] == failure_code
 
 
 @pytest.mark.django_db

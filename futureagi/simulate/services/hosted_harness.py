@@ -308,6 +308,11 @@ def run_idempotency_key(environment: HostedHarnessJob, idempotency_key: str) -> 
 # The environment's own bookkeeping, which a job made from its payload must not carry:
 # its build spend would be billed again and its markers would act on the new job.
 RUN_DROPPED_METADATA = (
+    "build_source_selection",
+    "build_source_pin",
+    "source_review_id",
+    "source_review_documents",
+    "source_review_receipt",
     "scenario_extend",
     "usage_limit",
     "harness_spend",
@@ -3244,13 +3249,22 @@ def record_cleanup(
 
             schedule_reconcile(job.id)
             schedule_deferred_activations(job.id)
-        if job.state == HostedHarnessJob.State.COMPLETED:
+        if (
+            job.state == HostedHarnessJob.State.COMPLETED
+            and not _scenario_only_source_build(job)
+        ):
             built_job_id, built_attempt_id = str(job.id), str(attempt.id)
             transaction.on_commit(
                 lambda: _ask_builder_to_check(built_job_id, built_attempt_id)
             )
         project_terminal_job_onto_run(job, now)
         return job
+
+
+def _scenario_only_source_build(job: HostedHarnessJob) -> bool:
+    from simulate.services.harness_reviewed_builds import sourced
+
+    return sourced(job)
 
 
 def _ask_builder_to_check(job_id: str, attempt_id: str) -> None:

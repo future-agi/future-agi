@@ -9,6 +9,7 @@ from simulate.serializers.harness_job import HarnessJobCreateSerializer
 from simulate.services import harness_designs as designs
 from simulate.services import harness_reviewed_builds as builds
 from simulate.services import harness_source_reviews as reviews
+from simulate.services import harness_sources
 from simulate.services.harness_provider import HostedHarnessProvider
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import guest_job_document
@@ -193,6 +194,7 @@ def test_each_connector_parks_and_recovers_approved_inputs(
     manifest = {
         "schema_version": "futureagi.environment-bundle.v2",
         "metadata": {"reviewed_source": pin},
+        "digest": "sha256:" + "d" * 64,
         "files": [
             {
                 "path": "reviewed-source.json",
@@ -207,7 +209,27 @@ def test_each_connector_parks_and_recovers_approved_inputs(
         ],
     }
     files["environment-bundle/manifest.json"] = json.dumps(manifest).encode()
+    trusted_requests = []
+
+    def trusted_scenarios(payload):
+        trusted_requests.append(payload)
+        return {
+            "ok": True,
+            "result": {
+                "snapshot_id": pin["id"],
+                "snapshot_digest": pin["digest"],
+                "simulation_schema_digest": pin["schema_digest"],
+                "bundle_digest": manifest["digest"],
+                "scenarios": [
+                    {"native": scenario, "source_case": case, "scenario": {}}
+                ],
+            },
+        }
+
+    monkeypatch.setattr(harness_sources, "execute_source_request", trusted_scenarios)
     assert builds.check_archive(job, _archive(files)) == pin
+    assert trusted_requests[-1]["operation"] == "generate_scenarios"
+    assert trusted_requests[-1]["bundle_manifest"] == manifest
     for path in (
         "reviewed-source.json",
         "environment-bundle/reviewed-source.json",
@@ -265,14 +287,22 @@ def test_each_connector_parks_and_recovers_approved_inputs(
             assert (
                 builds.controller_args(job) in sandbox.process.session_request.command
             )
-        wrong = {**files, "reviewed-source.json": b"{}"}
-        with monkeypatch.context() as patch:
-            patch.setattr(
-                gateway_service,
-                "freeze_authoring_archive",
-                lambda *_args, **_kwargs: pytest.fail("stored an unapproved workspace"),
-            )
-            assert (
-                builds.complete(attempt, _archive(wrong)).state
-                == HostedHarnessJob.State.FAILED
-            )
+        if kind == "repo":
+            wrong = {**files, "reviewed-source.json": b"{}"}
+            with monkeypatch.context() as patch:
+                patch.setattr(
+                    gateway_service,
+                    "freeze_authoring_archive",
+                    lambda *_args, **_kwargs: pytest.fail(
+                        "stored an unapproved workspace"
+                    ),
+                )
+                assert (
+                    builds.complete(attempt, _archive(wrong)).state
+                    == HostedHarnessJob.State.FAILED
+                )
+        else:
+            completed = builds.complete(attempt, _archive(files))
+            assert completed.state == HostedHarnessJob.State.COMPLETED
+            assert completed.scenario_registrations.count() == 1
+            assert completed.payload["metadata"]["authoring_object_key"]

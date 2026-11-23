@@ -578,7 +578,7 @@ def prepare_draft(
         ],
         **(
             {"destination_schema": destination_schema}
-            if destination_schema is not None
+            if destination_schema is not None and destination_schema.get("fields")
             else {}
         ),
         **({"schema_repairs": schema_repairs} if schema_repairs else {}),

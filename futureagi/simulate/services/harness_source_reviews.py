@@ -15,7 +15,11 @@ from rest_framework.exceptions import PermissionDenied
 
 from model_hub.services.kb_snapshot import CapturedKnowledgeBaseSource
 from model_hub.utils.kb_download import authorized_knowledge_base
-from simulate.models import HarnessSourceReview, HostedHarnessJob
+from simulate.models import (
+    HarnessSourceReview,
+    HarnessSourceScenarioGeneration,
+    HostedHarnessJob,
+)
 from simulate.services import harness_sources as sources
 from simulate.services.harness_provider import request_organization, request_workspace
 from simulate.services.harness_versioning import archives, drafts
@@ -122,7 +126,9 @@ def _environment_basis(
             "The Environment draft changed. Prepare the source review again."
         )
     schema, tables = (
-        _environment_schema(owner, target_table) if records else ({"fields": []}, [])
+        _environment_schema(owner, target_table)
+        if records
+        else ({"fields": [], "origin": "simulation", "repair_choices": []}, [])
     )
     return {
         "environment_version_id": str(owner.environment_version_id),
@@ -679,17 +685,53 @@ def _find(review_id, scope: dict, *, lock=False) -> HarnessSourceReview:
     return row
 
 
+def _end_parked_owner(row):
+    if row.owner_kind not in {Owner.DESIGN, Owner.BUILD_JOB}:
+        return
+    from simulate.services.harness_designs import AWAITING_REVIEW
+
+    cancelled = row.state == State.CANCELLED
+    state = (
+        HostedHarnessJob.State.CANCELED if cancelled else HostedHarnessJob.State.FAILED
+    )
+    now = timezone.now()
+    HostedHarnessJob.no_workspace_objects.filter(
+        pk=row.owner_id,
+        current_stage=AWAITING_REVIEW,
+        state=HostedHarnessJob.State.QUEUED,
+        payload__metadata__source_review_id=str(row.id),
+    ).update(
+        state=state,
+        current_stage=state,
+        terminal_at=now,
+        failure={
+            "code": (
+                "source_review_cancelled" if cancelled else "source_review_expired"
+            ),
+            "message": (
+                "The source review was cancelled."
+                if cancelled
+                else "The source review expired."
+            ),
+        },
+        updated_at=now,
+    )
+
+
+@transaction.atomic
 def _expire(row: HarnessSourceReview) -> HarnessSourceReview:
     if row.expires_at <= timezone.now() and row.state in {State.READING, *_REVIEWABLE}:
         HarnessSourceReview.objects.filter(pk=row.id, revision=row.revision).update(
             state=State.EXPIRED, revision=row.revision + 1, preview={}
         )
         row.refresh_from_db()
+        if row.state == State.EXPIRED:
+            _end_parked_owner(row)
     return row
 
 
 def public_review(row: HarnessSourceReview) -> dict:
-    return {
+    result = {
         "id": str(row.id),
         "state": row.state,
         "revision": row.revision,
@@ -699,6 +741,14 @@ def public_review(row: HarnessSourceReview) -> dict:
         "receipt": row.receipt,
         "expires_at": row.expires_at,
     }
+    if row.owner_kind == Owner.ENVIRONMENT and row.state == State.ACCEPTED:
+        from simulate.services.harness_source_generation import summary
+
+        generation = HarnessSourceScenarioGeneration.objects.filter(review=row).first()
+        result["scenario_generation"] = (
+            summary(generation) if generation is not None else None
+        )
+    return result
 
 
 @contextmanager
@@ -831,6 +881,7 @@ def cancel_review(
         row.revision += 1
         row.preview = {}
         row.save(update_fields=["state", "revision", "preview"])
+        _end_parked_owner(row)
         return public_review(row)
 
 
@@ -864,6 +915,10 @@ def _accept(
     ).hexdigest()
     if row.state == State.ACCEPTED:
         if row.acceptance_key == idempotency_key and row.acceptance_digest == digest:
+            if row.owner_kind == Owner.ENVIRONMENT:
+                from simulate.services.harness_source_generation import reserve
+
+                reserve(row, request.user)
             if _build_selection(row.owner, row.owner_kind):
                 from simulate.services.harness_designs import schedule_reviewed_design
 
@@ -925,6 +980,10 @@ def _accept(
             "revision",
         ]
     )
+    if row.owner_kind == Owner.ENVIRONMENT:
+        from simulate.services.harness_source_generation import reserve
+
+        reserve(row, request.user)
     if _build_selection(owner, row.owner_kind):
         from simulate.services.harness_designs import (
             PENDING_DISPATCH,

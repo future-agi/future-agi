@@ -17,7 +17,12 @@ PRIVATE_PERMISSIONS = f"chown svc-control:svc-control {PRIVATE_CONTROLLER_JOB} {
 
 
 def sourced(job):
-    return bool((job.payload.get("metadata") or {}).get("build_source_selection"))
+    metadata = job.payload.get("metadata") or {}
+    return bool(
+        not getattr(job, "environment_id", None)
+        and not metadata.get("simulation_only")
+        and metadata.get("build_source_selection")
+    )
 
 
 def controller_args(job):
@@ -114,6 +119,54 @@ def launch_material(job):
     )
 
 
+def _trusted_scenarios(job, manifest, pin):
+    from simulate.services import harness_sources as sources
+    from simulate.services.harness_source_reviews import accepted_source_snapshot
+
+    metadata = job.payload["metadata"]
+    snapshot, receipt = accepted_source_snapshot(
+        metadata["source_review_id"],
+        owner=job,
+        owner_kind=HarnessSourceReview.Owner.BUILD_JOB,
+    )
+    if (receipt["snapshot_id"], receipt["snapshot_digest"]) != (
+        pin["id"],
+        pin["digest"],
+    ):
+        raise _invalid()
+    task = metadata.get("agent_name") or job.name or "the connected agent"
+    try:
+        result = sources._alk_result(
+            sources.execute_source_request(
+                {
+                    "version": sources.REQUEST_VERSION,
+                    "operation": "generate_scenarios",
+                    "snapshot": json.loads(snapshot),
+                    "environment_requirements": {
+                        "task": f"Test the behavior of {task}"
+                    },
+                    "requested_count": job.scenario_count,
+                    "bundle_manifest": manifest,
+                }
+            )
+        )
+    except HostedHarnessError as exc:
+        if exc.retryable:
+            raise
+        raise _invalid() from None
+    if (
+        (result.get("snapshot_id"), result.get("snapshot_digest"))
+        != (pin["id"], pin["digest"])
+        or result.get("simulation_schema_digest") != pin["schema_digest"]
+        or result.get("bundle_digest") != manifest.get("digest")
+    ):
+        raise _invalid()
+    expected = result.get("scenarios")
+    if not isinstance(expected, list) or len(expected) != job.scenario_count:
+        raise _invalid()
+    return expected
+
+
 def check_archive(job, body):
     pin = expected_pin(job)
     root = "reviewed-source.json"
@@ -145,53 +198,43 @@ def check_archive(job, body):
                 entry["sha256"],
             ):
                 raise _invalid()
+        expected = _trusted_scenarios(job, manifest, pin)
         scenarios = json.loads(files["scenarios.json"])
         if not isinstance(scenarios, list) or len(scenarios) != job.scenario_count:
             raise _invalid()
-        preview = HarnessSourceReview.objects.values_list("preview", flat=True).get(
-            pk=job.payload["metadata"]["source_review_id"]
-        )
-        approved = {one["pin"]["source_id"] for one in preview["sources"]}
         proofs = json.loads(files["proofs.json"])
+        expected_by_key = {item["native"]["scenario_key"]: item for item in expected}
+        if len(expected_by_key) != len(expected):
+            raise _invalid()
         seen = set()
         for scenario in scenarios:
             key = scenario["scenario_key"]
             folder = scenario["folder"]
-            if folder != "scenarios/" + scenario["name"] or "/" in scenario["name"]:
+            trusted = expected_by_key.get(key)
+            if (
+                trusted is None
+                or folder != "scenarios/" + key
+                or "/" in key
+                or scenario != {**trusted["native"], "folder": folder}
+            ):
                 raise _invalid()
             path = folder + "/scenario.json"
             document = json.loads(files[path])
             bundled_document = json.loads(published[path])
             case = document["fixture"]["reviewed_source"]
             if (
-                scenario["fixture"]["reviewed_source"] != case
-                or bundled_document["fixture"]["reviewed_source"] != case
-                or bundled_document["scenario_key"] != key
-                or document["scenario_key"] != key
+                key in seen
+                or document != trusted["native"]
+                or bundled_document != trusted["native"]
+                or case != trusted["source_case"]
+                or scenario["fixture"]["reviewed_source"] != trusted["source_case"]
+                or proofs[key]["reviewed_source_digest"]
+                != trusted["source_case"]["proof_digest"]
             ):
                 raise _invalid()
-            cited = {citation["source_id"] for citation in case["citations"]}
-            case_digest = (
-                "sha256:"
-                + hashlib.sha256(
-                    json.dumps(
-                        {k: v for k, v in case.items() if k != "proof_digest"},
-                        sort_keys=True,
-                        separators=(",", ":"),
-                        ensure_ascii=False,
-                        allow_nan=False,
-                    ).encode()
-                ).hexdigest()
-            )
-            if (
-                case["id"] in seen
-                or not cited
-                or not cited <= approved
-                or case["proof_digest"] != case_digest
-                or proofs[key]["reviewed_source_digest"] != case_digest
-            ):
-                raise _invalid()
-            seen.add(case["id"])
+            seen.add(key)
+        if seen != set(expected_by_key) or set(proofs) != set(expected_by_key):
+            raise _invalid()
     except (KeyError, TypeError, ValueError, UnicodeError):
         raise _invalid() from None
     return pin
@@ -217,6 +260,13 @@ def complete(attempt, body):
     else:
         freeze_authoring_archive(job, body, extending=False)
         job.refresh_from_db()
+        files = archives.read_archive(body)
+        scenarios = json.loads(files["scenarios.json"])
+        from simulate.services.agent_contracts import store_build_contract
+        from simulate.services.harness_scenarios import index_scenarios
+
+        index_scenarios(job, scenarios, prune=True)
+        store_build_contract(job, archive=body)
         job.stage_outputs = authoring_stage_outputs_from_archive(
             body, scenario_limit=job.scenario_count
         )
