@@ -1399,11 +1399,13 @@ def save_drafts(
     *,
     idempotency_key: str,
     user: Any,
+    for_agent_fix: bool = False,
 ) -> dict[str, Any]:
     """Make every requested draft live together; the same key repeats the same Save.
 
     Where the environment's pairings can be validated, a reviewed draft goes through Validate and its candidates are
-    saved instead (`validation_required`); a plain Save of an undecided draft works as before.
+    saved instead (`validation_required`); a plain Save of an undecided draft works as before. An agent fix's own save
+    is gated by readiness, not by Validate: its runs measure the cases it adds.
     """
     pieces = set(requests)
     with transaction.atomic():
@@ -1420,7 +1422,7 @@ def save_drafts(
             ),
             None,
         )
-        if must_validate(locked, expected_review_digest):
+        if not for_agent_fix and must_validate(locked, expected_review_digest):
             raise version_error(
                 "validation_required",
                 "Validate these changes first, then save the validated versions",

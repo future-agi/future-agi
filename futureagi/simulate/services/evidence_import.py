@@ -513,6 +513,7 @@ def add_to_suite(
     expected: dict[str, drafts.DraftRef],
     idempotency_key: str,
     user,
+    for_agent_fix: bool = False,
 ) -> bool:
     """Add the drafted scenarios of ``case_ids`` to the environment's suite, in one
     transaction under the environment's lock. ``expected`` is the unsaved changes
@@ -617,6 +618,7 @@ def add_to_suite(
                 },
                 idempotency_key=idempotency_key,
                 user=user,
+                for_agent_fix=for_agent_fix,
             )
         _record_add(locked.id, evidence_import, wanted, saved, idempotency_key)
         transaction.on_commit(lambda: drafts.retire_chat_runtime(locked))
