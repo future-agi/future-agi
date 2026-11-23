@@ -58,7 +58,7 @@ export const LIFECYCLE_COPY = {
     runs_unvalidated: "Not validated here",
   },
   legacyHover:
-    "Kept from before checks were recorded. It runs, but nothing proved its checks can fail.",
+    "Saved before checks were recorded, so nothing proved its checks can fail.",
   counts: ({
     proved = 0,
     kept_as_written: kept = 0,
