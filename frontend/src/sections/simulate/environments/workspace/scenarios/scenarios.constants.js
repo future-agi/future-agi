@@ -46,6 +46,32 @@ export const SCENARIOS_COPY = {
   critical: "Critical: a failure here is a release blocker",
 };
 
+// A scenario's state on the versions in view. Active and Validated get no mark: Active is the
+// normal case and Validated only lasts until Save.
+export const LIFECYCLE_COPY = {
+  states: {
+    draft: "Not proved",
+    kept_as_written: "Kept as written",
+    archived: "Archived",
+    runs_unvalidated: "Not validated here",
+  },
+  legacyHover:
+    "Kept from before checks were recorded. It runs, but nothing proved its checks can fail.",
+  counts: ({
+    proved = 0,
+    kept_as_written: kept = 0,
+    not_proved: notProved = 0,
+  }) => `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
+  countsLegacy: (n) => ` · ${n} without a wrong-way example`,
+  wrongWay: {
+    title: "Wrong-way examples",
+    caught: "Caught",
+    not_caught: "Not caught",
+    not_run: "Not run",
+    none: "None yet. Saved before proofs existed.",
+  },
+};
+
 // A row the unsaved changes add or change; an added one can't be picked for a
 // run yet.
 export const hasUnsavedChange = (row) =>
@@ -103,15 +129,24 @@ export const deriveUseCase = (row) => {
   }
   if (id.includes("-rule-")) {
     const short = title.split(/[.:]/)[0].slice(0, 42).trim();
-    return { id: `rule:${short.toLowerCase()}`, label: short || "Rule enforcement" };
+    return {
+      id: `rule:${short.toLowerCase()}`,
+      label: short || "Rule enforcement",
+    };
   }
   if (id.includes("-trap-")) {
     const table = title.split(":")[0].trim();
-    if (table) return { id: `trap:${table.toLowerCase()}`, label: `${humanize(table)} data` };
+    if (table)
+      return {
+        id: `trap:${table.toLowerCase()}`,
+        label: `${humanize(table)} data`,
+      };
     return { id: "trap:other", label: "Data traps" };
   }
-  if (id.includes("-adversarial-")) return { id: `adv:${title.toLowerCase()}`, label: title || "Adversarial" };
-  if (id.includes("-edge-")) return { id: `edge:${title.toLowerCase()}`, label: title || "Edge case" };
+  if (id.includes("-adversarial-"))
+    return { id: `adv:${title.toLowerCase()}`, label: title || "Adversarial" };
+  if (id.includes("-edge-"))
+    return { id: `edge:${title.toLowerCase()}`, label: title || "Edge case" };
   return { id: "other", label: "Other" };
 };
 
@@ -129,7 +164,10 @@ export const groupKeyOf = (row, mode, env) => {
     const subs = subTasksFor(row, env);
     const first = subs?.[0]?.label;
     if (!first) return { id: "subgoal:none", label: "No sub-goals" };
-    const slug = first.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const slug = first
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
     return { id: `subgoal:${slug}`, label: first };
   }
   return deriveUseCase(row);
@@ -139,7 +177,8 @@ export const groupScenarios = (rows, mode = "goal", env) => {
   const buckets = new Map();
   (rows || []).forEach((r) => {
     const key = groupKeyOf(r, mode, env);
-    if (!buckets.has(key.id)) buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
+    if (!buckets.has(key.id))
+      buckets.set(key.id, { id: key.id, label: key.label, rows: [] });
     buckets.get(key.id).rows.push(r);
   });
   // Bigger groups first — the tail of one-off adversarial/edge titles shouldn't
