@@ -25,6 +25,7 @@ import {
 import { BUILD_TONES } from "../../buildEnvironment/buildTones";
 import { PARALLELISM_COPY } from "../../parallelism.constants";
 import { useConnectMode } from "../connectNewAgent";
+import BuildSourceFields from "./shared/BuildSourceFields";
 import {
   BTN_SX,
   INPUT_SX,
@@ -844,6 +845,7 @@ export function FormCard({
   const connect = useConnectMode();
   const { canEdit } = useSimulationAccess();
   const supported = !connect && !uiOnly;
+  const reviewingSources = Boolean(build.sources?.selection);
   useEffect(() => {
     onBusyChange?.(build.committing);
   }, [build.committing, onBusyChange]);
@@ -860,7 +862,7 @@ export function FormCard({
             ? "Fix what preflight found, then run it again"
             : "Run preflight first"
           : null);
-  const disabled = !canEdit || !!footerHint;
+  const disabled = !canEdit || !!footerHint || build.sources?.blocked;
 
   return (
     <Box
@@ -889,6 +891,12 @@ export function FormCard({
             <>
               <ScenarioRow value={scenarioCount} onChange={onScenarioCount} />
               <ParallelRow build={build} />
+              {canEdit && build.sources && (
+                <BuildSourceFields
+                  sources={build.sources}
+                  disabled={build.committing}
+                />
+              )}
               <PreflightRow
                 build={build}
                 canRun={canRun && canEdit}
@@ -928,7 +936,9 @@ export function FormCard({
               sx={{ color: "text.secondary" }}
             />
             <Typography sx={{ ...T12, color: "text.secondary" }}>
-              Building the environment…
+              {reviewingSources
+                ? "Preparing source review…"
+                : "Building the environment…"}
             </Typography>
           </Stack>
         ) : (
@@ -947,7 +957,9 @@ export function FormCard({
           startIcon={<Iconify icon="solar:link-circle-linear" width={14} />}
           sx={{ ...BTN_SX, flexShrink: 0 }}
         >
-          Connect and build environment
+          {reviewingSources
+            ? "Review sources"
+            : "Connect and build environment"}
         </Button>
       </Stack>
     </Box>

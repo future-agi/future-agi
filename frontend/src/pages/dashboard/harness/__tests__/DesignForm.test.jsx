@@ -31,6 +31,24 @@ vi.mock("../ReleaseGallery", () => ({
 vi.mock("src/sections/simulate/environments/hooks/useSimulationAccess", () => ({
   default: () => ({ canEdit: true }),
 }));
+vi.mock(
+  "src/sections/simulate/environments/workspace/sources/KnowledgeBasePicker",
+  () => ({
+    default: ({ onPick }) => (
+      <button
+        type="button"
+        onClick={() =>
+          onPick({
+            kb: { id: "kb-1", name: "Policies" },
+            whole_collection: true,
+          })
+        }
+      >
+        Add Policies knowledge base
+      </button>
+    ),
+  }),
+);
 vi.mock("react-router-dom", async (original) => ({
   ...(await original()),
   useNavigate: () => mocks.navigate,
@@ -86,8 +104,9 @@ describe("DesignForm", () => {
     );
     const submit = screen.getByRole("button", { name: "Customize" });
     expect(submit).toBeDisabled();
-    expect(screen.getByRole("progressbar", { name: "Uploading refund-policy.pdf" }))
-      .toHaveAttribute("aria-valuenow", "42");
+    expect(
+      screen.getByRole("progressbar", { name: "Uploading refund-policy.pdf" }),
+    ).toHaveAttribute("aria-valuenow", "42");
     await act(async () => finish({ id: documentId, name: pdf.name }));
     expect(submit).toBeEnabled();
     fireEvent.click(submit);
@@ -97,7 +116,11 @@ describe("DesignForm", () => {
         requirements: "Check refund eligibility using the approved policy.",
         modality: "chat",
         template_suite_id: suiteId,
-        document_ids: [documentId],
+        source_selection: {
+          document_ids: [documentId],
+          document_purposes: {},
+          knowledge_base: [],
+        },
         idempotency_key: expect.any(String),
       }),
     );
@@ -124,6 +147,49 @@ describe("DesignForm", () => {
     );
     await waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(3));
     expect(mocks.upload.mock.calls[1][0]).toBe(mocks.upload.mock.calls[2][0]);
+  });
+
+  it("starts scratch design review with a policy upload and Knowledge Base snapshot", async () => {
+    const documentId = "76469425-7b3d-40f9-8146-dd2f318345f0";
+    mocks.upload.mockResolvedValue({ id: documentId });
+    mocks.create.mockResolvedValue({
+      job: {
+        job_id: "review-job",
+        metadata: { source_review: { id: "review-1", state: "ready" } },
+      },
+    });
+    form();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Refunds" },
+    });
+    requirements();
+    pick("policy.pdf");
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Use policy.pdf as policy" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Select Knowledge Base" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add Policies knowledge base" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Design environment" }));
+    await waitFor(() =>
+      expect(mocks.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source_selection: {
+            document_ids: [documentId],
+            document_purposes: { [documentId]: "policy" },
+            knowledge_base: [
+              { kind: "knowledge_base", kb_id: "kb-1", whole_collection: true },
+            ],
+          },
+        }),
+      ),
+    );
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/review-job",
+    );
   });
 
   it("continues a server-paused design and opens the next hosted job", async () => {

@@ -52,6 +52,7 @@ import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
+import SourceReviewPanel from "./sources/SourceReviewPanel";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -133,8 +134,15 @@ export default function EnvironmentWorkspace() {
     handleDismiss: dismissCreditBanner,
     clearError: clearCreditError,
   } = useCreditExhaustion({ feature: "hosted_harness" });
-  const chat = useWorkspaceChat(env, { source });
-  const { canRun: roleCanRun } = useSimulationAccess();
+  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
+  const metadata = jobQuery.data?.job?.metadata || {};
+  const reviewId = metadata.source_review?.id || metadata.source_review_id;
+  const reviewStage = [
+    "awaiting_source_review",
+    "source_review_dispatch_pending",
+  ].includes(jobQuery.data?.status?.stage);
+  const chat = useWorkspaceChat(reviewStage ? undefined : env, { source });
+  const { canRun: roleCanRun, canEdit } = useSimulationAccess();
   const registerFork = useEnvironmentsStore((s) => s.forkEnvironment);
   const selection = useScenarioSelection();
   const queryClient = useQueryClient();
@@ -255,11 +263,9 @@ export default function EnvironmentWorkspace() {
   // neutral skeleton before.
   const derivedWorld = stageOutputsToWorld(progress.job?.stage_outputs || []);
 
-  const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
   // A design (environment-releases.md §7.9) and an adaptation (§7.5) have their own steps:
   // a sealed design offers the prebuilt environment's options, a finished adaptation opens
   // the environment it composed. Neither has an agent of its own, so neither runs from here.
-  const metadata = jobQuery.data?.job?.metadata || {};
   const designJob =
     metadata.design || metadata.adaptation ? jobQuery.data : null;
   const designPanel = designJob ? (
@@ -409,19 +415,36 @@ export default function EnvironmentWorkspace() {
         />
         {creditBanner}
         {refusalLine}
-        {designPanel}
-        <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
-          <BuildingStage
-            progress={progress}
-            chat={chat}
-            env={env}
-            envState={envState}
-            patch={patch}
-            primed={false}
-            source={env.name}
-            world={derivedWorld}
-          />
-        </Box>
+        {reviewId && reviewStage ? (
+          <Box sx={{ maxWidth: 960, p: 3, overflowY: "auto" }}>
+            <SourceReviewPanel
+              reviewId={reviewId}
+              ownerId={envId}
+              canEdit={canEdit}
+              acceptLabel="Approve sources and start build"
+              onAccepted={() => jobQuery.refetch()}
+              onDismiss={() =>
+                navigate(paths.dashboard.simulate.environments.root)
+              }
+            />
+          </Box>
+        ) : (
+          <>
+            {designPanel}
+            <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+              <BuildingStage
+                progress={progress}
+                chat={chat}
+                env={env}
+                envState={envState}
+                patch={patch}
+                primed={false}
+                source={env.name}
+                world={derivedWorld}
+              />
+            </Box>
+          </>
+        )}
       </Box>
     );
   }
@@ -617,7 +640,9 @@ export default function EnvironmentWorkspace() {
       <WorkspaceHeader
         env={displayEnv}
         envState={envState}
-        canRun={!designJob && runnable && !runMutation.isPending && !detailBlock}
+        canRun={
+          !designJob && runnable && !runMutation.isPending && !detailBlock
+        }
         runBlockedReason={runReason(
           (designJob && WORKSPACE_COPY.designTooltip) ||
             detailBlock ||

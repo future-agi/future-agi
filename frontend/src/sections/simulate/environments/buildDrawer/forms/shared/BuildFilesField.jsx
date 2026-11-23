@@ -20,11 +20,12 @@ export default function BuildFilesField({
   onChange,
   accept = BUILD_FILES_ACCEPT,
   flagged = false,
+  disabled = false,
 }) {
   const input = useRef(null);
   const [over, setOver] = useState(false);
   const add = (list) => {
-    if (!list?.length) return;
+    if (disabled || !list?.length) return;
     if (uploads) uploads.add(list);
     else onChange(mergeBuildFiles(files, list));
   };
@@ -89,6 +90,7 @@ export default function BuildFilesField({
           ref={input}
           type="file"
           hidden
+          disabled={disabled}
           multiple
           accept={accept}
           data-testid="build-files"
@@ -101,6 +103,7 @@ export default function BuildFilesField({
           size="small"
           variant="outlined"
           onClick={() => input.current?.click()}
+          disabled={disabled}
           startIcon={
             <Iconify icon="solar:upload-minimalistic-linear" width={14} />
           }
@@ -113,11 +116,13 @@ export default function BuildFilesField({
         label="Files and data"
         files={uploads ? uploads.files : files}
         accept={accept}
-        onRetry={uploads?.retry}
+        onRetry={disabled ? undefined : uploads?.retry}
         onRemove={
-          uploads
-            ? uploads.remove
-            : (id) => onChange(files.filter((x) => x.id !== id))
+          disabled
+            ? undefined
+            : uploads
+              ? uploads.remove
+              : (id) => onChange(files.filter((x) => x.id !== id))
         }
         sx={{ mt: 1 }}
       />
@@ -133,4 +138,5 @@ BuildFilesField.propTypes = {
   files: PropTypes.arrayOf(PropTypes.object),
   onChange: PropTypes.func,
   accept: PropTypes.string,
+  disabled: PropTypes.bool,
 };

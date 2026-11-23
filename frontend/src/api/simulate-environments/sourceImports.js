@@ -42,9 +42,14 @@ export const useSourceCapabilities = (envId) =>
     enabled: Boolean(envId),
   });
 
+export const sourceReviewKey = (reviewId) => [
+  "harness-source-review",
+  reviewId,
+];
+
 export const useEnvironmentSourceReview = (reviewId) =>
   useQuery({
-    queryKey: ["harness-source-review", reviewId],
+    queryKey: sourceReviewKey(reviewId),
     queryFn: async () =>
       (
         await axios.get(
@@ -55,20 +60,53 @@ export const useEnvironmentSourceReview = (reviewId) =>
       ).data,
     enabled: Boolean(reviewId),
     refetchOnMount: "always",
+    refetchInterval: (query) =>
+      query.state.data?.state === "reading" ? 1000 : false,
   });
 
-export const useReprepareEnvironmentSourceReview = () =>
-  useMutation({
+function useSourceReviewMutation(path, afterSuccess) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
     mutationFn: async ({ reviewId, ...body }) =>
-      (
-        await axios.post(
-          apiPath("/simulate/api/harness-source-reviews/{id}/reprepare/", {
-            id: reviewId,
-          }),
-          body,
-        )
-      ).data,
+      (await axios.post(path(reviewId), body)).data,
+    onSuccess: async (review) => {
+      const queryKey = sourceReviewKey(review.id);
+      await queryClient.cancelQueries({ queryKey });
+      queryClient.setQueryData(queryKey, review);
+      afterSuccess?.(review);
+    },
+    onError: (error, { reviewId }) => {
+      if (reviewId && error?.statusCode === 409) {
+        queryClient.invalidateQueries({ queryKey: sourceReviewKey(reviewId) });
+      }
+    },
   });
+}
+
+export const useCreateSourceReview = () =>
+  useSourceReviewMutation(() =>
+    apiPath("/simulate/api/harness-source-reviews/"),
+  );
+
+export const useReprepareEnvironmentSourceReview = () =>
+  useSourceReviewMutation((id) =>
+    apiPath("/simulate/api/harness-source-reviews/{id}/reprepare/", { id }),
+  );
+
+export const useAcceptSourceReview = (afterSuccess) =>
+  useSourceReviewMutation(
+    (id) =>
+      apiPath("/simulate/api/harness-source-reviews/{id}/accept/", { id }),
+    afterSuccess,
+  );
+
+export const useCancelSourceReview = (afterSuccess) =>
+  useSourceReviewMutation(
+    (id) =>
+      apiPath("/simulate/api/harness-source-reviews/{id}/cancel/", { id }),
+    afterSuccess,
+  );
 
 export const usePrepareKbSource = (envId) =>
   useMutation({

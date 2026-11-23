@@ -24,8 +24,8 @@ import {
 } from "src/api/harness/releases";
 import { paths } from "src/routes/paths";
 import useSimulationAccess from "src/sections/simulate/environments/hooks/useSimulationAccess";
-import BuildFilesField from "src/sections/simulate/environments/buildDrawer/forms/shared/BuildFilesField";
-import { useFileUploads } from "src/sections/simulate/environments/buildDrawer/forms/shared/useFileUploads";
+import BuildSourceFields from "src/sections/simulate/environments/buildDrawer/forms/shared/BuildSourceFields";
+import useBuildSources from "src/sections/simulate/environments/buildDrawer/forms/shared/useBuildSources";
 
 import { errorMessage } from "./harnessShared";
 
@@ -57,7 +57,7 @@ export default function DesignForm({
   );
   const [requirements, setRequirements] = useState("");
   const [modality, setModality] = useState("chat");
-  const uploads = useFileUploads();
+  const sources = useBuildSources();
   const { canEdit } = useSimulationAccess();
   const [submitting, setSubmitting] = useState(false);
   useEffect(() => {
@@ -70,8 +70,7 @@ export default function DesignForm({
     canEdit &&
     Boolean(name.trim() && requirements.trim()) &&
     (!chosen || Boolean(suiteId)) &&
-    !uploads.uploading.length &&
-    !uploads.failed.length &&
+    !sources.blocked &&
     !submitting;
 
   const choose = (release) => {
@@ -88,7 +87,7 @@ export default function DesignForm({
         requirements: requirements.trim(),
         modality,
         ...(chosen ? { template_suite_id: suiteId } : {}),
-        document_ids: uploads.done.map(({ documentId }) => documentId),
+        ...(sources.selection ? { source_selection: sources.selection } : {}),
       };
       const signature = JSON.stringify(body);
       if (request.current?.signature !== signature) {
@@ -175,7 +174,7 @@ export default function DesignForm({
           ))}
         </TextField>
       )}
-      {canEdit && <BuildFilesField uploads={uploads} />}
+      {canEdit && <BuildSourceFields sources={sources} disabled={submitting} />}
       <Typography variant="caption" color="text.secondary">
         The harness asks what it still needs, one question at a time, and
         proposes the design for your approval before it builds anything. The

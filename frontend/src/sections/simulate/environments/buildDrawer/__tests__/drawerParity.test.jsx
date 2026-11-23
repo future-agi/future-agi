@@ -23,6 +23,12 @@ vi.mock("react-router-dom", async () => {
   return { ...actual, useNavigate: () => vi.fn() };
 });
 
+const documentId = "76469425-7b3d-40f9-8146-dd2f318345f0";
+vi.mock("src/api/harness/releases", async (original) => ({
+  ...(await original()),
+  uploadHarnessDesignDocument: async () => ({ id: documentId }),
+}));
+
 vi.mock("src/api/harness/harness", () => ({
   preflightHarnessJob: vi.fn(),
   storeHarnessSecretValues: vi.fn(),
@@ -74,27 +80,37 @@ const byPlaceholder = (p) => screen.getAllByPlaceholderText(p)[0];
 const box = (name) => screen.getByRole("textbox", { name });
 
 // Runs one side and returns what it sent.
-async function capture(ui, fill, { build = false } = {}) {
+async function capture(ui, fill) {
   resetEnvironmentsStore();
   preflightHarnessJob.mockClear();
   storeHarnessSecretValues.mockClear();
   createHarnessJob.mockClear();
   const view = render(ui);
   await fill(view);
+  fireEvent.change(screen.getByTestId("build-files"), {
+    target: { files: [new File(["Order status facts"], "reference.txt")] },
+  });
   fireEvent.click(screen.getByRole("button", { name: "Run preflight" }));
   await waitFor(() => expect(preflightHarnessJob).toHaveBeenCalledTimes(1));
-  if (build) {
-    const go = await screen.findByRole("button", {
-      name: /Build environment|Connect and build environment/,
-    });
-    await waitFor(() => expect(go).toBeEnabled());
-    fireEvent.click(go);
-    await waitFor(() => expect(createHarnessJob).toHaveBeenCalledTimes(1));
-  }
+  const go = await screen.findByRole("button", { name: "Review sources" });
+  await waitFor(() => expect(go).toBeEnabled());
+  fireEvent.click(go);
+  await waitFor(() => expect(createHarnessJob).toHaveBeenCalledTimes(1));
+  expect(preflightHarnessJob.mock.calls[0][0]).not.toHaveProperty(
+    "source_selection",
+  );
+  const [{ source_selection: sourceSelection, ...create }, key] =
+    createHarnessJob.mock.calls[0];
+  expect(sourceSelection).toEqual({
+    document_ids: [documentId],
+    document_purposes: {},
+    knowledge_base: [],
+  });
+  expect(create).toEqual(preflightHarnessJob.mock.calls[0][0]);
   const sent = {
     preflight: preflightHarnessJob.mock.calls[0],
     secrets: storeHarnessSecretValues.mock.calls,
-    create: createHarnessJob.mock.calls[0],
+    create: [create, key],
   };
   cleanup();
   return sent;
@@ -133,24 +149,20 @@ describe("the drawer sends what the Build tab sent", () => {
       scenarios: "25",
       parallel: "3",
     };
-    const drawer = await capture(
-      <RepoForm />,
-      () => {
-        change(box("Repository link"), values.repo);
-        change(box("Branch or tag"), values.branch);
-        change(box("Entry path (optional)"), values.entry);
-        fireEvent.click(screen.getByRole("button", { name: "Private" }));
-        change(box("GitHub App installation ID"), values.install);
-        change(box("Environment values"), values.env);
-        change(box("Additional egress domains"), values.egress);
-        change(box("Scenarios to generate"), values.scenarios);
-        fireEvent.click(
-          screen.getByRole("checkbox", { name: "Enable observability" }),
-        );
-        change(box("Parallel worlds"), values.parallel);
-      },
-      { build: true },
-    );
+    const drawer = await capture(<RepoForm />, () => {
+      change(box("Repository link"), values.repo);
+      change(box("Branch or tag"), values.branch);
+      change(box("Entry path (optional)"), values.entry);
+      fireEvent.click(screen.getByRole("button", { name: "Private" }));
+      change(box("GitHub App installation ID"), values.install);
+      change(box("Environment values"), values.env);
+      change(box("Additional egress domains"), values.egress);
+      change(box("Scenarios to generate"), values.scenarios);
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Enable observability" }),
+      );
+      change(box("Parallel worlds"), values.parallel);
+    });
     expect(drawer.preflight).toEqual(BUILD_TAB.github.preflight);
     expect(drawer.secrets).toEqual(BUILD_TAB.github.secrets);
     expect(drawer.create).toEqual(BUILD_TAB.github.create);

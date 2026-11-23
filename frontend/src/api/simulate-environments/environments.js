@@ -268,7 +268,12 @@ export function useBuildEnvironment() {
     meta: { errorHandled: true },
     // Its variables hold credential values: drop them once nothing observes it.
     gcTime: 0,
-    mutationFn: async ({ draft, credentialValues, idempotencyKey } = {}) => {
+    mutationFn: async ({
+      draft,
+      credentialValues,
+      idempotencyKey,
+      sourceSelection,
+    } = {}) => {
       const built = draftToPreflightPayload(draft);
       if (built.skipped) {
         return {
@@ -279,6 +284,7 @@ export function useBuildEnvironment() {
       if (credentialValues && Object.keys(credentialValues).length) {
         built.payload.credential_values = credentialValues;
       }
+      if (sourceSelection) built.payload.source_selection = sourceSelection;
       const dto = await createHarnessJob(
         built.payload,
         idempotencyKey || harnessIdempotencyKey(),

@@ -4,13 +4,33 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SourcesPanel from "../SourcesPanel";
 
-const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
+const api = vi.hoisted(() => ({
+  get: vi.fn(),
+  post: vi.fn(),
+  upload: vi.fn(),
+}));
 vi.mock("src/utils/axios", () => ({ default: api }));
-vi.mock("src/api/knowledge-base/files", () => ({
-  useKnowledgeBaseList: () => ({ data: [], isLoading: false }),
+vi.mock("src/api/harness/releases", async (original) => ({
+  ...(await original()),
+  uploadHarnessDesignDocument: api.upload,
 }));
 vi.mock("../../../hooks/useSimulationAccess", () => ({
   default: () => ({ canEdit: true }),
+}));
+vi.mock("../KnowledgeBasePicker", () => ({
+  default: ({ onPick }) => (
+    <button
+      type="button"
+      onClick={() =>
+        onPick({
+          kb: { id: "kb-1", name: "Guides" },
+          files: [{ id: "ready-file" }],
+        })
+      }
+    >
+      Add a ready KB file
+    </button>
+  ),
 }));
 
 function mount(state) {
@@ -20,7 +40,11 @@ function mount(state) {
     >
       <QueryClientProvider
         client={
-          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+          new QueryClient({
+            defaultOptions: {
+              queries: { retry: false },
+            },
+          })
         }
       >
         <SourcesPanel env={{ id: "env-1" }} />
@@ -29,331 +53,297 @@ function mount(state) {
   );
 }
 
-const limits = {
-  enabled: true,
-  formats: ["txt"],
-  max_files: 100,
-  max_file_bytes: 26214400,
-  max_total_bytes: 209715200,
-};
+const indexPath = "/simulate/api/harness-source-reviews/";
+const reviewPath = `${indexPath}review-1/`;
+const storageKey = "harness-environment-source-review:env-1";
 const basis = {
   environment_version_id: "env-v1",
-  draft: null,
-  upload: limits,
-  knowledge_base: limits,
+  draft: { id: null, revision: 0 },
 };
-const prepared = {
-  import_ref: "server-signed",
-  revision: 2,
+const scope = {
+  kind: "environment",
+  id: "env-1",
+  schema_digest: "sha256:schema",
+  ...basis,
+};
+const ready = {
+  id: "review-1",
   state: "ready",
+  revision: 3,
+  scope,
   draft_digest: "sha256:prepared",
-  capabilities: basis,
-  draft: {
+  preview: {
     draft_digest: "sha256:prepared",
     sources: [
       {
-        filename: "reference.txt",
-        pin: { source_id: "reference", role: "reference" },
+        filename: "orders.csv",
+        pin: { source_id: "orders", role: "seed_records" },
+      },
+      {
+        filename: "policy.pdf",
+        pin: { source_id: "policy", role: "policy" },
+        statements: [{ statement_id: "statement-1", page: 2 }],
       },
     ],
+    proposals: {
+      field_mappings: [
+        {
+          source_id: "orders",
+          mapping: {
+            source_field: "email",
+            target_field: "email",
+            personal_data: true,
+          },
+        },
+      ],
+      policy_rules: [
+        {
+          rule_id: "rule-1",
+          statement_id: "statement-1",
+          kind: "eligibility",
+          check_type: "state_predicate",
+          status: "supported",
+        },
+      ],
+    },
   },
 };
-
-const ambiguous = {
-  ...prepared,
-  import_ref: "unstaged-review",
+const needsTable = {
+  ...ready,
   state: "needs_repair",
-  draft_digest: "",
-  draft: {
-    destination_tables: ["customers", "departments"],
-    diagnostics: [{ code: "source_schema_ambiguous", severity: "blocking" }],
-  },
+  revision: 2,
+  draft_digest: null,
+  preview: { destination_tables: ["orders", "departments"] },
 };
-
-const reviewStorageKey = "harness-environment-source-review:env-1";
-const serverReview = {
-  id: prepared.import_ref,
-  revision: prepared.revision,
-  state: prepared.state,
-  draft_digest: prepared.draft_digest,
-  preview: prepared.draft,
-  scope: { kind: "environment", id: "env-1", ...basis },
+const reading = {
+  ...ready,
+  state: "reading",
+  revision: 1,
+  draft_digest: null,
+  preview: {},
 };
+let serverReview;
+let currentBasis;
+let sources;
 
 beforeEach(() => {
   sessionStorage.clear();
-  api.get.mockReset().mockImplementation(async (path) => ({
-    data: path.endsWith("/capabilities/") ? basis : { sources: [] },
-  }));
+  serverReview = null;
+  currentBasis = basis;
+  sources = [];
+  api.upload.mockReset();
   api.post.mockReset();
+  api.get.mockReset().mockImplementation(async (path) => ({
+    data: path.endsWith("/capabilities/")
+      ? currentBasis
+      : path === reviewPath
+        ? serverReview
+        : { draft: Boolean(sources.length), sources },
+  }));
 });
 
+const pickFiles = (files) =>
+  fireEvent.change(screen.getByTestId("build-files"), { target: { files } });
+
 describe("SourcesPanel", () => {
-  it("prepares an upload, accepts the signed review, and reloads the persisted draft", async () => {
-    let accepted = false;
-    api.get.mockImplementation(async (path) => ({
-      data: path.endsWith("/capabilities/")
-        ? basis
-        : {
-            draft: accepted,
-            sources: accepted
-              ? [{ source_id: "reference", purpose: "reference" }]
-              : [],
-          },
-    }));
-    api.post.mockImplementation(async (path) => {
-      if (path.endsWith("/accept/")) {
-        accepted = true;
-        return {
-          data: {
-            draft: { id: "draft", revision: 1 },
-            validation: { status: "structural_only" },
-          },
-        };
-      }
-      return { data: prepared };
+  it("stages uploads and KB in one review and keeps the same request on a transport retry", async () => {
+    api.upload.mockImplementation(async (file, { onProgress }) => {
+      onProgress(42);
+      return { id: `uploaded-${file.name}` };
     });
-    const rendering = mount();
+    api.post
+      .mockRejectedValueOnce(new Error("The request timed out"))
+      .mockImplementationOnce(async () => {
+        serverReview = ready;
+        return { data: ready };
+      })
+      .mockImplementationOnce(async () => {
+        serverReview = { ...ready, state: "accepted", revision: 4 };
+        sources = [{ source_id: "orders", purpose: "seed_records" }];
+        return { data: serverReview };
+      });
+    const view = mount();
     expect(
       screen.getByText(/preserves the original version and source files/),
     ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Upload file" })).toBeEnabled(),
-    );
-    fireEvent.change(screen.getByLabelText("Environment source files"), {
-      target: { files: [new File(["An approved guide"], "reference.txt")] },
+    const csv = new File(["email\\nalice@example.test"], "orders.csv");
+    const policy = new File(["15-day policy"], "policy.pdf");
+    pickFiles([csv, policy]);
+    const asPolicy = await screen.findByRole("checkbox", {
+      name: "Use policy.pdf as policy",
     });
-    expect(await screen.findByText("reference.txt")).toBeInTheDocument();
+    fireEvent.click(asPolicy);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Select Knowledge Base" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add a ready KB file" }),
+    );
+    const start = screen.getByRole("button", { name: "Review sources" });
+    await waitFor(() => expect(start).toBeEnabled());
+    fireEvent.click(start);
+    expect(
+      await screen.findByText("The request timed out"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Guides (1 file)")).toBeInTheDocument();
+    fireEvent.click(start);
+    expect(
+      await screen.findByRole("heading", { name: "Review sources" }),
+    ).toBeInTheDocument();
+
+    const [, body] = api.post.mock.calls[0];
+    expect(body).toEqual({
+      scope: {
+        kind: "environment",
+        id: "env-1",
+        environment_version_id: "env-v1",
+        expected_draft: basis.draft,
+      },
+      document_ids: ["uploaded-orders.csv", "uploaded-policy.pdf"],
+      document_purposes: { "uploaded-policy.pdf": "policy" },
+      knowledge_base: [
+        { kind: "knowledge_base", kb_id: "kb-1", file_ids: ["ready-file"] },
+      ],
+      idempotency_key: expect.any(String),
+    });
+    expect(api.post).toHaveBeenNthCalledWith(2, indexPath, body);
+    expect(api.upload).toHaveBeenNthCalledWith(
+      1,
+      csv,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(api.upload).toHaveBeenNthCalledWith(2, policy, expect.anything());
+
+    view.unmount();
+    mount();
+    const rule = await screen.findByRole("checkbox", {
+      name: "statement-1 · supported · eligibility · state predicate · Page 2",
+    });
+    fireEvent.click(rule);
+    expect(
+      screen.getByRole("checkbox", {
+        name: /Replace personal data in orders.csv/,
+      }),
+    ).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: "Add to draft" }));
     expect(
-      await screen.findByText(/Source added to the Environment draft/),
+      await screen.findByText("Source review accepted."),
     ).toBeInTheDocument();
-    expect(api.post).toHaveBeenLastCalledWith(
-      "/simulate/api/harness-environments/env-1/sources/imports/accept/",
+    expect(await screen.findByText("Draft")).toBeInTheDocument();
+    expect(api.post).toHaveBeenNthCalledWith(
+      3,
+      `${reviewPath}accept/`,
       expect.objectContaining({
-        import_ref: "server-signed",
-        expected_environment_version_id: "env-v1",
-        expected_draft: null,
+        expected_revision: 3,
         expected_draft_digest: "sha256:prepared",
-        expected_revision: 2,
+        expected_schema_digest: "sha256:schema",
+        idempotency_key: expect.any(String),
+        decisions: expect.objectContaining({
+          record_reviews: [
+            expect.objectContaining({
+              personal_data_mode: "synthetic_replace",
+            }),
+          ],
+          policy_reviews: [
+            expect.objectContaining({
+              rules: [expect.objectContaining({ decision: "accepted" })],
+            }),
+          ],
+        }),
       }),
     );
-    expect(api.post).toHaveBeenCalledTimes(2);
+    expect(api.post).toHaveBeenCalledTimes(3);
+  });
+
+  it("polls a reading review after reload and cancels with the server revision", async () => {
+    sessionStorage.setItem(storageKey, reading.id);
+    serverReview = reading;
+    api.post.mockImplementation(async () => {
+      serverReview = { ...needsTable, state: "cancelled", revision: 3 };
+      return { data: serverReview };
+    });
+    mount();
+    expect(await screen.findByText("Reading sources…")).toBeInTheDocument();
+    serverReview = needsTable;
     expect(
-      screen.getByText(
-        /Source added to the Environment draft. Save creates a new Environment version/,
+      await screen.findByRole(
+        "combobox",
+        { name: "Scenario data table" },
+        { timeout: 3000 },
       ),
     ).toBeInTheDocument();
-    rendering.unmount();
-    mount();
-    expect(await screen.findByText("Draft")).toBeInTheDocument();
-  });
-
-  it("passes a Knowledge Base page selection as explicit file IDs", async () => {
-    api.post.mockResolvedValue({ data: prepared });
-    mount({
-      environmentSourceSelection: {
-        kb_id: "authorized-kb",
-        file_ids: ["ready-file"],
-      },
+    fireEvent.click(screen.getByRole("button", { name: "Cancel review" }));
+    await waitFor(() => expect(sessionStorage.getItem(storageKey)).toBeNull());
+    expect(api.post).toHaveBeenCalledExactlyOnceWith(`${reviewPath}cancel/`, {
+      expected_revision: 2,
+      expected_draft_digest: null,
     });
-    expect(await screen.findByText("reference.txt")).toBeInTheDocument();
-    expect(api.post).toHaveBeenCalledExactlyOnceWith(
-      "/simulate/api/harness-environments/env-1/sources/imports/prepare/",
-      {
-        expected_environment_version_id: "env-v1",
-        expected_draft: null,
-        selection: {
-          kind: "knowledge_base",
-          kb_id: "authorized-kb",
-          file_ids: ["ready-file"],
-        },
-      },
-    );
   });
 
-  it("repairs a mixed upload after reloading without sending the sources again", async () => {
-    const reviewPath = "/simulate/api/harness-source-reviews/unstaged-review/";
-    api.get.mockImplementation(async (path) => ({
-      data: path.endsWith("/capabilities/")
-        ? basis
-        : path === reviewPath
-          ? {
-              ...serverReview,
-              id: ambiguous.import_ref,
-              state: ambiguous.state,
-              draft_digest: null,
-              preview: ambiguous.draft,
-            }
-          : { sources: [] },
-    }));
+  it("reprepares the same review after reload without resending files", async () => {
+    sessionStorage.setItem(storageKey, needsTable.id);
+    serverReview = needsTable;
     api.post
-      .mockResolvedValueOnce({ data: ambiguous })
-      .mockRejectedValueOnce(new Error("Source preparation timed out"))
-      .mockResolvedValueOnce({
-        data: {
-          ...serverReview,
-          id: ambiguous.import_ref,
-          revision: 3,
-          preview: {
-            ...serverReview.preview,
-            sources: [
-              ...serverReview.preview.sources,
-              {
-                filename: "customers.csv",
-                pin: { source_id: "customers", role: "seed_records" },
-              },
-            ],
-          },
-        },
+      .mockRejectedValueOnce(new Error("The request timed out"))
+      .mockImplementationOnce(async () => {
+        serverReview = ready;
+        return { data: ready };
       });
-    const csv = new File(["name\nApproved owner"], "customers.csv");
-    const guide = new File(["A guide"], "guide.pdf");
-    const rendering = mount();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Upload file" })).toBeEnabled(),
-    );
-    fireEvent.change(screen.getByLabelText("Environment source files"), {
-      target: { files: [csv, guide] },
-    });
-    expect(
-      await screen.findByRole("combobox", { name: "Scenario data table" }),
-    ).toBeInTheDocument();
-    expect(sessionStorage.getItem(reviewStorageKey)).toBe(ambiguous.import_ref);
-    expect(api.post).toHaveBeenCalledTimes(1);
-    const [path, form] = api.post.mock.lastCall;
-    expect(path).toBe(
-      "/simulate/api/harness-environments/env-1/sources/uploads/prepare/",
-    );
-    expect(form.getAll("files")).toEqual([csv, guide]);
-    expect(form.has("purpose")).toBe(false);
-    rendering.unmount();
-
     mount();
-    const select = await screen.findByRole("combobox", {
+    const table = await screen.findByRole("combobox", {
       name: "Scenario data table",
     });
     const prepare = screen.getByRole("button", {
       name: "Prepare for this table",
     });
     expect(prepare).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Add to draft" })).toBeNull();
-    fireEvent.mouseDown(select);
-    fireEvent.click(screen.getByRole("option", { name: "customers" }));
+    fireEvent.mouseDown(table);
+    fireEvent.click(screen.getByRole("option", { name: "orders" }));
     fireEvent.click(prepare);
     expect(
-      await screen.findByText("Source preparation timed out"),
+      await screen.findByText("The request timed out"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("combobox", { name: "Scenario data table" }),
-    ).toHaveTextContent("customers");
     fireEvent.click(prepare);
-    expect(await screen.findByText("reference.txt")).toBeInTheDocument();
-    expect(screen.getByText("Structured scenario data")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add to draft" })).toBeEnabled();
-
-    expect(api.get).toHaveBeenCalledWith(reviewPath);
-    const body = {
+    expect(await screen.findByText("orders.csv")).toBeInTheDocument();
+    const repair = {
       expected_revision: 2,
-      target_table: "customers",
-      idempotency_key: "unstaged-review:2:0",
+      target_table: "orders",
+      idempotency_key: expect.any(String),
     };
-    expect(api.post).toHaveBeenCalledTimes(3);
     expect(api.post).toHaveBeenNthCalledWith(
-      2,
+      1,
       `${reviewPath}reprepare/`,
-      body,
+      repair,
     );
-    expect(api.post).toHaveBeenNthCalledWith(
-      3,
-      `${reviewPath}reprepare/`,
-      body,
-    );
-    api.post.mockResolvedValueOnce({
-      data: { validation: { status: "structural_only" } },
+    expect(api.post.mock.calls[0]).toEqual(api.post.mock.calls[1]);
+    expect(api.upload).not.toHaveBeenCalled();
+  });
+
+  it("keeps a Knowledge Base page selection available for a mixed review", async () => {
+    mount({
+      environmentSourceSelection: { kb_id: "kb-1", file_ids: ["ready-file"] },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add to draft" }));
     expect(
-      await screen.findByText(/Source added to the Environment draft/),
+      await screen.findByText("Selected Knowledge Base"),
     ).toBeInTheDocument();
-    expect(api.post).toHaveBeenLastCalledWith(
-      "/simulate/api/harness-environments/env-1/sources/imports/accept/",
-      expect.objectContaining({
-        import_ref: ambiguous.import_ref,
-        expected_revision: 3,
-        expected_draft_digest: prepared.draft_digest,
-      }),
-    );
-  });
-
-  it("sends an explicit policy purpose for PDF uploads", async () => {
-    api.post.mockResolvedValue({ data: prepared });
-    mount();
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Upload file" })).toBeEnabled(),
+      expect(
+        screen.getByRole("button", { name: "Review sources" }),
+      ).toBeEnabled(),
     );
-    fireEvent.mouseDown(
-      screen.getByRole("combobox", { name: "Upload purpose" }),
-    );
-    fireEvent.click(screen.getByRole("option", { name: "Policy PDF" }));
-    const input = screen.getByLabelText("Environment source files");
-    expect(input).toHaveAttribute("accept", ".pdf");
-    const file = new File(["Policy"], "policy.pdf");
-    fireEvent.change(input, { target: { files: [file] } });
-    expect(await screen.findByText("reference.txt")).toBeInTheDocument();
-    expect(api.post.mock.lastCall[1].get("purpose")).toBe("policy");
+    expect(api.post).not.toHaveBeenCalled();
   });
 
-  it("reopens an unaccepted review from the server after reloading", async () => {
-    api.post.mockResolvedValue({ data: prepared });
-    api.get.mockImplementation(async (path) => ({
-      data: path.endsWith("/capabilities/")
-        ? basis
-        : path.startsWith("/simulate/api/harness-source-reviews/")
-          ? serverReview
-          : { sources: [] },
-    }));
-    const rendering = mount();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Upload file" })).toBeEnabled(),
-    );
-    fireEvent.change(screen.getByLabelText("Environment source files"), {
-      target: { files: [new File(["A guide"], "reference.txt")] },
-    });
-    expect(await screen.findByText("reference.txt")).toBeInTheDocument();
-    expect(sessionStorage.getItem(reviewStorageKey)).toBe(prepared.import_ref);
-    rendering.unmount();
-
-    mount();
-    expect(await screen.findByText("reference.txt")).toBeInTheDocument();
-    expect(api.get).toHaveBeenCalledWith(
-      "/simulate/api/harness-source-reviews/server-signed/",
-    );
-    expect(api.post).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(sessionStorage.getItem(reviewStorageKey)).toBeNull();
-  });
-
-  it("blocks acceptance if a reloaded review belongs to an older Environment version", async () => {
-    sessionStorage.setItem(reviewStorageKey, prepared.import_ref);
-    api.get.mockImplementation(async (path) => ({
-      data: path.endsWith("/capabilities/")
-        ? basis
-        : path.startsWith("/simulate/api/harness-source-reviews/")
-          ? {
-              ...serverReview,
-              scope: {
-                ...serverReview.scope,
-                environment_version_id: "env-old",
-              },
-            }
-          : { sources: [] },
-    }));
+  it("blocks an older Environment basis and permits cancelling the stale review", async () => {
+    sessionStorage.setItem(storageKey, ready.id);
+    serverReview = ready;
+    currentBasis = { ...basis, environment_version_id: "env-v2" };
     mount();
     expect(
       await screen.findByText(/The Environment changed/),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add to draft" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled();
     expect(api.post).not.toHaveBeenCalled();
   });
 });
