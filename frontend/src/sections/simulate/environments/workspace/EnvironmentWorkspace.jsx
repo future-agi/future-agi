@@ -38,6 +38,7 @@ import { subscribeScenarioSelection } from "../buildEnvironment/console/scenario
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
+import AgentMoveBanner from "./AgentMoveBanner";
 import VersionBar from "./VersionBar";
 import DraftBar from "./drafts/DraftBar";
 import ReviewChangesDrawer from "./drafts/ReviewChangesDrawer";
@@ -606,7 +607,15 @@ export default function EnvironmentWorkspace() {
 
       <SystemBanners env={env} />
       {!detailLoading && !detailFailed && (
-        <VersionBar env={env} envState={envState} />
+        <>
+          <VersionBar env={env} envState={envState} />
+          <AgentMoveBanner
+            env={env}
+            onOpenAgentVersions={() =>
+              setTab("overview", { [AGENT_VERSIONS_PARAM]: "open" })
+            }
+          />
+        </>
       )}
       <DraftBar
         env={env}

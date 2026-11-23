@@ -745,3 +745,14 @@ export const REVIEW_COPY = {
   unsavedEdits: (n) => `${n} unsaved edit${n === 1 ? "" : "s"}`,
   unsavedEditsUncounted: "Unsaved edits",
 };
+
+// The banner under the version bar while a new default agent is checked with this environment, and how it ended.
+export const AGENT_MOVE_COPY = {
+  checking: (next) => `Checking ${next} with this environment`,
+  stays: (current) => `${current} stays the default while it's checked.`,
+  slow: "This is taking longer than usual.",
+  open: "Open agent versions",
+  nowDefault: (next) => `${next} is now the default agent`,
+  ended: (next, why) => `${next}: ${why}`,
+  dismiss: "Dismiss",
+};
