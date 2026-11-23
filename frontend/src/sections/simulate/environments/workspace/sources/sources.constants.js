@@ -245,7 +245,7 @@ export const SOURCES_COPY = {
         ? `${limits.formats.map((ext) => ext.toUpperCase()).join(", ")} · up to ${Math.round(limits.max_file_bytes / MB)} MB a file · ${limits.max_files} files or ${Math.round(limits.max_total_bytes / MB)} MB at a time`
         : "",
     kb: "From the Knowledge base",
-    kbHint: "Copies a snapshot of the revision you pick. It isn't linked live.",
+    kbHint: "Copies the file into this environment. It isn't linked live.",
     code: "From code",
     codeNote: "copy the command",
     copied: "Command copied. Run it in your terminal.",
