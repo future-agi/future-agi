@@ -3578,7 +3578,7 @@
 4. accept the rule and reject the actor
 5. try a plain Save, first with the decisions alone, then with the review digest too
 6. Validate
-7. stand in for the validation job by certifying the candidate pairing (no sandbox in this harness)
+7. stand in for the validation job: proofs recorded, the candidate pairing certified, the job completed (no sandbox in this harness)
 8. read the drafts until validation is ready, then Save the candidates with a name
 
 **Backend state verified:**
