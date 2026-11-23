@@ -8,8 +8,9 @@
 #   • every linked TH ticket must carry a type label
 #   • qualifying tickets get a Linear comment / Docs sub-issue
 #   • the dev→main release PR lists shipped features whose docs PR hasn't merged
-# The line rules always fail. The newer rules warn until vars.DOCS_GATE_MODE == 'enforce';
-# then add "Docs declaration" as a required check in the dev merge-queue ruleset.
+# The line rules always fail. The newer rules warn until Tue 1 Dec 2026 (IST), then fail
+# (ENFORCE_FROM in the script; vars.DOCS_GATE_MODE = warn|enforce overrides the date). From
+# then, "Docs declaration" is also a required check in the dev merge-queue ruleset.
 #
 # Skips drafts, release-please PRs, and dev<->main release/back-merge PRs (the release job
 # handles dev→main).
