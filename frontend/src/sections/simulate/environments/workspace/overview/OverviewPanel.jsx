@@ -28,6 +28,8 @@ import NextStepsChecklist from "./NextStepsChecklist";
 import StateSummary from "./StateSummary";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
 import { DependsOnCard, SeededDataCard } from "./WorldCards";
+import ConnectOnlyWorld from "../world/ConnectOnlyWorld";
+import { hasNoWorld } from "../world/world.constants";
 
 /**
  * What this environment is.
@@ -80,6 +82,8 @@ export default function OverviewPanel({
 
   const parallelism = env.parallelism;
   const degradeReasons = parallelism?.degrade_reasons || [];
+
+  const seeded = Boolean(backedWorld) && worldTables(env).length > 0;
 
   const hasDerivedWorld =
     (env.rules?.length || 0) > 0 ||
@@ -167,9 +171,7 @@ export default function OverviewPanel({
             bgcolor: "background.neutral",
           }}
         >
-          <Typography
-            sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
-          >
+          <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
             {PARALLELISM_COPY.degradedTitle(
               parallelism.effective,
               parallelism.requested,
@@ -208,17 +210,18 @@ export default function OverviewPanel({
           scratch env arrives carrying a derived world, so the same checklist
           would render every step pre-complete — skip it there. */}
       {!agentConnected && !hasDerivedWorld && (
-        <NextStepsChecklist env={env} envState={envState} onGo={onGo} scenarioCount={counts?.scenarios} />
+        <NextStepsChecklist
+          env={env}
+          envState={envState}
+          onGo={onGo}
+          scenarioCount={counts?.scenarios}
+        />
       )}
 
-      {/* CapabilityGraph moved to the Contract tab — that's where the shape of
-          the environment belongs. Overview keeps the summary, not the definition. */}
       <GroupHeading>{OVERVIEW_COPY.capabilities}</GroupHeading>
 
       <SourceReadCard tools={env.tools} rules={env.rules} />
 
-      {/* Tools and Hard rules cards were here — removed as duplicates of the
-          Contract tab, which owns the tool inventory and the hard-rule list. */}
       <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
         <Grid item xs={12} md={7}>
           {/* A backed env reads only the real §6 fields; a use case the build
@@ -245,26 +248,32 @@ export default function OverviewPanel({
         </Grid>
       </Grid>
 
-      {/* The world the agent works in: the seeded tables (real §6
-          world.stores, shown only when there are any) and what it depends on
-          (real §6 contract.dependencies). */}
       <GroupHeading>{OVERVIEW_COPY.world}</GroupHeading>
-      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-        <Grid item xs={12} md={7}>
+      {backedWorld && hasNoWorld(env) ? (
+        <Stack spacing={2} sx={{ mb: 3 }}>
+          <ConnectOnlyWorld env={env} />
           <DependsOnCard
-            dependsOn={
-              backedWorld
-                ? dependsFromContract(backedWorld.dependencies)
-                : contract.dependsOn
-            }
+            dependsOn={dependsFromContract(backedWorld.dependencies)}
           />
-        </Grid>
-        {backedWorld && worldTables(env).length > 0 && (
-          <Grid item xs={12} md={5}>
-            <SeededDataCard env={env} />
+        </Stack>
+      ) : (
+        <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
+          {seeded && (
+            <Grid item xs={12} md={7}>
+              <SeededDataCard env={env} />
+            </Grid>
+          )}
+          <Grid item xs={12} md={seeded ? 5 : 7}>
+            <DependsOnCard
+              dependsOn={
+                backedWorld
+                  ? dependsFromContract(backedWorld.dependencies)
+                  : contract.dependsOn
+              }
+            />
           </Grid>
-        )}
-      </Grid>
+        </Grid>
+      )}
 
       {/* Agent version-management drawer, overlaid on Overview so the user
           never leaves the tab. Not kept mounted while closed. */}

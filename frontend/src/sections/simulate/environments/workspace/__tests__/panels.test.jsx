@@ -35,7 +35,13 @@ OverviewPanelStub.propTypes = {
 };
 vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
 vi.mock("../contract/RlContractPanel", () => ({
-  default: () => <div>contract-body</div>,
+  // eslint-disable-next-line react/prop-types
+  default: ({ chat }) => (
+    <div>{`contract-body:chat=${typeof chat?.send === "function"}`}</div>
+  ),
+}));
+vi.mock("../world/WorldPanel", () => ({
+  default: () => <div>world-body</div>,
 }));
 vi.mock("../actors/ActorsTab", () => ({
   default: () => <div>actors-body</div>,
@@ -130,6 +136,7 @@ describe("WorkspacePanels", () => {
     renderPanels({ envState: baseEnvState({ runs: [{ id: "r1" }] }) });
     [
       "Overview",
+      "World & tools",
       "Contract",
       "Scenarios",
       "Evaluations",
@@ -307,6 +314,42 @@ describe("WorkspacePanels", () => {
       "aria-selected",
       "true",
     );
+  });
+
+  it("puts World & tools between Overview and Contract", () => {
+    renderPanels();
+    const names = screen
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent)
+      .slice(0, 3);
+    expect(names).toEqual(["Overview", "World & tools", "Contract"]);
+  });
+
+  it("renders the World & tools body on its tab", () => {
+    renderPanels({ tab: "world" });
+    expect(screen.getByText("world-body")).toBeInTheDocument();
+  });
+
+  it("explains the World & tools tab on hover", async () => {
+    const user = userEvent.setup();
+    renderPanels();
+    await user.hover(screen.getByText("World & tools"));
+    expect(
+      await screen.findByText(
+        "What your agent talks to during a run: the data and the tools that answer its calls.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("hands the Contract tab the builder chat it was given, and none otherwise", () => {
+    const { unmount } = renderPanels({
+      tab: "contract",
+      contractChat: { send: vi.fn(), busy: false, live: true },
+    });
+    expect(screen.getByText("contract-body:chat=true")).toBeInTheDocument();
+    unmount();
+    renderPanels({ tab: "contract" });
+    expect(screen.getByText("contract-body:chat=false")).toBeInTheDocument();
   });
 
   it("renders the body for the active tab", () => {

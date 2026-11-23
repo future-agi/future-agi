@@ -46973,6 +46973,589 @@ export const SimulateApiHarnessEnvironmentsCompareResponse = zod.object({
 });
 
 /**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const SimulateApiHarnessEnvironmentsDesignReviewParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsDesignReviewResponseScenarioCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewResponseUseCasesItemPlannedScenariosMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewResponseEditsItemIndexMin = 0;
+
+export const SimulateApiHarnessEnvironmentsDesignReviewResponse = zod.object({
+  environment_id: zod.string().uuid(),
+  status: zod.enum(["awaiting_approval", "approved", "discarded"]),
+  agent_version_id: zod.string().uuid(),
+  agent_changed: zod.boolean(),
+  scenario_count: zod
+    .number()
+    .min(simulateApiHarnessEnvironmentsDesignReviewResponseScenarioCountMin),
+  tables: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      columns: zod.array(zod.string().min(1)),
+      source: zod.string().min(1),
+      removed: zod.boolean(),
+    }),
+  ),
+  tools: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      name: zod.string().min(1),
+      description: zod.string(),
+      args: zod.array(
+        zod.object({
+          name: zod.string().min(1),
+          type: zod.string(),
+        }),
+      ),
+      requires: zod.array(zod.string().min(1)),
+      inputs_from: zod.record(zod.string(), zod.string().min(1)),
+      effects: zod.string(),
+      refuses: zod.string(),
+      source: zod.string().min(1),
+      removed: zod.boolean(),
+    }),
+  ),
+  rules: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      text: zod.string().min(1),
+      source: zod.string().min(1),
+      removed: zod.boolean(),
+      edited: zod.boolean(),
+      original_text: zod.string().min(1),
+    }),
+  ),
+  use_cases: zod.array(
+    zod.object({
+      id: zod.string().min(1),
+      text: zod.string().min(1),
+      source: zod.string().min(1),
+      removed: zod.boolean(),
+      planned_scenarios: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsDesignReviewResponseUseCasesItemPlannedScenariosMin,
+        ),
+    }),
+  ),
+  edits: zod.array(
+    zod.object({
+      index: zod
+        .number()
+        .min(
+          simulateApiHarnessEnvironmentsDesignReviewResponseEditsItemIndexMin,
+        ),
+      op: zod.enum(["remove", "edit"]),
+      kind: zod.enum(["table", "tool", "rule", "use_case"]),
+      id: zod.string().min(1),
+      text: zod.string().min(1).optional(),
+      by: zod.string(),
+      at: zod.string().min(1),
+    }),
+  ),
+  approved_at: zod.string().datetime({ offset: true }),
+});
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const SimulateApiHarnessEnvironmentsDesignReviewApproveParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsDesignReviewApproveBody = zod.object(
+  {},
+);
+
+export const simulateApiHarnessEnvironmentsDesignReviewApproveResponseScenarioCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewApproveResponseUseCasesItemPlannedScenariosMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewApproveResponseEditsItemIndexMin = 0;
+
+export const SimulateApiHarnessEnvironmentsDesignReviewApproveResponse =
+  zod.object({
+    environment_id: zod.string().uuid(),
+    status: zod.enum(["awaiting_approval", "approved", "discarded"]),
+    agent_version_id: zod.string().uuid(),
+    agent_changed: zod.boolean(),
+    scenario_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsDesignReviewApproveResponseScenarioCountMin,
+      ),
+    tables: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        columns: zod.array(zod.string().min(1)),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+      }),
+    ),
+    tools: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        description: zod.string(),
+        args: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            type: zod.string(),
+          }),
+        ),
+        requires: zod.array(zod.string().min(1)),
+        inputs_from: zod.record(zod.string(), zod.string().min(1)),
+        effects: zod.string(),
+        refuses: zod.string(),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+      }),
+    ),
+    rules: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string().min(1),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+        edited: zod.boolean(),
+        original_text: zod.string().min(1),
+      }),
+    ),
+    use_cases: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string().min(1),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+        planned_scenarios: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsDesignReviewApproveResponseUseCasesItemPlannedScenariosMin,
+          ),
+      }),
+    ),
+    edits: zod.array(
+      zod.object({
+        index: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsDesignReviewApproveResponseEditsItemIndexMin,
+          ),
+        op: zod.enum(["remove", "edit"]),
+        kind: zod.enum(["table", "tool", "rule", "use_case"]),
+        id: zod.string().min(1),
+        text: zod.string().min(1).optional(),
+        by: zod.string(),
+        at: zod.string().min(1),
+      }),
+    ),
+    approved_at: zod.string().datetime({ offset: true }),
+  });
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const SimulateApiHarnessEnvironmentsDesignReviewDiscardParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessEnvironmentsDesignReviewDiscardBody = zod.object(
+  {},
+);
+
+export const simulateApiHarnessEnvironmentsDesignReviewDiscardResponseScenarioCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewDiscardResponseUseCasesItemPlannedScenariosMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewDiscardResponseEditsItemIndexMin = 0;
+
+export const SimulateApiHarnessEnvironmentsDesignReviewDiscardResponse =
+  zod.object({
+    environment_id: zod.string().uuid(),
+    status: zod.enum(["awaiting_approval", "approved", "discarded"]),
+    agent_version_id: zod.string().uuid(),
+    agent_changed: zod.boolean(),
+    scenario_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsDesignReviewDiscardResponseScenarioCountMin,
+      ),
+    tables: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        columns: zod.array(zod.string().min(1)),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+      }),
+    ),
+    tools: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        description: zod.string(),
+        args: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            type: zod.string(),
+          }),
+        ),
+        requires: zod.array(zod.string().min(1)),
+        inputs_from: zod.record(zod.string(), zod.string().min(1)),
+        effects: zod.string(),
+        refuses: zod.string(),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+      }),
+    ),
+    rules: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string().min(1),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+        edited: zod.boolean(),
+        original_text: zod.string().min(1),
+      }),
+    ),
+    use_cases: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string().min(1),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+        planned_scenarios: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsDesignReviewDiscardResponseUseCasesItemPlannedScenariosMin,
+          ),
+      }),
+    ),
+    edits: zod.array(
+      zod.object({
+        index: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsDesignReviewDiscardResponseEditsItemIndexMin,
+          ),
+        op: zod.enum(["remove", "edit"]),
+        kind: zod.enum(["table", "tool", "rule", "use_case"]),
+        id: zod.string().min(1),
+        text: zod.string().min(1).optional(),
+        by: zod.string(),
+        at: zod.string().min(1),
+      }),
+    ),
+    approved_at: zod.string().datetime({ offset: true }),
+  });
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const SimulateApiHarnessEnvironmentsDesignReviewEditParams = zod.object({
+  id: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsDesignReviewEditBodyIdMax = 255;
+
+export const simulateApiHarnessEnvironmentsDesignReviewEditBodyTextMax = 2000;
+
+export const SimulateApiHarnessEnvironmentsDesignReviewEditBody = zod.object({
+  op: zod.enum(["remove", "edit"]),
+  kind: zod.enum(["table", "tool", "rule", "use_case"]),
+  id: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsDesignReviewEditBodyIdMax)
+    .optional(),
+  text: zod
+    .string()
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsDesignReviewEditBodyTextMax)
+    .optional(),
+});
+
+export const simulateApiHarnessEnvironmentsDesignReviewEditResponseScenarioCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewEditResponseUseCasesItemPlannedScenariosMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewEditResponseEditsItemIndexMin = 0;
+
+export const SimulateApiHarnessEnvironmentsDesignReviewEditResponse =
+  zod.object({
+    environment_id: zod.string().uuid(),
+    status: zod.enum(["awaiting_approval", "approved", "discarded"]),
+    agent_version_id: zod.string().uuid(),
+    agent_changed: zod.boolean(),
+    scenario_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsDesignReviewEditResponseScenarioCountMin,
+      ),
+    tables: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        columns: zod.array(zod.string().min(1)),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+      }),
+    ),
+    tools: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        description: zod.string(),
+        args: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            type: zod.string(),
+          }),
+        ),
+        requires: zod.array(zod.string().min(1)),
+        inputs_from: zod.record(zod.string(), zod.string().min(1)),
+        effects: zod.string(),
+        refuses: zod.string(),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+      }),
+    ),
+    rules: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string().min(1),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+        edited: zod.boolean(),
+        original_text: zod.string().min(1),
+      }),
+    ),
+    use_cases: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string().min(1),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+        planned_scenarios: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsDesignReviewEditResponseUseCasesItemPlannedScenariosMin,
+          ),
+      }),
+    ),
+    edits: zod.array(
+      zod.object({
+        index: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsDesignReviewEditResponseEditsItemIndexMin,
+          ),
+        op: zod.enum(["remove", "edit"]),
+        kind: zod.enum(["table", "tool", "rule", "use_case"]),
+        id: zod.string().min(1),
+        text: zod.string().min(1).optional(),
+        by: zod.string(),
+        at: zod.string().min(1),
+      }),
+    ),
+    approved_at: zod.string().datetime({ offset: true }),
+  });
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const SimulateApiHarnessEnvironmentsDesignReviewUndoParams = zod.object({
+  id: zod.string(),
+  index: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsDesignReviewUndoResponseScenarioCountMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewUndoResponseUseCasesItemPlannedScenariosMin = 0;
+
+export const simulateApiHarnessEnvironmentsDesignReviewUndoResponseEditsItemIndexMin = 0;
+
+export const SimulateApiHarnessEnvironmentsDesignReviewUndoResponse =
+  zod.object({
+    environment_id: zod.string().uuid(),
+    status: zod.enum(["awaiting_approval", "approved", "discarded"]),
+    agent_version_id: zod.string().uuid(),
+    agent_changed: zod.boolean(),
+    scenario_count: zod
+      .number()
+      .min(
+        simulateApiHarnessEnvironmentsDesignReviewUndoResponseScenarioCountMin,
+      ),
+    tables: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        columns: zod.array(zod.string().min(1)),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+      }),
+    ),
+    tools: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        name: zod.string().min(1),
+        description: zod.string(),
+        args: zod.array(
+          zod.object({
+            name: zod.string().min(1),
+            type: zod.string(),
+          }),
+        ),
+        requires: zod.array(zod.string().min(1)),
+        inputs_from: zod.record(zod.string(), zod.string().min(1)),
+        effects: zod.string(),
+        refuses: zod.string(),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+      }),
+    ),
+    rules: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string().min(1),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+        edited: zod.boolean(),
+        original_text: zod.string().min(1),
+      }),
+    ),
+    use_cases: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string().min(1),
+        source: zod.string().min(1),
+        removed: zod.boolean(),
+        planned_scenarios: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsDesignReviewUndoResponseUseCasesItemPlannedScenariosMin,
+          ),
+      }),
+    ),
+    edits: zod.array(
+      zod.object({
+        index: zod
+          .number()
+          .min(
+            simulateApiHarnessEnvironmentsDesignReviewUndoResponseEditsItemIndexMin,
+          ),
+        op: zod.enum(["remove", "edit"]),
+        kind: zod.enum(["table", "tool", "rule", "use_case"]),
+        id: zod.string().min(1),
+        text: zod.string().min(1).optional(),
+        by: zod.string(),
+        at: zod.string().min(1),
+      }),
+    ),
+    approved_at: zod.string().datetime({ offset: true }),
+  });
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const SimulateApiHarnessEnvironmentsDesignReviewImpactParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsDesignReviewImpactQueryIdMax = 255;
+
+export const SimulateApiHarnessEnvironmentsDesignReviewImpactQueryParams =
+  zod.object({
+    kind: zod.enum(["table", "tool"]),
+    id: zod
+      .string()
+      .min(1)
+      .max(simulateApiHarnessEnvironmentsDesignReviewImpactQueryIdMax),
+  });
+
+export const SimulateApiHarnessEnvironmentsDesignReviewImpactResponse =
+  zod.object({
+    kind: zod.enum(["table", "tool"]),
+    id: zod.string().min(1),
+    tools: zod.array(
+      zod.object({
+        name: zod.string().min(1),
+        reason: zod.string().min(1),
+      }),
+    ),
+    rules: zod.array(
+      zod.object({
+        id: zod.string().min(1),
+        text: zod.string().min(1),
+      }),
+    ),
+  });
+
+/**
  * The environment's unsaved changes, for the Save bar.
  */
 export const SimulateApiHarnessEnvironmentsDraftsParams = zod.object({

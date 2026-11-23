@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1204,
+  endpointCount: 1210,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29796,6 +29796,142 @@ export const OPENAPI_CONTRACT = Object.freeze({
         responses: {
           200: {
             $ref: "#/definitions/HarnessCompare",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/": {
+      get: {
+        operationId: "simulate_api_harness-environments_design_review",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/approve/": {
+      post: {
+        operationId: "simulate_api_harness-environments_design_review_approve",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/discard/": {
+      post: {
+        operationId: "simulate_api_harness-environments_design_review_discard",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/EmptyRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/edits/": {
+      post: {
+        operationId: "simulate_api_harness-environments_design_review_edit",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: {
+          $ref: "#/definitions/DesignEditRequest",
+        },
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/edits/{index}/": {
+      delete: {
+        operationId: "simulate_api_harness-environments_design_review_undo",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: false,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignReview",
+          },
+          403: {
+            $ref: "#/definitions/ViewerReadOnlyError",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{id}/design-review/impact/": {
+      get: {
+        operationId: "simulate_api_harness-environments_design_review_impact",
+        runtimeRequestValidation: true,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {
+          kind: {
+            required: true,
+            schema: {
+              type: "string",
+              enum: ["table", "tool"],
+            },
+          },
+          id: {
+            required: true,
+            schema: {
+              type: "string",
+              minLength: 1,
+              maxLength: 255,
+            },
+          },
+        },
+        responses: {
+          200: {
+            $ref: "#/definitions/DesignImpact",
           },
           default: {
             $ref: "#/definitions/ManagementAPIErrorResponse",
@@ -65347,6 +65483,141 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           default: "output",
           minLength: 1,
+        },
+      },
+    },
+    DesignEditRequest: {
+      required: ["op", "kind"],
+      type: "object",
+      properties: {
+        op: {
+          title: "Op",
+          type: "string",
+          enum: ["remove", "edit"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["table", "tool", "rule", "use_case"],
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          maxLength: 255,
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          maxLength: 2000,
+          minLength: 1,
+        },
+      },
+    },
+    DesignImpact: {
+      required: ["kind", "id", "tools", "rules"],
+      type: "object",
+      properties: {
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["table", "tool"],
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignImpactTool",
+          },
+        },
+        rules: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignImpactRule",
+          },
+        },
+      },
+    },
+    DesignReview: {
+      required: [
+        "environment_id",
+        "status",
+        "agent_version_id",
+        "agent_changed",
+        "scenario_count",
+        "tables",
+        "tools",
+        "rules",
+        "use_cases",
+        "edits",
+        "approved_at",
+      ],
+      type: "object",
+      properties: {
+        environment_id: {
+          title: "Environment id",
+          type: "string",
+          format: "uuid",
+        },
+        status: {
+          title: "Status",
+          type: "string",
+          enum: ["awaiting_approval", "approved", "discarded"],
+        },
+        agent_version_id: {
+          title: "Agent version id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        agent_changed: {
+          title: "Agent changed",
+          type: "boolean",
+        },
+        scenario_count: {
+          title: "Scenario count",
+          type: "integer",
+          minimum: 0,
+        },
+        tables: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignTable",
+          },
+        },
+        tools: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignTool",
+          },
+        },
+        rules: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignRule",
+          },
+        },
+        use_cases: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignUseCase",
+          },
+        },
+        edits: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignEdit",
+          },
+        },
+        approved_at: {
+          title: "Approved at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
         },
       },
     },
@@ -107273,6 +107544,244 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    DesignImpactRule: {
+      required: ["id", "text"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    DesignImpactTool: {
+      required: ["name", "reason"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        reason: {
+          title: "Reason",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    DesignEdit: {
+      required: ["index", "op", "kind", "id", "by", "at"],
+      type: "object",
+      properties: {
+        index: {
+          title: "Index",
+          type: "integer",
+          minimum: 0,
+        },
+        op: {
+          title: "Op",
+          type: "string",
+          enum: ["remove", "edit"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["table", "tool", "rule", "use_case"],
+        },
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        by: {
+          title: "By",
+          type: "string",
+        },
+        at: {
+          title: "At",
+          type: "string",
+          minLength: 1,
+        },
+      },
+    },
+    DesignRule: {
+      required: ["id", "text", "source", "removed", "edited", "original_text"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+        edited: {
+          title: "Edited",
+          type: "boolean",
+        },
+        original_text: {
+          title: "Original text",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+      },
+    },
+    DesignTable: {
+      required: ["id", "name", "columns", "source", "removed"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        columns: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+      },
+    },
+    DesignTool: {
+      required: [
+        "id",
+        "name",
+        "description",
+        "args",
+        "requires",
+        "inputs_from",
+        "effects",
+        "refuses",
+        "source",
+        "removed",
+      ],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        description: {
+          title: "Description",
+          type: "string",
+        },
+        args: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/DesignToolArg",
+          },
+        },
+        requires: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        inputs_from: {
+          title: "Inputs from",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        effects: {
+          title: "Effects",
+          type: "string",
+        },
+        refuses: {
+          title: "Refuses",
+          type: "string",
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+      },
+    },
+    DesignUseCase: {
+      required: ["id", "text", "source", "removed", "planned_scenarios"],
+      type: "object",
+      properties: {
+        id: {
+          title: "Id",
+          type: "string",
+          minLength: 1,
+        },
+        text: {
+          title: "Text",
+          type: "string",
+          minLength: 1,
+        },
+        source: {
+          title: "Source",
+          type: "string",
+          minLength: 1,
+        },
+        removed: {
+          title: "Removed",
+          type: "boolean",
+        },
+        planned_scenarios: {
+          title: "Planned scenarios",
+          type: "integer",
+          minimum: 0,
+        },
+      },
+    },
     DownloadInvoiceResult: {
       required: ["invoice_pdf_url"],
       type: "object",
@@ -132884,6 +133393,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Condition stage",
           type: "string",
           enum: ["after_reduction"],
+        },
+      },
+    },
+    DesignToolArg: {
+      required: ["name", "type"],
+      type: "object",
+      properties: {
+        name: {
+          title: "Name",
+          type: "string",
+          minLength: 1,
+        },
+        type: {
+          title: "Type",
+          type: "string",
         },
       },
     },

@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1204,
+  endpointCount: 1210,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -923,6 +923,18 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
       "/simulate/api/harness-environments/{id}/compare/": ["get"],
+      "/simulate/api/harness-environments/{id}/design-review/": ["get"],
+      "/simulate/api/harness-environments/{id}/design-review/approve/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/design-review/discard/": [
+        "post",
+      ],
+      "/simulate/api/harness-environments/{id}/design-review/edits/": ["post"],
+      "/simulate/api/harness-environments/{id}/design-review/edits/{index}/": [
+        "delete",
+      ],
+      "/simulate/api/harness-environments/{id}/design-review/impact/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/": ["get"],
       "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
       "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],
@@ -2392,6 +2404,14 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/harness-environments/{id}/agent-policy/": ["post"],
   "/simulate/api/harness-environments/{id}/compare/": ["get"],
+  "/simulate/api/harness-environments/{id}/design-review/": ["get"],
+  "/simulate/api/harness-environments/{id}/design-review/approve/": ["post"],
+  "/simulate/api/harness-environments/{id}/design-review/discard/": ["post"],
+  "/simulate/api/harness-environments/{id}/design-review/edits/": ["post"],
+  "/simulate/api/harness-environments/{id}/design-review/edits/{index}/": [
+    "delete",
+  ],
+  "/simulate/api/harness-environments/{id}/design-review/impact/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/": ["get"],
   "/simulate/api/harness-environments/{id}/drafts/save/": ["post"],
   "/simulate/api/harness-environments/{id}/drafts/{piece}/": ["delete"],

@@ -1,181 +1,222 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "src/utils/test-utils";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { enqueueSnackbar } from "notistack";
+import { render, screen, within } from "src/utils/test-utils";
+import useSimulationAccess from "../../../hooks/useSimulationAccess";
 import RlContractPanel from "../RlContractPanel";
 
-const tool = (name, description, writes) => ({
-  tool: name,
-  status: "simulated",
-  reset_between_trials: true,
-  runs_at: null,
-  writes,
-  description,
-  arguments: [],
-  returns: [],
-  requires: [],
-  refuses: "",
-  effect: writes ? "write" : "read",
-  effects: "",
-  tables: { recorded: false, read: [], changed: [], label: "Not recorded" },
-});
+vi.mock("../../../hooks/useSimulationAccess", () => ({ default: vi.fn() }));
+vi.mock("notistack", () => ({ enqueueSnackbar: vi.fn() }));
 
-// A voice environment with two tools, two hard rules and a seeded table —
-// enough to exercise the world (capability graph), the internals (tables +
-// tools) and the run-end card.
-const voiceEnv = {
+const env = {
   name: "Refund Copilot",
-  surface: "voice",
-  tools: [
-    { name: "lookup_account", desc: "Reads the caller's account." },
-    { name: "issue_refund", desc: "Refunds a charge." },
-  ],
   rules: [
     "Never disclose another caller's data.",
     "Only refund verified callers.",
   ],
-  worldTables: [
-    { name: "customers", rows: 240, note: "40 with saved cards", fields: [] },
-  ],
-  worldTotalRows: 240,
-  toolStatus: [
-    tool("lookup_account", "Reads the caller's account.", false),
-    tool("issue_refund", "Refunds a charge.", true),
-  ],
+  useCases: ["Refund a late order", "Cancel a booking"],
+  endConditions: {
+    ended_reasons: ["customer-ended-call", "silence-timed-out"],
+    max_turns: 10,
+    max_duration_seconds: 3600,
+    clock: "real-time",
+  },
 };
 
+const liveChat = (extra = {}) => ({
+  send: vi.fn(),
+  busy: false,
+  live: true,
+  ...extra,
+});
+
 const renderPanel = (props = {}) =>
-  render(
-    <RlContractPanel
-      env={voiceEnv}
-      envState={{
-        evals: [{ id: "task_success" }],
-        agent: { name: "Support agent" },
-      }}
-      patch={vi.fn()}
-      onGo={vi.fn()}
-      {...props}
-    />,
-  );
+  render(<RlContractPanel env={env} backed {...props} />);
+
+beforeEach(() => {
+  vi.mocked(useSimulationAccess).mockReturnValue({
+    canEdit: true,
+    canRun: true,
+  });
+  vi.mocked(enqueueSnackbar).mockClear();
+});
 
 describe("RlContractPanel", () => {
-  it("opens on its content, with no heading repeating the tab", () => {
+  it("lists the rules from the agent's prompt, numbered by position", () => {
     renderPanel();
-    expect(screen.queryByText("Environment contract")).toBeNull();
-    expect(screen.queryByText(/What this environment is made of/)).toBeNull();
+    expect(screen.getByText("Rules (2)")).toBeInTheDocument();
+    expect(screen.getByText("From the agent's prompt")).toBeInTheDocument();
+    expect(screen.getByText("R1")).toBeInTheDocument();
+    expect(screen.getByText("R2")).toBeInTheDocument();
+    expect(
+      screen.getByText("Only refund verified callers."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/sub-goal/)).toBeNull();
+    expect(screen.queryByText("Not tested")).toBeNull();
   });
 
-  it("renders the world-internals cards over real data only: tables and tools", () => {
+  it("lists the use cases", () => {
     renderPanel();
-    expect(screen.getByText("World state · database")).toBeInTheDocument();
-    expect(screen.getAllByText("Tools").length).toBeGreaterThan(0);
-    // The synthesised handler/check source cards are gone: their bodies were
-    // generated from the env manifest by _fixtures/envInternals, not read from
-    // the job.
-    expect(screen.queryByText("Tool implementations")).toBeNull();
-    expect(screen.queryByText("Check implementations")).toBeNull();
+    expect(screen.getByText("Use cases (2)")).toBeInTheDocument();
+    expect(screen.getByText("U1")).toBeInTheDocument();
+    expect(screen.getByText("Cancel a booking")).toBeInTheDocument();
   });
 
-  it("renders the authored run end conditions: terminate, truncate and clock", () => {
+  it("no longer shows the world, tools or capability graph", () => {
     renderPanel({
       env: {
-        ...voiceEnv,
-        endConditions: {
-          ended_reasons: ["customer-ended-call", "silence-timed-out"],
-          max_turns: 10,
-          max_duration_seconds: 3600,
-          clock: "real-time",
-        },
+        ...env,
+        worldTables: [{ name: "orders", rows: 1, fields: [] }],
+        toolStatus: [{ tool: "lookup_order", status: "simulated" }],
       },
     });
-    expect(screen.getByText("Run end conditions")).toBeInTheDocument();
-    expect(screen.getByText("Terminate")).toBeInTheDocument();
+    expect(screen.queryByText(/^World/)).toBeNull();
+    expect(screen.queryByText(/^Tools/)).toBeNull();
+    expect(screen.queryByText("Capability graph")).toBeNull();
+  });
+
+  it("says when a conversation ends, from the real end conditions", () => {
+    renderPanel();
+    expect(screen.getByText("When a conversation ends")).toBeInTheDocument();
+    expect(screen.getByText("It ends")).toBeInTheDocument();
     expect(screen.getByText("customer-ended-call")).toBeInTheDocument();
-    expect(screen.getByText("Truncate")).toBeInTheDocument();
+    expect(screen.getByText("It's cut off")).toBeInTheDocument();
     expect(screen.getByText("10 turns")).toBeInTheDocument();
-    expect(screen.getByText("Clock · real-time")).toBeInTheDocument();
-  });
-
-  it("has no seed row: the API carries no seed for it to describe", () => {
-    renderPanel({
-      env: { ...voiceEnv, endConditions: { ended_reasons: ["cancelled"] } },
-    });
-    expect(screen.queryByText("Deterministic seed")).toBeNull();
-  });
-
-  it("says a template or fork has no end conditions because it was never built", () => {
-    renderPanel({ env: { ...voiceEnv, endConditions: null } });
-    expect(screen.getByText("Not authored yet")).toBeInTheDocument();
-    expect(
-      screen.getByText("This environment hasn't been built, so it has none."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/The build writes these/)).toBeNull();
+    expect(screen.getByText("60 minutes")).toBeInTheDocument();
+    expect(screen.getByText("Time · real-time")).toBeInTheDocument();
+    expect(screen.queryByText("Same starting data every time")).toBeNull();
   });
 
   it("says the end conditions are not authored yet instead of showing sample ones", () => {
-    renderPanel({ env: { ...voiceEnv, endConditions: null }, backed: true });
+    renderPanel({ env: { ...env, endConditions: null } });
+    expect(screen.getByText("Not authored yet")).toBeInTheDocument();
     expect(
       screen.getByText(
         /The build writes these once it has read how a run of this agent ends/,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("Run end conditions")).toBeInTheDocument();
-    expect(screen.getByText("Not authored yet")).toBeInTheDocument();
-    expect(screen.queryByText("Terminate")).toBeNull();
-    expect(screen.queryByText(/^Clock ·/)).toBeNull();
+    expect(screen.queryByText("It ends")).toBeNull();
   });
 
-  it("lists each declared tool with its description and no inferred effect chip", () => {
+  it("says a template or fork has no end conditions because it was never built", () => {
+    renderPanel({ env: { ...env, endConditions: null }, backed: false });
+    expect(
+      screen.getByText("This environment hasn't been built, so it has none."),
+    ).toBeInTheDocument();
+  });
+
+  it("offers no actions without a builder chat to send them through", () => {
     renderPanel();
-    expect(screen.getAllByText("lookup_account").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("issue_refund").length).toBeGreaterThan(0);
-    expect(screen.getByText("Reads the caller's account.")).toBeInTheDocument();
-    // The read-only/writes classification came from a verb heuristic over the
-    // tool name, so the chip and its override picker were dropped.
-    expect(screen.queryByText("read-only · inferred")).toBeNull();
-    expect(screen.queryByText("writes · inferred")).toBeNull();
-    expect(screen.queryByText("Writes data")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Add rule/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Actions for rule 1" }),
+    ).toBeNull();
   });
 
-  it("shows where a tool runs only when the contract says, in its words", () => {
-    renderPanel({
-      env: {
-        ...voiceEnv,
-        toolStatus: [
-          { ...voiceEnv.toolStatus[0] },
-          { ...voiceEnv.toolStatus[1], runs_at: "billing.refund" },
-        ],
-      },
-    });
-    expect(screen.getByText("billing.refund")).toBeInTheDocument();
-    // lookup_account has no location, so none is invented.
-    expect(screen.queryByText(/lookup_account\./)).toBeNull();
+  it("offers no actions on a locked template", () => {
+    renderPanel({ chat: liveChat(), locked: true });
+    expect(screen.queryByRole("button", { name: /Add rule/ })).toBeNull();
   });
 
-  it("has no actors section, because actors have their own tab", () => {
-    renderPanel({
-      env: {
-        ...voiceEnv,
-        id: "env-1",
-        versioning: { enabled: true },
-        callActors: [{ id: "friend" }],
-      },
-    });
-    expect(screen.queryByText("In the world")).toBeNull();
-    expect(screen.queryByText(/^Actors/)).toBeNull();
+  it("edits a rule through the builder chat with one precise instruction", async () => {
+    const user = userEvent.setup();
+    const chat = liveChat();
+    renderPanel({ chat });
+
+    await user.click(
+      screen.getByRole("button", { name: "Actions for rule 2" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: /Edit/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Edit rule 2")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        /lands as a draft that you save as a new environment version/,
+      ),
+    ).toBeInTheDocument();
+
+    const field = within(dialog).getByRole("textbox", { name: "Rule" });
+    await user.clear(field);
+    await user.type(field, "Only refund callers who passed verification.");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Ask the builder" }),
+    );
+
+    expect(chat.send).toHaveBeenCalledWith(
+      'Change rule 2 of the contract from "Only refund verified callers." to "Only refund callers who passed verification.". Update the sub-goals and checks that depend on it, and keep everything else as it is.',
+    );
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "The builder is updating the contract. The change shows as a draft for you to save.",
+      { variant: "info" },
+    );
   });
 
-  describe("template lock (read-only until forked)", () => {
-    const LOCK_TOOLTIP = "Fork this environment to edit.";
+  it("adds a rule through the builder chat", async () => {
+    const user = userEvent.setup();
+    const chat = liveChat();
+    renderPanel({ chat });
 
-    it("renders the tool list as a static read-out — no override menu, no patch", () => {
-      const patch = vi.fn();
-      renderPanel({ patch, locked: true });
+    await user.click(screen.getByRole("button", { name: /Add rule/ }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Rule" }),
+      "Confirm the amount before refunding.",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Ask the builder" }),
+    );
+    expect(chat.send).toHaveBeenCalledWith(
+      'Add this rule to the contract: "Confirm the amount before refunding.". Add the sub-goals and checks it needs, and keep everything else as it is.',
+    );
+  });
 
-      // With the effect override gone there is nothing on this card to lock,
-      // and nothing that can reach patch.
-      expect(screen.getAllByText("lookup_account").length).toBeGreaterThan(0);
-      expect(screen.queryByText("Writes data")).toBeNull();
-      expect(screen.queryByLabelText(LOCK_TOOLTIP)).toBeNull();
-      expect(patch).not.toHaveBeenCalled();
+  it("removes a use case after a confirm", async () => {
+    const user = userEvent.setup();
+    const chat = liveChat();
+    renderPanel({ chat });
+
+    await user.click(
+      screen.getByRole("button", { name: "Actions for use case 1" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: /Remove/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Remove use case 1")).toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Remove use case" }),
+    );
+    expect(chat.send).toHaveBeenCalledWith(
+      'Remove use case 1 ("Refund a late order") from the contract. Remove or update the scenarios and checks that depend on it, and keep everything else as it is.',
+    );
+  });
+
+  it("sends nothing when the dialog is cancelled", async () => {
+    const user = userEvent.setup();
+    const chat = liveChat();
+    renderPanel({ chat });
+    await user.click(screen.getByRole("button", { name: /Add use case/ }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(chat.send).not.toHaveBeenCalled();
+  });
+
+  it("disables the actions for a viewer", () => {
+    vi.mocked(useSimulationAccess).mockReturnValue({
+      canEdit: false,
+      canRun: false,
     });
+    renderPanel({ chat: liveChat() });
+    expect(screen.getByRole("button", { name: /Add rule/ })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Actions for rule 1" }),
+    ).toBeDisabled();
+  });
+
+  it("disables the actions while the builder is busy", () => {
+    renderPanel({ chat: liveChat({ busy: true }) });
+    expect(screen.getByRole("button", { name: /Add rule/ })).toBeDisabled();
+  });
+
+  it("disables the actions until the environment is ready", () => {
+    renderPanel({ chat: liveChat({ live: false }) });
+    expect(screen.getByRole("button", { name: /Add use case/ })).toBeDisabled();
   });
 });

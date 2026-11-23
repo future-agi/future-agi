@@ -1,3 +1,5 @@
+export const AWAITING_APPROVAL_STAGE = "awaiting_approval";
+
 export const ENV_STATUS = {
   BUILDING: "building",
   NOT_RUN: "not_run",

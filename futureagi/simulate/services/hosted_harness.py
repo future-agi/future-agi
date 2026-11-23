@@ -226,6 +226,7 @@ def create_hosted_job(
     workspace=None,
     on_create: Callable[[HostedHarnessJob], None] | None = None,
     request_digest: str | None = None,
+    state: str = HostedHarnessJob.State.QUEUED,
 ) -> tuple[HostedHarnessJob, bool]:
     """Create the job, or return the one this idempotency key already made.
 
@@ -277,7 +278,7 @@ def create_hosted_job(
             request_digest=request_digest,
             schema_version=_JOB_SCHEMA_VERSION,
             payload=normalized,
-            state=HostedHarnessJob.State.QUEUED,
+            state=state,
             seed=seed,
             scenario_count=normalized["scenario_count"],
             artifact_level=normalized["artifacts"]["level"],

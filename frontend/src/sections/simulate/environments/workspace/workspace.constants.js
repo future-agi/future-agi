@@ -11,6 +11,12 @@
 export const WORKSPACE_TABS = [
   { id: "overview", label: "Overview", icon: "solar:widget-5-linear" },
   {
+    id: "world",
+    label: "World & tools",
+    icon: "solar:global-linear",
+    hint: "What your agent talks to during a run: the data and the tools that answer its calls.",
+  },
+  {
     id: "contract",
     label: "Contract",
     icon: "solar:document-text-linear",
@@ -52,11 +58,12 @@ export const WORKSPACE_TABS = [
 
 // Setup-gap areas map onto the tab that owns the underlying answer, so a
 // blocking gap surfaces as an amber dot on that tab. Only the areas the user
-// can resolve inside this workspace are routed; the designer's Sandbox/Tools
+// can resolve inside this workspace are routed; the designer's Sandbox
 // entries point at an Agents tab we do not render, so they are omitted.
 export const GAP_AREA_TO_TAB = {
   Contract: "contract",
   Grading: "evals",
+  Tools: "world",
 };
 
 // Header, overflow-menu and empty-state copy for the workspace shell.

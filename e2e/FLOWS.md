@@ -3515,9 +3515,9 @@
 
 1. seed a built, versioned Environment whose contract records each tool's fields and one tool that reaches production (e2e/lib/harness_environment_seed.py)
 2. read the environment (GET harness-environments/<id>/)
-3. open the Contract tab
+3. open the World & tools tab
 4. expand lookup_order
-5. read issue_refund's Unsupported label
+5. find issue_refund under Unsupported
 
 **Backend state verified:**
 
@@ -3527,7 +3527,7 @@
 **Browser observations:**
 
 - lookup_order reads "Reads only" and its returned fields with units
-- issue_refund reads Unsupported, never Simulated
+- issue_refund is listed under Unsupported, never under Simulated
 
 ### SIM-E2E-019 — World state shows a faulted call apart from a commit, and an actor's change made during the call
 

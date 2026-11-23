@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -57,6 +58,12 @@ from simulate.serializers.harness_actors import (
     HarnessEnvironmentFileUploadedSerializer,
     HarnessEnvironmentFileUploadSerializer,
     editor_problems,
+)
+from simulate.serializers.harness_design_review import (
+    DesignEditRequestSerializer,
+    DesignImpactQuerySerializer,
+    DesignImpactSerializer,
+    DesignReviewSerializer,
 )
 from simulate.serializers.harness_environment import (
     HarnessAgentCredentialsResponseSerializer,
@@ -902,6 +909,105 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             return self._not_found()
         discard_draft(job, piece, user=request.user)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @validated_request(
+        responses={200: DesignReviewSerializer},
+        operation_id="simulate_api_harness-environments_design_review",
+    )
+    @action(detail=True, methods=["get"], url_path="design-review")
+    def design_review(self, request, pk=None):
+        from simulate.services.harness_design_review import design_document
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(design_document(job))
+
+    @viewer_denied("change the environment's design")
+    @validated_request(
+        request_serializer=DesignEditRequestSerializer,
+        responses={200: DesignReviewSerializer},
+        reject_unknown_fields=True,
+        operation_id="simulate_api_harness-environments_design_review_edit",
+    )
+    @action(detail=True, methods=["post"], url_path="design-review/edits")
+    def add_design_edit(self, request, pk=None):
+        from simulate.services.harness_design_review import add_edit, design_document
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        job = add_edit(job, request.validated_data, user=request.user)
+        return Response(design_document(job))
+
+    @viewer_denied("change the environment's design")
+    @swagger_auto_schema(
+        responses={200: DesignReviewSerializer},
+        operation_id="simulate_api_harness-environments_design_review_undo",
+    )
+    @action(
+        detail=True,
+        methods=["delete"],
+        url_path=r"design-review/edits/(?P<index>[0-9]{1,4})",
+    )
+    def undo_design_edit(self, request, pk=None, index=None):
+        from simulate.services.harness_design_review import design_document, undo_edit
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        job = undo_edit(job, int(index), user=request.user)
+        return Response(design_document(job))
+
+    @validated_request(
+        query_serializer=DesignImpactQuerySerializer,
+        responses={200: DesignImpactSerializer},
+        operation_id="simulate_api_harness-environments_design_review_impact",
+    )
+    @action(detail=True, methods=["get"], url_path="design-review/impact")
+    def design_impact(self, request, pk=None):
+        from simulate.services.harness_design_review import impact
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        query = request.validated_query_data
+        return Response(impact(job, query["kind"], query["id"]))
+
+    @viewer_denied("approve the environment's design")
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: DesignReviewSerializer},
+        operation_id="simulate_api_harness-environments_design_review_approve",
+    )
+    @action(detail=True, methods=["post"], url_path="design-review/approve")
+    def approve_design(self, request, pk=None):
+        from simulate.services.harness_design_review import approve, design_document
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        base_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
+        job = approve(job, user=request.user, base_url=base_url)
+        return Response(design_document(job))
+
+    @viewer_denied("discard the environment's design")
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={200: DesignReviewSerializer},
+        operation_id="simulate_api_harness-environments_design_review_discard",
+    )
+    @action(detail=True, methods=["post"], url_path="design-review/discard")
+    def discard_design(self, request, pk=None):
+        from simulate.services.harness_design_review import design_document, discard
+
+        job = self._job(request, pk)
+        if job is None:
+            return self._not_found()
+        return Response(design_document(discard(job, user=request.user)))
 
     @validated_request(
         request_serializer=EvidenceImportCreateSerializer,

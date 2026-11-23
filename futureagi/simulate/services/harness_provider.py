@@ -1482,6 +1482,17 @@ def _environment_agent_maker(
     return make
 
 
+def _with_design_review(on_create, runtime, contract):
+    from simulate.services.harness_design_review import create_design_review
+
+    def make(job) -> None:
+        if on_create is not None:
+            on_create(job)
+        create_design_review(job, runtime, contract)
+
+    return make
+
+
 # TODO: delete with the HARNESS_VERSIONING_ENABLED kill switch.
 def _secret_ref_minter(secret_values):
     """A hook storing the values after the request digest, so a replay mints none."""
@@ -1533,6 +1544,7 @@ class HostedHarnessProvider:
     def create(self, request) -> Response:
         from simulate.serializers.harness_job import names_agent_version
         from simulate.services.harness_agent_versions import advisory_xact_lock
+        from simulate.services.harness_design_review import review_contract_for
         from simulate.services.harness_versioning.versions import versioning_enabled
         from simulate.services.hosted_harness import (
             HostedHarnessError,
@@ -1587,6 +1599,9 @@ class HostedHarnessProvider:
             connected_runtime = None
             version_bound = False
         connected_build = connected_runtime is not None
+        review_contract = (
+            review_contract_for(connected_runtime) if connected_build else None
+        )
         if (
             not connected_build
             and (payload.get("source") or {}).get("kind") == "provider"
@@ -1705,6 +1720,10 @@ class HostedHarnessProvider:
                     )
                 elif replayed is None and secret_values:
                     on_create = _secret_ref_minter(secret_values)
+                if review_contract is not None:
+                    on_create = _with_design_review(
+                        on_create, connected_runtime, review_contract
+                    )
                 job, _ = create_hosted_job(
                     organization,
                     payload,
@@ -1712,6 +1731,11 @@ class HostedHarnessProvider:
                     workspace=workspace,
                     on_create=on_create,
                     request_digest=client_digest,
+                    state=(
+                        HostedHarnessJob.State.RECEIVED
+                        if review_contract is not None
+                        else HostedHarnessJob.State.QUEUED
+                    ),
                 )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
@@ -1725,6 +1749,8 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness scheduler is unavailable"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        if job.state == HostedHarnessJob.State.RECEIVED:
+            return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
         try:
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(

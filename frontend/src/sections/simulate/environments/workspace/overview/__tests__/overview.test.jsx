@@ -8,9 +8,7 @@ import OverviewPanel from "../OverviewPanel";
 
 // The drawer's real-data panel has its own tests; here it only has to mount.
 vi.mock("../../agents/AgentVersionsPanel", () => ({
-  default: ({ env }) => (
-    <div data-testid="agent-versions-panel">{env.id}</div>
-  ),
+  default: ({ env }) => <div data-testid="agent-versions-panel">{env.id}</div>,
 }));
 import { HardRulesCard } from "../OverviewCards";
 
@@ -180,6 +178,59 @@ describe("OverviewPanel", () => {
     });
     expect(screen.queryByText("Seeded data")).toBeNull();
     expect(screen.queryByText("harness_seed_sentinel")).toBeNull();
+  });
+
+  it("puts Seeded data before What it depends on under The world", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        seed: { tables: [{ name: "bookings", rows: 900 }] },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    const heading = screen.getByText("The world");
+    const seeded = screen.getByText("Seeded data");
+    const depends = screen.getByText("What it depends on");
+    expect(
+      heading.compareDocumentPosition(seeded) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      seeded.compareDocumentPosition(depends) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("says there is no world to reset for a built env with no tables and no stores", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        detailReady: true,
+        seed: undefined,
+        worldTables: [],
+        stores: [],
+        tools: [{ name: "book_ride" }],
+        toolStatus: [{ tool: "book_ride", status: "in_process" }],
+      },
+      backedWorld: {
+        ...BACKED_WORLD,
+        dependencies: [
+          { name: "postgres", kind: "datastore", what: "Rows", used_by: [] },
+        ],
+      },
+    });
+    expect(screen.getByText("No world to reset")).toBeInTheDocument();
+    expect(
+      screen.getByText("No tables or stores are seeded for this environment."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Seeded data")).toBeNull();
+    expect(screen.getByText("What it depends on")).toBeInTheDocument();
+    expect(screen.getByText("postgres")).toBeInTheDocument();
+  });
+
+  it("shows no no-world card for a template, which has no built detail", () => {
+    renderPanel({ env: { ...MOCK_WORLD, worldTables: [], stores: [] } });
+    expect(screen.queryByText("No world to reset")).toBeNull();
   });
 
   it("names an agent-definition provider the way the Agents pages do", () => {

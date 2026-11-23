@@ -1278,6 +1278,9 @@ HARNESS_AGENT_READING_CHARGE_ENABLED = os.getenv(
 HARNESS_SEED_CONTRACT_ENABLED = os.getenv(
     "HARNESS_SEED_CONTRACT_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+HARNESS_DESIGN_REVIEW_ENABLED = os.getenv(
+    "HARNESS_DESIGN_REVIEW_ENABLED", ""
+).lower() in ("1", "true", "yes")
 # How long one reading of an agent, or one scan for the agents in a source, may run.
 ALK_HOSTED_READING_TIMEOUT = int(os.getenv("ALK_HOSTED_READING_TIMEOUT", "2400"))
 # Most scenarios × trials one simulation Run may submit.

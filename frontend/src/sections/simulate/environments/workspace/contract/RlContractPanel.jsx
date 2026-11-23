@@ -1,106 +1,123 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
 import { Box, Stack, Typography } from "@mui/material";
+import { enqueueSnackbar } from "notistack";
 import Iconify from "src/components/iconify";
 import SectionCard from "../../components/SectionCard";
-import CapabilityGraph from "../overview/CapabilityGraph";
-import WorldInternalsSection from "./WorldInternalsSection";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
+import { WORKSPACE_COPY } from "../workspace.constants";
 import { Label } from "./ContractPart";
-import { CONTRACT_COPY } from "./contract.constants";
+import ContractListCard from "./ContractListCard";
+import ContractEditDialog from "./ContractEditDialog";
+import { contractInstruction } from "./contractInstructions";
+import {
+  CONTRACT_COPY,
+  CONTRACT_EDIT_COPY,
+  CONTRACT_LISTS_COPY,
+} from "./contract.constants";
 
-// Map the real §6 `end_conditions` onto the episode-card shape. Returns null when
-// the environment carries no end conditions yet, and the card says so.
-// `ended_reasons` is the vocabulary a finished call may carry (terminate); the
-// two limits are the run's truncation ceilings.
-const CLOCK_NOTE = {
-  "real-time": "Wall-clock time: the voice call runs in real time.",
-  stepped: "Stepped: the chat advances a turn at a time.",
-};
+const EC = CONTRACT_COPY.endConditions;
+
+function durationLabel(seconds) {
+  if (seconds >= 60 && seconds % 60 === 0) {
+    const minutes = seconds / 60;
+    return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  }
+  return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+}
+
 function realEpisode(env) {
   const ec = env?.endConditions;
   if (!ec) return null;
-  const truncate = [
+  const cutOff = [
     ec.max_turns != null && {
-      when: `${ec.max_turns} turns`,
-      note: "Ceiling across the suite. Each scenario carries its own.",
+      when: EC.turns(ec.max_turns),
+      note: EC.turnsNote,
     },
     ec.max_duration_seconds != null && {
-      when: `${ec.max_duration_seconds}s`,
-      note: "The job's wall-clock limit.",
+      when: durationLabel(ec.max_duration_seconds),
+      note: EC.durationNote,
     },
   ].filter(Boolean);
   return {
-    terminate: (ec.ended_reasons || []).map((reason) => ({
+    ends: (ec.ended_reasons || []).map((reason) => ({
       when: reason,
       note: "",
     })),
-    truncate,
+    cutOff,
     clock: {
       mode: ec.clock || "-",
-      note: CLOCK_NOTE[ec.clock] || "How run time is measured.",
+      note: EC.clockNote[ec.clock] || EC.clockNoteDefault,
     },
   };
 }
 
-/**
- * The environment contract — what this environment IS.
- *
- * Concrete over formal: the world (capability graph), the internals a run reads
- * from (DB schema, tool code, check code), how a run ends, and who else acts in
- * it. The five-part RL-textbook framing that used to live here — modality
- * adapter, obs/action spaces, transition dynamics, reward spec — mostly
- * duplicated other tabs in RL notation, so it was removed. The RL vocabulary
- * still lives in `_fixtures/rlContract.js` if it needs to come back.
- *
- * Twin-backed envs are out of scope in this integration, so the world is always
- * the capability graph (the designer's TwinSandboxSection branch is omitted).
- */
 export default function RlContractPanel({
   env,
-  envState,
-  patch,
-  locked = false,
-  graphData,
   backed = false,
+  locked = false,
+  chat = null,
 }) {
-  // The real §6 `end_conditions`, mapped into the terminate/truncate/clock shape
-  // the card renders: `ended_reasons` are the ways a run terminates,
-  // `max_turns`/`max_duration_seconds` are the truncation ceilings, `clock` is
-  // real-time (voice) or stepped (chat). Null until the build authors them.
+  const { canEdit } = useSimulationAccess();
+  const [editing, setEditing] = useState(null);
   const episode = realEpisode(env);
-  const hasWorld = !!envState?.agent || (env.tools?.length || 0) > 0;
+  const rules = (env?.rules || []).map(String).filter(Boolean);
+  const useCases = (env?.useCases || []).map(String).filter(Boolean);
+
+  const showActions = !locked && typeof chat?.send === "function";
+  const blockedReason = !canEdit
+    ? WORKSPACE_COPY.viewer.edit
+    : !chat?.live
+      ? CONTRACT_LISTS_COPY.notLive
+      : chat?.busy
+        ? CONTRACT_LISTS_COPY.busy
+        : null;
+
+  const open = (target, op) => (index, text) =>
+    setEditing({ target, op, index, text: text ?? "" });
+
+  const confirm = (next) => {
+    const instruction = contractInstruction({ ...editing, next });
+    setEditing(null);
+    if (!instruction || blockedReason) return;
+    chat.send(instruction);
+    enqueueSnackbar(CONTRACT_EDIT_COPY.sent, { variant: "info" });
+  };
 
   return (
     <Box sx={{ p: 2 }}>
-      {/* ── the world ─────────────────────────────────────────────────── */}
-      {hasWorld && (
-        <Box sx={{ mb: 2 }}>
-          <CapabilityGraph env={env} envState={envState} data={graphData} />
-        </Box>
-      )}
-
-      {/* ── internals: DB schema + tool code + check code ─────────────── */}
-      <WorldInternalsSection
-        env={env}
-        envState={envState}
-        patch={patch}
-        locked={locked}
+      <ContractListCard
+        list={CONTRACT_LISTS_COPY.rules}
+        items={rules}
+        showActions={showActions}
+        blockedReason={blockedReason}
+        onAdd={() => open("rule", "add")()}
+        onEdit={open("rule", "edit")}
+        onRemove={open("rule", "remove")}
+        sx={{ mb: 2 }}
       />
 
-      {/* ── run end conditions ────────────────────────────────────────── */}
-      <SectionCard
-        title={CONTRACT_COPY.endConditions.title}
-        subtitle={CONTRACT_COPY.endConditions.subtitle}
-        sx={{ mb: 2 }}
-      >
+      {(useCases.length > 0 || showActions) && (
+        <ContractListCard
+          list={CONTRACT_LISTS_COPY.useCases}
+          items={useCases}
+          showActions={showActions}
+          blockedReason={blockedReason}
+          onAdd={() => open("useCase", "add")()}
+          onEdit={open("useCase", "edit")}
+          onRemove={open("useCase", "remove")}
+          sx={{ mb: 2 }}
+        />
+      )}
+
+      <SectionCard title={EC.title} subtitle={EC.subtitle} sx={{ mb: 2 }}>
         {!episode ? (
           <Box sx={{ p: 1.5 }}>
             <Typography sx={{ typography: "s1", fontWeight: 500 }}>
-              {CONTRACT_COPY.endConditions.notAuthored}
+              {EC.notAuthored}
             </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {backed
-                ? CONTRACT_COPY.endConditions.notAuthoredBuilt
-                : CONTRACT_COPY.endConditions.notAuthoredUnbuilt}
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              {backed ? EC.notAuthoredBuilt : EC.notAuthoredUnbuilt}
             </Typography>
           </Box>
         ) : (
@@ -113,51 +130,18 @@ export default function RlContractPanel({
                 bgcolor: "divider",
               }}
             >
-              <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
-                <Label>Terminate</Label>
-                <Typography
-                  sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}
-                >
-                  The episode has a value. Goal verifiers settle.
-                </Typography>
-                <Stack spacing={1}>
-                  {episode.terminate.map((e) => (
-                    <Box key={e.when}>
-                      <Typography sx={{ typography: "s1", fontWeight: 500 }}>
-                        {e.when}
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.subtitle" }}
-                      >
-                        {e.note}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Stack>
-              </Box>
-              <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
-                <Label>Truncate</Label>
-                <Typography
-                  sx={{ typography: "s3", color: "text.subtitle", mb: 1.25 }}
-                >
-                  Not a failure, and not terminal. Bootstrap from the last
-                  state.
-                </Typography>
-                <Stack spacing={1}>
-                  {episode.truncate.map((e) => (
-                    <Box key={e.when}>
-                      <Typography sx={{ typography: "s1", fontWeight: 500 }}>
-                        {e.when}
-                      </Typography>
-                      <Typography
-                        sx={{ typography: "s3", color: "text.subtitle" }}
-                      >
-                        {e.note}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Stack>
-              </Box>
+              <EndingColumn
+                label={EC.endsLabel}
+                blurb={EC.endsBlurb}
+                rows={episode.ends}
+                none={EC.endsNone}
+              />
+              <EndingColumn
+                label={EC.cutLabel}
+                blurb={EC.cutBlurb}
+                rows={episode.cutOff}
+                none={EC.cutNone}
+              />
             </Box>
             <Stack
               direction="row"
@@ -173,11 +157,11 @@ export default function RlContractPanel({
               <Iconify
                 icon="solar:clock-circle-linear"
                 width={16}
-                sx={{ color: "text.subtitle", flexShrink: 0, mt: "1px" }}
+                sx={{ color: "text.tertiary", flexShrink: 0, mt: "1px" }}
               />
               <Box>
                 <Typography sx={{ typography: "s1", fontWeight: 500 }}>
-                  Clock · {episode.clock.mode}
+                  {EC.timeLabel(episode.clock.mode)}
                 </Typography>
                 <Typography sx={{ typography: "s1", color: "text.secondary" }}>
                   {episode.clock.note}
@@ -187,39 +171,74 @@ export default function RlContractPanel({
           </>
         )}
       </SectionCard>
+
+      {editing && (
+        <ContractEditDialog
+          edit={editing}
+          onClose={() => setEditing(null)}
+          onConfirm={confirm}
+        />
+      )}
     </Box>
   );
 }
 
-const ENV_SHAPE = PropTypes.shape({
-  tools: PropTypes.arrayOf(
-    PropTypes.shape({ name: PropTypes.string, desc: PropTypes.string }),
-  ),
-  rules: PropTypes.arrayOf(PropTypes.string),
-  seed: PropTypes.shape({
-    tables: PropTypes.arrayOf(PropTypes.shape({ name: PropTypes.string })),
-  }),
-});
+function EndingColumn({ label, blurb, rows, none }) {
+  return (
+    <Box sx={{ p: 1.5, bgcolor: "background.paper" }}>
+      <Label>{label}</Label>
+      <Typography sx={{ typography: "s3", color: "text.tertiary", mb: 1.25 }}>
+        {blurb}
+      </Typography>
+      {rows.length === 0 ? (
+        <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+          {none}
+        </Typography>
+      ) : (
+        <Stack spacing={1}>
+          {rows.map((row) => (
+            <Box key={row.when}>
+              <Typography sx={{ typography: "s1", fontWeight: 500 }}>
+                {row.when}
+              </Typography>
+              {row.note && (
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {row.note}
+                </Typography>
+              )}
+            </Box>
+          ))}
+        </Stack>
+      )}
+    </Box>
+  );
+}
 
-const ENV_STATE_SHAPE = PropTypes.shape({
-  agent: PropTypes.shape({ name: PropTypes.string }),
-  evals: PropTypes.arrayOf(
-    PropTypes.oneOfType([
-      PropTypes.string,
-      PropTypes.shape({ id: PropTypes.string }),
-    ]),
-  ),
-  toolResolutions: PropTypes.objectOf(PropTypes.string),
-});
+EndingColumn.propTypes = {
+  label: PropTypes.string.isRequired,
+  blurb: PropTypes.string.isRequired,
+  rows: PropTypes.arrayOf(
+    PropTypes.shape({ when: PropTypes.string, note: PropTypes.string }),
+  ).isRequired,
+  none: PropTypes.string.isRequired,
+};
 
 RlContractPanel.propTypes = {
-  env: ENV_SHAPE.isRequired,
-  envState: ENV_STATE_SHAPE.isRequired,
-  patch: PropTypes.func,
-  locked: PropTypes.bool,
-  // Real §6 capability-graph data for a backed env (tools/flows/personas/
-  // guardrails); undefined for a non-backed env (fixture derivation).
-  graphData: PropTypes.object,
-  // A built (harness) environment; a template or fork is never built.
+  env: PropTypes.shape({
+    rules: PropTypes.arrayOf(PropTypes.string),
+    useCases: PropTypes.arrayOf(PropTypes.string),
+    endConditions: PropTypes.shape({
+      max_turns: PropTypes.number,
+      max_duration_seconds: PropTypes.number,
+      clock: PropTypes.string,
+      ended_reasons: PropTypes.arrayOf(PropTypes.string),
+    }),
+  }).isRequired,
   backed: PropTypes.bool,
+  locked: PropTypes.bool,
+  chat: PropTypes.shape({
+    send: PropTypes.func,
+    busy: PropTypes.bool,
+    live: PropTypes.bool,
+  }),
 };

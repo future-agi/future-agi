@@ -4,7 +4,10 @@ import {
   buildStatusFor,
   envStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
-import { BUILD_STATUS } from "src/sections/simulate/environments/myEnvironments.constants";
+import {
+  AWAITING_APPROVAL_STAGE,
+  BUILD_STATUS,
+} from "src/sections/simulate/environments/myEnvironments.constants";
 
 /**
  * §6 environment-detail adapter.
@@ -130,6 +133,7 @@ export function harnessDetailToEnvironment(detail) {
     buildStatus: overview.status
       ? buildStatusFor(overview.status)
       : BUILD_STATUS.BUILDING,
+    awaitingApproval: overview.stage === AWAITING_APPROVAL_STAGE,
     tools: derivedWorld.tools,
     rules: derivedWorld.rules,
     seed: derivedWorld.seed,

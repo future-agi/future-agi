@@ -10,7 +10,10 @@ import {
   completedStageCount,
 } from "src/pages/dashboard/harness/harnessShared";
 import { useEnvironmentsStore } from "src/sections/simulate/environments/store/useEnvironmentsStore";
-import { ENV_STATUS } from "src/sections/simulate/environments/myEnvironments.constants";
+import {
+  AWAITING_APPROVAL_STAGE,
+  ENV_STATUS,
+} from "src/sections/simulate/environments/myEnvironments.constants";
 import {
   VOICE_CONNECTORS,
   buildStatusFor,
@@ -75,7 +78,9 @@ export const harnessJobQuery = (envId, { enabled = true } = {}) => ({
   enabled: Boolean(envId) && enabled,
   retry: (failureCount, error) => !isJobNotFound(error) && failureCount < 3,
   refetchInterval: (query) =>
-    isJobNotFound(query.state.error) ? false : jobRefetchInterval(query.state.data),
+    isJobNotFound(query.state.error)
+      ? false
+      : jobRefetchInterval(query.state.data),
 });
 
 // §6 environment detail. Fetched once on open and refetched by the workspace
@@ -124,7 +129,8 @@ function seedTablesFromEnvironment(environment = {}) {
 export function stageOutputsToWorld(stageOutputs = []) {
   const outputs = Array.isArray(stageOutputs) ? stageOutputs : [];
   const contract = outputs.find((o) => o?.kind === "contract")?.data || {};
-  const environment = outputs.find((o) => o?.kind === "environment")?.data || {};
+  const environment =
+    outputs.find((o) => o?.kind === "environment")?.data || {};
   const scenariosOut = outputs.find((o) => o?.kind === "scenarios")?.data;
 
   const tools = (contract.tools || [])
@@ -182,7 +188,8 @@ export function harnessEnvState(item, world) {
   const status = item?.status || {};
   const resolved = world || {};
   const scenarios =
-    (resolved.scenarios?.length && resolved.scenarios.map(scenarioFromOutput)) ||
+    (resolved.scenarios?.length &&
+      resolved.scenarios.map(scenarioFromOutput)) ||
     (Array.isArray(item?.scenarios) && item.scenarios.length
       ? item.scenarios.map(scenarioFromOutput)
       : []);
@@ -218,6 +225,7 @@ export function harnessJobToEnvironment(item) {
     agentType: agentTypeFor(item?.credentials?.detected_connectors),
     status: jobStatusFor(status),
     buildStatus: buildStatusFor(status.stage),
+    awaitingApproval: status.stage === AWAITING_APPROVAL_STAGE,
     // The "whose fault" line for a failed build ({domain, stage, code, message},
     // see §7). Null unless the job stage is terminal-failed.
     buildError: status.failure || null,
@@ -281,7 +289,9 @@ export function useEnvironment(envId) {
   // refetched when the job crosses `validating_scenarios` (sections appear) or a
   // terminal stage (results appear).
   const detailQuery = useQuery(
-    harnessEnvironmentQuery(envId, { enabled: HARNESS_DETAIL_ENABLED && !clientEnv }),
+    harnessEnvironmentQuery(envId, {
+      enabled: HARNESS_DETAIL_ENABLED && !clientEnv,
+    }),
   );
   const stage = jobQuery.data?.status?.stage;
   const detailRefetch = detailQuery.refetch;
@@ -290,7 +300,12 @@ export function useEnvironment(envId) {
     if (!HARNESS_DETAIL_ENABLED || !stage) return;
     const authoredIdx = stages.indexOf("validating_scenarios");
     const idx = stages.indexOf(stage);
-    if (!crossed.current.authored && idx >= 0 && authoredIdx >= 0 && idx >= authoredIdx) {
+    if (
+      !crossed.current.authored &&
+      idx >= 0 &&
+      authoredIdx >= 0 &&
+      idx >= authoredIdx
+    ) {
       crossed.current.authored = true;
       detailRefetch();
     }
@@ -354,7 +369,8 @@ export function useEnvironment(envId) {
   }, [inFlight, refreshAfterTurn]);
 
   const detail = useMemo(
-    () => (detailQuery.data ? harnessDetailToEnvironment(detailQuery.data) : null),
+    () =>
+      detailQuery.data ? harnessDetailToEnvironment(detailQuery.data) : null,
     [detailQuery.data],
   );
 
@@ -388,7 +404,7 @@ export function useEnvironment(envId) {
     const base = harness?.env ?? {};
     const merged = detailReady
       ? overlayDefined(base, detail.env)
-      : (harness?.env ?? detail?.env);
+      : harness?.env ?? detail?.env;
     const env = base.status ? { ...merged, status: base.status } : merged;
 
     // Gate the bootstrap on the detail settling so a slightly-later §6 success is
@@ -428,9 +444,7 @@ export function useEnvironment(envId) {
   }
 
   const notFound =
-    isJobNotFound(jobQuery.error) &&
-    prebuilt.isSuccess &&
-    !templateEnv;
+    isJobNotFound(jobQuery.error) && prebuilt.isSuccess && !templateEnv;
 
   return {
     env: null,

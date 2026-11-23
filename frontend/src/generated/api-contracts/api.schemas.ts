@@ -22102,6 +22102,185 @@ export interface HarnessCompareApi {
   versions: HarnessCompareVersionsApi;
 }
 
+export type DesignReviewApiStatus =
+  (typeof DesignReviewApiStatus)[keyof typeof DesignReviewApiStatus];
+
+export const DesignReviewApiStatus = {
+  awaiting_approval: "awaiting_approval",
+  approved: "approved",
+  discarded: "discarded",
+} as const;
+
+export interface DesignTableApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  columns: string[];
+  /** @minLength 1 */
+  source: string;
+  removed: boolean;
+}
+
+export interface DesignToolArgApi {
+  /** @minLength 1 */
+  name: string;
+  type: string;
+}
+
+export type DesignToolApiInputsFrom = { [key: string]: string };
+
+export interface DesignToolApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  description: string;
+  args: DesignToolArgApi[];
+  requires: string[];
+  inputs_from: DesignToolApiInputsFrom;
+  effects: string;
+  refuses: string;
+  /** @minLength 1 */
+  source: string;
+  removed: boolean;
+}
+
+export interface DesignRuleApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  text: string;
+  /** @minLength 1 */
+  source: string;
+  removed: boolean;
+  edited: boolean;
+  /** @minLength 1 */
+  original_text: string;
+}
+
+export interface DesignUseCaseApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  text: string;
+  /** @minLength 1 */
+  source: string;
+  removed: boolean;
+  /** @minimum 0 */
+  planned_scenarios: number;
+}
+
+export type DesignEditApiOp =
+  (typeof DesignEditApiOp)[keyof typeof DesignEditApiOp];
+
+export const DesignEditApiOp = {
+  remove: "remove",
+  edit: "edit",
+} as const;
+
+export type DesignEditApiKind =
+  (typeof DesignEditApiKind)[keyof typeof DesignEditApiKind];
+
+export const DesignEditApiKind = {
+  table: "table",
+  tool: "tool",
+  rule: "rule",
+  use_case: "use_case",
+} as const;
+
+export interface DesignEditApi {
+  /** @minimum 0 */
+  index: number;
+  op: DesignEditApiOp;
+  kind: DesignEditApiKind;
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  text?: string;
+  by: string;
+  /** @minLength 1 */
+  at: string;
+}
+
+export interface DesignReviewApi {
+  environment_id: string;
+  status: DesignReviewApiStatus;
+  agent_version_id: string;
+  agent_changed: boolean;
+  /** @minimum 0 */
+  scenario_count: number;
+  tables: DesignTableApi[];
+  tools: DesignToolApi[];
+  rules: DesignRuleApi[];
+  use_cases: DesignUseCaseApi[];
+  edits: DesignEditApi[];
+  approved_at: string;
+}
+
+export type DesignEditRequestApiOp =
+  (typeof DesignEditRequestApiOp)[keyof typeof DesignEditRequestApiOp];
+
+export const DesignEditRequestApiOp = {
+  remove: "remove",
+  edit: "edit",
+} as const;
+
+export type DesignEditRequestApiKind =
+  (typeof DesignEditRequestApiKind)[keyof typeof DesignEditRequestApiKind];
+
+export const DesignEditRequestApiKind = {
+  table: "table",
+  tool: "tool",
+  rule: "rule",
+  use_case: "use_case",
+} as const;
+
+export interface DesignEditRequestApi {
+  op: DesignEditRequestApiOp;
+  kind: DesignEditRequestApiKind;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  id?: string;
+  /**
+   * @minLength 1
+   * @maxLength 2000
+   */
+  text?: string;
+}
+
+export type DesignImpactApiKind =
+  (typeof DesignImpactApiKind)[keyof typeof DesignImpactApiKind];
+
+export const DesignImpactApiKind = {
+  table: "table",
+  tool: "tool",
+} as const;
+
+export interface DesignImpactToolApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface DesignImpactRuleApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  text: string;
+}
+
+export interface DesignImpactApi {
+  kind: DesignImpactApiKind;
+  /** @minLength 1 */
+  id: string;
+  tools: DesignImpactToolApi[];
+  rules: DesignImpactRuleApi[];
+}
+
 export type HarnessDraftItemApiStatus =
   (typeof HarnessDraftItemApiStatus)[keyof typeof HarnessDraftItemApiStatus];
 
@@ -46198,6 +46377,23 @@ export type SimulateApiHarnessEnvironmentsCompareParams = {
    */
   against_execution_id?: string;
 };
+
+export type SimulateApiHarnessEnvironmentsDesignReviewImpactParams = {
+  kind: SimulateApiHarnessEnvironmentsDesignReviewImpactKind;
+  /**
+   * @minLength 1
+   * @maxLength 255
+   */
+  id: string;
+};
+
+export type SimulateApiHarnessEnvironmentsDesignReviewImpactKind =
+  (typeof SimulateApiHarnessEnvironmentsDesignReviewImpactKind)[keyof typeof SimulateApiHarnessEnvironmentsDesignReviewImpactKind];
+
+export const SimulateApiHarnessEnvironmentsDesignReviewImpactKind = {
+  table: "table",
+  tool: "tool",
+} as const;
 
 export type SimulateApiHarnessEnvironmentsUploadFileBody = {
   file: Blob;

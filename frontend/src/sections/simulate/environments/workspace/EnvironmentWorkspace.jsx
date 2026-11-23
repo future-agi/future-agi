@@ -37,6 +37,8 @@ import { CONSOLE_COPY } from "../buildEnvironment/build.constants";
 import { subscribeScenarioSelection } from "../buildEnvironment/console/scenarioSelectionBus";
 import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
+import DesignReviewStage from "./designReview/DesignReviewStage";
+import { REVIEW_COPY } from "./designReview/designReview.constants";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
 import DraftBar from "./drafts/DraftBar";
@@ -351,6 +353,31 @@ export default function EnvironmentWorkspace() {
     return <LoadingScreen />;
   }
 
+  if (env?.awaitingApproval) {
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          minHeight: 0,
+        }}
+      >
+        <WorkspaceHeader
+          env={env}
+          envState={envState}
+          canRun={false}
+          runBlockedReason={REVIEW_COPY.runBlocked}
+          locked
+        />
+        {creditBanner}
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          <DesignReviewStage envId={env.id} />
+        </Box>
+      </Box>
+    );
+  }
+
   // Still deriving OR terminally failed: the workspace header over the two-pane
   // build stage (console + hero/pipeline). A failed build keeps this layout —
   // the chat stays usable and the pipeline shows which stage failed — but the
@@ -555,6 +582,21 @@ export default function EnvironmentWorkspace() {
         }
       : undefined;
 
+  const contractChat =
+    backed && !chat.frozen
+      ? {
+          send: chat.send,
+          busy: Boolean(
+            chat.running ||
+              chat.inFlight ||
+              chat.waiting ||
+              chat.draftsBlocked ||
+              chatSaving,
+          ),
+          live: envLive,
+        }
+      : null;
+
   // A backed env's tabs all read the detail. Until it lands, or if it fails,
   // the job poll alone would fill them with a guessed channel, no agent, zero
   // counts and sample cards, so the tab area waits for it or offers a retry.
@@ -676,6 +718,7 @@ export default function EnvironmentWorkspace() {
               overviewCounts={overviewCounts}
               overviewWorld={overviewWorld}
               graphData={graphData}
+              contractChat={contractChat}
               onStartRun={startRun}
               runDialogOpen={Boolean(runDialog)}
               canRun={runnable && !runMutation.isPending}

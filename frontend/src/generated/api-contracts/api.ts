@@ -446,6 +446,9 @@ import type {
   DerivedVariableDetailResponseApi,
   DerivedVariableExtractRequestApi,
   DerivedVariablePreviewRequestApi,
+  DesignEditRequestApi,
+  DesignImpactApi,
+  DesignReviewApi,
   DevelopAnnotationsUserApi,
   DevelopDatasetMessageResponseApi,
   DiscussionCommentRequestApi,
@@ -1329,6 +1332,7 @@ import type {
   SimulateApiHarnessEnvironmentsActorViewParams,
   SimulateApiHarnessEnvironmentsCompareParams,
   SimulateApiHarnessEnvironmentsDeleteActorParams,
+  SimulateApiHarnessEnvironmentsDesignReviewImpactParams,
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
   SimulateApiHarnessEnvironmentsRunPlanParams,
@@ -62677,6 +62681,387 @@ export const simulateApiHarnessEnvironmentsCompare = async (
 ): Promise<simulateApiHarnessEnvironmentsCompareResponse> => {
   return apiMutator<simulateApiHarnessEnvironmentsCompareResponse>(
     getSimulateApiHarnessEnvironmentsCompareUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewResponse200 = {
+  data: DesignReviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewResponseSuccess =
+  simulateApiHarnessEnvironmentsDesignReviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsDesignReviewResponseError =
+  simulateApiHarnessEnvironmentsDesignReviewResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsDesignReviewResponse =
+  | simulateApiHarnessEnvironmentsDesignReviewResponseSuccess
+  | simulateApiHarnessEnvironmentsDesignReviewResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDesignReviewUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/design-review/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsDesignReview = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDesignReviewResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDesignReviewResponse>(
+    getSimulateApiHarnessEnvironmentsDesignReviewUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewApproveResponse200 = {
+  data: DesignReviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewApproveResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewApproveResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewApproveResponseSuccess =
+  simulateApiHarnessEnvironmentsDesignReviewApproveResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsDesignReviewApproveResponseError = (
+  | simulateApiHarnessEnvironmentsDesignReviewApproveResponse403
+  | simulateApiHarnessEnvironmentsDesignReviewApproveResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewApproveResponse =
+  | simulateApiHarnessEnvironmentsDesignReviewApproveResponseSuccess
+  | simulateApiHarnessEnvironmentsDesignReviewApproveResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDesignReviewApproveUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/design-review/approve/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsDesignReviewApprove = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDesignReviewApproveResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDesignReviewApproveResponse>(
+    getSimulateApiHarnessEnvironmentsDesignReviewApproveUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewDiscardResponse200 = {
+  data: DesignReviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewDiscardResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewDiscardResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewDiscardResponseSuccess =
+  simulateApiHarnessEnvironmentsDesignReviewDiscardResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsDesignReviewDiscardResponseError = (
+  | simulateApiHarnessEnvironmentsDesignReviewDiscardResponse403
+  | simulateApiHarnessEnvironmentsDesignReviewDiscardResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewDiscardResponse =
+  | simulateApiHarnessEnvironmentsDesignReviewDiscardResponseSuccess
+  | simulateApiHarnessEnvironmentsDesignReviewDiscardResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDesignReviewDiscardUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/design-review/discard/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsDesignReviewDiscard = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDesignReviewDiscardResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDesignReviewDiscardResponse>(
+    getSimulateApiHarnessEnvironmentsDesignReviewDiscardUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewEditResponse200 = {
+  data: DesignReviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewEditResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewEditResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewEditResponseSuccess =
+  simulateApiHarnessEnvironmentsDesignReviewEditResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsDesignReviewEditResponseError = (
+  | simulateApiHarnessEnvironmentsDesignReviewEditResponse403
+  | simulateApiHarnessEnvironmentsDesignReviewEditResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewEditResponse =
+  | simulateApiHarnessEnvironmentsDesignReviewEditResponseSuccess
+  | simulateApiHarnessEnvironmentsDesignReviewEditResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDesignReviewEditUrl = (
+  id: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/design-review/edits/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsDesignReviewEdit = async (
+  id: string,
+  designEditRequestApi: DesignEditRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDesignReviewEditResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDesignReviewEditResponse>(
+    getSimulateApiHarnessEnvironmentsDesignReviewEditUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(designEditRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewUndoResponse200 = {
+  data: DesignReviewApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewUndoResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewUndoResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewUndoResponseSuccess =
+  simulateApiHarnessEnvironmentsDesignReviewUndoResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsDesignReviewUndoResponseError = (
+  | simulateApiHarnessEnvironmentsDesignReviewUndoResponse403
+  | simulateApiHarnessEnvironmentsDesignReviewUndoResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewUndoResponse =
+  | simulateApiHarnessEnvironmentsDesignReviewUndoResponseSuccess
+  | simulateApiHarnessEnvironmentsDesignReviewUndoResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDesignReviewUndoUrl = (
+  id: string,
+  index: string,
+) => {
+  return `/simulate/api/harness-environments/${id}/design-review/edits/${index}/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsDesignReviewUndo = async (
+  id: string,
+  index: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDesignReviewUndoResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDesignReviewUndoResponse>(
+    getSimulateApiHarnessEnvironmentsDesignReviewUndoUrl(id, index),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewImpactResponse200 = {
+  data: DesignImpactApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewImpactResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsDesignReviewImpactResponseSuccess =
+  simulateApiHarnessEnvironmentsDesignReviewImpactResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsDesignReviewImpactResponseError =
+  simulateApiHarnessEnvironmentsDesignReviewImpactResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsDesignReviewImpactResponse =
+  | simulateApiHarnessEnvironmentsDesignReviewImpactResponseSuccess
+  | simulateApiHarnessEnvironmentsDesignReviewImpactResponseError;
+
+export const getSimulateApiHarnessEnvironmentsDesignReviewImpactUrl = (
+  id: string,
+  params: SimulateApiHarnessEnvironmentsDesignReviewImpactParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/design-review/impact/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/design-review/impact/`;
+};
+
+/**
+ * An environment is the job that built it (the world itself lives in object
+storage, addressed from the job's metadata), so these endpoints project the
+same rows the harness-jobs API serves. They exist separately because the
+list needs a row, not a run: the jobs list returns every event, receipt and
+stage-output payload for up to a hundred jobs, which is a detail document
+repeated a hundred times.
+
+Running and grading a simulation are deliberately not here. ``run`` starts
+one and returns 202; progress is read from the job.
+ * @summary The environments surface: list, delete, and start a simulation.
+ */
+export const simulateApiHarnessEnvironmentsDesignReviewImpact = async (
+  id: string,
+  params: SimulateApiHarnessEnvironmentsDesignReviewImpactParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsDesignReviewImpactResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsDesignReviewImpactResponse>(
+    getSimulateApiHarnessEnvironmentsDesignReviewImpactUrl(id, params),
     {
       ...options,
       method: "GET",
