@@ -794,6 +794,12 @@ def apply_environment_review(
             ) from exc
         raise
     draft = write.environment if write is not None else None
+    if write is None:
+        raise HostedHarnessError(
+            "source_review_stale",
+            "The Environment can no longer accept this source review.",
+            status_code=409,
+        )
     return {
         "draft": {"id": str(draft.id), "revision": draft.revision}
         if draft is not None

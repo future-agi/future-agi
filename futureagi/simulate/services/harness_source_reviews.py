@@ -15,6 +15,7 @@ from simulate.models import HarnessSourceReview, HostedHarnessJob
 from simulate.services import harness_sources as sources
 from simulate.services.harness_provider import request_organization, request_workspace
 from simulate.services.harness_versioning import archives, drafts
+from simulate.services.harness_versioning import read as version_reads
 from simulate.services.hosted_harness import HostedHarnessError
 from tfc.constants.roles import RolePermissions
 
@@ -48,7 +49,12 @@ def require_source_scope(request, *, write: bool) -> dict:
     organization = request_organization(request)
     workspace = request_workspace(request)
     if organization is None or (
-        workspace is not None and workspace.organization_id != organization.id
+        workspace is not None
+        and (
+            workspace.organization_id != organization.id
+            or not workspace.is_active
+            or workspace.deleted
+        )
     ):
         raise _not_found()
     if workspace is None:
@@ -182,6 +188,7 @@ def _owner_basis(
 ) -> tuple[dict, dict | None]:
     metadata = (owner.payload or {}).get("metadata") or {}
     if kind == Owner.ENVIRONMENT:
+        version_reads.require_versioning()
         if (
             metadata.get("design")
             or metadata.get("adaptation")
@@ -268,6 +275,11 @@ def _stage(
                 "source_duplicate", "An input is selected twice.", status_code=422
             )
         draft = sources.prepare_draft(captured, schema)
+        owner = _owner(
+            {"organization_id": row.organization_id, "workspace_id": row.workspace_id},
+            row.owner_id,
+        )
+        _required_basis(row, owner)
         staged = {
             "draft_payload": draft,
             "origins": [item.origin for item in captured],

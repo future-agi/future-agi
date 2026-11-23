@@ -203,7 +203,9 @@ def test_one_private_receipt_for_a_mixed_batch(
     }
     assert set(writes) == {private_bucket()}
     other = Workspace.no_workspace_objects.create(
-        organization=user.organization, name="Other", created_by=user,
+        organization=user.organization,
+        name="Other",
+        created_by=user,
     )
     request.workspace = other
     with pytest.raises((HostedHarnessError, PermissionDenied)):
