@@ -219,7 +219,13 @@ export default function RunDialog({
   if (!blocked && plan.data && !plan.data.runnable)
     blocked = COPY.allBlocked(blockedTools.map((entry) => entry.tool));
   if (!blocked && validating) blocked = COPY.validating;
-  if (!blocked && selection?.held_back?.count > 0 && selection.running === 0)
+  // With `next` set, a run of unproved cases starts their check or runs them unvalidated, so it isn't held.
+  if (
+    !blocked &&
+    selection?.held_back?.count > 0 &&
+    selection.running === 0 &&
+    !selection.next
+  )
     blocked = COPY.allHeld;
 
   const submitError =

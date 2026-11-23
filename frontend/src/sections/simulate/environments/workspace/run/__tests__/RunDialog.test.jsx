@@ -1101,6 +1101,29 @@ describe("RunDialog", () => {
       expect(runButton()).toBeDisabled();
     });
 
+    it.each(["validate_first", "run_unvalidated"])(
+      "lets the run through when every held scenario only waits on a check the server runs (%s)",
+      (next) => {
+        state.selection = selection({
+          running: 0,
+          next,
+          held_back: {
+            count: 2,
+            keys: ["k1", "k2"],
+            names: {},
+            by: { not_validated: 2 },
+          },
+        });
+        renderDialog();
+        expect(
+          screen.queryByText(
+            "Every picked scenario is held back, so nothing would run.",
+          ),
+        ).toBeNull();
+        expect(runButton()).toBeEnabled();
+      },
+    );
+
     // Shaped like a real report: a production-only tool holds every scenario back.
     const report = (validation = { state: "ready" }) => ({
       validation,
