@@ -479,6 +479,22 @@ const awaitsCheck = (data) =>
   Array.isArray(data?.agent) &&
   data.agent.some((item) => awaitedCheck(versionFromApi(item)));
 
+// A hand move of the default agent waits on its pair check (about 15 minutes), so the list is asked again slower.
+const MOVE_POLL_MS = 15000;
+
+// The newest agent version whose move to the default waits on its check with this environment, or null.
+export const movingAgent = (agentVersions) =>
+  (agentVersions || []).find(
+    (version) =>
+      version.activationOutcome === "validating" &&
+      !version.isDefault &&
+      version.status === "active",
+  ) ?? null;
+
+const awaitsMove = (data) =>
+  Array.isArray(data?.agent) &&
+  Boolean(movingAgent(data.agent.map(versionFromApi)));
+
 // Only an active version that is not already the default can become it; an
 // agent version only when the server says it can be picked here.
 export const canMakeDefault = (piece, version) =>
@@ -512,8 +528,10 @@ export function useEnvironmentVersions(envId, { enabled = true } = {}) {
     select: toVersions,
     enabled: Boolean(envId) && enabled,
     retry: retryUnlessNotFound,
-    refetchInterval: (query) =>
-      awaitsCheck(query.state.data) ? PREFLIGHT_POLL_MS : false,
+    refetchInterval: (query) => {
+      if (awaitsCheck(query.state.data)) return PREFLIGHT_POLL_MS;
+      return awaitsMove(query.state.data) ? MOVE_POLL_MS : false;
+    },
     meta: { errorHandled: true },
   });
 }
@@ -682,7 +700,17 @@ export function useCreateAgentVersion(envId) {
 export function useRefreshWhenChecked(envId, agentVersions) {
   const queryClient = useQueryClient();
   const pending = (agentVersions || []).some(awaitedCheck);
+  // A move that waited on its check changes the default pair, so everything that follows it is read again.
+  const moving = Boolean(movingAgent(agentVersions));
+  const wasMoving = useRef(moving);
   const wasPending = useRef(pending);
+  useEffect(() => {
+    if (wasMoving.current && !moving) {
+      refreshFollowers(queryClient, envId);
+      queryClient.invalidateQueries({ queryKey: nudgesKey(envId) });
+    }
+    wasMoving.current = moving;
+  }, [moving, envId, queryClient]);
   useEffect(() => {
     if (wasPending.current && !pending) {
       queryClient.invalidateQueries({

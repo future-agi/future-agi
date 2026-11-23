@@ -55,6 +55,7 @@ const {
   versionFromApi,
   isVersioningDisabled,
   isStuck,
+  movingAgent,
 } = await import("../versions");
 const { harnessEnvironmentKey, harnessJobQuery } = await import(
   "../environment"
@@ -809,6 +810,58 @@ describe("agent version checks", () => {
     ]);
     rerender({ versions: passed });
     expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  const moving = (overrides) =>
+    agentItem({
+      status: "active",
+      preflight_status: "passed",
+      activation_outcome: "validating",
+      ...overrides,
+    });
+
+  it("asks again every 15 seconds while an agent move waits on its check", async () => {
+    expect(await intervalFor([moving()])).toBe(15000);
+    expect(await intervalFor([pendingHere({ id: "a6" }), moving()])).toBe(5000);
+    expect(await intervalFor([moving({ is_default: true })])).toBe(false);
+  });
+
+  it("names the newest active version a move waits on", () => {
+    const list = (...items) => items.map(versionFromApi);
+    expect(
+      movingAgent(list(moving({ id: "a7" }), moving({ id: "a6" })))?.id,
+    ).toBe("a7");
+    expect(movingAgent(list(moving({ is_default: true })))).toBeNull();
+    expect(movingAgent(list(moving({ status: "discarded" })))).toBeNull();
+  });
+
+  it("refreshes what follows the default once a move's check ends", () => {
+    const spy = vi.spyOn(client, "invalidateQueries");
+    const { rerender } = renderHook(
+      ({ versions }) => useRefreshWhenChecked("env-1", versions),
+      {
+        wrapper,
+        initialProps: { versions: [versionFromApi(moving())] },
+      },
+    );
+    expect(spy).not.toHaveBeenCalled();
+    rerender({
+      versions: [
+        versionFromApi(
+          moving({ is_default: true, activation_outcome: "activated" }),
+        ),
+      ],
+    });
+    const keys = spy.mock.calls.map(([filters]) => filters.queryKey);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        environmentVersionsKey("env-1"),
+        harnessEnvironmentKey("env-1"),
+        harnessJobQuery("env-1").queryKey,
+        ["harness-scenarios", "env-1"],
+        nudgesKey("env-1"),
+      ]),
+    );
   });
 
   it("refreshes nothing when nothing was pending", () => {
