@@ -52,6 +52,29 @@
 - The UI displays the exact ordered graph set returned by the authorized list request at supported page sizes.
 - Above-cap graph requests return at most 100 rows, metadata reflects the cap, and following next_page returns the complete seeded ID set once.
 
+### AGENT-E2E-003 — connecting an agent from a folder asks only for the keys its code reads, then Connect enables
+
+**Goal:** A developer connects an agent from a folder, and the check asks only for the keys the agent's code reads before Connect enables
+
+**Spec:** `flows/agents/connect-folder-preflight.spec.ts:27`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Agents › New agent › Upload a folder
+2. choose the agent folder and wait for the upload
+3. find agents and pick the one found
+4. name it and run preflight
+5. see preflight pass without asking for a key the code only mentions in a comment
+6. connect the agent and land on its page
+
+**Backend state verified:**
+
+- the preflight response the page received is ready to submit and does not name the commented key
+- the scan of the uploaded folder reached found in PG simulate_agent_scan, scoped to the actor org
+- exactly one PG simulate_agent_definition row has the minted name in the actor org after Connect
+
 ## alerts
 
 ### ALERT-E2E-001 — a fired alert opens the traces from that fire’s own window

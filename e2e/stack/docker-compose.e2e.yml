@@ -78,6 +78,7 @@ services:
       # Actors and test conditions, which the actor flows cover.
       HARNESS_ACTORS_ENABLED: "true"
       HARNESS_AGENT_READING_ENABLED: "true"
+      HARNESS_PUBLIC_BASE_URL: http://platform.e2e.invalid
       SQL_WORKBENCH_CH_USER: e2e_sql_service
       SQL_WORKBENCH_CH_PASSWORD: e2e-sql-workbench-password-for-tests
       # Metrics (/dashboard/metrics, /tracer/derived-metrics/) is a deployment
