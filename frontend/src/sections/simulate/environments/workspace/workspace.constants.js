@@ -562,7 +562,7 @@ export const COMPARE_COPY = {
   clear: "Clear",
   back: "Back to runs",
   subtitle: (runs, scenarios, changed) =>
-    `${runs} runs · ${scenarios} ${scenarios === 1 ? "scenario" : "scenarios"} · ${changed} ended differently`,
+    `${runs} runs · ${scenarios} ${scenarios === 1 ? "task" : "tasks"} · ${changed} ended differently`,
   baseline: "baseline",
   runLabel: (agent, environment) =>
     [agent && `agent ${agent}`, environment && `environment ${environment}`]
@@ -598,7 +598,7 @@ export const COMPARE_COPY = {
     `${up ? "up" : "down"} ${text}, ${better ? "better" : "worse"}`,
   scenarioColumn: "Scenario",
   statusColumn: "Status",
-  scenarioCount: (n) => `${n} ${n === 1 ? "scenario" : "scenarios"}`,
+  scenarioCount: (n) => `${n} ${n === 1 ? "task" : "tasks"}`,
   drawerTitle: "Calls across runs",
   openCall: "Open call",
   trial: (n) => `Trial ${n}`,

@@ -16,9 +16,8 @@ const {
 } = await import("../compareRuns");
 const { compareRunsKeyPrefix } = await import("../runEvals");
 const { mapCallRow } = await import("../runCalls");
-const { compareRunsResponse, COMPARE_EVAL_COLUMNS, RUN } = await import(
-  "../_fixtures/compareRuns"
-);
+const { compareRunsResponse, COMPARE_EVAL_COLUMNS, RUN } =
+  await import("../_fixtures/compareRuns");
 
 let client;
 const wrapper = ({ children }) => (
@@ -105,11 +104,32 @@ describe("mapCompareResponse", () => {
   });
 
   it("maps every call with the run detail's mapCallRow", () => {
-    const raw = compareRunsResponse().rows[0].calls[RUN.a][1];
-    expect(data.rows[0].calls[RUN.a][1]).toEqual(
-      mapCallRow(raw, COMPARE_EVAL_COLUMNS),
-    );
-    expect(data.rows[0].calls[RUN.a].map((t) => t.trialIndex)).toEqual([1, 2]);
+    const raw = compareRunsResponse().rows[1].calls[RUN.a][0];
+    expect(data.rows[1].calls[RUN.a][0]).toEqual({
+      ...mapCallRow(raw, COMPARE_EVAL_COLUMNS),
+      diff: null,
+    });
+    // One row per scenario trial.
+    expect(data.rows.map((row) => row.trialIndex)).toEqual([1, 2, 1]);
+    expect(data.rows[1].calls[RUN.a].map((t) => t.trialIndex)).toEqual([2]);
+  });
+
+  it("passes the server's diff through with camelCase measures", () => {
+    const { diff } = data.rows[1].calls[RUN.b][0];
+    expect(diff.was).toBe("failed");
+    expect(diff.subGoals).toEqual({ up: true, better: true, change: 1 });
+    expect(diff.measures.tokens).toEqual({
+      up: false,
+      better: true,
+      change: 800,
+    });
+    expect(diff.measures).toHaveProperty("stopLatency", null);
+    expect(diff.measures).toHaveProperty("aiInterruptions", null);
+    expect(diff.evals["eval-2"]).toEqual({
+      up: true,
+      better: true,
+      change: 30,
+    });
   });
 
   it("keeps an empty list for a run that did not run the scenario", () => {
@@ -118,7 +138,10 @@ describe("mapCompareResponse", () => {
 
   it("maps each group's per-run figures like the calls table's groups", () => {
     const refund = data.groups[0];
-    expect(refund.rowIds).toEqual(["refund-double-charge:aaa"]);
+    expect(refund.rowIds).toEqual([
+      "refund-double-charge:aaa:1",
+      "refund-double-charge:aaa:2",
+    ]);
     expect(refund.runs[RUN.a]).toMatchObject({
       count: 2,
       passed: 1,
@@ -132,15 +155,15 @@ describe("mapCompareResponse", () => {
     expect(
       data.columns.filter((c) => c.group === "Evaluations").map((c) => c.key),
     ).toEqual(["eval-1", "eval-2"]);
-    expect(data.changedCount).toBe(2);
-    expect(data.count).toBe(2);
+    expect(data.changedCount).toBe(3);
+    expect(data.count).toBe(3);
   });
 
   it("maps the runs that played a row's scenario edited, none when absent", () => {
-    expect(data.rows.map((row) => row.editedRunIds)).toEqual([[], [RUN.b]]);
+    expect(data.rows.map((row) => row.editedRunIds)).toEqual([[], [], [RUN.b]]);
     const response = compareRunsResponse();
-    delete response.rows[1].edited_run_ids;
-    expect(mapCompareResponse(response).rows[1].editedRunIds).toEqual([]);
+    delete response.rows[2].edited_run_ids;
+    expect(mapCompareResponse(response).rows[2].editedRunIds).toEqual([]);
   });
 });
 
@@ -158,7 +181,7 @@ describe("useCompareRuns", () => {
         search: "x",
       }),
     });
-    expect(result.current.data.rows).toHaveLength(2);
+    expect(result.current.data.rows).toHaveLength(3);
   });
 
   it("waits for an environment and two runs", () => {

@@ -33,7 +33,7 @@ import {
   SHARED_COLUMNS,
   STATUS_COLUMN,
 } from "./compare.constants";
-import { baselineCallFor, callDiff } from "./compareDiff";
+import { wordDiff } from "./compareDiff";
 import { CompareStatusCell, DiffArrow, RunDot } from "./compareCells";
 
 const LEAD_CLASS = "compare-lead";
@@ -51,13 +51,16 @@ const tableSx = {
   [`&& .${LEAD_CLASS}`]: { borderLeft: 0 },
 };
 const leadCellSx = { ...bodyCellSx, width: 240, minWidth: 240, maxWidth: 240 };
-const chipCellSx = { ...bodyCellSx, width: 44, px: 1.25 };
 const groupCellSx = {
   ...bodyCellSx,
-  py: 1.25,
+  py: 1.5,
   bgcolor: "background.neutral",
+  borderTop: "2px solid",
+  borderTopColor: "divider",
   cursor: "pointer",
 };
+// Under a group, a scenario's lead cell steps in so it reads as the group's.
+const nestedLeadCellSx = { ...leadCellSx, pl: 4 };
 const focusRingSx = {
   "&:focus-visible": {
     outline: "2px solid",
@@ -215,7 +218,7 @@ function CompareGroupHeaderRow({
           />
           <Typography
             noWrap
-            sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}
+            sx={{ typography: "s1", fontWeight: "fontWeightBold" }}
           >
             {group.label}
           </Typography>
@@ -230,7 +233,6 @@ function CompareGroupHeaderRow({
       {sharedKeys.map((key) => (
         <TableCell key={key} sx={groupCellSx} />
       ))}
-      <TableCell sx={groupCellSx} />
       {lineKeys.map((key) => (
         <TableCell key={key} sx={groupCellSx}>
           {cell(key)}
@@ -290,20 +292,14 @@ function CompareTable({
   const sharedKeys = keys.filter((k) => SHARED_COLUMNS.has(k));
   const lineKeys = keys.filter((k) => !SHARED_COLUMNS.has(k));
   const scored = [...(show("subGoalEvals") ? subGoalEvals : []), ...evals];
-  const evalIds = scored.map((e) => e.id);
   const firstLineKey = lineKeys[0];
-  const baseline = runs.find((r) => r.isBaseline) ?? runs[0];
 
   const renderLine = (row, rep, lines, line, index, prefix) => {
     const { run, task } = line;
+    const marker = <RunDot ordinal={run.ordinal} colorIndex={run.colorIndex} />;
     // Every line opens the same drawer, so only a scenario's first is a stop.
     const keyable = onOpenRow && index === 0;
-    const edited = run.id !== baseline?.id && row.editedRunIds.includes(run.id);
-    const baseCalls = row.calls[baseline?.id] ?? [];
-    const diff =
-      showDiff && task && run.id !== baseline?.id
-        ? callDiff(task, baselineCallFor(task, baseCalls), evalIds)
-        : null;
+    const diff = showDiff && task ? wordDiff(task.diff) : null;
     return (
       <TableRow
         key={`${prefix}:${index}`}
@@ -318,12 +314,14 @@ function CompareTable({
           <TableCell
             className={LEAD_CLASS}
             rowSpan={lines.length}
-            sx={leadCellSx}
+            sx={groups ? nestedLeadCellSx : leadCellSx}
           >
             <Typography
               sx={{ typography: "s2", fontWeight: "fontWeightSemiBold" }}
             >
               {rep.sourceScenario || row.scenario || row.scenarioKey}
+              {row.trialIndex != null &&
+                ` · ${COMPARE_COPY.trial(row.trialIndex)}`}
             </Typography>
             {row.useCase && (
               <Typography
@@ -331,6 +329,17 @@ function CompareTable({
               >
                 {row.useCase}
               </Typography>
+            )}
+            {row.editedRunIds.length > 0 && (
+              <CustomTooltip show describeChild title={COMPARE_COPY.editedHint}>
+                <Chip
+                  size="small"
+                  label={COMPARE_COPY.edited}
+                  color="warning"
+                  tabIndex={0}
+                  sx={{ mt: 0.5 }}
+                />
+              </CustomTooltip>
             )}
           </TableCell>
         )}
@@ -343,37 +352,33 @@ function CompareTable({
               rowSpan={lines.length}
             />
           ))}
-        {line.first && (
-          <TableCell rowSpan={line.span} sx={chipCellSx}>
-            <Stack alignItems="flex-start" spacing={0.75}>
-              <RunDot ordinal={run.ordinal} colorIndex={run.colorIndex} />
-              {edited && (
-                <CustomTooltip
-                  show
-                  describeChild
-                  title={COMPARE_COPY.editedHint}
-                >
-                  <Chip size="small" label={COMPARE_COPY.edited} tabIndex={0} />
-                </CustomTooltip>
-              )}
-            </Stack>
-          </TableCell>
-        )}
         {lineKeys.map((key) => {
           if (!task)
             return (
               <TableCell key={key} sx={bodyCellSx}>
                 {key === firstLineKey ? (
-                  <Typography sx={{ typography: "s2", color: "text.disabled" }}>
-                    {COMPARE_COPY.notRun}
-                  </Typography>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    {marker}
+                    <Typography
+                      sx={{ typography: "s2", color: "text.disabled" }}
+                    >
+                      {COMPARE_COPY.notRun}
+                    </Typography>
+                  </Stack>
                 ) : (
                   dash
                 )}
               </TableCell>
             );
           if (key === STATUS_COLUMN.key)
-            return <CompareStatusCell key={key} task={task} diff={diff} />;
+            return (
+              <CompareStatusCell
+                key={key}
+                task={task}
+                diff={diff}
+                marker={marker}
+              />
+            );
           const change = diff?.measures[MEASURE_OF[key]];
           return (
             <TraceCell
@@ -443,7 +448,6 @@ function CompareTable({
             {COMPARE_COPY.scenarioColumn}
           </TableCell>
           {sharedKeys.map(headCell)}
-          <TableCell sx={{ ...headCellSx, width: 44 }} aria-label="Run" />
           {lineKeys.map(headCell)}
           {scored.map((e) => (
             <TableCell key={e.id} sx={{ ...headCellSx, width: 150 }}>

@@ -162,6 +162,8 @@ export const compareCall = (id, base, fields = {}) =>
     tokens: 2000,
     duration_seconds: 60,
     trial_index: 1,
+    // Show diff against the baseline's call; null on the baseline's own.
+    diff: null,
     conversation_branch: "main",
     sub_goal_results: [
       { name: "identity_verified", passed: true },
@@ -192,6 +194,28 @@ export const compareCall = (id, base, fields = {}) =>
     ...base,
     ...fields,
   });
+
+// The server's diff: each change against the baseline call, null if none.
+const diffOf = ({
+  was = null,
+  subGoals = null,
+  measures = {},
+  evals = {},
+}) => ({
+  was,
+  sub_goals: subGoals,
+  measures: {
+    duration: null,
+    csat: null,
+    turns: null,
+    latency: null,
+    stop_latency: null,
+    ai_interruptions: null,
+    tokens: null,
+    ...measures,
+  },
+  evals: { "eval-1": null, "eval-2": null, ...evals },
+});
 
 const failedRefund = {
   outcome: "failed",
@@ -244,6 +268,19 @@ const group = (label, passed, failed) => ({
     },
   },
 });
+
+// The refund scenario's own columns, the same on each of its trial rows.
+const REFUND_ROW = {
+  scenario_key: "refund-double-charge",
+  scenario: REFUND.scenario,
+  use_case: REFUND.goal,
+  persona: REFUND.persona,
+  persona_details: REFUND.persona_details,
+  situation: REFUND.scenario_details,
+  ideal_outcome: REFUND.ideal_outcome,
+  movement: "improved",
+  edited_run_ids: [],
+};
 
 export const compareRunsResponse = () => ({
   baseline_execution_id: RUN.a,
@@ -306,8 +343,8 @@ export const compareRunsResponse = () => ({
     refund_created: "Refund created",
     "Prompt injection": "Prompt injection",
   },
-  changed_count: 2,
-  count: 2,
+  changed_count: 3,
+  count: 3,
   page: 1,
   page_size: 25,
   total_pages: 1,
@@ -315,7 +352,7 @@ export const compareRunsResponse = () => ({
     {
       key: "Refund a double charge",
       label: "Refund a double charge",
-      row_ids: ["refund-double-charge:aaa"],
+      row_ids: ["refund-double-charge:aaa:1", "refund-double-charge:aaa:2"],
       // The group's rows on every page, not only this one.
       row_count: 3,
       runs: {
@@ -326,7 +363,7 @@ export const compareRunsResponse = () => ({
     {
       key: "Escalate to a human",
       label: "Escalate to a human",
-      row_ids: ["escalate-angry:bbb"],
+      row_ids: ["escalate-angry:bbb:1"],
       row_count: 1,
       runs: {
         [RUN.a]: group("Escalate to a human", 0, 1),
@@ -336,37 +373,61 @@ export const compareRunsResponse = () => ({
     },
   ],
   rows: [
+    // One row per scenario trial: each holds every run's call of that trial.
     {
-      row_id: "refund-double-charge:aaa",
-      scenario_key: "refund-double-charge",
-      scenario: REFUND.scenario,
-      use_case: REFUND.goal,
-      persona: REFUND.persona,
-      persona_details: REFUND.persona_details,
-      situation: REFUND.scenario_details,
-      ideal_outcome: REFUND.ideal_outcome,
+      ...REFUND_ROW,
+      row_id: "refund-double-charge:aaa:1",
+      trial_index: 1,
+      calls: {
+        [RUN.a]: [compareCall(CALL.aRefund1, REFUND, { trial_index: 1 })],
+        [RUN.b]: [
+          compareCall(CALL.bRefund1, REFUND, {
+            trial_index: 1,
+            latency_ms: 350,
+            diff: diffOf({
+              measures: { latency: { up: false, better: true, change: 50 } },
+            }),
+          }),
+        ],
+        [RUN.c]: [],
+      },
+    },
+    {
+      ...REFUND_ROW,
+      row_id: "refund-double-charge:aaa:2",
+      trial_index: 2,
       calls: {
         [RUN.a]: [
-          compareCall(CALL.aRefund1, REFUND, { trial_index: 1 }),
           compareCall(CALL.aRefund2, REFUND, {
             trial_index: 2,
             ...failedRefund,
           }),
         ],
         [RUN.b]: [
-          compareCall(CALL.bRefund1, REFUND, {
-            trial_index: 1,
-            latency_ms: 350,
+          compareCall(CALL.bRefund2, REFUND, {
+            trial_index: 2,
+            tokens: 1800,
+            diff: diffOf({
+              was: "failed",
+              subGoals: { up: true, better: true, change: 1 },
+              measures: {
+                duration: { up: false, better: true, change: 15000 },
+                latency: { up: false, better: true, change: 150 },
+                tokens: { up: false, better: true, change: 800 },
+              },
+              evals: {
+                "eval-1": { up: true, better: true, change: 100 },
+                "eval-2": { up: true, better: true, change: 30 },
+              },
+            }),
           }),
-          compareCall(CALL.bRefund2, REFUND, { trial_index: 2, tokens: 1800 }),
         ],
         [RUN.c]: [],
       },
-      movement: "improved",
-      edited_run_ids: [],
     },
     {
-      row_id: "escalate-angry:bbb",
+      row_id: "escalate-angry:bbb:1",
+      trial_index: 1,
       scenario_key: "escalate-angry",
       scenario: ESCALATE.scenario,
       use_case: ESCALATE.goal,
@@ -376,8 +437,40 @@ export const compareRunsResponse = () => ({
       ideal_outcome: ESCALATE.ideal_outcome,
       calls: {
         [RUN.a]: [compareCall(CALL.aEsc1, ESCALATE, failedRefund)],
-        [RUN.b]: [compareCall(CALL.bEsc1, ESCALATE)],
-        [RUN.c]: [compareCall(CALL.cEsc1, ESCALATE)],
+        [RUN.b]: [
+          compareCall(CALL.bEsc1, ESCALATE, {
+            diff: diffOf({
+              was: "failed",
+              subGoals: { up: true, better: true, change: 1 },
+              measures: {
+                duration: { up: false, better: true, change: 15000 },
+                latency: { up: false, better: true, change: 150 },
+                tokens: { up: false, better: true, change: 600 },
+              },
+              evals: {
+                "eval-1": { up: true, better: true, change: 100 },
+                "eval-2": { up: true, better: true, change: 30 },
+              },
+            }),
+          }),
+        ],
+        [RUN.c]: [
+          compareCall(CALL.cEsc1, ESCALATE, {
+            diff: diffOf({
+              was: "failed",
+              subGoals: { up: true, better: true, change: 1 },
+              measures: {
+                duration: { up: false, better: true, change: 15000 },
+                latency: { up: false, better: true, change: 150 },
+                tokens: { up: false, better: true, change: 600 },
+              },
+              evals: {
+                "eval-1": { up: true, better: true, change: 100 },
+                "eval-2": { up: true, better: true, change: 30 },
+              },
+            }),
+          }),
+        ],
       },
       movement: "improved",
       // Run 2 played this scenario as edited after the baseline ran.

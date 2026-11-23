@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from collections import Counter, defaultdict
 from datetime import datetime
 from typing import Any
@@ -105,18 +106,17 @@ HISTOGRAM_BANDS = 10
 MAX_PAGE_CALLS = 600
 
 
-def _row_id(scenario_key: str, columns: dict[str, Any]) -> str:
-    """The scenario key, plus a digest of its row-level content when it has any."""
+def _shown_digest(columns: dict[str, Any]) -> str:
+    """A digest of a call's row-level content; empty when it has none."""
     # A use case that only falls back to the scenario name is no content.
     if columns["goal"] == columns["scenario"] and not any(
         columns[name]
         for name in ("persona_details", "scenario_details", "ideal_outcome")
     ):
-        return scenario_key
-    digest = hashlib.sha1(
+        return ""
+    return hashlib.sha1(
         json.dumps([columns[name] for name in ROW_COLUMNS], sort_keys=True).encode()
     ).hexdigest()[:12]
-    return f"{scenario_key}:{digest}"
 
 
 def _played_digest(scenario: HostedHarnessScenario | None) -> str | None:
@@ -202,12 +202,17 @@ def _read_compare_facts(
     for call in calls:
         run_id, key = representatives[str(call.id)]
         columns = row_level_columns(call, scenarios, dimensions)
-        row_id = _row_id(key, columns)
+        # One row per scenario: an edit marks the run, it never splits the row.
+        row_id = key
         versions[run_id][key] = row_id
         shown[run_id][row_id] = {"scenario_key": key, **columns}
-        # An unpinned run reads today's identity row, not what it played.
+        # An unpinned run reads today's identity row, not what it played, so
+        # it is only compared with another unpinned run, on what it showed.
         if pinned[str(run_id)]["suite"]:
-            digests[run_id][row_id] = _played_digest(scenarios.get(str(call.id)))
+            played = _played_digest(scenarios.get(str(call.id))) or ""
+            digests[run_id][row_id] = f"pinned:{played}:{_shown_digest(columns)}"
+        else:
+            digests[run_id][row_id] = f"unpinned:{_shown_digest(columns)}"
     # A representative deleted since the facts were read: its key alone.
     for run_id, key in representatives.values():
         if key not in versions[run_id]:
@@ -287,7 +292,10 @@ def _edited_runs(
             continue
         theirs = compare_facts[execution.id]
         other = theirs["digests"].get(entry["row_id"])
-        if (digest and other and digest != other) or run_compare.changed_sub_goals(
+        comparable = (
+            digest and other and digest.split(":", 1)[0] == other.split(":", 1)[0]
+        )
+        if (comparable and digest != other) or run_compare.changed_sub_goals(
             names,
             sub_goal_digests.get(ours["environment"]),
             sub_goal_digests.get(theirs["environment"]),
@@ -352,6 +360,138 @@ def _trial_order(call: dict[str, Any]) -> tuple[Any, ...]:
         trial if isinstance(trial, int) else 0,
         call["id"],
     )
+
+
+def _js_round(value: float) -> int:
+    """Half up, as the cells round (``Math.round``), not Python's half even."""
+    return math.floor(value + 0.5)
+
+
+def _to_tenth(value: float) -> float:
+    return _js_round(value * 10) / 10
+
+
+def _at(field: str, precision: Any = None) -> Any:
+    """Reads a call's ``field`` at ``precision``; None stays None."""
+
+    def read(call: dict[str, Any]) -> Any:
+        value = call[field]
+        return value if value is None or precision is None else precision(value)
+
+    return read
+
+
+# Show diff's measures: each call's value at the precision its cell shows, so
+# equal-looking cells draw no arrow.
+DIFF_MEASURES: dict[str, Any] = {
+    # Seconds to whole ms, then to the 100 ms the cell shows.
+    "duration": _at(
+        "duration_seconds", lambda s: _js_round(_js_round(s * 1000) / 100) * 100
+    ),
+    "csat": _at("csat", lambda v: _to_tenth(_to_tenth(v))),
+    "turns": _at("turn_count"),
+    "latency": _at("latency_ms", _js_round),
+    "stop_latency": _at("avg_stop_time_after_interruption", _js_round),
+    "ai_interruptions": _at("ai_interruption_count"),
+    "tokens": _at("tokens", _js_round),
+}
+# Measures where less is better; every other one, and every score, is better higher.
+LOWER_IS_BETTER = {
+    "latency",
+    "stop_latency",
+    "ai_interruptions",
+    "duration",
+    "tokens",
+    "turns",
+}
+
+
+def _delta(
+    after: float | None, before: float | None, lower_is_better: bool = False
+) -> dict[str, Any] | None:
+    """A change from ``before`` to ``after``; None when a side is missing or equal."""
+    if after is None or before is None or after == before:
+        return None
+    up = after > before
+    return {
+        "up": up,
+        "better": up != lower_is_better,
+        "change": round(abs(after - before), 4),
+    }
+
+
+def _diff_status(call: dict[str, Any]) -> str:
+    # An unmeasured call reads as inconclusive, as its cell does.
+    return call["outcome"] or "inconclusive"
+
+
+def _eval_points(call: dict[str, Any]) -> dict[str, int]:
+    """Each scored evaluation's score as whole percentage points."""
+    points: dict[str, int] = {}
+    for entry in call["evaluations"]:
+        score = entry["score"]
+        value = entry.get("value")
+        if score is None and isinstance(value, dict):
+            raw = value.get("score")
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                score = raw if raw <= 1 else raw / 100
+        if score is not None:
+            points[str(entry["id"])] = _js_round(score * 100)
+    return points
+
+
+def _met_sub_goals(call: dict[str, Any]) -> int:
+    return sum(goal.get("passed") is True for goal in call["sub_goal_results"])
+
+
+def _call_diff(call: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
+    """Every change on one call against the baseline's call."""
+    after, before = _eval_points(call), _eval_points(base)
+    return {
+        "was": (
+            _diff_status(base) if _diff_status(call) != _diff_status(base) else None
+        ),
+        "sub_goals": (
+            _delta(_met_sub_goals(call), _met_sub_goals(base))
+            if call["sub_goal_results"] or base["sub_goal_results"]
+            else None
+        ),
+        "measures": {
+            key: _delta(read(call), read(base), key in LOWER_IS_BETTER)
+            for key, read in DIFF_MEASURES.items()
+        },
+        "evals": {
+            eval_id: _delta(after.get(eval_id), before.get(eval_id))
+            for eval_id in {**after, **before}
+        },
+    }
+
+
+def _with_diffs(
+    calls: dict[str, list[dict[str, Any]]], baseline_id: str
+) -> dict[str, list[dict[str, Any]]]:
+    """Each run's calls with ``diff`` against the baseline's call of the same
+    trial, else its first; null on the baseline and with nothing to compare."""
+    base_calls = calls.get(baseline_id) or []
+
+    def base_for(call: dict[str, Any]) -> dict[str, Any] | None:
+        same = (b for b in base_calls if b["trial_index"] == call["trial_index"])
+        return next(same, base_calls[0] if base_calls else None)
+
+    return {
+        run_id: [
+            {
+                **call,
+                "diff": (
+                    None
+                    if run_id == baseline_id or (base := base_for(call)) is None
+                    else _call_diff(call, base)
+                ),
+            }
+            for call in run_calls
+        ]
+        for run_id, run_calls in calls.items()
+    }
 
 
 def _trial_outcomes(
@@ -443,16 +583,21 @@ def build_compare_page(
         run_id: {row["id"]: row for row in rows} for run_id, rows in rows_by_run.items()
     }
 
-    # Scenario rows in first-seen order: each holds every run's calls of that version.
+    # Rows in first-seen order, one per scenario trial: each holds every run's
+    # call of that trial, so runs line up call for call.
     scenario_rows: dict[str, dict[str, Any]] = {}
     for execution in executions:
         facts = compare_facts[execution.id]
         for row in rows_by_run[execution.id]:
             row_id = facts["row_ids"][row["id"]]
+            trial = facts["calls"][row["id"]]["trial_index"]
+            entry_id = row_id if trial is None else f"{row_id}:{trial}"
             entry = scenario_rows.setdefault(
-                row_id,
+                entry_id,
                 {
+                    "id": entry_id,
                     "row_id": row_id,
+                    "trial_index": trial,
                     "shown": facts["rows"][row_id],
                     "calls": {one.id: [] for one in executions},
                     "kept": False,
@@ -461,18 +606,35 @@ def build_compare_page(
             entry["calls"][execution.id].append(row["id"])
             entry["kept"] |= row["id"] in matched_ids[execution.id]
     kept = [entry for entry in scenario_rows.values() if entry["kept"]]
+    # A verdict needs every trial of the scenario, so it is the scenario's,
+    # shown on each of its trial rows.
+    scenario_calls: dict[str, dict[Any, list[str]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for entry in scenario_rows.values():
+        for run_id, ids in entry["calls"].items():
+            scenario_calls[entry["row_id"]][run_id].extend(ids)
+    movements: dict[str, str] = {}
+    for row_id, calls_by_run in scenario_calls.items():
+        trials = {
+            run_id: _trial_outcomes(
+                calls_by_run[run_id], compare_facts[run_id]["calls"], values[run_id]
+            )
+            for run_id in (one.id for one in executions)
+        }
+        movements[row_id] = _movement(
+            _counts([outcome for _, outcome in trials[baseline.id]]),
+            [
+                _counts([outcome for _, outcome in trials[one.id]])
+                for one in executions[1:]
+            ],
+        )
     for entry in kept:
         outcomes = {
             run_id: _trial_outcomes(ids, compare_facts[run_id]["calls"], values[run_id])
             for run_id, ids in entry["calls"].items()
         }
-        entry["movement"] = _movement(
-            _counts([outcome for _, outcome in outcomes[baseline.id]]),
-            [
-                _counts([outcome for _, outcome in outcomes[one.id]])
-                for one in executions[1:]
-            ],
-        )
+        entry["movement"] = movements[entry["row_id"]]
         # Outcomes that differ, not trial counts: a rate moved, or a trial
         # ended unlike the baseline's.
         entry["changed"] = entry["movement"] != "same" or _changed(
@@ -481,7 +643,12 @@ def build_compare_page(
 
     def scenario_order(entry: dict[str, Any]) -> tuple[Any, ...]:
         shown = entry["shown"]
-        return (str(shown["scenario"]).lower(), shown["scenario_key"], entry["row_id"])
+        return (
+            str(shown["scenario"]).lower(),
+            shown["scenario_key"],
+            entry["row_id"],
+            *_trial_order({"trial_index": entry["trial_index"], "id": ""}),
+        )
 
     if query.get("ordering") == "scenario":
         kept.sort(key=scenario_order)
@@ -675,7 +842,8 @@ def build_compare_page(
         ),
         "rows": [
             {
-                "row_id": entry["row_id"],
+                "row_id": entry["id"],
+                "trial_index": entry["trial_index"],
                 "scenario_key": entry["shown"]["scenario_key"],
                 "scenario": entry["shown"]["scenario"],
                 "use_case": entry["shown"]["goal"],
@@ -683,13 +851,16 @@ def build_compare_page(
                 "persona_details": entry["shown"]["persona_details"],
                 "situation": entry["shown"]["scenario_details"],
                 "ideal_outcome": entry["shown"]["ideal_outcome"],
-                "calls": {
-                    str(run_id): sorted(
-                        (built[call_id] for call_id in ids if call_id in built),
-                        key=_trial_order,
-                    )
-                    for run_id, ids in entry["calls"].items()
-                },
+                "calls": _with_diffs(
+                    {
+                        str(run_id): sorted(
+                            (built[call_id] for call_id in ids if call_id in built),
+                            key=_trial_order,
+                        )
+                        for run_id, ids in entry["calls"].items()
+                    },
+                    str(baseline.id),
+                ),
                 "movement": entry["movement"],
                 "edited_run_ids": _edited_runs(
                     entry, executions, compare_facts, sub_goal_digests
@@ -755,7 +926,7 @@ def _page_groups(
                     continue
                 for key in keys_of[run_id][call_id]:
                     page_call_ids[key][run_id].append(call_id)
-                    row_ids.setdefault(key, []).append(entry["row_id"])
+                    row_ids.setdefault(key, []).append(entry["id"])
     groups = []
     for key, joined in row_ids.items():
         runs = {}

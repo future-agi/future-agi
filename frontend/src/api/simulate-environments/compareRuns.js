@@ -105,6 +105,36 @@ export function mapCompareRun(raw) {
   };
 }
 
+const MEASURE_KEYS = {
+  duration: "duration",
+  csat: "csat",
+  turns: "turns",
+  latency: "latency",
+  stop_latency: "stopLatency",
+  ai_interruptions: "aiInterruptions",
+  tokens: "tokens",
+};
+
+/**
+ * A call's changes against the baseline's call, as the server computed them;
+ * null on the baseline's calls and with nothing to compare.
+ * @param {?Object} diff
+ */
+export function mapCallDiff(diff) {
+  if (!diff) return null;
+  return {
+    was: diff.was ?? null,
+    subGoals: diff.sub_goals ?? null,
+    measures: Object.fromEntries(
+      Object.entries(diff.measures ?? {}).map(([key, change]) => [
+        MEASURE_KEYS[key] ?? key,
+        change,
+      ]),
+    ),
+    evals: diff.evals ?? {},
+  };
+}
+
 /**
  * The whole response, adapted for the compare page. Every call goes through
  * the run detail's `mapCallRow`, so a call reads the same on both pages.
@@ -115,6 +145,7 @@ export function mapCompareResponse(data) {
   const runs = (data?.runs ?? []).map(mapCompareRun);
   const rows = (data?.rows ?? []).map((row) => ({
     rowId: row.row_id,
+    trialIndex: row.trial_index ?? null,
     scenarioKey: row.scenario_key,
     scenario: row.scenario ?? null,
     useCase: row.use_case ?? null,
@@ -127,9 +158,10 @@ export function mapCompareResponse(data) {
     calls: Object.fromEntries(
       runs.map((run) => [
         run.id,
-        (row.calls?.[run.id] ?? []).map((call) =>
-          mapCallRow(call, evalColumns),
-        ),
+        (row.calls?.[run.id] ?? []).map((call) => ({
+          ...mapCallRow(call, evalColumns),
+          diff: mapCallDiff(call.diff),
+        })),
       ]),
     ),
   }));

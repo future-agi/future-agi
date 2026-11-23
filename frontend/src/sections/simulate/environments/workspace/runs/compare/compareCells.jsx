@@ -85,49 +85,52 @@ DiffArrow.propTypes = {
 
 // The compare-only Status column: the call's verdict, what the baseline's was
 // when it differs, and its sub-goals met, listed on hover.
-export function CompareStatusCell({ task, diff = null }) {
+export function CompareStatusCell({ task, diff = null, marker = null }) {
   const outcome = runOutcome(task.status);
   const goals = task.subGoalResults ?? [];
   const met = goals.filter((g) => g.passed === true).length;
   return (
     <TableCell sx={bodyCellSx}>
-      <Stack spacing={0.5} alignItems="flex-start">
-        <StatusBadge
-          status={task.status}
-          label={outcome.label}
-          role={outcome.role}
-          variant="dot"
-        />
-        {diff?.was && (
-          <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-            {COMPARE_COPY.was(diff.was)}
-          </Typography>
-        )}
-        {goals.length > 0 && (
-          <Stack direction="row" alignItems="center" spacing={0.75}>
-            <CustomTooltip
-              show
-              card
-              title={<SubGoalVerdicts goals={goals} sx={{ py: 0.5 }} />}
-            >
-              <Typography
-                component="span"
-                // Focusable, so the list opens from the keyboard too.
-                tabIndex={0}
-                sx={{
-                  typography: "s3",
-                  color: "text.secondary",
-                  textDecoration: "underline dotted",
-                  textUnderlineOffset: 3,
-                  cursor: "help",
-                }}
+      <Stack direction="row" spacing={1} alignItems="flex-start">
+        {marker}
+        <Stack spacing={0.5} alignItems="flex-start">
+          <StatusBadge
+            status={task.status}
+            label={outcome.label}
+            role={outcome.role}
+            variant="dot"
+          />
+          {diff?.was && (
+            <Typography sx={{ typography: "s3", color: "text.secondary" }}>
+              {COMPARE_COPY.was(diff.was)}
+            </Typography>
+          )}
+          {goals.length > 0 && (
+            <Stack direction="row" alignItems="center" spacing={0.75}>
+              <CustomTooltip
+                show
+                card
+                title={<SubGoalVerdicts goals={goals} sx={{ py: 0.5 }} />}
               >
-                {COMPARE_COPY.subGoals(met, goals.length)}
-              </Typography>
-            </CustomTooltip>
-            <DiffArrow change={diff?.subGoals} />
-          </Stack>
-        )}
+                <Typography
+                  component="span"
+                  // Focusable, so the list opens from the keyboard too.
+                  tabIndex={0}
+                  sx={{
+                    typography: "s3",
+                    color: "text.secondary",
+                    textDecoration: "underline dotted",
+                    textUnderlineOffset: 3,
+                    cursor: "help",
+                  }}
+                >
+                  {COMPARE_COPY.subGoals(met, goals.length)}
+                </Typography>
+              </CustomTooltip>
+              <DiffArrow change={diff?.subGoals} />
+            </Stack>
+          )}
+        </Stack>
       </Stack>
     </TableCell>
   );
@@ -135,4 +138,5 @@ export function CompareStatusCell({ task, diff = null }) {
 CompareStatusCell.propTypes = {
   task: PropTypes.object.isRequired,
   diff: PropTypes.object,
+  marker: PropTypes.node,
 };

@@ -11,6 +11,7 @@ from uuid import UUID
 from rest_framework import serializers
 
 from simulate.services.run_call_match import MATCH_FILTERS
+from simulate.services.run_results_v3 import OUTCOME_LABELS
 from simulate.services.run_results_v3_queries import GROUP_FIELDS
 from simulate.views.run_results_v3 import (
     EvaluationColumnSerializer,
@@ -95,8 +96,50 @@ class HarnessCompareGroupSerializer(serializers.Serializer):
     )
 
 
+class HarnessCompareChangeSerializer(serializers.Serializer):
+    """A value's change against the baseline call's, at the precision shown."""
+
+    up = serializers.BooleanField()
+    better = serializers.BooleanField()
+    change = serializers.FloatField(
+        help_text="The absolute change: ms, a tenth of CSAT, points of a score."
+    )
+
+
+class HarnessCompareCallDiffSerializer(serializers.Serializer):
+    """Show diff: a call against the baseline run's call of the same trial."""
+
+    was = serializers.ChoiceField(
+        choices=list(OUTCOME_LABELS),
+        allow_null=True,
+        help_text="The baseline call's outcome, when this call's differs.",
+    )
+    sub_goals = HarnessCompareChangeSerializer(
+        allow_null=True, help_text="Sub-goals met; null when neither has sub-goals."
+    )
+    measures = serializers.DictField(
+        child=HarnessCompareChangeSerializer(allow_null=True),
+        help_text=(
+            "By measure: duration (ms), csat, turns, latency (ms), stop_latency"
+            " (ms), ai_interruptions, tokens; null when unchanged or missing."
+        ),
+    )
+    evals = serializers.DictField(
+        child=HarnessCompareChangeSerializer(allow_null=True),
+        help_text="By evaluation id, in percentage points; null when unchanged.",
+    )
+
+
+class HarnessCompareCallSerializer(RunCallSerializer):
+    diff = HarnessCompareCallDiffSerializer(
+        allow_null=True,
+        help_text="Null on the baseline's calls and when the baseline has none.",
+    )
+
+
 class HarnessCompareRowSerializer(serializers.Serializer):
     row_id = serializers.CharField()
+    trial_index = serializers.IntegerField(allow_null=True)
     scenario_key = serializers.CharField()
     scenario = serializers.CharField()
     use_case = serializers.CharField()
@@ -105,7 +148,7 @@ class HarnessCompareRowSerializer(serializers.Serializer):
     situation = serializers.CharField(allow_null=True)
     ideal_outcome = serializers.CharField(allow_null=True)
     calls = serializers.DictField(
-        child=RunCallSerializer(many=True),
+        child=HarnessCompareCallSerializer(many=True),
         help_text="By run id, in trial order; empty when the run did not run it.",
     )
     movement = serializers.ChoiceField(

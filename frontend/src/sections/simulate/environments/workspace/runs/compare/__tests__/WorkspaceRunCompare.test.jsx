@@ -54,17 +54,14 @@ vi.mock("../compareCells", async (importOriginal) => {
 });
 
 const { default: axios } = await import("src/utils/axios");
-const { useEnvironmentRuns } = await import(
-  "src/api/simulate-environments/runs"
-);
-const { compareRunsResponse, RUN, CALL } = await import(
-  "src/api/simulate-environments/_fixtures/compareRuns"
-);
+const { useEnvironmentRuns } =
+  await import("src/api/simulate-environments/runs");
+const { compareRunsResponse, RUN, CALL } =
+  await import("src/api/simulate-environments/_fixtures/compareRuns");
 const { RunCompare } = await import("../WorkspaceRunCompare");
 const { AGENT_TYPES } = await import("src/sections/agents/constants");
-const { TRACE_COLUMNS } = await import(
-  "../../detail/trace/traceTable.constants"
-);
+const { TRACE_COLUMNS } =
+  await import("../../detail/trace/traceTable.constants");
 const { SHARED_COLUMNS } = await import("../compare.constants");
 const { histogramRows } = await import("../CompareScoreChart");
 
@@ -157,7 +154,7 @@ describe("RunCompare", () => {
     expect(pills[1]).toHaveTextContent(/ · 100% (\d+)\/\1$/);
     expect(within(pills[1]).queryByText("baseline")).toBeNull();
     expect(
-      screen.getByText("3 runs · 2 scenarios · 2 ended differently"),
+      screen.getByText("3 runs · 3 tasks · 3 ended differently"),
     ).toBeInTheDocument();
   });
 
@@ -202,7 +199,7 @@ describe("RunCompare", () => {
     // The previous comparison stays on screen, its header and body alike.
     expect(screen.getAllByTestId("compare-run-pill")).toHaveLength(3);
     expect(
-      screen.getByText("3 runs · 2 scenarios · 2 ended differently"),
+      screen.getByText("3 runs · 3 tasks · 3 ended differently"),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove run/ })).toBeNull();
   });
@@ -234,7 +231,9 @@ describe("RunCompare", () => {
     );
     expect(screen.queryByText("Couldn't compare these runs")).toBeNull();
     expect(screen.getAllByTestId("compare-run-pill")).toHaveLength(3);
-    expect(screen.getByText("refund-double-charge")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("refund-double-charge · Trial 1")[0],
+    ).toBeInTheDocument();
   });
 
   it("feeds the Filter panel the run detail's fields from the facets", async () => {
@@ -366,8 +365,8 @@ describe("RunCompare", () => {
     const heads = (await screen.findAllByRole("columnheader")).map(
       (th) => th.textContent,
     );
-    // Scenario and its own columns lead, then the unlabelled run chip and each
-    // run's columns; evals come last.
+    // Scenario and its own columns lead, then each run's columns, Status
+    // first; evals come last.
     const detailDefaults = TRACE_COLUMNS.filter(
       (c) => c.defaultOn && c.key !== "scenario",
     );
@@ -375,13 +374,12 @@ describe("RunCompare", () => {
     expect(heads).toEqual([
       "Scenario",
       ...detailDefaults.filter((c) => SHARED_COLUMNS.has(c.key)).map(label),
-      "",
       "Status",
       ...detailDefaults.filter((c) => !SHARED_COLUMNS.has(c.key)).map(label),
       "Refund correctness",
       "Tone",
     ]);
-    expect(heads.slice(0, 4)).toEqual(["Scenario", "Persona", "", "Status"]);
+    expect(heads.slice(0, 3)).toEqual(["Scenario", "Persona", "Status"]);
   });
 
   it("leads with a scenario column turned on in the picker", async () => {
@@ -396,11 +394,10 @@ describe("RunCompare", () => {
     const heads = (await screen.findAllByRole("columnheader")).map(
       (th) => th.textContent,
     );
-    expect(heads.slice(0, 5)).toEqual([
+    expect(heads.slice(0, 4)).toEqual([
       "Scenario",
       "Persona",
       "Conversation branch",
-      "",
       "Status",
     ]);
   });
@@ -423,14 +420,17 @@ describe("RunCompare", () => {
   it("draws a scenario's own columns once across its run lines", async () => {
     renderCompare();
     await loaded();
-    // The refund row: two trials in runs 1 and 2, one Not run line for run 3.
-    expect(screen.getAllByText("Impatient caller")).toHaveLength(1);
-    expect(screen.getAllByText("refund-double-charge · Trial 2")).toHaveLength(
-      2,
-    );
-    expect(screen.getAllByText("Not run")).toHaveLength(1);
-    // The row is named as its calls are on the run detail.
-    expect(screen.getByText("refund-double-charge")).toBeInTheDocument();
+    // A row per refund trial: each draws its persona once, with a line per run
+    // and a Not run line for run 3.
+    expect(screen.getAllByText("Impatient caller")).toHaveLength(2);
+    expect(screen.getAllByText("Not run")).toHaveLength(2);
+    // Each row is named as its calls are on the run detail, with its trial.
+    expect(
+      screen.getAllByText("refund-double-charge · Trial 1")[0],
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("refund-double-charge · Trial 2")[0],
+    ).toBeInTheDocument();
   });
 
   it("lists a call's sub-goals on hover of its count", async () => {
@@ -522,17 +522,14 @@ describe("RunCompare", () => {
       await screen.findByText(`Hello from ${CALL.aRefund1}`),
     ).toBeInTheDocument();
     expect(screen.getByText(`Hello from ${CALL.bRefund1}`)).toBeInTheDocument();
-    // Only the picked trial's transcripts load; run 3 did not play the row.
+    // Only the row's trial loads; run 3 did not play the row.
     expect(screen.queryByText(`Hello from ${CALL.aRefund2}`)).toBeNull();
     expect(screen.getAllByRole("button", { name: "Open call" })).toHaveLength(
       2,
     );
-
-    fireEvent.click(screen.getByRole("button", { name: "Trial 2" }));
-
-    expect(screen.getByText(`Hello from ${CALL.aRefund2}`)).toBeInTheDocument();
-    expect(screen.getByText(`Hello from ${CALL.bRefund2}`)).toBeInTheDocument();
-    expect(screen.queryByText(`Hello from ${CALL.aRefund1}`)).toBeNull();
+    // A row holds one trial, so there is no trial to pick.
+    expect(screen.queryByRole("group", { name: "Trial" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Trial \d$/ })).toBeNull();
   });
 
   it("folds and unfolds a group from the keyboard", async () => {
@@ -581,18 +578,17 @@ describe("RunCompare", () => {
     expect(screen.queryByText(/Calls across runs/)).toBeNull();
   });
 
-  it("marks the run that played a scenario edited, never the baseline", async () => {
+  it("marks a scenario a run played edited once, in its scenario cell", async () => {
     const response = compareRunsResponse();
     // Even when sent, the baseline is what the others are compared against.
-    response.rows[1].edited_run_ids = [RUN.a, RUN.b];
+    response.rows[2].edited_run_ids = [RUN.a, RUN.b];
     renderCompare({ response });
     await loaded();
     const [chip] = screen.getAllByText("Edited");
     expect(screen.getAllByText("Edited")).toHaveLength(1);
-    const line = chip.closest("tr");
-    expect(line).toHaveAttribute("data-run", RUN.b);
+    expect(chip.closest("td")).toHaveClass("compare-lead");
     expect(
-      within(line).getByText("escalate-angry · Trial 1"),
+      within(chip.closest("td")).getByText("Escalate to a human"),
     ).toBeInTheDocument();
 
     fireEvent.mouseOver(chip);
@@ -609,9 +605,9 @@ describe("RunCompare", () => {
       await screen.findByText(`Hello from ${CALL.aRefund1}`),
     ).toBeInTheDocument();
 
-    // A poll moved the refund row off this page.
+    // A poll moved the refund rows off this page.
     const moved = compareRunsResponse();
-    moved.rows = moved.rows.slice(1);
+    moved.rows = moved.rows.slice(2);
     moved.groups = moved.groups.slice(1);
     axios.get.mockResolvedValue({ data: moved });
     await lastClient.refetchQueries();
@@ -628,7 +624,7 @@ describe("RunCompare", () => {
     renderCompare();
     await loaded();
     const head = document.querySelector('tr[aria-expanded="true"]');
-    expect(within(head).getByText("3 scenarios")).toBeInTheDocument();
+    expect(within(head).getByText("3 tasks")).toBeInTheDocument();
   });
 
   it("keeps the rows on screen while a new grouping loads", async () => {
@@ -651,7 +647,9 @@ describe("RunCompare", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Status" }));
 
     await waitFor(() => expect(lastParams().group_by).toBe("status"));
-    expect(screen.getByText("refund-double-charge")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("refund-double-charge · Trial 1")[0],
+    ).toBeInTheDocument();
   });
 
   it("filters by status from the chips, counted over every run", async () => {
@@ -778,7 +776,7 @@ describe("RunCompare", () => {
     await waitFor(() => expect(lastParams().page).toBe(2));
   });
 
-  it("offers only numbered trials when a run's calls have none", async () => {
+  it("shows a run's untagged call beside the row's trial, with no picker", async () => {
     const response = compareRunsResponse();
     const [first] = response.rows[0].calls[RUN.a];
     response.rows[0].calls[RUN.a] = [{ ...first, trial_index: null }];
@@ -786,16 +784,13 @@ describe("RunCompare", () => {
     await loaded();
     fireEvent.click(screen.getAllByText("refund-double-charge · Trial 1")[0]);
 
+    // The untagged baseline call stands in for the row's trial.
     expect(
-      await screen.findByRole("button", { name: "Trial 1" }),
+      await screen.findByText(`Hello from ${CALL.aRefund1}`),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Trial 2" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Trial null" })).toBeNull();
-    // The untagged baseline call stands in for every trial.
-    expect(screen.getByText(`Hello from ${CALL.aRefund1}`)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Trial 2" }));
-    expect(screen.getByText(`Hello from ${CALL.aRefund1}`)).toBeInTheDocument();
-    expect(screen.getByText(`Hello from ${CALL.bRefund2}`)).toBeInTheDocument();
+    expect(screen.getByText(`Hello from ${CALL.bRefund1}`)).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Trial" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Trial / })).toBeNull();
   });
 
   it("asks for two runs when the URL has fewer", () => {

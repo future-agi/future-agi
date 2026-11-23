@@ -192,7 +192,13 @@ function normalizeHostStatusSpec(spec) {
           // Every non-ready source state sends kind and the ids as explicit null.
           name === "EvalLogSourceNavigation" ||
           // A log row sends explicit null for ids its source does not have.
-          name === "EvalApiLogRowResponseResult"
+          name === "EvalApiLogRowResponseResult" ||
+          // A compare call's diff, its parts and the run detail's nullable fields.
+          [
+            "HarnessCompareCall",
+            "HarnessCompareCallDiff",
+            "HarnessCompareChange",
+          ].includes(name)
             ? normalizeHostStatusSchema(schema)
             : withNullableFields(name, schema),
         ]),

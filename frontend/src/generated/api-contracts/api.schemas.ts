@@ -22255,10 +22255,10 @@ export interface SubGoalResultApi {
   evidence?: string[];
 }
 
-export type RunCallApiOutcome =
-  (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
+export type HarnessCompareCallApiOutcome =
+  (typeof HarnessCompareCallApiOutcome)[keyof typeof HarnessCompareCallApiOutcome];
 
-export const RunCallApiOutcome = {
+export const HarnessCompareCallApiOutcome = {
   queued: "queued",
   in_progress: "in_progress",
   passed: "passed",
@@ -22306,10 +22306,10 @@ export interface SimulateRunV3EvaluationResultApi {
   status: SimulateRunV3EvaluationResultApiStatus;
 }
 
-export type RunCallApiScoringStatus =
-  (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
+export type HarnessCompareCallApiScoringStatus =
+  (typeof HarnessCompareCallApiScoringStatus)[keyof typeof HarnessCompareCallApiScoringStatus];
 
-export const RunCallApiScoringStatus = {
+export const HarnessCompareCallApiScoringStatus = {
   not_applicable: "not_applicable",
   pending: "pending",
   succeeded: "succeeded",
@@ -22317,10 +22317,10 @@ export const RunCallApiScoringStatus = {
   timed_out: "timed_out",
 } as const;
 
-export type RunCallApiCsatStatus =
-  (typeof RunCallApiCsatStatus)[keyof typeof RunCallApiCsatStatus];
+export type HarnessCompareCallApiCsatStatus =
+  (typeof HarnessCompareCallApiCsatStatus)[keyof typeof HarnessCompareCallApiCsatStatus];
 
-export const RunCallApiCsatStatus = {
+export const HarnessCompareCallApiCsatStatus = {
   not_applicable: "not_applicable",
   pending: "pending",
   succeeded: "succeeded",
@@ -22329,73 +22329,82 @@ export const RunCallApiCsatStatus = {
   skipped: "skipped",
 } as const;
 
-export type RunCallApiFailureDomain =
-  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
+export type HarnessCompareChangeApi = {
+  up: boolean;
+  better: boolean;
+  /** The absolute change: ms, a tenth of CSAT, points of a score. */
+  change: number;
+} | null;
 
-export const RunCallApiFailureDomain = {
-  agent: "agent",
-  simulator: "simulator",
-  environment: "environment",
-  connectivity: "connectivity",
-  infrastructure: "infrastructure",
-  grading: "grading",
-  platform_sync: "platform_sync",
-  artifact: "artifact",
-} as const;
+export type HarnessCompareCallDiffApi = {
+  was:
+    | "queued"
+    | "in_progress"
+    | "passed"
+    | "failed"
+    | "inconclusive"
+    | "no_score"
+    | "error"
+    | null;
+  sub_goals: HarnessCompareChangeApi | null;
+  /** By measure: duration (ms), csat, turns, latency (ms), stop_latency (ms), ai_interruptions, tokens; null when unchanged or missing. */
+  measures: { [key: string]: HarnessCompareChangeApi | null };
+  /** By evaluation id, in percentage points; null when unchanged. */
+  evals: { [key: string]: HarnessCompareChangeApi | null };
+} | null;
 
-export interface RunCallApi {
+export interface HarnessCompareCallApi {
   id: string;
   /** @minLength 1 */
   scenario: string;
-  /** @minLength 1 */
-  scenario_details: string;
+  scenario_details: string | null;
   /** @minLength 1 */
   goal: string;
-  /** @minLength 1 */
-  ideal_outcome: string;
-  /** @minLength 1 */
-  conversation_branch: string;
-  /** @minLength 1 */
-  persona: string;
+  ideal_outcome: string | null;
+  conversation_branch: string | null;
+  persona: string | null;
   persona_details: PersonaDetailsApi;
   sub_goals: string[];
   sub_goal_results: SubGoalResultApi[];
-  /** @minLength 1 */
-  harness_outcome_status: string;
-  /** @minLength 1 */
-  source_scenario_key: string;
-  trial_index: number;
-  outcome: RunCallApiOutcome;
-  /** @minLength 1 */
-  outcome_reason?: string;
+  harness_outcome_status: string | null;
+  source_scenario_key: string | null;
+  trial_index: number | null;
+  outcome: HarnessCompareCallApiOutcome;
+  outcome_reason?: string | null;
   /** @minLength 1 */
   execution_status: string;
   /** @minLength 1 */
   modality: string;
-  /** @minLength 1 */
-  provider: string;
-  started_at: string;
-  completed_at: string;
-  duration_seconds: number;
-  latency_ms: number;
-  /** Average stop time after caller interruption in milliseconds. */
+  provider: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_seconds: number | null;
+  latency_ms: number | null;
   avg_stop_time_after_interruption: number | null;
   ai_interruption_count: number | null;
-  turn_count: number;
-  tokens: number;
-  cost_cents: number;
+  turn_count: number | null;
+  tokens: number | null;
+  cost_cents: number | null;
   cost_breakdown_cents: CostBreakdownApi;
-  csat: number;
-  ended_reason: string;
-  error_message: string;
+  csat: number | null;
+  ended_reason: string | null;
+  error_message: string | null;
   evaluations: SimulateRunV3EvaluationResultApi[];
-  scoring_status: RunCallApiScoringStatus;
-  csat_status: RunCallApiCsatStatus;
-  /** @minLength 1 */
-  csat_reason: string;
-  failure_domain: RunCallApiFailureDomain;
-  /** @minLength 1 */
-  failure_code: string;
+  scoring_status: HarnessCompareCallApiScoringStatus;
+  csat_status: HarnessCompareCallApiCsatStatus;
+  csat_reason: string | null;
+  failure_domain:
+    | "agent"
+    | "simulator"
+    | "environment"
+    | "connectivity"
+    | "infrastructure"
+    | "grading"
+    | "platform_sync"
+    | "artifact"
+    | null;
+  failure_code: string | null;
+  diff: HarnessCompareCallDiffApi | null;
 }
 
 export type HarnessCompareRowApiMovement =
@@ -22412,11 +22421,14 @@ export const HarnessCompareRowApiMovement = {
 /**
  * By run id, in trial order; empty when the run did not run it.
  */
-export type HarnessCompareRowApiCalls = { [key: string]: RunCallApi[] };
+export type HarnessCompareRowApiCalls = {
+  [key: string]: HarnessCompareCallApi[];
+};
 
 export interface HarnessCompareRowApi {
   /** @minLength 1 */
   row_id: string;
+  trial_index: number;
   /** @minLength 1 */
   scenario_key: string;
   /** @minLength 1 */
@@ -29903,6 +29915,111 @@ export interface RunAnalyticsV3ResponseApi {
 }
 
 export type RunCallsV3ResponseApiLevelLabels = { [key: string]: string };
+
+export type RunCallApiOutcome =
+  (typeof RunCallApiOutcome)[keyof typeof RunCallApiOutcome];
+
+export const RunCallApiOutcome = {
+  queued: "queued",
+  in_progress: "in_progress",
+  passed: "passed",
+  failed: "failed",
+  inconclusive: "inconclusive",
+  no_score: "no_score",
+  error: "error",
+} as const;
+
+export type RunCallApiScoringStatus =
+  (typeof RunCallApiScoringStatus)[keyof typeof RunCallApiScoringStatus];
+
+export const RunCallApiScoringStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+} as const;
+
+export type RunCallApiCsatStatus =
+  (typeof RunCallApiCsatStatus)[keyof typeof RunCallApiCsatStatus];
+
+export const RunCallApiCsatStatus = {
+  not_applicable: "not_applicable",
+  pending: "pending",
+  succeeded: "succeeded",
+  failed: "failed",
+  timed_out: "timed_out",
+  skipped: "skipped",
+} as const;
+
+export type RunCallApiFailureDomain =
+  (typeof RunCallApiFailureDomain)[keyof typeof RunCallApiFailureDomain];
+
+export const RunCallApiFailureDomain = {
+  agent: "agent",
+  simulator: "simulator",
+  environment: "environment",
+  connectivity: "connectivity",
+  infrastructure: "infrastructure",
+  grading: "grading",
+  platform_sync: "platform_sync",
+  artifact: "artifact",
+} as const;
+
+export interface RunCallApi {
+  id: string;
+  /** @minLength 1 */
+  scenario: string;
+  /** @minLength 1 */
+  scenario_details: string;
+  /** @minLength 1 */
+  goal: string;
+  /** @minLength 1 */
+  ideal_outcome: string;
+  /** @minLength 1 */
+  conversation_branch: string;
+  /** @minLength 1 */
+  persona: string;
+  persona_details: PersonaDetailsApi;
+  sub_goals: string[];
+  sub_goal_results: SubGoalResultApi[];
+  /** @minLength 1 */
+  harness_outcome_status: string;
+  /** @minLength 1 */
+  source_scenario_key: string;
+  trial_index: number;
+  outcome: RunCallApiOutcome;
+  /** @minLength 1 */
+  outcome_reason?: string;
+  /** @minLength 1 */
+  execution_status: string;
+  /** @minLength 1 */
+  modality: string;
+  /** @minLength 1 */
+  provider: string;
+  started_at: string;
+  completed_at: string;
+  duration_seconds: number;
+  latency_ms: number;
+  /** Average stop time after caller interruption in milliseconds. */
+  avg_stop_time_after_interruption: number | null;
+  ai_interruption_count: number | null;
+  turn_count: number;
+  tokens: number;
+  cost_cents: number;
+  cost_breakdown_cents: CostBreakdownApi;
+  csat: number;
+  ended_reason: string;
+  error_message: string;
+  evaluations: SimulateRunV3EvaluationResultApi[];
+  scoring_status: RunCallApiScoringStatus;
+  csat_status: RunCallApiCsatStatus;
+  /** @minLength 1 */
+  csat_reason: string;
+  failure_domain: RunCallApiFailureDomain;
+  /** @minLength 1 */
+  failure_code: string;
+}
 
 export interface RunCallsV3ResponseApi {
   execution: RunExecutionApi;

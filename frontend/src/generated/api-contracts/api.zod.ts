@@ -47272,6 +47272,7 @@ export const SimulateApiHarnessEnvironmentsCompareRunsResponse = zod.object({
   rows: zod.array(
     zod.object({
       row_id: zod.string().min(1),
+      trial_index: zod.number(),
       scenario_key: zod.string().min(1),
       scenario: zod.string().min(1),
       use_case: zod.string().min(1),
@@ -47293,11 +47294,11 @@ export const SimulateApiHarnessEnvironmentsCompareRunsResponse = zod.object({
             zod.object({
               id: zod.string().uuid(),
               scenario: zod.string().min(1),
-              scenario_details: zod.string().min(1),
+              scenario_details: zod.union([zod.string().min(1), zod.null()]),
               goal: zod.string().min(1),
-              ideal_outcome: zod.string().min(1),
-              conversation_branch: zod.string().min(1),
-              persona: zod.string().min(1),
+              ideal_outcome: zod.union([zod.string().min(1), zod.null()]),
+              conversation_branch: zod.union([zod.string().min(1), zod.null()]),
+              persona: zod.union([zod.string().min(1), zod.null()]),
               persona_details: zod.object({
                 name: zod.string().min(1),
                 voice: zod.string().min(1),
@@ -47321,9 +47322,12 @@ export const SimulateApiHarnessEnvironmentsCompareRunsResponse = zod.object({
                     ),
                 }),
               ),
-              harness_outcome_status: zod.string().min(1),
-              source_scenario_key: zod.string().min(1),
-              trial_index: zod.number(),
+              harness_outcome_status: zod.union([
+                zod.string().min(1),
+                zod.null(),
+              ]),
+              source_scenario_key: zod.union([zod.string().min(1), zod.null()]),
+              trial_index: zod.union([zod.number(), zod.null()]),
               outcome: zod.enum([
                 "queued",
                 "in_progress",
@@ -47333,23 +47337,34 @@ export const SimulateApiHarnessEnvironmentsCompareRunsResponse = zod.object({
                 "no_score",
                 "error",
               ]),
-              outcome_reason: zod.string().min(1).optional(),
+              outcome_reason: zod
+                .union([zod.string().min(1), zod.null()])
+                .optional(),
               execution_status: zod.string().min(1),
               modality: zod.string().min(1),
-              provider: zod.string().min(1),
-              started_at: zod.string().datetime({ offset: true }),
-              completed_at: zod.string().datetime({ offset: true }),
-              duration_seconds: zod.number(),
-              latency_ms: zod.number(),
-              avg_stop_time_after_interruption: zod
-                .number()
-                .describe(
-                  "Average stop time after caller interruption in milliseconds.",
-                ),
-              ai_interruption_count: zod.number(),
-              turn_count: zod.number(),
-              tokens: zod.number(),
-              cost_cents: zod.number(),
+              provider: zod.union([zod.string().min(1), zod.null()]),
+              started_at: zod.union([
+                zod.string().datetime({ offset: true }),
+                zod.null(),
+              ]),
+              completed_at: zod.union([
+                zod.string().datetime({ offset: true }),
+                zod.null(),
+              ]),
+              duration_seconds: zod.union([zod.number(), zod.null()]),
+              latency_ms: zod.union([zod.number(), zod.null()]),
+              avg_stop_time_after_interruption: zod.union([
+                zod
+                  .number()
+                  .describe(
+                    "Average stop time after caller interruption in milliseconds.",
+                  ),
+                zod.null(),
+              ]),
+              ai_interruption_count: zod.union([zod.number(), zod.null()]),
+              turn_count: zod.union([zod.number(), zod.null()]),
+              tokens: zod.union([zod.number(), zod.null()]),
+              cost_cents: zod.union([zod.number(), zod.null()]),
               cost_breakdown_cents: zod.object({
                 stt: zod.number(),
                 llm: zod.number(),
@@ -47357,9 +47372,9 @@ export const SimulateApiHarnessEnvironmentsCompareRunsResponse = zod.object({
                 storage: zod.number(),
                 customer: zod.number(),
               }),
-              csat: zod.number(),
-              ended_reason: zod.string(),
-              error_message: zod.string(),
+              csat: zod.union([zod.number(), zod.null()]),
+              ended_reason: zod.union([zod.string(), zod.null()]),
+              error_message: zod.union([zod.string(), zod.null()]),
               evaluations: zod.array(
                 zod.object({
                   id: zod.string().min(1),
@@ -47396,18 +47411,108 @@ export const SimulateApiHarnessEnvironmentsCompareRunsResponse = zod.object({
                 "timed_out",
                 "skipped",
               ]),
-              csat_reason: zod.string().min(1),
-              failure_domain: zod.enum([
-                "agent",
-                "simulator",
-                "environment",
-                "connectivity",
-                "infrastructure",
-                "grading",
-                "platform_sync",
-                "artifact",
+              csat_reason: zod.union([zod.string().min(1), zod.null()]),
+              failure_domain: zod.union([
+                zod.enum([
+                  "agent",
+                  "simulator",
+                  "environment",
+                  "connectivity",
+                  "infrastructure",
+                  "grading",
+                  "platform_sync",
+                  "artifact",
+                ]),
+                zod.null(),
               ]),
-              failure_code: zod.string().min(1),
+              failure_code: zod.union([zod.string().min(1), zod.null()]),
+              diff: zod.union([
+                zod
+                  .object({
+                    was: zod.union([
+                      zod
+                        .enum([
+                          "queued",
+                          "in_progress",
+                          "passed",
+                          "failed",
+                          "inconclusive",
+                          "no_score",
+                          "error",
+                        ])
+                        .describe(
+                          "The baseline call's outcome, when this call's differs.",
+                        ),
+                      zod.null(),
+                    ]),
+                    sub_goals: zod.union([
+                      zod
+                        .object({
+                          up: zod.boolean(),
+                          better: zod.boolean(),
+                          change: zod
+                            .number()
+                            .describe(
+                              "The absolute change: ms, a tenth of CSAT, points of a score.",
+                            ),
+                        })
+                        .describe(
+                          "Sub-goals met; null when neither has sub-goals.",
+                        ),
+                      zod.null(),
+                    ]),
+                    measures: zod
+                      .record(
+                        zod.string(),
+                        zod.union([
+                          zod
+                            .object({
+                              up: zod.boolean(),
+                              better: zod.boolean(),
+                              change: zod
+                                .number()
+                                .describe(
+                                  "The absolute change: ms, a tenth of CSAT, points of a score.",
+                                ),
+                            })
+                            .describe(
+                              "Sub-goals met; null when neither has sub-goals.",
+                            ),
+                          zod.null(),
+                        ]),
+                      )
+                      .describe(
+                        "By measure: duration (ms), csat, turns, latency (ms), stop_latency (ms), ai_interruptions, tokens; null when unchanged or missing.",
+                      ),
+                    evals: zod
+                      .record(
+                        zod.string(),
+                        zod.union([
+                          zod
+                            .object({
+                              up: zod.boolean(),
+                              better: zod.boolean(),
+                              change: zod
+                                .number()
+                                .describe(
+                                  "The absolute change: ms, a tenth of CSAT, points of a score.",
+                                ),
+                            })
+                            .describe(
+                              "Sub-goals met; null when neither has sub-goals.",
+                            ),
+                          zod.null(),
+                        ]),
+                      )
+                      .describe(
+                        "By evaluation id, in percentage points; null when unchanged.",
+                      ),
+                  })
+                  .describe(
+                    "Null on the baseline's calls and when the baseline has none.",
+                  ),
+                zod.null(),
+              ]),
             }),
           ),
         )

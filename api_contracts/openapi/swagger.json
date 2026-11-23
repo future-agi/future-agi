@@ -152952,7 +152952,79 @@
                 }
             }
         },
-        "RunCall": {
+        "HarnessCompareChange": {
+            "description": "Sub-goals met; null when neither has sub-goals.",
+            "required": [
+                "up",
+                "better",
+                "change"
+            ],
+            "type": "object",
+            "properties": {
+                "up": {
+                    "title": "Up",
+                    "type": "boolean"
+                },
+                "better": {
+                    "title": "Better",
+                    "type": "boolean"
+                },
+                "change": {
+                    "title": "Change",
+                    "description": "The absolute change: ms, a tenth of CSAT, points of a score.",
+                    "type": "number"
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessCompareCallDiff": {
+            "description": "Null on the baseline's calls and when the baseline has none.",
+            "required": [
+                "was",
+                "sub_goals",
+                "measures",
+                "evals"
+            ],
+            "type": "object",
+            "properties": {
+                "was": {
+                    "title": "Was",
+                    "description": "The baseline call's outcome, when this call's differs.",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "in_progress",
+                        "passed",
+                        "failed",
+                        "inconclusive",
+                        "no_score",
+                        "error"
+                    ],
+                    "x-nullable": true
+                },
+                "sub_goals": {
+                    "$ref": "#/definitions/HarnessCompareChange"
+                },
+                "measures": {
+                    "title": "Measures",
+                    "description": "By measure: duration (ms), csat, turns, latency (ms), stop_latency (ms), ai_interruptions, tokens; null when unchanged or missing.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/HarnessCompareChange"
+                    }
+                },
+                "evals": {
+                    "title": "Evals",
+                    "description": "By evaluation id, in percentage points; null when unchanged.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "$ref": "#/definitions/HarnessCompareChange"
+                    }
+                }
+            },
+            "x-nullable": true
+        },
+        "HarnessCompareCall": {
             "required": [
                 "id",
                 "scenario",
@@ -152989,7 +153061,8 @@
                 "csat_status",
                 "csat_reason",
                 "failure_domain",
-                "failure_code"
+                "failure_code",
+                "diff"
             ],
             "type": "object",
             "properties": {
@@ -153221,12 +153294,16 @@
                     "type": "string",
                     "minLength": 1,
                     "x-nullable": true
+                },
+                "diff": {
+                    "$ref": "#/definitions/HarnessCompareCallDiff"
                 }
             }
         },
         "HarnessCompareRow": {
             "required": [
                 "row_id",
+                "trial_index",
                 "scenario_key",
                 "scenario",
                 "use_case",
@@ -153244,6 +153321,11 @@
                     "title": "Row id",
                     "type": "string",
                     "minLength": 1
+                },
+                "trial_index": {
+                    "title": "Trial index",
+                    "type": "integer",
+                    "x-nullable": true
                 },
                 "scenario_key": {
                     "title": "Scenario key",
@@ -153288,7 +153370,7 @@
                     "additionalProperties": {
                         "type": "array",
                         "items": {
-                            "$ref": "#/definitions/RunCall"
+                            "$ref": "#/definitions/HarnessCompareCall"
                         }
                     }
                 },
@@ -170844,6 +170926,278 @@
                     "items": {
                         "$ref": "#/definitions/Trend"
                     }
+                }
+            }
+        },
+        "RunCall": {
+            "required": [
+                "id",
+                "scenario",
+                "scenario_details",
+                "goal",
+                "ideal_outcome",
+                "conversation_branch",
+                "persona",
+                "persona_details",
+                "sub_goals",
+                "sub_goal_results",
+                "harness_outcome_status",
+                "source_scenario_key",
+                "trial_index",
+                "outcome",
+                "execution_status",
+                "modality",
+                "provider",
+                "started_at",
+                "completed_at",
+                "duration_seconds",
+                "latency_ms",
+                "avg_stop_time_after_interruption",
+                "ai_interruption_count",
+                "turn_count",
+                "tokens",
+                "cost_cents",
+                "cost_breakdown_cents",
+                "csat",
+                "ended_reason",
+                "error_message",
+                "evaluations",
+                "scoring_status",
+                "csat_status",
+                "csat_reason",
+                "failure_domain",
+                "failure_code"
+            ],
+            "type": "object",
+            "properties": {
+                "id": {
+                    "title": "Id",
+                    "type": "string",
+                    "format": "uuid"
+                },
+                "scenario": {
+                    "title": "Scenario",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "scenario_details": {
+                    "title": "Scenario details",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "goal": {
+                    "title": "Goal",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "ideal_outcome": {
+                    "title": "Ideal outcome",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "conversation_branch": {
+                    "title": "Conversation branch",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "persona": {
+                    "title": "Persona",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "persona_details": {
+                    "$ref": "#/definitions/PersonaDetails"
+                },
+                "sub_goals": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                },
+                "sub_goal_results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SubGoalResult"
+                    }
+                },
+                "harness_outcome_status": {
+                    "title": "Harness outcome status",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "source_scenario_key": {
+                    "title": "Source scenario key",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "trial_index": {
+                    "title": "Trial index",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "outcome": {
+                    "title": "Outcome",
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "in_progress",
+                        "passed",
+                        "failed",
+                        "inconclusive",
+                        "no_score",
+                        "error"
+                    ]
+                },
+                "outcome_reason": {
+                    "title": "Outcome reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "execution_status": {
+                    "title": "Execution status",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "modality": {
+                    "title": "Modality",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "provider": {
+                    "title": "Provider",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "started_at": {
+                    "title": "Started at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "completed_at": {
+                    "title": "Completed at",
+                    "type": "string",
+                    "format": "date-time",
+                    "x-nullable": true
+                },
+                "duration_seconds": {
+                    "title": "Duration seconds",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "latency_ms": {
+                    "title": "Latency ms",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "avg_stop_time_after_interruption": {
+                    "title": "Avg stop time after interruption",
+                    "description": "Average stop time after caller interruption in milliseconds.",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "ai_interruption_count": {
+                    "title": "Ai interruption count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "turn_count": {
+                    "title": "Turn count",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "tokens": {
+                    "title": "Tokens",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "cost_cents": {
+                    "title": "Cost cents",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "cost_breakdown_cents": {
+                    "$ref": "#/definitions/CostBreakdown"
+                },
+                "csat": {
+                    "title": "Csat",
+                    "type": "number",
+                    "x-nullable": true
+                },
+                "ended_reason": {
+                    "title": "Ended reason",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "error_message": {
+                    "title": "Error message",
+                    "type": "string",
+                    "x-nullable": true
+                },
+                "evaluations": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/SimulateRunV3EvaluationResult"
+                    }
+                },
+                "scoring_status": {
+                    "title": "Scoring status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out"
+                    ]
+                },
+                "csat_status": {
+                    "title": "Csat status",
+                    "type": "string",
+                    "enum": [
+                        "not_applicable",
+                        "pending",
+                        "succeeded",
+                        "failed",
+                        "timed_out",
+                        "skipped"
+                    ]
+                },
+                "csat_reason": {
+                    "title": "Csat reason",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "failure_domain": {
+                    "title": "Failure domain",
+                    "type": "string",
+                    "enum": [
+                        "agent",
+                        "simulator",
+                        "environment",
+                        "connectivity",
+                        "infrastructure",
+                        "grading",
+                        "platform_sync",
+                        "artifact"
+                    ],
+                    "x-nullable": true
+                },
+                "failure_code": {
+                    "title": "Failure code",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
                 }
             }
         },

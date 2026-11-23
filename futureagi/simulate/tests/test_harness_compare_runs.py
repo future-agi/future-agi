@@ -5,7 +5,7 @@ from __future__ import annotations
 import gc
 import json
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Collection
 from datetime import timedelta
 from typing import Any
@@ -422,9 +422,22 @@ def _other_workspace(workspace: Workspace, user: User) -> Workspace:
     )
 
 
+def _trial_rows(body: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """A scenario's rows, one per trial, in trial order."""
+    return sorted(
+        (row for row in body["rows"] if row["scenario_key"] == key),
+        key=lambda row: row["trial_index"],
+    )
+
+
 def _row(body: dict[str, Any], key: str) -> dict[str, Any]:
-    [row] = [row for row in body["rows"] if row["scenario_key"] == key]
-    return row
+    """A scenario's first trial row: its verdict and edits are on each of them."""
+    rows = _trial_rows(body, key)
+    assert rows
+    assert {(row["movement"], tuple(row["edited_run_ids"])) for row in rows} == {
+        (rows[0]["movement"], tuple(rows[0]["edited_run_ids"]))
+    }
+    return rows[0]
 
 
 @pytest.mark.integration
@@ -458,6 +471,7 @@ class TestContract:
         row = body["rows"][0]
         assert set(row) == {
             "row_id",
+            "trial_index",
             "scenario_key",
             "scenario",
             "use_case",
@@ -599,24 +613,41 @@ class TestContract:
 @pytest.mark.integration
 @pytest.mark.django_db
 class TestSemantics:
-    def test_an_edited_scenario_is_two_rows(self, auth_client, environment):
+    def test_an_edited_scenario_is_one_row_marked_edited(
+        self, auth_client, environment
+    ):
         runs = _runs(environment)
 
         body = _ok(_compare(auth_client, environment, runs, page_size=100))
 
-        keys = Counter(row["scenario_key"] for row in body["rows"])
-        [(edited, versions)] = [(key, n) for key, n in keys.items() if n > 1]
-        assert versions == 2
-        first, second = (row for row in body["rows"] if row["scenario_key"] == edited)
-        assert first["situation"] != second["situation"]
-        assert first["row_id"] != second["row_id"]
-        for row in (first, second):
-            ran = [run for run, calls in row["calls"].items() if calls]
-            assert 0 < len(ran) < len(runs)
-            for calls in row["calls"].values():
-                assert {call["scenario_details"] for call in calls} <= {
-                    row["situation"]
-                }
+        # One row per scenario trial: an edit never splits it.
+        rows = Counter(
+            (row["scenario_key"], row["trial_index"]) for row in body["rows"]
+        )
+        assert set(rows.values()) == {1}
+        assert {row["row_id"] for row in body["rows"]} == {
+            f"{key}:{trial}" for key, trial in rows
+        }
+        situations: dict[str, dict[str, set[str]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
+        for one in body["rows"]:
+            for run, calls in one["calls"].items():
+                situations[one["scenario_key"]][run].update(
+                    call["scenario_details"] for call in calls
+                )
+        [(edited, by_run)] = [
+            (key, by_run)
+            for key, by_run in situations.items()
+            if len(set().union(*by_run.values())) > 1
+        ]
+        row = _row(body, edited)
+        baseline = by_run[str(runs[0].id)]
+        assert set(row["edited_run_ids"]) == {
+            run for run, shown in by_run.items() if shown != baseline
+        }
+        assert row["edited_run_ids"]
+        assert str(runs[0].id) not in row["edited_run_ids"]
 
     def test_a_scenario_left_out_of_a_run_is_not_run(self, auth_client, environment):
         runs = _runs(environment)
@@ -627,16 +658,22 @@ class TestSemantics:
 
         body = _ok(_compare(auth_client, environment, runs, page_size=100))
 
-        [row] = [row for row in body["rows"] if row["scenario_key"] == key]
-        assert row["calls"][str(runs[2].id)] == []
-        assert len(row["calls"][str(runs[0].id)]) == 2
+        rows = _trial_rows(body, key)
+        assert [row["trial_index"] for row in rows] == [1, 2]
+        for row in rows:
+            assert row["calls"][str(runs[2].id)] == []
+            assert len(row["calls"][str(runs[0].id)]) == 1
 
     def test_trials_are_lines_in_trial_order(self, auth_client, environment):
         body = _ok(_compare(auth_client, environment, _runs(environment)))
 
         for row in body["rows"]:
+            assert row["row_id"] == f"{row['scenario_key']}:{row['trial_index']}"
             for calls in row["calls"].values():
-                assert [call["trial_index"] for call in calls] in ([], [1, 2])
+                assert [call["trial_index"] for call in calls] in (
+                    [],
+                    [row["trial_index"]],
+                )
 
     def test_a_row_is_kept_when_any_call_matches_and_shows_every_call(
         self, auth_client, environment
@@ -677,7 +714,7 @@ class TestSemantics:
         )
 
         [row] = body["rows"]
-        assert any(len(calls) > 1 for calls in row["calls"].values())
+        assert all(len(calls) == 1 for calls in row["calls"].values())
         assert [(g["key"], g["row_ids"], g["row_count"]) for g in body["groups"]] == [
             ("failed", [row["row_id"]], 1)
         ]
@@ -773,7 +810,12 @@ class TestSemantics:
         after = _ok(_compare(auth_client, environment, runs, page_size=100))
 
         assert _row(after, key)["movement"] == "same"
-        assert len(_row(after, key)["calls"][str(runs[1].id)]) == 1
+        assert [
+            len(row["calls"][str(runs[1].id)]) for row in _trial_rows(after, key)
+        ] == [
+            1,
+            0,
+        ]
         assert after["changed_count"] == before["changed_count"]
 
     def test_a_flipped_outcome_is_a_regression(self, auth_client, environment):
@@ -788,7 +830,8 @@ class TestSemantics:
 
         assert _row(before, key)["movement"] == "same"
         assert _row(after, key)["movement"] == "regressed"
-        assert after["changed_count"] == before["changed_count"] + 1
+        # Both of its trial rows ended differently.
+        assert after["changed_count"] == before["changed_count"] + 2
         # Regressions lead the default order.
         assert after["rows"][0]["movement"] == "regressed"
 
@@ -810,7 +853,7 @@ class TestSemantics:
 
         # The same rate and the same set of outcomes, but each trial flipped.
         assert _row(after, key)["movement"] == "same"
-        assert after["changed_count"] == before["changed_count"] + 1
+        assert after["changed_count"] == before["changed_count"] + 2
 
     def test_a_flipped_row_leads_the_unchanged_rows_of_its_movement(
         self, auth_client, environment
@@ -844,7 +887,8 @@ class TestSemantics:
     def test_runs_moving_both_ways_are_mixed_between_regressions_and_improvements(
         self, auth_client, workspace
     ):
-        environment = build_environment(workspace, trials=10, edited=())
+        # Few enough scenarios that every trial row fits one page.
+        environment = build_environment(workspace, scenarios=5, trials=10, edited=())
         runs = _runs(environment)
         mixed, regressed, improved = _shared_keys(runs, trials=10)[:3]
         half = ["passed", "failed"] * 5
@@ -863,35 +907,39 @@ class TestSemantics:
         assert _row(body, mixed)["movement"] == "mixed"
         assert order.index(regressed) < order.index(mixed) < order.index(improved)
 
-    def test_a_page_holds_fewer_rows_when_they_hold_many_trials(
-        self, auth_client, workspace
+    def test_a_page_holds_fewer_rows_when_they_hold_many_calls(
+        self, auth_client, environment, monkeypatch
     ):
-        environment = build_environment(
-            workspace, runs=2, scenarios=20, trials=20, prefix="t-trials", edited=()
-        )
+        from simulate.services import run_compare_page
+
         runs = _runs(environment)
+        monkeypatch.setattr(run_compare_page, "MAX_PAGE_CALLS", 30)
 
         body = _ok(_compare(auth_client, environment, runs))
 
-        # 2 runs x 20 trials a row: 15 rows make the 600-call page.
+        # 3 runs, a call each a trial row: 10 rows make the 30-call page.
         assert body["page_size"] == 25
-        assert len(body["rows"]) == 15
-        assert body["total_pages"] == -(-body["count"] // 15)
+        assert len(body["rows"]) == 10
+        assert body["total_pages"] == -(-body["count"] // 10)
         second = _ok(_compare(auth_client, environment, runs, page=2))
         assert {row["row_id"] for row in second["rows"]}.isdisjoint(
             row["row_id"] for row in body["rows"]
         )
 
     def test_only_the_rows_with_many_calls_shrink_their_page(
-        self, auth_client, environment, monkeypatch
+        self, auth_client, workspace, monkeypatch
     ):
+        # Two runs leave scenario 4 out, so its trial rows hold one call.
+        environment = build_environment(workspace, skipped={(1, 3), (2, 3)})
         runs = _runs(environment)
         whole = _ok(_compare(auth_client, environment, runs, page_size=100))
         from simulate.services import run_compare_page
 
+        # A trial row holds a call per run that played it.
         sizes = [sum(map(len, row["calls"].values())) for row in whole["rows"]]
-        assert max(sizes) == 6 > min(sizes)
-        monkeypatch.setattr(run_compare_page, "MAX_PAGE_CALLS", 10)
+        assert max(sizes) == 3 > min(sizes) == 1
+        limit = max(sizes) + min(sizes)
+        monkeypatch.setattr(run_compare_page, "MAX_PAGE_CALLS", limit)
 
         first = _ok(_compare(auth_client, environment, runs, page_size=100))
         pages = [first] + [
@@ -901,14 +949,67 @@ class TestSemantics:
 
         # Rows of fewer calls share a page rather than every page sized by the largest.
         assert first["page_size"] == 100
-        # Sized by the largest row, a 6-call row, every page would hold one row.
+        # Sized by the largest row, a 3-call row, every page would hold one row.
         assert first["total_pages"] < whole["count"]
         for page in pages:
             calls = [c for row in page["rows"] for c in row["calls"].values()]
-            assert sum(map(len, calls)) <= 10
+            assert sum(map(len, calls)) <= limit
         assert [row["row_id"] for page in pages for row in page["rows"]] == [
             row["row_id"] for row in whole["rows"]
         ]
+
+    def test_each_trial_is_a_row_holding_every_runs_call_of_it(
+        self, auth_client, workspace
+    ):
+        environment = build_environment(workspace, scenarios=2, trials=3, edited=())
+        runs = _runs(environment)
+        key = _shared_key(runs, trials=3)
+        for run, outcome in zip(runs, ("passed", "failed", "passed"), strict=True):
+            _grade(_key_calls(run, key), outcome)
+
+        body = _ok(_compare(auth_client, environment, runs, page_size=100))
+
+        rows = _trial_rows(body, key)
+        assert [row["row_id"] for row in rows] == [f"{key}:{n}" for n in (1, 2, 3)]
+        for row in rows:
+            for calls in row["calls"].values():
+                assert [call["trial_index"] for call in calls] == [row["trial_index"]]
+        # One verdict for the scenario, across its trials, on each trial row.
+        assert {row["movement"] for row in rows} == {"regressed"}
+
+    def test_show_diff_pairs_each_call_with_the_baselines_same_trial(
+        self, auth_client, environment
+    ):
+        runs = _runs(environment)
+        key, left_out = _shared_keys(runs)[:2]
+        _grade(_key_calls(runs[0], key), "failed")
+        _grade(_key_calls(runs[1], key), "passed")
+        CallExecution.objects.filter(
+            test_execution=runs[0], call_metadata__harness_scenario_key=left_out
+        ).delete()
+
+        body = _ok(_compare(auth_client, environment, runs, page_size=100))
+
+        _assert_declared(body)
+        rows = [row for row in body["rows"] if row["scenario_key"] == key]
+        assert {row["trial_index"] for row in rows} == {1, 2}
+        for row in rows:
+            [base] = row["calls"][str(runs[0].id)]
+            [call] = row["calls"][str(runs[1].id)]
+            assert base["diff"] is None
+            assert call["trial_index"] == base["trial_index"]
+            assert call["diff"]["was"] == "failed"
+            # The harness policy eval went from failed to passed.
+            policy = call["diff"]["evals"]["harness-policy"]
+            assert policy == {"up": True, "better": True, "change": 100}
+        for row in body["rows"]:
+            if row["scenario_key"] == left_out:
+                assert row["calls"][str(runs[0].id)] == []
+                assert all(
+                    call["diff"] is None
+                    for calls in row["calls"].values()
+                    for call in calls
+                )
 
     def test_a_better_run_is_an_improvement(self, auth_client, environment):
         runs = _runs(environment)
@@ -1114,7 +1215,7 @@ class TestSemantics:
     ],
 )
 def test_a_use_case_alone_tells_scenario_versions_apart(columns, same):
-    from simulate.services.run_compare_page import _row_id
+    from simulate.services.run_compare_page import _shown_digest
 
     shown = {
         "scenario": "Sample scenario",
@@ -1125,11 +1226,11 @@ def test_a_use_case_alone_tells_scenario_versions_apart(columns, same):
         "ideal_outcome": None,
     }
 
-    one = _row_id("k", shown)
-    other = _row_id("k", {**shown, **columns})
+    one = _shown_digest(shown)
+    other = _shown_digest({**shown, **columns})
 
     assert (one == other) is same
-    assert _row_id("k", {**shown, "goal": "Sample scenario"}) == "k"
+    assert _shown_digest({**shown, "goal": "Sample scenario"}) == ""
 
 
 @pytest.mark.parametrize(
@@ -1152,6 +1253,104 @@ def test_movement_is_the_verdict_against_the_baseline(baseline, candidates, move
     from simulate.services.run_compare_page import _movement
 
     assert _movement(baseline, candidates) == movement
+
+
+def _diff_call(**fields: Any) -> dict[str, Any]:
+    return {
+        "id": "x",
+        "trial_index": 1,
+        "outcome": "passed",
+        "duration_seconds": 60.0,
+        "csat": 8.0,
+        "turn_count": 10,
+        "latency_ms": 400.0,
+        "avg_stop_time_after_interruption": 300,
+        "ai_interruption_count": 2,
+        "tokens": 2000,
+        "sub_goal_results": [
+            {"name": "a", "passed": True},
+            {"name": "b", "passed": True},
+        ],
+        "evaluations": [{"id": "tone", "score": 0.9, "value": 0.9}],
+        **fields,
+    }
+
+
+def test_a_call_diff_names_every_change_against_the_baseline_call():
+    from simulate.services.run_compare_page import _call_diff
+
+    base = _diff_call(
+        outcome="failed",
+        sub_goal_results=[{"name": "a", "passed": True}, {"name": "b"}],
+        evaluations=[{"id": "tone", "score": 0.6, "value": 0.6}],
+    )
+
+    diff = _call_diff(
+        _diff_call(latency_ms=350.0, tokens=2500, csat=8.3, turn_count=12), base
+    )
+
+    assert diff["was"] == "failed"
+    assert diff["sub_goals"] == {"up": True, "better": True, "change": 1}
+    # Less is better for latency, tokens and turns; more for CSAT and scores.
+    assert diff["measures"]["latency"] == {"up": False, "better": True, "change": 50}
+    assert diff["measures"]["tokens"] == {"up": True, "better": False, "change": 500}
+    assert diff["measures"]["turns"] == {"up": True, "better": False, "change": 2}
+    assert diff["measures"]["csat"] == {"up": True, "better": True, "change": 0.3}
+    assert diff["measures"]["duration"] is None
+    assert diff["evals"] == {"tone": {"up": True, "better": True, "change": 30}}
+
+
+def test_a_call_diff_compares_at_the_precision_its_cells_show():
+    from simulate.services.run_compare_page import _call_diff
+
+    diff = _call_diff(
+        _diff_call(
+            duration_seconds=60.04,
+            latency_ms=400.4,
+            csat=8.04,
+            evaluations=[{"id": "tone", "score": 0.904, "value": 0.904}],
+        ),
+        _diff_call(),
+    )
+
+    assert diff["was"] is None
+    assert diff["sub_goals"] is None
+    assert set(diff["measures"].values()) == {None}
+    assert diff["evals"] == {"tone": None}
+
+
+def test_a_call_diff_reads_a_missing_side_as_no_change():
+    from simulate.services.run_compare_page import _call_diff
+
+    diff = _call_diff(
+        _diff_call(
+            tokens=None,
+            sub_goal_results=[],
+            evaluations=[{"id": "tone", "score": None, "value": None}],
+        ),
+        _diff_call(sub_goal_results=[]),
+    )
+
+    assert diff["measures"]["tokens"] is None
+    assert diff["sub_goals"] is None
+    assert diff["evals"] == {"tone": None}
+    # Sub-goals on one side only still count: none met against two.
+    assert _call_diff(_diff_call(sub_goal_results=[]), _diff_call())["sub_goals"] == {
+        "up": False,
+        "better": False,
+        "change": 2,
+    }
+
+
+def test_a_call_diff_scores_an_unscored_entry_by_its_value():
+    from simulate.services.run_compare_page import _call_diff
+
+    diff = _call_diff(
+        _diff_call(evaluations=[{"id": "tone", "score": None, "value": {"score": 50}}]),
+        _diff_call(),
+    )
+
+    assert diff["evals"]["tone"] == {"up": False, "better": False, "change": 40}
 
 
 def _scenario_content(scenario: HostedHarnessScenario, **changes: Any) -> dict:
@@ -1229,10 +1428,12 @@ class TestEditedRuns:
     def _edited(self, auth_client, environment, runs) -> dict[str, list[list[str]]]:
         body = _ok(_compare(auth_client, environment, runs, page_size=100))
         _assert_declared(body)
-        edited: dict[str, list[list[str]]] = {}
+        # The scenario's edits, the same on each of its trial rows.
+        trials: dict[str, set[tuple[str, ...]]] = defaultdict(set)
         for row in body["rows"]:
-            edited.setdefault(row["scenario_key"], []).append(row["edited_run_ids"])
-        return edited
+            trials[row["scenario_key"]].add(tuple(row["edited_run_ids"]))
+        assert all(len(ids) == 1 for ids in trials.values())
+        return {key: [list(ids) for ids in one] for key, one in trials.items()}
 
     def test_an_edited_instruction_is_one_row_flagged_on_its_run(
         self, auth_client, played
@@ -1389,30 +1590,24 @@ class TestDatasetRowScenarios:
         cache.clear()
         return runs, key, cells
 
-    def test_an_edited_dataset_row_is_two_rows(
+    def test_an_edited_dataset_row_is_one_row_marked_edited(
         self, auth_client, environment, versions
     ):
         runs, key, _ = versions
 
         body = _ok(_compare(auth_client, environment, runs, page_size=100))
 
-        rows = [row for row in body["rows"] if row["scenario_key"] == key]
-        assert sorted(row["situation"] for row in rows) == [
-            "Situation one",
-            "Situation two",
-        ]
+        rows = _trial_rows(body, key)
+        assert len(rows) == 2
         for row in rows:
-            ran = {run for run, calls in row["calls"].items() if calls}
-            expected = (
-                {str(runs[-1].id)}
-                if row["situation"] == "Situation two"
-                else {str(run.id) for run in runs[:-1]}
-            )
-            assert ran == expected
-            for calls in row["calls"].values():
-                assert {call["scenario_details"] for call in calls} <= {
-                    row["situation"]
-                }
+            assert row["situation"] == "Situation one"
+            assert {run for run, calls in row["calls"].items() if calls} == {
+                str(run.id) for run in runs
+            }
+            assert {
+                call["scenario_details"] for call in row["calls"][str(runs[-1].id)]
+            } == {"Situation two"}
+            assert row["edited_run_ids"] == [str(runs[-1].id)]
 
     def test_compares_narrow_calls_read_the_columns_full_calls_do(
         self, auth_client, environment, versions
@@ -1519,9 +1714,11 @@ class TestDatasetRowScenarios:
 
         body = _ok(_compare(auth_client, environment, runs, page_size=100))
 
-        [row] = [row for row in body["rows"] if row["scenario_key"] == key]
-        assert row["situation"] == "Situation one"
-        assert all(row["calls"].values())
+        rows = _trial_rows(body, key)
+        assert len(rows) == 2
+        for row in rows:
+            assert row["situation"] == "Situation one"
+            assert all(row["calls"].values())
 
 
 @pytest.mark.integration
@@ -1553,7 +1750,8 @@ def test_each_run_equals_its_calls_page(auth_client, environment, params):
         }
         assert {call["id"] for call in detail["results"]} <= mine
         for call_id in mine:
-            assert shown[call_id] == unfiltered[call_id]
+            ours = {k: v for k, v in shown[call_id].items() if k != "diff"}
+            assert ours == unfiltered[call_id]
         for column in detail["evaluation_columns"]:
             assert columns[column["id"]] == column
         groups = {

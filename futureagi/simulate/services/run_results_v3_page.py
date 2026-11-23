@@ -85,7 +85,7 @@ CONFIG_KEY_FIELDS = ("id", "updated_at", "config", "eval_template__updated_at")
 CACHE_TIMEOUT = 5 * 60
 # Compare's facts derive from a run's whole-run rows and hold the stamp those
 # rows were cached with; rows cached again under a new stamp drop them.
-COMPARE_FACTS_SHAPE = "compare-facts:v6"
+COMPARE_FACTS_SHAPE = "compare-facts:v7"
 
 
 def _score_expressions(
