@@ -65,6 +65,13 @@ const ALL = "all";
 // one-line cost); the hidden reserve row sets the real height.
 const CHOICE_CARD_HEIGHT = 64;
 const noop = () => {};
+// The hidden reserve's text: as long as a big view's real cost lines, so it
+// wraps like them, in words no real card shows.
+const RESERVE_SAMPLE_DETAIL =
+  "Reads up to 5,000 rows · about 300 points · about 20 min. Picked from the view; the same rows each time.";
+const RESERVE_ALL_DETAIL =
+  "Reads up to 100,000 rows · about 6,000 points · about 7 h";
+const RESERVE_ALL_NOTE = "You confirm the cost here before it begins.";
 // A sample size typed in rather than picked from the menu.
 const CUSTOM = "custom";
 
@@ -465,8 +472,9 @@ function ScopeCard({
         </Box>
       </Stack>
       {/* The size choices' place. A hidden row of the counted cards' tallest
-          usual shapes (a sample with its size menu, every row with its
-          one-line note) shares one grid cell with what shows: the skeleton
+          usual shapes (a sample with its size menu and a cost line as long
+          as a big sample's, every row with its confirm note) shares one grid
+          cell with what shows: the skeleton
           while counting, nothing after a failed or empty count, the real
           cards once counted. The cell is never shorter than a counted row,
           so the question box and suggestions below never jump. */}
@@ -485,7 +493,7 @@ function ScopeCard({
             selected={false}
             onSelect={noop}
             title={"\u00a0"}
-            detail={"\u00a0"}
+            detail={RESERVE_SAMPLE_DETAIL}
           >
             <TextField
               select
@@ -501,8 +509,8 @@ function ScopeCard({
             selected={false}
             onSelect={noop}
             title={"\u00a0"}
-            detail={"\u00a0"}
-            note={"\u00a0"}
+            detail={RESERVE_ALL_DETAIL}
+            note={RESERVE_ALL_NOTE}
           />
         </Stack>
         {!(estimate && count > 0) && (
@@ -522,10 +530,11 @@ function ScopeCard({
                 <Skeleton
                   key={key}
                   variant="rounded"
-                  height="100%"
                   sx={{
                     flex: { xs: "none", sm: 1 },
                     minWidth: 240,
+                    // Stacked on a phone, two cells' worth would overflow.
+                    height: { xs: CHOICE_CARD_HEIGHT, sm: "100%" },
                     minHeight: CHOICE_CARD_HEIGHT,
                     borderRadius: "8px",
                   }}

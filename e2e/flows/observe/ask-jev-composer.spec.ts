@@ -148,7 +148,8 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     // Hold the count back until Question 1's place while counting is read.
     let release = () => {};
     const held = new Promise<void>(resolve => { release = resolve; });
-    await page.route(url => url.pathname === ESTIMATE, async route => {
+    const isEstimate = (url: URL) => url.pathname === ESTIMATE;
+    await page.route(isEstimate, async route => {
       await held;
       await route.continue();
     });
@@ -160,7 +161,7 @@ test('OBS-E2E-064: Ask Jev stays in reach as example questions are added, and th
     const counting = (await question1.boundingBox())?.y;
     release();
     const response = await estimated;
-    await page.unroute(url => url.pathname === ESTIMATE);
+    await page.unroute(isEstimate);
     await ui(page.getByRole('radiogroup', { name: 'How many to read' })).toBeVisible();
     const counted = (await question1.boundingBox())?.y;
     await testInfo.attach('question-1-y', { contentType: 'application/json', body: JSON.stringify({ counting, counted }) });
