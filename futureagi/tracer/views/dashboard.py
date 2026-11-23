@@ -2609,6 +2609,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     query={
                         "category": query_params.get("category", ""),
                         "source": query_params.get("source", ""),
+                        "context": query_params.get("context", ""),
+                        "level": query_params.get("level", ""),
                         "property_kind": "",
                         "role": query_params.get("role", ""),
                         "per_eval_config": query_params.get("per_eval_config", False),
@@ -6195,6 +6197,14 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 frozen_annotation_label_ids_by_project
             )
         query_config["allow_sampled"] = False
+
+        if all(
+            metric.get("source") == "derived_metrics"
+            for metric in query_config["metrics"]
+        ):
+            from tracer.services.derived_metrics.integrations import dashboard_result
+
+            return self._gm.success_response(dashboard_result(query_config, workspace))
 
         query_config["metrics"] = self._normalize_metric_sources(
             query_config["metrics"]

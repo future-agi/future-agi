@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from rest_framework import status
 
-from accounts.tests.test_rbac_regressions import WORKSPACE_WRITE_DENIED, _viewer_client
+from accounts.tests.test_rbac_regressions import _viewer_client
 from model_hub.models.develop_dataset import Dataset
 from simulate.models import EvidenceImport, EvidenceImportCase
 from simulate.selectors import evidence_import as evidence_selectors
@@ -242,5 +242,5 @@ class TestDiscard:
         response = _discard(viewer, environment, made)
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert WORKSPACE_WRITE_DENIED in str(response.data)
+        assert response.data["code"] == "viewer_read_only"
         assert EvidenceImport.no_workspace_objects.filter(id=made.id).exists()

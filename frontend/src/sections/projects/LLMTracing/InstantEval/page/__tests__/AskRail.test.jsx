@@ -282,13 +282,13 @@ describe("where a run that isn't done stands", () => {
       },
     });
     const open = card("Resolved?");
-    expect(within(open).getByText(/Stopped · 8 of 49 answered/)).toBeTruthy();
+    // The state is a status badge; the line beside it says how far it got.
+    expect(within(open).getByText("Stopped")).toBeInTheDocument();
+    expect(within(open).getByText(/8 of 49 answered/)).toBeInTheDocument();
     expect(
-      within(open).getByRole("img", { name: "Stopped before finishing" }),
+      within(open).getByTitle("Stopped before finishing"),
     ).toBeInTheDocument();
-    expect(
-      within(open).queryByRole("img", { name: "Still being answered" }),
-    ).toBeNull();
+    expect(within(open).queryByTitle("Still being answered")).toBeNull();
   });
 
   it("says another live run hasn't moved, from when it last did", () => {
@@ -298,18 +298,16 @@ describe("where a run that isn't done stands", () => {
     ];
     renderRail();
     const quiet = card("Quiet?");
-    expect(
-      within(quiet).getByText(/No progress lately · 8 of 49 answered/),
-    ).toBeInTheDocument();
-    expect(
-      within(quiet).getByRole("img", { name: "No progress lately" }),
-    ).toBeInTheDocument();
+    expect(within(quiet).getByTitle("No progress lately")).toHaveTextContent(
+      "No progress lately",
+    );
+    expect(within(quiet).getByText(/8 of 49 answered/)).toBeInTheDocument();
     const busy = card("Busy?");
     expect(within(busy).getByText(/8 of 49 answered/)).toBeInTheDocument();
     expect(within(busy).queryByText(/No progress lately/)).toBeNull();
-    expect(
-      within(busy).getByRole("img", { name: "Still being answered" }),
-    ).toBeInTheDocument();
+    expect(within(busy).getByTitle("Still being answered")).toHaveTextContent(
+      "Running",
+    );
   });
 
   it("turns quiet as time passes, with no new poll", () => {
@@ -317,13 +315,13 @@ describe("where a run that isn't done stands", () => {
     history.runs = [liveRun("busy-task", "Busy?", ago(80_000))];
     renderRail();
     expect(
-      within(card("Busy?")).getByRole("img", { name: "Still being answered" }),
+      within(card("Busy?")).getByTitle("Still being answered"),
     ).toBeInTheDocument();
     act(() => {
       vi.advanceTimersByTime(15_000);
     });
     expect(
-      within(card("Busy?")).getByRole("img", { name: "No progress lately" }),
+      within(card("Busy?")).getByTitle("No progress lately"),
     ).toBeInTheDocument();
   });
 });

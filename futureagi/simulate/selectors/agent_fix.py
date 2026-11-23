@@ -25,6 +25,7 @@ from django.db.models import (
     QuerySet,
     Subquery,
     Sum,
+    UUIDField,
     Value,
     When,
 )
@@ -33,6 +34,7 @@ from django.utils import timezone
 
 from simulate.models import (
     AgentFixCandidate,
+    AgentFixIssueJob,
     AgentFixRun,
     AgentVersion,
     CallExecution,
@@ -100,7 +102,7 @@ from simulate.services.run_results_v3_scoring import (
     judge_stored_eval,
     live_eval_specs,
 )
-from simulate.services.run_traces_v3 import CallUsage, run_usage
+from simulate.services.run_traces_v3 import CallUsage, run_traces_source, run_usage
 from simulate.temporal.constants import (
     AGENT_FIX_VARIATIONS_RUN_GRACE_MINUTES,
     AGENT_FIX_VARIATIONS_WRITE_MINUTES,
@@ -528,6 +530,15 @@ def _read_usage(run: HostedHarnessJob) -> dict[str, CallUsage]:
     if execution is None:
         return {}
     return run_usage(execution) or {}
+
+
+def measured_automatically(run: HostedHarnessJob) -> bool:
+    """Whether only the sandbox's own measuring could see the run's model calls: its agent
+    names no tracing, so any span carries the model, tokens and timing, never a prompt or
+    a reply."""
+    execution = run.test_execution
+    source = run_traces_source(execution) if execution is not None else None
+    return source is not None and source.measured_automatically
 
 
 def source_run_usage(source_run: HostedHarnessJob) -> dict[str, CallUsage]:
@@ -981,8 +992,14 @@ def fix_runs_for_read(runs: QuerySet[AgentFixRun]) -> QuerySet[AgentFixRun]:
         .annotate(
             number=Subquery(number),
             source_run_number=run_number("source_run__"),
-            retried=Exists(
-                AgentFixRun.no_workspace_objects.filter(retried_from=OuterRef("pk"))
+            retry_taken=Exists(
+                retries_taking_the_retry(
+                    Coalesce(
+                        OuterRef("retried_from_id"),
+                        OuterRef("pk"),
+                        output_field=UUIDField(),
+                    )
+                )
             ),
         )
         .select_related(
@@ -1120,14 +1137,33 @@ def overridable_regressions(candidate: AgentFixCandidate) -> list[str]:
     return list(regressions)
 
 
+def retries_taking_the_retry(original_id: Any) -> QuerySet[AgentFixRun]:
+    """The retries of a failed fix that took its one retry: each that started, or still
+    waits to start. One that ended before it started (it could not be scheduled, or waited
+    too long for a slot) spent nothing, so the retry stays free."""
+    return AgentFixRun.no_workspace_objects.filter(
+        Q(started_at__isnull=False) | Q(state__in=AgentFixRun.ACTIVE_STATES),
+        retried_from_id=original_id,
+    )
+
+
+def was_the_retry(fix_run: AgentFixRun) -> bool:
+    """A retry that started, so it took its failed fix's one retry."""
+    return fix_run.retried_from_id is not None and fix_run.started_at is not None
+
+
 def is_retryable(fix_run: AgentFixRun) -> bool:
-    """A failed fix not started again yet, and not itself a retry. Whatever failed it, the
-    user may try once more, and only once: a retry that fails is not retried again. A fix
-    that came through fix_runs_for_read answers without a query."""
-    if fix_run.state != AgentFixRun.State.FAILED or fix_run.retried_from_id is not None:
+    """Whether Retry starts this failed fix again, or the one it retried when it never
+    started. Whatever failed it, the user may try once more, and only once: a retry that
+    started and fails is not retried again. A fix that came through fix_runs_for_read
+    answers without a query."""
+    if fix_run.state != AgentFixRun.State.FAILED or was_the_retry(fix_run):
         return False
-    retried = getattr(fix_run, "retried", None)
-    return not (fix_run.retries.exists() if retried is None else retried)
+    taken = getattr(fix_run, "retry_taken", None)
+    if taken is None:
+        original_id = fix_run.retried_from_id or fix_run.id
+        taken = retries_taking_the_retry(original_id).exists()
+    return not taken
 
 
 def fix_lineage(fix_run: AgentFixRun) -> list[Any]:
@@ -1386,6 +1422,23 @@ def launch_blocker(
             " finish.",
             status_code=409,
         )
+    # An issue's baseline holds the environment for the epoch launched from it.
+    if (
+        AgentFixIssueJob.no_workspace_objects.filter(
+            environment=source_run.environment,
+            baseline_run__isnull=False,
+            fix_run__isnull=True,
+            ending__isnull=True,
+        )
+        .exclude(baseline_run=source_run)
+        .exists()
+    ):
+        return HostedHarnessError(
+            "issue_epoch_measuring",
+            "An epoch from an Error Feed issue is starting in this environment. Wait"
+            " for it, or open it.",
+            status_code=409,
+        )
     if usage:
         decision = check_harness_action(str(source_run.organization_id), "agent_fix")
         if not decision["allowed"]:
@@ -1441,8 +1494,6 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     launch_blocker; None when nothing would. The environment's builder writes them in its
     chat's workspace, which holds any unsaved scenario or setup changes, so those must be
     saved or discarded first: the variations are written from the run's cases only."""
-    from simulate.services.harness_versioning import drafts
-
     environment = source_run.environment
     if environment is None:
         return HostedHarnessError(
@@ -1464,6 +1515,18 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
     moved = variations_source_moved(environment, source_run)
     if moved is not None:
         return moved
+    return environment_variations_blocker(environment)
+
+
+def environment_variations_blocker(
+    environment: HostedHarnessJob,
+) -> HostedHarnessError | None:
+    """What of the environment itself would stop its builder writing variations: its
+    chat's saved files are gone, a rebuild is pending, or unsaved changes are open.
+    A launch that writes variations asks it (variations_blocker), and so does Run
+    Epoch from an issue before its baseline is paid for."""
+    from simulate.services.harness_versioning import drafts
+
     if HostedHarnessConversation.no_workspace_objects.filter(
         job=environment, state=HostedHarnessConversation.State.RETIRED
     ).exists():
@@ -1505,6 +1568,23 @@ def variations_source_moved(
         " written from the cases as they ran.",
         status_code=409,
     )
+
+
+def launch_surfaces(offered: Iterable[Surface]) -> list[LaunchSurface]:
+    """Each part of an agent the launch form names, and whether an epoch may change it
+    on this kind of agent."""
+    allowed = set(offered)
+    return [
+        LaunchSurface(
+            id=surface,
+            label=label,
+            allowed=surface in allowed,
+            reason=None
+            if surface in allowed
+            else f"Epoch can't change the {label.lower()} of this kind of agent.",
+        )
+        for surface, label in SURFACE_LABELS.items()
+    ]
 
 
 def _kind_or_none(environment: HostedHarnessJob) -> AgentKind | None:
@@ -1588,17 +1668,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             ],
             protected_scenario_keys=[one.key for one in scenarios if one.passed],
         ),
-        surfaces=[
-            LaunchSurface(
-                id=surface,
-                label=label,
-                allowed=surface in offered,
-                reason=None
-                if surface in offered
-                else f"Epoch can't change the {label.lower()} of this kind of agent.",
-            )
-            for surface, label in SURFACE_LABELS.items()
-        ],
+        surfaces=launch_surfaces(offered),
         defaults=LaunchDefaults(
             surfaces=[one for one in DEFAULT_SURFACES if one in offered],
             budget_credits=DEFAULT_BUDGET_CREDITS,

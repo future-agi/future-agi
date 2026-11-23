@@ -12,9 +12,9 @@ const VISIBLE = 6;
 const QUIET_VISIBLE = 4;
 
 const ARROW = {
-  up: "mdi:arrow-up",
-  down: "mdi:arrow-down",
-  flat: "mdi:minus",
+  up: "solar:arrow-up-linear",
+  down: "solar:arrow-down-linear",
+  flat: "solar:minus-linear",
 };
 
 function ChangeCard({ card }) {
@@ -28,9 +28,7 @@ function ChangeCard({ card }) {
     ? theme.palette.text.disabled
     : card.kind === "metric"
       ? toneColor(theme, card.tone)
-      : card.kind === "new"
-        ? theme.palette.info.main
-        : theme.palette.text.primary;
+      : theme.palette.text.primary;
   const clickable = Boolean(category);
   const body = (
     <Box
@@ -43,20 +41,20 @@ function ChangeCard({ card }) {
         gap: 0.75,
         width: "100%",
         minWidth: 0,
-        px: 1.25,
-        py: 0.875,
+        px: 1.5,
+        py: 1,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 1,
+        borderRadius: "8px",
         bgcolor: "background.paper",
         font: "inherit",
         textAlign: "left",
         color: strong ? "text.primary" : "text.secondary",
         cursor: clickable ? "pointer" : "default",
-        "&:hover": clickable ? { borderColor: "text.disabled" } : undefined,
+        "&:hover": clickable ? { borderColor: "border.hover" } : undefined,
         "&:focus-visible": {
           outline: "2px solid",
-          outlineColor: "primary.main",
+          outlineColor: "border.focus",
           outlineOffset: 1,
         },
       }}
@@ -66,12 +64,12 @@ function ChangeCard({ card }) {
           component="span"
           sx={{
             px: 0.5,
-            borderRadius: 0.5,
-            fontSize: 11,
-            fontWeight: 600,
+            borderRadius: "4px",
+            typography: "s2",
+            fontWeight: 500,
             lineHeight: "16px",
-            color: "info.dark",
-            bgcolor: "info.lighter",
+            color: "text.secondary",
+            bgcolor: "action.selected",
             flexShrink: 0,
           }}
         >
@@ -90,7 +88,7 @@ function ChangeCard({ card }) {
         component="span"
         noWrap
         sx={{
-          fontSize: 12,
+          typography: "m3",
           fontWeight: strong ? 500 : 400,
           minWidth: 0,
           flex: 1,
@@ -102,7 +100,7 @@ function ChangeCard({ card }) {
         variant="body2"
         component="span"
         sx={{
-          fontSize: 12,
+          typography: "m3",
           flexShrink: 0,
           fontVariantNumeric: "tabular-nums",
           color: "text.secondary",
@@ -172,9 +170,9 @@ export default function ChangeCards({ changes }) {
       >
         <Typography
           id="insights-changes"
-          variant="subtitle1"
+          variant="m3"
           component="h2"
-          sx={{ fontSize: 15 }}
+          fontWeight={500}
         >
           What changed since the last run
         </Typography>
