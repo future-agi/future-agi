@@ -87,7 +87,7 @@ describe("BuilderConsole", () => {
     fireEvent.change(input, { target: { value: "try again" } });
     expect(screen.queryByRole("button", { name: "Stop" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(onSend).toHaveBeenCalledWith("try again");
+    expect(onSend).toHaveBeenCalledWith("try again", []);
 
     // Sending clears the draft, so Stop is back while the turn is still in flight.
     expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
@@ -366,7 +366,7 @@ describe("BuilderConsole", () => {
     const field = screen.getByPlaceholderText(CONSOLE_COPY.placeholder);
     fireEvent.change(field, { target: { value: "hello" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledWith("hello");
+    expect(onSend).toHaveBeenCalledWith("hello", []);
     expect(field).toHaveValue("");
   });
 
@@ -419,7 +419,7 @@ describe("BuilderConsole", () => {
     const field = screen.getByPlaceholderText(CONSOLE_COPY.placeholder);
     fireEvent.change(field, { target: { value: "make it harder" } });
     fireEvent.keyDown(field, { key: "Enter" });
-    expect(onSend).toHaveBeenCalledWith("Rework the rushed-caller persona. make it harder");
+    expect(onSend).toHaveBeenCalledWith("Rework the rushed-caller persona. make it harder", []);
 
     // The pins clear after send.
     expect(screen.queryByText("Rework the rushed-caller persona")).toBeNull();

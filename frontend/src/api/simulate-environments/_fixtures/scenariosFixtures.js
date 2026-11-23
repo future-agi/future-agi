@@ -69,12 +69,17 @@ const valuesOf = (row, fieldValue) => {
 // Free text matches every word, in any order, against name / instruction /
 // use_case / branch. Names are snake_case and shown with spaces, so both forms
 // match: `_` is normalised to a space on both sides of the comparison.
-const normalize = (s) => String(s ?? "").toLowerCase().replace(/_/g, " ");
+const normalize = (s) =>
+  String(s ?? "")
+    .toLowerCase()
+    .replace(/_/g, " ");
 
 function matchesSearch(row, search) {
   const q = normalize(search).trim();
   if (!q) return true;
-  const hay = normalize(`${row.name} ${row.instruction} ${row.use_case} ${row.branch}`);
+  const hay = normalize(
+    `${row.name} ${row.instruction} ${row.use_case} ${row.branch}`,
+  );
   return q.split(/\s+/).every((word) => hay.includes(word));
 }
 
@@ -136,7 +141,9 @@ function orderRows(rows, groupBy, ordering) {
 // slice as-is.
 function groupPage(pageRows, groupBy) {
   if (!groupBy) return pageRows;
-  return [...pageRows].sort((a, b) => String(a.group).localeCompare(String(b.group)));
+  return [...pageRows].sort((a, b) =>
+    String(a.group).localeCompare(String(b.group)),
+  );
 }
 
 // The sections on this page, in row order: count = how many landed here, total
@@ -215,7 +222,8 @@ export function queryScenarioFixture(params = {}, rows = WORKING) {
 
   // Whole-suite totals per group, so a page section can report its full size.
   const totalsMap = new Map();
-  for (const r of ordered) totalsMap.set(r.group, (totalsMap.get(r.group) || 0) + 1);
+  for (const r of ordered)
+    totalsMap.set(r.group, (totalsMap.get(r.group) || 0) + 1);
 
   return {
     count,
@@ -240,7 +248,11 @@ const REWORK_FIELDS = SCENARIO_EDITING.rework_fields;
 
 // A set_field/set_persona op names a server field; map it to the WORKING row's
 // own key. Coverage/persona keys are already snake_case, so most pass through.
-const ROW_FIELD = { tests: "tests", max_turns: "max_turns", background_noise: "background_noise" };
+const ROW_FIELD = {
+  tests: "tests",
+  max_turns: "max_turns",
+  background_noise: "background_noise",
+};
 
 // Resolve the amend `scenario`/`scenarios` selector against WORKING. `scenario`
 // is a comma-list of names, keys, numbers, ranges or ordinals; `scenarios` is an
@@ -249,10 +261,17 @@ const ROW_FIELD = { tests: "tests", max_turns: "max_turns", background_noise: "b
 function resolveTargets(rows, change) {
   const tokens = [];
   if (change.scenario != null) {
-    String(change.scenario).split(",").map((t) => t.trim()).filter(Boolean).forEach((t) => tokens.push(t));
+    String(change.scenario)
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .forEach((t) => tokens.push(t));
   }
   if (Array.isArray(change.scenarios)) {
-    change.scenarios.map((t) => String(t).trim()).filter(Boolean).forEach((t) => tokens.push(t));
+    change.scenarios
+      .map((t) => String(t).trim())
+      .filter(Boolean)
+      .forEach((t) => tokens.push(t));
   }
   const matched = new Map();
   const unmatched = [];
@@ -265,7 +284,10 @@ function resolveTargets(rows, change) {
       found = rows.filter((r) => r.number === Number(tok));
     } else {
       found = rows.filter(
-        (r) => r.name === tok || r.scenario_key === tok || normalize(r.name) === normalize(tok),
+        (r) =>
+          r.name === tok ||
+          r.scenario_key === tok ||
+          normalize(r.name) === normalize(tok),
       );
     }
     if (found.length) found.forEach((r) => matched.set(r.id, r));
@@ -301,7 +323,9 @@ export function amendScenarioFixture(body = {}) {
 
   for (const change of changes) {
     const { matched, unmatched } = resolveTargets(WORKING, change);
-    unmatched.forEach((tok) => recordReceipt(receipts, tok, "refused", `no scenario matches "${tok}"`));
+    unmatched.forEach((tok) =>
+      recordReceipt(receipts, tok, "refused", `no scenario matches "${tok}"`),
+    );
 
     if (change.op === "drop") {
       matched.forEach((row) => {
@@ -317,11 +341,21 @@ export function amendScenarioFixture(body = {}) {
       const needsRework = REWORK_FIELDS.includes(field);
       matched.forEach((row) => {
         if (!editable) {
-          recordReceipt(receipts, row.name, "refused", `${field} is not editable: it is proved, not described`);
+          recordReceipt(
+            receipts,
+            row.name,
+            "refused",
+            `${field} is not editable: it is proved, not described`,
+          );
           return;
         }
         if (needsRework && !rework) {
-          recordReceipt(receipts, row.name, "refused", `${field} needs a re-proof; resend with rework: true`);
+          recordReceipt(
+            receipts,
+            row.name,
+            "refused",
+            `${field} needs a re-proof; resend with rework: true`,
+          );
           return;
         }
         row[ROW_FIELD[field] || field] = value;
@@ -336,11 +370,21 @@ export function amendScenarioFixture(body = {}) {
       const blocked = keys.filter((k) => !PERSONA_FIELDS.includes(k));
       matched.forEach((row) => {
         if (blocked.length) {
-          recordReceipt(receipts, row.name, "refused", `persona ${blocked[0]} is not editable: it is proved, not described`);
+          recordReceipt(
+            receipts,
+            row.name,
+            "refused",
+            `persona ${blocked[0]} is not editable: it is proved, not described`,
+          );
           return;
         }
         if (!rework) {
-          recordReceipt(receipts, row.name, "refused", "persona changes need a re-proof; resend with rework: true");
+          recordReceipt(
+            receipts,
+            row.name,
+            "refused",
+            "persona changes need a re-proof; resend with rework: true",
+          );
           return;
         }
         row.persona = { ...(row.persona || {}), ...persona };
@@ -360,7 +404,9 @@ export function amendScenarioFixture(body = {}) {
 // Distinct level names of a coverage axis over the given rows, alphabetical
 // (the server's row/column order).
 const levelsOf = (rows, axis) =>
-  [...new Set(rows.map((r) => r.coverage?.[axis]).filter((v) => v != null))].sort();
+  [
+    ...new Set(rows.map((r) => r.coverage?.[axis]).filter((v) => v != null)),
+  ].sort();
 
 // Count-desc then name, matching the server's per_axis and fields ordering.
 function countMap(rows, axis) {
@@ -371,7 +417,10 @@ function countMap(rows, axis) {
   }
   return Object.keys(counts)
     .sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))
-    .reduce((acc, k) => { acc[k] = counts[k]; return acc; }, {});
+    .reduce((acc, k) => {
+      acc[k] = counts[k];
+      return acc;
+    }, {});
 }
 
 /**
@@ -382,7 +431,7 @@ function countMap(rows, axis) {
  * from the WORKING rows' `coverage{}` objects, so an amend that drops or edits a
  * scenario reshapes the grid on the next read.
  */
-export function coverageScenarioFixture(params = {}) {
+export function coverageScenarioFixture(params = {}, suite = WORKING) {
   const {
     search = "",
     row_axis: rowAxisParam,
@@ -392,7 +441,7 @@ export function coverageScenarioFixture(params = {}) {
   const rowAxis = rowAxisParam || "task";
   const colAxis = colAxisParam || "overlay";
 
-  const searched = WORKING.filter((r) => matchesSearch(r, search));
+  const searched = suite.filter((r) => matchesSearch(r, search));
   const filtered = applyFilters(searched, filters);
 
   const rows = levelsOf(filtered, rowAxis);
@@ -406,7 +455,11 @@ export function coverageScenarioFixture(params = {}) {
     cellCounts[`${rv}|${cv}`] = (cellCounts[`${rv}|${cv}`] || 0) + 1;
   }
   const cells = rows.flatMap((row) =>
-    columns.map((column) => ({ row, column, count: cellCounts[`${row}|${column}`] || 0 })),
+    columns.map((column) => ({
+      row,
+      column,
+      count: cellCounts[`${row}|${column}`] || 0,
+    })),
   );
 
   const per_axis = AXES.map((axis) => {

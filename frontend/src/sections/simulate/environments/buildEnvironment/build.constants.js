@@ -1,3 +1,4 @@
+import { formatFileSize } from "src/utils/utils";
 import { WORKSPACE_TABS } from "../workspace/workspace.constants";
 
 // Build-stage copy for the deriving hero, the building tab rail and the builder
@@ -47,6 +48,7 @@ export const CONSOLE_COPY = {
   placeholder: "Reply to the builder…",
   attach: "Attach a dataset, CSV or file",
   attachAccept: ".csv,.tsv,.json,.jsonl,.xlsx,.txt,.md,.pdf",
+  fileSize: (bytes) => formatFileSize(bytes, { wholeKb: true }),
   stopping: "Stopping…",
   jumpToLatest: "Jump to latest",
   newMessage: "New message",

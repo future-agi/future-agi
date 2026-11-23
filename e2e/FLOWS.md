@@ -3266,7 +3266,7 @@
 **Browser observations:**
 
 - /dashboard/simulate lands on Environments
-- harness lands on Environments, harness/new on the Build tab, harness/<id> on environments/<id>
+- harness lands on Environments, harness/new on My Environments with the Build environment drawer open, harness/<id> on environments/<id>
 - simulator-agent lands on Environments
 - personas lands on the Environments Personas tab
 - the Personas tab is selected and shows the persona search
@@ -3492,7 +3492,7 @@
 
 1. seed a built, versioned Environment whose contract records each tool's fields and one tool that reaches production (e2e/lib/harness_environment_seed.py)
 2. read the environment (GET harness-environments/<id>/)
-3. open the Contract tab
+3. open the World & tools tab
 4. expand lookup_order
 5. read issue_refund's Unsupported label
 

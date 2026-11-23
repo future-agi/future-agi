@@ -1,6 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, Stack, Typography, Grid } from "@mui/material";
+import { Box, Collapse, Stack, Typography, Grid } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
@@ -21,6 +21,9 @@ import {
 } from "../../parallelism.constants";
 import SideDrawer from "../../components/SideDrawer";
 import AgentVersionsPanel from "../agents/AgentVersionsPanel";
+import ConnectAgentDrawer from "../agents/ConnectAgentDrawer";
+import { connectDesignEnvAgent } from "src/api/simulate-environments/designEnvironment";
+import usePrefersReducedMotion from "../../components/usePrefersReducedMotion";
 import { GroupHeading, Fact } from "./OverviewPrimitives";
 import AgentSummarySection from "./AgentSummarySection";
 import SourceReadCard from "./SourceReadCard";
@@ -66,8 +69,15 @@ export default function OverviewPanel({
   backedWorld,
 }) {
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const reduce = usePrefersReducedMotion();
+  // An environment built from a design connects its agent once it's saved.
+  const design = env.designBuild;
+  // Picked in place, saved as v1 or not.
+  const canConnect = !!design && !env.testSubject;
   // Agent versions are managed on real data, so only while versioning is on.
-  const canManageVersions = !locked && Boolean(env.versioning?.enabled);
+  const canManageVersions =
+    !locked && !design && Boolean(env.versioning?.enabled);
   const surface = getSurface(env.surface);
   const contract = contractFor(env);
   // The real connector for a backed env (envState.agent.typeId = the job poll's
@@ -88,6 +98,24 @@ export default function OverviewPanel({
 
   return (
     <Box sx={{ p: 2 }}>
+      {/* Getting-started checklist for envs that haven't been seeded yet. A
+          scratch env arrives carrying a derived world, so the same checklist
+          would render every step pre-complete — skip it there. A design's
+          environment only has the agent left to connect. It leads the tab so
+          it's seen on landing. */}
+      <Collapse
+        in={design ? !env.testSubject : !agentConnected && !hasDerivedWorld}
+        timeout={reduce ? 0 : undefined}
+        unmountOnExit
+      >
+        <NextStepsChecklist
+          env={env}
+          envState={envState}
+          onGo={onGo}
+          scenarioCount={counts?.scenarios}
+          connect={design ? { onClick: () => setConnectOpen(true) } : undefined}
+        />
+      </Collapse>
       <Stack
         direction={{ xs: "column", sm: "row" }}
         alignItems={{ sm: "flex-start" }}
@@ -167,9 +195,7 @@ export default function OverviewPanel({
             bgcolor: "background.neutral",
           }}
         >
-          <Typography
-            sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
-          >
+          <Typography sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}>
             {PARALLELISM_COPY.degradedTitle(
               parallelism.effective,
               parallelism.requested,
@@ -203,13 +229,6 @@ export default function OverviewPanel({
         latestRun={latestRun}
         onGo={onGo}
       />
-
-      {/* Getting-started checklist for envs that haven't been seeded yet. A
-          scratch env arrives carrying a derived world, so the same checklist
-          would render every step pre-complete — skip it there. */}
-      {!agentConnected && !hasDerivedWorld && (
-        <NextStepsChecklist env={env} envState={envState} onGo={onGo} scenarioCount={counts?.scenarios} />
-      )}
 
       {/* CapabilityGraph moved to the Contract tab — that's where the shape of
           the environment belongs. Overview keeps the summary, not the definition. */}
@@ -265,6 +284,15 @@ export default function OverviewPanel({
           </Grid>
         )}
       </Grid>
+
+      {design && (
+        <ConnectAgentDrawer
+          open={connectOpen && canConnect}
+          env={env}
+          onClose={() => setConnectOpen(false)}
+          onPick={(agent) => connectDesignEnvAgent(env.id, agent)}
+        />
+      )}
 
       {/* Agent version-management drawer, overlaid on Overview so the user
           never leaves the tab. Not kept mounted while closed. */}

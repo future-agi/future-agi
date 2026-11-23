@@ -1,0 +1,569 @@
+import PropTypes from "prop-types";
+import { useEffect, useRef, useState } from "react";
+import {
+  Box,
+  Button,
+  ButtonBase,
+  Collapse,
+  Fade,
+  Stack,
+  Typography,
+  useMediaQuery,
+} from "@mui/material";
+import Iconify from "src/components/iconify";
+import PageHeader from "src/components/page-header";
+import { formatFileSize } from "src/utils/utils";
+import SectionCard from "../components/SectionCard";
+import SideDrawer from "../components/SideDrawer";
+import UiOnlyFlag from "../components/UiOnlyFlag";
+import { PERSONAL_DATA } from "../buildDrawer/starts/startUtils";
+import { focusRing } from "../buildDrawer/drawerStyles";
+import { extOf } from "../buildDrawer/forms/shared/buildFiles";
+import { ROLES } from "../workspace/sources/sources.constants";
+import AddFilesPanel from "./AddFilesPanel";
+import { STOPPED_BUILD } from "src/api/simulate-environments/designBuild";
+import DesignBuildView from "./DesignBuildView";
+import { PlanLine, PlanRow, Quiet } from "./planParts";
+
+// What the page says under its title once the design is approved; the
+// build view below says what's next.
+const BUILD_LINE = {
+  building:
+    "Building what you approved. It's checked, then you review and save it.",
+  validating:
+    "Building what you approved. It's checked, then you review and save it.",
+  ready: "Built from what you approved, and checked.",
+  saved: "Built from what you approved, and checked.",
+  needs_repair: "Built from what you approved, but a check failed.",
+  failed: "Building what you approved failed partway.",
+  cancelled: "The build was cancelled before it finished.",
+};
+
+const linkSx = {
+  typography: "s1",
+  p: 0,
+  verticalAlign: "baseline",
+  textDecoration: "underline",
+  textUnderlineOffset: 2,
+  color: "text.primary",
+  "&:hover": { color: "text.secondary" },
+  "&.Mui-focusVisible": focusRing,
+};
+
+// Who sees a file in a run, by what it's read as.
+const READS = {
+  Records: "The agent sees these rows only through the world's tools.",
+  Rules:
+    "The agent never sees the file, only what the world's tools return from it.",
+  Background: "Yes, it reads the file directly.",
+  "Grader answers": "No. Only the grader reads it.",
+};
+
+/* What the builder took from one file. The file drawer replaces this once it
+   exists, opening the file itself. */
+function FilePreview({ file, summary, onClose }) {
+  const from = `From ${file?.name}`;
+  const fromIt = (x) => x.src === from || x.src.startsWith(`${from} ·`);
+  const gave = [
+    ...(summary.records || [])
+      .filter(fromIt)
+      .map((t) => `${t.name} · ${t.rows.toLocaleString()} rows`),
+    ...(summary.rules || []).filter(fromIt).map((r) => r.text),
+  ];
+  const facts = file
+    ? [
+        [
+          "Used as",
+          ROLES.find((r) => r.label === file.role)?.option || file.role,
+        ],
+        ["Agent reads it", READS[file.role]],
+        // Only files dropped with the question carry an answer.
+        ...(file.personalChoice
+          ? [
+              [
+                "Personal data",
+                PERSONAL_DATA.find(([v]) => v === file.personalChoice)?.[1],
+              ],
+            ]
+          : []),
+      ]
+    : [];
+  return (
+    <SideDrawer open={!!file} onClose={onClose} width={480}>
+      {file && (
+        <Stack spacing={2} sx={{ p: 2.5 }}>
+          <Box sx={{ pr: 4 }}>
+            <Typography sx={{ typography: "m1" }}>{file.name}</Typography>
+            <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+              {`${extOf(file.name).toUpperCase()} · ${formatFileSize(file.size)} · not in the environment yet`}
+            </Typography>
+          </Box>
+          <Box>
+            {facts.map(([k, v]) => (
+              <Stack key={k} direction="row" sx={{ py: 0.5 }}>
+                <Typography
+                  sx={{
+                    typography: "s1",
+                    color: "text.tertiary",
+                    width: 120,
+                    flexShrink: 0,
+                  }}
+                >
+                  {k}
+                </Typography>
+                <Typography sx={{ typography: "s1", flex: 1, minWidth: 0 }}>
+                  {v}
+                </Typography>
+              </Stack>
+            ))}
+          </Box>
+          <PlanRow
+            label="What the builder took from it"
+            reading={summary.readingParts.length ? file.name : ""}
+          >
+            {gave.length ? (
+              gave.map((g) => <PlanLine key={g}>{g}</PlanLine>)
+            ) : (
+              <PlanLine empty>
+                Nothing is graded from it. The agent reads it as background.
+              </PlanLine>
+            )}
+          </PlanRow>
+        </Stack>
+      )}
+    </SideDrawer>
+  );
+}
+FilePreview.propTypes = {
+  file: PropTypes.object,
+  summary: PropTypes.object.isRequired,
+  onClose: PropTypes.func.isRequired,
+};
+
+/**
+ * The proposed design: the brief, then the records, tools, rules, people and
+ * scenarios, each line citing where it came from. Parts fill in as the files
+ * are read. "Approve and build" is the one action; it waits for the reading
+ * and for something to build. Once approved, the build shows above the design,
+ * which stays read only unless a check sends it back.
+ */
+export default function DesignReview({
+  draft,
+  summary,
+  onAddFiles,
+  onDepChoice,
+  build,
+  onApprove,
+  onLeaveOut,
+}) {
+  const [adding, setAdding] = useState(false);
+  const [openFile, setOpenFile] = useState(null);
+  // The first few cases, until asked for all of them.
+  const [allCases, setAllCases] = useState(false);
+  const reduce = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const timeout = reduce ? 0 : undefined;
+  const addRef = useRef(null);
+  const wasAdding = useRef(false);
+  // Closing the panel hands focus back to the button that opened it.
+  useEffect(() => {
+    if (wasAdding.current && !adding) addRef.current?.focus();
+    wasAdding.current = adding;
+  }, [adding]);
+  const {
+    brief,
+    sources,
+    unusable,
+    readingParts,
+    readingNames,
+    approveBlocked,
+    deps,
+  } = summary;
+  const reading = readingParts.length > 0;
+  const pendingDeps = deps.filter((d) => !d.choice);
+  const pending = (part) => (readingParts.includes(part) ? readingNames : "");
+  const forAgent = !!draft.agent;
+  // Only a design waiting for approval, or one whose build stopped short, can change.
+  const editable = !build || STOPPED_BUILD.includes(build.status);
+  const building = !editable && build.status !== "saved";
+
+  const rows = [
+    [
+      "Description",
+      brief.description ||
+        (draft.files.length
+          ? "None. The design is read from your files."
+          : "None"),
+    ],
+    [
+      "Sources",
+      <>
+        {sources.map((f, i) => (
+          <Box component="span" key={f.id}>
+            {i > 0 && ", "}
+            <ButtonBase
+              onClick={() => setOpenFile(f)}
+              aria-label={`What the builder took from ${f.name}`}
+              sx={linkSx}
+            >
+              {f.name}
+            </ButtonBase>
+          </Box>
+        ))}
+        {sources.length ? ` · ${brief.sourcesLine}` : brief.sourcesLine}
+      </>,
+    ],
+    ...(unusable.length
+      ? [
+          [
+            "Couldn't read",
+            unusable.map((f) => `${f.name}: ${f.note}`).join(" · "),
+          ],
+        ]
+      : []),
+    ["Channel", brief.channel],
+    ["Agent", brief.agent || "None yet. Connect one after you save."],
+  ];
+
+  const blocker =
+    !reading && approveBlocked
+      ? `There's nothing to build yet. Say what the agent does and works with, for example "customers and their orders; it can look up an order and refund up to $200".`
+      : null;
+  // The last blocker, so its words stay while it collapses away.
+  const shownBlocker = useRef(blocker);
+  if (blocker) shownBlocker.current = blocker;
+
+  const { records, tools, rules, people, scenarios } = summary;
+  const extraScenarios = Math.max(
+    0,
+    (brief.scenarioCount || 0) - (scenarios?.length || 0),
+  );
+
+  return (
+    <Box sx={{ px: 3, py: 2.5 }}>
+      <PageHeader
+        title="Review the design"
+        description={
+          reading
+            ? `Reading ${readingNames}. The design fills in as it's read.`
+            : BUILD_LINE[build?.status] ||
+              "Nothing is built until you approve. Then you review the build and save it as v1."
+        }
+        actions={
+          <>
+            <UiOnlyFlag feature={build ? "designBuild" : "designReview"} />
+            <Fade
+              in={build?.status !== "saved"}
+              timeout={timeout}
+              unmountOnExit
+            >
+              <Button
+                size="small"
+                variant="contained"
+                color="primary"
+                // Approving drops files still in the add panel, so it waits.
+                disabled={reading || approveBlocked || building || adding}
+                onClick={onApprove}
+                startIcon={
+                  <Iconify icon="solar:check-circle-linear" width={14} />
+                }
+              >
+                {building ? "Building…" : "Approve and build"}
+              </Button>
+            </Fade>
+          </>
+        }
+        sx={{ mb: 0 }}
+      />
+
+      <Collapse in={!!build} timeout={timeout} unmountOnExit>
+        <DesignBuildView
+          build={build}
+          onLeaveOut={onLeaveOut}
+          timeout={timeout}
+        />
+      </Collapse>
+
+      <Collapse in={!!blocker} timeout={timeout} unmountOnExit>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1.25}
+          sx={{
+            mt: 2,
+            px: 1.5,
+            py: 1,
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "status.warning.border",
+            bgcolor: "status.warning.bg",
+          }}
+        >
+          <Iconify
+            icon="solar:danger-triangle-linear"
+            width={16}
+            sx={{ color: "status.warning.fg", flexShrink: 0 }}
+          />
+          <Typography sx={{ typography: "s1", color: "text.primary", flex: 1 }}>
+            {shownBlocker.current}
+          </Typography>
+          <Button
+            size="small"
+            variant="outlined"
+            disabled={adding}
+            onClick={() => setAdding(true)}
+            sx={{
+              color: "text.primary",
+              borderColor: "divider",
+              bgcolor: "background.paper",
+              flexShrink: 0,
+            }}
+          >
+            Add files
+          </Button>
+        </Stack>
+      </Collapse>
+
+      <SectionCard
+        title="Brief"
+        action={
+          <Stack direction="row" alignItems="center" spacing={1.5}>
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+              What the design is built from
+            </Typography>
+            {/* Hidden, not removed, while the panel is open, so the header keeps its size. */}
+            <Fade in={editable && !adding} timeout={timeout}>
+              <Button
+                ref={addRef}
+                size="small"
+                variant="outlined"
+                onClick={() => setAdding(true)}
+                startIcon={
+                  <Iconify icon="solar:add-circle-linear" width={14} />
+                }
+                sx={{ color: "text.primary", borderColor: "divider" }}
+              >
+                {draft.files.length ? "Add another" : "Add files"}
+              </Button>
+            </Fade>
+          </Stack>
+        }
+        sx={{ mt: 2 }}
+      >
+        <Box sx={{ py: 0.5 }}>
+          {rows.map(([k, v]) => (
+            <Stack key={k} direction="row" sx={{ px: 1.5, py: 0.75 }}>
+              <Typography
+                sx={{
+                  typography: "s1",
+                  color: "text.tertiary",
+                  width: 120,
+                  flexShrink: 0,
+                }}
+              >
+                {k}
+              </Typography>
+              <Typography
+                component="div"
+                sx={{ typography: "s1", flex: 1, minWidth: 0 }}
+              >
+                {v}
+              </Typography>
+            </Stack>
+          ))}
+        </Box>
+      </SectionCard>
+
+      <Collapse in={editable && adding} timeout={timeout} unmountOnExit>
+        <Box sx={{ pt: 2 }}>
+          <AddFilesPanel
+            taken={draft.files.map((f) => f.name)}
+            onAdd={(rows) => {
+              onAddFiles(rows);
+              setAdding(false);
+            }}
+            onCancel={() => setAdding(false)}
+          />
+        </Box>
+      </Collapse>
+
+      <Stack spacing={3} sx={{ mt: 3 }}>
+        {pendingDeps.length > 0 && (
+          <PlanRow
+            label="Can't be built here, simulate it instead"
+            count={pendingDeps.length}
+          >
+            {pendingDeps.map((d) => (
+              <PlanLine key={d.id}>
+                <Stack direction="row" alignItems="center" spacing={1}>
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Box component="span" sx={{ fontWeight: 500 }}>
+                      {d.request}
+                    </Box>
+                    <Quiet>{`${d.why} Adds ${d.alt.name}.`}</Quiet>
+                  </Box>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={!editable}
+                    onClick={() => onDepChoice(d.id, "simulate")}
+                    sx={{ color: "text.primary", borderColor: "divider" }}
+                  >
+                    Simulate it
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={!editable}
+                    onClick={() => onDepChoice(d.id, "skip")}
+                    sx={{ color: "text.primary", borderColor: "divider" }}
+                  >
+                    Leave out
+                  </Button>
+                </Stack>
+              </PlanLine>
+            ))}
+          </PlanRow>
+        )}
+
+        <PlanRow label="Records" reading={pending("records")}>
+          {records?.length ? (
+            records.map((t) => (
+              <PlanLine key={t.name} src={t.src}>
+                <Box component="span" sx={{ fontWeight: 500 }}>
+                  {t.name}
+                </Box>
+                <Quiet>
+                  {[`${t.rows.toLocaleString()} rows`, t.note]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Quiet>
+              </PlanLine>
+            ))
+          ) : (
+            <PlanLine empty>
+              {draft.files.length
+                ? "None proposed. Neither your files nor a description name any."
+                : "No records. The description named none."}
+            </PlanLine>
+          )}
+        </PlanRow>
+
+        <PlanRow label="Tools" reading={pending("tools")}>
+          {tools?.length ? (
+            tools.map((t) => (
+              <PlanLine key={t.name} src={t.src}>
+                <Box component="span" sx={{ fontWeight: 500 }}>
+                  {t.name}
+                </Box>
+                <Quiet>{t.desc}</Quiet>
+              </PlanLine>
+            ))
+          ) : (
+            <PlanLine empty>
+              {forAgent
+                ? "Read from the agent's code when it builds"
+                : "None yet"}
+            </PlanLine>
+          )}
+          {tools &&
+            deps
+              .filter((d) => d.choice === "skip")
+              .map((d) => (
+                <PlanLine key={d.id} empty>
+                  {`${d.request}: can't be built here, left out`}
+                </PlanLine>
+              ))}
+        </PlanRow>
+
+        <PlanRow label="Rules" reading={pending("rules")}>
+          {rules?.length ? (
+            rules.map((r) => (
+              <PlanLine key={`${r.src}-${r.text}`} src={r.src}>
+                {r.text}
+              </PlanLine>
+            ))
+          ) : (
+            <PlanLine empty>None yet</PlanLine>
+          )}
+        </PlanRow>
+
+        <PlanRow label="People" reading={pending("people")}>
+          {(people || []).map((p) => (
+            <PlanLine key={p.name} src={p.src}>
+              {p.name}
+              {p.note && <Quiet>{p.note}</Quiet>}
+            </PlanLine>
+          ))}
+        </PlanRow>
+
+        <PlanRow
+          label="Scenarios"
+          reading={pending("scenarios")}
+          count={(scenarios?.length || 0) + extraScenarios}
+        >
+          {scenarios?.length ? (
+            [
+              ...scenarios.slice(0, 6).map((s) => (
+                <PlanLine key={s.text} src={s.src}>
+                  {s.text}
+                </PlanLine>
+              )),
+              scenarios.length > 6 && (
+                <Collapse key="rest" in={allCases} timeout={timeout}>
+                  {scenarios.slice(6).map((s) => (
+                    <PlanLine key={s.text} src={s.src}>
+                      {s.text}
+                    </PlanLine>
+                  ))}
+                </Collapse>
+              ),
+              scenarios.length > 6 && (
+                <PlanLine key="all" empty>
+                  <ButtonBase
+                    onClick={() => setAllCases((v) => !v)}
+                    aria-expanded={allCases}
+                    sx={linkSx}
+                  >
+                    {allCases
+                      ? "Show fewer"
+                      : `Show all ${scenarios.length}, written and checked when it builds`}
+                  </ButtonBase>
+                </PlanLine>
+              ),
+              extraScenarios > 0 && (
+                <PlanLine key="more" empty>
+                  {`${extraScenarios} more written when it builds`}
+                </PlanLine>
+              ),
+            ]
+          ) : (
+            <PlanLine empty>Written once it knows what the agent does</PlanLine>
+          )}
+        </PlanRow>
+      </Stack>
+
+      <FilePreview
+        file={openFile}
+        summary={summary}
+        onClose={() => setOpenFile(null)}
+      />
+    </Box>
+  );
+}
+DesignReview.propTypes = {
+  draft: PropTypes.object.isRequired,
+  // designSummary(draft, now)
+  summary: PropTypes.object.isRequired,
+  // Plain file rows ({ id, name, size, type }) to add to the design.
+  onAddFiles: PropTypes.func.isRequired,
+  // (depId, "simulate" | "skip") for a behaviour that can't be built here.
+  onDepChoice: PropTypes.func.isRequired,
+  // useDesignBuild(draftId); null until approved.
+  build: PropTypes.shape({
+    status: PropTypes.string,
+    release: PropTypes.shape({ version: PropTypes.number }),
+  }),
+  onApprove: PropTypes.func.isRequired,
+  // (fileId) to leave a file out after a failed check.
+  onLeaveOut: PropTypes.func.isRequired,
+};

@@ -21,7 +21,14 @@ import {
 } from "src/api/simulate-environments/harnessEnvironments";
 import { harnessEnvironmentKey } from "src/api/simulate-environments/environment";
 import { harnessEnvToRow } from "src/sections/simulate/environments/helpers/harnessJobToRow";
-import { LIVE_ENV_STATUSES } from "src/sections/simulate/environments/myEnvironments.constants";
+import {
+  LIVE_ENV_STATUSES,
+  NOT_PROVIDED,
+} from "src/sections/simulate/environments/myEnvironments.constants";
+import {
+  EMPTY_ENV_FILTERS,
+  buildEnvironmentListParams,
+} from "src/api/simulate-environments/environmentListParams";
 
 export const SIMULATE_ENVIRONMENTS_KEY = ["simulate-environments"];
 // The prefix every page of the list shares — invalidating it refetches whatever
@@ -30,16 +37,28 @@ export const myEnvironmentsListKey = () => [
   ...SIMULATE_ENVIRONMENTS_KEY,
   "list",
 ];
-export const myEnvironmentsQueryKey = (page = 0, pageSize = 25) => [
+// Keyed by the request it makes, so a filtered page and the unfiltered one
+// are separate cache entries and the poll refetches with the same filters.
+export const myEnvironmentsQueryKey = (
+  page = 0,
+  pageSize = 25,
+  filters = EMPTY_ENV_FILTERS,
+) => [
   ...myEnvironmentsListKey(),
-  { page, pageSize },
+  buildEnvironmentListParams({ page, pageSize, filters }),
 ];
 
 // Map the RAW paginated payload ({ count, …, results }) to the page the table
 // needs: the mapped rows plus the server's total row count for the pager.
+// `statusCounts` covers every environment, not just this page or filter;
+// NOT_PROVIDED until the backend sends it.
 const toPage = (data) => ({
   rows: (Array.isArray(data?.results) ? data.results : []).map(harnessEnvToRow),
   total: data?.count ?? 0,
+  statusCounts:
+    data && Object.hasOwn(data, "status_counts")
+      ? data.status_counts
+      : NOT_PROVIDED,
 });
 
 const LIST_REFETCH_MS = 3000;
@@ -47,10 +66,17 @@ const LIST_REFETCH_MS = 3000;
 // Server-paginated: `page` is the table's 0-indexed page, the endpoint is
 // 1-indexed. keepPreviousData holds the current page on screen while the next
 // one loads, so paging doesn't flash an empty table.
-export function useMyEnvironments({ page = 0, pageSize = 25 } = {}) {
+export function useMyEnvironments({
+  page = 0,
+  pageSize = 25,
+  filters = EMPTY_ENV_FILTERS,
+} = {}) {
   return useQuery({
-    queryKey: myEnvironmentsQueryKey(page, pageSize),
-    queryFn: () => listHarnessEnvironments({ page: page + 1, limit: pageSize }),
+    queryKey: myEnvironmentsQueryKey(page, pageSize, filters),
+    queryFn: () =>
+      listHarnessEnvironments(
+        buildEnvironmentListParams({ page, pageSize, filters }),
+      ),
     select: toPage,
     placeholderData: keepPreviousData,
     // Poll while a row on this page is still building or running, so it flips

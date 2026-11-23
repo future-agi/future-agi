@@ -22,7 +22,14 @@ import {
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
-import { environmentVersionsKey } from "src/api/simulate-environments/versions";
+import {
+  environmentVersionsKey,
+  refreshFollowers,
+} from "src/api/simulate-environments/versions";
+import {
+  isDesignEnvId,
+  saveDesignDrafts,
+} from "src/api/simulate-environments/designEnvironment";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -42,6 +49,7 @@ import WorkspaceHeader from "./WorkspaceHeader";
 import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
 import DraftBar from "./drafts/DraftBar";
+import ReviewChangesDrawer from "./drafts/ReviewChangesDrawer";
 import TemplateLockBanner from "./TemplateLockBanner";
 import WorkspacePanels from "./WorkspacePanels";
 import RunDialog from "./run/RunDialog";
@@ -52,6 +60,9 @@ import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
+import useChatFiles from "./sources/useChatFiles";
+import DesignBuildStrip from "../design/DesignBuildStrip";
+import { useCancelDesignBuild } from "src/api/simulate-environments/designBuild";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -94,6 +105,7 @@ function refusalReason(refusal) {
 export default function EnvironmentWorkspace() {
   const navigate = useNavigate();
   const { envId } = useParams();
+  const cancelBuild = useCancelDesignBuild(envId);
   const { env, source, bootstrapState, notFound, error, refetch, chatSaving } =
     useEnvironment(envId);
   // A real (backed) env's applied evals live on the environment detail
@@ -141,6 +153,10 @@ export default function EnvironmentWorkspace() {
   const pendingSubmission = useRef(null);
   // { ids, trials, initialPicks, seed } of the run awaiting version picks.
   const [runDialog, setRunDialog] = useState(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const chatFiles = useChatFiles(env, chat, {
+    onReviewChanges: () => setReviewOpen(true),
+  });
   const runMutation = useMutation({
     meta: { errorHandled: true },
     // `resolved` is every version the dialog resolved, defaults included; only
@@ -312,6 +328,23 @@ export default function EnvironmentWorkspace() {
 
   const executionMatch = useMatch(EXECUTION_PATTERN);
   const improvementMatch = useMatch(IMPROVEMENT_PATTERN);
+
+  // A design's environment exists once its build is approved; before that, or
+  // after a failed check, the design page is where it's worked on.
+  const designBuild = isDesignEnvId(envId) ? env?.designBuild : undefined;
+  const backToDesign =
+    designBuild === null || designBuild?.status === "needs_repair";
+  useEffect(() => {
+    if (backToDesign)
+      navigate(paths.dashboard.simulate.environments.design(envId), {
+        replace: true,
+      });
+  }, [backToDesign, envId, navigate]);
+  const saveDesign = ({ name } = {}) => {
+    saveDesignDrafts(envId, name);
+    refreshFollowers(queryClient, envId);
+    enqueueSnackbar(WORKSPACE_COPY.designSaved, { variant: "success" });
+  };
 
   if (notFound) {
     return (
@@ -574,7 +607,10 @@ export default function EnvironmentWorkspace() {
           amendments: backedDetail.contract?.amendments ?? [],
           dependencies: backedDetail.contract?.dependencies ?? [],
         }
-      : undefined;
+      : // A design's build has none of these yet; never the sample cards.
+        designBuild
+        ? { stores: [], amendments: [], dependencies: [] }
+        : undefined;
   // Real capability-graph branches for a backed env: tools names,
   // real_use_cases (flows), world.personas names, hard_constraints (guardrails).
   // Empty arrays render the graph's honest "none yet" instead of a fixture.
@@ -599,11 +635,13 @@ export default function EnvironmentWorkspace() {
   const detailLoading = backed && !backedDetail && !detailFailed;
   // Run needs the details too: without them the page can't show what a run
   // would test against, so it waits for them like the tabs do.
-  const detailBlock = detailFailed
-    ? WORKSPACE_COPY.runBlocked.detailFailed
-    : detailLoading
-      ? WORKSPACE_COPY.runBlocked.detailLoading
-      : null;
+  const detailBlock = designBuild
+    ? WORKSPACE_COPY.runBlocked.design
+    : detailFailed
+      ? WORKSPACE_COPY.runBlocked.detailFailed
+      : detailLoading
+        ? WORKSPACE_COPY.runBlocked.detailLoading
+        : null;
 
   return (
     <Box
@@ -644,14 +682,6 @@ export default function EnvironmentWorkspace() {
       {!detailLoading && !detailFailed && (
         <VersionBar env={env} envState={envState} />
       )}
-      <DraftBar
-        env={env}
-        busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
-        rebuilding={chat.rebuildHold}
-        onViewChanges={(piece, id) =>
-          setTab("versions", { version: `${piece}:${id}` })
-        }
-      />
 
       {/* A template-seeded env is read-only until forked — the banner states the
           lock and offers the fork. */}
@@ -664,15 +694,22 @@ export default function EnvironmentWorkspace() {
           }
           chat={({ collapse, open, collapseRef }) => (
             <BuilderConsole
-              turns={chat.turns}
+              turns={designBuild ? env.designChat : chatFiles.turns}
               running={chat.running}
-              onSend={chat.send}
+              onSend={chatFiles.send}
+              canAttach={!locked}
               onStop={chat.stop}
               canStop={chat.canStop}
               working={chat.working}
               stopping={chat.stopping}
-              frozen={!envLive || chat.frozen}
-              frozenReason={!envLive ? CONSOLE_COPY.frozen : chat.frozenReason}
+              frozen={!envLive || chat.frozen || !!designBuild}
+              frozenReason={
+                designBuild
+                  ? WORKSPACE_COPY.designChatFrozen
+                  : !envLive
+                    ? CONSOLE_COPY.frozen
+                    : chat.frozenReason
+              }
               answerWithOptions={chat.answerWithOptions}
               onCollapse={collapse}
               collapseRef={collapseRef}
@@ -727,11 +764,25 @@ export default function EnvironmentWorkspace() {
                   backedScenarioCount,
                 ),
               )}
+              onReviewChanges={() => setReviewOpen(true)}
             />
           )}
         </ChatSplitPane>
       </Box>
       {runDialogEl}
+      {reviewOpen && (
+        <ReviewChangesDrawer
+          open
+          env={env}
+          canEdit={!locked}
+          onClose={() => setReviewOpen(false)}
+          onSaved={(saved) => {
+            setReviewOpen(false);
+            if (designBuild) saveDesign(saved);
+          }}
+          onOpenTab={setTab}
+        />
+      )}
     </Box>
   );
 }

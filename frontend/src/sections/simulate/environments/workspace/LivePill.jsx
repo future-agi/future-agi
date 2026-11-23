@@ -2,7 +2,11 @@ import PropTypes from "prop-types";
 import { Box } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
 import StatusBadge from "src/components/status-badge/StatusBadge";
-import { BUILD_STATUS, ENV_STATUS, STATUS_META } from "../myEnvironments.constants";
+import {
+  BUILD_STATUS,
+  ENV_STATUS,
+  STATUS_META,
+} from "../myEnvironments.constants";
 import { WORKSPACE_COPY } from "./workspace.constants";
 
 // The status chip beside an environment's name, drawn by the shared
@@ -16,11 +20,21 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 // the chip inside the workspace matches the one outside it.
 export default function LivePill({ env, building }) {
   const isCancelling = env?.status === ENV_STATUS.CANCELLING;
-  const isCancelled = env?.status === ENV_STATUS.CANCELLED;
+  // A design's first build that was stopped or failed says so too.
+  const design = env?.designBuild?.status;
+  const isCancelled =
+    env?.status === ENV_STATUS.CANCELLED || design === "cancelled";
   const isFinalizing = env?.status === ENV_STATUS.FINALIZING;
-  const isBuilding = building ?? env?.buildStatus === BUILD_STATUS.BUILDING;
-  const isFailed = !isBuilding && env?.buildStatus === BUILD_STATUS.FAILED;
-  const isRunning = !isBuilding && !isFailed && env?.status === ENV_STATUS.RUNNING;
+  // A design's first build streams into the workspace without being a job
+  // build, so it names itself ("Building v1").
+  const isBuilding =
+    building ??
+    (env?.buildStatus === BUILD_STATUS.BUILDING || !!env?.buildingLabel);
+  const isFailed =
+    !isBuilding &&
+    (env?.buildStatus === BUILD_STATUS.FAILED || design === "failed");
+  const isRunning =
+    !isBuilding && !isFailed && env?.status === ENV_STATUS.RUNNING;
   const key = isCancelled
     ? ENV_STATUS.CANCELLED
     : isCancelling
@@ -43,7 +57,7 @@ export default function LivePill({ env, building }) {
         : isFinalizing
           ? WORKSPACE_COPY.finalizingLabel
           : isBuilding
-            ? WORKSPACE_COPY.buildingLabel
+            ? env?.buildingLabel || WORKSPACE_COPY.buildingLabel
             : isRunning
               ? STATUS_META.running.label
               : WORKSPACE_COPY.live;
@@ -78,6 +92,11 @@ export default function LivePill({ env, building }) {
 }
 
 LivePill.propTypes = {
-  env: PropTypes.shape({ buildStatus: PropTypes.string, status: PropTypes.string }),
+  env: PropTypes.shape({
+    buildStatus: PropTypes.string,
+    status: PropTypes.string,
+    buildingLabel: PropTypes.string,
+    designBuild: PropTypes.shape({ status: PropTypes.string }),
+  }),
   building: PropTypes.bool,
 };
