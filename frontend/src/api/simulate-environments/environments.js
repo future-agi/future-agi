@@ -15,7 +15,9 @@ import {
   listHarnessEnvironments,
   deleteHarnessEnvironment,
   renameHarnessEnvironment,
+  addSuggestedEvaluation,
   deleteAppliedEvaluation,
+  setEvaluationRequirement,
   updateAppliedEvaluation,
   addRunEvaluation,
 } from "src/api/simulate-environments/harnessEnvironments";
@@ -350,5 +352,34 @@ export function useRunSimulation() {
       envId,
       runId: `run-${Date.now().toString(36)}`,
     }),
+  });
+}
+
+export function useAddSuggestedEvaluation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: ({ id, ...body }) => addSuggestedEvaluation(id, body),
+    onSuccess: (detail, { id }) => {
+      if (detail) queryClient.setQueryData(harnessEnvironmentKey(id), detail);
+    },
+    onSettled: (_data, _error, { id }) => {
+      queryClient.invalidateQueries({ queryKey: harnessEnvironmentKey(id) });
+      queryClient.invalidateQueries({
+        queryKey: [...SIMULATE_ENVIRONMENTS_KEY, "run-test"],
+      });
+    },
+  });
+}
+
+export function useSetEvaluationRequirement() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    meta: { errorHandled: true },
+    mutationFn: ({ id, evalConfigId, ...body }) =>
+      setEvaluationRequirement(id, evalConfigId, body),
+    onSuccess: (detail, { id }) => {
+      if (detail) queryClient.setQueryData(harnessEnvironmentKey(id), detail);
+    },
   });
 }
