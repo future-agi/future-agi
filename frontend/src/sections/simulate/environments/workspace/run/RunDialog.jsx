@@ -2,6 +2,7 @@ import PropTypes from "prop-types";
 import { useEffect, useMemo, useState } from "react";
 import {
   Alert,
+  Box,
   Button,
   CircularProgress,
   Dialog,
@@ -19,12 +20,18 @@ import {
   useDrafts,
   useEnvironmentVersions,
   useRunPlan,
+  useRunSelection,
   useSuiteMembers,
 } from "src/api/simulate-environments/versions";
+import { useRunningScenarioValidation } from "src/api/simulate-environments/scenariosHooks";
 import { DRAFTS_COPY, RUN_DIALOG_COPY as COPY } from "../workspace.constants";
 import { inlineRunError, planRefusal, seedRefusal } from "./runErrors";
 import RunBlockedLine from "./RunBlockedLine";
 import RunSeedLine from "./RunSeedLine";
+import HeldBackBox from "./HeldBackBox";
+
+// The run plan's warning that saved changes moved what some scenarios are graded on since they were proved.
+const CHANGED_SINCE_PROVED = "scenarios_need_revalidation";
 
 // Only versions a run can take are offered: an active environment or scenario
 // version, an agent version the server marks pickable (its check passed), and
@@ -127,7 +134,25 @@ export default function RunDialog({
     enabled: open && !versions.isLoading,
     scenarioKeys: runAll ? null : runIds,
   });
-  const warnings = plan.data?.warnings || [];
+  const allWarnings = plan.data?.warnings || [];
+  const changed = allWarnings.filter(
+    (one) => one.code === CHANGED_SINCE_PROVED,
+  );
+  const warnings = allWarnings.filter(
+    (one) => one.code !== CHANGED_SINCE_PROVED,
+  );
+  const versioned = Boolean(env?.versioning?.enabled);
+  // What readiness holds back for these picks and scenarios, and how many run.
+  const selectionKeys = runAll && !needsMembers ? null : runIds;
+  const { data: selection } = useRunSelection(env?.id, picks, selectionKeys, {
+    enabled:
+      open && versioned && Boolean(data) && !(needsMembers && !memberKeys),
+  });
+  // Runs wait while a scenario validation runs on the environment.
+  const { data: runningValidation } = useRunningScenarioValidation(
+    open && versioned ? env?.id : null,
+  );
+  const validating = Boolean(runningValidation?.job_id);
   const refusedPlan = planRefusal(plan.error);
   const planFailed =
     plan.isError &&
@@ -181,6 +206,9 @@ export default function RunDialog({
   const blockedTools = plan.data ? plan.data.blocked_tools : [];
   if (!blocked && plan.data && !plan.data.runnable)
     blocked = COPY.allBlocked(blockedTools.map((entry) => entry.tool));
+  if (!blocked && validating) blocked = COPY.validating;
+  if (!blocked && selection?.held_back?.count > 0 && selection.running === 0)
+    blocked = COPY.allHeld;
 
   const submitError =
     error && error !== dismissedError ? inlineRunError(error) : null;
@@ -213,7 +241,10 @@ export default function RunDialog({
     !(!runAll && members.isLoading) &&
     (!needsMembers || memberKeys?.length > 0);
 
+  // With readiness, the button says how many run; held ones are never sent, so nothing reads "anyway".
   let runLabel = warnings.length ? COPY.runAnyway : COPY.run;
+  if (Number.isInteger(selection?.running))
+    runLabel = COPY.runCount(selection.running);
   if (submitting) runLabel = COPY.starting;
 
   const pick = (piece, id) => {
@@ -270,7 +301,8 @@ export default function RunDialog({
     return `${COPY.allScenarios(memberKeys.length, named(suite))}${repeats}`;
   };
 
-  const blockedToolLines = plan.data && (
+  // The held-back box names every reason, the blocked tools' among them.
+  const blockedToolLines = plan.data && !selection?.held_back?.count && (
     <RunBlockedLine
       blockedTools={blockedTools}
       heldBack={plan.data.held_back}
@@ -313,6 +345,45 @@ export default function RunDialog({
           <Typography sx={{ typography: "s2", color: "text.secondary" }}>
             {line}
           </Typography>
+        )}
+        {selection && !blocked && Number.isInteger(selection.running) && (
+          <Typography
+            data-testid="run-will-run"
+            sx={{ typography: "s1", fontWeight: "fontWeightMedium" }}
+          >
+            {COPY.willRun(selection.running, selection.requested)}
+          </Typography>
+        )}
+        <HeldBackBox selection={selection} />
+        {changed.length > 0 && (
+          <Box
+            data-testid="run-changed-since-proved"
+            sx={{
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+              p: 1.5,
+            }}
+          >
+            <Typography
+              sx={{ typography: "s1", fontWeight: "fontWeightMedium", mb: 0.5 }}
+            >
+              {COPY.changedTitle}
+            </Typography>
+            {changed.map((one) => (
+              <Typography
+                key={one.piece || one.code}
+                sx={{ typography: "s1", color: "text.secondary" }}
+              >
+                {one.message}
+              </Typography>
+            ))}
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+            >
+              {COPY.changedHint}
+            </Typography>
+          </Box>
         )}
         <RunSeedLine
           seed={seed}

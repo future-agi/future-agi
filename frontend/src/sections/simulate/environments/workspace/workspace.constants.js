@@ -490,6 +490,18 @@ export const RUN_DIALOG_COPY = {
   cancel: "Cancel",
   run: "Run",
   runAnyway: "Run anyway",
+  // How many scenarios the run sends; held ones are never sent.
+  runCount: (n) => `Run ${n} ${n === 1 ? "scenario" : "scenarios"}`,
+  willRun: (n, of) => `${n} of ${of} will run`,
+  heldBackTitle: (n) => `Held back · ${n}`,
+  heldReason: (text, n) => `${text} · ${n}`,
+  showWhich: "Show which",
+  hideWhich: "Hide",
+  checkDetails: "Check details",
+  changedTitle: "Changed since proved",
+  changedHint: "Validate them before relying on the results.",
+  validating: "A validation is running. Runs are blocked until it finishes.",
+  allHeld: "Every picked scenario is held back, so nothing would run.",
   starting: "Starting…",
 };
 

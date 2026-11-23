@@ -9,6 +9,9 @@ const state = {
   plans: {},
   members: {},
   drafts: null,
+  // The readiness selection for the picks, and the scenario validation running, if any.
+  selection: undefined,
+  running: undefined,
 };
 const PLAN_OK = {
   warnings: [],
@@ -52,6 +55,7 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     useDrafts: vi.fn((envId, { enabled } = {}) => ({
       data: enabled && state.drafts ? actual.toDrafts(state.drafts) : undefined,
     })),
+    useRunSelection: vi.fn(() => ({ data: state.selection })),
     useSuiteMembers: vi.fn((envId, id) => ({
       data: state.members[id],
       isLoading: !state.members[id],
@@ -59,6 +63,14 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     })),
   };
 });
+
+vi.mock(
+  "src/api/simulate-environments/scenariosHooks",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useRunningScenarioValidation: vi.fn(() => ({ data: state.running })),
+  }),
+);
 
 const { default: RunDialog } = await import("../RunDialog");
 
@@ -131,6 +143,8 @@ describe("RunDialog", () => {
     planCalls.length = 0;
     state.drafts = null;
     state.versionsError = undefined;
+    state.selection = undefined;
+    state.running = undefined;
   });
 
   it("asks the plan about the scenarios this run takes", () => {
@@ -976,5 +990,91 @@ describe("RunDialog", () => {
       DEFAULTS,
       "7902065059689103066",
     );
+  });
+
+  describe("RunDialog run plan", () => {
+    const selection = (overrides = {}) => ({
+      requested: 2,
+      running: 1,
+      held_back: {
+        count: 1,
+        keys: ["k2"],
+        names: { k2: "Refund twice" },
+        by: { not_proved: 1 },
+        truncated: false,
+      },
+      reasons: { not_proved: "Not proved on these versions yet" },
+      held_by: [],
+      ...overrides,
+    });
+    beforeEach(() => {
+      state.versions = VERSIONS;
+      state.plans = {};
+      state.members = { s3: members("k1", "k2", "k3") };
+      state.selection = undefined;
+      state.running = undefined;
+    });
+
+    it("says how many run, why the rest are held back, and runs that many", async () => {
+      const user = userEvent.setup();
+      state.selection = selection();
+      renderDialog();
+      expect(screen.getByText("1 of 2 will run")).toBeInTheDocument();
+      expect(screen.getByText("Held back · 1")).toBeInTheDocument();
+      expect(
+        screen.getByText("Not proved on these versions yet · 1"),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Show which" }));
+      expect(screen.getByText("Refund twice")).toBeInTheDocument();
+      expect(runButton()).toHaveTextContent("Run 1 scenario");
+    });
+
+    it("puts the changed-since-proved warning in its own box, not among the warnings", () => {
+      state.plans[JSON.stringify({})] = {
+        warnings: [
+          {
+            code: "scenarios_need_revalidation",
+            message: "Saved changes changed what 2 scenarios are graded on",
+            piece: "suite",
+          },
+        ],
+      };
+      renderDialog();
+      const box = screen.getByTestId("run-changed-since-proved");
+      expect(
+        within(box).getByText(/changed what 2 scenarios are graded on/),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("run-warning")).toBeNull();
+    });
+
+    it("holds the run while a scenario validation runs", () => {
+      state.running = { job_id: "val-1" };
+      renderDialog();
+      expect(
+        screen.getByText(
+          "A validation is running. Runs are blocked until it finishes.",
+        ),
+      ).toBeInTheDocument();
+      expect(runButton()).toBeDisabled();
+    });
+
+    it("holds the run when every picked scenario is held back", () => {
+      state.selection = selection({
+        running: 0,
+        held_back: {
+          count: 2,
+          keys: ["k1", "k2"],
+          names: {},
+          by: { not_proved: 2 },
+        },
+      });
+      renderDialog();
+      expect(
+        screen.getByText(
+          "Every picked scenario is held back, so nothing would run.",
+        ),
+      ).toBeInTheDocument();
+      expect(runButton()).toBeDisabled();
+    });
   });
 });
