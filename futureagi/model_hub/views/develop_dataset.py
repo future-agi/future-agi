@@ -16658,6 +16658,10 @@ class ExistingKnowledgeBaseView(APIView):
                 "updated_by": DataTypeChoices.TEXT.value,
             }
 
+            def file_metadata(entry):
+                metadata = entry["metadata"]
+                return metadata if isinstance(metadata, dict) else json.loads(metadata)
+
             if sort_config:
                 sort_data = data
                 for sort_item in sort_config:
@@ -16683,7 +16687,7 @@ class ExistingKnowledgeBaseView(APIView):
                         elif column_type == DataTypeChoices.INTEGER.value:
                             sort_data = sorted(
                                 data,
-                                key=lambda x: json.loads(x["metadata"]).get("size", 0),
+                                key=lambda x: file_metadata(x).get("size", 0),
                                 reverse=reverse,
                             )
 
@@ -16711,7 +16715,7 @@ class ExistingKnowledgeBaseView(APIView):
             for entry in table_data:
                 if entry.get("status") == StatusType.DELETING.value:
                     continue
-                metadata = json.loads(entry["metadata"])
+                metadata = file_metadata(entry)
                 size = metadata.get("size", 0)
                 error = metadata.get("error", None)
                 table_rows.append(
