@@ -1,0 +1,122 @@
+{
+  "success": {
+    "status": 200,
+    "data": {
+      "status": true,
+      "result": "Resolution monitor alert created successfully"
+    }
+  },
+  "entitlement": {
+    "status": 402,
+    "data": {
+      "status": false,
+      "type": "entitlement_error",
+      "code": "ENTITLEMENT_DENIED",
+      "detail": "Monitor count exceeds the current plan limit.",
+      "message": "Monitor count exceeds the current plan limit.",
+      "error": {
+        "code": "ENTITLEMENT_DENIED",
+        "message": "Monitor count exceeds the current plan limit.",
+        "detail": {
+          "feature": "monitors",
+          "resource": "monitors",
+          "limit": 1,
+          "current_usage": 1
+        }
+      },
+      "result": "Monitor count exceeds the current plan limit.",
+      "attr": "feature",
+      "details": {
+        "feature": ["monitors"],
+        "resource": ["monitors"],
+        "limit": ["1"],
+        "current_usage": ["1"]
+      },
+      "upgrade_required": true
+    }
+  },
+  "entitlement_unavailable": {
+    "status": 402,
+    "data": {
+      "status": false,
+      "type": "entitlement_error",
+      "code": "ENTITLEMENT_DENIED",
+      "detail": "Feature entitlement service is unavailable.",
+      "message": "Feature entitlement service is unavailable.",
+      "error": {
+        "code": "ENTITLEMENT_DENIED",
+        "message": "Feature entitlement service is unavailable.",
+        "detail": {
+          "feature": "monitors",
+          "resource": "monitors"
+        }
+      },
+      "result": "Feature entitlement service is unavailable.",
+      "attr": "feature",
+      "details": {
+        "feature": ["monitors"],
+        "resource": ["monitors"]
+      },
+      "upgrade_required": true
+    }
+  },
+  "forbidden": {
+    "status": 403,
+    "data": {
+      "status": false,
+      "type": "permission_error",
+      "code": "permission_denied",
+      "detail": "You do not have permission to perform this action.",
+      "message": "You do not have permission to perform this action.",
+      "error": "You do not have permission to perform this action.",
+      "result": "You do not have permission to perform this action.",
+      "details": {
+        "detail": ["You do not have permission to perform this action."]
+      }
+    }
+  },
+  "validation": {
+    "status": 400,
+    "data": {
+      "status": false,
+      "type": "validation_error",
+      "code": "invalid",
+      "detail": "notification_emails: Enter a valid email address.",
+      "message": "notification_emails: Enter a valid email address.",
+      "error": "notification_emails: Enter a valid email address.",
+      "result": "notification_emails: Enter a valid email address.",
+      "attr": "notification_emails",
+      "details": {
+        "notification_emails": ["Enter a valid email address."]
+      }
+    }
+  },
+  "validation_drf": {
+    "status": 400,
+    "data": {
+      "status": false,
+      "type": "validation_error",
+      "code": "invalid",
+      "detail": "critical_threshold_value: A valid number is required.",
+      "message": "critical_threshold_value: A valid number is required.",
+      "error": "critical_threshold_value: A valid number is required.",
+      "result": "critical_threshold_value: A valid number is required.",
+      "attr": "critical_threshold_value",
+      "details": {
+        "critical_threshold_value": ["A valid number is required."]
+      }
+    }
+  },
+  "server": {
+    "status": 500,
+    "data": {
+      "status": false,
+      "type": "server_error",
+      "code": "server_error",
+      "detail": "synthetic private exception; must not display",
+      "message": "synthetic private exception; must not display",
+      "error": "synthetic private exception; must not display",
+      "result": "synthetic private exception; must not display"
+    }
+  }
+}

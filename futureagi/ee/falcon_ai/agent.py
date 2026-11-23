@@ -184,6 +184,8 @@ class AgentLoop:
                 Used by AgentEvaluator to restrict available tools.
         """
 
+        self.tool_context.require_foreground_execution()
+
         # 0. Cluster-RCA delegation. When the cluster-rca skill is active on the
         # first turn, hand off to the dedicated cluster-analysis agent: it streams
         # its own investigation over this socket and caches the synthesis. Falcon

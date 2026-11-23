@@ -4,6 +4,12 @@ from django.db import models
 
 from tfc.utils.base_model import BaseModel
 from tracer.models.project import Project
+from tracer.services.derived_metrics.pg_response_hooks import (
+    PgResponseAllManager,
+    PgResponseBaseManager,
+    PgResponseNoWorkspaceManager,
+    pg_response_save,
+)
 
 
 class TraceSession(BaseModel):
@@ -48,10 +54,18 @@ class TraceSessionOverlay(BaseModel):
     the identity the deterministic id is computed from.
     """
 
+    objects = PgResponseBaseManager()
+    all_objects = PgResponseAllManager()
+    no_workspace_objects = PgResponseNoWorkspaceManager()
+
     trace_session_id = models.UUIDField(db_index=True)  # soft id, not a FK
     project_id = models.UUIDField(db_index=True)
     bookmarked = models.BooleanField(default=False)
     display_name = models.CharField(max_length=255, null=True)  # override only
+
+    @pg_response_save
+    def save(self, *args, **kwargs):
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"SessionOverlay {self.trace_session_id}"

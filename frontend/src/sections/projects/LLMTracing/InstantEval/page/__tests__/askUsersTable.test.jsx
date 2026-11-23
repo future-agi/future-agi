@@ -190,3 +190,88 @@ describe("History", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("the rows table with no rows", () => {
+  it("says answers are coming while the run reads, not that none match", () => {
+    renderTable({ records: [], total: 0, unit: "sessions", waiting: true });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Answers will appear here as Jev reads each session.",
+    );
+    expect(screen.queryByText("No sessions match.")).toBeNull();
+  });
+
+  it("says none match once the run is over", () => {
+    renderTable({ records: [], total: 0, unit: "sessions" });
+    expect(screen.getByText("No sessions match.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+});
+
+describe("the rows table's own states", () => {
+  it("shows a failed read with the shared error state and its Retry", () => {
+    const onRetry = vi.fn();
+    renderTable({
+      records: [],
+      total: 0,
+      unit: "sessions",
+      error: true,
+      onRetry,
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("These sessions couldn't be loaded.");
+    // ErrorState's Retry is the neutral outlined button, not a bare text one.
+    const retry = within(alert).getByRole("button", { name: "Retry" });
+    expect(retry).toHaveClass("MuiButton-outlined");
+    fireEvent.click(retry);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry).toHaveBeenCalledWith();
+  });
+
+  it("offers Clear filters when the charts' filter matches nothing", () => {
+    const onClearFilter = vi.fn();
+    renderTable({
+      records: [],
+      total: 0,
+      runTotal: 53,
+      unit: "sessions",
+      filterLabel: "No · Did the agent resolve it?",
+      onClearFilter,
+    });
+    expect(screen.getByText("No sessions match.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(onClearFilter).toHaveBeenCalledTimes(1);
+  });
+
+  it("has nothing to clear when no filter is set", () => {
+    renderTable({ records: [], total: 0, unit: "sessions" });
+    expect(screen.getByText("No sessions match.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+  });
+
+  it("tells a paused run's table to resume rather than wait", () => {
+    renderTable({
+      records: [],
+      total: 0,
+      unit: "sessions",
+      waiting: true,
+      paused: true,
+    });
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Resume the run to start reading sessions.",
+    );
+    expect(screen.queryByText(/Answers will appear here/)).toBeNull();
+  });
+
+  it("sits on the page with hairline rows, not inside a card", () => {
+    renderTable();
+    const section = screen.getByRole("region", { name: "Users asked about" });
+    const style = getComputedStyle(section);
+    expect(style.borderTopStyle).not.toBe("solid");
+    expect(style.borderRadius).toBe("");
+    expect(style.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    // The table still scrolls sideways on its own.
+    expect(
+      getComputedStyle(screen.getByRole("table").parentElement).overflowX,
+    ).toBe("auto");
+  });
+});

@@ -165,6 +165,41 @@ def _add_transcripts(call, count):
         )
 
 
+@pytest.mark.parametrize("filter_scenario", [False, True], ids=["plain", "scenario"])
+def test_grouping_without_search_aggregates_without_listing_call_ids(
+    auth_client, chat_run, filter_scenario
+):
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    execution, add = chat_run
+    add("Checkout")
+    add("Returns")
+    params = {}
+    if filter_scenario:
+        params["filters"] = json.dumps(
+            [
+                {
+                    "column_id": "scenario",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "Checkout",
+                    },
+                }
+            ]
+        )
+    with CaptureQueriesContext(connection) as queries:
+        data = _detail(auth_client, execution, row_groups=["status"], **params)
+
+    assert _groups(data, "status") == [("completed", 1 if filter_scenario else 2)]
+    sql = [q["sql"] for q in queries.captured_queries]
+    call_pk = '"simulate_call_execution"."id"'
+    assert not any(q.startswith(f"SELECT DISTINCT {call_pk}") for q in sql)
+    (aggregate,) = [q for q in sql if f"COUNT({call_pk})" in q and "GROUP BY" in q]
+    assert f"{call_pk} IN (" not in aggregate
+
+
 def test_search_counts_each_matching_call_once(auth_client, chat_run):
     execution, add = chat_run
     calls = [add(score=4), add(score=4), add(score=1)]
@@ -259,6 +294,75 @@ def test_legacy_group_ids_keep_field_names_and_filters(
     (row,) = data["results"]
     assert (row.get(field), row["count"]) == (value, 1)
     assert "overall_score" not in row or field == "overall_score"
+
+
+@pytest.mark.parametrize(
+    ("field", "key"),
+    [
+        ("callType", ["chat"]),
+        ("overall_score", "not-a-number"),
+        ("overallScore", True),
+        ("overallScore", 10**310),
+        ("response_time", {}),
+        ("responseTime", False),
+        ("responseTime", "inf"),
+        ("responseTime", "nan"),
+        ("responseTime", 200.5),
+        ("responseTime", "200.00000000000000001"),
+        ("responseTime", 2**31),
+        ("responseTime", "1e500"),
+        ("timestamp", []),
+        ("timestamp", "not-a-date"),
+        ("timestamp", "2025-02-29"),
+    ],
+)
+def test_unmatchable_key_selects_no_groups(auth_client, chat_run, field, key):
+    execution, add = chat_run
+    add()
+    other = add(name="1", score=1)
+    CallExecution.objects.filter(pk=other.pk).update(response_time_ms=0)
+
+    data = _detail(
+        auth_client,
+        execution,
+        row_groups=["status", field],
+        group_keys=["completed", key],
+    )
+    assert (data["count"], data["results"]) == (0, [])
+
+
+@pytest.mark.parametrize(
+    ("field", "key", "column", "expected"),
+    [
+        ("scenario", 1, "scenario__name", "1"),
+        ("overallScore", "-2", "overall_score", -2),
+        ("responseTime", "0e3", "response_time_ms", 0),
+        ("responseTime", "-2.00", "response_time_ms", -2),
+    ],
+)
+def test_matching_key_coercions(auth_client, chat_run, field, key, column, expected):
+    execution, add = chat_run
+    for value in (0, -2):
+        call = add(name="1" if value == 0 else "Other", score=value)
+        CallExecution.objects.filter(pk=call.pk).update(response_time_ms=value)
+
+    data = _detail(auth_client, execution, row_groups=[field], group_keys=[key])
+    assert _groups(data, column) == [(expected, 1)]
+
+
+@pytest.mark.parametrize("value", ["inf", "nan"])
+def test_nonfinite_key_is_not_a_score_bucket(chat_run, value):
+    from simulate.utils.test_execution_utils import TestExecutionUtils
+
+    execution, add = chat_run
+    call = add()
+    CallExecution.objects.filter(pk=call.pk).update(overall_score=float(value))
+    groups = TestExecutionUtils()._apply_basic_grouping(
+        CallExecution.objects.filter(test_execution=execution),
+        ["overall_score"],
+        [value],
+    )
+    assert groups == []
 
 
 @pytest.mark.parametrize("params", [{}, {"row_groups": []}], ids=["omitted", "empty"])
