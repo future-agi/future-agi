@@ -37,6 +37,10 @@ class HostedHarnessJob(BaseModel):
         PROVIDER_CALL_OPEN = "provider_call_open", "Provider call still open"
         PROVIDER_UNCHECKED = "provider_unchecked", "Provider calls not checked"
         UNCHECKED_NO_KEY = "unchecked_no_key", "Not checked: no provider key"
+        UNCHECKED_KEY_REJECTED = (
+            "unchecked_key_rejected",
+            "Not checked: provider rejected the key",
+        )
         UNCHECKED_NO_TARGET = "unchecked_no_target", "Not checked: no provider agent ID"
         UNCHECKED_NO_CALLS = "unchecked_no_calls", "Not checked: no calls listed"
         UNCHECKED_TOO_MANY_CALLS = (

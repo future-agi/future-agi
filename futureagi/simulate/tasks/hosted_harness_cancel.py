@@ -20,6 +20,7 @@ def confirm_hosted_harness_provider_cancel(job_id: str) -> dict:
         ProviderCallsActive,
         provider_calls,
         record_confirmation,
+        stop_pending,
         unchecked_confirmation,
     )
 
@@ -29,6 +30,9 @@ def confirm_hosted_harness_provider_cancel(job_id: str) -> dict:
         Confirmation.PROVIDER_CALL_ENDED,
     ):
         return {"job_id": job_id, "confirmed": True}
+    if not stop_pending(job):
+        logger.info("hosted_harness_cancel_check_skipped", job_id=job_id)
+        return {"job_id": job_id, "confirmed": False}
     outcome = provider_calls(job)
     if outcome is ProviderCalls.ENDED:
         record_confirmation(job.id, Confirmation.PROVIDER_CALL_ENDED)
@@ -54,6 +58,8 @@ def schedule_provider_call_check(job_id: str) -> bool:
             dispatch_timeout_seconds=30,
         )
     except Exception:
-        logger.error("hosted_harness_cancel_confirm_not_scheduled", job_id=job_id)
+        logger.error(
+            "hosted_harness_cancel_confirm_not_scheduled", job_id=job_id, exc_info=True
+        )
         return False
     return True

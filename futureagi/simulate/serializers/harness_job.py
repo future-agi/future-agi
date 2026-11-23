@@ -1336,7 +1336,7 @@ class RunStopSerializer(serializers.Serializer):
         choices=HostedHarnessJob.CancelConfirmation.choices, allow_null=True
     )
     reason = serializers.ChoiceField(
-        choices=("no_key", "no_target", "no_calls", "too_many_calls"),
+        choices=("no_key", "key_rejected", "no_target", "no_calls", "too_many_calls"),
         allow_null=True,
         help_text="Why the provider could not be checked, when confirmed_by is"
         " provider_unchecked.",

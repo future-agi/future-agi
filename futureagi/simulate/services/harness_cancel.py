@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import Any
+from typing import Any, TypedDict
 
 import requests
 import structlog
@@ -22,6 +22,7 @@ PROVIDER_CHECK_WINDOW = timedelta(minutes=5)
 _CONFIRMED = frozenset({Confirmation.SANDBOX_ABSENT, Confirmation.PROVIDER_CALL_ENDED})
 _UNCHECKED = {
     "no_key": Confirmation.UNCHECKED_NO_KEY,
+    "key_rejected": Confirmation.UNCHECKED_KEY_REJECTED,
     "no_target": Confirmation.UNCHECKED_NO_TARGET,
     "no_calls": Confirmation.UNCHECKED_NO_CALLS,
     "too_many_calls": Confirmation.UNCHECKED_TOO_MANY_CALLS,
@@ -63,6 +64,7 @@ class ProviderCalls(StrEnum):
     ACTIVE = "active"
     UNKNOWN = "unknown"
     NO_KEY = "no_key"
+    KEY_REJECTED = "key_rejected"
     NO_TARGET = "no_target"
     NO_CALLS = "no_calls"
     TOO_MANY_CALLS = "too_many_calls"
@@ -74,6 +76,28 @@ def unchecked_confirmation(outcome: ProviderCalls) -> str:
 
 class ProviderCallsActive(RuntimeError):
     pass
+
+
+class RunStop(TypedDict):
+    status: str | None
+    kind: str
+    provider: str | None
+    requested_at: str
+    confirmed_at: str | None
+    confirmed_by: str | None
+    reason: str | None
+
+
+def is_unchecked(by: str | None) -> bool:
+    return by == Confirmation.PROVIDER_UNCHECKED or by in _UNCHECKED.values()
+
+
+def stop_pending(job: HostedHarnessJob) -> bool:
+    return (
+        job.cancel_requested_at is not None
+        and job.state in _TERMINAL
+        and job.cancel_confirmed_by not in _CONFIRMED
+    )
 
 
 def _rank(by: str | None) -> int:
@@ -110,7 +134,7 @@ def provider_name(connector: Any) -> str | None:
     return _PROVIDER_NAMES.get(str(connector or "").strip().lower())
 
 
-def stop_summary(job: HostedHarnessJob) -> dict[str, Any] | None:
+def stop_summary(job: HostedHarnessJob) -> RunStop | None:
     if job.cancel_requested_at is None:
         return None
     payload = job.payload or {}
@@ -134,7 +158,7 @@ def stop_summary(job: HostedHarnessJob) -> dict[str, Any] | None:
     }
 
 
-def stop_summaries(test_execution_ids: Iterable[Any]) -> dict[str, dict[str, Any]]:
+def stop_summaries(test_execution_ids: Iterable[Any]) -> dict[str, RunStop]:
     jobs = HostedHarnessJob.no_workspace_objects.filter(
         test_execution_id__in=list(test_execution_ids),
         cancel_requested_at__isnull=False,
@@ -163,11 +187,7 @@ def provider_connector(payload: Mapping[str, Any]) -> str | None:
 def confirm_cancel(job: HostedHarnessJob) -> None:
     from simulate.services.phone_telephony import uses_platform_phone_telephony
 
-    if (
-        job.state not in _TERMINAL
-        or job.cancel_requested_at is None
-        or job.cancel_confirmed_by in _CONFIRMED
-    ):
+    if not stop_pending(job):
         return
     payload = job.payload or {}
     source_kind = str((payload.get("source") or {}).get("kind") or "")
@@ -235,6 +255,16 @@ def provider_calls(job: HostedHarnessJob) -> ProviderCalls:
     reader = _vapi_calls if connector == "vapi" else _retell_calls
     try:
         return reader(api_key, target, attempt.created_at)
+    except requests.HTTPError as error:
+        if _key_rejected(error):
+            return ProviderCalls.KEY_REJECTED
+        logger.warning(
+            "hosted_harness_cancel_provider_unreachable",
+            job_id=str(job.id),
+            connector=connector,
+            error=type(error).__name__,
+        )
+        return ProviderCalls.ACTIVE
     except (requests.RequestException, ValueError) as error:
         logger.warning(
             "hosted_harness_cancel_provider_unreachable",
@@ -243,6 +273,10 @@ def provider_calls(job: HostedHarnessJob) -> ProviderCalls:
             error=type(error).__name__,
         )
         return ProviderCalls.ACTIVE
+
+
+def _key_rejected(error: requests.HTTPError) -> bool:
+    return error.response is not None and error.response.status_code in (401, 403)
 
 
 def _job_secrets(job: HostedHarnessJob) -> dict[str, str]:
@@ -280,6 +314,15 @@ def _livekit_rooms(job: HostedHarnessJob, config: Mapping[str, Any]) -> Provider
             api_key=api_key,
             api_secret=api_secret,
         )
+    except requests.HTTPError as error:
+        if _key_rejected(error):
+            return ProviderCalls.KEY_REJECTED
+        logger.warning(
+            "hosted_harness_cancel_livekit_rooms_remain",
+            job_id=str(job.id),
+            error=type(error).__name__,
+        )
+        return ProviderCalls.ACTIVE
     except (
         HostedPhoneRoomCleanupError,
         requests.RequestException,

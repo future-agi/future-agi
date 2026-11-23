@@ -5,7 +5,6 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
-  AlertTitle,
   Box,
   Stack,
   Typography,
@@ -335,28 +334,6 @@ export default function RunDetail({
             {startedLabel ? ` · started ${startedLabel}` : ""}
             {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
-          {stopNotice && (
-            <Alert
-              severity={stopNotice.severity}
-              sx={{ mt: 1 }}
-              data-testid="run-stop-notice"
-            >
-              {stopNotice.title && <AlertTitle>{stopNotice.title}</AlertTitle>}
-              {stopNotice.body}
-              {stopNotice.action && (
-                <Link
-                  component={RouterLink}
-                  href={paths.dashboard.simulate.environments.workspaceTab(
-                    env.id,
-                    stopNotice.action.tab,
-                  )}
-                  sx={{ display: "block", mt: 0.5 }}
-                >
-                  {stopNotice.action.label}
-                </Link>
-              )}
-            </Alert>
-          )}
           {identity?.buildNotice && (
             <Alert
               severity="warning"
@@ -468,6 +445,61 @@ export default function RunDetail({
         )}
       </Stack>
       {creditBanner}
+
+      {stopNotice?.live && (
+        <Typography
+          data-testid="run-stop-notice"
+          sx={{
+            mx: 2,
+            mt: 1.5,
+            px: 1.5,
+            py: 1,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            typography: "s2",
+            color: "text.secondary",
+            flexShrink: 0,
+          }}
+        >
+          {stopNotice.body}
+        </Typography>
+      )}
+      {stopNotice && !stopNotice.live && (
+        <Alert
+          data-testid="run-stop-notice"
+          severity={stopNotice.bad ? "warning" : "info"}
+          icon={
+            <Iconify
+              icon={
+                stopNotice.bad
+                  ? "solar:danger-triangle-linear"
+                  : "solar:stop-circle-linear"
+              }
+              width={16}
+            />
+          }
+          sx={{
+            mx: 2,
+            mt: 1.5,
+            flexShrink: 0,
+            ...(!stopNotice.bad && {
+              bgcolor: "background.neutral",
+              color: "text.primary",
+              border: "1px solid",
+              borderColor: "divider",
+              "& .MuiAlert-icon": { color: "text.secondary" },
+            }),
+          }}
+        >
+          <Typography sx={{ typography: "s2", fontWeight: 600 }}>
+            {stopNotice.title}
+          </Typography>
+          <Typography sx={{ typography: "s2", mt: 0.25 }}>
+            {stopNotice.body}
+          </Typography>
+        </Alert>
+      )}
 
       <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         <Box sx={{ p: 2 }}>
@@ -728,12 +760,12 @@ function stopNoticeOf(identity, live) {
   const stop = identity?.stop;
   if (!stop) return null;
   const voice = Boolean(identity?.voice);
-  if (live) {
-    return {
-      severity: "info",
-      title: null,
-      body: stopLiveLineOf(stop, { voice }),
-    };
-  }
-  return stopNoteOf(stop, { voice });
+  if (live) return { live: true, body: stopLiveLineOf(stop, { voice }) };
+  const note = stopNoteOf(stop, { voice });
+  return note
+    ? {
+        ...note,
+        bad: ["unconfirmed", "cleanup_failed"].includes(stop.status),
+      }
+    : null;
 }

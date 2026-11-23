@@ -24,6 +24,10 @@ class Migration(migrations.Migration):
                     ("provider_call_open", "Provider call still open"),
                     ("provider_unchecked", "Provider calls not checked"),
                     ("unchecked_no_key", "Not checked: no provider key"),
+                    (
+                        "unchecked_key_rejected",
+                        "Not checked: provider rejected the key",
+                    ),
                     ("unchecked_no_target", "Not checked: no provider agent ID"),
                     ("unchecked_no_calls", "Not checked: no calls listed"),
                     (

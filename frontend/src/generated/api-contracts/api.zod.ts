@@ -50903,6 +50903,7 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
         "provider_call_open",
         "provider_unchecked",
         "unchecked_no_key",
+        "unchecked_key_rejected",
         "unchecked_no_target",
         "unchecked_no_calls",
         "unchecked_too_many_calls",
@@ -51940,6 +51941,7 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
         "provider_call_open",
         "provider_unchecked",
         "unchecked_no_key",
+        "unchecked_key_rejected",
         "unchecked_no_target",
         "unchecked_no_calls",
         "unchecked_too_many_calls",
@@ -52195,6 +52197,7 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
         "provider_call_open",
         "provider_unchecked",
         "unchecked_no_key",
+        "unchecked_key_rejected",
         "unchecked_no_target",
         "unchecked_no_calls",
         "unchecked_too_many_calls",
@@ -60239,12 +60242,19 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
               "provider_call_open",
               "provider_unchecked",
               "unchecked_no_key",
+              "unchecked_key_rejected",
               "unchecked_no_target",
               "unchecked_no_calls",
               "unchecked_too_many_calls",
             ]),
             reason: zod
-              .enum(["no_key", "no_target", "no_calls", "too_many_calls"])
+              .enum([
+                "no_key",
+                "key_rejected",
+                "no_target",
+                "no_calls",
+                "too_many_calls",
+              ])
               .describe(
                 "Why the provider could not be checked, when confirmed_by is provider_unchecked.",
               ),
@@ -65650,12 +65660,19 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
           "provider_call_open",
           "provider_unchecked",
           "unchecked_no_key",
+          "unchecked_key_rejected",
           "unchecked_no_target",
           "unchecked_no_calls",
           "unchecked_too_many_calls",
         ]),
         reason: zod
-          .enum(["no_key", "no_target", "no_calls", "too_many_calls"])
+          .enum([
+            "no_key",
+            "key_rejected",
+            "no_target",
+            "no_calls",
+            "too_many_calls",
+          ])
           .describe(
             "Why the provider could not be checked, when confirmed_by is provider_unchecked.",
           ),

@@ -22,21 +22,6 @@ const clock = (iso) =>
 
 const providerOf = (stop) => stop?.provider || "the provider";
 
-const UNCHECKED_REASONS = {
-  no_key: (P) => `no ${P} API key`,
-  no_target: (P) => `no ${P} agent ID on the connection`,
-  no_calls: (P) => `${P} listed no calls for this run`,
-  too_many_calls: (P) => `${P} listed more calls than it returns at once`,
-  unreachable: (P) => `${P} could not be reached`,
-};
-
-export const uncheckedReasonOf = (stop) => {
-  const reason = UNCHECKED_REASONS[stop?.reason];
-  return reason ? reason(providerOf(stop)) : null;
-};
-
-const KEY_ACTION = { label: "Add the key in Settings", tab: "settings" };
-
 export const stopLiveLineOf = (stop, { voice = false } = {}) => {
   if (!stop) return null;
   const items = voice ? "calls" : "trials";
@@ -54,7 +39,7 @@ export const stopLiveLineOf = (stop, { voice = false } = {}) => {
         : `Stopped: cleanup finished. Finished ${items} are kept.`;
     case "unconfirmed":
       return stop.confirmed_by === "provider_unchecked"
-        ? `Stop not confirmed: we couldn't check with ${P} that the calls ended${uncheckedReasonOf(stop) ? ` (${uncheckedReasonOf(stop)})` : ""}. Finished calls are kept.`
+        ? `Stop not confirmed: we couldn't verify with ${P} that the calls ended. Finished calls are kept.`
         : `Stop not confirmed: ${P} still listed a call as open after ${PROVIDER_CHECK_MIN} minutes. Finished calls are kept.`;
     case "cleanup_failed":
       return `Cleanup failed: the stop wasn't confirmed after ${CLEANUP_FAILED_MIN} minutes. Finished ${items} are kept.`;
@@ -70,13 +55,11 @@ export const stopNoteOf = (stop, { voice = false } = {}) => {
   const at = clock(stop.requested_at);
   if (stop.status === "requested" && stop.kind === "endpoint")
     return {
-      severity: "info",
       title: `Stop requested at ${at} · can't be confirmed`,
       body: `This agent runs at its own URL, so we can't see it stop. We stopped sending and watching; your service may still have finished requests it already received. Finished ${items} are kept.`,
     };
   if (stop.status === "requested")
     return {
-      severity: "info",
       title: `Stop requested at ${at} · waiting for confirmation`,
       body:
         stop.kind === "provider"
@@ -86,23 +69,17 @@ export const stopNoteOf = (stop, { voice = false } = {}) => {
   if (
     stop.status === "unconfirmed" &&
     stop.confirmed_by === "provider_unchecked"
-  ) {
-    const reason = uncheckedReasonOf(stop);
+  )
     return {
-      severity: "warning",
       title: `Stop requested at ${at} · ${P} didn't confirm`,
-      body: `We couldn't check with ${P} that every call of this run ended${reason ? ` (${reason})` : ""}. An open call keeps running and ${P} charges for it, so check your ${P} dashboard. Finished calls are kept.`,
-      action: stop.reason === "no_key" ? KEY_ACTION : null,
+      body: `We couldn't verify with ${P} that every call of this run ended. An open call keeps running and ${P} charges for it, so check your ${P} dashboard. Finished calls are kept.`,
     };
-  }
   if (stop.status === "unconfirmed")
     return {
-      severity: "warning",
       title: `Stop requested at ${at} · ${P} didn't confirm`,
       body: `${P} still listed a call from this run as open after ${PROVIDER_CHECK_MIN} minutes. An open call keeps running and ${P} charges for it, so check your ${P} dashboard. Finished calls are kept.`,
     };
   return {
-    severity: "error",
     title: `Stop requested at ${at} · cleanup failed`,
     body:
       stop.kind === "provider"

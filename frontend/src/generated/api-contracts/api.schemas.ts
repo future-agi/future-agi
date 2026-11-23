@@ -23249,6 +23249,7 @@ export const HarnessJobStatusApiCancelConfirmedBy = {
   provider_call_open: "provider_call_open",
   provider_unchecked: "provider_unchecked",
   unchecked_no_key: "unchecked_no_key",
+  unchecked_key_rejected: "unchecked_key_rejected",
   unchecked_no_target: "unchecked_no_target",
   unchecked_no_calls: "unchecked_no_calls",
   unchecked_too_many_calls: "unchecked_too_many_calls",
@@ -27197,6 +27198,7 @@ export const RunStopApiConfirmedBy = {
   provider_call_open: "provider_call_open",
   provider_unchecked: "provider_unchecked",
   unchecked_no_key: "unchecked_no_key",
+  unchecked_key_rejected: "unchecked_key_rejected",
   unchecked_no_target: "unchecked_no_target",
   unchecked_no_calls: "unchecked_no_calls",
   unchecked_too_many_calls: "unchecked_too_many_calls",
@@ -27210,6 +27212,7 @@ export type RunStopApiReason =
 
 export const RunStopApiReason = {
   no_key: "no_key",
+  key_rejected: "key_rejected",
   no_target: "no_target",
   no_calls: "no_calls",
   too_many_calls: "too_many_calls",

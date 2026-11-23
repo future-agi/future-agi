@@ -636,10 +636,6 @@ def _reset(evidence: Evidence, runtime: HarnessAgentVersionRuntime | None) -> Re
             "The world did not return to its starting records",
             evidence=seen,
         )
-    if reset == "not_applicable" and isolation in (None, "not_applicable"):
-        return Reading("not_applicable", evidence=seen)
-    if reset != "passed":
-        return Reading("not_run", evidence=seen)
     if runtime is not None and _live_system(runtime):
         return Reading(
             "not_applicable",
@@ -647,6 +643,10 @@ def _reset(evidence: Evidence, runtime: HarnessAgentVersionRuntime | None) -> Re
             "A live system isn't assumed resettable",
             evidence=seen,
         )
+    if reset == "not_applicable" and isolation in (None, "not_applicable"):
+        return Reading("not_applicable", evidence=seen)
+    if reset != "passed":
+        return Reading("not_run", evidence=seen)
     if (
         runtime is not None
         and not _started_in_sandbox(runtime)
@@ -687,7 +687,6 @@ def _started_in_sandbox(runtime: HarnessAgentVersionRuntime) -> bool:
 
 
 def provider_label(runtime: HarnessAgentVersionRuntime | None) -> str | None:
-    """The provider a provider-hosted agent runs on, as people know it."""
     from simulate.services.harness_cancel import provider_name
 
     if runtime is None or connection(runtime) != "provider":
@@ -711,6 +710,8 @@ def _cancel(pairing: Pairing) -> Reading:
     """The agent version's latest Stop of a run whose sandbox existed, as the cancel
     path recorded it. Only a sandbox the agent ran in, verified gone, confirms the
     agent stopped; an agent outside it is confirmed by its own side, not ours."""
+    from simulate.services.harness_cancel import is_unchecked
+
     if pairing.agent_version is None:
         return Reading(
             "not_run", "stop_not_observed", "No run of this agent stopped yet"
@@ -781,9 +782,7 @@ def _cancel(pairing: Pairing) -> Reading:
                 evidence=seen,
                 checked_at=gave_up,
             )
-        if confirmed_by and str(confirmed_by).startswith(
-            ("unchecked_", "provider_unchecked")
-        ):
+        if is_unchecked(confirmed_by):
             return Reading(
                 "not_run",
                 "provider_unchecked",

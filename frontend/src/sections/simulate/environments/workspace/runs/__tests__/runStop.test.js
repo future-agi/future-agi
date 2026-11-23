@@ -38,13 +38,12 @@ describe("runStop", () => {
 
   it("warns that an unconfirmed provider call keeps charging", () => {
     const note = stopNoteOf(vapi("unconfirmed", "provider_call_open"));
-    expect(note.severity).toBe("warning");
     expect(note.title).toMatch(/· Vapi didn't confirm$/);
     expect(note.body).toMatch(
       /^Vapi still listed a call from this run as open after 5 minutes\. An open call keeps running and Vapi charges for it/,
     );
     expect(stopNoteOf(vapi("unconfirmed", "provider_unchecked")).body).toMatch(
-      /^We couldn't check with Vapi/,
+      /^We couldn't verify with Vapi/,
     );
   });
 
@@ -59,7 +58,7 @@ describe("runStop", () => {
     expect(note.body).toMatch(/^This agent runs at its own URL/);
   });
 
-  it("treats a cleanup that failed as an error and says the agent may still run", () => {
+  it("says a cleanup that failed may leave the agent running", () => {
     const note = stopNoteOf({
       status: "cleanup_failed",
       kind: "sandbox",
@@ -67,30 +66,20 @@ describe("runStop", () => {
       requested_at: at,
       confirmed_by: "cleanup_failed",
     });
-    expect(note.severity).toBe("error");
     expect(note.body).toBe(
       "The stop wasn't confirmed after 10 minutes, so the agent may still be running. Finished trials are kept.",
     );
   });
 
-  it("says why the provider couldn't be checked, and links to the key when it was missing", () => {
+  it("says in general terms when the provider couldn't be checked, whatever the reason", () => {
     const note = stopNoteOf({
       ...vapi("unconfirmed", "provider_unchecked"),
-      reason: "no_key",
+      reason: "no_calls",
     });
-    expect(note.body).toMatch(
-      /^We couldn't check with Vapi that every call of this run ended \(no Vapi API key\)\./,
+    expect(note.body).toBe(
+      "We couldn't verify with Vapi that every call of this run ended. An open call keeps running and Vapi charges for it, so check your Vapi dashboard. Finished calls are kept.",
     );
-    expect(note.action).toEqual({
-      label: "Add the key in Settings",
-      tab: "settings",
-    });
-    expect(
-      stopNoteOf({
-        ...vapi("unconfirmed", "provider_unchecked"),
-        reason: "no_calls",
-      }).action,
-    ).toBeNull();
+    expect(note.action).toBeUndefined();
   });
 
   it("words a LiveKit stop like a code agent's, confirmed by its room being gone", () => {

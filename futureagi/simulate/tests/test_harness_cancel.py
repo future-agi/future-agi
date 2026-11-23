@@ -283,6 +283,17 @@ class TestVapiCalls:
         assert outcome is ProviderCalls.NO_TARGET
         get.assert_not_called()
 
+    @pytest.mark.parametrize("status", [401, 403])
+    def test_a_rejected_key_proves_nothing_and_says_so(self, job, status):
+        rejected = requests.HTTPError(response=SimpleNamespace(status_code=status))
+        with (
+            patch.object(
+                harness_cancel, "_job_secrets", return_value={"VAPI_API_KEY": "k"}
+            ),
+            patch.object(harness_cancel.requests, "get", side_effect=rejected),
+        ):
+            assert provider_calls(job) is ProviderCalls.KEY_REJECTED
+
     def test_vapi_unreachable_reads_active_so_the_check_retries(self, job):
         with (
             patch.object(
@@ -384,6 +395,13 @@ class TestLiveKitRooms:
 
         assert outcome is ProviderCalls.ACTIVE
 
+    def test_a_rejected_livekit_key_proves_nothing_and_says_so(self):
+        rejected = requests.HTTPError(response=SimpleNamespace(status_code=401))
+
+        outcome, _ = self._read(_LIVEKIT_SECRETS, cleanup=rejected)
+
+        assert outcome is ProviderCalls.KEY_REJECTED
+
     @pytest.mark.parametrize(
         "missing", ["LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"]
     )
@@ -450,6 +468,11 @@ class TestProviderCheckTask:
         [
             (ProviderCalls.UNKNOWN, Confirmation.PROVIDER_UNCHECKED, None),
             (ProviderCalls.NO_KEY, Confirmation.UNCHECKED_NO_KEY, "no_key"),
+            (
+                ProviderCalls.KEY_REJECTED,
+                Confirmation.UNCHECKED_KEY_REJECTED,
+                "key_rejected",
+            ),
             (ProviderCalls.NO_TARGET, Confirmation.UNCHECKED_NO_TARGET, "no_target"),
             (ProviderCalls.NO_CALLS, Confirmation.UNCHECKED_NO_CALLS, "no_calls"),
             (
@@ -472,6 +495,19 @@ class TestProviderCheckTask:
             "provider_unchecked",
             reason,
         )
+
+    def test_a_stop_cleared_by_a_resume_is_not_checked_or_confirmed(self, job):
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            cancel_requested_at=None, state=HostedHarnessJob.State.RUNNING
+        )
+
+        with patch("simulate.services.harness_cancel.provider_calls") as read:
+            result = confirm_hosted_harness_provider_cancel._original_func(str(job.id))
+
+        assert result["confirmed"] is False
+        read.assert_not_called()
+        job.refresh_from_db()
+        assert (job.cancel_confirmed_at, job.cancel_confirmed_by) == (None, "")
 
     def test_an_already_confirmed_stop_asks_the_provider_nothing(self, job):
         record_confirmation(job.id, Confirmation.SANDBOX_ABSENT)
