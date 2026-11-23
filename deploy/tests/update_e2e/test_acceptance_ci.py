@@ -599,8 +599,10 @@ class AcceptancePlanTests(unittest.TestCase):
             self.assertNotIn('packages: write',job)
             self.assertNotIn('id-token: write',job)
             self.assertNotIn('secrets.',job)
+        policy=(ROOT/'.github/scripts/ci_scope.py').read_text()
         for suffix in ('**/*.py','**/*.go','**/*.sql','**/*.sh','deploy/**'):
-            self.assertGreaterEqual(text.count('"'+suffix+'"'),2)
+            self.assertGreaterEqual(text.count('"'+suffix+'"'),1)
+            self.assertGreaterEqual(policy.count('"'+suffix+'"'),1)
 
 
 class OCIRegistryTests(unittest.TestCase):
