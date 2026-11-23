@@ -74,7 +74,7 @@ export const stopNoteOf = (stop, { voice = false } = {}) => {
   if (stop.status === "unconfirmed")
     return {
       title: `Stop requested at ${at} · ${P} didn't confirm`,
-      body: `${P} still listed a call from this run as open after ${stop.check_window_minutes} minutes. An open call keeps running and ${P} charges for it, so check your ${P} dashboard. Finished calls are kept.`,
+      body: `${P} still listed a call on this assistant as open after ${stop.check_window_minutes} minutes. An open call keeps running and ${P} charges for it, so check your ${P} dashboard. Finished calls are kept.`,
     };
   return {
     title: `Stop requested at ${at} · cleanup failed`,

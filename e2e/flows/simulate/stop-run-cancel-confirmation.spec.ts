@@ -131,8 +131,9 @@ test('SIM-E2E-037: a stopped Run reads Stop requested while its agent is unconfi
 
   await test.step('ui: the Runs tab reads Stop requested for Run 1 and Stopped for Run 2', async () => {
     await page.goto(`/dashboard/simulate/environments/${seed.environmentId}?tab=runs`);
-    const remoteRow = page.getByRole('row').filter({ hasText: /\bRun 1\b/ });
-    const sandboxedRow = page.getByRole('row').filter({ hasText: /\bRun 2\b/ });
+    // The row number badge sits right before the label ("1Run 1 · agent"), so match the label itself.
+    const remoteRow = page.getByRole('row').filter({ has: page.getByText(/^Run 1 · /) });
+    const sandboxedRow = page.getByRole('row').filter({ has: page.getByText(/^Run 2 · /) });
     await expect(remoteRow.getByText(STOP_REQUESTED, { exact: true })).toBeVisible({ timeout: UI_READY });
     await expect(remoteRow.getByText(STOPPED, { exact: true })).toHaveCount(0);
     await expect(sandboxedRow.getByText(STOPPED, { exact: true })).toBeVisible({ timeout: UI_READY });

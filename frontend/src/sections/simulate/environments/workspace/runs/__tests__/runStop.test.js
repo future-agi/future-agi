@@ -42,7 +42,7 @@ describe("runStop", () => {
     const note = stopNoteOf(vapi("unconfirmed", "provider_call_open"));
     expect(note.title).toMatch(/· Vapi didn't confirm$/);
     expect(note.body).toMatch(
-      /^Vapi still listed a call from this run as open after 5 minutes\. An open call keeps running and Vapi charges for it/,
+      /^Vapi still listed a call on this assistant as open after 5 minutes\. An open call keeps running and Vapi charges for it/,
     );
     expect(stopNoteOf(vapi("unconfirmed", "provider_unchecked")).body).toMatch(
       /^We couldn't verify with Vapi/,
