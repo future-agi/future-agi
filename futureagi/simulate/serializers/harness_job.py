@@ -1142,7 +1142,7 @@ class HarnessJobStatusSerializer(serializers.Serializer):
         required=False,
     )
     cancel_status = serializers.ChoiceField(
-        choices=("requested", "confirmed", "cleanup_failed"),
+        choices=("requested", "confirmed", "unconfirmed", "cleanup_failed"),
         allow_null=True,
         required=False,
     )
@@ -1315,3 +1315,29 @@ class HarnessJobReadSerializer(serializers.Serializer):
     consumption = HarnessConsumptionSerializer(required=False, allow_null=True)
     usage_limit = serializers.JSONField(required=False, allow_null=True)
     versioning = HarnessVersioningFlagsSerializer(required=False)
+
+
+class RunStopSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=("requested", "confirmed", "unconfirmed", "cleanup_failed"),
+        help_text="requested until the agent's side is seen to stop, confirmed once it"
+        " is, unconfirmed when the provider check gave up, cleanup_failed when it"
+        " stayed unverified for 10 minutes.",
+    )
+    kind = serializers.ChoiceField(
+        choices=("sandbox", "provider", "endpoint"),
+        help_text="How a stop can be confirmed: our sandbox, the provider's calls, or"
+        " never for an agent at its own URL.",
+    )
+    provider = serializers.CharField(allow_null=True)
+    requested_at = serializers.DateTimeField()
+    confirmed_at = serializers.DateTimeField(allow_null=True)
+    confirmed_by = serializers.ChoiceField(
+        choices=HostedHarnessJob.CancelConfirmation.choices, allow_null=True
+    )
+    reason = serializers.ChoiceField(
+        choices=("no_key", "no_target", "no_calls", "too_many_calls"),
+        allow_null=True,
+        help_text="Why the provider could not be checked, when confirmed_by is"
+        " provider_unchecked.",
+    )

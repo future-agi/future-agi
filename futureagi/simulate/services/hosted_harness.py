@@ -1798,6 +1798,8 @@ def rerun_calls_in_run(
         job.terminal_at = None
         job.cancel_requested_at = None
         job.cancel_reason = None
+        job.cancel_confirmed_at = None
+        job.cancel_confirmed_by = ""
         job.save(
             update_fields=[
                 "payload",
@@ -1807,6 +1809,8 @@ def rerun_calls_in_run(
                 "terminal_at",
                 "cancel_requested_at",
                 "cancel_reason",
+                "cancel_confirmed_at",
+                "cancel_confirmed_by",
                 "updated_at",
             ]
         )
@@ -2337,6 +2341,8 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
             return locked
         locked.cancel_requested_at = timezone.now()
         locked.cancel_reason = reason
+        locked.cancel_confirmed_at = None
+        locked.cancel_confirmed_by = ""
         locked.state = HostedHarnessJob.State.CLEANING_UP
         # State and stage are both part of the public read model. Leaving the
         # previous authoring stage here makes a successful cancel request look
@@ -2346,6 +2352,8 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
             update_fields=[
                 "cancel_requested_at",
                 "cancel_reason",
+                "cancel_confirmed_at",
+                "cancel_confirmed_by",
                 "state",
                 "current_stage",
                 "updated_at",

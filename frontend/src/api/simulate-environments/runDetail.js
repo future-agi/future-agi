@@ -221,7 +221,9 @@ export function useRunDetail(
                 : summary?.outcomes?.passed > 0
                   ? "passed"
                   : "failed",
-      runState: runStateFor(execution.status),
+      runState: runStateFor(execution.status, execution.stop),
+      stop: execution.stop ?? null,
+      voice: execution.agent_type === "voice",
       stoppable: STOPPABLE_EXECUTION_STATUSES.has(execution.status),
       // Evals can only be graded again once the execution is `completed`.
       executionStatus: execution.status ?? null,

@@ -110559,6 +110559,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           minLength: 1,
         },
+        cancel_requested_at: {
+          title: "Cancel requested at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        cancel_confirmed_at: {
+          title: "Cancel confirmed at",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        cancel_confirmed_by: {
+          title: "Cancel confirmed by",
+          type: "string",
+          enum: [
+            "sandbox_absent",
+            "provider_call_ended",
+            "cleanup_failed",
+            "provider_call_open",
+            "provider_unchecked",
+            "unchecked_no_key",
+            "unchecked_no_target",
+            "unchecked_no_calls",
+            "unchecked_too_many_calls",
+          ],
+          "x-nullable": true,
+        },
+        cancel_status: {
+          title: "Cancel status",
+          type: "string",
+          enum: ["requested", "confirmed", "unconfirmed", "cleanup_failed"],
+          "x-nullable": true,
+        },
         failure: {
           title: "Failure",
           type: "object",
@@ -119222,6 +119256,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           minLength: 1,
           "x-nullable": true,
         },
+        stop: {
+          $ref: "#/definitions/RunStop",
+        },
         selected_scenario_keys: {
           type: "array",
           items: {
@@ -119772,6 +119809,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Agent differs",
           type: "boolean",
           readOnly: true,
+        },
+        stop: {
+          $ref: "#/definitions/RunStop",
         },
       },
     },
@@ -137641,6 +137681,78 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
       },
+    },
+    RunStop: {
+      description:
+        "The run's Stop and how far it got confirmed; null for a run never stopped.",
+      required: [
+        "status",
+        "kind",
+        "provider",
+        "requested_at",
+        "confirmed_at",
+        "confirmed_by",
+        "reason",
+      ],
+      type: "object",
+      properties: {
+        status: {
+          title: "Status",
+          description:
+            "requested until the agent's side is seen to stop, confirmed once it is, unconfirmed when the provider check gave up, cleanup_failed when it stayed unverified for 10 minutes.",
+          type: "string",
+          enum: ["requested", "confirmed", "unconfirmed", "cleanup_failed"],
+        },
+        kind: {
+          title: "Kind",
+          description:
+            "How a stop can be confirmed: our sandbox, the provider's calls, or never for an agent at its own URL.",
+          type: "string",
+          enum: ["sandbox", "provider", "endpoint"],
+        },
+        provider: {
+          title: "Provider",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        requested_at: {
+          title: "Requested at",
+          type: "string",
+          format: "date-time",
+        },
+        confirmed_at: {
+          title: "Confirmed at",
+          type: "string",
+          format: "date-time",
+          "x-nullable": true,
+        },
+        confirmed_by: {
+          title: "Confirmed by",
+          type: "string",
+          enum: [
+            "sandbox_absent",
+            "provider_call_ended",
+            "cleanup_failed",
+            "provider_call_open",
+            "provider_unchecked",
+            "unchecked_no_key",
+            "unchecked_no_target",
+            "unchecked_no_calls",
+            "unchecked_too_many_calls",
+          ],
+          "x-nullable": true,
+        },
+        reason: {
+          title: "Reason",
+          description:
+            "Why the provider could not be checked, when confirmed_by is provider_unchecked.",
+          type: "string",
+          enum: ["no_key", "no_target", "no_calls", "too_many_calls"],
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
     },
     RunSummary: {
       required: [

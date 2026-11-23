@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
+  AlertTitle,
   Box,
   Stack,
   Typography,
@@ -38,6 +39,7 @@ import {
 
 import SectionCard from "../../../components/SectionCard";
 import StatusChip from "../StatusChip";
+import { stopLiveLineOf, stopNoteOf, stopTipOf } from "../runStop";
 import StopRunControl from "../StopRunControl";
 import AgentDiffersTag from "../../run/AgentDiffersTag";
 import AddEvaluationDrawer from "../../evals/AddEvaluationDrawer";
@@ -176,6 +178,7 @@ export default function RunDetail({
   // finish. Stop simulation is the exception and stays in its own control.
   const live =
     identity?.status === "running" || identity?.status === "cancelling";
+  const stopNotice = stopNoticeOf(identity, live);
   // A finished run whose failures include cases an evidence import added offers
   // Run Epoch on them; the launch form reads the same cached options.
   const { options: fixOptions } = useFixLaunchOptions(executionId, {
@@ -312,7 +315,9 @@ export default function RunDetail({
                 environmentVersion={identity.environmentVersion}
               />
             )}
-            {status && <StatusChip status={status} />}
+            {status && (
+              <StatusChip status={status} tip={stopTipOf(identity?.stop)} />
+            )}
             {!fixRun && (
               <StopRunControl
                 executionId={executionId}
@@ -330,6 +335,28 @@ export default function RunDetail({
             {startedLabel ? ` · started ${startedLabel}` : ""}
             {lastResume ? ` · resumed ${fToNow(lastResume.at)}` : ""}
           </Typography>
+          {stopNotice && (
+            <Alert
+              severity={stopNotice.severity}
+              sx={{ mt: 1 }}
+              data-testid="run-stop-notice"
+            >
+              {stopNotice.title && <AlertTitle>{stopNotice.title}</AlertTitle>}
+              {stopNotice.body}
+              {stopNotice.action && (
+                <Link
+                  component={RouterLink}
+                  href={paths.dashboard.simulate.environments.workspaceTab(
+                    env.id,
+                    stopNotice.action.tab,
+                  )}
+                  sx={{ display: "block", mt: 0.5 }}
+                >
+                  {stopNotice.action.label}
+                </Link>
+              )}
+            </Alert>
+          )}
           {identity?.buildNotice && (
             <Alert
               severity="warning"
@@ -696,3 +723,17 @@ RunDetail.propTypes = {
   runStarting: PropTypes.bool,
   creditBanner: PropTypes.node,
 };
+
+function stopNoticeOf(identity, live) {
+  const stop = identity?.stop;
+  if (!stop) return null;
+  const voice = Boolean(identity?.voice);
+  if (live) {
+    return {
+      severity: "info",
+      title: null,
+      body: stopLiveLineOf(stop, { voice }),
+    };
+  }
+  return stopNoteOf(stop, { voice });
+}

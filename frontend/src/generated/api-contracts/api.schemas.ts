@@ -23239,6 +23239,31 @@ export interface HarnessJobInfoApi {
   test_execution_id: string;
 }
 
+export type HarnessJobStatusApiCancelConfirmedBy =
+  (typeof HarnessJobStatusApiCancelConfirmedBy)[keyof typeof HarnessJobStatusApiCancelConfirmedBy];
+
+export const HarnessJobStatusApiCancelConfirmedBy = {
+  sandbox_absent: "sandbox_absent",
+  provider_call_ended: "provider_call_ended",
+  cleanup_failed: "cleanup_failed",
+  provider_call_open: "provider_call_open",
+  provider_unchecked: "provider_unchecked",
+  unchecked_no_key: "unchecked_no_key",
+  unchecked_no_target: "unchecked_no_target",
+  unchecked_no_calls: "unchecked_no_calls",
+  unchecked_too_many_calls: "unchecked_too_many_calls",
+} as const;
+
+export type HarnessJobStatusApiCancelStatus =
+  (typeof HarnessJobStatusApiCancelStatus)[keyof typeof HarnessJobStatusApiCancelStatus];
+
+export const HarnessJobStatusApiCancelStatus = {
+  requested: "requested",
+  confirmed: "confirmed",
+  unconfirmed: "unconfirmed",
+  cleanup_failed: "cleanup_failed",
+} as const;
+
 export type HarnessJobStatusApiFailure = { [key: string]: unknown };
 
 export interface HarnessJobStatusApi {
@@ -23256,6 +23281,12 @@ export interface HarnessJobStatusApi {
   total_scenarios: number;
   /** @minLength 1 */
   deadline_at: string;
+  /** @minLength 1 */
+  cancel_requested_at?: string;
+  /** @minLength 1 */
+  cancel_confirmed_at?: string;
+  cancel_confirmed_by?: HarnessJobStatusApiCancelConfirmedBy;
+  cancel_status?: HarnessJobStatusApiCancelStatus;
   failure: HarnessJobStatusApiFailure;
 }
 
@@ -27131,6 +27162,76 @@ export const TestExecutionItemResponseApiOutcomeStatus = {
   no_score: "no_score",
 } as const;
 
+/**
+ * requested until the agent's side is seen to stop, confirmed once it is, unconfirmed when the provider check gave up, cleanup_failed when it stayed unverified for 10 minutes.
+ */
+export type RunStopApiStatus =
+  (typeof RunStopApiStatus)[keyof typeof RunStopApiStatus];
+
+export const RunStopApiStatus = {
+  requested: "requested",
+  confirmed: "confirmed",
+  unconfirmed: "unconfirmed",
+  cleanup_failed: "cleanup_failed",
+} as const;
+
+/**
+ * How a stop can be confirmed: our sandbox, the provider's calls, or never for an agent at its own URL.
+ */
+export type RunStopApiKind =
+  (typeof RunStopApiKind)[keyof typeof RunStopApiKind];
+
+export const RunStopApiKind = {
+  sandbox: "sandbox",
+  provider: "provider",
+  endpoint: "endpoint",
+} as const;
+
+export type RunStopApiConfirmedBy =
+  (typeof RunStopApiConfirmedBy)[keyof typeof RunStopApiConfirmedBy];
+
+export const RunStopApiConfirmedBy = {
+  sandbox_absent: "sandbox_absent",
+  provider_call_ended: "provider_call_ended",
+  cleanup_failed: "cleanup_failed",
+  provider_call_open: "provider_call_open",
+  provider_unchecked: "provider_unchecked",
+  unchecked_no_key: "unchecked_no_key",
+  unchecked_no_target: "unchecked_no_target",
+  unchecked_no_calls: "unchecked_no_calls",
+  unchecked_too_many_calls: "unchecked_too_many_calls",
+} as const;
+
+/**
+ * Why the provider could not be checked, when confirmed_by is provider_unchecked.
+ */
+export type RunStopApiReason =
+  (typeof RunStopApiReason)[keyof typeof RunStopApiReason];
+
+export const RunStopApiReason = {
+  no_key: "no_key",
+  no_target: "no_target",
+  no_calls: "no_calls",
+  too_many_calls: "too_many_calls",
+} as const;
+
+/**
+ * The run's Stop and how far it got confirmed; null for a run never stopped.
+ */
+export interface RunStopApi {
+  /** requested until the agent's side is seen to stop, confirmed once it is, unconfirmed when the provider check gave up, cleanup_failed when it stayed unverified for 10 minutes. */
+  status: RunStopApiStatus;
+  /** How a stop can be confirmed: our sandbox, the provider's calls, or never for an agent at its own URL. */
+  kind: RunStopApiKind;
+  /** @minLength 1 */
+  provider: string;
+  requested_at: string;
+  confirmed_at: string;
+  confirmed_by: RunStopApiConfirmedBy;
+  /** Why the provider could not be checked, when confirmed_by is provider_unchecked. */
+  reason: RunStopApiReason;
+}
+
 export interface TestExecutionItemResponseApi {
   /** Comparable trials that passed. */
   trials_passed: number;
@@ -27199,6 +27300,7 @@ export interface TestExecutionItemResponseApi {
   suite_version?: RunVersionLabelApi | null;
   pinned_agent_version?: RunVersionLabelApi | null;
   readonly agent_differs?: boolean;
+  stop?: RunStopApi;
 }
 
 export interface RunTestExecutionsResponseApi {
@@ -30382,6 +30484,7 @@ export interface RunExecutionApi {
    * @minLength 1
    */
   build_notice?: string;
+  stop?: RunStopApi;
   selected_scenario_keys?: string[];
   /** @minimum 1 */
   trials?: number;

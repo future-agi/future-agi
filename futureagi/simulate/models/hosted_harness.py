@@ -34,6 +34,15 @@ class HostedHarnessJob(BaseModel):
         SANDBOX_ABSENT = "sandbox_absent", "Sandbox absent"
         PROVIDER_CALL_ENDED = "provider_call_ended", "Provider call ended"
         CLEANUP_FAILED = "cleanup_failed", "Cleanup failed"
+        PROVIDER_CALL_OPEN = "provider_call_open", "Provider call still open"
+        PROVIDER_UNCHECKED = "provider_unchecked", "Provider calls not checked"
+        UNCHECKED_NO_KEY = "unchecked_no_key", "Not checked: no provider key"
+        UNCHECKED_NO_TARGET = "unchecked_no_target", "Not checked: no provider agent ID"
+        UNCHECKED_NO_CALLS = "unchecked_no_calls", "Not checked: no calls listed"
+        UNCHECKED_TOO_MANY_CALLS = (
+            "unchecked_too_many_calls",
+            "Not checked: more calls than one page",
+        )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(

@@ -50893,6 +50893,24 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
     queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
+    cancel_requested_at: zod.string().min(1).optional(),
+    cancel_confirmed_at: zod.string().min(1).optional(),
+    cancel_confirmed_by: zod
+      .enum([
+        "sandbox_absent",
+        "provider_call_ended",
+        "cleanup_failed",
+        "provider_call_open",
+        "provider_unchecked",
+        "unchecked_no_key",
+        "unchecked_no_target",
+        "unchecked_no_calls",
+        "unchecked_too_many_calls",
+      ])
+      .optional(),
+    cancel_status: zod
+      .enum(["requested", "confirmed", "unconfirmed", "cleanup_failed"])
+      .optional(),
     failure: zod.object({}).passthrough(),
   }),
   events: zod.array(
@@ -51912,6 +51930,24 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
     queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
+    cancel_requested_at: zod.string().min(1).optional(),
+    cancel_confirmed_at: zod.string().min(1).optional(),
+    cancel_confirmed_by: zod
+      .enum([
+        "sandbox_absent",
+        "provider_call_ended",
+        "cleanup_failed",
+        "provider_call_open",
+        "provider_unchecked",
+        "unchecked_no_key",
+        "unchecked_no_target",
+        "unchecked_no_calls",
+        "unchecked_too_many_calls",
+      ])
+      .optional(),
+    cancel_status: zod
+      .enum(["requested", "confirmed", "unconfirmed", "cleanup_failed"])
+      .optional(),
     failure: zod.object({}).passthrough(),
   }),
   events: zod.array(
@@ -52149,6 +52185,24 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     queued_scenarios: zod.number().optional(),
     total_scenarios: zod.number(),
     deadline_at: zod.string().min(1),
+    cancel_requested_at: zod.string().min(1).optional(),
+    cancel_confirmed_at: zod.string().min(1).optional(),
+    cancel_confirmed_by: zod
+      .enum([
+        "sandbox_absent",
+        "provider_call_ended",
+        "cleanup_failed",
+        "provider_call_open",
+        "provider_unchecked",
+        "unchecked_no_key",
+        "unchecked_no_target",
+        "unchecked_no_calls",
+        "unchecked_too_many_calls",
+      ])
+      .optional(),
+    cancel_status: zod
+      .enum(["requested", "confirmed", "unconfirmed", "cleanup_failed"])
+      .optional(),
     failure: zod.object({}).passthrough(),
   }),
   events: zod.array(
@@ -60163,6 +60217,42 @@ export const SimulateRunTestsExecutionsListResponse = zod.object({
           })
           .nullish(),
         agent_differs: zod.boolean().optional(),
+        stop: zod
+          .object({
+            status: zod
+              .enum(["requested", "confirmed", "unconfirmed", "cleanup_failed"])
+              .describe(
+                "requested until the agent's side is seen to stop, confirmed once it is, unconfirmed when the provider check gave up, cleanup_failed when it stayed unverified for 10 minutes.",
+              ),
+            kind: zod
+              .enum(["sandbox", "provider", "endpoint"])
+              .describe(
+                "How a stop can be confirmed: our sandbox, the provider's calls, or never for an agent at its own URL.",
+              ),
+            provider: zod.string().min(1),
+            requested_at: zod.string().datetime({ offset: true }),
+            confirmed_at: zod.string().datetime({ offset: true }),
+            confirmed_by: zod.enum([
+              "sandbox_absent",
+              "provider_call_ended",
+              "cleanup_failed",
+              "provider_call_open",
+              "provider_unchecked",
+              "unchecked_no_key",
+              "unchecked_no_target",
+              "unchecked_no_calls",
+              "unchecked_too_many_calls",
+            ]),
+            reason: zod
+              .enum(["no_key", "no_target", "no_calls", "too_many_calls"])
+              .describe(
+                "Why the provider could not be checked, when confirmed_by is provider_unchecked.",
+              ),
+          })
+          .optional()
+          .describe(
+            "The run's Stop and how far it got confirmed; null for a run never stopped.",
+          ),
       }),
     )
     .optional(),
@@ -65537,6 +65627,42 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       .optional()
       .describe(
         "Said when the run replayed a build without its environment's actors.",
+      ),
+    stop: zod
+      .object({
+        status: zod
+          .enum(["requested", "confirmed", "unconfirmed", "cleanup_failed"])
+          .describe(
+            "requested until the agent's side is seen to stop, confirmed once it is, unconfirmed when the provider check gave up, cleanup_failed when it stayed unverified for 10 minutes.",
+          ),
+        kind: zod
+          .enum(["sandbox", "provider", "endpoint"])
+          .describe(
+            "How a stop can be confirmed: our sandbox, the provider's calls, or never for an agent at its own URL.",
+          ),
+        provider: zod.string().min(1),
+        requested_at: zod.string().datetime({ offset: true }),
+        confirmed_at: zod.string().datetime({ offset: true }),
+        confirmed_by: zod.enum([
+          "sandbox_absent",
+          "provider_call_ended",
+          "cleanup_failed",
+          "provider_call_open",
+          "provider_unchecked",
+          "unchecked_no_key",
+          "unchecked_no_target",
+          "unchecked_no_calls",
+          "unchecked_too_many_calls",
+        ]),
+        reason: zod
+          .enum(["no_key", "no_target", "no_calls", "too_many_calls"])
+          .describe(
+            "Why the provider could not be checked, when confirmed_by is provider_unchecked.",
+          ),
+      })
+      .optional()
+      .describe(
+        "The run's Stop and how far it got confirmed; null for a run never stopped.",
       ),
     selected_scenario_keys: zod
       .array(zod.string().min(1))

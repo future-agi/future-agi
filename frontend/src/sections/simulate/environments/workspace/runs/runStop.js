@@ -1,0 +1,124 @@
+export const PROVIDER_CHECK_MIN = 5;
+export const CLEANUP_FAILED_MIN = 10;
+
+const STOP_CHIPS = {
+  requested: "stop_requested",
+  confirmed: "stopped",
+  unconfirmed: "stop_unconfirmed",
+  cleanup_failed: "cleanup_failed",
+};
+
+export const STOP_CHIP_STATUSES = new Set(Object.values(STOP_CHIPS));
+
+export const stopChipOf = (stop) => STOP_CHIPS[stop?.status] || null;
+
+const clock = (iso) =>
+  iso
+    ? new Date(iso).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "";
+
+const providerOf = (stop) => stop?.provider || "the provider";
+
+const UNCHECKED_REASONS = {
+  no_key: (P) => `no ${P} API key`,
+  no_target: (P) => `no ${P} agent ID on the connection`,
+  no_calls: (P) => `${P} listed no calls for this run`,
+  too_many_calls: (P) => `${P} listed more calls than it returns at once`,
+  unreachable: (P) => `${P} could not be reached`,
+};
+
+export const uncheckedReasonOf = (stop) => {
+  const reason = UNCHECKED_REASONS[stop?.reason];
+  return reason ? reason(providerOf(stop)) : null;
+};
+
+const KEY_ACTION = { label: "Add the key in Settings", tab: "settings" };
+
+export const stopLiveLineOf = (stop, { voice = false } = {}) => {
+  if (!stop) return null;
+  const items = voice ? "calls" : "trials";
+  const P = providerOf(stop);
+  switch (stop.status) {
+    case "requested":
+      if (stop.kind === "provider")
+        return `Stop requested: waiting for ${P} to confirm the calls in progress ended. No new calls start.`;
+      if (stop.kind === "endpoint")
+        return "Stop requested: we stopped sending and watching. Your service may still finish what it already received, and we can't see it stop.";
+      return `Stop requested: ${items} in progress are finishing up. No new ones start.`;
+    case "confirmed":
+      return stop.kind === "provider"
+        ? `Stopped: ${P} confirmed every call ended. Finished calls are kept.`
+        : `Stopped: cleanup finished. Finished ${items} are kept.`;
+    case "unconfirmed":
+      return stop.confirmed_by === "provider_unchecked"
+        ? `Stop not confirmed: we couldn't check with ${P} that the calls ended${uncheckedReasonOf(stop) ? ` (${uncheckedReasonOf(stop)})` : ""}. Finished calls are kept.`
+        : `Stop not confirmed: ${P} still listed a call as open after ${PROVIDER_CHECK_MIN} minutes. Finished calls are kept.`;
+    case "cleanup_failed":
+      return `Cleanup failed: the stop wasn't confirmed after ${CLEANUP_FAILED_MIN} minutes. Finished ${items} are kept.`;
+    default:
+      return null;
+  }
+};
+
+export const stopNoteOf = (stop, { voice = false } = {}) => {
+  if (!stop || stop.status === "confirmed") return null;
+  const P = providerOf(stop);
+  const items = voice ? "calls" : "trials";
+  const at = clock(stop.requested_at);
+  if (stop.status === "requested" && stop.kind === "endpoint")
+    return {
+      severity: "info",
+      title: `Stop requested at ${at} · can't be confirmed`,
+      body: `This agent runs at its own URL, so we can't see it stop. We stopped sending and watching; your service may still have finished requests it already received. Finished ${items} are kept.`,
+    };
+  if (stop.status === "requested")
+    return {
+      severity: "info",
+      title: `Stop requested at ${at} · waiting for confirmation`,
+      body:
+        stop.kind === "provider"
+          ? `Checking with ${P} that every call of this run ended (up to ${PROVIDER_CHECK_MIN} minutes).`
+          : "Waiting for the sandbox to be verified gone.",
+    };
+  if (
+    stop.status === "unconfirmed" &&
+    stop.confirmed_by === "provider_unchecked"
+  ) {
+    const reason = uncheckedReasonOf(stop);
+    return {
+      severity: "warning",
+      title: `Stop requested at ${at} · ${P} didn't confirm`,
+      body: `We couldn't check with ${P} that every call of this run ended${reason ? ` (${reason})` : ""}. An open call keeps running and ${P} charges for it, so check your ${P} dashboard. Finished calls are kept.`,
+      action: stop.reason === "no_key" ? KEY_ACTION : null,
+    };
+  }
+  if (stop.status === "unconfirmed")
+    return {
+      severity: "warning",
+      title: `Stop requested at ${at} · ${P} didn't confirm`,
+      body: `${P} still listed a call from this run as open after ${PROVIDER_CHECK_MIN} minutes. An open call keeps running and ${P} charges for it, so check your ${P} dashboard. Finished calls are kept.`,
+    };
+  return {
+    severity: "error",
+    title: `Stop requested at ${at} · cleanup failed`,
+    body:
+      stop.kind === "provider"
+        ? `The stop wasn't confirmed after ${CLEANUP_FAILED_MIN} minutes. A call may still be open on ${P}, and ${P} charges for it, so check your ${P} dashboard. Finished calls are kept.`
+        : `The stop wasn't confirmed after ${CLEANUP_FAILED_MIN} minutes, so the agent may still be running. Finished ${items} are kept.`,
+  };
+};
+
+export const stopTipOf = (stop) => {
+  if (!stop) return "";
+  if (stop.status !== "confirmed") return stopNoteOf(stop)?.title || "";
+  const requested = `Stop requested at ${clock(stop.requested_at)}`;
+  const confirmed = clock(stop.confirmed_at);
+  if (stop.confirmed_by !== "provider_call_ended")
+    return `${requested} · sandbox verified gone at ${confirmed}`;
+  return stop.kind === "provider"
+    ? `${requested} · ${providerOf(stop)} confirmed every call ended at ${confirmed}`
+    : `${requested} · ${providerOf(stop)} room verified gone at ${confirmed}`;
+};
