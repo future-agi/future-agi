@@ -573,7 +573,7 @@ class TestCheckIntegrationErrorAlerts:
         )
         seen = {}
 
-        def record(conn):
+        def record(conn, *_):
             seen["at_send"] = IntegrationConnection.no_workspace_objects.get(
                 id=conn.id
             ).last_error_notified_at
@@ -614,6 +614,28 @@ class TestCheckIntegrationErrorAlerts:
 
         mock_send.assert_called_once()
 
+    def test_admins_are_looked_up_once_per_connection(self, error_connection):
+        """review-factory P3: the reachable admins are resolved once and
+        handed to the sender, not looked up again for the send."""
+        from django.core import mail
+
+        from integrations.temporal import activities
+
+        IntegrationConnection.no_workspace_objects.filter(
+            id=error_connection.id
+        ).update(
+            updated_at=datetime.now(UTC) - timedelta(hours=2),
+            last_error_notified_at=None,
+        )
+        mail.outbox = []
+        with patch.object(
+            activities, "_admin_emails", wraps=activities._admin_emails
+        ) as lookups:
+            check_integration_error_alerts()
+
+        assert lookups.call_count == 1
+        assert len(mail.outbox) == 1
+
     @patch("integrations.temporal.activities._send_error_notification")
     def test_failed_send_leaves_a_newer_claim_alone(self, mock_send, error_connection):
         """Review round 2: a slow run that fails after another run re-claimed
@@ -626,7 +648,7 @@ class TestCheckIntegrationErrorAlerts:
         )
         newer = datetime.now(UTC) + timedelta(minutes=5)
 
-        def another_run_claims_then_this_send_fails(conn):
+        def another_run_claims_then_this_send_fails(conn, *_):
             IntegrationConnection.no_workspace_objects.filter(id=conn.id).update(
                 last_error_notified_at=newer
             )

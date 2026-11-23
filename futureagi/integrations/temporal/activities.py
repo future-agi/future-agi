@@ -946,7 +946,8 @@ def check_integration_error_alerts():
     )
 
     for conn in connections_in_error:
-        if not _reachable_admin_emails(conn):
+        recipients = _reachable_admin_emails(conn)
+        if not recipients:
             # Nobody to tell: no owner or admin, or every one of them has
             # unsubscribed from integration error emails. Leave the
             # connection out of this run instead of claiming a send that
@@ -966,7 +967,7 @@ def check_integration_error_alerts():
         if not claimed:
             continue
         try:
-            _send_error_notification(conn)
+            _send_error_notification(conn, recipients)
         except Exception as e:
             # email_helper raises only when no admin was reached, so release
             # the claim and let the next run retry.
@@ -1004,12 +1005,14 @@ def _reachable_admin_emails(connection) -> list[str]:
     ]
 
 
-def _send_error_notification(connection):
-    """Send email notification for a connection in error state."""
+def _send_error_notification(connection, recipient_emails=None):
+    """Send email notification for a connection in error state, to the admin
+    addresses already resolved by the caller, else to every admin."""
     from tfc.utils.email import email_helper
     from tfc.utils.email_unsubscribe import INTEGRATION_ERRORS
 
-    recipient_emails = _admin_emails(connection)
+    if recipient_emails is None:
+        recipient_emails = _admin_emails(connection)
     if not recipient_emails:
         return
 

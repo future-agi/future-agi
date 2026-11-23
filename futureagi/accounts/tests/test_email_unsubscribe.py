@@ -333,30 +333,57 @@ class TestReviewRound2Storage:
     """Rick round 2: opt-outs survive config rewrites and links bind to the
     account they were sent to."""
 
-    def test_stale_config_save_keeps_the_opt_out(self, user):
-        from accounts.models.user import User
+    @staticmethod
+    def _sign_in(api_client, user):
+        """A real access-token session whose user object the auth cache holds,
+        as it does for every signed-in browser tab."""
+        from datetime import timedelta
 
-        # A user object cached before the opt-out, as the auth cache holds one.
-        stale = User.objects.get(pk=user.pk)
-        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
+        from django.utils import timezone
 
-        stale.config["currentOrganizationId"] = "org-2"  # an org switch
-        stale.save(update_fields=["config"])
-        stale.save()  # and a full save from the same stale copy
+        from accounts.authentication import generate_encrypted_message
+        from accounts.models.auth_token import AuthToken, AuthTokenType
 
-        user.refresh_from_db()
-        assert user.config["currentOrganizationId"] == "org-2"
-        assert user.config[eu.USER_CONFIG_KEY] == [eu.INTEGRATION_ERRORS]
+        row = AuthToken.objects.create(
+            user=user,
+            auth_type=AuthTokenType.ACCESS.value,
+            is_active=True,
+            last_used_at=timezone.now() - timedelta(minutes=1),
+        )
+        token = generate_encrypted_message({"user_id": str(user.pk), "id": str(row.pk)})
+        api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        assert api_client.get("/accounts/organizations/current/").status_code == 200
+        return api_client
+
+    @staticmethod
+    def _switch_org(session, user):
+        response = session.post(
+            "/accounts/organizations/",
+            {"organization_id": str(user.organization_id)},
+            format="json",
+        )
+        assert response.status_code == 200, response.content
+
+    def test_org_switch_in_a_signed_in_session_keeps_the_opt_out(
+        self, api_client, user, django_capture_on_commit_callbacks
+    ):
+        session = self._sign_in(api_client, user)
+        with django_capture_on_commit_callbacks(execute=True):
+            eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
+
+        self._switch_org(session, user)
+
         assert eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
 
-    def test_stale_config_save_keeps_a_resubscribe(self, user):
-        from accounts.models.user import User
-
+    def test_org_switch_in_a_signed_in_session_keeps_a_resubscribe(
+        self, api_client, user, django_capture_on_commit_callbacks
+    ):
         eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
-        stale = User.objects.get(pk=user.pk)
-        eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), True)
+        session = self._sign_in(api_client, user)
+        with django_capture_on_commit_callbacks(execute=True):
+            eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), True)
 
-        stale.save(update_fields=["config"])
+        self._switch_org(session, user)
 
         assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
 
@@ -667,3 +694,21 @@ def test_link_for_a_deleted_account_says_so(api_client, user):
 
     assert b"Account deleted" in page
     assert b"Account deleted" in response.content
+
+
+@pytest.mark.django_db
+def test_recipient_reload_failure_stays_inside_the_alert_email(monitor):
+    """review-factory F2: a database error while re-reading the recipients
+    must not escape and retry the whole monitor task."""
+    from django.db import OperationalError
+
+    from tracer.models.monitor import UserAlertMonitor
+    from tracer.utils.monitor import _send_alert_email
+
+    mail.outbox = []
+    with mock.patch.object(
+        UserAlertMonitor, "refresh_from_db", side_effect=OperationalError("blip")
+    ):
+        _send_alert_email(monitor, "Errors above threshold", "critical")
+
+    assert mail.outbox == []

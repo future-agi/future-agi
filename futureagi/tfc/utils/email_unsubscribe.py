@@ -302,9 +302,21 @@ def set_subscribed(link: Link, subscribed: bool) -> str:
             optouts.append(link.category)
         config[USER_CONFIG_KEY] = sorted(optouts)
         user.config = config
-        user._writes_email_optouts = True
         user.save(update_fields=["config"])
+        transaction.on_commit(lambda: _forget_cached_sessions(user.pk))
     return CHANGED
+
+
+def _forget_cached_sessions(user_id) -> None:
+    """Drop the user objects the auth cache holds for this account.
+
+    Every authenticated request reuses a user object cached at login, and an
+    org or workspace switch saves that object's whole ``config``. A copy
+    cached before this opt-out change would write the old opt-outs back; with
+    the cache cleared the next request loads the account fresh."""
+    from accounts.views.workspace_management import clear_user_redis_cache
+
+    clear_user_redis_cache(user_id)
 
 
 def _remove_monitor_recipient(link: Link) -> str:

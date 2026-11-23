@@ -146,6 +146,13 @@ def _send_alert_email(monitor: UserAlertMonitor, message: str, alert_type: str) 
             monitor.refresh_from_db(fields=["notification_emails"])
     except UserAlertMonitor.DoesNotExist:
         return
+    except Exception:
+        # Best effort, like the Slack and webhook senders: an escape here
+        # would retry the whole monitor task and fire its alert twice.
+        logger.exception(
+            "monitor_alert_recipient_reload_failed", monitor_id=str(monitor.id)
+        )
+        return
     if not monitor.notification_emails:
         return
     try:

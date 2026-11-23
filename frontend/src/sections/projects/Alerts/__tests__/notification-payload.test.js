@@ -49,4 +49,16 @@ describe("notificationPayload", () => {
     expect(payload.notification_emails).toEqual([]);
     expect(payload.slack_webhook_url).toBe("https://hooks.example");
   });
+
+  it("clears recipients and keeps the webhook when the alert moves to a webhook", () => {
+    const payload = notificationPayload(
+      { method: "webhook", webhook: { url: "https://hooks.example/alerts" } },
+      email(["oncall@example.com"]),
+      true,
+    );
+
+    expect(payload.notification_emails).toEqual([]);
+    expect(payload.webhook_url).toBe("https://hooks.example/alerts");
+    expect(payload.slack_webhook_url).toBe("");
+  });
 });
