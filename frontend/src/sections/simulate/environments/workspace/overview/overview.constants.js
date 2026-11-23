@@ -6,9 +6,17 @@ import {
 
 // Every copy string the Overview surface renders.
 export const OVERVIEW_COPY = {
+  worldKind: {
+    label: "Simulated",
+    short: ": tool calls are answered by this world, inside our sandbox",
+    tip: "Tool calls are answered by this environment's world in our sandbox.",
+  },
+  scenarioPacks: (packs, scenarios) =>
+    `${packs} ${packs === 1 ? "pack" : "packs"} · ${scenarios} ${scenarios === 1 ? "scenario" : "scenarios"}`,
   manageVersionsSubtitle:
     "Manage the agent versions running against this environment",
   facts: {
+    scenarioPacks: "Scenario packs",
     channel: "Channel",
     domain: "Domain",
     connector: "Connector",
@@ -44,13 +52,10 @@ export const OVERVIEW_COPY = {
   dependsBuilt: "Built and torn down with the environment",
   dependsRuntime: "Services the agent calls",
   seedBlurb: (rows) =>
-    `${rows.toLocaleString()} ${rows === 1 ? "row fills" : "rows fill"} this environment before your agent arrives: the world it actually works in. Rebuilt for every task, so nothing carries over.`,
+    `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"}, rebuilt fresh for every task.`,
   usedBy: (name) => `used by ${Array.isArray(name) ? name.join(", ") : name}`,
+  moreNames: (n) => `+${n} more`,
   startingTitle: "Starting data",
-  startingSubtitle:
-    "Records the build writes into the world before your agent arrives",
-  startingRows: (n) =>
-    `${n.toLocaleString()} ${n === 1 ? "record" : "records"}`,
   startingShow: "Show the starting data",
   startingHide: "Hide the starting data",
   startingFile: "base_environment",
@@ -104,6 +109,22 @@ export const DIRECTION_LABEL = { inbound: "Inbound", outbound: "Outbound" };
 
 export const AGENT_SUMMARY_COPY = {
   label: "Test subject",
+  tests: "Tests",
+  more: "More agent actions",
+  commitAt: (ref, sha) =>
+    [ref, sha && `@ ${sha.slice(0, 7)}`].filter(Boolean).join(" "),
+  sourceKind: {
+    github: "GitHub",
+    archive: "Uploaded folder",
+    vapi: "Vapi",
+    retell: "Retell",
+    livekit: "LiveKit",
+    phone: "Phone",
+  },
+  simulated: "Simulated",
+  connectOnly: "Answered by your systems",
+  defaultPinned: (label) => `default ${label}`,
+  defaultProduction: "default: production",
   viewAgent: "View agent",
   versions: (n) => `${n} ${n === 1 ? "version" : "versions"}`,
   connected: "Connected",

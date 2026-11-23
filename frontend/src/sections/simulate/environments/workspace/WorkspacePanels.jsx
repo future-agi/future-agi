@@ -203,7 +203,6 @@ export default function WorkspacePanels({
             agentConnected={!!envState?.agent}
             locked={locked}
             counts={overviewCounts}
-            latestRun={runs[0]}
             backedWorld={overviewWorld}
             onFork={onFork}
             buildMode={buildMode}

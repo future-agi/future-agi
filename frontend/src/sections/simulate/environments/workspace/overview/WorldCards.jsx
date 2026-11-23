@@ -1,7 +1,9 @@
 import PropTypes from "prop-types";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { useState } from "react";
 import { Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import SectionCard from "../../components/SectionCard";
 import MockBadge from "../../components/MockBadge";
@@ -41,37 +43,35 @@ export function SeededDataCard({ env }) {
             direction="row"
             alignItems="center"
             spacing={2}
-            sx={{ px: 1.5, minHeight: ROW_HEIGHT.twoLine }}
+            sx={{ px: 2.5, py: 1 }}
           >
             <Iconify
               icon="solar:database-linear"
-              width={15}
-              sx={{ color: "text.subtitle", flexShrink: 0 }}
+              width={16}
+              sx={{ color: "text.tertiary", flexShrink: 0 }}
             />
             <Box flex={1} minWidth={0}>
               <Typography
-                sx={{
-                  typography: "s1",
-                  fontWeight: "fontWeightRegular",
-                  fontFamily: MONO,
-                }}
+                sx={{ typography: "s2", fontWeight: 500, fontFamily: MONO }}
               >
                 {t.name}
               </Typography>
               {t.note && (
-                <Typography
-                  noWrap
-                  sx={{ typography: "s3", color: "text.subtitle" }}
-                >
-                  {t.note}
-                </Typography>
+                <OverflowTooltip title={t.note}>
+                  <Typography
+                    noWrap
+                    sx={{ typography: "s3", color: "text.tertiary" }}
+                  >
+                    {t.note}
+                  </Typography>
+                </OverflowTooltip>
               )}
             </Box>
             {hasRows(t) && (
               <Typography
                 sx={{
-                  typography: "s1",
-                  fontWeight: "fontWeightMedium",
+                  typography: "s2",
+                  fontWeight: 600,
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
@@ -85,6 +85,43 @@ export function SeededDataCard({ env }) {
   );
 }
 SeededDataCard.propTypes = { env: ENV_SHAPE.isRequired };
+
+const USED_BY_SHOWN = 6;
+
+function UsedBy({ names }) {
+  const list = Array.isArray(names) ? names : [names];
+  const shown = list.slice(0, USED_BY_SHOWN);
+  const rest = list.slice(USED_BY_SHOWN);
+  return (
+    <>
+      {OVERVIEW_COPY.usedBy(shown)}
+      {rest.length > 0 && (
+        <CustomTooltip show arrow size="small" title={rest.join(", ")}>
+          <Box
+            component="span"
+            tabIndex={0}
+            sx={{
+              ml: 0.5,
+              color: "text.secondary",
+              textDecoration: "underline",
+              textDecorationStyle: "dotted",
+              cursor: "default",
+            }}
+          >
+            {OVERVIEW_COPY.moreNames(rest.length)}
+          </Box>
+        </CustomTooltip>
+      )}
+    </>
+  );
+}
+
+UsedBy.propTypes = {
+  names: PropTypes.oneOfType([
+    PropTypes.string,
+    PropTypes.arrayOf(PropTypes.string),
+  ]).isRequired,
+};
 
 const DEPENDENCY_SHAPE = PropTypes.arrayOf(
   PropTypes.shape({
@@ -107,11 +144,16 @@ export function DependsOnCard({ dependsOn, runtimeDependsOn }) {
       rows: runtimeDependsOn || [],
     },
   ].filter((group) => group.rows.length);
+  const split = groups.length > 1;
   return (
     <SectionCard
       dense
       title={OVERVIEW_COPY.dependsTitle}
-      subtitle={OVERVIEW_COPY.dependsSubtitle}
+      subtitle={
+        split
+          ? OVERVIEW_COPY.dependsSubtitle
+          : groups[0]?.label || OVERVIEW_COPY.dependsBuilt
+      }
     >
       {groups.length === 0 ? (
         <Box sx={{ p: 1.5 }}>
@@ -130,20 +172,22 @@ export function DependsOnCard({ dependsOn, runtimeDependsOn }) {
               borderColor: "divider",
             }}
           >
-            <Typography
-              sx={{
-                px: 1.5,
-                py: 0.75,
-                typography: "s3",
-                fontWeight: 500,
-                color: "text.tertiary",
-                bgcolor: "background.neutral",
-                borderBottom: "1px solid",
-                borderColor: "divider",
-              }}
-            >
-              {group.label}
-            </Typography>
+            {split && (
+              <Typography
+                sx={{
+                  px: 2.5,
+                  py: 0.75,
+                  typography: "s3",
+                  fontWeight: 500,
+                  color: "text.tertiary",
+                  bgcolor: "background.neutral",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                {group.label}
+              </Typography>
+            )}
             <DependencyRows rows={group.rows} />
           </Box>
         ))
@@ -164,23 +208,19 @@ function DependencyRows({ rows }) {
       }
     >
       {rows.map((d) => (
-        <Box key={d.name} sx={{ px: 1.5, py: 1.5 }}>
+        <Box key={d.name} sx={{ px: 2.5, py: 1 }}>
           <Stack direction="row" alignItems="center" spacing={1}>
             <Typography
-              sx={{
-                typography: "s1",
-                fontWeight: "fontWeightRegular",
-                fontFamily: MONO,
-              }}
+              sx={{ typography: "s2", fontWeight: 500, fontFamily: MONO }}
             >
               {d.name}
             </Typography>
-            <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
+            <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
               {d.kind}
             </Typography>
           </Stack>
           <Typography
-            sx={{ typography: "s1", color: "text.secondary", mt: 0.25 }}
+            sx={{ typography: "s2", color: "text.secondary", mt: 0.25 }}
           >
             {d.provides}
           </Typography>
@@ -188,13 +228,13 @@ function DependencyRows({ rows }) {
             <Typography
               sx={{
                 typography: "s3",
-                color: "text.subtitle",
+                color: "text.tertiary",
                 mt: 0.5,
                 fontFamily: MONO,
                 overflowWrap: "anywhere",
               }}
             >
-              {OVERVIEW_COPY.usedBy(d.usedBy)}
+              <UsedBy names={d.usedBy} />
             </Typography>
           )}
         </Box>
@@ -207,6 +247,10 @@ DependencyRows.propTypes = { rows: DEPENDENCY_SHAPE };
 export function StartingDataCard({ baseEnvironment }) {
   const [open, setOpen] = useState(false);
   const collections = startingCollections(baseEnvironment);
+  const totalRows = collections.reduce(
+    (total, c) => total + (Number(c.rows) || 0),
+    0,
+  );
   const code =
     typeof baseEnvironment === "string"
       ? baseEnvironment
@@ -214,8 +258,8 @@ export function StartingDataCard({ baseEnvironment }) {
   return (
     <SectionCard
       dense
-      title={OVERVIEW_COPY.startingTitle}
-      subtitle={OVERVIEW_COPY.startingSubtitle}
+      title={OVERVIEW_COPY.seededTitle}
+      subtitle={OVERVIEW_COPY.seedBlurb(totalRows)}
       action={
         <Button
           size="small"
@@ -241,16 +285,17 @@ export function StartingDataCard({ baseEnvironment }) {
               direction="row"
               alignItems="center"
               spacing={2}
-              sx={{ px: 1.5, minHeight: ROW_HEIGHT.default }}
+              sx={{ px: 2.5, py: 1 }}
             >
               <Iconify
                 icon="solar:database-linear"
-                width={15}
-                sx={{ color: "text.subtitle", flexShrink: 0 }}
+                width={16}
+                sx={{ color: "text.tertiary", flexShrink: 0 }}
               />
               <Typography
                 sx={{
-                  typography: "s1",
+                  typography: "s2",
+                  fontWeight: 500,
                   fontFamily: MONO,
                   flex: 1,
                   minWidth: 0,
@@ -260,12 +305,12 @@ export function StartingDataCard({ baseEnvironment }) {
               </Typography>
               <Typography
                 sx={{
-                  typography: "s3",
-                  color: "text.secondary",
+                  typography: "s2",
+                  fontWeight: 600,
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                {OVERVIEW_COPY.startingRows(c.rows)}
+                {(Number(c.rows) || 0).toLocaleString()}
               </Typography>
             </Stack>
           ))}

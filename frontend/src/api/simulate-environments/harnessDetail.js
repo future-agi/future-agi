@@ -199,6 +199,7 @@ export function harnessDetailToEnvironment(detail) {
     seed: derivedWorld.seed,
     evalPreset: contract?.chosen_evals || undefined,
     testSubject: overview.agent ?? null,
+    agentPolicy: overview.agent_policy ?? null,
     platform: {
       runTestId: overview.run?.run_test_id,
       testExecutionId: overview.run?.test_execution_id,

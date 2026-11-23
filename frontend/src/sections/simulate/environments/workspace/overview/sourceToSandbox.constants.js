@@ -7,6 +7,25 @@ export const MAP_COPY = {
   title: "How the world was built",
   subtitle:
     "Every derived fact carries where it was read from and what it became in the sandbox. A tool whose effect you set on the Contract tab shows here as confirmed.",
+  backedSubtitle:
+    "Where each tool, rule and store came from. The details are on World & tools and Contract.",
+  backedGroups: {
+    tools: "from the agent's code",
+    rules: "from the agent's prompt",
+    stores: "seeded by the build",
+  },
+  toolTarget: {
+    simulated: (writes) =>
+      writes
+        ? "Simulated · reads and writes the world"
+        : "Simulated · reads the world",
+    in_process: () => "Runs inside your agent",
+    unsupported: () =>
+      "Unsupported · reaches a system the world has no copy of",
+    unknown: () => "Where it runs is not known",
+  },
+  ruleTarget: "Checked in every run",
+  storesNotYet: "Seeded once the build writes the world.",
   readHead: "Read from source",
   sandboxHead: "In the sandbox world",
   needsAnswer: "Needs your answer",
@@ -17,7 +36,8 @@ export const MAP_COPY = {
     stores: { label: "Stores", hint: "from your fixtures" },
     actors: { label: "Actors", hint: "from the call-graph & prompt" },
   },
-  toolsRight: (n, toAnswer) => `${n} mapped${toAnswer ? ` · ${toAnswer} to answer` : ""}`,
+  toolsRight: (n, toAnswer) =>
+    `${n} mapped${toAnswer ? ` · ${toAnswer} to answer` : ""}`,
   rulesRight: (n) => `${n} mapped`,
   storesRight: (n) => `${n} mapped`,
   storesEmpty: "No stores seeded for this environment.",
@@ -27,8 +47,17 @@ export const MAP_COPY = {
     confirm: (label) => `Confirm ${label.toLowerCase()}`,
     secondary: "Ask a teammate",
     options: [
-      { id: "reads", label: "Read-only", detail: "scenarios call it directly", suggested: true },
-      { id: "writes", label: "Writes data", detail: "writes hit the sandbox, never production" },
+      {
+        id: "reads",
+        label: "Read-only",
+        detail: "scenarios call it directly",
+        suggested: true,
+      },
+      {
+        id: "writes",
+        label: "Writes data",
+        detail: "writes hit the sandbox, never production",
+      },
     ],
   },
 };
@@ -37,8 +66,14 @@ export const MAP_COPY = {
 // reader's static-analysis guess before a human confirms.
 export const classifyTool = (tool) => {
   const n = (tool?.name || "").toLowerCase();
-  if (/^(book|create|reschedule|update|cancel|delete|send|post|upsert|issue|generate)/.test(n)) return "writes";
-  if (/^(get|read|check|list|search|fetch|verify|lookup)/.test(n)) return "reads";
+  if (
+    /^(book|create|reschedule|update|cancel|delete|send|post|upsert|issue|generate)/.test(
+      n,
+    )
+  )
+    return "writes";
+  if (/^(get|read|check|list|search|fetch|verify|lookup)/.test(n))
+    return "reads";
   return "unknown";
 };
 
@@ -51,7 +86,12 @@ export const effectTarget = (effect) => {
 
 // The Contract tab's effect picker stores a singular override (`read`/`write`);
 // this ledger's targets speak the plural (`reads`/`writes`), so normalize.
-const NORMALIZE_EFFECT = { read: "reads", write: "writes", reads: "reads", writes: "writes" };
+const NORMALIZE_EFFECT = {
+  read: "reads",
+  write: "writes",
+  reads: "reads",
+  writes: "writes",
+};
 
 // The tool rows for the map: name, origin chip, and sandbox target. The
 // read/write classification is a verb-heuristic guess; resolving/overriding it
@@ -64,7 +104,9 @@ export const toolMapRows = (env, envState) => {
   const resolutions = envState?.toolResolutions || {};
   return tools.map((t) => {
     const stored = resolutions[t.name];
-    const effect = stored ? (NORMALIZE_EFFECT[stored] || stored) : classifyTool(t);
+    const effect = stored
+      ? NORMALIZE_EFFECT[stored] || stored
+      : classifyTool(t);
     return {
       key: t.name,
       name: t.name,
@@ -79,10 +121,18 @@ export const toolMapRows = (env, envState) => {
 export function ruleTarget(subject, origin) {
   if (origin === ORIGIN_ID.DOC) return "held for review · click to accept";
   const s = (subject || "").toLowerCase();
-  if (s.includes("double") || s.includes("overlap")) return "blocks overlapping slots";
-  if (s.includes("hour") || s.includes("time")) return "blocks off-hours attempts";
-  if (s.includes("cancel") || s.includes("window") || s.includes("return")) return "blocks late cancels";
-  if (s.includes("refund") || s.includes("supervisor") || s.includes("approval")) return "requires supervisor approval";
+  if (s.includes("double") || s.includes("overlap"))
+    return "blocks overlapping slots";
+  if (s.includes("hour") || s.includes("time"))
+    return "blocks off-hours attempts";
+  if (s.includes("cancel") || s.includes("window") || s.includes("return"))
+    return "blocks late cancels";
+  if (
+    s.includes("refund") ||
+    s.includes("supervisor") ||
+    s.includes("approval")
+  )
+    return "requires supervisor approval";
   if (s.includes("escalat")) return "routes to human handoff";
   return "enforced at the sandbox boundary";
 }
@@ -124,3 +174,27 @@ export const storeRowsFromStores = (stores = []) =>
       };
     }),
   );
+
+export const backedToolRows = (env) =>
+  (Array.isArray(env?.toolStatus) ? env.toolStatus : []).map((row) => ({
+    key: row.tool,
+    name: row.tool,
+    origin: ORIGIN_ID.CODE,
+    target: (MAP_COPY.toolTarget[row.status] || MAP_COPY.toolTarget.unknown)(
+      Boolean(row.writes),
+    ),
+    confirmed: false,
+  }));
+
+export const backedRuleRows = (env) =>
+  (Array.isArray(env?.rules) ? env.rules : [])
+    .map((rule) =>
+      typeof rule === "string" ? rule : rule?.text || rule?.subject,
+    )
+    .filter(Boolean)
+    .map((text, index) => ({
+      key: `rule-${index}`,
+      name: text,
+      origin: ORIGIN_ID.PROMPT,
+      target: MAP_COPY.ruleTarget,
+    }));

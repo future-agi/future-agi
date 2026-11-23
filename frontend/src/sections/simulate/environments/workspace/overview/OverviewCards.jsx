@@ -5,9 +5,11 @@ import { ROW_HEIGHT } from "src/theme/sizes";
 import SectionCard from "../../components/SectionCard";
 import MockBadge from "../../components/MockBadge";
 import OriginChip from "../../components/OriginChip";
+import CustomTooltip from "src/components/tooltip";
 import { ENV_SHAPE, OVERVIEW_COPY, ruleRowsFor } from "./overview.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
+const USE_CASES_SHOWN = 6;
 
 // Tools declared by the connected agent, with the arguments each really takes.
 // Before an agent connects the world has no tool inventory, so a slim empty row
@@ -173,108 +175,95 @@ export function HardRulesCard({ env }) {
 HardRulesCard.propTypes = { env: ENV_SHAPE.isRequired };
 
 // What the environment is actually for.
-export function UseCasesCard({ useCases, details }) {
+export function UseCasesCard({ useCases }) {
   return (
-    <SectionCard
-      dense
-      title={OVERVIEW_COPY.useCasesTitle}
-      subtitle={OVERVIEW_COPY.useCasesSubtitle}
-    >
+    <SectionCard dense title={OVERVIEW_COPY.useCasesTitle}>
       <Stack sx={{ p: 1.5 }} spacing={1}>
-        {(useCases || []).map((u) => {
-          const origin = (details || []).find(
-            (detail) => detail.text === u,
-          )?.origin;
-          return (
-            <Stack
-              key={u}
-              direction="row"
-              spacing={1.25}
-              alignItems="flex-start"
+        {(useCases || []).slice(0, USE_CASES_SHOWN).map((u) => (
+          <Stack key={u} direction="row" spacing={1.25} alignItems="flex-start">
+            <Box
+              sx={{
+                width: 4,
+                height: 4,
+                borderRadius: "50%",
+                bgcolor: "text.tertiary",
+                flexShrink: 0,
+                mt: "7px",
+              }}
+            />
+            <Typography sx={{ typography: "s2", color: "text.secondary" }}>
+              {u}
+            </Typography>
+          </Stack>
+        ))}
+        {(useCases || []).length > USE_CASES_SHOWN && (
+          <CustomTooltip
+            show
+            arrow
+            size="small"
+            title={
+              <Stack spacing={0.5}>
+                {useCases.slice(USE_CASES_SHOWN).map((u) => (
+                  <Typography key={u} sx={{ typography: "s2" }}>
+                    {u}
+                  </Typography>
+                ))}
+              </Stack>
+            }
+          >
+            <Box
+              component="span"
+              tabIndex={0}
+              sx={{
+                alignSelf: "flex-start",
+                ml: 2,
+                typography: "s2",
+                color: "text.secondary",
+                textDecoration: "underline",
+                textDecorationStyle: "dotted",
+                cursor: "default",
+              }}
             >
-              <Box
-                sx={{
-                  width: 4,
-                  height: 4,
-                  borderRadius: "50%",
-                  bgcolor: "text.subtitle",
-                  flexShrink: 0,
-                  mt: "7px",
-                }}
-              />
-              <Typography
-                sx={{
-                  typography: "s1",
-                  color: "text.secondary",
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                {u}
-              </Typography>
-              {origin && (
-                <OriginChip
-                  origin={origin.kind}
-                  file={origin.path || origin.field}
-                  line={origin.line}
-                />
-              )}
-            </Stack>
-          );
-        })}
+              {OVERVIEW_COPY.moreNames(useCases.length - USE_CASES_SHOWN)}
+            </Box>
+          </CustomTooltip>
+        )}
       </Stack>
     </SectionCard>
   );
 }
 UseCasesCard.propTypes = {
   useCases: PropTypes.arrayOf(PropTypes.string),
-  details: PropTypes.arrayOf(PropTypes.object),
 };
 
 // Facts changed after reading the source, each with its stated reason.
 export function AmendmentsCard({ amendments }) {
-  const rows = amendments || [];
   return (
-    <SectionCard
-      dense
-      title={OVERVIEW_COPY.amendmentsTitle}
-      subtitle={OVERVIEW_COPY.amendmentsSubtitle}
-    >
-      {rows.length === 0 ? (
-        <Box sx={{ p: 1.5 }}>
-          <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
-            {OVERVIEW_COPY.amendmentsEmpty}
-          </Typography>
-        </Box>
-      ) : (
-        <Stack sx={{ p: 1.5 }} spacing={1.25}>
-          {rows.map((a) => (
-            <Box
-              key={a.subject}
-              sx={{
-                p: 1.5,
-                borderRadius: 1,
-                bgcolor: "status.warning.bg",
-              }}
+    <SectionCard dense title={OVERVIEW_COPY.amendmentsTitle}>
+      <Stack sx={{ p: 1.5 }} spacing={1.25}>
+        {(amendments || []).map((a) => (
+          <Box
+            key={a.subject}
+            sx={{
+              p: 1.5,
+              borderRadius: 1,
+              border: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography
+              sx={{ typography: "s2", fontWeight: 500, fontFamily: MONO }}
             >
-              <Typography
-                sx={{
-                  typography: "s1",
-                  fontWeight: "fontWeightRegular",
-                  fontFamily: MONO,
-                }}
-              >
-                {a.subject}
-              </Typography>
-              <Typography
-                sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
-              >
-                {a.note}
-              </Typography>
-            </Box>
-          ))}
-        </Stack>
-      )}
+              {a.subject}
+            </Typography>
+            <Typography
+              sx={{ typography: "s3", color: "text.secondary", mt: 0.25 }}
+            >
+              {a.note}
+            </Typography>
+          </Box>
+        ))}
+      </Stack>
     </SectionCard>
   );
 }

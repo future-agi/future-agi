@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { Box, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
@@ -11,6 +12,8 @@ import {
   ruleMapRows,
   storeMapRows,
   storeRowsFromStores,
+  backedToolRows,
+  backedRuleRows,
 } from "./sourceToSandbox.constants";
 
 const MONO = "ui-monospace, Menlo, monospace";
@@ -30,33 +33,159 @@ const MAP_PX = 1.5;
 // a Contract override: a resolved tool shows the overridden target and a "you
 // confirmed" mark. This is the artifact someone returns to weeks later to see
 // which decisions a human made and which the reader made itself.
-export default function SourceToSandboxMap({ env, envState, stores }) {
-  const toolRows = toolMapRows(env, envState);
-  const ruleRows = ruleMapRows(env);
+function MapSummary({ groups }) {
+  return (
+    <Box
+      sx={{
+        mb: 3,
+        borderRadius: "8px",
+        overflow: "hidden",
+        border: "1px solid",
+        borderColor: "divider",
+        bgcolor: "background.paper",
+      }}
+    >
+      <Box
+        sx={{
+          px: 2,
+          py: 1.25,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Typography sx={{ typography: "s2", fontWeight: 500 }}>
+          {MAP_COPY.title}
+        </Typography>
+        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}>
+          {MAP_COPY.backedSubtitle}
+        </Typography>
+      </Box>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "repeat(2, minmax(0, 1fr))",
+            md: `repeat(${groups.length}, minmax(0, 1fr))`,
+          },
+        }}
+      >
+        {groups.map((group, index) => (
+          <Box
+            key={group.label}
+            title={group.hint}
+            sx={{
+              px: 2,
+              py: 1,
+              minWidth: 0,
+              borderLeft: index ? "1px solid" : "none",
+              borderLeftColor: "divider",
+            }}
+          >
+            <OverflowTooltip title={group.label}>
+              <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>
+                {group.label}
+              </Typography>
+            </OverflowTooltip>
+            <OverflowTooltip title={group.right}>
+              <Typography
+                noWrap
+                sx={{ typography: "s3", color: "text.tertiary" }}
+              >
+                {group.right}
+              </Typography>
+            </OverflowTooltip>
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+MapSummary.propTypes = {
+  groups: PropTypes.arrayOf(
+    PropTypes.shape({
+      label: PropTypes.string,
+      hint: PropTypes.string,
+      right: PropTypes.string,
+    }),
+  ).isRequired,
+};
+
+export default function SourceToSandboxMap({
+  env,
+  envState,
+  stores,
+  backed = false,
+}) {
+  const toolRows = backed ? backedToolRows(env) : toolMapRows(env, envState);
+  const ruleRows = backed ? backedRuleRows(env) : ruleMapRows(env);
   // A backed env passes its real §6 world.stores (may be empty); otherwise fall
   // back to the client/fixture seed tables. Actors were removed — they were a
   // hardcoded 4-row stub, not backed by world.personas.
-  const storeRows = stores !== undefined ? storeRowsFromStores(stores) : storeMapRows(env);
+  const storeRows =
+    stores !== undefined ? storeRowsFromStores(stores) : storeMapRows(env);
+
+  if (backed)
+    return (
+      <MapSummary
+        groups={[
+          {
+            label: MAP_COPY.groups.tools.label,
+            hint: MAP_COPY.backedGroups.tools,
+            right: MAP_COPY.toolsRight(toolRows.length),
+          },
+          {
+            label: MAP_COPY.groups.rules.label,
+            hint: MAP_COPY.backedGroups.rules,
+            right: MAP_COPY.rulesRight(ruleRows.length),
+          },
+          {
+            label: MAP_COPY.groups.stores.label,
+            hint: MAP_COPY.backedGroups.stores,
+            right: MAP_COPY.storesRight(storeRows.length),
+          },
+        ]}
+      />
+    );
 
   return (
     <Box
       sx={{
-        mb: 3, borderRadius: "8px", overflow: "hidden",
-        border: "1px solid", borderColor: "divider",
+        mb: 3,
+        borderRadius: "8px",
+        overflow: "hidden",
+        border: "1px solid",
+        borderColor: "divider",
       }}
     >
-      <Box sx={{ px: MAP_PX, py: 1, borderBottom: "1px solid", borderColor: "divider" }}>
-        <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium" }}>{MAP_COPY.title}</Typography>
-        <Typography sx={{ typography: "s3", color: "text.subtitle", maxWidth: 720 }}>
-          {MAP_COPY.subtitle}
+      <Box
+        sx={{
+          px: MAP_PX,
+          py: 1,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium" }}>
+          {MAP_COPY.title}
+        </Typography>
+        <Typography
+          sx={{ typography: "s3", color: "text.subtitle", maxWidth: 720 }}
+        >
+          {backed ? MAP_COPY.backedSubtitle : MAP_COPY.subtitle}
         </Typography>
       </Box>
 
       <Box
         sx={{
-          display: "grid", gridTemplateColumns: MAP_GRID, columnGap: 2,
-          alignItems: "center", px: MAP_PX, height: 32,
-          borderBottom: "1px solid", borderColor: "divider",
+          display: "grid",
+          gridTemplateColumns: MAP_GRID,
+          columnGap: 2,
+          alignItems: "center",
+          px: MAP_PX,
+          height: 32,
+          borderBottom: "1px solid",
+          borderColor: "divider",
         }}
       >
         <ColHead>{MAP_COPY.readHead}</ColHead>
@@ -67,14 +196,13 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
 
       <MapGroup
         label={MAP_COPY.groups.tools.label}
-        hint={MAP_COPY.groups.tools.hint}
+        hint={backed ? MAP_COPY.backedGroups.tools : MAP_COPY.groups.tools.hint}
         right={MAP_COPY.toolsRight(toolRows.length)}
         first
       >
         {toolRows.map((r) => (
           <MapRow
             key={r.key}
-
             name={r.name}
             origin={r.origin}
             target={r.target}
@@ -86,24 +214,39 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
 
       <MapGroup
         label={MAP_COPY.groups.rules.label}
-        hint={MAP_COPY.groups.rules.hint}
+        hint={backed ? MAP_COPY.backedGroups.rules : MAP_COPY.groups.rules.hint}
         right={MAP_COPY.rulesRight(ruleRows.length)}
       >
         {ruleRows.map((r) => (
-          <MapRow key={r.key} name={r.name} origin={r.origin} target={r.target} />
+          <MapRow
+            key={r.key}
+            name={r.name}
+            origin={r.origin}
+            target={r.target}
+          />
         ))}
       </MapGroup>
 
       <MapGroup
         label={MAP_COPY.groups.stores.label}
-        hint={MAP_COPY.groups.stores.hint}
+        hint={
+          backed ? MAP_COPY.backedGroups.stores : MAP_COPY.groups.stores.hint
+        }
         right={MAP_COPY.storesRight(storeRows.length)}
       >
         {storeRows.length === 0 ? (
-          <EmptyRow>{MAP_COPY.storesEmpty}</EmptyRow>
+          <EmptyRow>
+            {backed ? MAP_COPY.storesNotYet : MAP_COPY.storesEmpty}
+          </EmptyRow>
         ) : (
           storeRows.map((r) => (
-            <MapRow key={r.key} name={r.name} origin={r.origin} target={r.target} mono />
+            <MapRow
+              key={r.key}
+              name={r.name}
+              origin={r.origin}
+              target={r.target}
+              mono
+            />
           ))
         )}
       </MapGroup>
@@ -111,8 +254,11 @@ export default function SourceToSandboxMap({ env, envState, stores }) {
   );
 }
 SourceToSandboxMap.propTypes = {
+  backed: PropTypes.bool,
   env: ENV_SHAPE.isRequired,
-  envState: PropTypes.shape({ toolResolutions: PropTypes.objectOf(PropTypes.string) }),
+  envState: PropTypes.shape({
+    toolResolutions: PropTypes.objectOf(PropTypes.string),
+  }),
   // Real §6 world.stores for a backed env (may be []); undefined = use the
   // client/fixture seed tables.
   stores: PropTypes.array,
@@ -122,7 +268,9 @@ SourceToSandboxMap.propTypes = {
 function EmptyRow({ children }) {
   return (
     <Box sx={{ px: MAP_PX, py: 1 }}>
-      <Typography sx={{ typography: "s3", color: "text.subtitle", fontStyle: "italic" }}>
+      <Typography
+        sx={{ typography: "s3", color: "text.subtitle", fontStyle: "italic" }}
+      >
         {children}
       </Typography>
     </Box>
@@ -133,14 +281,24 @@ EmptyRow.propTypes = { children: PropTypes.node };
 // A small "you confirmed" pill for a tool row whose read/write effect was
 // overridden by a human on the Contract tab — the map reflects that decision.
 function ConfirmedChip() {
-  return <StatusBadge status="confirmed" role="success" label={MAP_COPY.confirmed} size="sm" dot={false} />;
+  return (
+    <StatusBadge
+      status="confirmed"
+      role="success"
+      label={MAP_COPY.confirmed}
+      size="sm"
+      dot={false}
+    />
+  );
 }
 
 function ColHead({ children }) {
   return (
     <Typography
       sx={{
-        typography: "s3", fontWeight: "fontWeightMedium", color: "text.subtitle",
+        typography: "s3",
+        fontWeight: "fontWeightMedium",
+        color: "text.subtitle",
       }}
     >
       {children}
@@ -154,16 +312,37 @@ function MapGroup({ label, hint, right, toAnswer, children, first }) {
     <Box>
       <Box
         sx={{
-          display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", columnGap: 2,
-          alignItems: "baseline", px: MAP_PX, pt: first ? 1.5 : 2, pb: 1,
-          borderTop: first ? "none" : "1px solid", borderColor: "divider",
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          columnGap: 2,
+          alignItems: "baseline",
+          px: MAP_PX,
+          pt: first ? 1.5 : 2,
+          pb: 1,
+          borderTop: first ? "none" : "1px solid",
+          borderColor: "divider",
         }}
       >
-        <Stack direction="row" alignItems="baseline" spacing={1} sx={{ minWidth: 0 }}>
-          <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium" }}>{label}</Typography>
-          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>{hint}</Typography>
+        <Stack
+          direction="row"
+          alignItems="baseline"
+          spacing={1}
+          sx={{ minWidth: 0 }}
+        >
+          <Typography sx={{ typography: "m3", fontWeight: "fontWeightMedium" }}>
+            {label}
+          </Typography>
+          <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
+            {hint}
+          </Typography>
         </Stack>
-        <Typography sx={{ typography: "s3", fontWeight: "fontWeightMedium", color: toAnswer ? "status.warning.fg" : "text.subtitle" }}>
+        <Typography
+          sx={{
+            typography: "s3",
+            fontWeight: "fontWeightMedium",
+            color: toAnswer ? "status.warning.fg" : "text.subtitle",
+          }}
+        >
           {right}
         </Typography>
       </Box>
@@ -172,11 +351,24 @@ function MapGroup({ label, hint, right, toAnswer, children, first }) {
   );
 }
 MapGroup.propTypes = {
-  label: PropTypes.string, hint: PropTypes.string, right: PropTypes.string,
-  toAnswer: PropTypes.number, children: PropTypes.node, first: PropTypes.bool,
+  label: PropTypes.string,
+  hint: PropTypes.string,
+  right: PropTypes.string,
+  toAnswer: PropTypes.number,
+  children: PropTypes.node,
+  first: PropTypes.bool,
 };
 
-function MapRow({ name, origin, target, mono, highlight, derived, trailing, below }) {
+function MapRow({
+  name,
+  origin,
+  target,
+  mono,
+  highlight,
+  derived,
+  trailing,
+  below,
+}) {
   return (
     <Box
       sx={{
@@ -188,10 +380,13 @@ function MapRow({ name, origin, target, mono, highlight, derived, trailing, belo
     >
       <Box
         sx={{
-          display: "grid", gridTemplateColumns: MAP_GRID, columnGap: 2,
+          display: "grid",
+          gridTemplateColumns: MAP_GRID,
+          columnGap: 2,
           alignItems: "center",
           minHeight: highlight ? ROW_HEIGHT.twoLine : ROW_HEIGHT.default,
-          pl: MAP_PX, pr: MAP_PX,
+          pl: MAP_PX,
+          pr: MAP_PX,
         }}
       >
         {name ? (
@@ -206,7 +401,9 @@ function MapRow({ name, origin, target, mono, highlight, derived, trailing, belo
           >
             {name}
           </Typography>
-        ) : <Box />}
+        ) : (
+          <Box />
+        )}
 
         <Box sx={{ justifySelf: "end", display: "flex" }}>
           {origin && <OriginChip origin={origin} showPath={false} />}
@@ -215,10 +412,18 @@ function MapRow({ name, origin, target, mono, highlight, derived, trailing, belo
         <Iconify
           icon="solar:arrow-right-linear"
           width={14}
-          sx={{ color: derived ? "text.disabled" : "text.subtitle", justifySelf: "center" }}
+          sx={{
+            color: derived ? "text.disabled" : "text.subtitle",
+            justifySelf: "center",
+          }}
         />
 
-        <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={0.75}
+          sx={{ minWidth: 0 }}
+        >
           {/* String targets get the row's own text styling; a node target (the
               "Needs your answer" marker) styles itself, so it renders as-is
               rather than nested inside a <p>. */}
@@ -240,12 +445,19 @@ function MapRow({ name, origin, target, mono, highlight, derived, trailing, belo
         </Stack>
       </Box>
 
-      {below && <Box sx={{ pl: MAP_PX, pr: MAP_PX, pb: 1.5, pt: 0.25 }}>{below}</Box>}
+      {below && (
+        <Box sx={{ pl: MAP_PX, pr: MAP_PX, pb: 1.5, pt: 0.25 }}>{below}</Box>
+      )}
     </Box>
   );
 }
 MapRow.propTypes = {
-  name: PropTypes.node, origin: PropTypes.string,
-  target: PropTypes.node, mono: PropTypes.bool, highlight: PropTypes.bool,
-  derived: PropTypes.bool, trailing: PropTypes.node, below: PropTypes.node,
+  name: PropTypes.node,
+  origin: PropTypes.string,
+  target: PropTypes.node,
+  mono: PropTypes.bool,
+  highlight: PropTypes.bool,
+  derived: PropTypes.bool,
+  trailing: PropTypes.node,
+  below: PropTypes.node,
 };

@@ -1,146 +1,141 @@
 import PropTypes from "prop-types";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { useState } from "react";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  IconButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  Stack,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
-import StatusBadge from "src/components/status-badge/StatusBadge";
-import { VOICE_CHAT_PROVIDERS } from "src/sections/agents/constants";
-import { AGENT_SUMMARY_COPY, CONNECTOR_LABEL } from "./overview.constants";
+import { AGENT_SUMMARY_COPY } from "./overview.constants";
 import { CONNECTED_AGENTS_PATH } from "src/sections/agent-playground/agentsTabs";
 import PromptDrawer from "./PromptDrawer";
+import PlatformLogo from "../../components/PlatformLogo";
+import { agentLineOf } from "./agentLine";
 
-// The agent definition's provider, named the way the Agents pages name it;
-// harness connector names cover the rest.
-const providerLabel = (provider) =>
-  VOICE_CHAT_PROVIDERS.find((p) => p.value === provider)?.label ||
-  CONNECTOR_LABEL[provider] ||
-  provider;
-
-// With `onManageVersions`, a "Manage versions" action opens the agent versions.
 export default function AgentSummarySection({
   subject,
+  source,
+  connector,
+  policy,
+  noWorld = false,
   onManageVersions,
   systemPrompt,
   systemPromptOrigin,
 }) {
   const [promptOpen, setPromptOpen] = useState(false);
-  const title = subject
-    ? AGENT_SUMMARY_COPY.agentTitle(subject.name, subject.active_version)
-    : AGENT_SUMMARY_COPY.noAgentTitle;
-  const body = subject ? null : AGENT_SUMMARY_COPY.portableBody;
-  // Where the agent runs and how many versions it has, from the agent
-  // definition the environment tests.
-  const facts = subject
-    ? [
-        subject.provider && providerLabel(subject.provider),
-        subject.versions_count != null &&
-          AGENT_SUMMARY_COPY.versions(subject.versions_count),
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : "";
+  const [menuAnchor, setMenuAnchor] = useState(null);
+  const line = agentLineOf({ subject, source, connector, policy, noWorld });
+  const hasMenu = Boolean(systemPrompt || onManageVersions);
 
   return (
     <Box
       sx={{
         my: 2,
-        p: 1.5,
-        borderRadius: "8px",
         border: "1px solid",
         borderColor: "divider",
+        borderRadius: 1,
       }}
     >
-      <Stack direction="row" spacing={2} alignItems="center">
-        <Box
-          sx={{
-            width: 28,
-            height: 28,
-            borderRadius: 1,
-            display: "grid",
-            placeItems: "center",
-            bgcolor: "action.selected",
-            color: "text.secondary",
-            flexShrink: 0,
-          }}
-        >
-          <Iconify icon="solar:cpu-bolt-linear" width={18} />
-        </Box>
-        <Box flex={1} minWidth={0}>
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <Typography
-              sx={{
-                typography: "s3",
-                color: "text.subtitle",
-                fontWeight: "fontWeightMedium",
-              }}
-            >
-              {AGENT_SUMMARY_COPY.label}
-            </Typography>
-            {subject && (
-              <StatusBadge
-                status="connected"
-                label={AGENT_SUMMARY_COPY.connected}
-                size="sm"
-              />
-            )}
-          </Stack>
-          <Typography
-            sx={{ typography: "s1", fontWeight: "fontWeightMedium", mt: 0.25 }}
-          >
-            {title}
-          </Typography>
-          {facts && (
-            <Typography
-              sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
-            >
-              {facts}
-            </Typography>
-          )}
-          {body && (
-            <Typography
-              sx={{ typography: "s3", color: "text.subtitle", mt: 0.25 }}
-            >
-              {body}
-            </Typography>
-          )}
-        </Box>
-        {systemPrompt && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            startIcon={<Iconify icon="solar:document-text-linear" width={16} />}
-            onClick={() => setPromptOpen(true)}
-            sx={{ flexShrink: 0 }}
-          >
-            {AGENT_SUMMARY_COPY.viewPrompt}
-          </Button>
+      <Stack
+        direction="row"
+        alignItems="center"
+        spacing={1.5}
+        sx={{ px: 2, py: 1.25 }}
+      >
+        {line.logo ? (
+          <PlatformLogo id={line.logo} name={line.label} />
+        ) : (
+          <Iconify
+            icon={line.icon}
+            width={16}
+            sx={{ color: "text.secondary", flexShrink: 0 }}
+          />
         )}
+        <OverflowTooltip
+          title={`${subject ? `${AGENT_SUMMARY_COPY.tests} ` : ""}${line.title}${
+            line.facts ? ` · ${line.facts}` : ""
+          }`}
+        >
+          <Typography noWrap sx={{ typography: "s1", flex: 1, minWidth: 0 }}>
+            {subject && (
+              <Box component="span" sx={{ color: "text.tertiary" }}>
+                {`${AGENT_SUMMARY_COPY.tests} `}
+              </Box>
+            )}
+            <Box component="span" sx={{ fontWeight: 600 }}>
+              {line.title}
+            </Box>
+            {line.facts && (
+              <Box component="span" sx={{ color: "text.tertiary" }}>
+                {` · ${line.facts}`}
+              </Box>
+            )}
+          </Typography>
+        </OverflowTooltip>
         {subject?.id && (
           <Button
             component={RouterLink}
             href={`${CONNECTED_AGENTS_PATH}/${subject.id}`}
             size="small"
             variant="outlined"
-            color="inherit"
             endIcon={<Iconify icon="solar:arrow-right-linear" width={14} />}
-            sx={{ flexShrink: 0 }}
+            sx={{ color: "text.primary", flexShrink: 0 }}
           >
             {AGENT_SUMMARY_COPY.viewAgent}
           </Button>
         )}
-        {onManageVersions && (
-          <Button
-            variant="outlined"
+        {hasMenu && (
+          <IconButton
             size="small"
-            color="inherit"
-            onClick={onManageVersions}
-            sx={{ flexShrink: 0 }}
+            aria-label={AGENT_SUMMARY_COPY.more}
+            onClick={(event) => setMenuAnchor(event.currentTarget)}
           >
-            {AGENT_SUMMARY_COPY.manage}
-          </Button>
+            <Iconify icon="solar:menu-dots-bold" width={20} />
+          </IconButton>
         )}
       </Stack>
+      <Menu
+        anchorEl={menuAnchor}
+        open={Boolean(menuAnchor)}
+        onClose={() => setMenuAnchor(null)}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        {systemPrompt && (
+          <MenuItem
+            onClick={() => {
+              setMenuAnchor(null);
+              setPromptOpen(true);
+            }}
+          >
+            <ListItemIcon>
+              <Iconify icon="solar:document-text-linear" width={16} />
+            </ListItemIcon>
+            <ListItemText>{AGENT_SUMMARY_COPY.viewPrompt}</ListItemText>
+          </MenuItem>
+        )}
+        {onManageVersions && (
+          <MenuItem
+            onClick={() => {
+              setMenuAnchor(null);
+              onManageVersions();
+            }}
+          >
+            <ListItemIcon>
+              <Iconify icon="solar:layers-minimalistic-linear" width={16} />
+            </ListItemIcon>
+            <ListItemText>{AGENT_SUMMARY_COPY.manage}</ListItemText>
+          </MenuItem>
+        )}
+      </Menu>
       {systemPrompt && (
         <PromptDrawer
           open={promptOpen}
@@ -153,6 +148,7 @@ export default function AgentSummarySection({
     </Box>
   );
 }
+
 AgentSummarySection.propTypes = {
   subject: PropTypes.shape({
     id: PropTypes.string,
@@ -161,6 +157,14 @@ AgentSummarySection.propTypes = {
     versions_count: PropTypes.number,
     active_version: PropTypes.string,
   }),
+  source: PropTypes.shape({
+    kind: PropTypes.string,
+    ref: PropTypes.string,
+    commit_sha: PropTypes.string,
+  }),
+  connector: PropTypes.string,
+  policy: PropTypes.string,
+  noWorld: PropTypes.bool,
   onManageVersions: PropTypes.func,
   systemPrompt: PropTypes.string,
   systemPromptOrigin: PropTypes.object,

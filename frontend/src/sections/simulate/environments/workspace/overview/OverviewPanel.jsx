@@ -1,6 +1,7 @@
 import PropTypes from "prop-types";
+import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import { useState } from "react";
-import { Box, Stack, Typography, Grid } from "@mui/material";
+import { Box, Stack, Tooltip, Typography, Grid } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getSurface } from "src/api/simulate-environments/_fixtures/surfaces";
 import { contractFor } from "src/api/simulate-environments/_fixtures/contract";
@@ -23,7 +24,9 @@ import SideDrawer from "../../components/SideDrawer";
 import AgentVersionsPanel from "../agents/AgentVersionsPanel";
 import { GroupHeading, Fact } from "./OverviewPrimitives";
 import AgentSummarySection from "./AgentSummarySection";
+import { isCodeSource } from "./agentLine";
 import SourceReadCard from "./SourceReadCard";
+import SourceToSandboxMap from "./SourceToSandboxMap";
 import NextStepsChecklist from "./NextStepsChecklist";
 import StateSummary from "./StateSummary";
 import { UseCasesCard, AmendmentsCard } from "./OverviewCards";
@@ -64,7 +67,6 @@ export default function OverviewPanel({
   locked = false,
   buildMode,
   counts,
-  latestRun,
   backedWorld,
 }) {
   const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
@@ -86,6 +88,18 @@ export default function OverviewPanel({
   const seeded = Boolean(backedWorld) && worldTables(env).length > 0;
   const startingData = Boolean(backedWorld) && env.baseEnvironment != null;
 
+  const amendments =
+    (backedWorld
+      ? backedWorld.amendments
+      : env.amendments ?? contract.amendments) || [];
+  const showAmendments = !buildMode && amendments.length > 0;
+  const useCaseCount = (env.useCases || []).length;
+  const scenarioTotal = counts?.scenarios;
+  const scenarioPacks =
+    useCaseCount && scenarioTotal != null
+      ? OVERVIEW_COPY.scenarioPacks(useCaseCount, scenarioTotal)
+      : null;
+
   const hasDerivedWorld =
     (env.rules?.length || 0) > 0 ||
     (counts?.scenarios ?? (envState?.scenarios?.length || 0)) > 0 ||
@@ -98,11 +112,19 @@ export default function OverviewPanel({
         alignItems={{ sm: "flex-start" }}
         spacing={2}
       >
-        <Typography
-          sx={{ typography: "m3", color: "text.secondary", maxWidth: 820 }}
-        >
-          {env.description}
-        </Typography>
+        <OverflowTooltip title={env.description || ""}>
+          <Typography
+            noWrap
+            sx={{
+              typography: "s1",
+              color: "text.secondary",
+              minWidth: 0,
+              flex: 1,
+            }}
+          >
+            {env.description}
+          </Typography>
+        </OverflowTooltip>
       </Stack>
 
       {/* Labels, not content — a strip rather than a column of its own. */}
@@ -117,16 +139,17 @@ export default function OverviewPanel({
           border: "1px solid",
           borderColor: "divider",
           borderRadius: "8px",
+          bgcolor: "background.paper",
           rowGap: 1,
-          width: "fit-content",
-          maxWidth: "100%",
         }}
       >
         <Fact
           label={OVERVIEW_COPY.facts.channel}
           value={surface?.label ?? "-"}
         />
-        <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
+        {!isCodeSource(env.source) && (
+          <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
+        )}
         {/* Domain, direction, source and mode are real §6 fields; a client-only
             env (template, fork) carries sample values for them, so they show
             for a backed env only. */}
@@ -150,6 +173,12 @@ export default function OverviewPanel({
           <Fact
             label={OVERVIEW_COPY.facts.mode}
             value={MODE_LABEL[env.agentMode] || env.agentMode}
+          />
+        ) : null}
+        {backedWorld && scenarioPacks ? (
+          <Fact
+            label={OVERVIEW_COPY.facts.scenarioPacks}
+            value={scenarioPacks}
           />
         ) : null}
         {parallelism?.requested ? (
@@ -191,6 +220,10 @@ export default function OverviewPanel({
 
       <AgentSummarySection
         subject={env.testSubject}
+        source={env.source}
+        connector={connector}
+        policy={env.agentPolicy}
+        noWorld={Boolean(backedWorld) && hasNoWorld(env)}
         systemPrompt={env.systemPrompt}
         systemPromptOrigin={env.systemPromptOrigin}
         onManageVersions={
@@ -201,13 +234,7 @@ export default function OverviewPanel({
       {/* State-of-the-env summary tiles + latest run — the "how's this env doing
           right now?" answer. Each tile jumps to the tab it summarises. For a
           backed env the numbers come from §6 (summaryCounts). */}
-      <StateSummary
-        env={env}
-        envState={envState}
-        counts={counts}
-        latestRun={latestRun}
-        onGo={onGo}
-      />
+      <StateSummary env={env} envState={envState} counts={counts} onGo={onGo} />
 
       {/* Getting-started checklist for envs that haven't been seeded yet. A
           scratch env arrives carrying a derived world, so the same checklist
@@ -223,10 +250,19 @@ export default function OverviewPanel({
 
       <GroupHeading>{OVERVIEW_COPY.capabilities}</GroupHeading>
 
-      <SourceReadCard tools={env.tools} rules={env.rules} />
+      {backedWorld ? (
+        <SourceToSandboxMap
+          env={env}
+          envState={envState}
+          stores={env.stores || []}
+          backed
+        />
+      ) : (
+        <SourceReadCard tools={env.tools} rules={env.rules} />
+      )}
 
       <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-        <Grid item xs={12} md={7}>
+        <Grid item xs={12} md={showAmendments ? 7 : 12}>
           {/* A backed env reads only the real §6 fields; a use case the build
               didn't write stays empty rather than being made up. The fixture
               derivation is for client-only envs (templates, forks). */}
@@ -236,23 +272,53 @@ export default function OverviewPanel({
                 ? env.useCases ?? []
                 : env.useCases ?? contract.useCases
             }
-            details={env.useCaseDetails}
           />
         </Grid>
-        <Grid item xs={12} md={5}>
-          {!buildMode && (
-            <AmendmentsCard
-              amendments={
-                backedWorld
-                  ? backedWorld.amendments
-                  : env.amendments ?? contract.amendments
-              }
-            />
-          )}
-        </Grid>
+        {showAmendments && (
+          <Grid item xs={12} md={5}>
+            <AmendmentsCard amendments={amendments} />
+          </Grid>
+        )}
       </Grid>
 
       <GroupHeading>{OVERVIEW_COPY.world}</GroupHeading>
+      {backedWorld && !hasNoWorld(env) && (
+        <Stack
+          direction="row"
+          spacing={1}
+          alignItems="center"
+          sx={{ px: 0.5, mb: 2 }}
+        >
+          <Iconify
+            icon="solar:lock-keyhole-minimalistic-linear"
+            width={14}
+            sx={{ color: "text.tertiary", flexShrink: 0 }}
+          />
+          <Typography
+            sx={{ typography: "s2", color: "text.secondary", minWidth: 0 }}
+          >
+            <Box
+              component="span"
+              sx={{ fontWeight: 600, color: "text.primary" }}
+            >
+              {OVERVIEW_COPY.worldKind.label}
+            </Box>
+            {OVERVIEW_COPY.worldKind.short}
+          </Typography>
+          <Tooltip arrow title={OVERVIEW_COPY.worldKind.tip}>
+            <Box
+              component="span"
+              sx={{ display: "inline-flex", flexShrink: 0 }}
+            >
+              <Iconify
+                icon="solar:info-circle-linear"
+                width={14}
+                sx={{ color: "text.disabled" }}
+              />
+            </Box>
+          </Tooltip>
+        </Stack>
+      )}
       {backedWorld && hasNoWorld(env) ? (
         <Stack spacing={2} sx={{ mb: 3 }}>
           <ConnectOnlyWorld env={env} />
@@ -268,12 +334,16 @@ export default function OverviewPanel({
         </Stack>
       ) : (
         <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-          {seeded && (
+          {(seeded || startingData) && (
             <Grid item xs={12} md={7}>
-              <SeededDataCard env={env} />
+              {seeded ? (
+                <SeededDataCard env={env} />
+              ) : (
+                <StartingDataCard baseEnvironment={env.baseEnvironment} />
+              )}
             </Grid>
           )}
-          <Grid item xs={12} md={seeded ? 5 : 7}>
+          <Grid item xs={12} md={seeded || startingData ? 5 : 7}>
             <DependsOnCard
               dependsOn={
                 backedWorld
@@ -287,7 +357,7 @@ export default function OverviewPanel({
               }
             />
           </Grid>
-          {startingData && (
+          {seeded && startingData && (
             <Grid item xs={12}>
               <StartingDataCard baseEnvironment={env.baseEnvironment} />
             </Grid>
@@ -355,7 +425,6 @@ OverviewPanel.propTypes = {
   // client-store fallback in StateSummary covers non-backed envs.
   counts: PropTypes.object,
   // The newest run from the executions list, for the latest-run card.
-  latestRun: PropTypes.object,
   // Real §6 world content for a backed env: { stores, amendments, dependencies }.
   // Undefined for a non-backed env (keeps the client/fixture source).
   backedWorld: PropTypes.shape({
