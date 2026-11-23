@@ -112,9 +112,7 @@ def test_the_scenario_screens_open_objects_carry_any_json_value(definition, fiel
 
 @pytest.mark.parametrize("field", ["patch", "sources"])
 def test_a_review_change_s_patch_and_sources_carry_any_json_value(field):
-    items = _swagger_definitions()["HarnessReviewChange"]["properties"][field][
-        "items"
-    ]
+    items = _swagger_definitions()["HarnessReviewChange"]["properties"][field]["items"]
 
     assert items["additionalProperties"]["x-json-value"] is True
 

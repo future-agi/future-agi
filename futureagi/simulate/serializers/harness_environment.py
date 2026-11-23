@@ -832,12 +832,16 @@ class HarnessEnvironmentScenarioSerializer(serializers.Serializer):
     use_case = serializers.CharField(allow_null=True)
     branch = serializers.CharField(allow_null=True)
     tests = serializers.CharField(allow_null=True)
-    fixture = serializers.DictField(child=JsonValueField(allow_null=True), allow_null=True)
+    fixture = serializers.DictField(
+        child=JsonValueField(allow_null=True), allow_null=True
+    )
     steps = serializers.IntegerField(allow_null=True)
     sub_goals = HarnessEnvironmentSubGoalSerializer(many=True)
     actors = HarnessEnvironmentResolvedScenarioActorSerializer(many=True)
     door_problem = HarnessEnvironmentDoorProblemSerializer(allow_null=True)
-    persona = serializers.DictField(child=JsonValueField(allow_null=True), allow_null=True)
+    persona = serializers.DictField(
+        child=JsonValueField(allow_null=True), allow_null=True
+    )
     situation = serializers.CharField(allow_null=True)
     outcome = serializers.CharField(allow_null=True)
     status = serializers.CharField()
@@ -915,9 +919,15 @@ class HarnessEnvironmentSettingsSerializer(serializers.Serializer):
     schema_version = serializers.CharField(allow_null=True)
     source = serializers.DictField(child=JsonValueField(allow_null=True))
     agent = HarnessEnvironmentAgentSettingsSerializer()
-    runtime = serializers.DictField(child=JsonValueField(allow_null=True), allow_null=True)
-    security = serializers.DictField(child=JsonValueField(allow_null=True), allow_null=True)
-    artifacts = serializers.DictField(child=JsonValueField(allow_null=True), allow_null=True)
+    runtime = serializers.DictField(
+        child=JsonValueField(allow_null=True), allow_null=True
+    )
+    security = serializers.DictField(
+        child=JsonValueField(allow_null=True), allow_null=True
+    )
+    artifacts = serializers.DictField(
+        child=JsonValueField(allow_null=True), allow_null=True
+    )
     scenario_count = serializers.IntegerField(allow_null=True)
     seed = serializers.IntegerField(allow_null=True)
     enable_tool_evaluation = serializers.BooleanField()
@@ -1640,7 +1650,9 @@ class HarnessReviewChangeSerializer(serializers.Serializer):
     fields = serializers.ListField(  # type: ignore[assignment]  # the API field is named fields
         child=serializers.CharField()
     )
-    patch = serializers.ListField(child=serializers.DictField(child=JsonValueField(allow_null=True)))
+    patch = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True))
+    )
     base_digest = serializers.CharField(allow_null=True)
     draft_digest = serializers.CharField(allow_null=True)
     summary = serializers.CharField()
@@ -1920,7 +1932,13 @@ class HarnessCapabilityFixRecheckSerializer(serializers.Serializer):
 class HarnessCapabilityFixSerializer(serializers.Serializer):
     type = serializers.CharField()
     category = serializers.ChoiceField(
-        choices=("startup", "message_mapping", "tool_routing", "evidence", "agent_version"),
+        choices=(
+            "startup",
+            "message_mapping",
+            "tool_routing",
+            "evidence",
+            "agent_version",
+        ),
         allow_null=True,
         help_text=(
             "The kind of repair: the agent's start and credentials, its message"
