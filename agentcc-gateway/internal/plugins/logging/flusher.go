@@ -425,12 +425,24 @@ func retryable(status int, err error) bool {
 	return err != nil || status >= 500
 }
 
+// refusedConnection reports whether err says the connection was refused.
+//
+// syscall.ECONNREFUSED alone is not enough: on Windows it is an invented value
+// (APPLICATION_ERROR + iota), not the 10061 a dial reports there, so errors.Is
+// against it never matches and a refused backend was misread as a sending
+// failure. 10061 is WSAECONNREFUSED; no Unix platform uses it as an errno, and
+// the comparison is cheap and correct when false, so both are checked rather
+// than splitting this over build tags.
+func refusedConnection(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.Errno(10061))
+}
+
 // backendGone reports whether err says there is no backend to send to: it
 // refused the connection, or its name no longer resolves, as a stopped compose
 // service's does.
 func backendGone(err error) bool {
 	var dnsErr *net.DNSError
-	return errors.Is(err, syscall.ECONNREFUSED) || (errors.As(err, &dnsErr) && dnsErr.IsNotFound)
+	return refusedConnection(err) || (errors.As(err, &dnsErr) && dnsErr.IsNotFound)
 }
 
 // closing reports whether Close has begun. A flush then re-enqueues the
