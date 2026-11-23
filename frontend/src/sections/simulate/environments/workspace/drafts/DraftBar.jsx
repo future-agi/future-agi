@@ -15,7 +15,13 @@ import {
   useSaveDrafts,
 } from "src/api/simulate-environments/versions";
 import { refusalText } from "../evals/refusalText";
-import { DRAFTS_COPY as COPY, REVIEW_COPY } from "../workspace.constants";
+import {
+  DRAFTS_COPY as COPY,
+  REVIEW_COPY,
+  WORKSPACE_COPY,
+} from "../workspace.constants";
+import ViewerLock from "../../components/ViewerLock";
+import useSimulationAccess from "../../hooks/useSimulationAccess";
 import {
   keptChanges,
   recheckedKeys,
@@ -62,6 +68,7 @@ export default function DraftBar({
   });
   const { data: versions } = useEnvironmentVersions(env?.id, { enabled });
   const save = useSaveDrafts(env?.id);
+  const { canEdit } = useSimulationAccess();
   const staleId = useId();
   const busyId = useId();
   const holdId = useId();
@@ -192,17 +199,19 @@ export default function DraftBar({
           </OverflowTooltip>
         </Button>
         {(kept.length > 0 || uncounted) && (
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            disabled={saveReasons.length > 0 || save.isPending}
-            aria-describedby={saveReasons.join(" ") || undefined}
-            onClick={needsReview ? onReview : onSave}
-            sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
-          >
-            {saveText}
-          </Button>
+          <ViewerLock locked={!canEdit} title={WORKSPACE_COPY.viewer.drafts}>
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              disabled={!canEdit || saveReasons.length > 0 || save.isPending}
+              aria-describedby={saveReasons.join(" ") || undefined}
+              onClick={needsReview ? onReview : onSave}
+              sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+            >
+              {saveText}
+            </Button>
+          </ViewerLock>
         )}
       </Stack>
       {staleReason && (
