@@ -66,7 +66,7 @@ export default function DraftBar({
   );
   const { data: sourceGeneration } = useEnvironmentSourceGeneration(
     review?.id,
-    review?.receipt?.scenario_generation,
+    review?.scenario_generation,
   );
   const save = useSaveDrafts(env?.id);
   const discard = useDiscardDraft(env?.id);

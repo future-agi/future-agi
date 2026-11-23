@@ -357,11 +357,11 @@ describe("SourcesPanel", () => {
     serverReview = {
       ...ready,
       state: "accepted",
-      receipt: { scenario_generation: generation },
+      scenario_generation: generation,
     };
     const fallback = api.get.getMockImplementation();
     api.get.mockImplementation(async (path) => {
-      if (path === `${reviewPath}generate-scenarios/`)
+      if (path === `${reviewPath}scenario-generation/`)
         return { data: generation };
       if (path.endsWith("/drafts/")) {
         return {

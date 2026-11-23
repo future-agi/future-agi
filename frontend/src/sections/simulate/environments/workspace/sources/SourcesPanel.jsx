@@ -40,7 +40,12 @@ export default function SourcesPanel({ env, locked }) {
 
   useEffect(() => {
     const selection = location.state?.environmentSourceSelection;
-    if (!writable || !selection || consumedSelection.current === location.key)
+    if (
+      !writable ||
+      reviewId ||
+      !selection ||
+      consumedSelection.current === location.key
+    )
       return;
     consumedSelection.current = location.key;
     addKnowledgeSelection(
@@ -58,6 +63,7 @@ export default function SourcesPanel({ env, locked }) {
     location.search,
     location.state,
     navigate,
+    reviewId,
     writable,
   ]);
 
@@ -89,6 +95,7 @@ export default function SourcesPanel({ env, locked }) {
     setReviewId(null);
   };
   const refresh = () => {
+    sources.clear();
     queryClient.invalidateQueries({ queryKey: sourceSummaryKey(env.id) });
     queryClient.invalidateQueries({ queryKey: draftsKey(env.id) });
   };

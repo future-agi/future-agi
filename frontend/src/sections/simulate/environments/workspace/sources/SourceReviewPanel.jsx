@@ -448,7 +448,7 @@ export default function SourceReviewPanel({
         stale={stale}
         {...editor}
       />
-      {review.state === "accepted" && review.receipt?.scenario_generation ? (
+      {review.state === "accepted" && review.scenario_generation ? (
         <SourceScenarioGeneration review={review} onDismiss={onDismiss} />
       ) : onDismiss && !unfinished.includes(review.state) ? (
         <Button onClick={onDismiss}>Close</Button>

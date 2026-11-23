@@ -20,7 +20,7 @@ export default function SourceScenarioGeneration({ review, onDismiss }) {
   const queryClient = useQueryClient();
   const query = useEnvironmentSourceGeneration(
     review.id,
-    review.receipt.scenario_generation,
+    review.scenario_generation,
   );
   const state = query.data?.state;
   const envId = review.scope.id;
@@ -65,9 +65,7 @@ export default function SourceScenarioGeneration({ review, onDismiss }) {
         </Alert>
       )}
       {state === "failed" && (
-        <Alert severity="error">
-          {query.data.error?.message || "Scenario generation failed."}
-        </Alert>
+        <Alert severity="error">Scenario generation failed.</Alert>
       )}
       {state === "stale" && (
         <Alert severity="warning">

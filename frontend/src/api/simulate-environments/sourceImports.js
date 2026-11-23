@@ -92,7 +92,7 @@ export const useEnvironmentSourceGeneration = (reviewId, initial) =>
       (
         await axios.get(
           apiPath(
-            "/simulate/api/harness-source-reviews/{id}/generate-scenarios/",
+            "/simulate/api/harness-source-reviews/{id}/scenario-generation/",
             {
               id: reviewId,
             },

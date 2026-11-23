@@ -30,6 +30,11 @@ export default function useBuildSources() {
     setPolicy,
     selection,
     blocked: Boolean(uploads.uploading.length || uploads.failed.length),
+    clear: () => {
+      uploads.files.forEach(({ id }) => uploads.remove(id));
+      setKnowledge([]);
+      setPolicy({});
+    },
     addKnowledgeSelection,
     addKnowledge: ({ kb, files, whole_collection: wholeCollection }) => {
       const selection = {
