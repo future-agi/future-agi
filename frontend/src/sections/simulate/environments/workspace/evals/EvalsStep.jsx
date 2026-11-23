@@ -13,7 +13,12 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { getEval } from "src/api/simulate-environments/_fixtures/evalCatalog";
-import { useRemoveAppliedEvaluation } from "src/api/simulate-environments/environments";
+import {
+  useAddSuggestedEvaluation,
+  useRemoveAppliedEvaluation,
+  useSetEvaluationRequirement,
+} from "src/api/simulate-environments/environments";
+import { enqueueSnackbar } from "notistack";
 import { harnessEnvironmentQuery } from "src/api/simulate-environments/environment";
 import { useToolCallEval } from "src/api/simulate-environments/toolCallEval";
 import { BUILD_STATUS } from "../../myEnvironments.constants";
@@ -23,6 +28,8 @@ import SectionCard from "../../components/SectionCard";
 import EmptyState from "../../components/EmptyState";
 import EvalRow from "./EvalRow";
 import SelectedEvalRow from "./SelectedEvalRow";
+import { PassThreshold, RequiredSwitch } from "./RequirementControls";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import AddEvalsDrawer from "./AddEvalsDrawer";
 import AddEvaluationDrawer from "./AddEvaluationDrawer";
 import { useAppliedEvals } from "./useAppliedEvals";
@@ -121,6 +128,10 @@ export default function EvalsStep({
   // the source of truth. Disabled while building (409). A forked/template env
   // stays store-only.
   const removeEval = useRemoveAppliedEvaluation();
+  const addSuggested = useAddSuggestedEvaluation();
+  const setRequirement = useSetEvaluationRequirement();
+  const [suggestedChoices, setSuggestedChoices] = useState({});
+  const [confirmRemove, setConfirmRemove] = useState(null);
   const building = env.buildStatus === BUILD_STATUS.BUILDING;
   const removeDisabled =
     !canEdit || locked || (backed && (building || removeEval.isPending));
@@ -131,6 +142,63 @@ export default function EvalsStep({
       : backed && building
         ? "Available once the environment finishes building."
         : "";
+  const serverSuggested = backed
+    ? (detailQuery.data?.evaluations?.suggested || []).filter(Boolean)
+    : [];
+  const suggestDisabled =
+    !canEdit || locked || building || needsScenarios || addSuggested.isPending;
+  const suggestDisabledTip = !canEdit
+    ? WORKSPACE_COPY.viewer.evals
+    : locked
+      ? LOCK_TOOLTIP
+      : building
+        ? "Available once the environment finishes building."
+        : needsScenarios
+          ? EVALS_COPY.needsScenariosHint
+          : "";
+  const showEvalError = (error) =>
+    enqueueSnackbar(
+      refusalText(error, "Couldn’t save the evaluation. Try again."),
+      { variant: "error" },
+    );
+  const choiceFor = (entry) =>
+    suggestedChoices[entry.name] || {
+      required: Boolean(entry.required),
+      passThreshold: entry.pass_threshold ?? 80,
+    };
+  const addOneSuggested = (entry) =>
+    addSuggested
+      .mutateAsync({
+        id: env.id,
+        name: entry.name,
+        ...choiceFor(entry),
+      })
+      .catch(showEvalError);
+  const addAllSuggested = async () => {
+    for (const entry of serverSuggested) {
+      try {
+        await addSuggested.mutateAsync({
+          id: env.id,
+          name: entry.name,
+          ...choiceFor(entry),
+        });
+      } catch (error) {
+        showEvalError(error);
+        return;
+      }
+    }
+  };
+  const saveRequirement = (entry, next) =>
+    setRequirement.mutate(
+      {
+        id: env.id,
+        evalConfigId: entry.id,
+        required: Boolean(entry.required),
+        passThreshold: entry.pass_threshold ?? 80,
+        ...next,
+      },
+      { onError: showEvalError },
+    );
   const onRemove = (id) => {
     if (!backed) {
       store.remove(id);
@@ -211,16 +279,14 @@ export default function EvalsStep({
         sx={{
           px: 2,
           py: 1.5,
-          mb: 3,
+          mb: 2,
           borderRadius: "8px",
           border: "1px solid",
           borderColor: "divider",
         }}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography
-            sx={{ typography: "s1", fontWeight: 500 }}
-          >
+          <Typography sx={{ typography: "s1", fontWeight: 600 }}>
             {EVALS_COPY.toolCall.title}
           </Typography>
           <Typography
@@ -257,7 +323,7 @@ export default function EvalsStep({
         </Tooltip>
       </Stack>
       {backed && toolCall.isError && (
-        <Alert severity="error" sx={{ mt: -2, mb: 3, typography: "s3" }}>
+        <Alert severity="error" sx={{ mb: 2, typography: "s3" }}>
           {refusalText(
             toolCall.error,
             "Couldn’t change tool-call evaluation. Try again.",
@@ -271,6 +337,99 @@ export default function EvalsStep({
           environment is still building, 404 if already removed (safe to
           retry) — prefixed with the eval's own name so it's clear which row
           it belongs to. */}
+      {backed && serverSuggested.length > 0 && !needsScenarios && (
+        <SectionCard
+          title={EVALS_COPY.suggestedTitle(serverSuggested.length)}
+          subtitle={EVALS_COPY.suggestedSubtitle}
+          sx={{ mb: 2 }}
+          action={
+            <Tooltip arrow title={suggestDisabledTip}>
+              <span>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={suggestDisabled}
+                  onClick={addAllSuggested}
+                  sx={{ color: "text.primary", borderColor: "divider" }}
+                >
+                  {EVALS_COPY.addAll}
+                </Button>
+              </span>
+            </Tooltip>
+          }
+        >
+          {serverSuggested.map((entry) => {
+            const choice = choiceFor(entry);
+            const setChoice = (next) =>
+              setSuggestedChoices((current) => ({
+                ...current,
+                [entry.name]: { ...choice, ...next },
+              }));
+            return (
+              <Stack
+                key={entry.name}
+                direction="row"
+                alignItems="center"
+                spacing={1.5}
+                sx={{
+                  px: 2.5,
+                  py: 0.875,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                  "&:first-of-type": { borderTop: "none" },
+                }}
+              >
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  <Typography noWrap sx={{ typography: "s2", fontWeight: 500 }}>
+                    {entry.name}
+                  </Typography>
+                  {entry.description && (
+                    <Tooltip arrow title={entry.description} enterDelay={400}>
+                      <Typography
+                        noWrap
+                        sx={{ typography: "s3", color: "text.tertiary" }}
+                      >
+                        {entry.description}
+                      </Typography>
+                    </Tooltip>
+                  )}
+                </Box>
+                <PassThreshold
+                  name={entry.name}
+                  value={choice.passThreshold}
+                  disabled={suggestDisabled}
+                  onChange={(passThreshold) => setChoice({ passThreshold })}
+                />
+                <RequiredSwitch
+                  name={entry.name}
+                  checked={choice.required}
+                  disabled={suggestDisabled}
+                  disabledTip={suggestDisabledTip}
+                  onChange={(required) => setChoice({ required })}
+                />
+                <Tooltip arrow title={suggestDisabledTip}>
+                  <span>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      disabled={suggestDisabled}
+                      onClick={() => addOneSuggested(entry)}
+                      sx={{
+                        color: "text.primary",
+                        borderColor: "divider",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {EVALS_COPY.addOne}
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Stack>
+            );
+          })}
+        </SectionCard>
+      )}
+
       {backed && removeEval.isError && (
         <Alert severity="error" sx={{ mb: 2, typography: "s3" }}>
           {failedRemoveName ? `${failedRemoveName}: ` : ""}
@@ -289,7 +448,9 @@ export default function EvalsStep({
         }
         subtitle={
           !detailUnknown && appliedEvals.length
-            ? EVALS_COPY.addedSubtitle
+            ? EVALS_COPY.addedSubtitle(
+                appliedEvals.filter((e) => e.required).length,
+              )
             : undefined
         }
         action={
@@ -418,7 +579,9 @@ export default function EvalsStep({
                       size="small"
                       disabled={removeDisabled}
                       aria-label={EVALS_COPY.remove}
-                      onClick={() => onRemove(e.id)}
+                      onClick={() =>
+                        backed ? setConfirmRemove(e) : onRemove(e.id)
+                      }
                     >
                       <Iconify
                         icon="solar:trash-bin-trash-linear"
@@ -477,8 +640,27 @@ export default function EvalsStep({
                 <SelectedEvalRow
                   key={e.id}
                   item={e}
+                  threshold={
+                    <PassThreshold
+                      name={e.name}
+                      value={e.pass_threshold ?? 80}
+                      disabled={removeDisabled || setRequirement.isPending}
+                      onChange={(passThreshold) =>
+                        saveRequirement(e, { passThreshold })
+                      }
+                    />
+                  }
                   action={
-                    <Stack direction="row" spacing={0.5}>
+                    <Stack direction="row" alignItems="center" spacing={0.25}>
+                      <RequiredSwitch
+                        name={e.name}
+                        checked={Boolean(e.required)}
+                        disabled={removeDisabled || setRequirement.isPending}
+                        disabledTip={lockedOrBuildingTooltip}
+                        onChange={(required) =>
+                          saveRequirement(e, { required })
+                        }
+                      />
                       {editAction}
                       {removeAction}
                     </Stack>
@@ -491,6 +673,26 @@ export default function EvalsStep({
           </Stack>
         )}
       </SectionCard>
+
+      <ConfirmDialog
+        open={Boolean(confirmRemove)}
+        onClose={() => setConfirmRemove(null)}
+        title={EVALS_COPY.removeTitle(confirmRemove?.name)}
+        content={EVALS_COPY.removeBody}
+        action={
+          <Button
+            size="small"
+            variant="contained"
+            color="error"
+            onClick={() => {
+              onRemove(confirmRemove.id);
+              setConfirmRemove(null);
+            }}
+          >
+            {EVALS_COPY.remove}
+          </Button>
+        }
+      />
 
       {/* A backed env adds from the whole catalogue through the product picker,
           saved on its run test; a forked/template env keeps the store-only
