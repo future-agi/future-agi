@@ -49,6 +49,20 @@ function mount(onAccepted) {
 }
 
 describe("Prebuild source review", () => {
+  it("keeps inferred-schema edits out of a review pinned to a template table", async () => {
+    serverReview = {
+      ...repair,
+      scope: { ...repair.scope, target_table: "orders" },
+    };
+    mount();
+    expect(await screen.findByText("orders.csv")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "Identify records by" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Prepare again" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled();
+  });
+
   it("repairs inferred fields and launches only after approving the new revision", async () => {
     const onAccepted = vi.fn();
     api.post

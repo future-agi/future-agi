@@ -80,6 +80,27 @@ const pick = (name) => {
 describe("DesignForm", () => {
   beforeEach(() => Object.values(mocks).forEach((mock) => mock.mockReset()));
 
+  it("starts a source-free scratch design without parking it for review", async () => {
+    mocks.create.mockResolvedValue({ job: { job_id: "source-free-job" } });
+    form();
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Support desk" },
+    });
+    requirements();
+    fireEvent.click(screen.getByRole("button", { name: "Design environment" }));
+    await waitFor(() =>
+      expect(mocks.create).toHaveBeenCalledWith({
+        name: "Support desk",
+        requirements: "Check refund eligibility using the approved policy.",
+        modality: "chat",
+        idempotency_key: expect.any(String),
+      }),
+    );
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      "/dashboard/simulate/environments/source-free-job",
+    );
+  });
+
   it("starts a real design from the canonical template and uploaded document", async () => {
     const documentId = "9e3b1f4a-2c6d-4e8f-a0b1-c2d3e4f5a6b7";
     const suiteId = "17be9639-4157-4b75-9d52-7675b8aa7ecb";

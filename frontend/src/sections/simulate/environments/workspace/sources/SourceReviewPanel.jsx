@@ -46,10 +46,15 @@ function SourceReviewEditor({
   const cancel = useCancelSourceReview(onCancelled);
   const reprepare = useReprepareEnvironmentSourceReview();
   const pending = accept.isPending || cancel.isPending || reprepare.isPending;
+  const editable = canEdit && !pending && !stale;
   const error = accept.error || cancel.error || reprepare.error;
   const action = useRef();
   const sources = preview?.sources ?? [];
   const tables = preview?.destination_tables ?? [];
+  const inferRepairs = scope.kind !== "environment" && !scope.target_table;
+  const hasRepairControls =
+    tables.length > 0 ||
+    (inferRepairs && sources.some((item) => item.fields?.length));
   const mappings = preview?.proposals?.field_mappings ?? [];
   const rules = preview?.proposals?.policy_rules ?? [];
   const joins = preview?.proposals?.relationships ?? [];
@@ -161,7 +166,7 @@ function SourceReviewEditor({
       )}
       <Stack
         component="fieldset"
-        disabled={!canEdit || pending || stale}
+        disabled={!editable}
         spacing={2}
         sx={{ border: 0, m: 0, p: 0, minWidth: 0 }}
       >
@@ -171,6 +176,7 @@ function SourceReviewEditor({
             size="small"
             label="Scenario data table"
             value={table}
+            disabled={!editable}
             onChange={(event) => setTable(event.target.value)}
           >
             {tables.map((name) => (
@@ -188,6 +194,7 @@ function SourceReviewEditor({
               {rows > 0 ? ` · ${rows} rows` : ""}
             </Typography>
             {state === "needs_repair" &&
+              inferRepairs &&
               !tables.length &&
               fields.length > 0 && (
                 <>
@@ -200,6 +207,7 @@ function SourceReviewEditor({
                       select
                       size="small"
                       label={title}
+                      disabled={!editable}
                       SelectProps={{ multiple: true }}
                       value={repairs[pin.source_id]?.[key] || []}
                       onChange={(event) =>
@@ -362,10 +370,10 @@ function SourceReviewEditor({
           >
             Cancel review
           </Button>
-          {state === "needs_repair" && (
+          {state === "needs_repair" && hasRepairControls && (
             <Button
               variant="contained"
-              disabled={!canEdit || pending || stale || !canRepair}
+              disabled={!editable || !canRepair}
               onClick={doRepair}
             >
               {tables.length ? "Prepare for this table" : "Prepare again"}
@@ -374,7 +382,7 @@ function SourceReviewEditor({
           {state === "ready" && (
             <Button
               variant="contained"
-              disabled={!canEdit || pending || stale || !canAccept}
+              disabled={!editable || !canAccept}
               onClick={doAccept}
             >
               {acceptLabel}

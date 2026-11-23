@@ -101,14 +101,16 @@ function FileRow({ file, accept, onRetry, onRemove, timeout }) {
               Retry
             </Button>
           )}
-        <IconButton
-          size="small"
-          aria-label={`Remove ${file.name}`}
-          onClick={() => onRemove(file.id)}
-          sx={{ p: 0.5, color: "text.secondary", flexShrink: 0 }}
-        >
-          <Iconify icon="solar:close-linear" width={14} />
-        </IconButton>
+        {onRemove && (
+          <IconButton
+            size="small"
+            aria-label={`Remove ${file.name}`}
+            onClick={() => onRemove(file.id)}
+            sx={{ p: 0.5, color: "text.secondary", flexShrink: 0 }}
+          >
+            <Iconify icon="solar:close-linear" width={14} />
+          </IconButton>
+        )}
       </Stack>
       <Collapse in={status === "uploading"} timeout={timeout} unmountOnExit>
         <LinearProgress
@@ -131,7 +133,7 @@ FileRow.propTypes = {
   file: PropTypes.object.isRequired,
   accept: PropTypes.string,
   onRetry: PropTypes.func,
-  onRemove: PropTypes.func.isRequired,
+  onRemove: PropTypes.func,
   timeout: PropTypes.number,
 };
 
@@ -219,7 +221,7 @@ UploadingFiles.propTypes = {
   // Rows from useFileUploads; a row without a status reads as done.
   files: PropTypes.arrayOf(PropTypes.object).isRequired,
   onRetry: PropTypes.func,
-  onRemove: PropTypes.func.isRequired,
+  onRemove: PropTypes.func,
   label: PropTypes.string.isRequired,
   accept: PropTypes.string,
   chips: PropTypes.bool,
