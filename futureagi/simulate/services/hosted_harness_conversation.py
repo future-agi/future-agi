@@ -495,13 +495,9 @@ def send_to_harness(
 
 
 def _refuse_while_awaiting_approval(job: HostedHarnessJob) -> None:
-    from simulate.services.harness_design_review import (
-        AWAITING_APPROVAL,
-        stored_review,
-    )
+    from simulate.services.harness_design_review import awaiting_design_approval
 
-    review = stored_review(job)
-    if review is not None and review.get("status") == AWAITING_APPROVAL:
+    if awaiting_design_approval(job):
         raise HostedHarnessError(
             "design_review_pending",
             "Approve or discard the design before changing it in the builder chat",

@@ -37,6 +37,22 @@ VIEWER_REFUSALS = [
     ("delete", ENVIRONMENT, "delete an environment"),
     ("post", f"{ENVIRONMENT}versions/agent/", "create an agent version"),
     ("post", f"{ENVIRONMENT}nudges/{OTHER}/answer/", "answer a rebuild prompt"),
+    ("post", f"{ENVIRONMENT}design-review/edits/", "change the environment's design"),
+    (
+        "delete",
+        f"{ENVIRONMENT}design-review/edits/0/",
+        "change the environment's design",
+    ),
+    (
+        "post",
+        f"{ENVIRONMENT}design-review/approve/",
+        "approve the environment's design",
+    ),
+    (
+        "post",
+        f"{ENVIRONMENT}design-review/discard/",
+        "discard the environment's design",
+    ),
     ("delete", f"{ENVIRONMENT}evaluations/{OTHER}/", "remove evaluations"),
     ("patch", f"{ENVIRONMENT}evaluations/{OTHER}/", "edit evaluations"),
     ("post", "/simulate/agent-definitions/create/", "create an agent"),

@@ -48,7 +48,7 @@ def review_applies(runtime: HarnessAgentVersionRuntime | None) -> bool:
 def review_contract_for(
     runtime: HarnessAgentVersionRuntime | None,
 ) -> dict[str, Any] | None:
-    if not review_applies(runtime):
+    if runtime is None or not review_applies(runtime):
         return None
     from simulate.services.agent_contracts import stored_version_contract
 
@@ -124,6 +124,11 @@ def stored_review(job: HostedHarnessJob) -> dict[str, Any] | None:
     return review if isinstance(review, dict) else None
 
 
+def awaiting_design_approval(job: HostedHarnessJob) -> bool:
+    review = stored_review(job)
+    return review is not None and review.get("status") == AWAITING_APPROVAL
+
+
 def _write(job: HostedHarnessJob, review: dict[str, Any]) -> None:
     payload = dict(job.payload or {})
     payload["metadata"] = {**(payload.get("metadata") or {}), REVIEW_KEY: review}
@@ -139,7 +144,9 @@ def create_design_review(
         job,
         {
             "status": AWAITING_APPROVAL,
-            "agent_version_id": str(runtime.agent_version_id),
+            "agent_version_id": (
+                str(runtime.agent_version_id) if runtime.agent_version_id else None
+            ),
             "source_contract_hash": contract_hash(contract),
             "proposal": build_proposal(contract, job.scenario_count),
             "edits": [],
@@ -511,7 +518,7 @@ def apply_edits_to_contract(
     for edit in edits:
         op, kind, item_id = edit["op"], edit["kind"], edit.get("id")
         if op == "remove":
-            removed[kind].add(item_id)
+            removed[kind].add(str(item_id))
         elif op == "edit" and kind == "rule":
             for rule in rules:
                 if rule["id"] == item_id:

@@ -1544,7 +1544,10 @@ class HostedHarnessProvider:
     def create(self, request) -> Response:
         from simulate.serializers.harness_job import names_agent_version
         from simulate.services.harness_agent_versions import advisory_xact_lock
-        from simulate.services.harness_design_review import review_contract_for
+        from simulate.services.harness_design_review import (
+            awaiting_design_approval,
+            review_contract_for,
+        )
         from simulate.services.harness_versioning.versions import versioning_enabled
         from simulate.services.hosted_harness import (
             HostedHarnessError,
@@ -1749,7 +1752,7 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness scheduler is unavailable"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        if job.state == HostedHarnessJob.State.RECEIVED:
+        if awaiting_design_approval(job):
             return Response(serialize_job(job), status=status.HTTP_202_ACCEPTED)
         try:
             retry_cfg = job.payload["retry"]

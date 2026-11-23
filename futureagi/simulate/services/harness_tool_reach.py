@@ -455,10 +455,12 @@ def _arguments(spec: Mapping[str, Any]) -> list[ToolArgument]:
     """A tool's arguments with their type and unit as the contract writes them: by name in `arg_types` and
     `arg_units`, or on an argument written as an object (`{name, type, unit}`)."""
     types, units = _words(spec.get("arg_types")), _words(spec.get("arg_units"))
-    values = spec.get("arg_values") if isinstance(spec.get("arg_values"), dict) else {}
-    bounds = spec.get("arg_bounds") if isinstance(spec.get("arg_bounds"), dict) else {}
-    required = spec.get("arg_required")
-    recorded = isinstance(required, list) and bool(required)
+    raw_values, raw_bounds = spec.get("arg_values"), spec.get("arg_bounds")
+    values: dict[str, Any] = raw_values if isinstance(raw_values, dict) else {}
+    bounds: dict[str, Any] = raw_bounds if isinstance(raw_bounds, dict) else {}
+    raw_required = spec.get("arg_required")
+    required: list[Any] = raw_required if isinstance(raw_required, list) else []
+    recorded = bool(required)
     arguments: list[ToolArgument] = []
     args = spec.get("args")
     for arg in args if isinstance(args, list) else []:

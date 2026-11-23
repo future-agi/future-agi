@@ -117,7 +117,19 @@ def test_the_world_lists_only_its_own_tables(organization, workspace):
     ]
     assert world["total_rows"] == 5
     # The stores themselves are kept whole.
-    assert world["stores"] == STORES
+    assert world["stores"] == [
+        {
+            **STORES[0],
+            "tables": [
+                {
+                    **table,
+                    "internal": table["name"] == "harness_seed_sentinel",
+                    "columns": None,
+                }
+                for table in STORES[0]["tables"]
+            ],
+        }
+    ]
 
 
 def test_a_scenario_that_cannot_work_says_why_and_its_actors_are_resolved(

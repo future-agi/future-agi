@@ -1737,7 +1737,11 @@ def test_environment_detail_preserves_data_schema_for_contract_ui(user, workspac
                     {
                         "name": "lookup_order",
                         "args": ["order_id"],
-                        "origin": {"kind": "code", "path": "support/tools.py", "line": 4},
+                        "origin": {
+                            "kind": "code",
+                            "path": "support/tools.py",
+                            "line": 4,
+                        },
                     }
                 ],
                 "tool_entrypoints": [
