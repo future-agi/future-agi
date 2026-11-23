@@ -415,6 +415,7 @@ def _run(
                 expected={},
                 idempotency_key=f"issue-epoch-{locked.id}",
                 user=user,
+                for_agent_fix=True,
             )
         # The drafts the person did not keep are discarded, so they hold back no
         # later import of their sources.

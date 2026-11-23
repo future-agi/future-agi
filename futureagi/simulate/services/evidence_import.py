@@ -519,6 +519,7 @@ def add_to_suite(
     expected: dict[str, drafts.DraftRef],
     idempotency_key: str,
     user,
+    for_agent_fix: bool = False,
 ) -> bool:
     """Add the drafted scenarios of ``case_ids`` to the environment's suite, in one
     transaction under the environment's lock. ``expected`` is the unsaved changes
@@ -645,6 +646,7 @@ def _save_added(
                 },
                 idempotency_key=idempotency_key,
                 user=user,
+                for_agent_fix=for_agent_fix,
             )
     except HostedHarnessError as refused:
         if refused.status_code >= 500 or refused.code in _REFUSE_WHOLE_ADD:
