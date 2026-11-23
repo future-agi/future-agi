@@ -16,8 +16,9 @@ const {
 } = await import("../compareRuns");
 const { compareRunsKeyPrefix } = await import("../runEvals");
 const { mapCallRow } = await import("../runCalls");
-const { compareRunsResponse, COMPARE_EVAL_COLUMNS, RUN } =
-  await import("../_fixtures/compareRuns");
+const { compareRunsResponse, COMPARE_EVAL_COLUMNS, RUN } = await import(
+  "../_fixtures/compareRuns"
+);
 
 let client;
 const wrapper = ({ children }) => (

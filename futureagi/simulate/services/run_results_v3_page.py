@@ -134,7 +134,7 @@ def _cache_key(
     *,
     configs: list[tuple[Any, ...]] | None = None,
     calls: int | None = None,
-    shape: str = "calls:v4",
+    shape: str = "calls:v5",
 ) -> str | None:
     if execution.status != TestExecution.ExecutionStatus.COMPLETED:
         return None
@@ -165,7 +165,8 @@ def _cache_key(
             default=str,
         ).encode()
     ).hexdigest()
-    # The shape names what is cached; an entry written in another shape must miss.
+    # The shape names what is cached and the outcome rules it was counted under
+    # (a worker's own check no longer fails the call); any other entry must miss.
     return f"simulate:v3:{shape}:{execution.id}:{version.timestamp()}:{fingerprint}"
 
 
@@ -296,7 +297,7 @@ def cached_execution_rows(
             )
             for execution in missed
         },
-        shape="calls:v4",
+        shape="calls:v5",
         columns_by_run=columns_by_run,
         key_inputs=key_inputs,
         stamps={} if stamps is None else stamps,
@@ -405,7 +406,7 @@ def run_outcome_summaries(
                 [],
                 configs=configs.get(execution.run_test_id, []),
                 calls=calls.get(execution.id, 0),
-                shape="run-summary:v1",
+                shape="run-summary:v2",
             )
             for execution in completed
         }

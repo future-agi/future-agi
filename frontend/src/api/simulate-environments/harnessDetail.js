@@ -159,6 +159,8 @@ export function harnessDetailToEnvironment(detail) {
     // provider agents, which have none.
     dataSchema: contract?.data_schema || null,
     toolStatus: contract?.tool_status,
+    // An open draft's contract, which runs do not use until it is saved.
+    contractFromDraft: Boolean(contract?.from_draft),
     faultTargets: contract?.fault_targets,
     worldTables: world?.tables,
     worldTotalRows: world?.total_rows,

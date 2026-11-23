@@ -41,6 +41,7 @@ const summary = (passed, failed, extra = {}) => ({
     passed,
     failed,
     error: 0,
+    cancelled: 0,
     inconclusive: 0,
     no_score: 0,
   },
@@ -68,6 +69,7 @@ const statusCounts = (passed, failed) => ({
   failed,
   inconclusive: 0,
   error: 0,
+  cancelled: 0,
   no_score: 0,
 });
 
@@ -122,9 +124,14 @@ const ESCALATE = {
   },
 };
 
-// The deprecated name list the server still sends beside sub_goal_results.
+// Each sub-goal shown by its name, and the deprecated name list the server
+// still sends beside sub_goal_results.
 const withSubGoals = (call) => ({
   ...call,
+  sub_goal_results: call.sub_goal_results.map((goal) => ({
+    display_name: goal.name,
+    ...goal,
+  })),
   sub_goals: call.sub_goal_results.map((goal) => goal.name),
 });
 

@@ -1983,7 +1983,7 @@ def test_settled_statuses_are_dropped_when_the_runnable_evals_change(
     assert _scoring(warm)[0] == calls_page["summary"]["scoring"]
 
 
-def _expire_rows(shape: str = "calls:v4") -> dict[str, tuple[Any, Any]]:
+def _expire_rows(shape: str = "calls:v5") -> dict[str, tuple[Any, Any]]:
     """Drop only the cached rows, as when they expire before the compare facts.
 
     Returns the dropped entries, stored as they were, so a test can put them back.

@@ -124,7 +124,7 @@ async def cancel_hosted_harness_attempt(
             "job", "job__organization"
         ).get(id=input.attempt_id)
         reason = attempt.job.cancel_reason or "user_canceled"
-        job = HostedHarnessGateway().cancel(attempt.job, reason=reason)
+        job = HostedHarnessGateway().cancel(attempt.job, reason=reason, await_seal=True)
         return job.state
 
     try:

@@ -54,14 +54,17 @@ vi.mock("../compareCells", async (importOriginal) => {
 });
 
 const { default: axios } = await import("src/utils/axios");
-const { useEnvironmentRuns } =
-  await import("src/api/simulate-environments/runs");
-const { compareRunsResponse, RUN, CALL } =
-  await import("src/api/simulate-environments/_fixtures/compareRuns");
+const { useEnvironmentRuns } = await import(
+  "src/api/simulate-environments/runs"
+);
+const { compareRunsResponse, RUN, CALL } = await import(
+  "src/api/simulate-environments/_fixtures/compareRuns"
+);
 const { RunCompare } = await import("../WorkspaceRunCompare");
 const { AGENT_TYPES } = await import("src/sections/agents/constants");
-const { TRACE_COLUMNS } =
-  await import("../../detail/trace/traceTable.constants");
+const { TRACE_COLUMNS } = await import(
+  "../../detail/trace/traceTable.constants"
+);
 const { SHARED_COLUMNS } = await import("../compare.constants");
 const { histogramRows } = await import("../CompareScoreChart");
 
