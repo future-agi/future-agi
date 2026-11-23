@@ -105,6 +105,29 @@ def merge(upstream, current, models_dev):
     return merged, counts
 
 
+def calculate_cost(entry, input_tokens=0, output_tokens=0, image_count=0):
+    """Calculate total USD cost for a request based on a catalogue entry.
+
+    The function respects the per‑token input and output rates that are stored
+    in the catalogue (`input_cost_per_token` and `output_cost_per_token`).  It
+    also supports image‑based pricing via `input_per_image` or `image_input`
+    fields when present.
+    """
+    total = 0.0
+    # Input token cost – always applied when the field exists.
+    if "input_cost_per_token" in entry:
+        total += input_tokens * entry["input_cost_per_token"]
+    # Output token cost – optional for embedding models.
+    if "output_cost_per_token" in entry:
+        total += output_tokens * entry["output_cost_per_token"]
+    # Image‑based cost – some models expose a per‑image rate.
+    if "input_per_image" in entry:
+        total += image_count * entry["input_per_image"]
+    elif "image_input" in entry:
+        total += image_count * entry["image_input"]
+    return total
+
+
 def main(upstream_path, models_dev_path, dest):
     with open(upstream_path) as f:
         upstream = json.load(f)
