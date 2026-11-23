@@ -155,6 +155,15 @@ def _stats(
     }
 
 
+def _average(values: Sequence[float]) -> float | None:
+    """PostgreSQL ``avg(float8)``: a plain running sum in scan order, over N."""
+    # Not sum(): Python 3.12+ compensates float sums, which PostgreSQL does not.
+    total = 0.0
+    for value in values:
+        total += value
+    return total / len(values) if values else None
+
+
 def _breakdown(counts: Sequence[FacetCount], key: str, label: str, total: int) -> dict:
     """``counts`` are ``{"value", "count"}`` rows in ``ORDER BY -count, value``."""
     segments: list[dict[str, Any]] = [
@@ -543,6 +552,10 @@ def build_run_dashboard(
     *,
     call_rows: Sequence[DashboardCallRow],
 ) -> dict[str, Any]:
+    """``call_rows`` must be the complete ``dashboard_call_rows()`` result for
+    ``queryset``. The SQL aggregates run after it, so row-derived counts and
+    averages describe those rows, while SQL totals may include later calls on a
+    live run."""
     total = summary["total"]
     # Charts built from the rows take their totals from the same rows.
     row_total = len(call_rows)
@@ -582,8 +595,6 @@ def build_run_dashboard(
         }
     ).aggregate(
         voice_calls=Count("id", filter=voice_scope),
-        csat=Avg("dashboard_csat"),
-        turns=Avg("result_turn_count"),
         cost_passed=Count(
             "id", filter=Q(result_cost_cents__isnull=False, result_outcome="passed")
         ),
@@ -726,11 +737,15 @@ def build_run_dashboard(
         "Caller ended before script completion and failed evaluation; "
         "calls without completion evidence are unmeasured",
     )
+    # Averaged from the rows they count, so a live run never averages unread calls.
+    csat_scores = [
+        row["dashboard_csat"] for row in call_rows if row["dashboard_csat"] is not None
+    ]
     metric(
         "csat",
         "Avg CSAT (0–10)",
-        values["csat"],
-        measured=sum(row["dashboard_csat"] is not None for row in call_rows),
+        _average(csat_scores),
+        measured=len(csat_scores),
         note="Scorer CSAT on a 0–10 scale; a provider success flag is never counted",
     )
     metric(
@@ -769,11 +784,16 @@ def build_run_dashboard(
         "seconds",
         summary["duration"]["measured"],
     )
+    turn_counts = [
+        row["result_turn_count"]
+        for row in call_rows
+        if row["result_turn_count"] is not None
+    ]
     metric(
         "turns",
         f"Avg turns/{noun}",
-        values["turns"],
-        measured=sum(row["result_turn_count"] is not None for row in call_rows),
+        _average(turn_counts),
+        measured=len(turn_counts),
     )
     duration_stats = _stats(values, duration_fields, "stats_")
     metric(

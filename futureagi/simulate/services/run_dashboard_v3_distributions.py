@@ -39,7 +39,9 @@ def _percentile_cont(ordered: Sequence[float], fraction: float) -> float | None:
 def csat_distribution(
     call_rows: Sequence[DashboardCallRow], total: int
 ) -> dict[str, Any]:
-    # Bins, satisfied and agreement all read the same rows, so they never disagree.
+    # Bins, satisfied and agreement share one read (the same call rows), not one
+    # population: bins round, satisfied reads raw scores, and agreement counts
+    # only comparable pairs.
     scores = [
         row["dashboard_csat"] for row in call_rows if row["dashboard_csat"] is not None
     ]

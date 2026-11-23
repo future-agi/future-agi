@@ -30,6 +30,7 @@ from simulate.models.hosted_harness import (
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import CallExecution, TestExecution
+from simulate.services.run_dashboard_v3 import CHART_BUCKETS
 from simulate.services.run_results_v3_page import CALL_VALUE_FIELDS, group_call_values
 from simulate.services.run_results_v3_queries import run_calls_queryset
 
@@ -4419,133 +4420,6 @@ def test_the_aggregate_average_leaves_out_results_that_are_neither_a_pass_nor_a_
     assert metrics["avg_noticed"] == 50.0
 
 
-# ============================================================================
-# Run dashboard charts built from the shared call rows
-# ============================================================================
-
-
-def _dashboard_row(index: int, **values):
-    row = {
-        "id": uuid.UUID(int=index),
-        "started_at": None,
-        "dashboard_csat": None,
-        "dashboard_provider_success": None,
-        "result_eval_outcome": "inconclusive",
-        "result_latency_ms": None,
-        "duration_seconds": None,
-        "result_cost_cents": None,
-        "llm_cost_cents": None,
-        "tts_cost_cents": None,
-        "stt_cost_cents": None,
-        "storage_cost_cents": None,
-        "result_scenario": f"Scenario {index}",
-        "simulation_call_type": "voice",
-        "result_provider": "vapi",
-    }
-    row.update(values)
-    return row
-
-
-def test_csat_half_points_bin_up_and_agreement_counts_both_verdicts():
-    from simulate.services.run_dashboard_v3_distributions import csat_distribution
-
-    scores = [0.5, 1.5, 4.5, 7.5, 8.0, 9.49, 9.5, 10.0]
-    verdicts = [
-        ("true", "passed"),
-        ("false", "failed"),
-        ("true", "failed"),
-        ("false", "passed"),
-        (None, "passed"),
-        ("true", "inconclusive"),
-        ("maybe", "failed"),
-        (None, None),
-    ]
-    rows = [
-        _dashboard_row(
-            index,
-            dashboard_csat=score,
-            dashboard_provider_success=provider,
-            result_eval_outcome=outcome,
-        )
-        for index, (score, (provider, outcome)) in enumerate(
-            zip(scores, verdicts, strict=True)
-        )
-    ]
-    rows.append(_dashboard_row(99))
-
-    chart = csat_distribution(rows, len(rows))
-
-    assert {row["label"]: row["count"] for row in chart["bins"] if row["count"]} == {
-        "1": 1,
-        "2": 1,
-        "5": 1,
-        "8": 2,
-        "9": 1,
-        "10": 2,
-    }
-    assert (chart["measured"], chart["total"], chart["satisfied"]) == (8, 9, 4)
-    assert chart["satisfied_percent"] == 50.0
-    assert chart["agreement"] == {"compared": 4, "agreed": 2, "percent": 50.0}
-
-
-def test_latency_bars_around_the_target_are_flagged_from_the_target_up(settings):
-    from simulate.services.run_dashboard_v3_distributions import (
-        response_time_distribution,
-    )
-
-    settings.SIMULATION_VOICE_RESPONSE_TARGET_MS = 1500
-    rows = [
-        _dashboard_row(index, result_latency_ms=latency)
-        for index, latency in enumerate([1450.0, 1500.0, 1550.0])
-    ]
-
-    chart = response_time_distribution(rows, len(rows), voice=True)
-
-    assert [
-        (row["lower"], row["upper"], row["count"], row["danger"])
-        for row in chart["bins"]
-    ] == [(1450, 1500, 1, False), (1500, 1550, 1, True), (1550, 1600, 1, True)]
-    assert (chart["measured"], chart["at_or_above_target"]) == (3, 2)
-
-
-def test_top_eight_rankings_break_ties_by_ascending_call_id():
-    from simulate.services.run_dashboard_v3 import _tails
-
-    tied = [
-        _dashboard_row(index, duration_seconds=900, result_cost_cents=5.0)
-        for index in range(9, 0, -1)
-    ]
-    rows = [*tied, _dashboard_row(0)]
-
-    for field in ("duration_seconds", "result_cost_cents"):
-        ranked = _tails(rows, field)
-        assert [row["id"] for row in ranked] == [
-            str(uuid.UUID(int=index)) for index in range(1, 9)
-        ], field
-        assert [row["rank"] for row in ranked] == list(range(1, 9))
-
-
-def test_per_call_series_orders_by_start_then_id_with_unstarted_calls_last():
-    from simulate.services.run_dashboard_v3 import SeriesBounds, _series
-
-    started = timezone.now().replace(microsecond=0)
-    rows = [
-        _dashboard_row(1, duration_seconds=10),
-        _dashboard_row(3, started_at=started, result_latency_ms=-1.0),
-        _dashboard_row(2, started_at=started, result_latency_ms=800.0),
-    ]
-
-    series = _series(None, rows, len(rows), SeriesBounds(first=started, last=started))
-
-    assert [(row["label"], row["started_at"]) for row in series] == [
-        ("1", started),
-        ("2", started),
-        ("3", None),
-    ]
-    assert [row["latency_ms"] for row in series] == [800.0, None, None]
-    assert series[2]["duration_ms"] == 10000.0
-
-
 @pytest.mark.django_db
 def test_voice_only_metrics_ignore_chat_calls_in_a_mixed_run(
     auth_client, test_execution, scenario
@@ -4591,14 +4465,15 @@ def test_row_charts_total_the_rows_they_count(
     """A call the shared rows missed (it landed after the read) is in no row chart."""
     from simulate.services import run_dashboard_v3
 
-    for index, csat in enumerate([9, None, 3]):
+    # The omitted third call has its own CSAT and turns, so averaging it shows.
+    for index, (csat, turns) in enumerate([(9, 2), (None, 5), (3, 11)]):
         CallExecution.objects.create(
             test_execution=test_execution,
             scenario=scenario,
             status="completed",
             simulation_call_type="voice",
             phone_number=f"+940000000{index}",
-            conversation_metrics_data={"turn_count": 4, "csat_score": csat},
+            conversation_metrics_data={"turn_count": turns, "csat_score": csat},
         )
     read_rows = run_dashboard_v3.dashboard_call_rows
     monkeypatch.setattr(
@@ -4619,7 +4494,88 @@ def test_row_charts_total_the_rows_they_count(
     assert dashboard["csat"]["total"] == 2
     assert dashboard["agent_response_time"]["total"] == 2
     metrics = {metric["key"]: metric for metric in dashboard["metrics"]}
-    assert metrics["turns"]["measured"] == 2
+    assert (metrics["turns"]["value"], metrics["turns"]["measured"]) == (3.5, 2)
+    assert (metrics["csat"]["value"], metrics["csat"]["measured"]) == (9.0, 1)
     assert metrics["csat"]["measured"] == sum(
         row["count"] for row in dashboard["csat"]["bins"]
     )
+
+
+@pytest.mark.django_db
+def test_row_averages_are_null_when_no_row_is_read(
+    auth_client, test_execution, scenario, monkeypatch
+):
+    """Calls the shared rows missed never yield an average with nothing measured."""
+    from simulate.services import run_dashboard_v3
+
+    CallExecution.objects.create(
+        test_execution=test_execution,
+        scenario=scenario,
+        status="completed",
+        simulation_call_type="voice",
+        phone_number="+9500000000",
+        conversation_metrics_data={"turn_count": 5, "csat_score": 7.5},
+    )
+    monkeypatch.setattr(run_dashboard_v3, "dashboard_call_rows", lambda **kwargs: [])
+
+    response = auth_client.get(
+        f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    metrics = {
+        metric["key"]: metric for metric in response.json()["dashboard"]["metrics"]
+    }
+    for key in ("csat", "turns"):
+        assert (metrics[key]["value"], metrics[key]["measured"]) == (None, 0), key
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("calls", [CHART_BUCKETS, CHART_BUCKETS + 1])
+def test_series_switches_to_time_buckets_past_the_per_call_limit(
+    auth_client, test_execution, scenario, calls
+):
+    """Up to CHART_BUCKETS calls chart one point each; one more buckets by time."""
+    # One call every 100 s spans 99 bucket widths of exactly 100 s; the extra
+    # call repeats the first start, so only the first bucket holds two calls.
+    rows = [(100 + index, 1, 100 * index) for index in range(CHART_BUCKETS)]
+    rows += [(300, 1, 0)] * (calls - CHART_BUCKETS)
+    _latency_calls(test_execution, scenario, rows)
+
+    response = auth_client.get(
+        f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    dashboard = response.json()["dashboard"]
+    series = dashboard["series"]
+    assert dashboard["series_limit"] == CHART_BUCKETS
+    assert [row["label"] for row in series] == [
+        str(index + 1) for index in range(CHART_BUCKETS)
+    ]
+    assert [row["duration_ms"] for row in series] == [1000.0] * CHART_BUCKETS
+    if calls == CHART_BUCKETS:
+        assert dashboard["series_mode"] == "calls"
+        assert [row["calls"] for row in series] == [1] * CHART_BUCKETS
+        assert [row["latency_ms"] for row in series] == [
+            100.0 + index for index in range(CHART_BUCKETS)
+        ]
+    else:
+        assert dashboard["series_mode"] == "time_buckets"
+        assert [row["calls"] for row in series] == [2] + [1] * (CHART_BUCKETS - 1)
+        assert [row["latency_ms"] for row in series] == [200.0] + [
+            100.0 + index for index in range(1, CHART_BUCKETS)
+        ]
+
+
+@pytest.mark.django_db
+def test_cold_analytics_get_runs_a_fixed_number_of_queries(
+    auth_client, test_execution, analytics_call_executions, django_assert_num_queries
+):
+    """Pins the cold analytics read's query budget; a new query must update it."""
+    cache.clear()
+    with django_assert_num_queries(21):
+        response = auth_client.get(
+            f"/simulate/v3/test-executions/{test_execution.id}/analytics/"
+        )
+    assert response.status_code == status.HTTP_200_OK
