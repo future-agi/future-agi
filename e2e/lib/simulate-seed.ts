@@ -405,7 +405,7 @@ def main():
         payload={"source": {"kind": "archive"}, "metadata": {"name": f"e2e-participants-env-{suffix}"}},
     )
     # A built environment: its run detail shows calls rather than the build overview.
-    # The contract snapshot declares the two workers, as the Contract tab's Workers card reads them.
+    # The contract snapshot declares the two workers, as the Contract tab's Participants card reads them.
     contract = {"workers": [
         {"id": "order_lookup", "name": "Order-lookup worker", "tools": ["get_order", "list_refunds", "update_order_status"],
          "allowed_tools": ["get_order", "list_refunds"], "binding": "separate", "address_env": "ORDER_LOOKUP_API_URL"},
@@ -422,6 +422,8 @@ def main():
         "started_at": at(0),
         "spans_received": True,
         "collection": "complete",
+        # The project its spans were read from, as record_call_workers keeps it: Participants opens a step's trace there.
+        "project_id": str(project.id),
         "coordinator": {"name": "Returns coordinator"},
         "workers": [
             {"worker_id": f"{run}/order_lookup", "id": "order_lookup", "name": "Order-lookup worker",

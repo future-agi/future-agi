@@ -53,7 +53,9 @@ const tableQuery = (page = 1) => ({
 });
 
 const setup = ({ callId, page = 1, source = "table", query, live = false }) => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const wrapper = ({ children }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
@@ -212,7 +214,15 @@ describe("useCallListNavigation", () => {
 
   it("ends the list at the last distinct call, even when a repeated call sits below it", async () => {
     // On screen [b a] [c a] reads b a c: a repeats after c, but c is the end.
-    mockPages({ 1: { results: ["a", "b", "c"], groups: [["b", "a"], ["c", "a"]] } });
+    mockPages({
+      1: {
+        results: ["a", "b", "c"],
+        groups: [
+          ["b", "a"],
+          ["c", "a"],
+        ],
+      },
+    });
     const { result, rerender, onStep } = setup({ callId: "c" });
     await waitFor(() => expect(result.current.hasPrev).toBe(true));
     expect(result.current.hasNext).toBe(false);
@@ -227,7 +237,14 @@ describe("useCallListNavigation", () => {
 
   it("steps through every distinct call once when one sits in three groups", async () => {
     mockPages({
-      1: { results: ["a", "b", "c", "d"], groups: [["a", "b"], ["a", "c"], ["a", "d"]] },
+      1: {
+        results: ["a", "b", "c", "d"],
+        groups: [
+          ["a", "b"],
+          ["a", "c"],
+          ["a", "d"],
+        ],
+      },
     });
     const { result, rerender, onStep } = setup({ callId: "a" });
     await waitFor(() => expect(result.current.hasNext).toBe(true));
@@ -248,21 +265,39 @@ describe("useCallListNavigation", () => {
   it("crosses pages by distinct calls when both pages have a repeated call", async () => {
     // page 1 on screen [a c] [b c] reads a c b; page 2 [d e] [d f] reads d e f.
     mockPages({
-      1: { results: ["a", "b", "c"], groups: [["a", "c"], ["b", "c"]] },
-      2: { results: ["d", "e", "f"], groups: [["d", "e"], ["d", "f"]] },
+      1: {
+        results: ["a", "b", "c"],
+        groups: [
+          ["a", "c"],
+          ["b", "c"],
+        ],
+      },
+      2: {
+        results: ["d", "e", "f"],
+        groups: [
+          ["d", "e"],
+          ["d", "f"],
+        ],
+      },
     });
     const { result, onStep } = setup({ callId: "b" });
     await waitFor(() => expect(result.current.hasNext).toBe(true));
     await act(() => result.current.onNext());
     expect(lastStep(onStep)).toEqual(
-      expect.objectContaining({ task: expect.objectContaining({ id: "d" }), page: 2 }),
+      expect.objectContaining({
+        task: expect.objectContaining({ id: "d" }),
+        page: 2,
+      }),
     );
 
     const back = setup({ callId: "d", page: 2 });
     await waitFor(() => expect(back.result.current.hasPrev).toBe(true));
     await act(() => back.result.current.onPrev());
     expect(lastStep(back.onStep)).toEqual(
-      expect.objectContaining({ task: expect.objectContaining({ id: "b" }), page: 1 }),
+      expect.objectContaining({
+        task: expect.objectContaining({ id: "b" }),
+        page: 1,
+      }),
     );
   });
 
@@ -310,10 +345,21 @@ describe("useCallListNavigation", () => {
     expect(result.current.hasNext).toBe(false);
   });
 
-  it("gives a call opened from Analytics no prev/next and reads nothing", () => {
+  it("reads the open call's row from the table, so the drawer isn't left with a snapshot", async () => {
+    const { result } = setup({ callId: "c2" });
+    await waitFor(() =>
+      expect(result.current.openRow).toMatchObject({
+        id: "c2",
+        scenario: "Scenario c2",
+      }),
+    );
+  });
+
+  it("gives a call opened from Analytics no prev/next or row and reads nothing", () => {
     const { result } = setup({ callId: "c2", source: "analytics" });
     expect(result.current.hasPrev).toBe(false);
     expect(result.current.hasNext).toBe(false);
+    expect(result.current.openRow).toBeNull();
     expect(axios.get).not.toHaveBeenCalled();
   });
 
