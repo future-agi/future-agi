@@ -11,8 +11,11 @@ export default function BuildStreamNote({
   count = null,
   total = null,
   waiting = false,
+  stopped = false,
   sx,
 }) {
+  /* A build that stopped: nothing is moving, so no spinner. */
+  const quiet = waiting || stopped;
   return (
     <Stack
       direction="row"
@@ -20,9 +23,11 @@ export default function BuildStreamNote({
       spacing={1}
       sx={{ px: 0.5, mb: 2, ...sx }}
     >
-      {waiting ? (
+      {quiet ? (
         <Iconify
-          icon="solar:clock-circle-linear"
+          icon={
+            stopped ? "solar:stop-circle-linear" : "solar:clock-circle-linear"
+          }
           width={14}
           sx={{ color: "text.subtitle", flexShrink: 0 }}
         />
@@ -44,8 +49,8 @@ export default function BuildStreamNote({
       <Typography
         sx={{
           typography: "s2",
-          fontWeight: waiting ? 500 : 600,
-          color: waiting ? "text.subtitle" : "text.primary",
+          fontWeight: quiet ? 500 : 600,
+          color: quiet ? "text.subtitle" : "text.primary",
           fontVariantNumeric: "tabular-nums",
         }}
       >
@@ -65,5 +70,6 @@ BuildStreamNote.propTypes = {
   count: PropTypes.number,
   total: PropTypes.number,
   waiting: PropTypes.bool,
+  stopped: PropTypes.bool,
   sx: PropTypes.object,
 };

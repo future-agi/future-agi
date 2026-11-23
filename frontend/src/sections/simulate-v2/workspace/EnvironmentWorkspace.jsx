@@ -91,6 +91,17 @@ import {
   firstBuildOf,
   stepKindNow,
 } from "../_mock/versionBuild";
+import { schemaFor } from "../_mock/envInternals";
+import {
+  BUILD_STOP_CASES,
+  buildStopOf,
+  isBuildStopCase,
+  isBuildStopped,
+  resumedBuildOf,
+  stoppedBuildOf,
+  stoppedRunReason,
+  stoppedStepOf,
+} from "../_mock/buildStop";
 import {
   addDesignOrgPatch,
   mergeDesignFiles,
@@ -125,7 +136,10 @@ import {
   subscribeBuilderSend,
   subscribeOpenBuilderChat,
 } from "../_mock/builderPromptBus";
-import { subscribeComposerScaffold } from "../_mock/composerScaffoldBus";
+import {
+  injectComposerScaffold,
+  subscribeComposerScaffold,
+} from "../_mock/composerScaffoldBus";
 import {
   subscribeScenarioSelection,
   clearScenarioSelection,
@@ -591,8 +605,13 @@ export default function EnvironmentWorkspace() {
        into its tab, the tabs follow it, and the five release checks run as
        its last step — only then is Save offered. */
     const before = new Set((envState.scenarios || []).map((r) => r.id));
+    /* ?build=fail-* stops this build where that case stops (demo). */
+    const stopCase = searchParams.get("build");
     const firstBuild = {
       ...firstBuildOf({
+        stop: isBuildStopCase(stopCase)
+          ? { case: stopCase, no: BUILD_STOP_CASES[stopCase] }
+          : null,
         tables: next.seed?.tables || [],
         tools: next.tools || [],
         rules: rulesOf(next, envState).map((r) => r.id),
@@ -682,6 +701,29 @@ export default function EnvironmentWorkspace() {
   const [copyOpen, setCopyOpen] = useState(null);
   /* A newer release of the world this environment came from. */
   const [reviewOpen, setReviewOpen] = useState(false);
+  /*
+    ?build=fail-world | fail-scenarios | fail-checks | fail-ours (demo): this
+    environment's first build stops in that phase — stored like a real stop,
+    so the header, the run button and the Environments list all read it.
+    A design still waiting for approval stops when it's approved instead.
+  */
+  const stopKnob = searchParams.get("build");
+  useEffect(() => {
+    if (!env || !state.hydrated || !gates.canEdit) return;
+    if (!isBuildStopCase(stopKnob)) return;
+    if (env.buildStatus === "awaiting_approval") return;
+    if (envState.versionBuild?.stop?.case === stopKnob) return;
+    storePatch({
+      versionBuild: stoppedBuildOf({
+        env: worldEnv,
+        envState,
+        kase: stopKnob,
+        /* The world's tables as the World tab lists them. */
+        tables: schemaFor(worldEnv, envState),
+      }),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stopKnob, env?.id, env?.buildStatus, state.hydrated]);
   /* ?copy=1 (the environment list's row menu) opens Make a copy. */
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
@@ -904,6 +946,28 @@ export default function EnvironmentWorkspace() {
       ),
     );
   }, [env?.buildStatus]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* A first build that stopped: the greeting says where, and what the
+     builder can do about it — never "is ready". */
+  const stoppedLabel = stoppedStepOf(envState?.versionBuild)?.label || null;
+  useEffect(() => {
+    if (!env || !stoppedLabel) return;
+    setTurns((prev) =>
+      prev.map((t) =>
+        t.id === "ws-greet"
+          ? {
+              ...t,
+              steps: [
+                {
+                  ...t.steps[0],
+                  text: `The build of ${env.name} stopped at ${stoppedLabel}. What it finished is kept — tell me what to change, or try again from the strip above.`,
+                },
+                ...t.steps.slice(1),
+              ],
+            }
+          : t,
+      ),
+    );
+  }, [stoppedLabel, turns.length > 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* The chat is kept with the environment, so a reload still has it and
      Open in chat (Review changes) finds the message an edit came from. */
@@ -1168,6 +1232,9 @@ export default function EnvironmentWorkspace() {
     !envState.versionBuild;
   /* A new version building after approved changes (a source's proposal). */
   const versionBuilding = !!envState.versionBuild;
+  /* A first build that stopped part-way: nothing is building, nothing runs
+     until it's tried again and finishes. */
+  const buildStopped = isBuildStopped(envState.versionBuild);
   /* Tabs with a part of a new version building, or new and not yet seen. */
   const changedTabs = changedTabsOf(envState);
   const chipLive = envLive && !versionBuilding;
@@ -1430,6 +1497,7 @@ export default function EnvironmentWorkspace() {
     /* An older version is read-only — runs go on the version in use. */
     if (!gates.canRun) return gates.runReason;
     if (viewingOlder) return "Back to current to run";
+    if (buildStopped) return stoppedRunReason(envState.versionBuild);
     if (versionBuilding)
       return `Environment ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)} is building — runs start when ready`;
     if (validateHolds) return validatingRunBlock(validatingNow);
@@ -1654,6 +1722,92 @@ export default function EnvironmentWorkspace() {
     them and re-checks the pair. It never starts the run: it ends with one
     button back to the run plan.
   */
+  /*
+    A stopped first build. Try again resumes from the step that stopped —
+    what it finished is kept — and the page follows it again. The change
+    that can fix it: the builder chat, with the failure pinned in the
+    composer and the request written (send it, or edit it first); or, when
+    the agent couldn't be reached, the agent's connection.
+  */
+  const retryStoppedBuild = () => {
+    const build = latestEnvState.current.versionBuild;
+    if (!isBuildStopped(build)) return;
+    if (isBuildStopCase(searchParams.get("build"))) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("build");
+      setSearchParams(next, { replace: true });
+    }
+    patch({ versionBuild: resumedBuildOf(build) });
+    followBuild.current = true;
+  };
+  const fixStoppedBuild = (fix) => {
+    if (fix?.kind === "connection") {
+      navigate(
+        envState.agent
+          ? `${paths.dashboard.agents}/connected/${agentIdOf(agentKey)}?tab=connections`
+          : `${paths.dashboard.simulate.environmentStep(envId, "overview")}?connect=agent`,
+        envState.agent
+          ? {
+              state: {
+                from: "environment",
+                envId,
+                envName: env?.name,
+                back: `${paths.dashboard.simulate.environmentStep(envId, "overview")}`,
+                backLabel: `Back to ${env?.name || "the environment"}`,
+              },
+            }
+          : undefined,
+      );
+      return;
+    }
+    if (fix?.kind !== "builder") return;
+    setCollapsed(false);
+    setTimeout(
+      () =>
+        injectComposerScaffold({
+          label: fix.chip,
+          prompt: fix.context,
+          icon: "solar:stop-circle-linear",
+          draft: fix.draft,
+        }),
+      260,
+    );
+  };
+  /* The builder's answer to a pinned build stop: it makes the change, says
+     so, and the strip's one way on is Try again. */
+  const answerBuildStop = (trimmed) => {
+    const build = latestEnvState.current.versionBuild;
+    const view = buildStopOf(build, {
+      scenarios: latestEnvState.current.scenarios || [],
+      agent: latestEnvState.current.agent,
+    });
+    if (!view?.fix?.context || !trimmed.startsWith(view.fix.context))
+      return false;
+    const stamp = Date.now();
+    const [say, ...oks] = view.fix.reply;
+    setTurns((prev) => [
+      ...prev,
+      { id: `u-stop-${stamp}`, role: "user", text: trimmed },
+      {
+        id: `a-stop-${stamp}`,
+        role: "assistant",
+        title: "Fixing the build",
+        steps: [
+          { kind: "note", text: say },
+          ...oks.map((o) => ({ label: o.ok, result: o.sub || "" })),
+          {
+            kind: "note",
+            text: `Done. Try again from ${view.phase.short} to finish the build — what it finished is kept.`,
+          },
+        ],
+      },
+    ]);
+    patch({
+      versionBuild: { ...build, stop: { ...build.stop, fixedAt: stamp } },
+    });
+    return true;
+  };
+
   const fixInBuilderChat = (jobs, key) => {
     if (!jobs?.length) return;
     const kit = fixKitOf(key);
@@ -2235,6 +2389,7 @@ export default function EnvironmentWorkspace() {
     }
     if (files?.length) return sendFiles(trimmed, files);
     if (!trimmed) return;
+    if (answerBuildStop(trimmed)) return undefined;
     /* While the design waits (builder.md §2), more detail goes into the
        design: the records, tools and rules it names join the proposal on the
        right. Nothing is guessed, and nothing is built before approval. */
@@ -2650,11 +2805,13 @@ export default function EnvironmentWorkspace() {
                   ? "The design is waiting for your approval. Nothing is built until you approve it."
                   : unsavedFirst
                     ? "Built and checked, but not saved. Save it as v1 to keep it and connect an agent."
-                    : versionBuilding
-                      ? "A new version is building from the changes you approved. Runs start once it's ready."
-                      : chipLive
-                        ? "Environment is ready. You can edit via the builder or inline."
-                        : "Environment is still being built. Editing resumes when it's ready."
+                    : buildStopped
+                      ? "The build stopped part-way. What it finished is kept — try again to finish it."
+                      : versionBuilding
+                        ? "A new version is building from the changes you approved. Runs start once it's ready."
+                        : chipLive
+                          ? "Environment is ready. You can edit via the builder or inline."
+                          : "Environment is still being built. Editing resumes when it's ready."
               }
             >
               <Stack
@@ -2676,22 +2833,28 @@ export default function EnvironmentWorkspace() {
                   color:
                     awaitingApproval || unsavedFirst
                       ? "status.warning.fg"
-                      : chipLive
-                        ? "status.success.fg"
-                        : "primary.main",
+                      : buildStopped
+                        ? "text.secondary"
+                        : chipLive
+                          ? "status.success.fg"
+                          : "primary.main",
                   bgcolor:
                     awaitingApproval || unsavedFirst
                       ? "status.warning.bg"
-                      : chipLive
-                        ? "status.success.bg"
-                        : "status.discovery.bg",
+                      : buildStopped
+                        ? "action.hover"
+                        : chipLive
+                          ? "status.success.bg"
+                          : "status.discovery.bg",
                   border: "1px solid",
                   borderColor:
                     awaitingApproval || unsavedFirst
                       ? "status.warning.border"
-                      : chipLive
-                        ? "status.success.border"
-                        : "status.discovery.border",
+                      : buildStopped
+                        ? "divider"
+                        : chipLive
+                          ? "status.success.border"
+                          : "status.discovery.border",
                 }}
               >
                 <Box
@@ -2702,12 +2865,15 @@ export default function EnvironmentWorkspace() {
                     bgcolor:
                       awaitingApproval || unsavedFirst
                         ? "status.warning.solid"
-                        : chipLive
-                          ? "status.success.solid"
-                          : "primary.main",
-                    animation: chipLive
-                      ? undefined
-                      : "env-pulse 1.4s ease-in-out infinite",
+                        : buildStopped
+                          ? "text.disabled"
+                          : chipLive
+                            ? "status.success.solid"
+                            : "primary.main",
+                    animation:
+                      chipLive || buildStopped
+                        ? undefined
+                        : "env-pulse 1.4s ease-in-out infinite",
                     "@keyframes env-pulse": {
                       "0%,100%": { opacity: 0.4 },
                       "50%": { opacity: 1 },
@@ -2720,11 +2886,13 @@ export default function EnvironmentWorkspace() {
                     ? "Awaiting approval"
                     : unsavedFirst
                       ? "Built · not saved"
-                      : versionBuilding
-                        ? `Building ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)}`
-                        : chipLive
-                          ? "Ready"
-                          : "Building"}
+                      : buildStopped
+                        ? "Build stopped"
+                        : versionBuilding
+                          ? `Building ${envState.versionBuild.shownLabel || envLabelOf(env, envState, envState.versionBuild.label)}`
+                          : chipLive
+                            ? "Ready"
+                            : "Building"}
                 </Typography>
               </Stack>
             </Tooltip>
@@ -4343,6 +4511,8 @@ export default function EnvironmentWorkspace() {
         envState={envState}
         patch={patch}
         onGo={go}
+        onRetry={gates.canEdit ? retryStoppedBuild : undefined}
+        onFix={gates.canEdit ? fixStoppedBuild : undefined}
       />
       {readOnlyEnv && (
         <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>

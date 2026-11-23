@@ -52,6 +52,7 @@ import ReleasePanel from "./ReleasePanel";
 import useEnvViewAs from "./useEnvViewAs";
 import { agentNameOf } from "../_mock/agentRegistry";
 import { clickable, focusRing } from "../components/clickable";
+import { isBuildStopped } from "../_mock/buildStop";
 
 /**
  * What this environment is.
@@ -136,7 +137,11 @@ export default function OverviewPanel({
   const showIntro = !inBuild || (prog.tools || 0) > 0 || understood;
   const showUseCases = !inBuild || (prog.rules || 0) > 0 || understood;
   const showWorld = !inBuild || (prog.stores || 0) > 0;
-  const showSummary = !inBuild;
+  /* A first build that stopped reads like one still building, minus the
+     progress: what it finished stays, nothing that needs a built
+     environment (readiness, counts, release, RL access) shows yet. */
+  const stopped = isBuildStopped(envState?.versionBuild);
+  const showSummary = !inBuild && !stopped;
 
   const releasePanel = (
     <ReleasePanel
@@ -173,6 +178,7 @@ export default function OverviewPanel({
       */}
       {!agentConnected &&
         !inBuild &&
+        !stopped &&
         /* Built from scratch: an agent is connected once the release is saved. */
         !(
           env.builtFrom?.releaseStep &&
@@ -302,7 +308,7 @@ export default function OverviewPanel({
         full inbox — optional and settled items too — opens from the header.
         "Connect an agent" is skipped while the banner above is saying it.
       */}
-      {!buildMode && (
+      {!buildMode && !stopped && (
         <BlockingGapsInline
           env={env}
           envState={envState}
@@ -335,7 +341,9 @@ export default function OverviewPanel({
           <StateSummary env={env} envState={envState} onGo={go} />
         </FadeIn>
       )}
-      <ResultsMovedNote move={moved} sx={{ mt: -1.5, mb: 3 }} />
+      {!stopped && (
+        <ResultsMovedNote move={moved} sx={{ mt: -1.5, mb: 3 }} />
+      )}
 
       {/* The release: checks that gate Ready, Lock, and RL access once locked.
           A template or an older version can't change it; a locked release
@@ -423,7 +431,7 @@ export default function OverviewPanel({
                 </Grid>
 
                 <Grid item xs={12} md={5}>
-                  {!buildMode && (
+                  {!buildMode && !stopped && (
                     <SectionCard dense title="Amendments">
                       <Stack sx={{ p: 1.5 }} spacing={1.25}>
                         {contract.amendments.map((a) => (

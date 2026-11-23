@@ -52,6 +52,7 @@ import ConnectNewAgentDrawer from "./agents/ConnectNewAgentDrawer";
 import { COMPAT_STATUS, compatibilityOf } from "../_mock/compatibility";
 import { StatusDot } from "../components/primitives";
 import { checksConnection } from "../_mock/connectionCheck";
+import { isBuildStopped } from "../_mock/buildStop";
 
 const outlined = {
   color: "text.primary",
@@ -481,9 +482,11 @@ export default function EnvAgentLine({
         </Stack>
       )}
       {/* Ready to run means something exists to run — not while the agent is
-          still being read or the design waits for approval. */}
+          still being read, the design waits for approval, or a first build
+          stopped before it finished. */}
       {compat &&
-        !["building", "awaiting_approval"].includes(env?.buildStatus) && (
+        !["building", "awaiting_approval"].includes(env?.buildStatus) &&
+        !isBuildStopped(envState?.versionBuild) && (
           <Stack
             direction="row"
             alignItems="center"

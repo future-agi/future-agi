@@ -132,12 +132,15 @@ export default function RlContractPanel({
       {liveRules && (
         <BuildStreamNote
           waiting={liveRules.state === "next"}
+          stopped={liveRules.state === "stopped"}
           label={
             liveRules.state === "next"
               ? `Rules from your files are added next, in ${liveRules.label}`
-              : `Adding rules from your files to ${liveRules.label}`
+              : liveRules.state === "stopped"
+                ? "The build stopped before these rules were added — try again from the strip above"
+                : `Adding rules from your files to ${liveRules.label}`
           }
-          {...(liveRules.state !== "next" && {
+          {...(liveRules.state === "now" && {
             count: liveRules.shown,
             total: liveRules.total,
           })}

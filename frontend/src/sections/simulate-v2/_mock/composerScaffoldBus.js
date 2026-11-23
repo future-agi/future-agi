@@ -8,6 +8,7 @@
  * shows, the prompt is what actually gets prepended to the outgoing
  * message on send, and the placeholder (optional) replaces the input's
  * hint while the pill is pinned — so a skill can say what to type next.
+ * `draft` (optional) writes a request into an empty input, ready to send.
  * Legacy callers can still pass a bare string — that string is used for
  * both label and prompt.
  */
@@ -37,7 +38,14 @@ function normalize(input) {
     const label = (input.label || "").toString().trim();
     const prompt = (input.prompt || input.label || "").toString().trim();
     if (!label || !prompt) return null;
-    return { label, prompt, icon: input.icon || null, placeholder: input.placeholder || null };
+    return {
+      label,
+      prompt,
+      icon: input.icon || null,
+      placeholder: input.placeholder || null,
+      /* Text written into the input for the person to send or edit. */
+      draft: input.draft || null,
+    };
   }
   return null;
 }

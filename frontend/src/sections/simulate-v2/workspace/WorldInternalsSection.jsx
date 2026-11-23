@@ -293,7 +293,9 @@ function SchemaCard({ schema, totalRows, change = null }) {
                 {live?.ids.includes(t.name)
                   ? live.state === "next"
                     ? `Seeds in ${live.label}`
-                    : `Seeding · ${live.rowsOf(t.name).toLocaleString()} of ${(t.rows || 0).toLocaleString()}`
+                    : live.state === "stopped"
+                      ? "Not seeded · the build stopped"
+                      : `Seeding · ${live.rowsOf(t.name).toLocaleString()} of ${(t.rows || 0).toLocaleString()}`
                   : `${(t.rows || 0).toLocaleString()} rows`}
               </Typography>
               <Typography
@@ -805,7 +807,9 @@ function ToolImplsCard({
                   {live?.ids.includes(t.name)
                     ? live.state === "next"
                       ? `Seeds in ${live.label}`
-                      : `Seeding · ${live.rowsOf(t.name).toLocaleString()}`
+                      : live.state === "stopped"
+                        ? "Not seeded"
+                        : `Seeding · ${live.rowsOf(t.name).toLocaleString()}`
                     : (t.rows || 0).toLocaleString()}
                 </Typography>
                 <Typography

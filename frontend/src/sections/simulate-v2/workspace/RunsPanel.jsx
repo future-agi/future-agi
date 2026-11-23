@@ -28,6 +28,7 @@ import useEnvViewAs from "./useEnvViewAs";
 import { runDefaultsOf } from "../_mock/rsiModel";
 import { estimateRunPlan, rangeLabel } from "../_mock/pricing";
 import { resolveEval } from "../_mock/evals";
+import { isBuildStopped, stoppedRunReason } from "../_mock/buildStop";
 
 /**
  * Run history.
@@ -54,7 +55,16 @@ export default function RunsPanel({ env, envState, onGo }) {
   );
   /* Same readiness as every other Run button — evaluations included. */
   const readiness = runReadiness(envState);
-  const ready = readiness.ready;
+  /* A build in flight, or a first build that stopped, holds the run — the
+     same hold as the header's Run, so the first run isn't offered here
+     while it's off there. */
+  const build = envState.versionBuild;
+  const buildHold = isBuildStopped(build)
+    ? stoppedRunReason(build)
+    : build
+      ? "The environment is building — runs start when it's ready"
+      : "";
+  const ready = readiness.ready && !buildHold;
   /* Viewing an older environment version: only the runs taken on it. */
   const { viewAs } = useEnvViewAs(env, envState);
 
@@ -173,7 +183,7 @@ export default function RunsPanel({ env, envState, onGo }) {
               title={
                 ready
                   ? `${runScope.sitOut ? `Runs ${runScope.count} of the ${runScope.runnable} scenarios that can run (${runScope.sitOut} wait on Needs input)` : `Runs all ${runScope.count} scenarios`}, ${defaultRepeats} times each · ≈ ${rangeLabel(runEstimate.platform.low, runEstimate.platform.high)}`
-                  : readiness.reason
+                  : buildHold || readiness.reason
               }
             >
               <span>

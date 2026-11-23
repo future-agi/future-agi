@@ -82,6 +82,8 @@ export default function StudioConsole({
         setScaffolds((prev) =>
           prev.some((x) => x.label === s.label) ? prev : [...prev, s],
         );
+        /* A written request goes in only when the input is empty. */
+        if (s.draft) setDraft((d) => (d.trim() ? d : s.draft));
         setTimeout(() => inputRef.current?.focus(), 80);
       }),
     [],
@@ -112,7 +114,9 @@ export default function StudioConsole({
     setDraft("");
     setAttachments([]);
     setScaffolds([]);
-    if (!attachments.length && take(combined)) return;
+    /* A pinned request goes to the builder as written, not to a quick action. */
+    const pinned = scaffolds.some((s) => s.draft);
+    if (!attachments.length && !pinned && take(combined)) return;
     onSend(combined, attachments);
   };
   const chip = (c) => {

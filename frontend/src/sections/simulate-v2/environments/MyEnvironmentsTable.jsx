@@ -1,3 +1,4 @@
+import { isBuildStopped } from "../_mock/buildStop";
 import PropTypes from "prop-types";
 import { managedOf } from "../_mock/envManaged";
 import { useMemo, useState } from "react";
@@ -183,6 +184,9 @@ export default function MyEnvironmentsTable({
            when the env has been built but never simulated. Runs still
            in flight surface as "Running…". */
           status: (() => {
+            /* A first build that stopped part-way comes first: nothing runs
+               until it's tried again. */
+            if (isBuildStopped(envState?.versionBuild)) return "build_stopped";
             const lastRun = runs[runs.length - 1];
             if (!lastRun)
               return env.buildStatus === "building"
@@ -1012,6 +1016,9 @@ const STATUS_META = {
   /* A build someone stopped, or one that failed part-way — open it to restart or retry. */
   canceled: { label: "Build canceled", role: "neutral" },
   build_failed: { label: "Build failed", role: "danger" },
+  /* A first build that stopped in one of its phases: what it finished is
+     kept and it resumes from there — neutral, like a stopped epoch. */
+  build_stopped: { label: "Build stopped", role: "neutral" },
   not_run: { label: "Not run yet", role: "neutral" },
   running: { label: "Running", role: "info" },
   passed: { label: "Passed", role: "success" },
