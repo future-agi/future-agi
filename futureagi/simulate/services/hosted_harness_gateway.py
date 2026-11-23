@@ -5178,6 +5178,7 @@ def _seed_contract_for(job: HostedHarnessJob) -> bytes | None:
         contract_bytes,
         stored_version_contract,
     )
+    from simulate.services.harness_design_review import approved_contract
     from simulate.services.hosted_harness import frozen_build_pin
 
     pinned = frozen_build_pin(job)
@@ -5187,6 +5188,7 @@ def _seed_contract_for(job: HostedHarnessJob) -> bytes | None:
     contract = stored_version_contract(version_id)
     if not contract:
         return None
+    contract = approved_contract(job, contract)
     body = contract_bytes(contract)
     if len(body) > SEED_MAX_BYTES:
         structlog_logger.info(

@@ -534,9 +534,24 @@ def apply_edits_to_contract(
         for tool in edited.get("tools") or []
         if not (isinstance(tool, dict) and tool.get("name") in removed["tool"])
     ]
+    if isinstance(edited.get("tool_entrypoints"), list):
+        edited["tool_entrypoints"] = [
+            entry
+            for entry in edited["tool_entrypoints"]
+            if not (isinstance(entry, dict) and entry.get("tool") in removed["tool"])
+        ]
     schema = edited.get("data_schema")
     if isinstance(schema, dict):
         edited["data_schema"] = {
             name: body for name, body in schema.items() if name not in removed["table"]
         }
     return edited
+
+
+def approved_contract(
+    job: HostedHarnessJob, contract: dict[str, Any]
+) -> dict[str, Any]:
+    review = stored_review(job)
+    if review is None or review.get("status") != APPROVED or not review.get("edits"):
+        return contract
+    return apply_edits_to_contract(contract, review["edits"])
