@@ -12,6 +12,7 @@ import {
 import { EVALS_COPY } from "./evals.constants";
 
 const clamp = (value) => Math.min(100, Math.max(0, Math.round(value)));
+const asPercent = (fraction) => Math.round(fraction * 100);
 
 const THRESHOLD_TEXT_SX = {
   typography: "s3",
@@ -31,7 +32,7 @@ export function PassThreshold({ name, value, disabled = false, onChange }) {
     if (draft === null || draft.trim() === "" || !Number.isFinite(number))
       return;
     const next = clamp(number);
-    if (next !== value) onChange(next);
+    if (next !== asPercent(value)) onChange(next / 100);
   };
 
   if (draft !== null)
@@ -67,12 +68,12 @@ export function PassThreshold({ name, value, disabled = false, onChange }) {
       />
     );
 
-  const label = EVALS_COPY.passAt(value);
+  const label = EVALS_COPY.passAt(asPercent(value));
   if (disabled) return <Typography sx={THRESHOLD_TEXT_SX}>{label}</Typography>;
   return (
     <Tooltip arrow title={EVALS_COPY.thresholdTip}>
       <ButtonBase
-        onClick={() => setDraft(String(value))}
+        onClick={() => setDraft(String(asPercent(value)))}
         aria-label={EVALS_COPY.thresholdLabel(name)}
         sx={{
           ...THRESHOLD_TEXT_SX,

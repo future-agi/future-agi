@@ -164,7 +164,7 @@ export default function EvalsStep({
   const choiceFor = (entry) =>
     suggestedChoices[entry.name] || {
       required: Boolean(entry.required),
-      passThreshold: entry.pass_threshold ?? 80,
+      passThreshold: entry.pass_threshold,
     };
   const addOneSuggested = (entry) =>
     addSuggested
@@ -193,8 +193,6 @@ export default function EvalsStep({
       {
         id: env.id,
         evalConfigId: entry.id,
-        required: Boolean(entry.required),
-        passThreshold: entry.pass_threshold ?? 80,
         ...next,
       },
       { onError: showEvalError },
@@ -643,7 +641,7 @@ export default function EvalsStep({
                   threshold={
                     <PassThreshold
                       name={e.name}
-                      value={e.pass_threshold ?? 80}
+                      value={e.pass_threshold}
                       disabled={removeDisabled || setRequirement.isPending}
                       onChange={(passThreshold) =>
                         saveRequirement(e, { passThreshold })
