@@ -343,10 +343,11 @@ export const releaseUsePayload = ({
   connector,
   targetId,
   dynamicVariables,
-  secretRefs,
+  credentialValues,
   idempotencyKey,
 }) => ({
   suite_id: suiteId,
+  credential_values: credentialValues,
   agent_version_id: agentVersionId,
   name: name.trim(),
   idempotency_key: idempotencyKey,
@@ -361,7 +362,6 @@ export const releaseUsePayload = ({
         ? { dynamic_variables: parseProviderDynamicVariables(dynamicVariables) }
         : {}),
     },
-    secret_refs: secretRefs,
   },
 });
 

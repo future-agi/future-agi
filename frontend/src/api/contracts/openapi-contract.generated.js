@@ -73741,6 +73741,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         agent: {
           $ref: "#/definitions/HarnessAgent",
         },
+        credential_values: {
+          title: "Credential values",
+          type: "object",
+          additionalProperties: {
+            type: "string",
+            maxLength: 65536,
+            minLength: 1,
+          },
+        },
         name: {
           title: "Name",
           type: "string",

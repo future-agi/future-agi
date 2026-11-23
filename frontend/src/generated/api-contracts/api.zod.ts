@@ -41295,6 +41295,8 @@ export const simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsKeyMax = 255;
 export const simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsVersionMax = 255;
 
 export const simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsDefault = {};
+export const simulateApiHarnessAdaptationsCreateBodyCredentialValuesMaxOne = 65536;
+
 export const simulateApiHarnessAdaptationsCreateBodyNameMax = 255;
 
 export const simulateApiHarnessAdaptationsCreateBodyIdempotencyKeyMax = 255;
@@ -41352,6 +41354,15 @@ export const SimulateApiHarnessAdaptationsCreateBody = zod.object({
       )
       .default(simulateApiHarnessAdaptationsCreateBodyAgentSecretRefsDefault),
   }),
+  credential_values: zod
+    .record(
+      zod.string(),
+      zod
+        .string()
+        .min(1)
+        .max(simulateApiHarnessAdaptationsCreateBodyCredentialValuesMaxOne),
+    )
+    .optional(),
   name: zod.string().min(1).max(simulateApiHarnessAdaptationsCreateBodyNameMax),
   idempotency_key: zod
     .string()

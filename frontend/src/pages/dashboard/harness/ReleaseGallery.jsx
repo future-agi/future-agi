@@ -23,10 +23,7 @@ import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import { useAgentDefinitions } from "src/components/run-tests/common";
 import { useAgentDefinitionVersions } from "src/api/agent-definition/agent-definition-version";
-import {
-  harnessIdempotencyKey,
-  storeHarnessSecretValues,
-} from "src/api/harness/harness";
+import { harnessIdempotencyKey } from "src/api/harness/harness";
 import {
   createHarnessAdaptation,
   createHarnessHostedAgent,
@@ -159,7 +156,6 @@ export function UseReleaseDialog({ release, open, onClose }) {
     setSubmitting(true);
     setError("");
     try {
-      const stored = await storeHarnessSecretValues({ [keyName]: apiKey });
       const job = await createHarnessAdaptation(
         releaseUsePayload({
           suiteId,
@@ -168,7 +164,7 @@ export function UseReleaseDialog({ release, open, onClose }) {
           connector,
           targetId,
           dynamicVariables,
-          secretRefs: stored?.secret_refs || {},
+          credentialValues: { [keyName]: apiKey },
           idempotencyKey,
         }),
       );

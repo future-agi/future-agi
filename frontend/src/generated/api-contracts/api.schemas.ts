@@ -20423,6 +20423,10 @@ export interface CallExecutionErrorResponseApi {
   details?: CallExecutionErrorResponseApiDetails;
 }
 
+export type HarnessReleaseAgentRequestApiCredentialValues = {
+  [key: string]: string;
+};
+
 export type HarnessAgentApiConnector =
   (typeof HarnessAgentApiConnector)[keyof typeof HarnessAgentApiConnector];
 
@@ -20505,6 +20509,7 @@ export interface HarnessReleaseAgentRequestApi {
   suite_id: string;
   agent_version_id: string;
   agent: HarnessAgentApi;
+  credential_values?: HarnessReleaseAgentRequestApiCredentialValues;
   /**
    * @minLength 1
    * @maxLength 255

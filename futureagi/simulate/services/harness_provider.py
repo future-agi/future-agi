@@ -1608,6 +1608,7 @@ class HostedHarnessProvider:
                 ),
                 name=data["name"],
                 parallelism=data.get("parallelism"),
+                credential_values=data.get("credential_values"),
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)

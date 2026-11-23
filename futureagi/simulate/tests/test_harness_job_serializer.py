@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -10,6 +12,8 @@ from simulate.serializers.harness_job import (
     HarnessJobInfoSerializer,
     HarnessPreflightSerializer,
 )
+from simulate.serializers.harness_release import HarnessReleaseAgentRequestSerializer
+from simulate.services.harness_releases import adaptation_payload
 from simulate.tests.test_hosted_harness_parallelism import _create_data
 from tfc.utils.serializer_fields import JsonValueField
 
@@ -132,3 +136,56 @@ def test_subfolder_refuses_an_unsafe_path(settings, subfolder):
     settings.HARNESS_SOURCE_SUBFOLDER_ENABLED = True
 
     assert "subfolder" in _source_errors({**_GITHUB, "subfolder": subfolder})
+
+
+def test_release_adaptation_reuses_write_only_hosted_credentials():
+    organization = SimpleNamespace(id=uuid4())
+    world = SimpleNamespace(
+        parent_id=None, digest="world", name="Order support", object_key="world.tar.gz"
+    )
+    suite = SimpleNamespace(
+        id=uuid4(),
+        organization_id=organization.id,
+        environment=world,
+        personas=[{}],
+        digest="suite",
+        name="Order scenarios",
+        object_key="suite.tar.gz",
+    )
+    version = SimpleNamespace(
+        id=uuid4(),
+        organization_id=organization.id,
+        agent_definition=SimpleNamespace(agent_type="voice"),
+        agent_definition_id=uuid4(),
+        configuration_snapshot={},
+    )
+    credential = "release-credential-fixture"
+    serializer = HarnessReleaseAgentRequestSerializer(
+        data={
+            "suite_id": str(suite.id),
+            "agent_version_id": str(version.id),
+            "agent": {
+                "connector": "vapi",
+                "mode": "provider_import",
+                "config": {"assistant_id": "order-agent"},
+            },
+            "credential_values": {"VAPI_API_KEY": credential},
+            "name": "Order release",
+            "idempotency_key": "use-release",
+        },
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    assert credential not in json.dumps(serializer.data, default=str)
+    data = serializer.validated_data
+    job = adaptation_payload(
+        organization,
+        suite=suite,
+        agent=data["agent"],
+        agent_version=version,
+        name=data["name"],
+        credential_values=data["credential_values"],
+    )
+    assert job.pop("credential_values") == {"VAPI_API_KEY": credential}
+    assert "VAPI_API_KEY" in job["agent"]["secret_refs"]
+    assert credential not in json.dumps(job)

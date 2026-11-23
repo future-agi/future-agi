@@ -1209,6 +1209,7 @@ def adaptation_payload(
     agent_version: AgentVersion,
     name: str,
     parallelism: int | None = None,
+    credential_values: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """The validated hosted job payload of an adaptation of `agent` to `suite`. `parallelism` is
     the composition's, kept until adaptation completes (unset: what the deployment admits)."""
@@ -1221,6 +1222,7 @@ def adaptation_payload(
     serializer = HarnessJobCreateSerializer(
         data={
             "agent": agent,
+            "credential_values": credential_values or {},
             "artifacts": {"level": "full"},
             "scenario_count": len(suite.personas),
             "metadata": {"name": name},

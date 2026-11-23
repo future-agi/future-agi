@@ -2,7 +2,11 @@
 
 from rest_framework import serializers
 
-from simulate.serializers.harness_job import HOSTED_AGENT_MODELS, HarnessAgentSerializer
+from simulate.serializers.harness_job import (
+    CREDENTIAL_VALUE_MAX_CHARS,
+    HOSTED_AGENT_MODELS,
+    HarnessAgentSerializer,
+)
 from simulate.serializers.harness_source_review import (
     HarnessDesignSourceSelectionSerializer,
 )
@@ -111,6 +115,13 @@ class HarnessReleaseAgentRequestSerializer(serializers.Serializer):
     suite_id = serializers.UUIDField()
     agent_version_id = serializers.UUIDField()
     agent = HarnessAgentSerializer()
+    credential_values = serializers.DictField(
+        child=serializers.CharField(
+            max_length=CREDENTIAL_VALUE_MAX_CHARS, trim_whitespace=False
+        ),
+        required=False,
+        write_only=True,
+    )
     name = serializers.CharField(max_length=255)
     idempotency_key = serializers.CharField(max_length=255)
     parallelism = _parallelism_field()

@@ -138,11 +138,11 @@ export const HERO_COPY = {
 };
 
 export const ENTRY_TAB = {
-  BUILD: "build",
   MY: "my-environments",
   PERSONAS: "personas",
 };
-export const DEFAULT_ENTRY_TAB = ENTRY_TAB.BUILD;
+export const DEFAULT_ENTRY_TAB = ENTRY_TAB.MY;
+export const BUILD_DRAWER_TAB = "build";
 
 // The product tab rail: the theme gives every tab a
 // 40px right margin, which spreads short labels apart and breaks the row into
