@@ -1169,6 +1169,33 @@ describe("VersionsPanel", () => {
       ).toBeInTheDocument();
     });
 
+    it("checks against the default seen when the roll back was opened", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<VersionsPanel env={ENV} />);
+      await rollBack(user, "environment", "v1");
+      const dialog = confirmDialog("Roll back to environment v1?");
+
+      // Someone else moves the default while the dialog is open.
+      state.versions = {
+        ...VERSIONS,
+        environment: [
+          item({ id: "e3", label: "v3", is_default: true }),
+          { ...VERSIONS.environment[0], is_default: false },
+          VERSIONS.environment[1],
+        ],
+      };
+      rerender(<VersionsPanel env={ENV} />);
+      await user.click(
+        within(dialog).getByRole("button", { name: "Roll back to env v1" }),
+      );
+
+      // The server can then refuse it instead of moving a default the reader
+      // never saw.
+      expect(move.calls).toEqual([
+        { piece: "environment", versionId: "e1", expectedDefaultId: "e2" },
+      ]);
+    });
+
     it("makes another scenario version the default", async () => {
       const user = userEvent.setup();
       state.versions = {

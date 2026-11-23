@@ -46,7 +46,9 @@ export default function HistoryEntry({
 }) {
   const { piece, version, badges, originLine } = entry;
   const [menu, setMenu] = useState(null);
-  const [confirming, setConfirming] = useState(false);
+  // Open while asking; holds the default the reader saw when it opened, so
+  // a refresh meanwhile can't change what the server checks against.
+  const [confirming, setConfirming] = useState(null);
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const { history, menu: MENU } = VERSIONS_COPY;
   const title = `${VERSIONS_COPY.pieces[piece]} ${named(version)}`;
@@ -73,8 +75,12 @@ export default function HistoryEntry({
 
   const confirm = () =>
     move.mutate(
-      { piece, versionId: version.id, expectedDefaultId: defaultId },
-      { onSettled: () => setConfirming(false) },
+      {
+        piece,
+        versionId: version.id,
+        expectedDefaultId: confirming.expectedDefaultId,
+      },
+      { onSettled: () => setConfirming(null) },
     );
 
   return (
@@ -213,7 +219,7 @@ export default function HistoryEntry({
               disabled={!canEdit}
               onClick={() => {
                 setMenu(null);
-                setConfirming(true);
+                setConfirming({ expectedDefaultId: defaultId });
               }}
             >
               {rollsBack
@@ -238,7 +244,7 @@ export default function HistoryEntry({
         pending={move.isPending}
         rollBack={rollsBack}
         onConfirm={confirm}
-        onClose={() => setConfirming(false)}
+        onClose={() => setConfirming(null)}
       />
       {/* Slides open and shut; mounted only while open, so its changes load
           when the row is first opened. */}

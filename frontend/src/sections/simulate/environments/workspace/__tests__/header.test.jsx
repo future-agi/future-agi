@@ -272,6 +272,28 @@ describe("EnvVersionPin", () => {
       name: /^(Roll back to env v1|Rolling back…)$/,
     });
 
+  it("checks against the default shown when the roll back was opened", async () => {
+    const user = userEvent.setup();
+    versionsResponse.current = VERSIONS;
+    const { rerender } = render(<EnvVersionPin env={VERSIONED_ENV} />);
+    await user.click(screen.getByRole("button", { name: /env v2/i }));
+    await user.click(screen.getByRole("button", { name: "Roll back to v1" }));
+    // A refresh moves the default while the dialog is open.
+    versionsResponse.current = {
+      ...VERSIONS,
+      environment: [
+        item({ id: "e3", label: "v3", is_default: true }),
+        { ...VERSIONS.environment[0], is_default: false },
+        VERSIONS.environment[1],
+      ],
+    };
+    rerender(<EnvVersionPin env={VERSIONED_ENV} />);
+    await user.click(confirmButton());
+    expect(moveCalls).toEqual([
+      { piece: "environment", versionId: "e1", expectedDefaultId: "e2" },
+    ]);
+  });
+
   it("opens the full history from the list", async () => {
     const user = userEvent.setup();
     versionsResponse.current = VERSIONS;

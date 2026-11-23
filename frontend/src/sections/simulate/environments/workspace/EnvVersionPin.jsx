@@ -30,7 +30,8 @@ import useSimulationAccess from "../hooks/useSimulationAccess";
 // off, or the environment has no versions.
 export default function EnvVersionPin({ env, onHistory }) {
   const [anchor, setAnchor] = useState(null);
-  // The version waiting on the user's confirmation.
+  // The version waiting on the user's confirmation, with the default shown
+  // when they picked it.
   const [confirming, setConfirming] = useState(null);
   const move = useMoveDefault(env?.id);
   const { canEdit } = useSimulationAccess();
@@ -57,8 +58,8 @@ export default function EnvVersionPin({ env, onHistory }) {
     move.mutate(
       {
         piece: "environment",
-        versionId: confirming.id,
-        expectedDefaultId: current.id,
+        versionId: confirming.version.id,
+        expectedDefaultId: confirming.expectedDefaultId,
       },
       { onSettled: () => setConfirming(null) },
     );
@@ -224,7 +225,14 @@ export default function EnvVersionPin({ env, onHistory }) {
                     variant="outlined"
                     color="inherit"
                     disabled={!canEdit || move.isPending}
-                    onClick={() => setConfirming(v)}
+                    onClick={() =>
+                      // The default shown now, so a refresh before the
+                      // confirm can't change what the server checks against.
+                      setConfirming({
+                        version: v,
+                        expectedDefaultId: current.id,
+                      })
+                    }
                     sx={{ mt: 0.75 }}
                   >
                     {pin.rollBack(v.label || VERSIONS_COPY.unlabelled)}
@@ -269,7 +277,7 @@ export default function EnvVersionPin({ env, onHistory }) {
       </Popover>
       <MakeDefaultConfirm
         piece="environment"
-        version={confirming}
+        version={confirming?.version ?? null}
         pending={move.isPending}
         rollBack
         onConfirm={confirmMove}
