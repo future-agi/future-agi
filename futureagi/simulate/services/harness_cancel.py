@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -12,8 +13,9 @@ from django.utils import timezone
 
 from simulate.models import (
     HostedHarnessAttempt,
-    HostedHarnessExecution,
+    HostedHarnessEvent,
     HostedHarnessJob,
+    HostedHarnessReceipt,
 )
 from simulate.serializers.harness_job import CONNECTOR_ALIASES, LIVEKIT_ALIASES
 
@@ -309,16 +311,53 @@ def provider_calls(job: HostedHarnessJob) -> ProviderCalls:
 
 
 def run_call_ids(job: HostedHarnessJob) -> list[str] | None:
-    rows = list(
-        HostedHarnessExecution.no_workspace_objects.filter(job=job).values_list(
-            "call_execution__customer_call_id", "receipt__id"
-        )
-    )
-    if not rows or len(rows) > _CALL_ID_LOOKUP_LIMIT:
+    starts: Counter[str] = Counter()
+    connected: dict[str, list[str]] = defaultdict(list)
+    for event_type, payload in HostedHarnessEvent.no_workspace_objects.filter(
+        attempt__job=job,
+        attempt__attempt_number=job.current_attempt_number,
+        accepted=True,
+        event_type__in=("scenario_started", "call_connected"),
+    ).values_list("event_type", "payload"):
+        body = payload or {}
+        key = str(body.get("scenario_key") or "")
+        if event_type == "scenario_started":
+            starts[key] += 1
+        elif body.get("provider_call_id"):
+            connected[key].append(str(body["provider_call_id"]))
+    received = _received_call_ids(job)
+    ids: set[str] = set()
+    for key, started in starts.items():
+        if len(connected[key]) < started and key not in received:
+            return None
+        ids.update(connected[key])
+        if received.get(key):
+            ids.add(received[key])
+    if not ids or len(ids) > _CALL_ID_LOOKUP_LIMIT:
         return None
-    if any(not call_id or receipt is None for call_id, receipt in rows):
-        return None
-    return [str(call_id) for call_id, _ in rows]
+    return sorted(ids)
+
+
+def _received_call_ids(job: HostedHarnessJob) -> dict[str, str]:
+    received: dict[str, str] = {}
+    for (
+        execution_key,
+        execution_call,
+        scenario_key,
+        scenario_call,
+    ) in HostedHarnessReceipt.no_workspace_objects.filter(
+        job=job, attempt_number=job.current_attempt_number
+    ).values_list(
+        "execution__execution_key",
+        "execution__call_execution__customer_call_id",
+        "scenario__scenario_key",
+        "scenario__call_execution__customer_call_id",
+    ):
+        if execution_key:
+            received[execution_key] = execution_call or ""
+        else:
+            received[scenario_key] = scenario_call or ""
+    return received
 
 
 def _key_rejected(error: requests.HTTPError) -> bool:

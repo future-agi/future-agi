@@ -83,6 +83,7 @@ _EVENT_TYPES = {
     "world_unhealthy",
     "scenario_started",
     "scenario_retried",
+    "call_connected",
     "log",
     "terminal",
 }
@@ -828,6 +829,12 @@ def _event_payload_error(event_type: str, stage: str, payload: object) -> str | 
         key = payload.get("scenario_key")
         if not isinstance(key, str) or not key.strip() or len(key) > 255:
             return "scenario_started requires a nonempty scenario key"
+    elif event_type == "call_connected":
+        if set(payload) != {"scenario_key", "provider_call_id"} or not all(
+            isinstance(value, str) and value.strip() and len(value) <= 255
+            for value in payload.values()
+        ):
+            return "call_connected requires a scenario key and a provider call id"
     elif event_type == "parallelism_degraded":
         if set(payload) != {"requested", "effective", "reason"}:
             return "parallelism_degraded requires requested/effective/reason"

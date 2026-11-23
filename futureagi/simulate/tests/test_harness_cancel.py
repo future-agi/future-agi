@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,6 +9,7 @@ from django.utils import timezone
 
 from simulate.models import (
     CallExecution,
+    HostedHarnessEvent,
     HostedHarnessExecution,
     HostedHarnessJob,
     HostedHarnessReceipt,
@@ -29,6 +31,7 @@ from simulate.services.harness_cancel import (
     treated_as_sandbox,
 )
 from simulate.services.harness_provider import serialize_job
+from simulate.services.hosted_harness_ingestion import _event_payload_error
 from simulate.services.phone_telephony import HostedPhoneRoomCleanupError
 from simulate.tasks.hosted_harness_cancel import confirm_hosted_harness_provider_cancel
 from simulate.tests.test_cancelled_call_journey import (  # noqa: F401 - fixture
@@ -115,6 +118,26 @@ class TestConnector:
 
 
 class TestRunCallIds:
+    def _event(self, attempt, event_type, key, call_id=None):
+        payload = {"scenario_key": key}
+        if event_type == "scenario_started":
+            payload.update(world_index=0, scenario_attempt=1)
+        else:
+            payload["provider_call_id"] = call_id
+        sequence = HostedHarnessEvent.no_workspace_objects.filter(
+            attempt=attempt
+        ).count()
+        HostedHarnessEvent.no_workspace_objects.create(
+            event_id=uuid.uuid4().hex,
+            attempt=attempt,
+            sequence=sequence + 1,
+            stage="running",
+            event_type=event_type,
+            payload=payload,
+            digest="sha256:" + "0" * 64,
+            emitted_at=timezone.now(),
+        )
+
     def _receive(self, run, attempt, execution, call_id):
         CallExecution.no_workspace_objects.filter(
             id=execution.call_execution_id
@@ -130,39 +153,92 @@ class TestRunCallIds:
             body={},
         )
 
-    def test_every_call_received_with_its_provider_id_gives_the_ids(self, running_run):
-        run, attempt = running_run
-        executions = HostedHarnessExecution.no_workspace_objects.filter(job=run)
-        for number, execution in enumerate(executions):
-            self._receive(run, attempt, execution, f"call-{number}")
+    def _keys(self, run):
+        first, second = HostedHarnessExecution.no_workspace_objects.filter(job=run)
+        return first, second
 
-        assert sorted(run_call_ids(run)) == ["call-0", "call-1"]
-
-    def test_a_call_still_without_a_receipt_falls_back_to_the_time_window(
+    def test_the_call_in_flight_at_stop_is_checked_by_the_id_it_sent_when_placed(
         self, running_run
     ):
         run, attempt = running_run
-        first, _ = HostedHarnessExecution.no_workspace_objects.filter(job=run)
-        self._receive(run, attempt, first, "call-0")
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-live")
 
-        assert run_call_ids(run) is None
+        assert run_call_ids(run) == ["call-live"]
 
-    def test_a_received_call_without_a_provider_id_falls_back(self, running_run):
-        run, attempt = running_run
-        for execution in HostedHarnessExecution.no_workspace_objects.filter(job=run):
-            self._receive(run, attempt, execution, None)
-
-        assert run_call_ids(run) is None
-
-    def test_a_stale_id_from_an_earlier_attempt_without_a_receipt_falls_back(
+    def test_a_finished_call_counts_by_its_receipt_and_a_live_one_by_its_event(
         self, running_run
     ):
+        run, attempt = running_run
+        first, second = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._receive(run, attempt, first, "call-done")
+        self._event(attempt, "scenario_started", second.execution_key)
+        self._event(attempt, "call_connected", second.execution_key, "call-live")
+
+        assert run_call_ids(run) == ["call-done", "call-live"]
+
+    def test_a_started_call_that_never_named_its_id_falls_back_to_the_time_window(
+        self, running_run
+    ):
+        run, attempt = running_run
+        first, second = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-1")
+        self._event(attempt, "scenario_started", second.execution_key)
+
+        assert run_call_ids(run) is None
+
+    def test_a_retried_scenario_needs_an_id_for_each_try(self, running_run):
+        run, attempt = running_run
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-1")
+        self._event(attempt, "scenario_started", first.execution_key)
+
+        assert run_call_ids(run) is None
+
+        self._event(attempt, "call_connected", first.execution_key, "call-2")
+
+        assert run_call_ids(run) == ["call-1", "call-2"]
+
+    def test_nothing_started_falls_back_rather_than_reading_stopped(self, running_run):
         run, _ = running_run
-        CallExecution.no_workspace_objects.filter(
-            hosted_harness_execution__job=run
-        ).update(customer_call_id="old-call")
 
         assert run_call_ids(run) is None
+
+    def test_an_earlier_attempt_s_calls_are_not_this_stop_s(self, running_run):
+        run, attempt = running_run
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-old")
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            current_attempt_number=attempt.attempt_number + 1
+        )
+        run.refresh_from_db()
+
+        assert run_call_ids(run) is None
+
+
+class TestCallConnectedEvent:
+    @pytest.mark.parametrize(
+        ("payload", "error"),
+        [
+            ({"scenario_key": "s1", "provider_call_id": "call-1"}, None),
+            ({"scenario_key": "s1"}, True),
+            ({"scenario_key": "s1", "provider_call_id": " "}, True),
+            ({"scenario_key": "s1", "provider_call_id": "c" * 256}, True),
+            ({"scenario_key": "s1", "provider_call_id": 7}, True),
+            ({"scenario_key": "s1", "provider_call_id": "c", "x": 1}, True),
+        ],
+    )
+    def test_a_placed_call_is_accepted_only_with_its_scenario_and_provider_id(
+        self, payload, error
+    ):
+        found = _event_payload_error("call_connected", "running", payload)
+
+        assert (found is not None) is bool(error)
 
 
 class TestConfirmCancel:
