@@ -1482,6 +1482,7 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "UserListQueryBuilder.build_matching_activity_slice_query": _SESSION_OR_USER,
         "UserListQueryBuilder.build_physical_user_presence_query": _SESSION_OR_USER,
         "UserListQueryBuilder.build_relation_filter_user_query": _SESSION_OR_USER,
+        "UserListQueryBuilder.build_user_activity_upper_bound_query": _SESSION_OR_USER,
         "_touched_survivor_map_subquery": _SURVIVOR_MAP,
     },
     "tracer.services.clickhouse.query_builders.user_time_series": {
@@ -1698,7 +1699,9 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         ),
     },
     "tracer.services.clickhouse.v2.query_builders.session_detail": {
-        "_LIVE_SESSION_SPANS": filed(BY_ID_ALONE, why="session detail by session id"),
+        "_LIVE_SESSION_SPANS_TEMPLATE": filed(
+            BY_ID_ALONE, why="session detail by session id"
+        ),
     },
     "tracer.services.clickhouse.v2.query_builders.session_list": {
         (

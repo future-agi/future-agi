@@ -62,9 +62,11 @@ candidate_identities AS
     /*
      * The key predicate is intentionally applied only to the identity seed.
      * Every version of those identities is replayed below, so a later key
-     * removal or tombstone still wins.  This avoids deserialising every wide
-     * attribute Map in the project merely to discover that the requested key
-     * was never present on that span.
+     * removal or tombstone still wins.  Splitting each storage family into its
+     * own UNION DISTINCT branch lets ClickHouse prune granules independently
+     * via idx_attrs_str_keys / idx_attrs_num_keys / idx_attrs_bool_keys rather
+     * than disabling all three Map bloom filters behind an OR with unindexed
+     * attributes_extra.
      */
     SELECT
         project_id,
@@ -75,24 +77,44 @@ candidate_identities AS
     PREWHERE candidate_source.project_id = toUUID(%(project_id)s)
       AND candidate_source.start_time >= %(window_start)s
       AND candidate_source.start_time < %(window_end)s
-    WHERE
-        (
-            indexHint(has(mapKeys(candidate_source.attrs_string), %(attribute_key)s))
-            AND mapContains(candidate_source.attrs_string, %(attribute_key)s)
-        )
-        OR (
-            indexHint(has(mapKeys(candidate_source.attrs_number), %(attribute_key)s))
-            AND mapContains(candidate_source.attrs_number, %(attribute_key)s)
-        )
-        OR (
-            indexHint(has(mapKeys(candidate_source.attrs_bool), %(attribute_key)s))
-            AND mapContains(candidate_source.attrs_bool, %(attribute_key)s)
-        )
-        OR (
-            candidate_source.attributes_extra NOT IN ('', '{}', 'null')
-            AND JSONHas(candidate_source.attributes_extra, %(attribute_key)s)
-        )
-    GROUP BY project_id, trace_id, id, start_time
+    WHERE indexHint(has(mapKeys(candidate_source.attrs_string), %(attribute_key)s))
+      AND mapContains(candidate_source.attrs_string, %(attribute_key)s)
+    UNION DISTINCT
+    SELECT
+        project_id,
+        trace_id,
+        id,
+        start_time
+    FROM spans AS candidate_source
+    PREWHERE candidate_source.project_id = toUUID(%(project_id)s)
+      AND candidate_source.start_time >= %(window_start)s
+      AND candidate_source.start_time < %(window_end)s
+    WHERE indexHint(has(mapKeys(candidate_source.attrs_number), %(attribute_key)s))
+      AND mapContains(candidate_source.attrs_number, %(attribute_key)s)
+    UNION DISTINCT
+    SELECT
+        project_id,
+        trace_id,
+        id,
+        start_time
+    FROM spans AS candidate_source
+    PREWHERE candidate_source.project_id = toUUID(%(project_id)s)
+      AND candidate_source.start_time >= %(window_start)s
+      AND candidate_source.start_time < %(window_end)s
+    WHERE indexHint(has(mapKeys(candidate_source.attrs_bool), %(attribute_key)s))
+      AND mapContains(candidate_source.attrs_bool, %(attribute_key)s)
+    UNION DISTINCT
+    SELECT
+        project_id,
+        trace_id,
+        id,
+        start_time
+    FROM spans AS candidate_source
+    PREWHERE candidate_source.project_id = toUUID(%(project_id)s)
+      AND candidate_source.start_time >= %(window_start)s
+      AND candidate_source.start_time < %(window_end)s
+      AND candidate_source.attributes_extra NOT IN ('', '{}', 'null')
+    WHERE JSONHas(candidate_source.attributes_extra, %(attribute_key)s)
 ),
 latest_spans AS
 (

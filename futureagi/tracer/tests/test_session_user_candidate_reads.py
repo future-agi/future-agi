@@ -1645,9 +1645,12 @@ def test_session_message_filter_and_sort_are_applied_before_page():
 
     assert "argMax(tuple(input), _version).1 AS latest_input" in sql
     assert "argMin(input, start_time) AS first_message" in sql
-    assert "HAVING first_message ILIKE %(having_" in sql
+    assert (
+        "HAVING positionUTF8(lowerUTF8(toString(first_message)), lowerUTF8(toString(%(having_"
+        in sql
+    )
     assert "ORDER BY first_message ASC, session_id ASC" in sql
-    assert "%needle%" in params.values()
+    assert "needle" in params.values()
 
 
 @pytest.mark.unit

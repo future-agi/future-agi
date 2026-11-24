@@ -526,16 +526,15 @@ def retrieve_trace_detail_ch(
                 },
             )
 
-    # Clean up internal fields
-    def _clean_entry(entry):
-        del entry["_parent_id"]
-        for child in entry["children"]:
-            _clean_entry(child)
-
-    for entry in root_spans:
-        _clean_entry(entry)
-    for entry in orphan_spans:
-        _clean_entry(entry)
+    # Clean up internal fields iteratively so deep (>1,000-level) distributed
+    # coding-agent span trees never hit Python's recursion limit.
+    clean_stack = list(reversed(root_spans)) + list(reversed(orphan_spans))
+    while clean_stack:
+        entry = clean_stack.pop()
+        entry.pop("_parent_id", None)
+        children = entry.get("children")
+        if children:
+            clean_stack.extend(reversed(children))
 
     observation_spans_response = root_spans + orphan_spans
 

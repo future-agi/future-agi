@@ -53,19 +53,62 @@ class ObserveUsageFilterBuilderV2(ClickHouseFilterBuilderV2):
         # tuple membership so identical trace IDs cannot pool or cross-match.
         identity = "project_id, trace_id" if self._org_scoped else "trace_id"
         lhs = f"({identity})" if self._org_scoped else identity
+        span_key = (
+            "project_id, observation_type, service_name, "
+            "toStartOfHour(start_time), trace_id, id"
+        )
         return f"""{lhs} IN (
             SELECT {identity} FROM (
-                SELECT project_id, trace_id, {usage_aggregate_sql(coverage="usage_coverage")}
+                SELECT
+                    project_id,
+                    trace_id,
+                    usage_metrics.2 AS usage_cost,
+                    usage_metrics.3 AS usage_total_tokens,
+                    usage_metrics.4 AS usage_prompt_tokens,
+                    usage_metrics.5 AS usage_completion_tokens
                 FROM (
-                    SELECT id, parent_span_id, name, observation_type, project_id,
-                           cost, total_tokens, prompt_tokens, completion_tokens, trace_id,
-                           {usage_coverage_sql(attrs="attrs_string", include_summary=True)} AS usage_coverage
-                    FROM spans FINAL
-                    PREWHERE {self._project_scope_predicate()}
-                        {self._candidate_filter("trace_id")}
-                    WHERE is_deleted = 0
-                ) AS live_usage_spans
-                GROUP BY project_id, trace_id
+                    SELECT project_id, trace_id, {usage_aggregate_sql(coverage="usage_coverage", materialized=True)}
+                    FROM (
+                        SELECT
+                            project_id,
+                            trace_id,
+                            id,
+                            observation_type,
+                            latest_span.1 AS parent_span_id,
+                            latest_span.2 AS name,
+                            latest_span.3 AS cost,
+                            latest_span.4 AS total_tokens,
+                            latest_span.5 AS prompt_tokens,
+                            latest_span.6 AS completion_tokens,
+                            latest_span.7 AS usage_coverage,
+                            latest_span.8 AS latest_is_deleted
+                        FROM (
+                            SELECT
+                                project_id,
+                                trace_id,
+                                id,
+                                observation_type,
+                                service_name,
+                                toStartOfHour(start_time) AS start_hour,
+                                argMax(
+                                    tuple(
+                                        parent_span_id, name, cost, total_tokens,
+                                        prompt_tokens, completion_tokens,
+                                        {usage_coverage_sql(attrs="attrs_string", include_summary=True)},
+                                        is_deleted
+                                    ),
+                                    _version
+                                ) AS latest_span
+                            FROM spans
+                            PREWHERE {self._project_scope_predicate()}
+                                {self._candidate_filter("trace_id")}
+                            GROUP BY {span_key}
+                        )
+                        WHERE latest_is_deleted = 0
+                    ) AS live_usage_spans
+                    GROUP BY project_id, trace_id
+                ) AS trace_usage_raw
+                ARRAY JOIN trace_usage_metrics AS usage_metrics
             ) AS trace_usage
             WHERE {predicate}
         )"""
@@ -132,11 +175,37 @@ class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
             "trace_session_id",
         ]
         root_fields = ", ".join(f"live.{field}" for field in fields)
-        # SELECT * omits MATERIALIZED columns such as deployed trace_name.
-        source_columns = ", ".join(
-            dict.fromkeys(
-                ["project_id", "trace_id", "parent_span_id", *fields, *USAGE_COLUMNS]
-            )
+        # Resolve latest span state by six-key argMax instead of spans FINAL so
+        # ClickHouse prunes partitions via start_time and granules via idx_trace_id
+        # even when use_skip_indexes_if_final = 0 is active on the connection.
+        # Keep immutable key columns outside argMax and mutable columns inside
+        # one tuple so a newer NULL replaces an older value.
+        mutable_fields = [
+            "start_time",
+            "_version",
+            "trace_name",
+            "name",
+            "status",
+            "end_time",
+            "latency_ms",
+            "model",
+            "provider",
+            "trace_session_id",
+            "parent_span_id",
+            "is_deleted",
+            *USAGE_COLUMNS,
+        ]
+        tuple_exprs = [
+            *mutable_fields,
+            usage_coverage_sql(attrs="attrs_string", include_summary=True),
+        ]
+        latest_projections = [
+            f"latest_span.{idx} AS {col}"
+            for idx, col in enumerate(mutable_fields, start=1)
+        ] + [f"latest_span.{len(tuple_exprs)} AS usage_coverage"]
+        span_key = (
+            "project_id, observation_type, service_name, "
+            "toStartOfHour(start_time), trace_id, id"
         )
         source = f"""
             SELECT project_id, trace_id,
@@ -146,30 +215,48 @@ class ObserveTraceListQueryBuilderV2(TraceListQueryBuilderV2):
                 root.5 AS _root_version, root.6 AS trace_name, root.7 AS span_name,
                 root.8 AS status, root.9 AS end_time, root.10 AS latency_ms,
                 root.11 AS model, root.12 AS provider, root.13 AS trace_session_id,
-                usage_cost AS cost, usage_total_tokens AS total_tokens,
-                usage_prompt_tokens AS prompt_tokens, usage_completion_tokens AS completion_tokens
+                usage_metrics.2 AS cost, usage_metrics.3 AS total_tokens,
+                usage_metrics.4 AS prompt_tokens, usage_metrics.5 AS completion_tokens
             FROM (
                 SELECT project_id, trace_id,
                     argMaxIf(tuple({root_fields}),
                         tuple(live.start_time, live.id, live.observation_type, live.service_name),
                         {root_condition}) AS root,
-                    {usage_aggregate_sql(prefix="live.", coverage="live.usage_coverage")}
+                    {usage_aggregate_sql(prefix="live.", coverage="live.usage_coverage", materialized=True)}
                 FROM (
-                    SELECT {source_columns},
-                        {usage_coverage_sql(attrs="attrs_string", include_summary=True)} AS usage_coverage
-                    FROM spans FINAL
-                    PREWHERE {self.project_filter_sql()}
-                        AND trace_id IN (
-                            SELECT trace_id FROM spans
-                            PREWHERE {self.project_filter_sql()}
-                                AND {time_condition}
-                            WHERE parent_span_id IS NULL OR parent_span_id = ''
-                        )
+                    SELECT
+                        project_id,
+                        trace_id,
+                        id,
+                        observation_type,
+                        service_name,
+                        {", ".join(latest_projections)}
+                    FROM (
+                        SELECT
+                            project_id,
+                            trace_id,
+                            id,
+                            observation_type,
+                            service_name,
+                            toStartOfHour(start_time) AS start_hour,
+                            argMax(tuple({", ".join(tuple_exprs)}), _version) AS latest_span
+                        FROM spans
+                        PREWHERE {self.project_filter_sql()}
+                            AND start_time >= fromUnixTimestamp64Micro(%(usage_start_us)s) - INTERVAL 7 DAY
+                            AND trace_id IN (
+                                SELECT trace_id FROM spans
+                                PREWHERE {self.project_filter_sql()}
+                                    AND {time_condition}
+                                WHERE parent_span_id IS NULL OR parent_span_id = ''
+                            )
+                        GROUP BY {span_key}
+                    )
                     WHERE is_deleted = 0
                 ) AS live
                 GROUP BY project_id, trace_id
                 HAVING countIf({root_condition}) > 0
             ) AS usage_roots
+            ARRAY JOIN trace_usage_metrics AS usage_metrics
             WHERE {predicate or "1 = 1"}
         """
         if count_only:

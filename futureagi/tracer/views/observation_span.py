@@ -3902,6 +3902,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     span_attribute_keys,
                     max_spans=cardinality.max_spans_per_trace,
                 )
+                expected_total = len(
+                    self._TRACE_PUBLIC_FIELDS
+                ) + cardinality.max_spans_per_trace * (
+                    len(self._SPAN_PUBLIC_FIELDS) + len(span_attribute_keys)
+                )
+                if len(paths) < expected_total and metadata.query_complete:
+                    metadata = replace(
+                        metadata,
+                        query_complete=False,
+                        query_status="sampled",
+                        query_error_code="sample_limit",
+                    )
                 return self._attribute_list_response(paths, metadata)
 
             if row_type == "sessions":
@@ -3911,6 +3923,23 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     max_traces=cardinality.max_traces_per_session,
                     max_spans=cardinality.max_spans_per_trace,
                 )
+                expected_total = (
+                    len(self._SESSION_PUBLIC_FIELDS)
+                    + 2
+                    + cardinality.max_traces_per_session
+                    * (
+                        len(self._TRACE_PUBLIC_FIELDS)
+                        + cardinality.max_spans_per_trace
+                        * (len(self._SPAN_PUBLIC_FIELDS) + len(span_attribute_keys))
+                    )
+                )
+                if len(paths) < expected_total and metadata.query_complete:
+                    metadata = replace(
+                        metadata,
+                        query_complete=False,
+                        query_status="sampled",
+                        query_error_code="sample_limit",
+                    )
                 return self._attribute_list_response(paths, metadata)
 
             return self._gm.bad_request("Unknown row type")
@@ -4103,6 +4132,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         "provider",
     )
 
+    # Bound the Cartesian expansion of indexed trace/session eval picker paths
+    # so high-fan-out coding/distributed agent projects (500–5,000+ spans/trace,
+    # hundreds of keys) never allocate multi-million-element JSON responses.
+    _MAX_EVAL_TRACE_SPANS = 50
+    _MAX_EVAL_SESSION_TRACES = 20
+    _MAX_EVAL_SESSION_SPANS_PER_TRACE = 10
+    _MAX_EVAL_ATTRIBUTE_PATHS = 5_000
+
     def _build_trace_attribute_paths(
         self,
         project_id: str,
@@ -4111,14 +4148,19 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         max_spans: int | None = None,
     ) -> list:
         """Trace-level paths: trace fields + ``spans.<n>.<key>`` for each
-        index up to the observed max spans-per-trace."""
+        index up to the bounded observed max spans-per-trace."""
         paths = list(self._TRACE_PUBLIC_FIELDS)
         if max_spans is None:
             max_spans = self._max_spans_per_trace(project_id)
-        for i in range(max_spans):
+        effective_max_spans = min(max(int(max_spans), 0), self._MAX_EVAL_TRACE_SPANS)
+        for i in range(effective_max_spans):
             for field in self._SPAN_PUBLIC_FIELDS:
+                if len(paths) >= self._MAX_EVAL_ATTRIBUTE_PATHS:
+                    return paths
                 paths.append(f"spans.{i}.{field}")
             for key in span_attribute_keys:
+                if len(paths) >= self._MAX_EVAL_ATTRIBUTE_PATHS:
+                    return paths
                 paths.append(f"spans.{i}.{key}")
         return paths
 
@@ -4133,7 +4175,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         """Session-level paths: session fields, the whole conversation
         (``transcript``, and ``transcript_full`` with tool calls) +
         ``traces.<i>.<trace_field>`` + ``traces.<i>.spans.<j>.<key>`` up to
-        the observed max traces-per-session and spans-per-trace."""
+        the bounded observed max traces-per-session and spans-per-trace."""
         from tracer.utils.eval import (
             SESSION_FULL_TRANSCRIPT_FIELD,
             SESSION_TRANSCRIPT_FIELD,
@@ -4148,13 +4190,28 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             max_traces = self._max_traces_per_session(project_id)
         if max_spans is None:
             max_spans = self._max_spans_per_trace(project_id)
-        for i in range(max_traces):
+        effective_max_traces = min(
+            max(int(max_traces), 0), self._MAX_EVAL_SESSION_TRACES
+        )
+        effective_max_spans = min(
+            max(int(max_spans), 0), self._MAX_EVAL_SESSION_SPANS_PER_TRACE
+        )
+        # Emit all trace-level paths before nested span paths so high span
+        # fan-out never crowds out top-level trace fields when bounded.
+        for i in range(effective_max_traces):
             for trace_field in self._TRACE_PUBLIC_FIELDS:
+                if len(paths) >= self._MAX_EVAL_ATTRIBUTE_PATHS:
+                    return paths
                 paths.append(f"traces.{i}.{trace_field}")
-            for j in range(max_spans):
+        for i in range(effective_max_traces):
+            for j in range(effective_max_spans):
                 for field in self._SPAN_PUBLIC_FIELDS:
+                    if len(paths) >= self._MAX_EVAL_ATTRIBUTE_PATHS:
+                        return paths
                     paths.append(f"traces.{i}.spans.{j}.{field}")
                 for key in span_attribute_keys:
+                    if len(paths) >= self._MAX_EVAL_ATTRIBUTE_PATHS:
+                        return paths
                     paths.append(f"traces.{i}.spans.{j}.{key}")
         return paths
 

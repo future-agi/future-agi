@@ -1558,8 +1558,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 # ONCE — matching the span-backed value paths below. Reading
                 # trace_sessions directly would surface both rows as duplicates.
                 search_clause = (
-                    "AND (external_session_id ILIKE %(search)s "
-                    "OR toString(trace_session_id) ILIKE %(search)s)"
+                    "AND (positionCaseInsensitiveUTF8(external_session_id, %(search)s) > 0 "
+                    "OR positionCaseInsensitiveUTF8(toString(trace_session_id), %(search)s) > 0)"
                     if search
                     else ""
                 )
@@ -1595,7 +1595,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         "project_id": project_id,
                         "limit": page_size + 1,
                         "offset": page * page_size,
-                        **({"search": f"%{search}%"} if search else {}),
+                        **({"search": search} if search else {}),
                     },
                     timeout_ms=read_deadline.remaining_ms(
                         SESSION_LIST_QUERY_TIMEOUT_MS
@@ -1682,7 +1682,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             # User labels come from the curated CH end_users dimension.
 
             if ch_column == "user_id":
-                search_clause = "AND user_id ILIKE %(search)s" if search else ""
+                search_clause = (
+                    "AND positionCaseInsensitiveUTF8(user_id, %(search)s) > 0"
+                    if search
+                    else ""
+                )
                 query = f"""
                 SELECT DISTINCT user_id AS val
                 FROM end_users FINAL
@@ -1699,7 +1703,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "offset": page * page_size,
             }
             if search:
-                params["search"] = f"%{search}%"
+                params["search"] = search
 
             result = analytics.execute_ch_query(
                 query,

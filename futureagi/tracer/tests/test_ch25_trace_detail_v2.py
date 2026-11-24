@@ -316,9 +316,14 @@ class TestV2TenantGate:
                 retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
 
     def test_span_sentinel_fails_closed_before_content_hydration(self):
+        from tracer.services.clickhouse.v2.trace_detail_reads import (
+            _MAX_PHYSICAL_SPANS,
+        )
+
         started = datetime(2026, 1, 1, tzinfo=UTC)
         span_rows = [
-            _root_span_row(id=f"S{index}", start_time=started) for index in range(1001)
+            _root_span_row(id=f"S{index}", start_time=started)
+            for index in range(_MAX_PHYSICAL_SPANS + 1)
         ]
         analytics = _FakeAnalytics(
             project_rows=[{"project_id": "P1"}], span_rows=span_rows
@@ -333,7 +338,67 @@ class TestV2TenantGate:
             )
 
         assert len(analytics.queries) == 1
-        assert "LIMIT 1001" in analytics.queries[0]
+        assert f"LIMIT {_MAX_PHYSICAL_SPANS + 1}" in analytics.queries[0]
+        assert "HAVING latest_is_deleted = 0" in analytics.queries[0]
+
+    def test_high_fan_out_coding_agent_trace_batches_evals_and_annotations(self):
+        started = datetime(2026, 1, 1, tzinfo=UTC)
+        span_count = 1200
+        identity_rows = [
+            {
+                "project_id": "P1",
+                "trace_id": "T-SWARM",
+                "span_id": f"S{index}",
+                "start_time": started,
+                "latest_is_deleted": 0,
+                "latest_version": 1,
+            }
+            for index in range(span_count)
+        ]
+        content_batches = [
+            [
+                _root_span_row(
+                    id=f"S{index}",
+                    trace_id="T-SWARM",
+                    parent_span_id="" if index == 0 else f"S{index - 1}",
+                    start_time=started,
+                )
+                for index in range(offset, min(offset + 500, span_count))
+            ]
+            for offset in range(0, span_count, 500)
+        ]
+        # 1 identity + 3 content batches (500, 500, 200) + 3 eval batches + 3 annotation batches
+        analytics = _SequenceAnalytics(
+            [identity_rows, *content_batches, [], [], [], [], [], []]
+        )
+        detail = read_trace_detail(
+            analytics=analytics,
+            project_ids=["P1"],
+            trace_id="T-SWARM",
+            eval_config_ids_resolver=lambda _pid: ["E1"],
+            deadline_ms=5000,
+        )
+        assert len(detail.spans) == span_count
+        # 1 identity + 3 content + 3 eval + 3 annotation = 10 queries
+        assert detail.query_count == 10
+        # Verify deep 1,200-level tree walks iteratively without RecursionError
+        from tracer.services.clickhouse.query_builders.trace_detail import (
+            compute_trace_summary_and_graph,
+        )
+
+        node = {
+            "observation_span": {**detail.spans[-1], "span_attributes": {}},
+            "children": [],
+        }
+        for row in reversed(detail.spans[:-1]):
+            node = {
+                "observation_span": {**row, "span_attributes": {}},
+                "children": [node],
+            }
+        summary, graph = compute_trace_summary_and_graph([node])
+        assert summary["total_spans"] == span_count
+        assert len(graph["nodes"]) == span_count
+        assert len(graph["edges"]) == span_count - 1
 
     def test_cross_project_trace_collision_serves_newest_copy(self):
         started = datetime(2026, 1, 1, tzinfo=UTC)
@@ -1053,7 +1118,10 @@ class TestV2EvalScoreRendering:
             if "latest_trace_evals" in query
         )
         assert eval_call["detail_eval_config_ids"] == ("C1",)
-        assert "toString(custom_eval_config_id)" in eval_query.split("GROUP BY id")[0]
+        assert (
+            "custom_eval_config_id IN %(detail_eval_config_ids)s"
+            in eval_query.split("GROUP BY id")[0]
+        )
 
     def test_no_project_configs_skips_eval_query_and_returns_empty(self):
         analytics = _FakeAnalytics(

@@ -36,11 +36,13 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     boolean_meta_presence_condition,
     build_numeric_filter_predicate,
+    build_session_message_having_predicate,
     parse_boolean_meta_filter,
     resolve_boolean_meta_value,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     _attribute_plan,
+    _values_fit_second_inline_budget,
     partition_span_filter_plans,
 )
 from tracer.services.clickhouse.query_builders.session_filters import (
@@ -1944,10 +1946,30 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 # The compiler proves this value witness exhaustive even when
                 # missing-key defaults and independent argMax fields matter.
                 # Otherwise retain its conservative necessary raw witness.
+                # Individually small IN leaves can still exceed max_query_size
+                # together when double-inlined across witness_cte + classifier,
+                # so check the combined string payload against the second-copy
+                # budget and fall back to key-presence discovery when exceeded.
+                population_values = tuple(
+                    value
+                    for plan in witness_plans
+                    for param_name, param_value in plan.params.items()
+                    if param_name.startswith("latest_filter_param_")
+                    for value in (
+                        param_value
+                        if isinstance(param_value, (tuple, list))
+                        else (param_value,)
+                    )
+                    if isinstance(value, str)
+                )
                 predicate = (
-                    witness.raw_graph_value_witness_predicate
+                    witness.raw_population_witness_predicate
+                    if witness.raw_population_witness_predicate is not None
+                    else witness.raw_graph_value_witness_predicate
                     or witness.raw_witness_predicate
                 )
+                if not _values_fit_second_inline_budget(population_values):
+                    predicate = witness.raw_key_witness_predicate or predicate
                 witness_cte = f"""
         (SELECT groupUniqArray(assumeNotNull(trace_session_id))
          FROM {self.TABLE}
@@ -2668,7 +2690,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             if datetime_predicate
             else ""
         )
-        outer_predicates: list[str] = []
+        seed_keyset_template: str | None = None
         if before_start_time is not None:
             if not slice_start <= before_start_time < slice_end:
                 raise ValueError("session keyset must stay inside its slice")
@@ -2677,13 +2699,27 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 before_start_time
             )
             params["filter_before_session_id"] = str(before_id)
-            outer_predicates.append(
-                "(start_time < fromUnixTimestamp64Micro("
+            # Apply the scan checkpoint to roots before per-session max() so a
+            # session held below the previous page's publication floor can be
+            # reacquired through its older root, even when it also has a newer
+            # root above the checkpoint.
+            seed_keyset_template = (
+                "({start_time} < fromUnixTimestamp64Micro("
                 "%(filter_before_start_time_us)s, 'UTC') OR ("
-                "start_time = fromUnixTimestamp64Micro("
+                "{start_time} = fromUnixTimestamp64Micro("
                 "%(filter_before_start_time_us)s, 'UTC') AND "
-                "toString(session_id) < %(filter_before_session_id)s))"
+                "toString({session_id}) < %(filter_before_session_id)s))"
             )
+        seed_keyset_fragment = (
+            "\n              AND "
+            + seed_keyset_template.format(
+                start_time="seed_spans.start_time",
+                session_id="seed_spans.trace_session_id",
+            )
+            if seed_keyset_template
+            else ""
+        )
+        outer_predicates: list[str] = []
         if self._bounded_sampling_rate is not None:
             params["bounded_sampling_salt"] = str(self._bounded_sampling_salt)
             params["bounded_sampling_rate"] = float(self._bounded_sampling_rate)
@@ -2706,7 +2742,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
               AND seed_spans.start_time < fromUnixTimestamp64Micro(%(filter_slice_end_us)s, 'UTC'){datetime_fragment}
             WHERE (seed_spans.parent_span_id IS NULL OR seed_spans.parent_span_id = '')
               AND isNotNull(seed_spans.trace_session_id)
-              AND seed_spans.trace_session_id != toUUID('{NIL_UUID}'){witness_fragment}
+              AND seed_spans.trace_session_id != toUUID('{NIL_UUID}'){witness_fragment}{seed_keyset_fragment}
             GROUP BY seed_spans.trace_session_id
         """
         if self._bounded_sampling_rate is not None:
@@ -2715,6 +2751,15 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             # hash to raw aliases would change which straddlers are selected.
             ts_map = survivor_map_subquery("trace_session_id_remap")
             resolved_session = resolved_id_expr("raw_trace_session_id", "seed_ts_remap")
+            remapped_keyset_where = (
+                "WHERE "
+                + seed_keyset_template.format(
+                    start_time="raw_roots.start_time",
+                    session_id=resolved_session,
+                )
+                if seed_keyset_template
+                else ""
+            )
             seed_source = f"""
             SELECT
                 {resolved_session} AS session_id,
@@ -2734,6 +2779,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             ) AS raw_roots
             LEFT JOIN ({ts_map}) AS seed_ts_remap
                 ON raw_trace_session_id = seed_ts_remap.any_id
+            {remapped_keyset_where}
             GROUP BY session_id
             """
         query = f"""
@@ -4435,34 +4481,17 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             )
 
             if col_id in self.MESSAGE_FILTER_MAP:
-                if filter_op in ("is_null", "is_not_null"):
-                    conditions.append(
-                        f"({ch_col} IS NULL OR {ch_col} = '')"
-                        if filter_op == "is_null"
-                        else f"({ch_col} IS NOT NULL AND {ch_col} != '')"
-                    )
-                    continue
-                text_op = {
-                    "equals": "=",
-                    "not_equals": "!=",
-                    "contains": "ILIKE",
-                    "not_contains": "NOT ILIKE",
-                    "starts_with": "ILIKE",
-                    "ends_with": "ILIKE",
-                }.get(filter_op)
-                if text_op is None:
-                    conditions.append("0 = 1")
-                    continue
                 param_counter += 1
                 param_name = f"having_{param_counter}"
-                if filter_op in ("contains", "not_contains"):
-                    filter_value = f"%{filter_value}%"
-                elif filter_op == "starts_with":
-                    filter_value = f"{filter_value}%"
-                elif filter_op == "ends_with":
-                    filter_value = f"%{filter_value}"
-                target_params[param_name] = filter_value
-                conditions.append(f"{ch_col} {text_op} %({param_name})s")
+                conditions.append(
+                    build_session_message_having_predicate(
+                        ch_col,
+                        filter_op,
+                        filter_value,
+                        param_prefix=param_name,
+                        params=target_params,
+                    )
+                )
                 continue
 
             param_counter += 1

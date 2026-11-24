@@ -100,11 +100,11 @@ ATTRIBUTE_READ_EXPLICIT_SEGMENT = timedelta(hours=6)
 # extra row requested by ``_candidate_ids`` remains an explicit truncation
 # sentinel, so callers never mistake this discovery sample for a complete
 # distribution.
-ATTRIBUTE_READ_CANDIDATE_LIMIT = 64
+ATTRIBUTE_READ_CANDIDATE_LIMIT = 256
 # Value pickers replay full typed Map values only after acquiring a finite
-# identity set. Keep that acquisition deliberately tiny so a key lookup cannot
-# pull another large values block before LIMIT stops the read.
-ATTRIBUTE_READ_VALUE_CANDIDATE_LIMIT = 8
+# identity set. Keep that acquisition bounded while wide enough to sample
+# sparse (<1%) values on high-fan-out multi-span traces.
+ATTRIBUTE_READ_VALUE_CANDIDATE_LIMIT = 64
 # Exact-key discovery may continue through a small number of deterministic
 # candidate pages when a storage-order first probe replays entirely to
 # cleared/tombstoned latest state. This cap is shared across adaptive bands and
@@ -837,6 +837,11 @@ _STRATIFIED_CANDIDATE_SQL = """
         toStartOfHour(attribute_source.start_time) ASC,
         attribute_source.trace_id ASC,
         attribute_source.id ASC
+    LIMIT 8 BY
+        attribute_source.project_id,
+        attribute_source.observation_type,
+        attribute_source.service_name,
+        empty(attribute_source.parent_span_id)
     LIMIT %(candidate_limit)s
 """
 
@@ -4215,10 +4220,22 @@ class AttributeReadSelector:
                 and active_segment_start is None
                 and exact_probe_segment_end is None
             ):
+                exact_probe_proven_empty = False
                 try:
+                    # When JSON overflow is disabled, probe the full remaining
+                    # [start, current_segment_end) window via Map-key blooms so
+                    # sparse/older keys are found on page one and missing keys
+                    # prove exhaustion in one query. When JSON overflow is on,
+                    # keep the bounded first slice pinned by the structured
+                    # exact-search contract.
+                    probe_segment = (
+                        (start, current_segment_end)
+                        if not self._reads_json_overflow
+                        else segment
+                    )
                     exact_candidate_ids, _exact_truncated, _ = self._candidate_ids(
                         projects,
-                        segment,
+                        probe_segment,
                         predicate=exact_typed_predicate,
                         attribute_key=exact_key,
                         # This is an existence accelerator, not a published
@@ -4250,6 +4267,8 @@ class AttributeReadSelector:
                         if emitted and not exhaustive_exact_types:
                             break
                     exact_probe_segment_end = current_segment_end
+                    if not _exact_truncated and not self._reads_json_overflow:
+                        exact_probe_proven_empty = True
                 except Exception as exc:
                     if not is_read_budget_error(exc):
                         raise
@@ -4258,6 +4277,14 @@ class AttributeReadSelector:
                     # backoff; the physical exact walk remains authoritative.
                     exact_probe_segment_end = current_segment_end
                 if emitted and not exhaustive_exact_types:
+                    break
+                if exact_probe_proven_empty:
+                    # When JSON overflow is disabled, the full-window typed
+                    # bloom probe is exhaustive: if it did not truncate, no
+                    # further physical slices can contain exact_key.
+                    current_segment_end = start
+                    cursor_before = None
+                    active_segment_start = None
                     break
 
             try:

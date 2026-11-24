@@ -451,8 +451,8 @@ def test_exact_candidate_reader_keeps_canonical_activity_and_all_aliases():
         rows = m._read_dimension_candidates(
             deadline=None,
             limit=2,
-            before_first_seen=None,
-            before_end_user_id=None,
+            before_first_seen=END,
+            before_end_user_id=OTHER,
             window_start=START,
             window_end=END,
         )
@@ -463,6 +463,52 @@ def test_exact_candidate_reader_keeps_canonical_activity_and_all_aliases():
         call.kwargs["timeout_ms"] is None
         for call in service.return_value.execute_ch_query.call_args_list
     )
+
+
+def test_page_one_unfiltered_uses_upper_bound_projection_fast_path():
+    m = manager()
+    result = [
+        # 1. proj_by_end_user upper-bound discovery (exhausted: <= 50 rows)
+        SimpleNamespace(data=[{"end_user_id": USER, "upper_last_active": START}]),
+        # 2. remap aliases for selected candidate users
+        SimpleNamespace(
+            data=[
+                {"any_id": USER, "survivor_id": USER},
+                {"any_id": OTHER, "survivor_id": USER},
+            ]
+        ),
+        # 3. seeded exact replay for ONLY the selected users
+        SimpleNamespace(
+            data=[
+                {
+                    "end_user_id": USER,
+                    "last_active": START,
+                    "user_id": "canonical-label",
+                    "total_cost": 3,
+                }
+            ]
+        ),
+    ]
+    with patch("tracer.services.users_list_manager.V2AnalyticsQueryService") as service:
+        service.return_value.execute_ch_query.side_effect = result
+        rows = m._read_dimension_candidates(
+            deadline=None,
+            limit=2,
+            before_first_seen=None,
+            before_end_user_id=None,
+            window_start=START,
+            window_end=END,
+        )
+    assert len(rows) == 1 and rows[0]["end_user_id"] == USER
+    assert rows[0]["first_seen"] == START
+    assert set(rows[0]["_candidate_scan_end_user_ids"]) == {USER, OTHER}
+    queries = [
+        call.args[0] for call in service.return_value.execute_ch_query.call_args_list
+    ]
+    assert len(queries) == 3
+    assert "raw_upper_last_active" in queries[0]
+    assert "attrs_string" not in queries[0]
+    assert "candidate_scan_end_user_ids" in queries[2]
 
 
 @pytest.mark.parametrize("workspace", [False, True])

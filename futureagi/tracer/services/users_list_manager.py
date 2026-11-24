@@ -123,7 +123,7 @@ USER_LIST_ATTRIBUTE_SEED_TIMEOUT_MS = 1_500
 USER_LIST_PAGE_WALL_MS = settings.USER_LIST_PAGE_WALL_MS
 
 _USER_LIST_READ_SETTINGS = {
-    "max_threads": 1,
+    "max_threads": 4,
     "max_block_size": 8192,
     "read_overflow_mode": "throw",
     "max_bytes_to_read": 36 * 1024 * 1024 * 1024,
@@ -327,13 +327,23 @@ def _users_attr_enrichment_query(
     if (start_date is None) != (end_date is None):
         raise ValueError("attribute enrichment window must be provided together")
     time_filter = ""
+    partition_hour_filter = ""
     latest_time_filter = ""
     if start_date is not None:
         params["attr_start_date"] = start_date
         params["attr_end_date"] = end_date
         params["attr_start_us"] = _unix_microseconds(start_date)
         params["attr_end_us"] = _unix_microseconds(end_date)
-        time_filter = """
+        partition_hour_filter = """
+          AND toDate(start_time) BETWEEN
+              toDate(%(attr_start_date)s) AND toDate(%(attr_end_date)s)
+          AND toStartOfHour(start_time) >= toStartOfHour(
+              fromUnixTimestamp64Micro(%(attr_start_us)s, 'UTC')
+          )
+          AND toStartOfHour(start_time) < fromUnixTimestamp64Micro(%(attr_end_us)s, 'UTC')
+        """
+        time_filter = f"""
+          {partition_hour_filter}
           AND start_time >= fromUnixTimestamp64Micro(%(attr_start_us)s, 'UTC')
           AND start_time < fromUnixTimestamp64Micro(%(attr_end_us)s, 'UTC')
         """
@@ -444,43 +454,38 @@ def _users_attr_enrichment_query(
             argMax(tuple(end_user_id), _version).1 AS latest_end_user_id,
             argMax(start_time, _version) AS latest_start_time,
             argMax(
-                tuple(
-                    multiIf(
-                        notEmpty(JSONExtractRaw(attributes_extra, attribute_key)),
-                            JSONExtractRaw(attributes_extra, attribute_key),
-                        mapContains(attrs_bool, attribute_key),
-                            if(attrs_bool[attribute_key] != 0, 'true', 'false'),
-                        mapContains(attrs_number, attribute_key),
+                multiIf(
+                    attributes_extra NOT IN ('', '{{}}', 'null')
+                        AND notEmpty(JSONExtractRaw(attributes_extra, attribute_key)),
+                        tuple('json', JSONExtractRaw(attributes_extra, attribute_key)),
+                    mapContains(attrs_bool, attribute_key),
+                        tuple(
+                            'boolean',
+                            if(attrs_bool[attribute_key] != 0, 'true', 'false')
+                        ),
+                    mapContains(attrs_number, attribute_key),
+                        tuple(
+                            'number',
                             if(
                                 isFinite(attrs_number[attribute_key]),
                                 toString(attrs_number[attribute_key]),
                                 'null'
-                            ),
-                        mapContains(attrs_string, attribute_key),
-                            toJSONString(attrs_string[attribute_key]),
-                        ''
-                    )
+                            )
+                        ),
+                    mapContains(attrs_string, attribute_key),
+                        tuple('string', toJSONString(attrs_string[attribute_key])),
+                    tuple('', '')
                 ),
                 _version
-            ).1 AS latest_attribute_value_json,
-            argMax(
-                tuple(
-                    multiIf(
-                        notEmpty(JSONExtractRaw(attributes_extra, attribute_key)),
-                            'json',
-                        mapContains(attrs_bool, attribute_key), 'boolean',
-                        mapContains(attrs_number, attribute_key), 'number',
-                        mapContains(attrs_string, attribute_key), 'string',
-                        ''
-                    )
-                ),
-                _version
-            ).1 AS latest_attribute_value_type,
+            ) AS latest_attribute_pair,
+            latest_attribute_pair.2 AS latest_attribute_value_json,
+            latest_attribute_pair.1 AS latest_attribute_value_type,
             argMax(is_deleted, _version) AS latest_is_deleted
         FROM spans
         ARRAY JOIN %(requested_attribute_keys)s AS attribute_key
         PREWHERE 1 = 1
           {project_clause}
+          {partition_hour_filter}
           AND (
               project_id,
               observation_type,
@@ -1600,6 +1605,167 @@ class UsersListManager:
                 break
         return selected
 
+    @staticmethod
+    def _activity_strictly_above_watermark(
+        row_last_active: Any,
+        row_end_user_id: str,
+        watermark_last_active: Any,
+        watermark_end_user_id: str,
+    ) -> bool:
+        """Compare under ``ORDER BY last_active DESC NULLS LAST, end_user_id DESC``."""
+        if watermark_last_active is None:
+            return (
+                row_last_active is not None or row_end_user_id > watermark_end_user_id
+            )
+        if row_last_active is None:
+            return False
+        left_dt = (
+            row_last_active.replace(tzinfo=UTC)
+            if isinstance(row_last_active, datetime) and row_last_active.tzinfo is None
+            else row_last_active
+        )
+        right_dt = (
+            watermark_last_active.replace(tzinfo=UTC)
+            if isinstance(watermark_last_active, datetime)
+            and watermark_last_active.tzinfo is None
+            else watermark_last_active
+        )
+        if left_dt != right_dt:
+            return left_dt > right_dt
+        return row_end_user_id > watermark_end_user_id
+
+    def _try_upper_bound_dimension_candidates(
+        self,
+        *,
+        builder: UserListQueryBuilderV2,
+        analytics: V2AnalyticsQueryService,
+        deadline: ReadDeadline | None,
+        limit: int,
+        window_start: datetime,
+        window_end: datetime,
+    ) -> list[dict] | None:
+        """Fast path for page-one unfiltered Users via ``proj_by_end_user``.
+
+        Every live span's ``end_time`` is bounded above by the max physical
+        ``end_time`` of non-deleted rows for that user's alias group. When the
+        exact replay of the top ``K`` upper-bound users yields at least
+        ``limit`` users strictly above the ``(K+1)``-th user's upper bound (or
+        exhausts all active users in the window), the top ``limit`` exact rows
+        are mathematically proven identical to the full-window scan without
+        reading ``attrs_string``, costs, or tokens for non-page users.
+        """
+        upper_batch = limit + 6
+        upper_query, upper_params = builder.build_user_activity_upper_bound_query(
+            limit=upper_batch + 1,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        upper_result = analytics.execute_ch_query(
+            upper_query,
+            upper_params,
+            **_candidate_statement_timeout(deadline),
+            settings=_page_read_settings(max_result_rows=upper_batch + 1),
+        )
+        upper_rows = list(upper_result.data or [])
+        if not upper_rows:
+            return []
+        if "upper_last_active" not in upper_rows[0]:
+            return None
+        exhausted = len(upper_rows) <= upper_batch
+        selected = upper_rows[:upper_batch]
+        selected_ids = list(
+            dict.fromkeys(
+                str(row["end_user_id"]) for row in selected if row.get("end_user_id")
+            )
+        )
+        if not selected_ids:
+            return []
+        remap_query, remap_params = builder.build_dimension_survivor_query(selected_ids)
+        remap_result = analytics.execute_ch_query(
+            remap_query,
+            remap_params,
+            **_candidate_statement_timeout(deadline),
+            settings=_page_read_settings(max_result_rows=_USER_LIST_ATTR_RESULT_ROWS),
+        )
+        aliases_by_survivor: dict[str, set[str]] = {}
+        alias_to_survivor: dict[str, str] = {cid: cid for cid in selected_ids}
+        for row in remap_result.data or []:
+            if row.get("any_id") and row.get("survivor_id"):
+                any_id = str(row["any_id"])
+                survivor_id = str(row["survivor_id"])
+                aliases_by_survivor.setdefault(survivor_id, set()).add(any_id)
+                alias_to_survivor[any_id] = survivor_id
+        scan_ids = list(
+            dict.fromkeys(
+                alias
+                for cid in selected_ids
+                for alias in sorted(aliases_by_survivor.get(cid, set()) | {cid})
+            )
+        )
+        seeded_builder = UserListQueryBuilderV2(
+            organization_id=self.organization_id,
+            project_ids=self.scoped_project_ids,
+            search=self.search,
+            empty_scope=self.empty_scope,
+            candidate_end_user_ids=selected_ids,
+            candidate_scan_end_user_ids=scan_ids,
+            candidate_end_user_id_map=alias_to_survivor,
+            limit=len(selected_ids),
+            offset=0,
+            filters=[
+                {
+                    "column_id": "created_at",
+                    "filter_config": {
+                        "filter_type": "datetime",
+                        "filter_op": "between",
+                        "filter_value": [
+                            window_start.isoformat(),
+                            window_end.isoformat(),
+                        ],
+                    },
+                }
+            ],
+        )
+        exact_query, exact_params = seeded_builder.build_candidate_page_query(
+            cursor_mode=True
+        )
+        exact_result = analytics.execute_ch_query(
+            exact_query,
+            exact_params,
+            **_candidate_statement_timeout(deadline),
+            settings=_page_replay_read_settings(
+                max_result_rows=max(1, len(selected_ids))
+            ),
+        )
+        raw_exact = list(exact_result.data or [])
+        if not exhausted:
+            watermark_row = upper_rows[upper_batch]
+            wm_active = watermark_row.get("upper_last_active")
+            wm_id = str(watermark_row["end_user_id"])
+            proven_raw = [
+                row
+                for row in raw_exact
+                if self._activity_strictly_above_watermark(
+                    row.get("last_active"),
+                    str(row.get("end_user_id") or ""),
+                    wm_active,
+                    wm_id,
+                )
+            ]
+            if len(proven_raw) < limit:
+                return None
+            raw_exact = proven_raw[:limit]
+        else:
+            raw_exact = raw_exact[:limit]
+        candidates = self._format_candidate_rows(seeded_builder, raw_exact)
+        for candidate, raw in zip(candidates, raw_exact, strict=True):
+            canonical_id = str(candidate["end_user_id"])
+            candidate["first_seen"] = raw.get("last_active")
+            candidate["_candidate_scan_end_user_ids"] = tuple(
+                sorted(aliases_by_survivor.get(canonical_id, set()) | {canonical_id})
+            )
+        return candidates
+
     def _read_dimension_candidates(
         self,
         *,
@@ -1620,6 +1786,25 @@ class UsersListManager:
             empty_scope=self.empty_scope,
         )
         self._bind_current_facts(builder)
+        analytics = V2AnalyticsQueryService()
+        if (
+            getattr(builder, "_current_facts", None) is None
+            and before_first_seen is None
+            and before_end_user_id is None
+            and not self.attribute_exact_text_filters
+            and not builder._positive_scalar_user_witness()[0]
+            and not builder._positive_user_id_witness()[0]
+        ):
+            fast_candidates = self._try_upper_bound_dimension_candidates(
+                builder=builder,
+                analytics=analytics,
+                deadline=deadline,
+                limit=limit,
+                window_start=window_start,
+                window_end=window_end,
+            )
+            if fast_candidates is not None:
+                return fast_candidates
         query, params = builder.build_dimension_candidate_query(
             limit=limit,
             before_first_seen=before_first_seen,
@@ -1627,7 +1812,6 @@ class UsersListManager:
             window_start=window_start,
             window_end=window_end,
         )
-        analytics = V2AnalyticsQueryService()
         result = analytics.execute_ch_query(
             query,
             params,
