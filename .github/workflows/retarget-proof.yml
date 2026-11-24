@@ -1,0 +1,41 @@
+name: Retarget proof
+
+# Not a required check. Backend CI and E2E CI start only on opened,
+# synchronize and reopened (an edit run would hide their required checks), so
+# a retarget starts neither. When a pull request's base really changes, this
+# runs both, unchanged, against the merge candidate on the new base. Their
+# jobs appear as "retarget-backend / ..." and "retarget-e2e / ...", never as
+# a required check name, and each records the candidate it tested for the
+# "CI ran on this base" check (ci-base-gate.yml).
+#
+# A title or body edit starts this workflow with every job skipped: it is not
+# required, so that skipped run hides nothing, and it cancels nothing. Its own
+# runs never join a pull request's "candidate" concurrency group (see the
+# called workflows' concurrency), so they neither cancel nor get cancelled by
+# the pull request's real runs. No secrets are forwarded.
+
+on:
+  pull_request:
+    types: [edited]
+
+permissions:
+  contents: read
+  # The called workflows read job attempts and artifacts of their own run.
+  actions: read
+  # The E2E shards pull the build cache from GHCR.
+  packages: read
+
+jobs:
+  retarget-backend:
+    name: retarget-backend
+    if: ${{ github.event.changes.base }}
+    uses: ./.github/workflows/backend-ci.yml
+    with:
+      job_prefix: "retarget-backend / "
+
+  retarget-e2e:
+    name: retarget-e2e
+    if: ${{ github.event.changes.base }}
+    uses: ./.github/workflows/e2e-ci.yml
+    with:
+      job_prefix: "retarget-e2e / "

@@ -697,11 +697,20 @@ merge queue refuses the PR, although the real run is green. Blacksmith edits eve
 about 4 s after it opens, which is how #4332 (green run 45070958943, then skipped run 45070969031)
 and #4001 were refused. This is not documented by GitHub, and `gh pr checks --required` cannot
 show it, because it still lists the older green runs. A retarget therefore starts no run of these
-workflows either. The merge queue re-tests every merge into dev, but main has no queue: a pull
-request moved onto main keeps checks from its old base until a push or reopen runs CI against main.
-Until a check that proves the tested merge candidate lands, do that after every retarget into main.
-Update CI is not required and still starts on edits and labels (`update-rehearsal` starts the Real
-rehearsals).
+workflows either. The merge queue re-tests every merge into dev. For a retarget, **Retarget proof**
+(`.github/workflows/retarget-proof.yml`) runs Backend CI and E2E CI, unchanged, against the merge
+candidate on the new base; their jobs appear as `retarget-backend / …` and `retarget-e2e / …`,
+never under a required name, and they never share or cancel the pull request's own runs. Every
+Backend CI or E2E CI run that tested a pull request records the merge candidate it tested (artifact
+`ci-candidate-<kind>-attempt-<n>`). The **"CI ran on this base"** check
+(`.github/workflows/ci-base-gate.yml`, not required) passes for a retargeted pull request into
+main only when both a Backend CI and an E2E CI run recorded this pull request, this head, this base
+and its current tip, and the tree of GitHub's current merge candidate. It re-reads all of that, and
+fails closed when anything is missing, skipped, from another pull request or stale. A green
+verdict is **proved against the base tip at its last run**, not at merge time: the base can move
+after it. Until the repository owner makes it required on main, push or reopen after a retarget
+into main if it is red. Update CI is not required and still starts on edits and labels
+(`update-rehearsal` starts the Real rehearsals).
 
 To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
 artifact of a green run and regenerate the recorded times:

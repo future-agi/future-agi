@@ -603,7 +603,45 @@ class CandidateScope(unittest.TestCase):
                 )[1]
                 self.assertRegex(block, rf"(?m)^    name: {check}( #.*)?$")
                 self.assertIn("    if: ${{ always() }}\n", block)
-                self.assertRegex(text, r"(?m)^  group: .*-candidate$")
+                suffix = (
+                    "-candidate"
+                    if workflow == "python-lint"
+                    else "-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}"
+                )
+                self.assertRegex(text, rf"(?m)^  group: .*{re.escape(suffix)}$")
+
+    def test_only_retarget_proof_runs_leave_the_candidate_group(self):
+        # Pull request and merge-group runs, direct or through the merge
+        # queue's call, keep today's "candidate" group, so one run per PR is
+        # active and a newer push cancels the older one. Only Retarget proof's
+        # calls get a group of their own: they never cancel, and are never
+        # cancelled by, a pull request's real runs.
+        expression = (
+            "github.workflow == 'Retarget proof' && github.run_id || 'candidate'"
+        )
+
+        def suffix(workflow_name, run_id):
+            # GitHub's && and || return operand values, like Python's.
+            return (workflow_name == "Retarget proof" and run_id) or "candidate"
+
+        for name in ("Backend CI", "E2E CI", "Backend merge queue"):
+            self.assertEqual(suffix(name, "45079002539"), "candidate", name)
+        self.assertEqual(suffix("Retarget proof", "45079002539"), "45079002539")
+        for workflow in ("backend-ci", "e2e-ci"):
+            text = (SCRIPTS.parent / "workflows" / (workflow + ".yml")).read_text()
+            with self.subTest(workflow=workflow):
+                self.assertEqual(text.count(expression), 1)
+                self.assertIn(
+                    "    inputs:\n      job_prefix:\n",
+                    text.split("  workflow_call:\n", 1)[1],
+                )
+                # Empty by default: today's job names hold.
+                block = text.split("      job_prefix:\n", 1)[1].split(
+                    "\n    outputs:", 1
+                )[0]
+                self.assertIn('        default: ""', block)
+        proof = (SCRIPTS.parent / "workflows/retarget-proof.yml").read_text()
+        self.assertIn("name: Retarget proof\n", proof)
 
     def test_update_ci_metadata_events_start_no_jobs(self):
         # Update CI is not required and still starts on edits and labels:

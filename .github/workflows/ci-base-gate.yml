@@ -1,0 +1,49 @@
+name: CI base gate
+
+# "CI ran on this base" is NOT a required check. For a pull request whose base
+# changed, it passes into main only when a Backend CI and an E2E CI run (its
+# own, or Retarget proof's) each recorded that they tested GitHub's current
+# merge candidate: this pull request's head merged onto the current base tip.
+# It reads the pull request, its runs and their receipts, and judges again on
+# every pull request event. It never writes or copies another check. A green
+# verdict is proof against the base tip at its last run, not at merge time.
+# See .github/scripts/ci_base_gate.py.
+#
+# Only the repository owner can make it required on main, and only after this
+# file is on main and both a stale and a fresh verdict have been shown there.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+  # Workflow runs, their jobs and their artifacts.
+  actions: read
+
+concurrency:
+  # A newer verdict replaces an older one for the same pull request. This
+  # cancels only this check's own evaluation, never a CI run.
+  group: ci-base-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # Never skipped: every pull request event gets a verdict.
+    name: CI ran on this base
+    runs-on: ubuntu-latest
+    # Into main it waits for this head's producer runs (up to two hours).
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - name: Judge from the pull request, its runs and their receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BASE_CHANGED: ${{ github.event.changes.base != null }}
+        run: python3 -I .github/scripts/ci_base_gate.py
