@@ -639,8 +639,9 @@ def refuse_outside_the_epoch(
     *, agent_version_id: Any = None, archive_artifact_id: Any = None
 ) -> None:
     """Refuse to make the default, anywhere but its Epoch's ship route, a version that is
-    a candidate the Epoch ships only on a person's reason, or an upload of the same
-    archive. A person ships it there, with the reason; no key, agent or move does."""
+    an Epoch candidate the Epoch would not ship without a reason, or an upload of the
+    same archive. Only the winner ships without one. A candidate only its must-pass check
+    refused ships in its Epoch, on a person's reason; any other refused one never does."""
     match = Q(pk__in=[])
     if agent_version_id is not None:
         match |= Q(agent_version_id=agent_version_id)
@@ -658,22 +659,35 @@ def refuse_outside_the_epoch(
                 archive_artifact_id
             )
         )
-    for candidate in AgentFixCandidate.no_workspace_objects.filter(
-        match
-    ).select_related("fix_run"):
-        if not ships_only_with_a_reason(candidate):
-            continue
-        number = AgentFixRun.no_workspace_objects.filter(
-            environment_id=candidate.fix_run.environment_id,
-            created_at__lte=candidate.fix_run.created_at,
-        ).count()
+    candidates = list(
+        AgentFixCandidate.no_workspace_objects.filter(match).select_related("fix_run")
+    )
+    # The same tree an Epoch proved, whichever candidate made the version.
+    if not candidates or any(
+        one.outcome == AgentFixCandidate.Outcome.WINNER for one in candidates
+    ):
+        return
+    candidate = next(
+        (one for one in candidates if one.agent_version_id == agent_version_id),
+        candidates[0],
+    )
+    number = AgentFixRun.no_workspace_objects.filter(
+        environment_id=candidate.fix_run.environment_id,
+        created_at__lte=candidate.fix_run.created_at,
+    ).count()
+    named = f"This version is Candidate {candidate.attempt} of Epoch {number}"
+    if ships_only_with_a_reason(candidate):
         raise HostedHarnessError(
             "fix_candidate_needs_override",
-            f"This version is Candidate {candidate.attempt} of Epoch {number}, whose"
-            f" checks refused it. To make it the default, open Epoch {number} and ship"
-            " it there with a reason.",
+            f"{named}, whose checks refused it. To make it the default, open Epoch"
+            f" {number} and ship it there with a reason.",
             status_code=409,
         )
+    raise HostedHarnessError(
+        "fix_candidate_not_shippable",
+        f"{named}, whose checks refused it, so it can't be made the default.",
+        status_code=409,
+    )
 
 
 def record_override(candidate: AgentFixCandidate, *, reason: str, user: Any) -> None:

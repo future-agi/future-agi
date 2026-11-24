@@ -330,6 +330,47 @@ class TestSubmit:
             "number": 1,
         }
 
+    def test_a_change_already_checked_is_refused_without_using_an_attempt(
+        self, auth_client, source_run, temporal
+    ):
+        first = _submit(auth_client, source_run)
+        assert first.status_code == 201, first.content
+        close_fix_run(first.json()["id"], State.NO_IMPROVEMENT)
+
+        again = _submit(auth_client, source_run)
+        changed = {**FIXED, "agent.py": FIXED["agent.py"] + b" "}
+        brief = auth_client.get(
+            f"{EPOCHS}/coding-agent-brief/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+        one_byte = _submit(auth_client, source_run, changed)
+
+        assert (again.status_code, again.json()["error"]) == (
+            409,
+            "fix_outside_tree_checked",
+        )
+        assert again.json()["message"] == (
+            "This exact change was already checked as attempt 1. Change something,"
+            " then submit again."
+        )
+        assert brief["attempts"]["used"] == 1
+        assert one_byte.status_code == 201, one_byte.content
+        assert one_byte.json()["request"]["outside_candidate"]["number"] == 2
+
+    def test_a_change_whose_attempt_failed_unchecked_may_be_sent_again(
+        self, auth_client, source_run
+    ):
+        first = _submit(auth_client, source_run)
+        close_fix_run(
+            first.json()["id"],
+            State.FAILED,
+            failure={"code": "fix_engine_failed", "message": "the engine stopped"},
+        )
+
+        again = _submit(auth_client, source_run)
+
+        assert again.status_code == 201, again.content
+
     def test_a_given_budget_is_kept(self, auth_client, source_run):
         response = _submit(auth_client, source_run, budget_credits=900)
 
@@ -567,7 +608,12 @@ class TestSubmit:
             {**FIXED, "prompts/system.md": b"never refund\n"},
             locked_paths=["tools.py"],
         )
-        second = _submit(auth_client, source_run, locked_paths=["tools.py"])
+        second = _submit(
+            auth_client,
+            source_run,
+            {**FIXED, "agent.py": b"PROMPT = 'refund, then close'\n"},
+            locked_paths=["tools.py"],
+        )
 
         assert (unlocked.status_code, unlocked.json()["error"]) == (
             422,
@@ -1516,20 +1562,53 @@ def _candidate_archive(fix_run):
     return str(_runtime(candidate.agent_version_id).source["archive_artifact_id"])
 
 
-def _refused(response):
+CANNOT_SHIP = (
+    "This version is Candidate 1 of Epoch 1, whose checks refused it, so it can't be"
+    " made the default."
+)
+REFUSALS = {
+    "must-pass": ("fix_candidate_needs_override", NEEDS_OVERRIDE),
+    "held-back": ("fix_candidate_not_shippable", CANNOT_SHIP),
+}
+
+
+@pytest.fixture(params=list(REFUSALS))
+def refused_by(request, planted):
+    """The tier that refused the planted candidate: its must-pass check alone, which the
+    Epoch ships over on a person's reason, or its held-back cases, which it never does."""
+    if request.param == "held-back":
+        verdict = _verdict(HELD)
+        verdict["tiers"] = [
+            {**tier, "status": "failed" if tier["name"] == "held-back" else "passed"}
+            for tier in verdict["tiers"]
+        ]
+        AgentFixCandidate.no_workspace_objects.filter(fix_run=planted).update(
+            verdict=verdict
+        )
+    return request.param
+
+
+def _refused(response, refused_by):
     assert response.status_code == 409, response.content
-    assert (response.json()["error"], response.json()["message"]) == (
-        "fix_candidate_needs_override",
-        NEEDS_OVERRIDE,
-    )
+    assert (response.json()["error"], response.json()["message"]) == REFUSALS[
+        refused_by
+    ]
 
 
 class TestARefusedCandidateShipsOnlyInItsEpoch:
-    """A candidate the Epoch ships only on a person's reason is made the default only by
-    the Epoch's own ship route: no move, pin or upload does it, whoever asks."""
+    """Only an Epoch's winner becomes the default outside its Epoch. A candidate only its
+    must-pass check refused ships in the Epoch, on a person's reason; any other refused
+    candidate never does. No move, pin or upload does it, whoever asks."""
+
+    def test_only_a_must_pass_refusal_is_shipped_in_its_epoch(
+        self, browser_client, planted, refused_by
+    ):
+        [read] = browser_client.get(f"{EPOCHS}/{planted.id}/").json()["candidates"]
+
+        assert read["override"]["allowed"] is (refused_by == "must-pass")
 
     @EVERY_CALLER
-    def test_moving_it_is_refused(self, request, planted, client):
+    def test_moving_it_is_refused(self, request, planted, refused_by, client):
         environment = planted.environment
         before = environment.agent_version_id
 
@@ -1539,13 +1618,13 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
             planted.candidates.get().agent_version_id,
         )
 
-        _refused(response)
+        _refused(response, refused_by)
         environment.refresh_from_db()
         assert environment.agent_version_id == before
 
     @EVERY_CALLER
     def test_uploading_its_tree_as_the_default_is_refused(
-        self, request, planted, user, workspace, storage, client
+        self, request, planted, refused_by, user, workspace, storage, client
     ):
         uploaded = _uploaded_environment(user, workspace, storage)
 
@@ -1555,10 +1634,10 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
             format="json",
         )
 
-        _refused(response)
+        _refused(response, refused_by)
 
     def test_a_copy_uploaded_to_move_later_is_refused_at_the_move(
-        self, browser_client, planted, user, workspace, storage
+        self, browser_client, planted, refused_by, user, workspace, storage
     ):
         uploaded = _uploaded_environment(user, workspace, storage)
         made = browser_client.post(
@@ -1570,7 +1649,7 @@ class TestARefusedCandidateShipsOnlyInItsEpoch:
         copy = AgentVersion._base_manager.get(id=made.json()["agent_version"]["id"])
         assert _preflight(copy).status == "passed"
 
-        _refused(_move(browser_client, uploaded, copy.id))
+        _refused(_move(browser_client, uploaded, copy.id), refused_by)
 
     @pytest.mark.parametrize("made_by", ["no-epoch", "winner"])
     def test_any_other_version_moves(self, browser_client, planted, made_by):

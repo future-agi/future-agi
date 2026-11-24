@@ -22,6 +22,7 @@ from simulate.services.agent_fix_engine import (
     refuse_unwritable,
     run_source_archive,
     store_outside_trees,
+    submitted_archive,
 )
 from simulate.services.agent_fix_runs import create_fix_run
 from simulate.services.harness_usage import require_agent_fix_usage
@@ -84,9 +85,11 @@ def submit_outside_attempt(
         # Two submissions at once take their numbers one after the other.
         HostedHarnessJob.no_workspace_objects.select_for_update().get(id=source_run.id)
         attempts = list(outside_attempts(source_run))
-        used = used_attempts(source_run).count()
+        counted = list(used_attempts(source_run))
+        used = len(counted)
         if refused := attempts_used(used):
             raise refused
+        _refuse_checked_already(counted, files)
         previous = attempts[-1] if attempts else None
         request = outside_attempt_request(
             source_run,
@@ -116,6 +119,24 @@ def submit_outside_attempt(
         files=len(files),
     )
     return fix_run
+
+
+def _refuse_checked_already(
+    counted: list[AgentFixRun], files: dict[str, bytes]
+) -> None:
+    """Refuse the tree an attempt that counted already submitted: its verdict would be
+    the same, and it would use up one of the run's attempts. A tree whose attempt failed
+    with no verdict was never checked, so it may be sent again."""
+    for attempt in counted:
+        stored = submitted_archive(attempt)
+        if stored is not None and archive_files(stored) == files:
+            number = attempt.request["outside_candidate"]["number"]
+            raise HostedHarnessError(
+                "fix_outside_tree_checked",
+                f"This exact change was already checked as attempt {number}. Change"
+                " something, then submit again.",
+                status_code=409,
+            )
 
 
 # Folders git keeps out of a diff, so a change in them would not reach the engine.
