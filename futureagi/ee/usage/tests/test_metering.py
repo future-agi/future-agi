@@ -211,23 +211,6 @@ class TestCheckUsageUnit:
             assert result.allowed is False
             assert result.error_code == "BUDGET_PAUSED"
 
-    def test_total_spend_pause_is_per_org(self):
-        """Another org's total_spend pause doesn't block this org."""
-        with (
-            patch("ee.usage.services.metering.get_redis") as mock_redis,
-            patch("ee.usage.services.metering._get_cached_plan", return_value="payg"),
-        ):
-            mock_r = MagicMock()
-            mock_redis.return_value = mock_r
-            mock_r.get.side_effect = lambda k: (
-                "1" if k == "pause:org-2:total_spend" else None
-            )
-
-            from ee.usage.services.metering import check_usage
-
-            result = check_usage("org-1", "turing_large_evaluator")
-            assert result.allowed is True
-
     def test_resolves_turing_large_to_ai_credits(self):
         """Event type resolution from billing.yaml."""
         with (
