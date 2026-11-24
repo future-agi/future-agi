@@ -3472,7 +3472,6 @@ simulate/services/agent_fix_agents.py:0: error: Item "None" of "HostedHarnessJob
 simulate/services/agent_fix_agents.py:0: error: Item "None" of "HostedHarnessJob | None" has no attribute "environment_version_id"  [union-attr]
 simulate/services/agent_fix_agents.py:0: error: Item "None" of "HostedHarnessJob | None" has no attribute "suite_version_id"  [union-attr]
 simulate/services/agent_fix_engine.py:0: error: Incompatible type for lookup 'id': (got "UUID | None", expected "UUID | str")  [misc]
-simulate/services/agent_fix_github.py:0: error: Argument 1 to "_percent" has incompatible type "Any | None"; expected "float"  [arg-type]
 simulate/services/agent_fix_github.py:0: error: Returning Any from function declared to return "str"  [no-any-return]
 simulate/services/agent_fix_github.py:0: error: Returning Any from function declared to return "str"  [no-any-return]
 simulate/services/agent_fix_github.py:0: error: Returning Any from function declared to return "str"  [no-any-return]

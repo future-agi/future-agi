@@ -73,7 +73,9 @@ def changed_files(patch: bytes) -> list[ChangedFile]:
             files[path][0] += 1
         elif in_hunk and line.startswith("-"):
             files[path][1] += 1
-    return [ChangedFile(name, *counts) for name, counts in files.items()]
+    return [
+        ChangedFile(name, added, removed) for name, (added, removed) in files.items()
+    ]
 
 
 def candidate_files(candidate: AgentFixCandidate) -> list[ChangedFile] | None:
@@ -176,9 +178,9 @@ def headline(verdict: dict, tiers: list[VerdictTier]) -> str:
 
 
 def must_pass_check(check: str) -> str:
-    """A must-pass check, sent as "scenario key: sub-goal", as its case and its check."""
-    case, _, sub_goal = str(check).partition(": ")
-    named = f"Must-pass case “{case}”"
+    """A must-pass check, sent as "scenario key: sub-goal", as its scenario and its check."""
+    scenario, _, sub_goal = str(check).partition(": ")
+    named = f"Must-pass scenario “{scenario}”"
     return f"{named}: its “{sub_goal}” check" if sub_goal else named
 
 

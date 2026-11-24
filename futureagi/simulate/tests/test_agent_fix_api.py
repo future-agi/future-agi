@@ -2340,7 +2340,7 @@ class TestUserApi:
         assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
         key, check = self.REGRESSED.split(": ")
-        assert f"- Must-pass case “{key}”: its “{check}” check" in pull["body"]
+        assert f"- Must-pass scenario “{key}”: its “{check}” check" in pull["body"]
         assert f"> {self.REASON}" in pull["body"]
         assert "Verified by" not in pull["body"]
         after = self._override(auth_client, fix_run)

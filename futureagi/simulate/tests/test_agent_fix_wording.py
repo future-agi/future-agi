@@ -142,11 +142,11 @@ class TestOneWording:
         assert f"{wording['headline']}\n\n### Verdict" in body
         assert f"| Must-pass scenarios | Passed | {wording['must_pass']} |" in body
         assert wording["caveats"] == [
-            "Must-pass case “late-booking”: its “confirms” check passed less often,"
+            "Must-pass scenario “late-booking”: its “confirms” check passed less often,"
             " within normal noise, so it was not counted.",
-            "Must-pass case “late-booking”: its “polite” check passed less often,"
+            "Must-pass scenario “late-booking”: its “polite” check passed less often,"
             " within normal noise, so it was not counted.",
-            "Must-pass case “refund”: its “asks” check passed less often, within"
+            "Must-pass scenario “refund”: its “asks” check passed less often, within"
             " normal noise, so it was not counted.",
         ]
 
