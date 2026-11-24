@@ -1501,8 +1501,9 @@ def environment_state_blocker(
     update (a rebuild, more scenarios, or a re-run of its calls) is. More scenarios run
     the environment again, so its state says so; a settled environment's leftover
     ``scenario_extend`` marker is not an update. A settled environment with no agent
-    version (made before they were kept, or its version was deleted) gets none from any
-    later step: only a new environment's creation makes one."""
+    version (made before they were kept, or its version was deleted) has none for an
+    epoch to change. More scenarios may pin one, but no later chat, edit or extend saves
+    the first environment versions drafting needs; a new environment's build makes both."""
     from simulate.services.harness_versioning import drafts
 
     built = environment.environment_version_id is not None

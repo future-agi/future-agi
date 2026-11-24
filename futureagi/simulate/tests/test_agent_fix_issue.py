@@ -623,32 +623,32 @@ class TestRunEpoch:
             job.evidence_import.cases.exclude(id=kept.id).get().id: "discarded",
         }
 
-    def test_an_environment_whose_update_failed_refuses_the_run_before_the_baseline(
+    def test_an_environment_still_building_refuses_the_run_before_the_baseline(
         self, environment, issue, user
     ):
         job, _case = _in_review(environment, issue, user)
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
-            state="failed"
+            state="running", environment_version=None
         )
 
         with pytest.raises(HostedHarnessError) as refused:
             jobs.run_issue_job(job, case_ids=_kept(job), launch=LAUNCH, user=user)
 
-        assert refused.value.code == "environment_update_failed"
+        assert refused.value.code == "environment_not_built"
         job.refresh_from_db()
         assert job.baseline_run_id is None
 
-    def test_variations_are_refused_while_the_environment_s_update_failed(
+    def test_variations_are_refused_while_the_environment_is_still_building(
         self, environment, source_run
     ):
         HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
-            state="failed"
+            state="running", environment_version=None
         )
         source_run.refresh_from_db()
 
         refused = variations_blocker(source_run)
 
-        assert refused is not None and refused.code == "environment_update_failed"
+        assert refused is not None and refused.code == "environment_not_built"
 
     # With the floor at 2 and both drafts kept, the epoch writes variations only if
     # one passes, which the baseline has not shown yet: its checks run first anyway.

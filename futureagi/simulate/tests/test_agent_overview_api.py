@@ -1522,19 +1522,20 @@ def test_the_list_reads_observe_projects_without_a_query_per_agent(
 
 @pytest.mark.django_db
 def test_the_list_says_which_environments_epoch_can_pick_without_a_query_per_row(
-    auth_client, organization, workspace, django_assert_max_num_queries
+    auth_client, organization, workspace
 ):
     agent = _agent(organization, workspace, "Epoch picks")
-    _environment(agent, 1, kind="github")
-    with CaptureQueriesContext(connection) as one_row:
-        _list(auth_client, agent)
     # Uploaded and GitHub, with no agent version yet; a hosted agent never.
-    _environment(agent, 2, kind="archive")
-    _environment(agent, 3, kind="provider")
-    _environment(agent, 4, kind="remote")
+    for minutes, kind in enumerate(("github", "archive", "provider", "remote"), 1):
+        _environment(agent, minutes, kind=kind)
 
-    with django_assert_max_num_queries(len(one_row.captured_queries)):
+    # The list reads the annotation; a read per row would call this.
+    with patch(
+        "simulate.services.agent_fix_agents.pickable_kind",
+        side_effect=AssertionError("read per row"),
+    ):
         rows = _list(auth_client, agent)
+
     assert {row["name"]: row["epoch_pickable"] for row in rows} == {
         "env-1": True,
         "env-2": True,

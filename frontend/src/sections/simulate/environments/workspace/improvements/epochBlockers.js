@@ -10,7 +10,8 @@ const openEnvironment = (envId) => ({
   href: environments.detail(envId),
 });
 
-// Only a new environment's build saves the agent versions an epoch works on.
+// A new environment's build saves the agent and environment versions an epoch
+// works on; nothing done later to one made before them does both.
 const buildEnvironment = () => ({
   label: "Build an environment",
   href: environments.root,
