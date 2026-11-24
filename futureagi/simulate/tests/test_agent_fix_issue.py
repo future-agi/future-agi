@@ -1068,12 +1068,13 @@ class TestApi:
         }
         assert response.json()["from_issue"] is True
 
+    @pytest.mark.parametrize("title", [None, ""])
     def test_an_issue_with_no_title_yet_reads_as_null(
-        self, auth_client, environment, issue, source_run
+        self, auth_client, environment, issue, source_run, title
     ):
         epoch = _fix_run(source_run)
         _job(environment, _import(environment, issue, ["t1"]), fix_run=epoch)
-        TraceErrorGroup.objects.filter(id=issue.id).update(title=None)
+        TraceErrorGroup.objects.filter(id=issue.id).update(title=title)
 
         response = auth_client.get(f"{RUNS}/{epoch.id}/")
 

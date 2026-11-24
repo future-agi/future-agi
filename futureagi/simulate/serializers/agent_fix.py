@@ -394,7 +394,8 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "job_id": job.id,
             "cluster_id": issue.cluster_id,
             "project_id": issue.project_id,
-            "title": issue.title,
+            # A blank title reads as none, as the contract allows.
+            "title": issue.title or None,
         }
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
