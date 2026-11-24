@@ -26,7 +26,8 @@ const line = { typography: "s3", color: "text.subtitle" };
 // A rate card reads from → to, the gap in points; a cost or reply-time card
 // comes already worded.
 const cardValue = (card) => {
-  if (card.id === "gap") return `${card.value} pts`;
+  // The gap's size; its note says which side did better.
+  if (card.id === "gap") return `${Math.abs(card.value)} pts`;
   if (card.from != null) return `${card.from}% → ${card.to}%`;
   return card.value;
 };

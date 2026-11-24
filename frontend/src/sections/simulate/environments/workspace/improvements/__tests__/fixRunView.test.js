@@ -306,7 +306,28 @@ describe("verdict", () => {
     expect(cards.map((c) => c.id)).toEqual(["held", "target", "gap"]);
     expect(cards[0]).toMatchObject({ from: 17, to: 83, delta: 66 });
     expect(cards[1]).toMatchObject({ from: 33, to: 100, delta: 67 });
-    expect(cards[2]).toMatchObject({ value: 17 });
+    expect(cards[2]).toMatchObject({
+      value: 17,
+      note: "target did better than held back",
+    });
+  });
+
+  it("says in words which side the overfit gap leans to, or that there is none", () => {
+    const withRates = (target, held) => {
+      const fix = structuredClone(byId("fix-ready-archive"));
+      const winner = fix.candidates.find((c) => c.outcome === "winner");
+      winner.verdict.target_pass_rate = target;
+      winner.verdict.held_back_pass_rate = held;
+      return verdictCards(fix).find((c) => c.id === "gap");
+    };
+    expect(withRates([0.3, 0.71], [0.2, 0.8])).toMatchObject({
+      value: -9,
+      note: "held back did better than target",
+    });
+    expect(withRates([0.3, 0.8], [0.2, 0.8])).toMatchObject({
+      value: 0,
+      note: "no gap between target and held back",
+    });
   });
 
   it("shows only the target card when nothing was held back", () => {

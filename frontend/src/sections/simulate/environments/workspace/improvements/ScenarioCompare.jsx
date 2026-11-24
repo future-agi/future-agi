@@ -44,7 +44,9 @@ function Calls({ title, calls, envId }) {
           >
             <Stack direction="row" alignItems="center" spacing={1}>
               <Typography sx={{ typography: "s2", flex: 1 }}>
-                {call.trialIndex ? `Trial ${call.trialIndex}` : "Call"}
+                {/* Numbered per side: each check run counts its own trials
+                    from 1, so their own index repeats across runs. */}
+                {`Trial ${i + 1}`}
               </Typography>
               <StatusBadge status={callStatus(call)} size="sm" />
               {call.checkRun && (

@@ -8,12 +8,17 @@ import { diagnosisCauses } from "./fixRunView";
 
 // What the diagnosis found, on a finished epoch: one folded line that opens to
 // every cause. The design shows it only while the epoch runs; this keeps it.
+// A failed epoch's diagnosis is from before it stopped, so it says so: beside
+// "not your agent" it must never read as the current finding.
 export default function FinishedDiagnosis({ fix }) {
   const [open, setOpen] = useState(false);
   if (!fix.diagnosis) return null;
+  const failed = fix.state === "failed";
   const causes = diagnosisCauses(fix);
   const line = { typography: "s2", color: "text.secondary" };
   if (!causes.length) {
+    // Nothing found before it failed: nothing to say.
+    if (failed) return null;
     return (
       <Typography data-testid="finished-diagnosis" sx={{ ...line, mb: 2 }}>
         The diagnosis named no single cause, so the candidates started from the
@@ -38,7 +43,7 @@ export default function FinishedDiagnosis({ fix }) {
           sx={{ color: "text.tertiary", flexShrink: 0 }}
         />
         <Typography sx={{ typography: "s2", fontWeight: 600, flexShrink: 0 }}>
-          Diagnosis
+          {failed ? "Diagnosis, before it stopped" : "Diagnosis"}
         </Typography>
         {/* The summary only while folded: open, the list says it all. */}
         {!open && (

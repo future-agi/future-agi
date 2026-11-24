@@ -38,8 +38,9 @@ const OUTCOME_COLOR = {
   fixed: "status.success.fg",
 };
 
-// The sets a scenario filters by. Must-pass has no filter: the read counts its
-// scenarios but does not list them.
+// The chips a scenario filters by: every scenario is in exactly one, so All is
+// always their sum. Must-pass has no chip: the read counts its scenarios but
+// does not list them, so the rest are Other, never must-pass by elimination.
 const SETS = [
   {
     id: "target",
@@ -51,10 +52,19 @@ const SETS = [
     label: "Held back",
     tip: "Never shown to the candidates: they check the change holds",
   },
+  {
+    id: "other",
+    label: "Other",
+    tip: "Not targets or held back: only checked for whether the change broke them",
+  },
 ];
-// A protected case is must-pass whatever else holds, so its row says so.
+const chipOf = (row) =>
+  row.set === "target" || row.set === "held" ? row.set : "other";
+// The Set column: a protected case is must-pass whatever else holds, so its
+// row says so; any other Other row says nothing.
 const SET_LABEL = {
-  ...Object.fromEntries(SETS.map((s) => [s.id, s.label])),
+  target: "Target",
+  held: "Held back",
   protected: "Must-pass",
 };
 
@@ -98,12 +108,12 @@ export default function FixScenariosTab({ fix, candidateId }) {
     );
   }
   const counts = Object.fromEntries(
-    SETS.map((s) => [s.id, rows.filter((r) => r.set === s.id).length]),
+    SETS.map((s) => [s.id, rows.filter((r) => chipOf(r) === s.id).length]),
   );
   // A set left with no scenario (another candidate reviewed) has no tab, so the
   // table falls back to All rather than read empty.
   const chosen = counts[set] ? set : "all";
-  const shown = rows.filter((r) => chosen === "all" || r.set === chosen);
+  const shown = rows.filter((r) => chosen === "all" || chipOf(r) === chosen);
   // Sorted Broke first; the other way puts it last.
   if (dir === "desc") shown.reverse();
   const name = candidate ? `Candidate ${candidate.attempt}` : "the candidate";

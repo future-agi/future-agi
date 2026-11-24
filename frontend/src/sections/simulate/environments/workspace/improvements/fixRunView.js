@@ -226,6 +226,19 @@ const rateCard = (id, label, rate, note) => ({
   note,
 });
 
+// Target minus held back, its sign said in words: the card shows the size.
+const gapCard = (value) => ({
+  id: "gap",
+  label: "Overfit gap",
+  value,
+  note:
+    value > 0
+      ? "target did better than held back"
+      : value < 0
+        ? "held back did better than target"
+        : "no gap between target and held back",
+});
+
 export function verdictCards(fix) {
   const winner = winnerOf(fix);
   if (!winner) return [];
@@ -241,12 +254,7 @@ export function verdictCards(fix) {
   return [
     rateCard("held", "Held back", held, "re-run after the pick"),
     targetCard,
-    {
-      id: "gap",
-      label: "Overfit gap",
-      value: pct(target[1]) - pct(held[1]),
-      note: "between target and held back",
-    },
+    gapCard(pct(target[1]) - pct(held[1])),
   ];
 }
 

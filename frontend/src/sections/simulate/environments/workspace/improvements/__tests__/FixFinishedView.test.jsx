@@ -810,6 +810,47 @@ describe("FixFinishedView, candidates", () => {
     expect(diagnosis.queryByText(/· 1 more/)).toBeNull();
   });
 
+  it("labels a failed epoch's diagnosis as from before it stopped, beside not your agent", () => {
+    const view = (fix) =>
+      renderUi(
+        <FixFinishedView
+          fix={fix}
+          tab="trials"
+          onTab={vi.fn()}
+          renderTab={() => null}
+        />,
+      );
+    const failed = fixOf("fix-failed", {
+      failure: { code: "fix_engine_died", message: "" },
+    });
+    const { unmount } = view(failed);
+    expect(screen.getByText(/not your agent/)).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("finished-diagnosis")).getByText(
+        "Diagnosis, before it stopped",
+      ),
+    ).toBeInTheDocument();
+    unmount();
+
+    // Nothing found before it failed: no line at all.
+    view({ ...failed, diagnosis: { causes: [] } });
+    expect(screen.queryByTestId("finished-diagnosis")).toBeNull();
+  });
+
+  it("shows the gap's size, its side in words", () => {
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.target_pass_rate = [0.3, 0.71];
+    winner.verdict.held_back_pass_rate = [0.2, 0.8];
+    renderUi(<FixVerdict fix={fix} />);
+    const gap = within(screen.getByTestId("verdict-card-gap"));
+    expect(gap.getByText("9 pts")).toBeInTheDocument();
+    expect(
+      gap.getByText("held back did better than target"),
+    ).toBeInTheDocument();
+    expect(gap.queryByText(/-9/)).toBeNull();
+  });
+
   it("says nothing about a diagnosis a finished epoch never ran", () => {
     renderUi(
       <FixFinishedView

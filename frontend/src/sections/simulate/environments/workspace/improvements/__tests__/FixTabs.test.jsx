@@ -125,12 +125,18 @@ describe("Scenarios tab", () => {
     await user.click(screen.getByRole("tab", { name: "All 5" }));
     expect(rowIds()).toHaveLength(5);
     expect(screen.getByRole("tab", { name: "Target 1" })).toBeInTheDocument();
-    // No Must-pass filter: the read does not list the must-pass scenarios.
-    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
-      "All 5",
-      "Target 1",
-      "Held back 2",
+    // No Must-pass chip: the read does not list the must-pass scenarios, so
+    // the rest are Other, and All is always the sum of the chips.
+    const chips = screen.getAllByRole("tab").map((t) => t.textContent);
+    expect(chips).toEqual(["All 5", "Target 1", "Held back 2", "Other 2"]);
+    const [all, ...sets] = chips.map((c) => Number(c.split(" ").at(-1)));
+    expect(sets.reduce((a, b) => a + b, 0)).toBe(all);
+    await user.click(screen.getByRole("tab", { name: "Other 2" }));
+    expect(rowIds().sort()).toEqual([
+      "scenario-on-time-cancel",
+      "scenario-refund-window",
     ]);
+    await user.click(screen.getByRole("tab", { name: "All 5" }));
 
     await user.click(screen.getByRole("button", { name: "Result" }));
     expect(rowIds().at(-1)).toBe("scenario-on-time-cancel");
@@ -164,7 +170,49 @@ describe("Scenarios tab", () => {
       "aria-selected",
       "true",
     );
+    // The two held-back cases are Other now; the sum still adds up.
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "All 5",
+      "Target 1",
+      "Other 4",
+    ]);
     expect(rowIds()).toHaveLength(5);
+  });
+
+  it("numbers each side's trials 1 to n, though each check run starts its own at 1", async () => {
+    const user = userEvent.setup();
+    const fix = byId("fix-ready-archive");
+    wrap(
+      <FixScenariosTab
+        fix={{
+          ...fix,
+          check_runs: [
+            ...fix.check_runs,
+            {
+              run_id: "rt-fix-ready-archive",
+              test_execution_id: "te-fix-ready-archive-baseline2",
+              label: "baseline-r2",
+              state: "completed",
+            },
+          ],
+        }}
+      />,
+    );
+    await user.click(await screen.findByTestId("scenario-on-time-cancel"));
+    const drawer = within(await screen.findByTestId("scenario-compare"));
+    expect(
+      drawer.getAllByText(/^Trial \d+$/).map((t) => t.textContent),
+    ).toEqual([
+      "Trial 1",
+      "Trial 2",
+      "Trial 3",
+      "Trial 4",
+      "Trial 5",
+      "Trial 6",
+      "Trial 1",
+      "Trial 2",
+      "Trial 3",
+    ]);
   });
 
   it("opens a scenario's calls before the change beside the candidate's", async () => {
