@@ -681,7 +681,9 @@ def environment_detail(
     caller can tell "not built yet" from "built with nothing in it".
     """
     working, from_draft = working_contract(job)
-    evidence = replace(_environment_evidence(job), contract=_secret_safe(working))
+    evidence = _environment_evidence(job)
+    if from_draft or job.environment_version_id is not None:
+        evidence = replace(evidence, contract=_secret_safe(working))
     contract = evidence.contract
     environment = evidence.environment
     scenario_docs = evidence.scenarios
@@ -762,7 +764,7 @@ def environment_detail(
         "actors_tab": _actors_tab(contract_section),
     }
     entrypoints = (contract_section or {}).get("tool_entrypoints")
-    if entrypoints:
+    if contract_section is not None and entrypoints:
         from simulate.services.harness_tool_source import with_tool_sources
 
         contract_section["tool_entrypoints"] = with_tool_sources(job, entrypoints)
@@ -793,7 +795,7 @@ def _environment_evidence(job: HostedHarnessJob) -> EnvironmentEvidence:
             job=job, kind__in=kinds, deleted=False
         ).values_list("kind", "data")
     )
-    values = {
+    values: dict[str, Any] = {
         kind: value if isinstance(value := documents.get(kind), shape) else None
         for kind, shape in kinds.items()
     }
@@ -1202,7 +1204,7 @@ def _contract_section(
     contract = evidence.contract
     if not contract:
         return None
-    section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
+    section: dict[str, Any] = {field: contract.get(field) for field in _CONTRACT_FIELDS}
     if not has_verified_system_prompt(contract):
         section["system_prompt"] = None
         section["system_prompt_origin"] = None
