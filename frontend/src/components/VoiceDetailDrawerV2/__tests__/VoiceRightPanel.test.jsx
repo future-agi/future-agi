@@ -100,6 +100,39 @@ describe("VoiceRightPanel", () => {
     expect(screen.getByText("Stop wasting my time.")).toBeInTheDocument();
   });
 
+  it("counts a scored choice eval as passed and still shows its choice", async () => {
+    renderWithQueryClient(
+      <VoiceRightPanel
+        data={{
+          id: "call-1",
+          module: "simulate",
+          status: "completed",
+          provider: "livekit",
+          transcript: [],
+          eval_metrics: {
+            "eval-1": {
+              name: "customer_agent_query_handling",
+              output: { score: 1.0, choice: "always" },
+              output_type: "choices",
+              status: "Completed",
+            },
+            "eval-2": {
+              name: "call_opening_handling",
+              output: "Failed",
+              output_type: "Pass/Fail",
+              status: "Completed",
+            },
+          },
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("tab", { name: "Evals" }));
+
+    expect(screen.getByText("always")).toBeInTheDocument();
+    expect(screen.getByText(/1\/2 passed/)).toBeInTheDocument();
+  });
+
   it("shows image-region error localization when an image eval is expanded", async () => {
     const getContext = vi
       .spyOn(HTMLCanvasElement.prototype, "getContext")

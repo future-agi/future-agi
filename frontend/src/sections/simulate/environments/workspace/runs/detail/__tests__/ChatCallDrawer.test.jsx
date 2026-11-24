@@ -122,6 +122,34 @@ describe("ChatCallDrawer tabs", () => {
   });
 });
 
+describe("ChatCallDrawer errored call", () => {
+  it("says why a call ended as an error", () => {
+    render(
+      <ChatCallDrawer
+        task={{
+          id: "call-execution-3",
+          status: "error",
+          outcomeReason: "Failed to start the provider web bridge",
+        }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Failed to start the provider web bridge",
+    );
+  });
+
+  it("shows no reason for a call that did not error", () => {
+    render(
+      <ChatCallDrawer
+        task={{ id: "call-execution-4", status: "completed" }}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
 describe("ChatCallDrawer World state", () => {
   it("shows no World state tab while actors are off", () => {
     mocks.callDetail = { actorsEnabled: false, trial_state: null };

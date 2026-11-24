@@ -279,6 +279,12 @@ const VoiceRightPanel = ({
         const result = normalizeEvalResult(rawValue, e?.type || e?.output_type);
         if (result?.kind === "choices" && Array.isArray(result.items)) {
           scoreItems = result.items;
+          if (typeof result.score === "number") {
+            score =
+              result.score <= 1
+                ? Math.round(result.score * 100)
+                : Math.round(result.score);
+          }
         } else if (
           result?.kind === "score" &&
           typeof result.score === "number"

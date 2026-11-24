@@ -339,6 +339,31 @@ export default function ChatCallDrawer({
             </Stack>
           </Box>
 
+          {task.status === "error" && task.outcomeReason && (
+            <Stack
+              role="alert"
+              direction="row"
+              spacing={1.25}
+              alignItems="flex-start"
+              sx={{
+                mx: 2,
+                mb: 1.5,
+                p: 1.5,
+                borderRadius: "8px",
+                bgcolor: "status.danger.bg",
+              }}
+            >
+              <Iconify
+                icon="solar:close-circle-bold"
+                width={15}
+                sx={{ color: "status.danger.solid", flexShrink: 0, mt: "1px" }}
+              />
+              <Typography sx={{ typography: "s2", minWidth: 0 }}>
+                {task.outcomeReason}
+              </Typography>
+            </Stack>
+          )}
+
           {failed.length > 0 && (
             <Stack
               sx={{
@@ -493,6 +518,7 @@ ChatCallDrawer.propTypes = {
     scenario: PropTypes.string,
     persona: PropTypes.string,
     status: PropTypes.string,
+    outcomeReason: PropTypes.string,
     requiredEvalsFailed: PropTypes.arrayOf(PropTypes.string),
     turns: PropTypes.number,
     tokens: PropTypes.number,
