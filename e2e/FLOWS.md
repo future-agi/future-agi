@@ -3272,7 +3272,7 @@
 
 **Goal:** A developer opening Simulate lands on Environments, old Harness, Simulator Agent, Personas and template links go somewhere sensible, Personas opens as a tab on Environments, and a new org sees only Environment in the menu and gets not found from direct Scenarios, Run Simulation and Agent Definition links
 
-**Spec:** `flows/simulate/environments-only-routing.spec.ts:33`
+**Spec:** `flows/simulate/environments-only-routing.spec.ts:32`
 
 **Tags:** —
 
