@@ -506,7 +506,9 @@ function tierLine(tier, verdict, plan, request) {
       return rateLine(
         verdict?.held_back_pass_rate,
         passed,
-        " on scenarios the epoch never saw",
+        request?.outside_candidate
+          ? " on scenarios your coding agent wasn't given"
+          : " on scenarios the epoch never saw",
       );
     case "must-pass": {
       const broke = (verdict?.must_pass_regressions || []).length;
@@ -740,11 +742,28 @@ const GROUP_HEADING = {
   static: "The change wasn't valid",
 };
 
+// The same groups for an attempt from a person's own coding agent: its one candidate
+// is that agent's change, and the held-back cases are the ones it wasn't given.
+const ATTEMPT_GROUP_HEADING = {
+  "must-pass": "Your coding agent's change broke a must-pass scenario",
+  "held-back":
+    "Your coding agent's change didn't hold on scenarios it wasn't given",
+  repeats: "Your coding agent's change didn't hold over repeat runs",
+  target: "Your coding agent's change didn't improve the target scenarios",
+  ceilings: "Your coding agent's change went over the reply-time or cost limit",
+  "model-lock":
+    "Your coding agent's change called a model outside the approved list",
+  static: "Your coding agent's change wasn't valid",
+};
+
 function groupLabel(id, fix, live) {
   if (["winner", "finalist", "pending"].includes(id))
     return outcomeLabel(id, live);
   if (id === "rejected") return "Rejected";
-  return GROUP_HEADING[id] || `Stopped at “${checkLabel(id, fix.request)}”`;
+  const headings = isOutsideAttempt(fix)
+    ? ATTEMPT_GROUP_HEADING
+    : GROUP_HEADING;
+  return headings[id] || `Stopped at “${checkLabel(id, fix.request)}”`;
 }
 
 // What stopped a candidate, in the words its verdict's own numbers give.

@@ -76,7 +76,9 @@ const { default: CopyForCodingAgentButton } = await import(
   "../CopyForCodingAgentButton"
 );
 const { default: FixFinishedView } = await import("../FixFinishedView");
-const { headline, stageLabel, stepRows } = await import("../fixRunView");
+const { candidateGroups, headline, stageLabel, stepRows } = await import(
+  "../fixRunView"
+);
 const { default: OutsideAttemptVerdict } = await import(
   "../OutsideAttemptVerdict"
 );
@@ -358,6 +360,51 @@ describe("Copy for coding agent reads the brief fresh", () => {
     ).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent("Not found");
     expect(clipboard.copy).not.toHaveBeenCalled();
+  });
+});
+
+describe("The candidates table of an attempt", () => {
+  // One candidate the held-back check stopped, as the engine records it.
+  const heldBackRejected = (fix) => ({
+    ...fix,
+    state: "no_improvement",
+    candidates: [
+      {
+        ...fix.candidates[0],
+        outcome: "rejected",
+        verdict: {
+          ...fix.candidates[0].verdict,
+          accepted: false,
+          target_pass_rate: [0.25, 0.92],
+          held_back_pass_rate: [0.25, 0.25],
+          tiers: [
+            { name: "static", status: "passed", detail: "" },
+            { name: "target", status: "passed", detail: "" },
+            { name: "held-back", status: "failed", detail: "" },
+          ],
+        },
+      },
+    ],
+  });
+
+  it("names the coding agent's change and the scenarios it wasn't given", () => {
+    const [group] = candidateGroups(heldBackRejected(attemptFix()));
+    expect(group.label).toBe(
+      "Your coding agent's change didn't hold on scenarios it wasn't given",
+    );
+    expect(group.rows[0].result).toBe(
+      "25% → 25% on scenarios your coding agent wasn't given, not a clear gain.",
+    );
+    expect(JSON.stringify(group)).not.toMatch(/never saw/);
+  });
+
+  it("keeps the engine's words for an Epoch the engine made", () => {
+    const engineFix = structuredClone(fixtureFixRun("fix-ready-archive"));
+    const [group] = candidateGroups(heldBackRejected(engineFix));
+    expect(group.label).toBe("Didn't hold on the held-back scenarios");
+    expect(group.rows[0].result).toBe(
+      "25% → 25% on scenarios the epoch never saw, not a clear gain.",
+    );
   });
 });
 
