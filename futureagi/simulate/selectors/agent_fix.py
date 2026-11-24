@@ -95,7 +95,11 @@ from simulate.services.hosted_harness import (
     HostedHarnessError,
     run_max_duration_seconds,
 )
-from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
+from simulate.services.hosted_harness_ingestion import (
+    SUB_GOAL_PASSED,
+    graded_call_receipt,
+    sub_goal_result,
+)
 from simulate.services.run_compare import REGRESSED, verdict
 from simulate.services.run_results_v3_scoring import (
     LiveEvals,
@@ -320,9 +324,7 @@ def source_failures(
         .order_by("trial_index", "execution_key")
     ):
         key = execution.source_scenario.scenario_key
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if key in found or not isinstance(receipt, Mapping):
             continue
         record = _record(key, execution.trial_index, receipt, "")
@@ -372,9 +374,7 @@ def check_run_status(
     latencies = _reply_latencies(calls) if finished else {}
     records = []
     for execution in executions:
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         records.append(
@@ -750,9 +750,7 @@ def scenario_results(source_run: HostedHarnessJob) -> list[LaunchScenario]:
                 failing_sub_goals=[],
             ),
         )
-        receipt = (execution.call_execution.call_metadata or {}).get(
-            "hosted_harness_receipt"
-        )
+        receipt = graded_call_receipt(execution.call_execution.call_metadata)
         if not isinstance(receipt, Mapping):
             continue
         for name, held in judged_sub_goals(receipt).items():

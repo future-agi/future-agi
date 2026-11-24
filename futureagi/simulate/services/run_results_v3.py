@@ -41,6 +41,7 @@ from simulate.services.hosted_harness_ingestion import (
     STARTED_BY_TASK,
     SUB_GOAL_PASSED,
     WORLD_ACTIONS_KEY,
+    graded_call_receipt,
     sub_goal_result,
 )
 from simulate.services.run_results_v3_expressions import NUMERIC_JSON_PATTERN
@@ -528,7 +529,7 @@ def sub_goal_entries(
 
 def receipt_sub_goals(metadata: Mapping[str, object] | None) -> list[SubGoalEntry]:
     """The judged sub-goals a call's metadata holds, its receipt's first."""
-    receipt = (metadata or {}).get("hosted_harness_receipt")
+    receipt = graded_call_receipt(metadata)
     raw = (receipt.get("sub_goals") if isinstance(receipt, dict) else None) or (
         metadata or {}
     ).get("sub_goals")
