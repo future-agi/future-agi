@@ -1046,7 +1046,8 @@ class ProducerIdentityTest(unittest.TestCase):
                     "id": 1,
                     "digest": "sha256:" + hashlib.sha256(raw).hexdigest(),
                 }
-                with patch.object(checker.subprocess, "check_output", return_value=raw):
+                done = subprocess.CompletedProcess([], 0, stdout=raw, stderr=b"")
+                with patch.object(checker.subprocess, "run", return_value=done):
                     if status == b"0\n":
                         self.assertEqual(
                             checker.verify_artifact(artifact, "repo")[3], []
@@ -1056,13 +1057,103 @@ class ProducerIdentityTest(unittest.TestCase):
                             checker.verify_artifact(artifact, "repo")
 
     def test_raw_archive_digest_is_mandatory(self):
+        wrong = subprocess.CompletedProcess([], 0, stdout=b"wrong bytes", stderr=b"")
         with (
-            patch.object(
-                checker.subprocess, "check_output", return_value=b"wrong bytes"
-            ),
-            self.assertRaisesRegex(ValueError, "digest"),
+            patch.object(checker.subprocess, "run", return_value=wrong),
+            patch.object(checker.time, "sleep") as slept,
+            self.assertRaisesRegex(ValueError, "digest mismatch .* after 4 downloads"),
         ):
             checker.verify_artifact({"id": 1, "digest": "sha256:other"}, "fixture/repo")
+        # A wrong digest is fetched again from scratch before failing closed.
+        self.assertEqual([c.args[0] for c in slept.call_args_list], [2, 4, 8])
+
+
+class GhApiRetryTest(unittest.TestCase):
+    """Transient GitHub API failures, as in run 45334240608, are read again."""
+
+    CUT = b"unexpected end of JSON input"
+
+    def runner(self, *results):
+        calls = []
+        queue = list(results)
+
+        def run(cmd, capture_output):
+            calls.append(cmd)
+            code, out, err = queue.pop(0)
+            return subprocess.CompletedProcess(cmd, code, stdout=out, stderr=err)
+
+        return run, calls
+
+    def test_a_transient_failure_is_read_again_from_scratch(self):
+        run, calls = self.runner((1, b"", self.CUT), (0, b'[{"jobs": [1, 2]}]', b""))
+        pauses = []
+        self.assertEqual(
+            checker.gh_api(
+                ["--paginate", "--slurp", "x"], run=run, pause=pauses.append
+            ),
+            [{"jobs": [1, 2]}],
+        )
+        self.assertEqual(calls, [["gh", "api", "--paginate", "--slurp", "x"]] * 2)
+        self.assertEqual(pauses, [2])
+
+    def test_a_cut_short_body_is_never_used(self):
+        run, _ = self.runner((0, b'[{"jobs": [1,', b""), (0, b'[{"jobs": [1]}]', b""))
+        self.assertEqual(
+            checker.gh_api(["x"], run=run, pause=lambda s: None), [{"jobs": [1]}]
+        )
+
+    def test_other_failures_fail_at_once_with_gh_s_error(self):
+        run, calls = self.runner((1, b"", b"gh: Not Found (HTTP 404)"))
+        with self.assertRaisesRegex(
+            subprocess.CalledProcessError, r"after 1 tries: gh: Not Found"
+        ):
+            checker.gh_api(["x"], run=run, pause=lambda s: None)
+        self.assertEqual(len(calls), 1)
+
+    def test_retries_are_bounded_and_fail_closed(self):
+        for bad in (
+            (1, b"", self.CUT),
+            (1, b"", b"HTTP 502: Bad Gateway"),
+            (0, b"[{", b""),
+        ):
+            with self.subTest(bad=bad):
+                run, calls = self.runner(*[bad] * checker.API_TRIES)
+                pauses = []
+                with self.assertRaisesRegex(
+                    (subprocess.CalledProcessError, ValueError),
+                    f"after {checker.API_TRIES} tries",
+                ):
+                    checker.gh_api(["x"], run=run, pause=pauses.append)
+                self.assertEqual(len(calls), checker.API_TRIES)
+                self.assertEqual(pauses, [2, 4, 8])
+
+    def test_the_verdict_s_reads_go_through_the_retry(self):
+        run, calls = self.runner(
+            (1, b"", self.CUT),
+            (0, b'[{"jobs": [{"name": "a"}]}, {"jobs": [{"name": "b"}]}]', b""),
+            (0, b'{"created_at": "2026-11-24T05:00:00Z"}', b""),
+        )
+        with (
+            patch.object(checker.subprocess, "run", run),
+            patch.object(checker.time, "sleep"),
+        ):
+            self.assertEqual(
+                [job["name"] for job in checker.pages("runs/1/jobs", "jobs")],
+                ["a", "b"],
+            )
+            self.assertEqual(checker.run_date("runs/1"), datetime.date(2026, 11, 24))
+        self.assertEqual(len(calls), 3)
+
+    def test_a_download_cut_short_is_fetched_again(self):
+        good = b"whole archive"
+        artifact = {"id": 7, "digest": "sha256:" + hashlib.sha256(good).hexdigest()}
+        fetched = iter([b"whole arch", good])
+        self.assertEqual(
+            checker.download_artifact(
+                artifact, "repo", fetch=lambda: next(fetched), pause=lambda s: None
+            ),
+            good,
+        )
 
 
 @unittest.skipUnless(plugin, "run with the shard pytest installation")
