@@ -2,7 +2,7 @@ import copy
 import uuid
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
@@ -25,12 +25,16 @@ from simulate.services.harness_design_review import (
     open_review_after_reading,
     stored_review,
 )
-from simulate.services.hosted_harness import HostedHarnessError
-from simulate.services.hosted_harness_gateway import _seed_contract_for
+from simulate.services.hosted_harness import HostedHarnessError, create_hosted_job
+from simulate.services.hosted_harness_gateway import (
+    HostedHarnessGateway,
+    _seed_contract_for,
+)
 from simulate.tasks.harness_agent_versions import (
     DESIGN_READING_DEADLINE_SECONDS,
     read_agent_for_design_review,
 )
+from simulate.tests.hosted_job_payloads import hosted_job_payload
 from simulate.tests.test_harness_design_review import (  # noqa: F401
     APPROVED_KEY,
     CONTRACT,
@@ -47,7 +51,9 @@ from simulate.tests.test_harness_design_review_reading import (  # noqa: F401
     client,
     review_on,
 )
+from simulate.tests.test_hosted_harness_gateway import _Daytona, _Stopped
 
+GATEWAY = "simulate.services.hosted_harness_gateway"
 START = "simulate.temporal.client.start_hosted_harness_gateway_workflow"
 AUTHORING = "simulate.services.harness_usage.require_harness_authoring"
 READ = "simulate.services.agent_reading_sandbox.read_version_contract"
@@ -423,3 +429,64 @@ class TestReadingThatDies:
             ),
         ):
             assert open_review_after_reading(str(job.id)) == "closed"
+
+
+def _launch_until_capacity(organization, monkeypatch, key, *, seed_profile):
+    payload = hosted_job_payload()
+    payload["source"] = {
+        "kind": "remote",
+        "endpoint": "https://agent.example.com",
+        "visibility": "public",
+    }
+    job, _ = create_hosted_job(organization, payload, idempotency_key=key)
+    material = MagicMock(return_value=({"VAPI_API_KEY": "vapi-key"}, "vapi"))
+
+    def stop(*_args, **_kwargs):
+        raise _Stopped
+
+    monkeypatch.setattr(f"{GATEWAY}._seed_contract_for", lambda _job: b"{}")
+    monkeypatch.setattr(f"{GATEWAY}._seed_profile_for", lambda _job: seed_profile)
+    monkeypatch.setattr(f"{GATEWAY}._provider_import_authoring_material", material)
+    monkeypatch.setattr(
+        f"{GATEWAY}.PlatformSecretResolver.resolve", lambda _self, _job: {}
+    )
+    monkeypatch.setattr(
+        "simulate.services.harness_agent_versions.stamp_built_commit",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr("simulate.services.harness_capacity.configured_capacity", stop)
+    gateway = object.__new__(HostedHarnessGateway)
+    gateway.client = _Daytona()
+    gateway.snapshot = "alk-hosted-v1"
+    gateway.snapshot_digest = ""
+    with (
+        patch(f"{GATEWAY}.HostedSourceAcquirer.acquire", return_value=(b"archive", "")),
+        pytest.raises(_Stopped),
+    ):
+        gateway.launch(job, endpoint_base_url=BASE_URL)
+    return material
+
+
+@pytest.mark.django_db
+class TestSeededProviderKey:
+    @pytest.fixture(autouse=True)
+    def builder_session(self, settings):
+        settings.ALK_HOSTED_BUILDER_SESSION = True
+
+    def test_a_build_handed_the_providers_profile_gets_no_provider_key(
+        self, organization, monkeypatch
+    ):
+        material = _launch_until_capacity(
+            organization, monkeypatch, "seeded-profile", seed_profile=b"{}\n"
+        )
+
+        material.assert_not_called()
+
+    def test_a_build_without_a_stored_profile_still_gets_the_key_to_fetch_one(
+        self, organization, monkeypatch
+    ):
+        material = _launch_until_capacity(
+            organization, monkeypatch, "unseeded-profile", seed_profile=None
+        )
+
+        material.assert_called_once()

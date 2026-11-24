@@ -2559,8 +2559,7 @@ class HostedHarnessGateway:
         # An imported provider target is part of the agent source of truth. Give the isolated
         # authoring control process only the one provider credential it needs to fetch a
         # read-only, sanitized behavioral profile. It is uploaded as a one-shot file rather than
-        # put in the model environment, and the guest deletes it before any model/source process
-        # starts.
+        # put in the model environment.
         authoring_target_secrets, connector = _provider_import_authoring_material(
             job, payload
         )
@@ -2840,7 +2839,7 @@ class HostedHarnessGateway:
         secrets_map = PlatformSecretResolver().resolve(job)
         authoring_target_secrets, _authoring_connector = (
             _provider_import_authoring_material(job, payload)
-            if authoring_archive is None
+            if authoring_archive is None and seed_profile is None
             else ({}, "")
         )
         from simulate.services.harness_capacity import configured_capacity
@@ -3024,9 +3023,9 @@ class HostedHarnessGateway:
             authoring_secrets_path = "/run/futureagi/authoring-target-secrets.json"
             if authoring_target_secrets:
                 # Imported provider configuration is source material for authoring. Give the
-                # control process only the matching provider key in a one-shot file; ALK removes
-                # it before any model or source process starts. The normal target secret remains
-                # separately available to the eventual provider lifecycle process.
+                # control process only the matching provider key in a one-shot file, and only
+                # when no stored profile is handed over in its place. The normal target secret
+                # remains separately available to the eventual provider lifecycle process.
                 sandbox.fs.upload_file(
                     json.dumps(
                         authoring_target_secrets,
