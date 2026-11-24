@@ -20,7 +20,11 @@ from simulate.models import (
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
 from simulate.services.run_reliability_v3 import wilson
-from simulate.services.run_results_v3_scoring import HARNESS_FAILED, HARNESS_PASSED
+from simulate.services.run_results_v3_scoring import (
+    HARNESS_ERROR,
+    HARNESS_FAILED,
+    HARNESS_PASSED,
+)
 
 # Two-sided 95%.
 Z = 1.959963984540054
@@ -82,13 +86,22 @@ def verdict(
     return INCONCLUSIVE, (low, high)
 
 
-def trial_passed(sub_goals: Any, harness_status: Any) -> bool | None:
+def trial_passed(
+    sub_goals: Any, harness_status: Any, failure: Any = None
+) -> bool | None:
     """Whether a trial passed: every sub-goal held. A failed check, or a trial graded failed with none (the world
     committed a write twice), fails it; else a check undecided or never verified leaves it undecided. Not applicable
     and inconclusive sub-goals are left out; no sub-goals reads the status."""
     checks = [one for one in sub_goals or [] if isinstance(one, Mapping)]
     results = [sub_goal_result(dict(one)) for one in checks]
     status = str(harness_status or "").lower()
+    if status in HARNESS_ERROR:
+        # Ended on a failure: the agent's fails it, ours (or one not known) decides nothing about the agent.
+        return (
+            False
+            if isinstance(failure, Mapping) and failure.get("domain") == "agent"
+            else None
+        )
     if "fail" in results or status in HARNESS_FAILED:
         return False
     if checks:

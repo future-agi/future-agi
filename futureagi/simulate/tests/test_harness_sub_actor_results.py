@@ -510,3 +510,28 @@ def test_a_passed_receipt_with_no_score_is_never_counted_passed_in_a_run_s_total
         fields["outcome_failed"],
         fields["outcome_no_score"],
     ) == (1, 1, 2)
+
+
+def test_a_trial_that_ended_on_our_side_never_blames_the_agent_in_verify_or_fix_my_agent():
+    from simulate.selectors.agent_fix import _record, judged_sub_goals
+    from simulate.services.run_compare import trial_passed
+
+    # Our simulated caller went off script; the checks ran on a conversation that was never the scenario's.
+    off_script = {
+        "status": "errored",
+        "failure": {"domain": "simulator", "code": "caller_off_script"},
+        "sub_goals": [
+            {"name": "looked_up", "held": False, "verdict": "fail"},
+            {"name": "applied", "held": False, "verdict": "fail"},
+        ],
+    }
+
+    assert (
+        trial_passed(off_script["sub_goals"], "errored", off_script["failure"]) is None
+    )
+    assert judged_sub_goals(off_script) == {}
+    record = _record("case", 1, off_script, "")
+    assert (record.status, record.sub_goals) == ("error", {})
+    # The agent broke the conversation itself: that is its failure.
+    agent = {**off_script, "failure": {"domain": "agent", "code": "agent_hung_up"}}
+    assert trial_passed(agent["sub_goals"], "errored", agent["failure"]) is False

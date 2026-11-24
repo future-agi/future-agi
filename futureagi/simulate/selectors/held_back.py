@@ -314,7 +314,9 @@ def verify_result(run: HostedHarnessJob) -> dict[str, Any]:
         receipt = graded_call_receipt(call_metadata)
         if not isinstance(receipt, Mapping):
             continue
-        verdict = trial_passed(receipt.get("sub_goals"), receipt.get("status"))
+        verdict = trial_passed(
+            receipt.get("sub_goals"), receipt.get("status"), receipt.get("failure")
+        )
         passed += verdict is True
         failed += verdict is False
     rate = None

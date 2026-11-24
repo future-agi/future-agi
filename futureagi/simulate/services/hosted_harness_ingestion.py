@@ -1338,7 +1338,7 @@ def unverified_checks(job: HostedHarnessJob, scenario_key: str) -> list[str]:
     """The checks the case's proof on the run's suite and environment versions could not verify (its `excused`, which a
     step it could only assume would have decided): the run's agent version's own entry when it has one, else the
     case's entry; none without a proof. A proof plays the reference, not the agent, so another version's still says
-    which checks it could verify (a tool that version lacks is held back before any run)."""
+    which checks it could verify."""
     from simulate.services.harness_starting_records import scenario_token
     from simulate.services.harness_versioning.versions import OTHER_AGENTS
 

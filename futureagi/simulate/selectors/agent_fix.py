@@ -458,7 +458,16 @@ FAILED_BEYOND_CHECKS = "failed_beyond_its_checks"
 
 def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     """Each sub-goal and whether it held (None: undecided); a conversation the agent broke fails every undecided goal.
-    Not applicable and inconclusive sub-goals are left out."""
+    Not applicable and inconclusive sub-goals are left out, and a trial that ended on a failure of ours judges none."""
+    failure = (
+        receipt.get("failure") if isinstance(receipt.get("failure"), Mapping) else None
+    )
+    if (
+        receipt.get("status") == "errored"
+        and failure is not None
+        and failure.get("domain") != "agent"
+    ):
+        return {}
     # A worker's own check is reported beside the task's verdict, never folded into it: it does not fail the scenario.
     checks = [
         one
