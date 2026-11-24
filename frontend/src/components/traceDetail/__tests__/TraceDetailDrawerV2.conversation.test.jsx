@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => ({
   toolbarProps: vi.fn(),
   spanPaneProps: vi.fn(),
   callPanelProps: vi.fn(),
+  headerProps: vi.fn(),
   createView: vi.fn(),
   updateView: vi.fn(),
 }));
@@ -79,7 +80,12 @@ vi.mock("../DrawerToolbar", () => ({
     return null;
   },
 }));
-vi.mock("../DrawerHeader", () => ({ default: () => null }));
+vi.mock("../DrawerHeader", () => ({
+  default: (props) => {
+    mocks.headerProps(props);
+    return null;
+  },
+}));
 vi.mock("../SpanDetailPane", () => ({
   default: (props) => {
     mocks.spanPaneProps(props);
@@ -145,6 +151,8 @@ describe("TraceDetailDrawerV2 Conversation view", () => {
     expect(mocks.callPanelProps.mock.lastCall[0]).toEqual({
       traceId: "trace-1",
       projectId,
+      spans: mocks.spans,
+      onSelectSpan: expect.any(Function),
     });
     expect(screen.queryByTestId("trace-tree")).toBeNull();
     expect(screen.getByTestId("span-detail")).toBeInTheDocument();
@@ -157,6 +165,54 @@ describe("TraceDetailDrawerV2 Conversation view", () => {
     // The Conversation view is not a saved view and writes none.
     expect(mocks.createView).not.toHaveBeenCalled();
     expect(mocks.updateView).not.toHaveBeenCalled();
+  });
+
+  it("hands the Conversation panel the whole tree and opens a selected span on the right", () => {
+    renderDrawer();
+    expect(mocks.headerProps.mock.lastCall[0].navigationShortcuts).toBe(true);
+
+    act(() => toolbar().onTabChange("conversation"));
+
+    const panel = mocks.callPanelProps.mock.lastCall[0];
+    expect(panel.spans).toBe(mocks.spans);
+    // J/K belong to the transcript while it is shown; Esc still closes.
+    expect(mocks.headerProps.mock.lastCall[0].navigationShortcuts).toBe(false);
+
+    act(() => panel.onSelectSpan("session-1"));
+    expect(mocks.spanPaneProps.mock.lastCall[0].entry.observation_span.id).toBe(
+      "session-1",
+    );
+    // Selecting the same span again keeps its detail open (no toggle).
+    act(() => mocks.callPanelProps.mock.lastCall[0].onSelectSpan("session-1"));
+    expect(screen.getByTestId("span-detail")).toBeInTheDocument();
+    expect(mocks.spanPaneProps.mock.lastCall[0].entry.observation_span.id).toBe(
+      "session-1",
+    );
+
+    act(() => toolbar().onTabChange("trace"));
+    expect(mocks.headerProps.mock.lastCall[0].navigationShortcuts).toBe(true);
+  });
+
+  it("opens a span the saved type filter hides and times it from the whole call", () => {
+    // A saved default that matches no span of this call.
+    const key = `trace-view-default-${projectId}`;
+    localStorage.setItem(key, JSON.stringify({ spanTypeFilter: ["llm"] }));
+    try {
+      renderDrawer();
+      act(() => toolbar().onTabChange("conversation"));
+
+      const panel = mocks.callPanelProps.mock.lastCall[0];
+      expect(panel.spans).toBe(mocks.spans);
+      act(() => panel.onSelectSpan("session-1"));
+
+      expect(screen.getByTestId("span-detail")).toBeInTheDocument();
+      const pane = mocks.spanPaneProps.mock.lastCall[0];
+      expect(pane.entry.observation_span.id).toBe("session-1");
+      expect(pane.allSpans).toBe(mocks.spans);
+      expect(pane.traceStartTime).toBe("2026-11-22T10:00:00Z");
+    } finally {
+      localStorage.removeItem(key);
+    }
   });
 
   it("adds nothing for a call without an attached recording (Vapi, Retell)", () => {

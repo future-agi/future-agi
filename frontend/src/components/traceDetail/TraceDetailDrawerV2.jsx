@@ -720,9 +720,12 @@ const TraceDetailDrawerV2 = ({
     setSelectedSpanId(initialSpanId || rootSpanId || null);
   }, [traceId, rootSpanId, initialSpanId]);
 
-  // Find selected span in tree
+  // Find selected span in tree. The Conversation view hides the trace
+  // filters, so it selects from the whole tree: a saved type filter must not
+  // hide the span a conversation row opens.
+  const detailSpans = inCall ? rawSpans : spans;
   const selectedSpanData = useMemo(() => {
-    if (!selectedSpanId || !spans) return null;
+    if (!selectedSpanId || !detailSpans) return null;
     function find(entries) {
       for (const entry of entries) {
         const span = getSpan(entry);
@@ -734,8 +737,8 @@ const TraceDetailDrawerV2 = ({
       }
       return null;
     }
-    return find(spans);
-  }, [selectedSpanId, spans]);
+    return find(detailSpans);
+  }, [selectedSpanId, detailSpans]);
 
   const handleSelectSpan = useCallback((spanId) => {
     setSelectedSpanId((prev) => (prev === spanId ? null : spanId));
@@ -1005,6 +1008,8 @@ const TraceDetailDrawerV2 = ({
           onNext={onNext}
           hasPrev={hasPrev}
           hasNext={hasNext}
+          // J/K belong to the transcript while the Conversation view shows it.
+          navigationShortcuts={!inCall}
           onFullscreen={
             initialFullscreen
               ? undefined
@@ -1405,7 +1410,12 @@ const TraceDetailDrawerV2 = ({
                     flexShrink: 0,
                   }}
                 >
-                  <TraceCallPanel traceId={traceId} projectId={projectId} />
+                  <TraceCallPanel
+                    traceId={traceId}
+                    projectId={projectId}
+                    spans={rawSpans}
+                    onSelectSpan={handleViewSpan}
+                  />
                 </Box>
               ) : (
                 <LeftPanelSplit
@@ -1475,9 +1485,11 @@ const TraceDetailDrawerV2 = ({
                     conversationTree={data?.observation_spans}
                     callRecording={hasCall}
                     entry={selectedSpanData}
-                    allSpans={spans}
+                    allSpans={detailSpans}
                     traceStartTime={
-                      spans?.length ? getSpan(spans[0])?.start_time : null
+                      detailSpans?.length
+                        ? getSpan(detailSpans[0])?.start_time
+                        : null
                     }
                     isRootSpan={selectedSpanId === rootSpanId}
                     traceTags={data?.trace?.tags || []}

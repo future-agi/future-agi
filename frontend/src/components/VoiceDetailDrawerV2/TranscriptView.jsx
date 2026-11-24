@@ -35,6 +35,7 @@ import {
   WORLD_ACTOR_SERIES,
 } from "./constants";
 import FunctionCallContent from "./FunctionCallContent";
+import { ACTIVITY_SHAPE, ActivityGroup, ActivityRow } from "./ActivityRow";
 import OtherPartyName from "./OtherPartyName";
 import CallParticipants from "./CallParticipants";
 import WorldActorAction from "./WorldActorAction";
@@ -608,6 +609,11 @@ const TranscriptView = ({
   // intervals. Disabling temporal features prevents those weights from being
   // rendered as seconds or interpreted as voice interruptions.
   enableTemporalFeatures = true,
+  // Optional background activity (tool calls) of a traced call. Shown only
+  // with the All filter and no search, as rows beside the speech; it never
+  // enters turns, metrics, filters, focus or playback. Absent: unchanged.
+  activity,
+  onSelectActivity,
 }) => {
   const colors = useSpeakerColors();
 
@@ -647,6 +653,29 @@ const TranscriptView = ({
       return true;
     });
   }, [turns, query, activeFilter]);
+
+  const showActivity =
+    !!activity?.length && activeFilter === "all" && !query.trim();
+  const { beforeTurn, afterTurns, ungrouped } = useMemo(() => {
+    // Rows go before the first shown turn with their anchor id. An anchor
+    // the list does not show cannot be placed, so that row joins the
+    // separate group instead of disappearing.
+    const firstIndex = new Map();
+    filteredTurns.forEach((turn, i) => {
+      if (!firstIndex.has(String(turn.id))) firstIndex.set(String(turn.id), i);
+    });
+    const before = new Map();
+    const after = [];
+    const separate = [];
+    for (const item of activity || []) {
+      const at = firstIndex.get(String(item.anchorTurnId));
+      if (!item.interleaved) separate.push(item);
+      else if (item.anchorTurnId == null) after.push(item);
+      else if (at === undefined) separate.push(item);
+      else before.set(at, [...(before.get(at) || []), item]);
+    }
+    return { beforeTurn: before, afterTurns: after, ungrouped: separate };
+  }, [activity, filteredTurns]);
 
   // Which turn is currently playing based on currentTime?
   //
@@ -1007,6 +1036,16 @@ const TranscriptView = ({
         ) : (
           filteredTurns.map((turn, i) => (
             <React.Fragment key={turn.id}>
+              {showActivity &&
+                beforeTurn
+                  .get(i)
+                  ?.map((item) => (
+                    <ActivityRow
+                      key={item.key}
+                      item={item}
+                      onSelect={onSelectActivity}
+                    />
+                  ))}
               {!hideSilenceMarkers &&
                 turn.silenceBefore != null &&
                 turn.silenceBefore > 0.3 && (
@@ -1026,6 +1065,17 @@ const TranscriptView = ({
               />
             </React.Fragment>
           ))
+        )}
+        {showActivity &&
+          afterTurns.map((item) => (
+            <ActivityRow
+              key={item.key}
+              item={item}
+              onSelect={onSelectActivity}
+            />
+          ))}
+        {showActivity && (
+          <ActivityGroup items={ungrouped} onSelect={onSelectActivity} />
         )}
 
         {/* Follow playback pill — floats over the list when auto-scroll is
@@ -1087,6 +1137,8 @@ TranscriptView.propTypes = {
   hideSilenceMarkers: PropTypes.bool,
   enableTemporalFeatures: PropTypes.bool,
   embedded: PropTypes.bool,
+  activity: PropTypes.arrayOf(ACTIVITY_SHAPE),
+  onSelectActivity: PropTypes.func,
 };
 
 export default TranscriptView;

@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import PropTypes from "prop-types";
 import { useState } from "react";
-import RecordingSeekBar from "../RecordingSeekBar";
+import RecordingSeekBar, { waveformBars } from "../RecordingSeekBar";
 import useRecordingPeaks from "../useRecordingPeaks";
 import {
   projectId,
@@ -129,4 +129,72 @@ it("does not request an oversized plan and discards aborted replies", async () =
   expect(signal.aborted).toBe(true);
   await act(async () => finish([readyGrant(occurrenceId)]));
   expect(fetch).not.toHaveBeenCalled();
+});
+
+// 512 overview columns: three loud bursts, a quiet stretch, silence and a gap.
+const overview = () => {
+  const columns = Array(512).fill([0, 0]);
+  for (const [from, to] of [
+    [40, 100],
+    [180, 290],
+    [330, 440],
+  ])
+    for (let x = from; x < to; x++) columns[x] = [-20000, 21000];
+  for (let x = 120; x < 160; x++) columns[x] = [-300, 300];
+  for (let x = 470; x < 500; x++) columns[x] = null;
+  return columns;
+};
+
+it("draws bursts as tall bars and leaves silence and gaps empty", () => {
+  const bars = waveformBars(overview(), 64);
+  expect(bars).toHaveLength(64);
+  expect(Math.max(...bars)).toBeCloseTo(1, 6);
+  const burst = bars[30];
+  const quiet = bars[17];
+  expect(burst).toBeCloseTo(1, 6);
+  expect(quiet).toBeGreaterThan(0);
+  expect(quiet).toBeLessThan(0.2);
+  expect(bars[2]).toBe(0);
+  expect(bars[60]).toBe(0);
+});
+
+it("lifts quiet audio at most eightfold and draws nothing for pure silence", () => {
+  expect(
+    waveformBars(
+      [
+        [-1000, 1000],
+        [0, 0],
+      ],
+      2,
+    ),
+  ).toEqual([8000 / 32767, 0]);
+  expect(waveformBars(Array(8).fill([0, 0]), 4)).toEqual([0, 0, 0, 0]);
+  expect(waveformBars(Array(8).fill(null), 4)).toEqual([0, 0, 0, 0]);
+  expect(waveformBars([], 4)).toEqual([]);
+});
+
+it("renders the bars behind the operable slider and fills what has played", () => {
+  const onSeek = vi.fn();
+  render(
+    <RecordingSeekBar
+      seconds={3.5}
+      duration={7}
+      onSeek={onSeek}
+      peaks={overview()}
+    />,
+  );
+  const svg = screen.getByTestId("recording-waveform");
+  const rects = [...svg.querySelectorAll("rect")];
+  const heights = rects.map((r) => Number(r.getAttribute("height")));
+  expect(Math.max(...heights)).toBeGreaterThan(5 * Math.min(...heights));
+  const played = rects.filter((r) => r.getAttribute("fill-opacity") === "1");
+  expect(played.length).toBeGreaterThan(0);
+  expect(played.length).toBeLessThan(rects.length);
+  for (const r of played)
+    expect(Number(r.getAttribute("x"))).toBeLessThan(
+      Number(svg.getAttribute("viewBox").split(" ")[2]) / 2,
+    );
+  const slider = screen.getByRole("slider", { name: "Recording position" });
+  fireEvent.change(slider, { target: { value: 5 } });
+  expect(onSeek).toHaveBeenCalledWith(5);
 });

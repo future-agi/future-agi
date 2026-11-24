@@ -8,6 +8,7 @@ import { getLoadingStateWithRespectiveStatus } from "src/sections/test-detail/co
 import PathAnalysisView from "./PathAnalysisView";
 import TranscriptView from "./TranscriptView";
 import VoiceAudioBridge from "./VoiceAudioBridge";
+import { ACTIVITY_SHAPE, ActivityGroup } from "./ActivityRow";
 import { LEFT_PANEL_TAB_SHAPE } from "./constants";
 
 const TABS = {
@@ -46,6 +47,9 @@ const VoiceLeftPanel = ({
   tab,
   onTabChange,
   recordingVariant,
+  // Background activity (tool calls) of a traced call; absent elsewhere.
+  activity,
+  onSelectActivity,
 }) => {
   const isSimulate = data?.module === "simulate";
   const [ownTab, setOwnTab] = useState(TABS.TRANSCRIPT);
@@ -163,7 +167,7 @@ const VoiceLeftPanel = ({
                 <Box
                   sx={{
                     flexShrink: 0,
-                    ...(filteredTranscript?.length
+                    ...(filteredTranscript?.length || activity?.length
                       ? {}
                       : {
                           flex: 1,
@@ -175,7 +179,10 @@ const VoiceLeftPanel = ({
                   }}
                 >
                   <ShowComponent
-                    condition={!!filteredTranscript?.length && !embedded}
+                    condition={
+                      !!(filteredTranscript?.length || activity?.length) &&
+                      !embedded
+                    }
                   >
                     <Typography
                       sx={{
@@ -203,6 +210,19 @@ const VoiceLeftPanel = ({
                       participants={data?.participants}
                       hasCustomer={data?.has_customer}
                       embedded={embedded}
+                      activity={activity}
+                      onSelectActivity={onSelectActivity}
+                    />
+                  </Box>
+                </ShowComponent>
+                {/* A traced call without a transcript still shows what ran. */}
+                <ShowComponent
+                  condition={!filteredTranscript?.length && !!activity?.length}
+                >
+                  <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                    <ActivityGroup
+                      items={activity}
+                      onSelect={onSelectActivity}
                     />
                   </Box>
                 </ShowComponent>
@@ -249,6 +269,8 @@ VoiceLeftPanel.propTypes = {
   onTabChange: PropTypes.func,
   // Player for an attachment recording; Voice Observability keeps its default.
   recordingVariant: PropTypes.oneOf(["voice", "trace"]),
+  activity: PropTypes.arrayOf(ACTIVITY_SHAPE),
+  onSelectActivity: PropTypes.func,
 };
 
 export default VoiceLeftPanel;

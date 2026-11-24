@@ -21,8 +21,8 @@ vi.mock("src/components/VoiceDetailDrawerV2/VoiceLeftPanel", () => ({
 import TraceCallPanel from "../TraceCallPanel";
 
 const projectId = "10000000-0000-0000-0000-000000000001";
-const renderPanel = () =>
-  render(<TraceCallPanel traceId="trace-1" projectId={projectId} />);
+const renderPanel = (props) =>
+  render(<TraceCallPanel traceId="trace-1" projectId={projectId} {...props} />);
 
 describe("TraceCallPanel", () => {
   beforeEach(() => {
@@ -77,6 +77,104 @@ describe("TraceCallPanel", () => {
     const { data } = mocks.panelProps.mock.lastCall[0];
     expect(Object.hasOwn(data, "recording_attachment")).toBe(true);
     expect(data.recording_attachment).toBeNull();
+  });
+
+  it("adds the call's tool spans as activity that selects the span on the right", () => {
+    const T0 = Date.parse("2026-11-24T10:00:00Z");
+    const at = (ms) => new Date(T0 + ms).toISOString();
+    const transcript = [
+      { role: "user", content: "Where is it?", timestamp: at(500) },
+      { role: "assistant", content: "Checking.", timestamp: at(2500) },
+      { role: "assistant", content: "Shipped.", timestamp: at(4500) },
+    ];
+    const spans = [
+      {
+        observation_span: {
+          id: "root-1",
+          start_time: at(0),
+          observation_type: "conversation",
+        },
+        children: [
+          {
+            observation_span: {
+              id: "tool-1",
+              name: "lookup_order",
+              observation_type: "tool",
+              start_time: at(3000),
+              end_time: at(4000),
+              input: "private",
+            },
+            children: [],
+          },
+        ],
+      },
+    ];
+    const detail = {
+      trace_id: "trace-1",
+      transcript,
+      observation_span: [{ id: "root-1" }],
+    };
+    mocks.detail.mockReturnValue({ data: detail, isFetching: false });
+    const onSelectSpan = vi.fn();
+    renderPanel({ spans, onSelectSpan });
+
+    const props = mocks.panelProps.mock.lastCall[0];
+    expect(props.onSelectActivity).toBe(onSelectSpan);
+    expect(props.activity).toEqual([
+      expect.objectContaining({
+        spanId: "tool-1",
+        name: "lookup_order",
+        startMs: 3000,
+        endMs: 4000,
+        interleaved: true,
+        anchorTurnId: "call-turn-2",
+      }),
+    ]);
+    expect(props.data.transcript.map((t) => t.id)).toEqual([
+      "call-turn-0",
+      "call-turn-1",
+      "call-turn-2",
+    ]);
+    // The fetched call detail itself is left as it was.
+    expect(transcript.every((t) => !("id" in t))).toBe(true);
+    expect(JSON.stringify(props.activity)).not.toContain("private");
+  });
+
+  it("keeps the transcript's identity when only the tree refreshes", () => {
+    const detail = {
+      trace_id: "trace-1",
+      transcript: [{ role: "user", content: "Hi" }],
+      observation_span: [{ id: "root-1" }],
+    };
+    mocks.detail.mockReturnValue({ data: detail, isFetching: false });
+    const tree = () => [
+      {
+        observation_span: {
+          id: "root-1",
+          start_time: "2026-11-24T10:00:00Z",
+        },
+        children: [],
+      },
+    ];
+    const { rerender } = renderPanel({ spans: tree() });
+    const first = mocks.panelProps.mock.lastCall[0].data.transcript;
+    rerender(
+      <TraceCallPanel traceId="trace-1" projectId={projectId} spans={tree()} />,
+    );
+    expect(mocks.panelProps.mock.lastCall[0].data.transcript).toBe(first);
+  });
+
+  it("shows no activity without the drawer's tree", () => {
+    mocks.detail.mockReturnValue({
+      data: {
+        trace_id: "trace-1",
+        transcript: [],
+        observation_span: [{ id: "root-1" }],
+      },
+      isFetching: false,
+    });
+    renderPanel();
+    expect(mocks.panelProps.mock.lastCall[0].activity).toEqual([]);
   });
 
   it("says so when the call cannot be loaded", () => {
