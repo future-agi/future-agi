@@ -1,9 +1,5 @@
 import { useCallback, useMemo, useEffect, useRef, useState } from "react";
-import {
-  replaceEqualDeep,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getHarnessJob } from "src/api/harness/harness";
 import { getHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
 import { harnessDetailToEnvironment } from "src/api/simulate-environments/harnessDetail";
@@ -21,7 +17,8 @@ import {
   jobStatusFor,
 } from "src/sections/simulate/environments/helpers/harnessJobToRow";
 import { usePrebuiltEnvironments } from "./prebuilt";
-import { conversationInFlight, mergeEvents } from "./conversationProjection";
+import { keepChat } from "./chatHistory";
+import { conversationInFlight } from "./conversationProjection";
 import { environmentVersionsKey, refreshDrafts } from "./versions";
 
 // The §6 environment-detail endpoint is implemented on the backend branch but not
@@ -73,56 +70,35 @@ const errorStatus = (error) => error?.statusCode ?? error?.response?.status;
 // workspace never settles on its "not found" state.
 const isJobNotFound = (error) => errorStatus(error) === 404;
 
-// Every answer written to the job keeps the chat events already held for its
-// conversation, whether it came from a poll or a send.
-const keepChatEvents = (held, job) => {
-  const conversation = job?.conversation;
-  const before = held?.conversation;
-  if (
-    !before ||
-    !conversation ||
-    before.conversation_id !== conversation.conversation_id
-  ) {
-    return replaceEqualDeep(held, job);
-  }
-  const events = mergeEvents(before.events, conversation.events);
-  // Where the events start is said by the answer that holds the oldest one.
-  const startsHere =
-    conversation.events?.length &&
-    conversation.events[0].sequence === events[0].sequence;
-  const start = (startsHere && conversation.history?.events) || null;
-  return replaceEqualDeep(held, {
-    ...job,
-    conversation: {
-      ...conversation,
-      events,
-      history: {
-        ...conversation.history,
-        events: start ?? before.history?.events,
-      },
-    },
-  });
-};
-
 // Read the job with only the chat events newer than the ones held, a page at a
-// time until caught up. The sandbox provider has no chat and refuses the cursor,
-// so it goes out only once there are events to be newer than.
-const readHarnessJob = async (envId, held) => {
-  const after = held?.conversation?.events?.at(-1)?.sequence;
-  if (!after) return getHarnessJob(envId);
-  let job = await getHarnessJob(envId, { eventsAfter: after });
-  const { conversation_id } = held.conversation;
+// time until caught up.
+const readNewer = async (envId, { conversation_id, events: held }) => {
+  let after = held.at(-1).sequence;
   let events = [];
-  while (job.conversation?.conversation_id === conversation_id) {
+  for (;;) {
+    const job = await getHarnessJob(envId, { eventsAfter: after });
+    // Another conversation, so the cursor was not one of its events.
+    if (job.conversation?.conversation_id !== conversation_id) {
+      return getHarnessJob(envId);
+    }
     const page = job.conversation.events ?? [];
     events = [...events, ...page];
     if (!job.conversation.events_has_newer || !page.length) {
       return { ...job, conversation: { ...job.conversation, events } };
     }
-    job = await getHarnessJob(envId, { eventsAfter: page.at(-1).sequence });
+    after = page.at(-1).sequence;
   }
-  // Another conversation, so the cursor was not one of its events.
-  return getHarnessJob(envId);
+};
+
+const readHarnessJob = async (envId, held) => {
+  if (!held?.conversation?.events?.length) return getHarnessJob(envId);
+  try {
+    return await readNewer(envId, held.conversation);
+  } catch (error) {
+    // Only the hosted provider reads from a cursor.
+    if (errorStatus(error) === 501) return getHarnessJob(envId);
+    throw error;
+  }
 };
 
 export const harnessJobQuery = (
@@ -132,7 +108,7 @@ export const harnessJobQuery = (
   queryKey: ["harness-job", envId],
   queryFn: () =>
     readHarnessJob(envId, queryClient?.getQueryData(["harness-job", envId])),
-  structuralSharing: keepChatEvents,
+  structuralSharing: keepChat,
   enabled: Boolean(envId) && enabled,
   retry: (failureCount, error) => !isJobNotFound(error) && failureCount < 3,
   refetchInterval: (query) =>

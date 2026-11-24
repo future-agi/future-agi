@@ -13,7 +13,7 @@ import {
   createHarnessJob,
   getHarnessJob,
   harnessIdempotencyKey,
-  listOlderHarnessEvents,
+  listOlderHarnessChat,
   sendHarnessConversationMessage,
 } from "./harness";
 
@@ -90,7 +90,7 @@ describe("builder chat events", () => {
     expect(axios.get).toHaveBeenLastCalledWith(job, {
       params: { events_after: 5 },
     });
-    await listOlderHarnessEvents(JOB_ID, 201);
+    await listOlderHarnessChat(JOB_ID, { kind: "events", before: 201 });
     expect(axios.get).toHaveBeenLastCalledWith(`${job}conversation/history/`, {
       params: { kind: "events", before: 201 },
     });

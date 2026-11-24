@@ -5,8 +5,8 @@ const items = (list) => [...list.querySelectorAll("[data-message-id]")];
 const topOf = (node) => node.getBoundingClientRect().top;
 
 /**
- * Holds the reader's place when older steps load above what they are reading,
- * and fades those steps in. A class, since only `getSnapshotBeforeUpdate` can
+ * Holds the reader's place when older messages or steps load above what they are reading,
+ * and fades those in. A class, since only `getSnapshotBeforeUpdate` can
  * measure the list right before it changes.
  */
 export default class KeepPlace extends Component {
@@ -50,8 +50,8 @@ export default class KeepPlace extends Component {
 
 KeepPlace.propTypes = {
   listRef: PropTypes.object.isRequired,
-  // The first held step: it changes when older ones load.
-  from: PropTypes.number,
+  // Where what is held starts: it changes when older ones load.
+  from: PropTypes.string,
   duration: PropTypes.number,
   children: PropTypes.node,
 };

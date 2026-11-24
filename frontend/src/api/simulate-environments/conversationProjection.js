@@ -67,32 +67,13 @@ function finalizeRunningSteps(steps) {
   }
 }
 
-/**
- * The chat events held and the ones just received, as one list in order. The
- * server numbers a conversation's events one by one and never changes one, so
- * lists that touch or overlap join. Newer ones that don't touch what is held
- * replace it, so the list never has a gap.
- */
-export function mergeEvents(held = [], incoming = []) {
-  if (!held.length) return incoming;
-  if (!incoming.length) return held;
-  if (incoming[0].sequence > held[held.length - 1].sequence + 1) {
-    return incoming;
-  }
-  if (incoming[incoming.length - 1].sequence < held[0].sequence - 1) {
-    return held;
-  }
-  const bySequence = new Map(
-    [...held, ...incoming].map((event) => [event.sequence, event]),
-  );
-  return [...bySequence.values()].sort((a, b) => a.sequence - b.sequence);
-}
-
 export function projectConversation(conversation) {
   if (!conversation) return [];
-  const messages = Array.isArray(conversation.messages)
-    ? conversation.messages
-    : [];
+  // The older ones are only for reading: the chat's state follows the newest.
+  const messages = [
+    ...(conversation.older_messages ?? []),
+    ...(conversation.messages ?? []),
+  ];
   const events = Array.isArray(conversation.events) ? conversation.events : [];
   const blocking = conversation.blocking_input || null;
 
@@ -145,10 +126,23 @@ export function projectConversation(conversation) {
     builder = null;
   };
 
-  // Where the held steps start: the ones before are read on demand, and once
-  // read back, the line says so.
-  const start = conversation.history?.events;
-  let startMarked = !(start?.has_older || start?.read_back);
+  // Where the held messages and steps start: the ones before are read on
+  // demand, and once read back, the line says so.
+  const starts = { msg: "messages", evt: "events" };
+  const markStart = ({ src, seq }) => {
+    const kind = starts[src];
+    delete starts[src];
+    const start = kind && conversation.history?.[kind];
+    if (!start?.has_older && !start?.read_back) return;
+    builder = null;
+    turns.push({
+      id: `older-${kind}`,
+      role: "history",
+      kind,
+      oldest: seq,
+      hasOlder: Boolean(start.has_older),
+    });
+  };
 
   const pushActivity = (line, seedId) => {
     if (!builder?.title) {
@@ -176,6 +170,7 @@ export function projectConversation(conversation) {
   };
 
   for (const item of timeline) {
+    markStart(item);
     if (item.src === "msg") {
       const m = item.data;
       if (m.role === "user") {
@@ -273,16 +268,6 @@ export function projectConversation(conversation) {
     }
 
     const e = item.data;
-    if (!startMarked) {
-      startMarked = true;
-      builder = null;
-      turns.push({
-        id: "older-steps",
-        role: "history",
-        oldest: e.sequence,
-        hasOlder: Boolean(start.has_older),
-      });
-    }
     switch (e.kind) {
       case "tool_started": {
         const b = startBuilder();

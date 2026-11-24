@@ -6,7 +6,7 @@ import Iconify from "src/components/iconify";
 import AskUserQuestionCard from "./AskUserQuestionCard";
 import ChatMarkdown from "./ChatMarkdown";
 import NudgeCard from "./NudgeCard";
-import OlderSteps from "./OlderSteps";
+import OlderChat from "./OlderChat";
 
 const MONO = "ui-monospace, Menlo, monospace";
 
@@ -78,7 +78,7 @@ export function Turn({ turn }) {
     );
   }
 
-  if (turn.role === "history") return <OlderSteps turn={turn} />;
+  if (turn.role === "history") return <OlderChat turn={turn} />;
 
   if (turn.role === "system") return <NudgeCard turn={turn} />;
 

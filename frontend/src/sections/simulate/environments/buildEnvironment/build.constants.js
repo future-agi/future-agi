@@ -54,11 +54,21 @@ export const CONSOLE_COPY = {
   frozen: "Environment is still being built",
   stop: "Stop the current turn",
   collapse: "Collapse chat",
-  loadOlder: "Load earlier steps",
-  loadingOlder: "Loading earlier steps…",
-  olderFailed: "Couldn't load the earlier steps.",
-  retryOlder: "Try again",
-  olderEnd: "Start of the builder's steps",
+  older: {
+    events: {
+      load: "Load earlier steps",
+      loading: "Loading earlier steps…",
+      failed: "Couldn't load the earlier steps.",
+      end: "Start of the builder's steps",
+    },
+    messages: {
+      load: "Load earlier messages",
+      loading: "Loading earlier messages…",
+      failed: "Couldn't load the earlier messages.",
+      end: "Start of the chat",
+    },
+    retry: "Try again",
+  },
 };
 
 export const PIPELINE_CHECKS_COPY = {

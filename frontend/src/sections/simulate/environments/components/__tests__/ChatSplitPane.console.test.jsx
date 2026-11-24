@@ -149,6 +149,35 @@ describe("ChatSplitPane with a long builder conversation", () => {
     expect(scrollTo.mock.calls).toEqual([[{ top: 321, behavior: "smooth" }]]);
   });
 
+  it("loads older messages until the one asked for is there", () => {
+    const onLoad = vi.fn();
+    const start = (oldest) => ({
+      id: "older-messages",
+      role: "history",
+      kind: "messages",
+      oldest,
+      hasOlder: true,
+      onLoad,
+    });
+    const { rerender } = render(renderSplit([start(201), ...makeTurns(4)]));
+    collapse();
+    const scrollTo = window.HTMLElement.prototype.scrollTo;
+    act(() => focusBuilderChat("old"));
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    rerender(renderSplit([{ ...start(201), loading: true }, ...makeTurns(4)]));
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    scrollTo.mockClear();
+    rerender(
+      renderSplit([
+        start(1),
+        { id: "old", role: "user", text: "an old message" },
+        ...makeTurns(4),
+      ]),
+    );
+    expect(onLoad).toHaveBeenCalledTimes(1);
+    expect(scrollTo.mock.calls).toEqual([[{ top: 0, behavior: "smooth" }]]);
+  });
+
   it.each([undefined, "not-loaded"])(
     "opens at the newest when there is no message to show (%s)",
     (messageId) => {
@@ -164,8 +193,9 @@ describe("ChatSplitPane with a long builder conversation", () => {
 
   it("keeps the reader's place when older steps load above it", () => {
     const start = (oldest) => ({
-      id: "older-steps",
+      id: "older-events",
       role: "history",
+      kind: "events",
       oldest,
       hasOlder: true,
     });

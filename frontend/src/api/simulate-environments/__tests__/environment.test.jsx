@@ -681,7 +681,8 @@ describe("harnessJobQuery", () => {
     }
     const { conversation } = client.getQueryData(query.queryKey);
     return {
-      sequences: conversation.events.map((one) => one.sequence),
+      conversation,
+      sequences: conversation.events?.map((one) => one.sequence),
       start: conversation.history?.events,
       asked: getHarnessJob.mock.calls.map(([, options]) => options),
     };
@@ -695,11 +696,7 @@ describe("harnessJobQuery", () => {
     );
     expect(sequences).toEqual([3, 4, 5, 6]);
     expect(start).toEqual({ oldest_sequence: 3, has_older: true });
-    expect(asked).toEqual([
-      undefined,
-      { eventsAfter: 5 },
-      { eventsAfter: 6 },
-    ]);
+    expect(asked).toEqual([undefined, { eventsAfter: 5 }, { eventsAfter: 6 }]);
   });
 
   it("reads on until it has caught up, when more than a page is new", async () => {
@@ -709,11 +706,7 @@ describe("harnessJobQuery", () => {
       answer({ events: events(6, 7), events_has_newer: false }),
     );
     expect(sequences).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    expect(asked).toEqual([
-      undefined,
-      { eventsAfter: 2 },
-      { eventsAfter: 5 },
-    ]);
+    expect(asked).toEqual([undefined, { eventsAfter: 2 }, { eventsAfter: 5 }]);
   });
 
   it("starts over when events were missed, rather than leave a gap", async () => {
@@ -733,6 +726,59 @@ describe("harnessJobQuery", () => {
     );
     expect(sequences).toEqual([1, 2]);
     expect(asked).toEqual([undefined, { eventsAfter: 3 }, undefined]);
+  });
+
+  it("reads the job whole where the provider refuses the cursor", async () => {
+    const { sequences, asked } = await held(
+      answer({ events: events(1, 2) }),
+      Promise.reject(Object.assign(new Error("refused"), { statusCode: 501 })),
+      answer({ events: events(2, 3) }),
+    );
+    expect(sequences).toEqual([1, 2, 3]);
+    expect(asked.at(-1)).toBeUndefined();
+  });
+
+  describe("messages", () => {
+    const messages = (from, to, content = "") =>
+      Array.from({ length: to - from + 1 }, (_, i) => ({
+        message_id: `m${from + i}`,
+        sequence: from + i,
+        content,
+      }));
+    const window = (oldest_sequence, has_older) => ({
+      messages: { oldest_sequence, has_older },
+    });
+    const ids = (list) => list.map((one) => one.message_id);
+
+    it("keeps one that slid out of the newest, apart from the ones the server still sends", async () => {
+      const { conversation } = await held(
+        answer({ messages: messages(1, 3), history: window(1, false) }),
+        answer({
+          messages: messages(3, 5, "edited"),
+          history: window(3, true),
+        }),
+        answer({ messages: messages(4, 6), history: window(4, true) }),
+      );
+      expect(ids(conversation.older_messages)).toEqual(["m1", "m2", "m3"]);
+      expect(conversation.older_messages[2].content).toBe("edited");
+      expect(ids(conversation.messages)).toEqual(["m4", "m5", "m6"]);
+      expect(conversation.history.messages).toEqual({
+        oldest_sequence: 1,
+        has_older: false,
+      });
+    });
+
+    it("starts over when some were missed, rather than leave a gap", async () => {
+      const { conversation } = await held(
+        answer({ messages: messages(1, 3), history: window(1, false) }),
+        answer({ messages: messages(7, 9), history: window(7, true) }),
+      );
+      expect(conversation.older_messages).toEqual([]);
+      expect(conversation.history.messages).toEqual({
+        oldest_sequence: 7,
+        has_older: true,
+      });
+    });
   });
 });
 

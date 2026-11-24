@@ -13,7 +13,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 
 import {
-  listOlderHarnessEvents,
   sendHarnessConversationMessage,
   harnessIdempotencyKey,
 } from "src/api/harness/harness";
@@ -22,6 +21,7 @@ import {
   getScenarioSelection,
   clearScenarioSelection,
 } from "src/sections/simulate/environments/buildEnvironment/console/scenarioSelectionBus";
+import { useOlderChat } from "./chatHistory";
 import { useHarnessJob } from "./environment";
 import {
   isVersioningDisabled,
@@ -32,7 +32,6 @@ import {
 } from "./versions";
 import { useNudgeActions } from "./nudgeActions";
 import {
-  mergeEvents,
   projectConversation,
   conversationInFlight,
   conversationStopping,
@@ -164,47 +163,8 @@ export function useWorkspaceChat(env, { source } = {}) {
     [mutate],
   );
 
-  // The steps before the ones held, a page at a time.
-  const older = useMutation({
-    mutationFn: ({ id, before }) => listOlderHarnessEvents(id, before),
-    onSuccess: (page, { id, before, conversationId }) => {
-      // Only onto the events it was read for: they start over when some are missed.
-      queryClient.setQueryData(["harness-job", id], (prev) =>
-        prev?.conversation?.conversation_id === conversationId &&
-        prev.conversation.events?.[0]?.sequence === before
-          ? {
-              ...prev,
-              conversation: {
-                ...prev.conversation,
-                events: mergeEvents(page.events, prev.conversation.events),
-                history: {
-                  ...prev.conversation.history,
-                  events: {
-                    oldest_sequence: page.oldest_sequence,
-                    has_older: page.has_older,
-                    read_back: true,
-                  },
-                },
-              },
-            }
-          : prev,
-      );
-    },
-  });
-  const { mutate: readOlder } = older;
-  const askedHere = older.variables?.id === jobId;
-  const loadingOlder = askedHere && older.isPending;
-  const olderFailed = askedHere && older.isError;
-  const loadOlder = useCallback(() => {
-    const held = conversationRef.current;
-    const before = held?.events?.[0]?.sequence;
-    if (!before) return;
-    readOlder({
-      id: jobIdRef.current,
-      before,
-      conversationId: held.conversation_id,
-    });
-  }, [readOlder]);
+  const olderEvents = useOlderChat("events", jobId, conversation);
+  const olderMessages = useOlderChat("messages", jobId, conversation);
 
   const interrupt = useCallback(() => {
     const id = jobIdRef.current;
@@ -328,11 +288,12 @@ export function useWorkspaceChat(env, { source } = {}) {
     // A resolved question renders its summary from props, so it needs no handler.
     return projected.map((turn) => {
       if (turn.role === "history") {
+        const isEvents = turn.kind === "events";
         return {
           ...turn,
-          loading: loadingOlder,
-          failed: olderFailed,
-          onLoad: loadOlder,
+          loading: isEvents ? olderEvents.loading : olderMessages.loading,
+          failed: isEvents ? olderEvents.failed : olderMessages.failed,
+          onLoad: isEvents ? olderEvents.load : olderMessages.load,
         };
       }
       if (turn.role === "system" && turn.kind === "nudge") {
@@ -385,9 +346,12 @@ export function useWorkspaceChat(env, { source } = {}) {
     stopNudgeById,
     flagsFor,
     resetNudgeActions,
-    loadingOlder,
-    olderFailed,
-    loadOlder,
+    olderEvents.loading,
+    olderEvents.failed,
+    olderEvents.load,
+    olderMessages.loading,
+    olderMessages.failed,
+    olderMessages.load,
   ]);
 
   // Retry a failed send by replaying its original variables (same payload, same

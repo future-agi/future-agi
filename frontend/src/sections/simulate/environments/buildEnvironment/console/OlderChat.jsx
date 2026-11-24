@@ -5,19 +5,20 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 
 import { CONSOLE_COPY } from "../build.constants";
 
-/** Where the held steps start: loads the ones before them, a page at a time. */
-export default function OlderSteps({ turn }) {
+/** Where the held messages or steps start: loads the ones before, a page at a time. */
+export default function OlderChat({ turn }) {
+  const copy = CONSOLE_COPY.older[turn.kind];
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   if (!turn.hasOlder) {
     return (
       <Typography
         sx={{ typography: "s3", color: "text.tertiary", textAlign: "center" }}
       >
-        {CONSOLE_COPY.olderEnd}
+        {copy.end}
       </Typography>
     );
   }
-  const label = turn.failed ? CONSOLE_COPY.retryOlder : CONSOLE_COPY.loadOlder;
+  const label = turn.failed ? CONSOLE_COPY.older.retry : copy.load;
   return (
     <Stack alignItems="center">
       <Collapse
@@ -28,7 +29,7 @@ export default function OlderSteps({ turn }) {
           role="status"
           sx={{ typography: "s3", color: "text.secondary", pb: 0.5 }}
         >
-          {turn.failed ? CONSOLE_COPY.olderFailed : ""}
+          {turn.failed ? copy.failed : ""}
         </Typography>
       </Collapse>
       {/* Kept enabled while it loads, so a keyboard reader keeps focus. */}
@@ -45,13 +46,14 @@ export default function OlderSteps({ turn }) {
         }
         sx={{ color: "text.secondary" }}
       >
-        {turn.loading ? CONSOLE_COPY.loadingOlder : label}
+        {turn.loading ? copy.loading : label}
       </Button>
     </Stack>
   );
 }
-OlderSteps.propTypes = {
+OlderChat.propTypes = {
   turn: PropTypes.shape({
+    kind: PropTypes.oneOf(["messages", "events"]),
     hasOlder: PropTypes.bool,
     loading: PropTypes.bool,
     failed: PropTypes.bool,

@@ -103,6 +103,8 @@ export default function BuilderConsole({
   const { draft, scaffolds } = state;
   const theme = useTheme();
   const listRef = useRef(null);
+  // Where the held messages and steps start.
+  const starts = (turns || []).filter((turn) => turn.role === "history");
   const lastScrollRef = useRef({ top: 0, height: 0 });
   const [following, setFollowing] = useState(true);
   const messageCount = countMessages(turns);
@@ -113,16 +115,16 @@ export default function BuilderConsole({
       subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
     [],
   );
-  // Asked to show one of its messages: once open, scroll the list to it and stop following the latest. A message that
-  // isn't loaded leaves the list at the latest.
+  // Asked to show one of its messages: once open, scroll the list to it and stop following the latest. Older
+  // messages load until it is there; one that isn't leaves the list at the latest.
   const [asked, setAsked] = useState(null);
+  const olderMessages = starts.find((turn) => turn.kind === "messages");
   useEffect(
     () => subscribeBuilderChatFocus((messageId) => setAsked({ messageId })),
     [],
   );
   useEffect(() => {
     if (!active || !asked) return;
-    setAsked(null);
     const list = listRef.current;
     const id = asked.messageId && CSS.escape(asked.messageId);
     const target =
@@ -130,6 +132,11 @@ export default function BuilderConsole({
       list?.querySelector(
         `[data-message-id="${id}"], [data-answer-id="${id}"]`,
       );
+    if (!target && id && olderMessages?.hasOlder && !olderMessages.failed) {
+      if (!olderMessages.loading) olderMessages.onLoad();
+      return;
+    }
+    setAsked(null);
     if (!target) {
       setFollowing(true);
       return;
@@ -139,7 +146,7 @@ export default function BuilderConsole({
       top: target.offsetTop - list.offsetTop,
       behavior: "smooth",
     });
-  }, [active, asked]);
+  }, [active, asked, olderMessages]);
 
   // Follow the transcript only as it grows, not when a card's state changes.
   const count = turns?.length ?? 0;
@@ -157,8 +164,8 @@ export default function BuilderConsole({
   // Sending from any path (composer, a question card, Stop) and reopening the
   // console both return to the latest turn. Adjusted during render, so the next
   // paint already follows.
-  // Older steps loaded above are not new messages, whatever they hold.
-  const from = turns?.find((turn) => turn.role === "history")?.oldest;
+  // Older messages and steps loaded above are not new ones, whatever they hold.
+  const from = starts.map((turn) => `${turn.kind} ${turn.oldest}`).join();
   const [prev, setPrev] = useState({ running, active, from });
   if (prev.from !== from) {
     setSeenMessages(messageCount);
