@@ -8,6 +8,7 @@ import { LIFECYCLE_COPY } from "./scenarios.constants";
 import {
   citationState,
   isNotMeasured,
+  isProvable,
   lifecycleChip,
   stateText,
   wrongWayRows,
@@ -81,13 +82,8 @@ export function LifecycleHeaderLine({ envId, row, locked = false }) {
   const lifecycle = row?.lifecycle;
   if (!lifecycle) return null;
   const chip = lifecycleChip(lifecycle);
-  // An unsaved change validates with the unsaved changes, not on its own; an archived one doesn't run, so it isn't proved.
   const canValidate =
-    !locked &&
-    envId &&
-    row.scenarioKey &&
-    lifecycle.reason !== "in_draft" &&
-    lifecycle.state !== "archived";
+    !locked && envId && row.scenarioKey && isProvable(lifecycle);
   return (
     <Stack
       direction="row"

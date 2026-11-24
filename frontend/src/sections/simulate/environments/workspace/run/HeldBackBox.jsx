@@ -58,10 +58,11 @@ export default function HeldBackBox({ shownRows = [], selection }) {
   const reasonText = (row) =>
     selection.reasons?.[row] || COPY.heldCodes[row] || row;
   const byKey = held.by_key ?? {};
+  const ownReason = held.reason_by_key ?? {};
   const items = held.keys.map((key) => ({
     key,
     name: held.names?.[key] || key,
-    reason: byKey[key] && reasonText(byKey[key]),
+    reason: ownReason[key] || (byKey[key] && reasonText(byKey[key])),
   }));
   // A reason no listed scenario carries (past the report's list, or from a report that names none) is still counted.
   const listed = new Set(Object.values(byKey));
@@ -125,6 +126,8 @@ HeldBackBox.propTypes = {
       by: PropTypes.object,
       // The row each listed scenario is held under, by key.
       by_key: PropTypes.objectOf(PropTypes.string),
+      // Its own reason, by key, where it has one; a row's reason is joined from every scenario it holds.
+      reason_by_key: PropTypes.objectOf(PropTypes.string),
     }),
     reasons: PropTypes.object,
   }),

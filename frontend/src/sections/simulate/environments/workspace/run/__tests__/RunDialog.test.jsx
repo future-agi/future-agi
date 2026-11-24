@@ -1046,6 +1046,27 @@ describe("RunDialog", () => {
       expect(runButton()).toHaveTextContent("Run 1 scenario");
     });
 
+    it("gives each held scenario its own reason, not the ones joined for its row", () => {
+      state.selection = selection({
+        held_back: {
+          count: 2,
+          keys: ["k1", "k2"],
+          names: {},
+          by: { scenario_archived: 1, tool_routing: 1 },
+          by_key: { k1: "scenario_archived", k2: "tool_routing" },
+          reason_by_key: { k1: "Archived on 24 Nov" },
+        },
+        reasons: {
+          scenario_archived: "Archived on 24 Nov; Archived on 20 Nov",
+          tool_routing: "refund reaches production",
+        },
+      });
+      renderDialog();
+      const held = within(screen.getByTestId("run-held-back"));
+      expect(held.getByText("Archived on 24 Nov")).toBeInTheDocument();
+      expect(held.getByText("refund reaches production")).toBeInTheDocument();
+    });
+
     it("words a held-back code the report sends no text for", () => {
       state.selection = selection({
         held_back: {

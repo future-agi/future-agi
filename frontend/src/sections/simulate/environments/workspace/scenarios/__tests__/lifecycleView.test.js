@@ -63,6 +63,14 @@ describe("lifecycleChip and isRunnable", () => {
     expect(isRunnable({ state: "draft", reason: "not_validated" })).toBe(false);
   });
 
+  it.each([
+    ["proof_failed", "danger"],
+    ["unproved", "neutral"],
+    ["ours", "neutral"],
+  ])("marks a case held by %s as %s", (held_by, tone) => {
+    expect(lifecycleChip({ state: "draft", held_by }).tone).toBe(tone);
+  });
+
   it("gives an older kept-as-written case a reason even when the server sends none", () => {
     const chip = lifecycleChip({
       state: "kept_as_written",
@@ -74,8 +82,7 @@ describe("lifecycleChip and isRunnable", () => {
   });
 });
 
-describe("the state's name, said once", () => {
-  // The server's own sentences.
+describe("the server's sentence, as sent", () => {
   it.each([
     [
       {
@@ -84,7 +91,7 @@ describe("the state's name, said once", () => {
           "Kept as written: only an AI judge grades this case, and nothing has shown it fails a wrong answer.",
       },
       "Kept as written: only an AI judge grades this case, and nothing has shown it fails a wrong answer.",
-      "Kept as written. Runs, but not proved. Only an AI judge grades this case, and nothing has shown it fails a wrong answer.",
+      "Runs, but not proved. Kept as written: only an AI judge grades this case, and nothing has shown it fails a wrong answer.",
     ],
     [
       { state: "archived", reason_text: "Archived on 24 Nov 2026: Duplicate" },
@@ -93,10 +100,10 @@ describe("the state's name, said once", () => {
     ],
     [
       { state: "draft", reason_text: "Not validated on these versions yet." },
-      "Not proved: Not validated on these versions yet.",
-      "Not proved. Not validated on these versions yet.",
+      "Not validated on these versions yet.",
+      "Not validated on these versions yet.",
     ],
-    [{ state: "archived" }, "Archived", "Archived."],
+    [{ state: "archived" }, "Archived", "Archived"],
   ])("%j", (lifecycle, mark, line) => {
     expect(markTitle(lifecycleChip(lifecycle))).toBe(mark);
     expect(stateText(lifecycle)).toBe(line);
@@ -164,7 +171,7 @@ describe("isBeingValidated", () => {
     scenarioKey: key,
     lifecycle: { state },
   });
-  it("marks the named scenarios, or every one but the archived when none are named", () => {
+  it("marks the named scenarios, or every saved one but the archived when none are named", () => {
     expect(
       isBeingValidated(row("active", "a"), {
         job_id: "j",
@@ -185,6 +192,12 @@ describe("isBeingValidated", () => {
     ).toBe(true);
     expect(
       isBeingValidated(row("archived"), { job_id: "j", scenario_keys: null }),
+    ).toBe(false);
+    expect(
+      isBeingValidated(
+        { lifecycle: { state: "draft", reason: "in_draft" } },
+        { job_id: "j", scenario_keys: null },
+      ),
     ).toBe(false);
     expect(isBeingValidated(row("draft"), { job_id: null })).toBe(false);
   });
