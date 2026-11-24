@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1221,
+  endpointCount: 1222,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -1017,6 +1017,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/simulate/api/harness-jobs/{id}/": ["get"],
       "/simulate/api/harness-jobs/{id}/adjust/": ["post"],
       "/simulate/api/harness-jobs/{id}/cancel/": ["post"],
+      "/simulate/api/harness-jobs/{id}/conversation/history/": ["get"],
       "/simulate/api/harness-jobs/{id}/conversation/messages/": ["post"],
       "/simulate/api/harness-jobs/{id}/extend/": ["post"],
       "/simulate/api/harness-jobs/{id}/runs/": ["post"],
@@ -2504,6 +2505,7 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/simulate/api/harness-jobs/{id}/": ["get"],
   "/simulate/api/harness-jobs/{id}/adjust/": ["post"],
   "/simulate/api/harness-jobs/{id}/cancel/": ["post"],
+  "/simulate/api/harness-jobs/{id}/conversation/history/": ["get"],
   "/simulate/api/harness-jobs/{id}/conversation/messages/": ["post"],
   "/simulate/api/harness-jobs/{id}/extend/": ["post"],
   "/simulate/api/harness-jobs/{id}/runs/": ["post"],

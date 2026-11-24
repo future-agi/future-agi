@@ -49236,7 +49236,7 @@ export const SimulateApiHarnessEnvironmentsDraftsDraftsReviewResponse =
             ),
           )
           .describe(
-            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file with its name and row).",
           ),
         depends_on: zod
           .array(zod.string().min(1))
@@ -49362,7 +49362,7 @@ export const SimulateApiHarnessEnvironmentsDraftsReviewDraftsReviewDecisionsResp
             ),
           )
           .describe(
-            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
+            "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file with its name and row).",
           ),
         depends_on: zod
           .array(zod.string().min(1))
@@ -56029,6 +56029,36 @@ export const SimulateApiHarnessJobsListResponseItem = zod.object({
       event_watermark: zod
         .number()
         .min(simulateApiHarnessJobsListResponseConversationEventWatermarkMin),
+      history: zod
+        .object({
+          messages: zod.object({
+            oldest_sequence: zod
+              .number()
+              .describe(
+                "The oldest sequence in this read; read what came before it with `before` set to it.",
+              ),
+            has_older: zod
+              .boolean()
+              .describe(
+                "Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+              ),
+          }),
+          events: zod.object({
+            oldest_sequence: zod
+              .number()
+              .describe(
+                "The oldest sequence in this read; read what came before it with `before` set to it.",
+              ),
+            has_older: zod
+              .boolean()
+              .describe(
+                "Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+              ),
+          }),
+        })
+        .describe(
+          "Where `messages` and `events` start, and whether older ones can be read with the history read.",
+        ),
       runtime: zod.object({
         state: zod.string().min(1),
         warm_until: zod.string().datetime({ offset: true }),
@@ -56916,6 +56946,27 @@ export const SimulateApiHarnessJobsReadParams = zod.object({
   id: zod.string(),
 });
 
+export const simulateApiHarnessJobsReadQueryMessagesAfterMin = 0;
+
+export const simulateApiHarnessJobsReadQueryEventsAfterMin = 0;
+
+export const SimulateApiHarnessJobsReadQueryParams = zod.object({
+  messages_after: zod
+    .number()
+    .min(simulateApiHarnessJobsReadQueryMessagesAfterMin)
+    .optional()
+    .describe(
+      "Only the builder chat messages newer than this sequence; all recent ones when absent.",
+    ),
+  events_after: zod
+    .number()
+    .min(simulateApiHarnessJobsReadQueryEventsAfterMin)
+    .optional()
+    .describe(
+      "Only the builder chat events newer than this sequence; all recent ones when absent.",
+    ),
+});
+
 export const simulateApiHarnessJobsReadResponseConversationEventWatermarkMin = 0;
 
 export const simulateApiHarnessJobsReadResponseConsumptionTextSimTokensMin = 0;
@@ -57090,6 +57141,36 @@ export const SimulateApiHarnessJobsReadResponse = zod.object({
       event_watermark: zod
         .number()
         .min(simulateApiHarnessJobsReadResponseConversationEventWatermarkMin),
+      history: zod
+        .object({
+          messages: zod.object({
+            oldest_sequence: zod
+              .number()
+              .describe(
+                "The oldest sequence in this read; read what came before it with `before` set to it.",
+              ),
+            has_older: zod
+              .boolean()
+              .describe(
+                "Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+              ),
+          }),
+          events: zod.object({
+            oldest_sequence: zod
+              .number()
+              .describe(
+                "The oldest sequence in this read; read what came before it with `before` set to it.",
+              ),
+            has_older: zod
+              .boolean()
+              .describe(
+                "Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+              ),
+          }),
+        })
+        .describe(
+          "Where `messages` and `events` start, and whether older ones can be read with the history read.",
+        ),
       runtime: zod.object({
         state: zod.string().min(1),
         warm_until: zod.string().datetime({ offset: true }),
@@ -57346,6 +57427,36 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
       event_watermark: zod
         .number()
         .min(simulateApiHarnessJobsCancelResponseConversationEventWatermarkMin),
+      history: zod
+        .object({
+          messages: zod.object({
+            oldest_sequence: zod
+              .number()
+              .describe(
+                "The oldest sequence in this read; read what came before it with `before` set to it.",
+              ),
+            has_older: zod
+              .boolean()
+              .describe(
+                "Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+              ),
+          }),
+          events: zod.object({
+            oldest_sequence: zod
+              .number()
+              .describe(
+                "The oldest sequence in this read; read what came before it with `before` set to it.",
+              ),
+            has_older: zod
+              .boolean()
+              .describe(
+                "Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+              ),
+          }),
+        })
+        .describe(
+          "Where `messages` and `events` start, and whether older ones can be read with the history read.",
+        ),
       runtime: zod.object({
         state: zod.string().min(1),
         warm_until: zod.string().datetime({ offset: true }),
@@ -57378,6 +57489,36 @@ export const SimulateApiHarnessJobsCancelResponse = zod.object({
     })
     .optional(),
 });
+
+/**
+ * The builder chat's messages or events just before a sequence, oldest first, for reading back past the
+window a job read carries.
+ */
+export const SimulateApiHarnessJobsConversationConversationHistoryParams =
+  zod.object({
+    id: zod.string(),
+  });
+
+export const SimulateApiHarnessJobsConversationConversationHistoryQueryParams =
+  zod.object({
+    kind: zod.enum(["messages", "events"]),
+    before: zod
+      .number()
+      .min(1)
+      .describe("Read the items just before this sequence."),
+  });
+
+export const SimulateApiHarnessJobsConversationConversationHistoryResponse =
+  zod.object({
+    kind: zod.enum(["messages", "events"]),
+    items: zod
+      .array(zod.record(zod.string(), zod.string()))
+      .describe(
+        "Messages or events, oldest first, in the same shape as a conversation read's.",
+      ),
+    oldest_sequence: zod.number(),
+    has_older: zod.boolean(),
+  });
 
 /**
  * Validates the v1.6 request contract and delegates execution to the public backend selected by

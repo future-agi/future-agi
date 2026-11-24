@@ -56537,7 +56537,24 @@
             "get": {
                 "operationId": "simulate_api_harness-jobs_read",
                 "description": "One harness job. A coding agent key reads its own run narrowly, outside\nthis schema: only `status` (its failure as domain, stage, code and a fixed\nmessage), `receipts`, `consumption`, `platform`, and `job` with its ids and\nfive metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or\n`job.source`, which name every case of the suite.",
-                "parameters": [],
+                "parameters": [
+                    {
+                        "name": "messages_after",
+                        "in": "query",
+                        "description": "Only the builder chat messages newer than this sequence; all recent ones when absent.",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    {
+                        "name": "events_after",
+                        "in": "query",
+                        "description": "Only the builder chat events newer than this sequence; all recent ones when absent.",
+                        "required": false,
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "",
@@ -56554,7 +56571,9 @@
                 },
                 "tags": [
                     "simulate"
-                ]
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
             },
             "parameters": [
                 {
@@ -56640,6 +56659,59 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/HarnessJobRead"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-jobs/{id}/conversation/history/": {
+            "get": {
+                "operationId": "simulate_api_harness-jobs_conversation_conversation_history",
+                "description": "The builder chat's messages or events just before a sequence, oldest first, for reading back past the\nwindow a job read carries.",
+                "parameters": [
+                    {
+                        "name": "kind",
+                        "in": "query",
+                        "required": true,
+                        "type": "string",
+                        "enum": [
+                            "messages",
+                            "events"
+                        ]
+                    },
+                    {
+                        "name": "before",
+                        "in": "query",
+                        "description": "Read the items just before this sequence.",
+                        "required": true,
+                        "type": "integer",
+                        "minimum": 1
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessConversationHistoryPage"
                         }
                     },
                     "default": {
@@ -155568,7 +155640,7 @@
                     "description": "Plain text string or array of content-part objects."
                 },
                 "sources": {
-                    "description": "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file and its row).",
+                    "description": "Where the change came from, latest first: who, through what, when, and what it used (the person's message, or a file with its name and row).",
                     "type": "array",
                     "items": {
                         "type": "object",
@@ -159463,6 +159535,42 @@
                 }
             }
         },
+        "HarnessConversationWindow": {
+            "required": [
+                "oldest_sequence",
+                "has_older"
+            ],
+            "type": "object",
+            "properties": {
+                "oldest_sequence": {
+                    "title": "Oldest sequence",
+                    "description": "The oldest sequence in this read; read what came before it with `before` set to it.",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "has_older": {
+                    "title": "Has older",
+                    "description": "Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+                    "type": "boolean"
+                }
+            }
+        },
+        "HarnessConversationHistory": {
+            "description": "Where `messages` and `events` start, and whether older ones can be read with the history read.",
+            "required": [
+                "messages",
+                "events"
+            ],
+            "type": "object",
+            "properties": {
+                "messages": {
+                    "$ref": "#/definitions/HarnessConversationWindow"
+                },
+                "events": {
+                    "$ref": "#/definitions/HarnessConversationWindow"
+                }
+            }
+        },
         "HarnessConversationRuntime": {
             "required": [
                 "state",
@@ -159504,6 +159612,7 @@
                 "messages",
                 "events",
                 "event_watermark",
+                "history",
                 "runtime"
             ],
             "type": "object",
@@ -159553,6 +159662,9 @@
                     "title": "Event watermark",
                     "type": "integer",
                     "minimum": 0
+                },
+                "history": {
+                    "$ref": "#/definitions/HarnessConversationHistory"
                 },
                 "runtime": {
                     "$ref": "#/definitions/HarnessConversationRuntime"
@@ -160478,6 +160590,45 @@
                         "ttl_exceeded"
                     ],
                     "default": "user_canceled"
+                }
+            }
+        },
+        "HarnessConversationHistoryPage": {
+            "required": [
+                "kind",
+                "items",
+                "oldest_sequence",
+                "has_older"
+            ],
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "title": "Kind",
+                    "type": "string",
+                    "enum": [
+                        "messages",
+                        "events"
+                    ]
+                },
+                "items": {
+                    "description": "Messages or events, oldest first, in the same shape as a conversation read's.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "string",
+                            "x-nullable": true
+                        }
+                    }
+                },
+                "oldest_sequence": {
+                    "title": "Oldest sequence",
+                    "type": "integer",
+                    "x-nullable": true
+                },
+                "has_older": {
+                    "title": "Has older",
+                    "type": "boolean"
                 }
             }
         },
