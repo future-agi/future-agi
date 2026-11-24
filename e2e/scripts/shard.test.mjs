@@ -336,6 +336,38 @@ test("each shard's receipts come from the attempt that ran it", () => {
   );
 });
 
+test("a caller's prefix names the shard jobs; without one today's names hold", () => {
+  const job = (name, attempt = 1) => ({
+    name,
+    run_attempt: attempt,
+    started_at: "2026-11-23T01:00:00Z",
+    completed_at: "2026-11-23T01:30:00Z",
+  });
+  const called = [1, 2].map((i) => job(`retarget-e2e / e2e (distributed, ${i}/2)`));
+  assert.deepEqual(
+    shardAttempts("distributed", 2, called, "retarget-e2e / "),
+    [1, 1],
+  );
+  // Unprefixed lookups do not see a caller's jobs, and the reverse.
+  assert.throws(() => shardAttempts("distributed", 2, called), /missing producer/);
+  const direct = [1, 2].map((i) => job(`e2e (distributed, ${i}/2)`));
+  assert.deepEqual(shardAttempts("distributed", 2, direct), [1, 1]);
+  assert.throws(
+    () => shardAttempts("distributed", 2, direct, "retarget-e2e / "),
+    /missing producer/,
+  );
+  for (const bad of ["retarget-e2e", " / ", "a / b / ", "x/ "])
+    assert.throws(
+      () => shardAttempts("distributed", 2, called, bad),
+      /invalid job prefix/,
+      bad,
+    );
+  // The report job passes the input through; empty unless a caller set it.
+  const report = workflow().jobs.report;
+  assert.equal(report.env.E2E_JOB_PREFIX, "${{ inputs.job_prefix }}");
+  assert.equal(workflow().on.workflow_call.inputs.job_prefix.default, "");
+});
+
 // Run 45334240608: a paginated read came back cut short ("unexpected end of
 // JSON input") and the verdict failed with every shard green.
 const CUT = "unexpected end of JSON input";
@@ -830,7 +862,11 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
     "metadata edit",
   ])
     assert.ok(!text.includes(expression), expression);
-  assert.match(workflow().concurrency.group, /-candidate$/);
+  // One "candidate" group per pull request, except Retarget proof's calls.
+  assert.match(
+    workflow().concurrency.group,
+    /-\$\{\{ github\.workflow == 'Retarget proof' && github\.run_id \|\| 'candidate' \}\}$/,
+  );
 });
 
 test("the E2E gate passes only on a green suite with its report, or when nothing was needed", () => {

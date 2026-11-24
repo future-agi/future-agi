@@ -14,6 +14,13 @@ on:
     branches: [dev, main]
   # The queue entrypoint calls this workflow without forwarding any secrets.
   workflow_call:
+    inputs:
+      job_prefix:
+        # How the caller's jobs prefix these job names ("<caller job> / ").
+        # Empty keeps today's names: none, or "backend / " in a merge group.
+        type: string
+        required: false
+        default: ""
     outputs:
       verdict:
         description: Result of the required backend aggregate step
@@ -40,7 +47,7 @@ concurrency:
   # per PR even across forks, whereas a fork branch also named "dev" would share
   # a head_ref group with internal dev runs and cancel them.
   # Manual profiles can be dispatched together without replacing a pending trial.
-  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-candidate
+  group: backend-ci-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name == 'push' && github.sha || github.ref }}-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -72,6 +79,8 @@ jobs:
           persist-credentials: false
       - name: Exercise the candidate policy against Git fixtures
         run: python3 -I .github/scripts/test_ci_scope.py
+      - name: "\"CI ran on this base\" verdicts on recorded API payloads"
+        run: python3 -I .github/scripts/test_ci_base_gate.py
 
   changes:
     runs-on: ubuntu-latest
@@ -165,9 +174,11 @@ jobs:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           # The merge-group event does not attest to the provenance of every member.
+          # A call from Retarget proof forwards no secrets: like a merge group,
+          # it runs without the private package (GITHUB_WORKFLOW is the caller's).
           internal=false
           case "$GITHUB_EVENT_NAME" in
-            pull_request) if [[ -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
+            pull_request) if [[ $GITHUB_WORKFLOW == "Backend CI" && -n $PR_HEAD_REPO && $PR_HEAD_REPO == "$GITHUB_REPOSITORY" ]]; then internal=true; fi ;;
             push|workflow_dispatch|schedule) internal=true ;;
           esac
           echo "internal=$internal" >> "$GITHUB_OUTPUT"
@@ -951,6 +962,7 @@ jobs:
       - name: Verify each planned shard receipt
         id: qualification
         env:
+          BACKEND_JOB_PREFIX: ${{ inputs.job_prefix }}
           GH_TOKEN: ${{ github.token }}
           SHARDS: ${{ needs.changes.outputs.shards }}
           # Set this repository variable to 'true' to fail on unexpected runtime
@@ -968,6 +980,48 @@ jobs:
           overwrite: true
           # An early qualification error (e.g. listing artifacts failed) has no report.
           if-no-files-found: ${{ steps.qualification.outcome == 'success' && 'error' || 'ignore' }}
+
+  candidate-receipt:
+    # Not part of the required check: records which merge candidate this run
+    # tested, for the "CI ran on this base" check (.github/scripts/ci_base_gate.py).
+    # Only on pull requests whose suite was selected, ran and passed; its own
+    # failure never changes the required verdict. Default permissions (read).
+    # It sits above backend-tests, which stays the last job: policy tests read
+    # that job's script through to the end of this file.
+    name: Record the tested merge candidate
+    needs: [changes, backend-tests]
+    if: ${{ github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the merge candidate this run tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIND: backend
+          # Whether the suite ran with the private package ("internal") or
+          # without it ("oss", as merge groups and Retarget proof do).
+          SCOPE: ${{ needs.changes.outputs.internal == 'true' && 'internal' || 'oss' }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA")
+          # GITHUB_SHA is the merge of the head onto the base tip this run used.
+          jq -e --arg head "$HEAD_SHA" '(.parents | length) == 2 and .parents[1].sha == $head' <<<"$commit" > /dev/null
+          mkdir -p "$RUNNER_TEMP/ci-candidate"
+          jq -n --arg kind "$KIND" --argjson pr "$PR" --arg head "$HEAD_SHA" --arg base_ref "$BASE_REF" \
+            --arg base_sha "$(jq -r '.parents[0].sha' <<<"$commit")" --arg merge_sha "$GITHUB_SHA" \
+            --arg merge_tree "$(jq -r '.commit.tree.sha' <<<"$commit")" \
+            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --arg scope "$SCOPE" \
+            '{schema: 1, kind: $kind, scope: $scope, pr: $pr, head_sha: $head, base_ref: $base_ref, base_sha: $base_sha,
+              merge_sha: $merge_sha, merge_tree: $merge_tree, run_id: $run_id, run_attempt: $run_attempt}' \
+            | tee "$RUNNER_TEMP/ci-candidate/receipt.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-candidate-backend-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-candidate/receipt.json
+          if-no-files-found: error
 
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check

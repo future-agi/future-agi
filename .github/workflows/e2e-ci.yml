@@ -13,6 +13,15 @@ on:
   push:
     branches: [dev, main]
   merge_group:
+  # Retarget proof (retarget-proof.yml) calls this workflow on a pull request
+  # whose base changed. No secrets are forwarded.
+  workflow_call:
+    inputs:
+      job_prefix:
+        # How the caller's jobs prefix these job names ("<caller job> / ").
+        type: string
+        required: false
+        default: ""
   # The Standalone leg (E2E_STACK=standalone): nightly, on demand, and next to
   # the Distributed leg on a PR that carries the e2e-standalone label. Adding a
   # label starts no run (see `types` above), so add e2e-standalone, then push or
@@ -41,7 +50,7 @@ permissions:
 concurrency:
   # Every landing needs its own verdict, even if several arrive while one runs.
   # Only the independent cache publisher coalesces pending pushes.
-  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-candidate
+  group: e2e-ci-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -1593,6 +1602,7 @@ jobs:
       SKILLS_COHORT: ordinary
       E2E_STACK: ${{ matrix.stack }}
       E2E_QUARANTINE_TODAY: ${{ needs.changes.outputs.today }}
+      E2E_JOB_PREFIX: ${{ inputs.job_prefix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1713,3 +1723,43 @@ jobs:
             echo "::error::Skills E2E did not pass (receipts: $SKILLS, e2e needed: ${E2E_NEEDED:-<none>})."
             exit 1
           fi
+
+  candidate-receipt:
+    # Not part of the required check: records which merge candidate this run
+    # tested, for the "CI ran on this base" check (.github/scripts/ci_base_gate.py).
+    # Only on pull requests whose suite was selected, ran and passed; its own
+    # failure never changes the required verdict. Default permissions (read).
+    name: Record the tested merge candidate
+    needs: [changes, e2e-tests]
+    if: ${{ github.event_name == 'pull_request' && needs.e2e-tests.result == 'success' && needs.changes.outputs.any == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the merge candidate this run tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIND: e2e
+          # Whether the suite ran with the private package ("internal") or
+          # without it ("oss", as merge groups and Retarget proof do). E2E never uses it.
+          SCOPE: oss
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA")
+          # GITHUB_SHA is the merge of the head onto the base tip this run used.
+          jq -e --arg head "$HEAD_SHA" '(.parents | length) == 2 and .parents[1].sha == $head' <<<"$commit" > /dev/null
+          mkdir -p "$RUNNER_TEMP/ci-candidate"
+          jq -n --arg kind "$KIND" --argjson pr "$PR" --arg head "$HEAD_SHA" --arg base_ref "$BASE_REF" \
+            --arg base_sha "$(jq -r '.parents[0].sha' <<<"$commit")" --arg merge_sha "$GITHUB_SHA" \
+            --arg merge_tree "$(jq -r '.commit.tree.sha' <<<"$commit")" \
+            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --arg scope "$SCOPE" \
+            '{schema: 1, kind: $kind, scope: $scope, pr: $pr, head_sha: $head, base_ref: $base_ref, base_sha: $base_sha,
+              merge_sha: $merge_sha, merge_tree: $merge_tree, run_id: $run_id, run_attempt: $run_attempt}' \
+            | tee "$RUNNER_TEMP/ci-candidate/receipt.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-candidate-e2e-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-candidate/receipt.json
+          if-no-files-found: error

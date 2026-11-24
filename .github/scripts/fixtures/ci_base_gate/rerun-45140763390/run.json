@@ -1,0 +1,10 @@
+{
+  "id": 45140763390,
+  "name": "E2E CI",
+  "path": ".github/workflows/e2e-ci.yml",
+  "event": "pull_request",
+  "head_sha": "6c9b83e99a8484d8781a580810f8d6fed75722df",
+  "run_attempt": 3,
+  "status": "completed",
+  "conclusion": "success"
+}
