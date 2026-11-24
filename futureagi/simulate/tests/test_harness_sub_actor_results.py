@@ -535,3 +535,29 @@ def test_a_trial_that_ended_on_our_side_never_blames_the_agent_in_verify_or_fix_
     # The agent broke the conversation itself: that is its failure.
     agent = {**off_script, "failure": {"domain": "agent", "code": "agent_hung_up"}}
     assert trial_passed(agent["sub_goals"], "errored", agent["failure"]) is False
+
+
+def test_compare_counts_an_agent_that_stalled_as_a_failed_trial_and_our_failure_as_no_trial():
+    from simulate.services.run_compare import ScenarioTrials
+
+    goals = [{"name": "replied", "held": False, "verdict": "fail"}]
+
+    stalled = ScenarioTrials("case")
+    stalled.add(
+        goals,
+        "errored",
+        "error",
+        None,
+        {"domain": "agent", "code": "target_agent_stalled"},
+    )
+    assert (stalled.side()["passed"], stalled.side()["trials"]) == (0, 1)
+
+    ours = ScenarioTrials("case")
+    ours.add(
+        goals,
+        "errored",
+        "error",
+        None,
+        {"domain": "simulator", "code": "caller_off_script"},
+    )
+    assert (ours.side()["trials"], ours.side()["undecided"]) == (0, 0)

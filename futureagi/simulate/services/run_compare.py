@@ -125,20 +125,26 @@ class ScenarioTrials:
     sub_goals: set[str] = field(default_factory=set)
 
     def add(
-        self, sub_goals: Any, harness_status: Any, call_outcome: Any, eval_outcome: Any
+        self,
+        sub_goals: Any,
+        harness_status: Any,
+        call_outcome: Any,
+        eval_outcome: Any,
+        failure: Any = None,
     ) -> None:
         for one in sub_goals or []:
             if isinstance(one, Mapping) and one.get("name"):
                 self.sub_goals.add(str(one["name"]))
-        outcome = (
-            None
-            if call_outcome in _UNRUN_OUTCOMES
-            else trial_passed(sub_goals, harness_status)
+        # A trial that errored on the agent's own failure (it stalled, it hung up) ran: it is the agent's failure.
+        agents = isinstance(failure, Mapping) and failure.get("domain") == "agent"
+        unrun = call_outcome in _UNRUN_OUTCOMES and not (
+            call_outcome == "error" and agents
         )
+        outcome = None if unrun else trial_passed(sub_goals, harness_status, failure)
         if outcome is not None:
             self.decided += 1
             self.passed += int(outcome)
-        elif call_outcome not in _UNRUN_OUTCOMES:
+        elif not unrun:
             self.undecided += 1
         if eval_outcome in ("passed", "failed"):
             self.eval_measured += 1

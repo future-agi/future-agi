@@ -1494,12 +1494,16 @@ def build_run_comparison(
                     "call_metadata", "harness_outcome_status"
                 ),
                 result_unverified=_json_value("call_metadata", UNVERIFIED_KEY),
+                result_failure_domain=_json_text(
+                    "call_metadata", "hosted_harness_receipt", "failure", "domain"
+                ),
             )
             fields += [
                 "result_eval_outcome",
                 "result_receipt_sub_goals",
                 "result_harness_status",
                 "result_unverified",
+                "result_failure_domain",
             ]
         for scenario_key, scenario_label, outcome, *trial in calls.values_list(
             *fields
@@ -1511,7 +1515,9 @@ def build_run_comparison(
             elif outcome == "failed":
                 counts[key][1] += 1
             if trial:
-                eval_outcome, sub_goals, harness_status, unverified = trial
+                eval_outcome, sub_goals, harness_status, unverified, failure_domain = (
+                    trial
+                )
                 trials.setdefault(key, run_compare.ScenarioTrials(labels[key])).add(
                     (
                         graded_sub_goals(sub_goals, unverified or [])
@@ -1521,6 +1527,7 @@ def build_run_comparison(
                     harness_status,
                     outcome,
                     eval_outcome,
+                    {"domain": failure_domain} if failure_domain else None,
                 )
         return (
             {
