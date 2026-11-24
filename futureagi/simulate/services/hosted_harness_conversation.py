@@ -182,6 +182,7 @@ def conversation_history(
     back past the window a conversation read carries, or, with `around`, the messages around that message, so a change
     that cites it can show it in place. Raises `MessageNotInConversation` when `around` is not this conversation's."""
     rows_of = conversation.messages if kind == "messages" else conversation.events
+    rows: list
     if around is not None:
         target = (
             conversation.messages.filter(id=around)
