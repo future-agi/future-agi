@@ -1,5 +1,6 @@
 """A candidate's changed files, counted once when it is stored, so reading an epoch never
-reads its patch. A nullable column only; 0118 counts the candidates stored before it."""
+reads its patch. A nullable column only: a candidate stored before it has none, and
+reads with no change line."""
 
 from django.db import migrations, models
 

@@ -1,14 +1,9 @@
 """An epoch's result in words: the epoch page's read and the pull request's body say the
 same sentences, from the patch that ships."""
 
-import importlib
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from django.apps import apps
-from minio.error import S3Error
-from urllib3.exceptions import MaxRetryError
 
 from simulate.models import AgentFixCandidate, AgentFixRun
 from simulate.pydantic_schemas.agent_fix import (
@@ -345,78 +340,6 @@ class TestCountedWhenStored:
         assert "Changes café.py: 1 line added, 0 removed." in body
         assert "| `café.py` | +1 | −0 |" in body
         assert "\\303" not in body
-
-
-_MIGRATION = importlib.import_module(
-    "simulate.migrations.0118_agent_fix_candidate_count_changed_files"
-)
-
-
-def _stored(body):
-    return SimpleNamespace(
-        read=lambda: body, close=lambda: None, release_conn=lambda: None
-    )
-
-
-class TestBackfill:
-    """Candidates stored before their files were counted are counted from their patch."""
-
-    def _two(self, source_run):
-        fix_run = _fix_run(source_run)
-        first = _candidate(fix_run, attempt=1)
-        second = _candidate(fix_run, attempt=2)
-        AgentFixCandidate.no_workspace_objects.filter(fix_run=fix_run).update(
-            changed_files=None
-        )
-        return first, second
-
-    def _run(self, client):
-        with patch(
-            "tfc.utils.storage_client.bounded_storage_client", return_value=client
-        ) as made:
-            _MIGRATION.count_changed_files(apps, None)
-        return made
-
-    def test_each_readable_patch_is_counted_and_a_missing_one_left_alone(
-        self, source_run
-    ):
-        first, second = self._two(source_run)
-        missing = S3Error(None, "NoSuchKey", "gone", "k", "r", "h")
-        client = MagicMock()
-        client.get_object.side_effect = lambda bucket, key: (
-            _stored(_SHIPPED)
-            if key == second.patch_object_key
-            else (_ for _ in ()).throw(missing)
-        )
-
-        self._run(client)
-
-        first.refresh_from_db()
-        second.refresh_from_db()
-        assert first.changed_files is None
-        assert second.changed_files == [list(one) for one in patch_files(_SHIPPED)]
-
-    def test_storage_that_is_down_stops_the_pass_after_one_read(self, source_run):
-        first, second = self._two(source_run)
-        client = MagicMock()
-        client.get_object.side_effect = MaxRetryError(None, "storage", "refused")
-
-        made = self._run(client)
-
-        # A client that gives up fast, asked once, and nothing counted.
-        assert made.call_args.kwargs == {"connect": 5, "read": 30, "retries": 1}
-        assert client.get_object.call_count == 1
-        first.refresh_from_db()
-        second.refresh_from_db()
-        assert first.changed_files is None and second.changed_files is None
-
-    def test_nothing_to_count_asks_storage_nothing(self, source_run):
-        fix_run = _fix_run(source_run)
-        _candidate(fix_run)
-
-        made = self._run(MagicMock())
-
-        made.assert_not_called()
 
 
 class TestNoIdsInThePullRequest:
