@@ -230,6 +230,8 @@ export default function AgentDefinitionTab() {
   const isCode = kind === "source";
   const details = stored.data;
   const traced = TRACED.has(details?.agent?.instrumentation);
+  const tracingUnknown = isCode && stored.isError;
+  const traceMode = traced ? "link" : tracingUnknown ? "both" : "setup";
   const facts = factsOf(agent ?? {}, version ?? {}, details?.agent);
   const source = agent?.source ?? version?.config?.provider;
   const readFrom = source ? sourceLabel(source) : null;
@@ -317,7 +319,7 @@ export default function AgentDefinitionTab() {
         >
           {!isCode
             ? "Not linked · turn observability on to pull its calls in"
-            : traced
+            : traced || tracingUnknown
               ? "Not linked"
               : "Not traced · its code has no traceAI or OpenTelemetry"}
         </Typography>
@@ -336,7 +338,11 @@ export default function AgentDefinitionTab() {
                 disabled={!canEdit}
                 onClick={() => setConnecting(true)}
               >
-                {traced ? "Link a project" : "Set up tracing"}
+                {traced
+                  ? "Link a project"
+                  : tracingUnknown
+                    ? "Connect traces"
+                    : "Set up tracing"}
               </Button>
             </span>
           </CustomTooltip>
@@ -439,7 +445,7 @@ export default function AgentDefinitionTab() {
       {!agent || (isCode && stored.isLoading) ? (
         <ObservabilityToggleSkeleton />
       ) : (
-        (!isCode || traced) && (
+        (!isCode || traced || agent.observabilityEnabled) && (
           <ObservabilityToggle agent={agent} isCode={isCode} />
         )
       )}
@@ -458,7 +464,7 @@ export default function AgentDefinitionTab() {
       {agent && isCode && (
         <ConnectTracesDrawer
           agent={agent}
-          mode={traced ? "link" : "setup"}
+          mode={traceMode}
           open={connecting}
           onClose={() => setConnecting(false)}
           canEdit={canEdit}

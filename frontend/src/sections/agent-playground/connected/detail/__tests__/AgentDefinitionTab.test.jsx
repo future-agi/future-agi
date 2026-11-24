@@ -209,6 +209,43 @@ describe("AgentDefinitionTab", () => {
     expect(within(drawer).queryByLabelText("Observe project")).toBeNull();
   });
 
+  it("does not call a code agent untraced when its stored Agent fails to load", async () => {
+    serve(CODE_AGENT_DETAIL, { [CODE_VERSION_DETAIL.id]: CODE_VERSION_DETAIL });
+    const served = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url) =>
+      /\/agent\/$/.test(url)
+        ? Promise.reject({ statusCode: 500, message: "Server error" })
+        : served(url),
+    );
+    renderAt(CODE_AGENT_DETAIL);
+    expect(await screen.findByText("Server error")).toBeInTheDocument();
+    const row = screen.getByTestId("observe-project-link");
+    expect(row).toHaveTextContent("Not linked");
+    expect(row).not.toHaveTextContent("Not traced");
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Connect traces" }),
+    );
+    const drawer = await screen.findByRole("presentation");
+    expect(
+      within(drawer).getByText("Connect production traces"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the observability switch for an untraced code agent that has it on", async () => {
+    const observed = { ...CODE_AGENT_DETAIL, observability_enabled: true };
+    serve(
+      observed,
+      { [CODE_VERSION_DETAIL.id]: CODE_VERSION_DETAIL },
+      { [CODE_VERSION_DETAIL.id]: STORED_AGENT },
+    );
+    renderAt(observed);
+    const row = await screen.findByTestId("observe-project-link");
+    expect(row).toHaveTextContent("Not traced");
+    expect(
+      screen.getByRole("checkbox", { name: "Observability" }),
+    ).toBeChecked();
+  });
+
   it("lets a traced code agent link a project and switch observability on", async () => {
     serve(
       CODE_AGENT_DETAIL,
