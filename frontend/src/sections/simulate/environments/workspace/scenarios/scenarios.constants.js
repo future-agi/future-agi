@@ -88,12 +88,14 @@ export const LIFECYCLE_COPY = {
     reproveAll: "Re-prove all",
     reproveAllHint:
       "Proves every scenario again in a test sandbox. It doesn't start a paid run.",
-    validating: "Validating…",
     progress: (n) => `Validating ${n} ${n === 1 ? "scenario" : "scenarios"}`,
+    // The tab's one line while a validation runs.
+    runningLine: (n) =>
+      `Validating ${n > 0 ? `${n} ${n === 1 ? "scenario" : "scenarios"}` : "scenarios"}. Save waits until it finishes; runs use the saved version.`,
     reproveConfirmTitle: (n) =>
       n > 0 ? `Re-prove all ${n} scenarios?` : "Re-prove every scenario?",
     reproveConfirmBody:
-      "Each one is proved again in a test sandbox, including the ones already proved. Save waits until it finishes. It doesn't start a paid run.",
+      "Every scenario is validated again, including proved ones. Save waits until it finishes; runs use the saved version.",
     done: (proved, total) =>
       Number.isInteger(total) && total > 0
         ? `Validation finished · proved ${proved} of ${total}`

@@ -1033,24 +1033,20 @@ describe("RunDialog", () => {
       state.cases = undefined;
     });
 
-    it("says how many run, why the rest are held back, and runs that many", async () => {
-      const user = userEvent.setup();
+    it("says how many run, why the rest are held back, and runs that many", () => {
       state.selection = selection();
       renderDialog();
       expect(screen.getByText("1 of 2 will run")).toBeInTheDocument();
       expect(screen.getByText("Held back · 1")).toBeInTheDocument();
+      const held = within(screen.getByTestId("run-held-back"));
+      expect(held.getByText("Refund twice")).toBeInTheDocument();
       expect(
-        screen.getByText("Not proved on these versions yet · 1"),
-      ).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "Show which" }));
-      expect(
-        screen.getByText("Refund twice · Not proved on these versions yet"),
+        held.getByText("Not proved on these versions yet"),
       ).toBeInTheDocument();
       expect(runButton()).toHaveTextContent("Run 1 scenario");
     });
 
-    it("words a held-back code the report sends no text for", async () => {
-      const user = userEvent.setup();
+    it("words a held-back code the report sends no text for", () => {
       state.selection = selection({
         held_back: {
           count: 1,
@@ -1063,14 +1059,32 @@ describe("RunDialog", () => {
       });
       renderDialog();
       expect(
-        screen.getByText("These versions failed their check together · 1"),
+        screen.getByText("These versions failed their check together"),
       ).toBeInTheDocument();
-      await user.click(screen.getByRole("button", { name: "Show which" }));
-      expect(
-        screen.getByText(
-          "Refund twice · These versions failed their check together",
-        ),
-      ).toBeInTheDocument();
+    });
+
+    it("lists five held scenarios, the rest one click away, and counts what the report leaves out", async () => {
+      const user = userEvent.setup();
+      const keys = ["a", "b", "c", "d", "e", "f"];
+      state.selection = selection({
+        held_back: {
+          count: 8,
+          keys,
+          names: {},
+          by: { not_validated: 6, proof_failed: 2 },
+          by_key: Object.fromEntries(keys.map((key) => [key, "not_validated"])),
+          truncated: true,
+        },
+        reasons: { not_validated: "Not proved yet", proof_failed: "Failed" },
+      });
+      renderDialog();
+      const held = within(screen.getByTestId("run-held-back"));
+      expect(held.getAllByRole("listitem")).toHaveLength(5);
+      // A reason no listed scenario carries is still counted.
+      expect(held.getByText("Failed · 2")).toBeInTheDocument();
+      expect(held.getByText("and 2 more")).toBeInTheDocument();
+      await user.click(held.getByRole("button", { name: "Show 1 more" }));
+      expect(held.getAllByRole("listitem")).toHaveLength(6);
     });
 
     it("puts the changed-since-proved warning in its own box with every key one click away", async () => {

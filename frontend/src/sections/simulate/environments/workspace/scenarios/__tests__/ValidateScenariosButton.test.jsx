@@ -89,12 +89,14 @@ describe("ValidateScenariosButton", () => {
       total: 5,
     });
     renderButton();
+    // The tab's own line says it's running, so the button only waits.
+    await waitFor(() =>
+      expect(getScenarioValidation).toHaveBeenCalledWith("env-1", "val-9"),
+    );
     expect(
-      await screen.findByRole("button", { name: "Validating 3 scenarios" }),
+      screen.getByRole("button", { name: "Validate cases not yet proved" }),
     ).toBeDisabled();
-    expect(
-      screen.getByText("Save waits until it finishes."),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Save waits until it finishes.")).toBeNull();
     expect(getScenarioValidation).toHaveBeenCalledWith("env-1", "val-9");
     expect(validateScenarios).not.toHaveBeenCalled();
   });

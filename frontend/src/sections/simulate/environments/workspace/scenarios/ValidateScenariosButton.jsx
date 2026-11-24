@@ -35,7 +35,7 @@ export default function ValidateScenariosButton({
   const { enqueueSnackbar } = useSnackbar();
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const [validationJobId, setValidationJobId] = useState(null);
-  // Re-prove all redoes proved scenarios too and blocks runs meanwhile, so it asks first.
+  // Re-prove all redoes proved scenarios too and holds Save meanwhile, so it asks first.
   const [confirming, setConfirming] = useState(false);
   const [message, setMessage] = useState(null);
   const start = useValidateScenarios(envId);
@@ -117,23 +117,19 @@ export default function ValidateScenariosButton({
   let said = null;
   if (!quiet) {
     said = message || ended || (elsewhere ? COPY.elsewhere : null);
-    if (running && !said) said = COPY.saveWaits;
+    // On the tab one line above says it for every button.
+    if (running && scoped && !said) said = COPY.saveWaits;
   }
 
-  // Proofs are recorded only when the validation ends, so while it runs the status says how many it is proving,
-  // never how many are done.
-  const proving = scoped
-    ? keys.length
-    : Math.max((status.data?.total ?? 0) - (status.data?.proved ?? 0), 0);
-  const text = running
-    ? proving > 0
-      ? COPY.progress(proving)
-      : COPY.validating
-    : nothing
-      ? COPY.nothing
-      : didNotFinish && !quiet
-        ? COPY.tryAgain
-        : label;
+  // Proofs are recorded only when the validation ends, so it says how many it is proving, never how many are done.
+  const text =
+    running && scoped
+      ? COPY.progress(keys.length)
+      : nothing
+        ? COPY.nothing
+        : didNotFinish && !quiet
+          ? COPY.tryAgain
+          : label;
 
   return (
     <Stack direction="row" alignItems="center" spacing={1}>
@@ -157,7 +153,7 @@ export default function ValidateScenariosButton({
             }
             sx={scenarioToolbarButtonSx}
           >
-            {quiet && running ? COPY.validating : text}
+            {text}
           </Button>
         </span>
       </Tooltip>

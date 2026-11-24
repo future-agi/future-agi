@@ -6,7 +6,7 @@ const RUNNABLE = new Set(["active", "kept_as_written"]);
 const NO_VALIDATION = "validation_unavailable";
 
 const TONES = {
-  draft: "warning",
+  draft: "danger",
   kept_as_written: "warning",
   archived: "neutral",
   runs_unvalidated: "neutral",

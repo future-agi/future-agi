@@ -22,6 +22,7 @@ const LIFECYCLE_ICONS = {
   runs_unvalidated: "solar:info-circle-linear",
 };
 const LIFECYCLE_ICON_COLORS = {
+  danger: "status.danger.fg",
   warning: "status.warning.fg",
   neutral: "text.secondary",
 };
@@ -45,37 +46,61 @@ export function NotMeasuredChip({ lifecycle }) {
 }
 NotMeasuredChip.propTypes = { lifecycle: PropTypes.object };
 
-// A row's state as one small mark, its name and reason on hover. Active rows get none.
-export function LifecycleMark({ lifecycle, validating = false }) {
-  if (validating) {
-    return (
-      <StatusBadge
-        status="validating"
-        role="info"
-        label={LIFECYCLE_COPY.validate.rowValidating}
-        size="sm"
-        dot={false}
-      />
-    );
-  }
-  const chip = lifecycleChip(lifecycle);
-  if (!chip) return <NotMeasuredChip lifecycle={lifecycle} />;
-  const title = chip.hover ? `${chip.label}: ${chip.hover}` : chip.label;
+function Mark({ icon, label, title, color, testId }) {
   return (
     <Tooltip arrow title={title}>
       <Box
         role="img"
-        aria-label={chip.label}
-        data-testid="lifecycle-mark"
-        sx={{
-          display: "flex",
-          flexShrink: 0,
-          color: LIFECYCLE_ICON_COLORS[chip.tone],
-        }}
+        aria-label={label}
+        data-testid={testId}
+        sx={{ display: "flex", flexShrink: 0, color }}
       >
-        <Iconify icon={LIFECYCLE_ICONS[chip.key]} width={14} />
+        <Iconify icon={icon} width={14} />
       </Box>
     </Tooltip>
+  );
+}
+Mark.propTypes = {
+  icon: PropTypes.string,
+  label: PropTypes.string,
+  title: PropTypes.string,
+  color: PropTypes.string,
+  testId: PropTypes.string,
+};
+
+// A row's state as one small mark, its name and reason on hover, so the scenario's name keeps its room. Active rows
+// get none.
+export function LifecycleMark({ lifecycle, validating = false }) {
+  if (validating) {
+    return (
+      <Typography
+        sx={{ typography: "s3", color: "text.secondary", flexShrink: 0 }}
+      >
+        {LIFECYCLE_COPY.validate.rowValidating}
+      </Typography>
+    );
+  }
+  const chip = lifecycleChip(lifecycle);
+  if (!chip) {
+    if (!isNotMeasured(lifecycle)) return null;
+    return (
+      <Mark
+        icon="solar:eye-closed-linear"
+        label={LIFECYCLE_COPY.notMeasured}
+        title={`${LIFECYCLE_COPY.notMeasured}${lifecycle.warning_text ? `: ${lifecycle.warning_text}` : ""}`}
+        color={LIFECYCLE_ICON_COLORS.warning}
+        testId="not-measured-mark"
+      />
+    );
+  }
+  return (
+    <Mark
+      icon={LIFECYCLE_ICONS[chip.key]}
+      label={chip.label}
+      title={chip.hover ? `${chip.label}: ${chip.hover}` : chip.label}
+      color={LIFECYCLE_ICON_COLORS[chip.tone]}
+      testId="lifecycle-mark"
+    />
   );
 }
 LifecycleMark.propTypes = {

@@ -634,7 +634,7 @@ describe("ScenarioEditor test conditions", () => {
 });
 
 describe("ScenarioEditor grading-only fields", () => {
-  it("labels only the fields the environment keeps for grading", () => {
+  it("groups only the fields the environment keeps for grading under one badge", () => {
     render(
       <ScenarioEditor
         open
@@ -646,9 +646,12 @@ describe("ScenarioEditor grading-only fields", () => {
         privateFields={["tests", "negative_controls"]}
       />,
     );
-    expect(
-      screen.getByLabelText("Passes when · Grading only"),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("Sub-goals")).toBeInTheDocument();
+    expect(screen.getAllByText("Grading only")).toHaveLength(1);
+    const marked = screen.getByText("How it's marked");
+    const after = (field) =>
+      marked.compareDocumentPosition(screen.getByLabelText(field)) &
+      Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(after("Passes when")).toBeTruthy();
+    expect(after("Sub-goals")).toBeFalsy();
   });
 });

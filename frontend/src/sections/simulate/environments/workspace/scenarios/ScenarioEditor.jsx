@@ -15,6 +15,7 @@ import {
 
 import { ConfirmDialog } from "src/components/custom-dialog";
 import StatusBadge from "src/components/status-badge/StatusBadge";
+import Iconify from "src/components/iconify";
 import SideDrawer from "../../components/SideDrawer";
 import {
   focusBuilderChat,
@@ -54,12 +55,7 @@ export default function ScenarioEditor({
   env,
   privateFields = [],
 }) {
-  // A field only the grader reads says so on its label and its hint.
   const isPrivate = (field) => privateFields.includes(field);
-  const labelFor = (label, field) =>
-    isPrivate(field) ? `${label} · ${EDITOR_COPY.gradingOnly}` : label;
-  const hintFor = (hint, field) =>
-    isPrivate(field) ? `${hint} ${EDITOR_COPY.gradingOnlyHint}` : hint;
   const [saveError, setSaveError] = useState("");
   // The server's problems with the test conditions, each naming the fault (`index`) and its field.
   const [faultProblems, setFaultProblems] = useState([]);
@@ -264,6 +260,35 @@ export default function ScenarioEditor({
     onClose();
   };
 
+  // Both sit under How it's marked when only the grader reads them.
+  const testsField = (
+    <TextField
+      size="small"
+      label="Passes when"
+      multiline
+      minRows={2}
+      value={draft.tests || ""}
+      disabled={!canEdit("tests")}
+      onChange={(e) => set("tests")(e.target.value)}
+      helperText={
+        canEdit("tests")
+          ? "What a pass looks like. Evals grade against this."
+          : READ_ONLY_HINT
+      }
+    />
+  );
+  const subGoalsField = (
+    <TextField
+      size="small"
+      label="Sub-goals"
+      multiline
+      minRows={3}
+      value={draft.subGoalsText || ""}
+      disabled
+      helperText={READ_ONLY_HINT}
+    />
+  );
+
   return (
     <SideDrawer open={open} onClose={onClose} width={620}>
       <Stack sx={{ height: "100%" }}>
@@ -319,30 +344,20 @@ export default function ScenarioEditor({
             disabled
             helperText={READ_ONLY_HINT}
           />
-          <TextField
-            size="small"
-            label={labelFor("Passes when", "tests")}
-            multiline
-            minRows={2}
-            value={draft.tests || ""}
-            disabled={!canEdit("tests")}
-            onChange={(e) => set("tests")(e.target.value)}
-            helperText={hintFor(
-              canEdit("tests")
-                ? "What a pass looks like. Evals grade against this."
-                : READ_ONLY_HINT,
-              "tests",
-            )}
-          />
-          <TextField
-            size="small"
-            label={labelFor("Sub-goals", "sub_goals")}
-            multiline
-            minRows={3}
-            value={draft.subGoalsText || ""}
-            disabled
-            helperText={hintFor(READ_ONLY_HINT, "sub_goals")}
-          />
+          {!isPrivate("tests") && testsField}
+          {!isPrivate("sub_goals") && subGoalsField}
+          {(isPrivate("tests") || isPrivate("sub_goals")) && (
+            <>
+              <SectionHeader
+                title={EDITOR_COPY.markedSection}
+                tag={EDITOR_COPY.gradingOnly}
+                tagHint={EDITOR_COPY.gradingOnlyHint}
+                tagIcon="solar:lock-keyhole-linear"
+              />
+              {isPrivate("tests") && testsField}
+              {isPrivate("sub_goals") && subGoalsField}
+            </>
+          )}
 
           <SectionHeader
             title={EDITOR_COPY.personaSection}
@@ -425,6 +440,9 @@ export default function ScenarioEditor({
               <SectionHeader
                 title={TEST_CONDITIONS_COPY.heading}
                 hint={canEdit("faults") ? REPROOF_HINT : READ_ONLY_HINT}
+                tag={isPrivate("faults") ? EDITOR_COPY.gradingOnly : undefined}
+                tagHint={EDITOR_COPY.gradingOnlyHint}
+                tagIcon="solar:lock-keyhole-linear"
               />
               <TestConditionsEditor
                 faults={draft.faults || []}
@@ -649,7 +667,7 @@ PersonaField.propTypes = {
   multiple: PropTypes.bool,
 };
 
-function SectionHeader({ title, hint, tag, tagHint }) {
+function SectionHeader({ title, hint, tag, tagHint, tagIcon }) {
   return (
     <Box>
       <Stack direction="row" alignItems="center" spacing={1}>
@@ -664,15 +682,28 @@ function SectionHeader({ title, hint, tag, tagHint }) {
         </Typography>
         {tag && (
           <Tooltip arrow title={tagHint || ""}>
-            <span>
+            <Stack
+              component="span"
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+            >
+              {tagIcon && (
+                <Iconify
+                  icon={tagIcon}
+                  width={12}
+                  sx={{ color: "text.secondary" }}
+                />
+              )}
               <StatusBadge
                 status="audience"
                 role="neutral"
+                variant="badge"
                 label={tag}
                 size="sm"
                 dot={false}
               />
-            </span>
+            </Stack>
           </Tooltip>
         )}
       </Stack>
@@ -689,4 +720,5 @@ SectionHeader.propTypes = {
   hint: PropTypes.string,
   tag: PropTypes.string,
   tagHint: PropTypes.string,
+  tagIcon: PropTypes.string,
 };

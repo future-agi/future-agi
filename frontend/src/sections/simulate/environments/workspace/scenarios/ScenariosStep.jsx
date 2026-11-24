@@ -5,8 +5,10 @@ import {
   Stack,
   Typography,
   Button,
+  Collapse,
   ClickAwayListener,
   Tooltip,
+  useMediaQuery,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
 import { useSearchParams } from "react-router-dom";
@@ -354,6 +356,7 @@ export default function ScenariosStep({
 
   // Only versioned environments carry lifecycle counts; unversioned ones show no line and no State filter.
   const countsText = countsLine(pageData.proofCounts);
+  const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   // The rows a running validation is proving read Validating.
   const { data: runningValidation } = useRunningScenarioValidation(
     pageData.proofCounts ? env?.id : null,
@@ -704,10 +707,38 @@ export default function ScenariosStep({
               )}
             </Box>
 
+            <Collapse
+              in={Boolean(runningValidation?.job_id)}
+              timeout={reduceMotion ? 0 : undefined}
+              unmountOnExit
+              sx={{ flexShrink: 0 }}
+            >
+              <Stack
+                role="status"
+                direction="row"
+                alignItems="center"
+                spacing={1}
+                data-testid="validating-line"
+                sx={{ pb: 1 }}
+              >
+                <Iconify
+                  icon="solar:hourglass-line-linear"
+                  width={16}
+                  sx={{ color: "text.secondary", flexShrink: 0 }}
+                />
+                <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+                  {LIFECYCLE_COPY.validate.runningLine(
+                    runningValidation?.scenario_keys?.length ||
+                      runningValidation?.to_prove,
+                  )}
+                </Typography>
+              </Stack>
+            </Collapse>
             {countsText && (
               <Stack
                 direction="row"
                 alignItems="center"
+                justifyContent="flex-end"
                 flexWrap="wrap"
                 columnGap={1}
                 rowGap={0.5}
@@ -749,12 +780,7 @@ export default function ScenariosStep({
                   </Tooltip>
                 )}
                 {!rowsLocked && env?.id && (
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    spacing={0.5}
-                    sx={{ ml: "auto" }}
-                  >
+                  <Stack direction="row" alignItems="center" spacing={0.5}>
                     <ValidateScenariosButton envId={env.id} />
                     <ValidateScenariosButton
                       envId={env.id}

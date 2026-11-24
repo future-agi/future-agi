@@ -519,6 +519,8 @@ export const RUN_DIALOG_COPY = {
   willRun: (n, of) => `${n} of ${of} will run`,
   heldBackTitle: (n) => `Held back · ${n}`,
   heldReason: (text, n) => `${text} · ${n}`,
+  heldUnlisted: (n) => `and ${n} more`,
+  showMore: (n) => `Show ${n} more`,
   // Held-back codes the report can send without words of its own.
   heldCodes: {
     pair_failed: "These versions failed their check together",

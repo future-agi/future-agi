@@ -19,6 +19,7 @@ export const EDITOR_COPY = {
   personaSection: "Persona",
   callerSection: "Caller",
   constraintsSection: "Call constraints",
+  markedSection: "How it's marked",
   gradingOnly: "Grading only",
   gradingOnlyHint:
     "Private to grading. Never shown to the agent or the simulated people.",
