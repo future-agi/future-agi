@@ -18,6 +18,8 @@ from simulate.services.harness_design_review import (
     READING_STAGE,
     READING_TIMED_OUT,
     REVIEW_KEY,
+    add_edit,
+    approve,
     fail_design_reading,
     fail_stale_reading,
     open_review_after_reading,
@@ -30,8 +32,11 @@ from simulate.tasks.harness_agent_versions import (
     read_agent_for_design_review,
 )
 from simulate.tests.test_harness_design_review import (  # noqa: F401
+    APPROVED_KEY,
     CONTRACT,
     URL,
+    stored_contracts,
+    waiting,
 )
 from simulate.tests.test_harness_design_review_reading import (  # noqa: F401
     SCHEDULE,
@@ -182,6 +187,39 @@ class TestRetryAfterAFailedReading:
         schedule.assert_called_once_with(str(job.id))
         job.refresh_from_db()
         assert stored_review(job)["status"] == READING
+
+
+@pytest.mark.django_db
+class TestApproveRollback:
+    def test_a_build_that_started_before_its_start_failed_keeps_its_design(
+        self,
+        user,
+        waiting,  # noqa: F811
+        stored_contracts,  # noqa: F811
+    ):
+        add_edit(
+            waiting, op="remove", kind="tool", item_id="notify", text=None, user=user
+        )
+
+        def started_then_lost(*_args, **_kwargs):
+            HostedHarnessJob.no_workspace_objects.filter(id=waiting.id).update(
+                state=HostedHarnessJob.State.RUNNING
+            )
+            raise RuntimeError("response lost")
+
+        with (
+            patch(START, side_effect=started_then_lost),
+            patch("simulate.services.agent_contracts.remove_contract") as removed,
+            pytest.raises(HostedHarnessError),
+        ):
+            approve(waiting, user=user, base_url=BASE_URL)
+
+        removed.assert_not_called()
+        waiting.refresh_from_db()
+        assert waiting.state == HostedHarnessJob.State.RUNNING
+        review = stored_review(waiting)
+        assert review["status"] == APPROVED
+        assert review["approved_contract_key"] == APPROVED_KEY
 
 
 class TestApprovedSeed:

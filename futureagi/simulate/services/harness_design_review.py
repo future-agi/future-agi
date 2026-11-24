@@ -851,23 +851,31 @@ def approve(job: HostedHarnessJob, *, user: User, base_url: str) -> HostedHarnes
         )
     except Exception as exc:
         with transaction.atomic():
-            reverted, current = _locked(locked)
-            _write(
-                reverted,
-                {
-                    **current,
-                    "status": AWAITING_APPROVAL,
-                    "approved_by": None,
-                    "approved_at": None,
-                    "approved_contract_key": "",
-                },
+            reverted = HostedHarnessJob.no_workspace_objects.select_for_update().get(
+                id=locked.id
             )
-            reverted.state = HostedHarnessJob.State.RECEIVED
-            reverted.current_stage = AWAITING_STAGE
-            reverted.save(
-                update_fields=["payload", "state", "current_stage", "updated_at"]
+            current = stored_review(reverted) or {}
+            still_queued = (
+                reverted.state == HostedHarnessJob.State.QUEUED
+                and current.get("status") == APPROVED
             )
-        if contract_key:
+            if still_queued:
+                _write(
+                    reverted,
+                    {
+                        **current,
+                        "status": AWAITING_APPROVAL,
+                        "approved_by": None,
+                        "approved_at": None,
+                        "approved_contract_key": "",
+                    },
+                )
+                reverted.state = HostedHarnessJob.State.RECEIVED
+                reverted.current_stage = AWAITING_STAGE
+                reverted.save(
+                    update_fields=["payload", "state", "current_stage", "updated_at"]
+                )
+        if contract_key and still_queued:
             remove_contract(contract_key)
         logger.warning(
             "design_review_build_not_started",
