@@ -7,12 +7,15 @@ import pytest
 from django.utils import timezone
 
 from simulate.models import HostedHarnessJob
+from simulate.services.harness_build_retry import retry_failed_build, retryable
 from simulate.services.harness_design_review import (
     DISCARD_REASON,
     READING,
     READING_FAILED,
+    READING_STAGE,
     READING_TIMED_OUT,
     REVIEW_KEY,
+    fail_design_reading,
     fail_stale_reading,
     open_review_after_reading,
     stored_review,
@@ -27,6 +30,7 @@ from simulate.tests.test_harness_design_review import (  # noqa: F401
     URL,
 )
 from simulate.tests.test_harness_design_review_reading import (  # noqa: F401
+    SCHEDULE,
     SIDE_ROW,
     STORED,
     _reading,
@@ -35,9 +39,13 @@ from simulate.tests.test_harness_design_review_reading import (  # noqa: F401
     review_on,
 )
 
+START = "simulate.temporal.client.start_hosted_harness_gateway_workflow"
+AUTHORING = "simulate.services.harness_usage.require_harness_authoring"
 READ = "simulate.services.agent_reading_sandbox.read_version_contract"
 ACTIVITY_INFO = "tfc.logging.temporal.context.try_activity_info"
 
+
+BASE_URL = "https://platform.example.com"
 
 run_reading = read_agent_for_design_review._original_func
 
@@ -48,11 +56,111 @@ def keep_connection():
         yield
 
 
+def _failed_reading(user, workspace, capture, *, can_retry):
+    job = _reading(user, workspace, _runtime(), capture)
+    assert fail_design_reading(
+        str(job.id),
+        code="agent_unreadable",
+        message="Reading the agent failed.",
+        retryable=can_retry,
+    )
+    job.refresh_from_db()
+    return job
+
+
 def _age_reading(job, seconds):
     review = stored_review(job)
     review["created_at"] = (timezone.now() - timedelta(seconds=seconds)).isoformat()
     job.payload["metadata"][REVIEW_KEY] = review
     job.save(update_fields=["payload", "updated_at"])
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("review_on")
+class TestRetryAfterAFailedReading:
+    def test_a_reading_that_failed_for_good_is_not_tried_again(
+        self, user, workspace, django_capture_on_commit_callbacks
+    ):
+        job = _failed_reading(
+            user, workspace, django_capture_on_commit_callbacks, can_retry=False
+        )
+
+        with (
+            patch(AUTHORING),
+            patch(START) as start,
+            patch(SCHEDULE) as schedule,
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            retry_failed_build(job, user=user, base_url=BASE_URL)
+
+        assert (refused.value.code, refused.value.status_code) == (
+            "build_retry_not_retryable",
+            409,
+        )
+        start.assert_not_called()
+        schedule.assert_not_called()
+        job.refresh_from_db()
+        assert job.state == HostedHarnessJob.State.FAILED
+        assert not retryable(job)
+
+    def test_a_reading_that_cannot_start_again_leaves_the_build_failed(
+        self, user, workspace, django_capture_on_commit_callbacks
+    ):
+        job = _failed_reading(
+            user, workspace, django_capture_on_commit_callbacks, can_retry=True
+        )
+
+        with (
+            patch(AUTHORING),
+            patch(START) as start,
+            patch(SCHEDULE, side_effect=RuntimeError("temporal down")),
+            pytest.raises(HostedHarnessError) as refused,
+        ):
+            retry_failed_build(job, user=user, base_url=BASE_URL)
+
+        assert refused.value.code == "scheduler_unavailable"
+        start.assert_not_called()
+        job.refresh_from_db()
+        assert job.state == HostedHarnessJob.State.FAILED
+        assert job.failure["code"] == "agent_unreadable"
+        assert stored_review(job)["status"] == READING_FAILED
+
+    def test_a_failed_reading_is_read_again_and_never_built_unapproved(
+        self, user, workspace, django_capture_on_commit_callbacks
+    ):
+        job = _failed_reading(
+            user, workspace, django_capture_on_commit_callbacks, can_retry=True
+        )
+        assert retryable(job)
+
+        with patch(AUTHORING), patch(START) as start, patch(SCHEDULE) as schedule:
+            retried, point = retry_failed_build(job, user=user, base_url=BASE_URL)
+
+        assert point == "start"
+        start.assert_not_called()
+        schedule.assert_called_once_with(str(job.id))
+        job.refresh_from_db()
+        assert (job.state, job.current_stage) == (
+            HostedHarnessJob.State.RECEIVED,
+            READING_STAGE,
+        )
+        assert (job.failure, job.terminal_at) == (None, None)
+        assert stored_review(job)["status"] == READING
+        assert retried.state == HostedHarnessJob.State.RECEIVED
+
+    def test_a_reading_stuck_past_its_deadline_can_be_tried_again(
+        self, user, workspace, django_capture_on_commit_callbacks
+    ):
+        job = _reading(user, workspace, _runtime(), django_capture_on_commit_callbacks)
+        _age_reading(job, DESIGN_READING_DEADLINE_SECONDS + 60)
+
+        with patch(AUTHORING), patch(START) as start, patch(SCHEDULE) as schedule:
+            retry_failed_build(job, user=user, base_url=BASE_URL)
+
+        start.assert_not_called()
+        schedule.assert_called_once_with(str(job.id))
+        job.refresh_from_db()
+        assert stored_review(job)["status"] == READING
 
 
 @pytest.mark.django_db

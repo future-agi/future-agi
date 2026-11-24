@@ -365,6 +365,32 @@ def fail_stale_reading(job: HostedHarnessJob) -> bool:
     return failed
 
 
+def reopen_reading(job: HostedHarnessJob) -> None:
+    review = stored_review(job) or {}
+    _write(
+        job,
+        {
+            "status": READING,
+            "agent_version_id": review.get("agent_version_id"),
+            "created_at": timezone.now().isoformat(),
+        },
+    )
+    job.state = HostedHarnessJob.State.RECEIVED
+    job.current_stage = READING_STAGE
+    job.failure = None
+    job.terminal_at = None
+    job.save(
+        update_fields=[
+            "payload",
+            "state",
+            "current_stage",
+            "failure",
+            "terminal_at",
+            "updated_at",
+        ]
+    )
+
+
 def _pin_read_commit(job: HostedHarnessJob, commit_sha: str) -> None:
     source = (job.payload or {}).get("source") or {}
     if not commit_sha or source.get("kind") != "github" or source.get("commit_sha"):
