@@ -291,13 +291,13 @@ def build_session_message_having_predicate(
         # Exact comparisons stay case-sensitive, as `equals` always was here.
         params[param_prefix] = tuple(values)
         sql_op = "IN" if op == "in" else "NOT IN"
-        return f"toString({expression}) {sql_op} %({param_prefix})s"
+        return f"{expression} {sql_op} %({param_prefix})s"
     if op in {"equals", "not_equals"}:
         if filter_value is None:
             return "0 = 1"
         params[param_prefix] = str(filter_value)
         sql_op = "=" if op == "equals" else "!="
-        return f"toString({expression}) {sql_op} %({param_prefix})s"
+        return f"{expression} {sql_op} %({param_prefix})s"
     if op in _LITERAL_TEXT_MATCH_OPS:
         if filter_value is None:
             return "0 = 1"

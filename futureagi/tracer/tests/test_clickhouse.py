@@ -3751,8 +3751,11 @@ class TestSessionListQueryBuilder:
         count_query, _ = builder.build_count_query()
 
         assert "argMin(input, start_time) AS first_message" in query
-        assert "HAVING first_message ILIKE %(having_" in query
-        assert "%recursion%" in params.values()
+        assert (
+            "HAVING positionUTF8(lowerUTF8(toString(first_message)), "
+            "lowerUTF8(toString(%(having_" in query
+        )
+        assert "recursion" in params.values()
         assert "argMin(input, start_time) AS first_message" in count_query
 
     def test_first_message_sort_projects_message_aggregates(self):
