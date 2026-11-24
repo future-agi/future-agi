@@ -603,7 +603,45 @@ class CandidateScope(unittest.TestCase):
                 )[1]
                 self.assertRegex(block, rf"(?m)^    name: {check}( #.*)?$")
                 self.assertIn("    if: ${{ always() }}\n", block)
-                self.assertRegex(text, r"(?m)^  group: .*-candidate$")
+                suffix = (
+                    "-candidate"
+                    if workflow == "python-lint"
+                    else "-${{ github.workflow == 'Retarget proof' && github.run_id || 'candidate' }}"
+                )
+                self.assertRegex(text, rf"(?m)^  group: .*{re.escape(suffix)}$")
+
+    def test_only_retarget_proof_runs_leave_the_candidate_group(self):
+        # Pull request and merge-group runs, direct or through the merge
+        # queue's call, keep today's "candidate" group, so one run per PR is
+        # active and a newer push cancels the older one. Only Retarget proof's
+        # calls get a group of their own: they never cancel, and are never
+        # cancelled by, a pull request's real runs.
+        expression = (
+            "github.workflow == 'Retarget proof' && github.run_id || 'candidate'"
+        )
+
+        def suffix(workflow_name, run_id):
+            # GitHub's && and || return operand values, like Python's.
+            return (workflow_name == "Retarget proof" and run_id) or "candidate"
+
+        for name in ("Backend CI", "E2E CI", "Backend merge queue"):
+            self.assertEqual(suffix(name, "45079002539"), "candidate", name)
+        self.assertEqual(suffix("Retarget proof", "45079002539"), "45079002539")
+        for workflow in ("backend-ci", "e2e-ci"):
+            text = (SCRIPTS.parent / "workflows" / (workflow + ".yml")).read_text()
+            with self.subTest(workflow=workflow):
+                self.assertEqual(text.count(expression), 1)
+                self.assertIn(
+                    "    inputs:\n      job_prefix:\n",
+                    text.split("  workflow_call:\n", 1)[1],
+                )
+                # Empty by default: today's job names hold.
+                block = text.split("      job_prefix:\n", 1)[1].split(
+                    "\n    outputs:", 1
+                )[0]
+                self.assertIn('        default: ""', block)
+        proof = (SCRIPTS.parent / "workflows/retarget-proof.yml").read_text()
+        self.assertIn("name: Retarget proof\n", proof)
 
     def test_update_ci_metadata_events_start_no_jobs(self):
         # Update CI is not required and still starts on edits and labels:
@@ -632,15 +670,35 @@ class CandidateScope(unittest.TestCase):
             "      - id: shards"
         )[0]
         script = textwrap.dedent(selector.split("        run: |\n")[1])
-        for event, head_repo, members, wanted in (
-            ("pull_request", "base/repo", [], "true"),
-            ("pull_request", "fork/repo", [], "false"),
-            ("pull_request", "", [], "false"),
-            ("merge_group", "", ["base/repo", "base/repo"], "false"),
-            ("merge_group", "", ["base/repo", "fork/repo"], "false"),
-            ("push", "", [], "true"),
+        for event, head_repo, members, wanted, caller in (
+            ("pull_request", "base/repo", [], "true", "Backend CI"),
+            ("pull_request", "fork/repo", [], "false", "Backend CI"),
+            ("pull_request", "", [], "false", "Backend CI"),
+            # Retarget proof forwards no secrets: an OSS run, like the queue.
+            ("pull_request", "base/repo", [], "false", "Retarget proof"),
+            ("pull_request", "fork/repo", [], "false", "Retarget proof"),
+            # Unchanged: dev/main pushes, dispatches and schedules are internal.
+            ("workflow_dispatch", "", [], "true", "Backend CI"),
+            ("schedule", "", [], "true", "Backend CI"),
+            (
+                "merge_group",
+                "",
+                ["base/repo", "base/repo"],
+                "false",
+                "Backend merge queue",
+            ),
+            (
+                "merge_group",
+                "",
+                ["base/repo", "fork/repo"],
+                "false",
+                "Backend merge queue",
+            ),
+            ("push", "", [], "true", "Backend CI"),
         ):
-            with self.subTest(event=event, members=members, head=head_repo):
+            with self.subTest(
+                event=event, members=members, head=head_repo, caller=caller
+            ):
                 # Both group compositions produce the same GitHub event shape:
                 # the head is a synthetic ref, not the provenance of its members.
                 payload = (
@@ -661,6 +719,7 @@ class CandidateScope(unittest.TestCase):
                     env=dict(
                         os.environ,
                         GITHUB_EVENT_NAME=event,
+                        GITHUB_WORKFLOW=caller,
                         GITHUB_REPOSITORY="base/repo",
                         PR_HEAD_REPO=head_repo,
                         GITHUB_EVENT_PATH=str(Path("event").resolve()),

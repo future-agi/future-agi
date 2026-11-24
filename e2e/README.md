@@ -33,16 +33,20 @@ Playwright config — and it imports nothing from `frontend/` or `futureagi/`.
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The distributed harness starts the dedicated `code-executor` and sets
-`CODE_EXECUTOR_LOCAL_FALLBACK=false`; it never executes evaluator code in a worker.
-`EVAL-E2E-016` uses the shipped templates and an owned HTTP listener. The executor
-only joins internal Docker networks, with no default route. `allowed.example`
-resolves to the listener at public-numbered `11.23.0.10` **inside that network**,
-not on the internet. `private.example` resolves to its private interface and is
-operator-listed to prove that admission cannot override the public-IP rule.
-The listener never makes outbound requests. Its loopback-only journal is at
-`http://127.0.0.1:28082/requests?prefix=...` (`E2E_LINK_CANARY_URL` in attach mode).
-Redirects point only to that owned private interface. No real third party is contacted.
+Both harness stacks start the dedicated `code-executor` and set
+`CODE_EXECUTOR_LOCAL_FALLBACK=false`; they never execute evaluator code in a worker.
+`EVAL-E2E-016` uses the shipped templates to check link format entirely offline.
+Owned HTTP listeners remain only as negative witnesses: both complete journals must
+stay empty after every browser submission and the Temporal harness task. The executor
+only joins internal Docker networks, with no default route. `allowed.example` and
+`worker-allowed.example` resolve to the listeners at public-numbered `11.23.0.10`
+and `11.23.0.11` **inside those networks**, not on the internet; `private.example`
+resolves to the first listener's private interface. These aliases and local redirects
+make an accidental destination request observable without contacting a real third party.
+The listeners never make outbound requests. Their loopback-only journals are at
+`http://127.0.0.1:28082/requests` and `http://127.0.0.1:28083/requests`
+(`E2E_LINK_CANARY_URL` and `E2E_LINK_WORKER_CANARY_URL` in attach mode).
+The browser's local-only request guard remains in place as an additional boundary.
 
 Error Feed flows use the local mock Slack OAuth/API service and inspect its captured messages at
 `http://localhost:28081/messages`. They seed issue transitions through the authenticated
@@ -697,11 +701,28 @@ merge queue refuses the PR, although the real run is green. Blacksmith edits eve
 about 4 s after it opens, which is how #4332 (green run 45070958943, then skipped run 45070969031)
 and #4001 were refused. This is not documented by GitHub, and `gh pr checks --required` cannot
 show it, because it still lists the older green runs. A retarget therefore starts no run of these
-workflows either. The merge queue re-tests every merge into dev, but main has no queue: a pull
-request moved onto main keeps checks from its old base until a push or reopen runs CI against main.
-Until a check that proves the tested merge candidate lands, do that after every retarget into main.
-Update CI is not required and still starts on edits and labels (`update-rehearsal` starts the Real
-rehearsals).
+workflows either. The merge queue re-tests every merge into dev. For a retarget, **Retarget proof**
+(`.github/workflows/retarget-proof.yml`) first checks that GitHub delivered the retarget with a
+merge of the head onto the new base's current tip. GitHub often sends a retarget, its automatic
+ones included, with the merge from before it; then that check fails and nothing else runs, and a
+push or a close and reopen lets the pull request's own runs test the new base. Otherwise it calls
+Backend CI and E2E CI on that merge. Their jobs appear as `retarget-backend / …` and
+`retarget-e2e / …`, never under a required name, and they never share or cancel the pull request's
+own runs. Like a merge group, its backend leg runs without the private package: no secrets are
+forwarded. A Backend CI or E2E CI run on a pull request whose suite was selected, ran and passed
+records the merge candidate it tested (artifact `ci-candidate-<kind>-attempt-<n>`). The **"CI ran
+on this base"** check (`.github/workflows/ci-base-gate.yml`, not required) passes for a
+retargeted pull request into main only when both a Backend CI and an E2E CI run recorded this pull
+request, this head, this base and its current tip, and the tree of GitHub's current merge
+candidate. It re-reads all of that, and fails closed when anything is missing, skipped, from
+another pull request or stale. A green verdict is **proved against the base tip at its last run**,
+not at merge time: the base can move after it. A receipt is written by the producing run's own
+workflow, which for a pull request comes from that pull request's merge commit, so this check has
+the same trust as the required checks. If `CI_SCOPE_MODE` ever narrows the suites, a retargeted
+pull request whose suite was not selected records no receipt and stays red into main. Until the
+repository owner makes it required on main, push or reopen after a retarget into main if it is
+red. Update CI is not required and still starts on edits and labels (`update-rehearsal` starts the
+Real rehearsals).
 
 To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
 artifact of a green run and regenerate the recorded times:

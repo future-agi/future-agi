@@ -306,17 +306,20 @@ export function fileDurations(merged) {
  * carry the earliest attempt of the copies of its latest job. Fails closed:
  * every shard needs a finished latest job, and the copies must agree.
  */
-export function shardAttempts(stack, total, jobs) {
+export function shardAttempts(stack, total, jobs, prefix = "") {
   if (
     !["distributed", "standalone"].includes(stack) ||
     !Number.isSafeInteger(total) ||
     total < 1
   )
     throw new Error("invalid stack plan");
+  // A caller's jobs prefix these names ("<caller job> / "); none when direct.
+  if (prefix !== "" && !/^[A-Za-z0-9][A-Za-z0-9 _.-]* \/ $/.test(prefix))
+    throw new Error("invalid job prefix");
   const produced = [];
   for (let i = 1; i <= total; i++) {
     const matches = jobs
-      .filter((job) => job.name === `e2e (${stack}, ${i}/${total})`)
+      .filter((job) => job.name === `${prefix}e2e (${stack}, ${i}/${total})`)
       .sort((a, b) => b.run_attempt - a.run_attempt);
     if (
       !matches.length ||
@@ -503,6 +506,7 @@ function downloadReceipts(stack, total) {
     stack,
     total,
     pages(`${run}/jobs?filter=all&per_page=100`, "jobs"),
+    process.env.E2E_JOB_PREFIX ?? "",
   );
   // The last shard writes the once-per-stack record.
   const recordAttempt = attempts[total - 1];
