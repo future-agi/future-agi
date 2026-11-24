@@ -62,7 +62,7 @@ export default function CheckLine({
           }}
         >
           {check.notRun
-            ? `not run — an earlier check failed: ${check.notRunBecause}`
+            ? `Not run: an earlier check failed (${check.notRunBecause})`
             : check.unknown || "Couldn't measure"}
         </Typography>
       )}

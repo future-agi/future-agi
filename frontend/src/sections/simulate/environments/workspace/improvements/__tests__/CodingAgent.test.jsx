@@ -220,7 +220,7 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
       "Held-back scenariosDid not pass on cases your agent wasn't given.",
     );
     expect(rows[4]).toHaveTextContent(
-      "not run — an earlier check failed: Held-back scenarios",
+      "Not run: an earlier check failed (Held-back scenarios)",
     );
     // Nothing of the engine's own words, and no held-back case, reaches the page.
     const text = panel.textContent;

@@ -550,7 +550,7 @@ describe("FixDecisionDrawer without a kept trial", () => {
     const row = trial.getByText("Must-pass scenarios").parentElement;
     expect(
       within(row).getByText(
-        "not run — an earlier check failed: Target scenarios",
+        "Not run: an earlier check failed (Target scenarios)",
       ),
     ).toBeInTheDocument();
     expect(row.getAttribute("data-check")).toBe("not-run");
