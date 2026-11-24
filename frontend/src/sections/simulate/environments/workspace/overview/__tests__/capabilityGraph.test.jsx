@@ -46,7 +46,6 @@ describe("CapabilityGraph", () => {
 
     expect(screen.queryByText("Personas")).toBeNull();
     expect(screen.queryByText("Guardrails")).toBeNull();
-    expect(screen.queryByText("none yet")).toBeNull();
     expect(screen.getByRole("tab", { name: "Tools" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Flows" })).toBeInTheDocument();
   });

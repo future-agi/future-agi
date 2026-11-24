@@ -178,13 +178,19 @@ describe("ChatCallDrawer errored call", () => {
     );
   });
 
-  it("shows no reason for a call that did not error", () => {
+  it("shows a reason on a call that did not error as a note, not an error", () => {
+    const reason = "Held for review while the scenario is rechecked.";
     render(
       <ChatCallDrawer
-        task={{ id: "call-execution-4", status: "completed" }}
+        task={{
+          id: "call-execution-4",
+          status: "completed",
+          outcomeReason: reason,
+        }}
         onClose={vi.fn()}
       />,
     );
+    expect(screen.getByText(reason)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

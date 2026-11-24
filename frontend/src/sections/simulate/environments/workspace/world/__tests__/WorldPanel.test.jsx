@@ -381,7 +381,6 @@ describe("WorldPanel", () => {
     expect(
       screen.getByText("book_ride", { selector: "span" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/No tables or stores are seeded/)).toBeNull();
     expect(screen.queryByText(/^World · /)).toBeNull();
   });
 

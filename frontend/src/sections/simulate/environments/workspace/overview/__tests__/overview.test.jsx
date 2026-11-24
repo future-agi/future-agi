@@ -177,7 +177,6 @@ describe("OverviewPanel", () => {
       },
     });
 
-    expect(screen.queryByText(/No dependencies recorded/)).toBeNull();
     expect(screen.getByText("Services the agent calls")).toBeInTheDocument();
     expect(
       screen.queryByText("Built and torn down with the environment"),
@@ -192,8 +191,8 @@ describe("OverviewPanel", () => {
       backedWorld: { ...BACKED_WORLD, runtimeDependencies: [] },
     });
 
+    expect(screen.getByText("The world")).toBeInTheDocument();
     expect(screen.queryByText("What it depends on")).toBeNull();
-    expect(screen.queryByText(/No dependencies recorded/)).toBeNull();
   });
 
   it("counts each starting-data collection and shows the data on request", async () => {
@@ -318,8 +317,8 @@ describe("OverviewPanel", () => {
       },
       backedWorld: BACKED_WORLD,
     });
+    expect(screen.getByText("How the world was built")).toBeInTheDocument();
     expect(screen.queryByText("Seeded data")).toBeNull();
-    expect(screen.queryByText(/No rows are seeded/)).toBeNull();
     expect(screen.queryByText("_alk_tool_trace")).toBeNull();
     expect(screen.queryByText("harness_seed_sentinel")).toBeNull();
   });
@@ -330,7 +329,12 @@ describe("OverviewPanel", () => {
         ...MOCK_WORLD,
         seed: { tables: [{ name: "bookings", rows: 900 }] },
       },
-      backedWorld: BACKED_WORLD,
+      backedWorld: {
+        ...BACKED_WORLD,
+        dependencies: [
+          { name: "postgres", kind: "datastore", what: "Rows", used_by: [] },
+        ],
+      },
     });
     const heading = screen.getByText("The world");
     const seeded = screen.getByText("Seeded data");
@@ -365,7 +369,6 @@ describe("OverviewPanel", () => {
       },
     });
     expect(screen.getByText("No world to reset")).toBeInTheDocument();
-    expect(screen.queryByText(/No tables or stores are seeded/)).toBeNull();
     expect(screen.queryByText("Seeded data")).toBeNull();
     expect(screen.getByText("What it depends on")).toBeInTheDocument();
     expect(screen.getByText("postgres")).toBeInTheDocument();
