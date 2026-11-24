@@ -52,6 +52,7 @@ from simulate.services.agent_definition import (
 from simulate.services.agent_overview import (
     annotate_agent_rows,
     environment_refs,
+    filter_agent_rows,
     observability_on,
     observe_project,
     recent_agent_runs,
@@ -157,7 +158,6 @@ class AgentDefinitionView(APIView):
 
             validated = request.validated_query_data
             search_query = validated.get("search", "").strip()
-            agent_type = validated.get("agent_type", None)
             required_agent_id = validated.get("agent_definition_id", None)
 
             # Use Subquery to get latest version info in a single query (avoid N+1)
@@ -175,10 +175,13 @@ class AgentDefinitionView(APIView):
             )
 
             agents = (
-                annotate_agent_rows(
-                    AgentDefinition.objects.filter(
-                        organization=user_organization,
-                    )
+                filter_agent_rows(
+                    annotate_agent_rows(
+                        AgentDefinition.objects.filter(
+                            organization=user_organization,
+                        )
+                    ),
+                    validated,
                 )
                 .annotate(
                     _latest_version=Subquery(latest_version_subquery),
@@ -186,9 +189,6 @@ class AgentDefinitionView(APIView):
                 )
                 .select_related("observability_provider__project", "production_project")
             )
-
-            if agent_type is not None:
-                agents = agents.filter(agent_type=agent_type)
 
             # Apply search filter
             if search_query:

@@ -34,6 +34,7 @@ from contextvars import ContextVar
 from datetime import timedelta
 from functools import wraps
 from time import sleep
+from typing import TYPE_CHECKING
 
 from django.apps import apps
 from django.db import (
@@ -61,7 +62,12 @@ from tracer.models.derived_metric import (
     MetricStateConflict,
 )
 
-_lock_budget = ContextVar("metric_lifecycle_lock_budget", default=None)
+if TYPE_CHECKING:
+    from tracer.services.derived_metrics.lease import ProjectLease
+
+_lock_budget: ContextVar["ProjectLease | None"] = ContextVar(
+    "metric_lifecycle_lock_budget", default=None
+)
 
 
 @contextmanager
@@ -268,7 +274,7 @@ def revoke_generations(
     definition_version_ids=None,
     now=None,
     using=DEFAULT_DB_ALIAS,
-):
+) -> int:
     """Durably fence captures, even if there were no pins at revocation time.
 
     Manifest and definition selectors intersect for existing pins. A definition
@@ -852,9 +858,10 @@ def _register_collector_protocol():
                     setattr(instance, Model._meta.pk.attname, None)
             return result
 
-    delete_with_current_graph._metric_lifecycle = True
-    Collector.collect = remember_roots
-    Collector.delete = delete_with_current_graph
+    # Intentional monkeypatch; the marker makes re-registration a no-op.
+    delete_with_current_graph._metric_lifecycle = True  # type: ignore[attr-defined]
+    Collector.collect = remember_roots  # type: ignore[method-assign, assignment]
+    Collector.delete = delete_with_current_graph  # type: ignore[method-assign, assignment]
 
 
 def register_deletion_hooks():
