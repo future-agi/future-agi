@@ -129,7 +129,7 @@ def _wake_workspace(workspace_id: str):
         from tracer.services.feed_escalation import sweep_feed_escalations
 
         sweep_feed_escalations.delay(workspace_id=workspace_id)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort Temporal wake; the policy revision mismatch is the durable request
         structlog.get_logger(__name__).exception(
             "feed_escalation_wake_failed", workspace_id=workspace_id
         )
