@@ -25030,7 +25030,7 @@ export interface HarnessConversationEventReadApi {
 export interface HarnessConversationWindowApi {
   /** The oldest sequence in this read; read what came before it with `before` set to it. */
   oldest_sequence: number;
-  /** Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry). */
+  /** Items before `oldest_sequence` this read leaves out. */
   has_older: boolean;
 }
 
@@ -25039,7 +25039,7 @@ export interface HarnessConversationWindowApi {
  */
 export interface HarnessConversationHistoryApi {
   messages: HarnessConversationWindowApi;
-  events: HarnessConversationWindowApi;
+  events?: HarnessConversationWindowApi;
 }
 
 export interface HarnessConversationRuntimeApi {
@@ -25065,6 +25065,8 @@ export interface HarnessConversationReadApi {
   /** @minimum 0 */
   event_watermark: number;
   history: HarnessConversationHistoryApi;
+  /** On a read with `events_after`, whether more events past the last one here are left to read. */
+  events_has_newer: boolean;
   runtime: HarnessConversationRuntimeApi;
 }
 
@@ -25557,14 +25559,12 @@ export const HarnessConversationHistoryPageApiKind = {
   events: "events",
 } as const;
 
-export type HarnessConversationHistoryPageApiItemsItem = {
-  [key: string]: string;
-};
-
 export interface HarnessConversationHistoryPageApi {
   kind: HarnessConversationHistoryPageApiKind;
-  /** Messages or events, oldest first, in the same shape as a conversation read's. */
-  items: HarnessConversationHistoryPageApiItemsItem[];
+  /** Oldest first; empty for `kind` events. */
+  messages: HarnessConversationMessageApi[];
+  /** Oldest first; empty for `kind` messages. */
+  events: HarnessConversationEventReadApi[];
   oldest_sequence: number;
   has_older: boolean;
 }
@@ -49012,12 +49012,7 @@ export type SimulateApiHarnessJobsSourceUploadBody = {
 
 export type SimulateApiHarnessJobsReadParams = {
   /**
-   * Only the builder chat messages newer than this sequence; all recent ones when absent.
-   * @minimum 0
-   */
-  messages_after?: number;
-  /**
-   * Only the builder chat events newer than this sequence; all recent ones when absent.
+   * Only the builder chat events past this sequence, oldest first, `events_has_newer` saying whether more are left; the newest ones when absent. Messages are always the newest ones whole.
    * @minimum 0
    */
   events_after?: number;

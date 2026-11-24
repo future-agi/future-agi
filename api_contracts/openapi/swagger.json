@@ -56539,17 +56539,9 @@
                 "description": "One harness job. A coding agent key reads its own run narrowly, outside\nthis schema: only `status` (its failure as domain, stage, code and a fixed\nmessage), `receipts`, `consumption`, `platform`, and `job` with its ids and\nfive metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or\n`job.source`, which name every case of the suite.",
                 "parameters": [
                     {
-                        "name": "messages_after",
-                        "in": "query",
-                        "description": "Only the builder chat messages newer than this sequence; all recent ones when absent.",
-                        "required": false,
-                        "type": "integer",
-                        "minimum": 0
-                    },
-                    {
                         "name": "events_after",
                         "in": "query",
-                        "description": "Only the builder chat events newer than this sequence; all recent ones when absent.",
+                        "description": "Only the builder chat events past this sequence, oldest first, `events_has_newer` saying whether more are left; the newest ones when absent. Messages are always the newest ones whole.",
                         "required": false,
                         "type": "integer",
                         "minimum": 0
@@ -159550,7 +159542,7 @@
                 },
                 "has_older": {
                     "title": "Has older",
-                    "description": "Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+                    "description": "Items before `oldest_sequence` this read leaves out.",
                     "type": "boolean"
                 }
             }
@@ -159558,8 +159550,7 @@
         "HarnessConversationHistory": {
             "description": "Where `messages` and `events` start, and whether older ones can be read with the history read.",
             "required": [
-                "messages",
-                "events"
+                "messages"
             ],
             "type": "object",
             "properties": {
@@ -159613,6 +159604,7 @@
                 "events",
                 "event_watermark",
                 "history",
+                "events_has_newer",
                 "runtime"
             ],
             "type": "object",
@@ -159665,6 +159657,11 @@
                 },
                 "history": {
                     "$ref": "#/definitions/HarnessConversationHistory"
+                },
+                "events_has_newer": {
+                    "title": "Events has newer",
+                    "description": "On a read with `events_after`, whether more events past the last one here are left to read.",
+                    "type": "boolean"
                 },
                 "runtime": {
                     "$ref": "#/definitions/HarnessConversationRuntime"
@@ -160596,7 +160593,8 @@
         "HarnessConversationHistoryPage": {
             "required": [
                 "kind",
-                "items",
+                "messages",
+                "events",
                 "oldest_sequence",
                 "has_older"
             ],
@@ -160610,15 +160608,18 @@
                         "events"
                     ]
                 },
-                "items": {
-                    "description": "Messages or events, oldest first, in the same shape as a conversation read's.",
+                "messages": {
+                    "description": "Oldest first; empty for `kind` events.",
                     "type": "array",
                     "items": {
-                        "type": "object",
-                        "additionalProperties": {
-                            "type": "string",
-                            "x-nullable": true
-                        }
+                        "$ref": "#/definitions/HarnessConversationMessage"
+                    }
+                },
+                "events": {
+                    "description": "Oldest first; empty for `kind` messages.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessConversationEventRead"
                     }
                 },
                 "oldest_sequence": {

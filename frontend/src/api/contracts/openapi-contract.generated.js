@@ -31136,13 +31136,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         runtimeResponseValidation: true,
         requestBody: null,
         queryParameters: {
-          messages_after: {
-            required: false,
-            schema: {
-              type: "integer",
-              minimum: 0,
-            },
-          },
           events_after: {
             required: false,
             schema: {
@@ -72550,7 +72543,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessConversationHistoryPage: {
-      required: ["kind", "items", "oldest_sequence", "has_older"],
+      required: ["kind", "messages", "events", "oldest_sequence", "has_older"],
       type: "object",
       properties: {
         kind: {
@@ -72558,16 +72551,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           enum: ["messages", "events"],
         },
-        items: {
-          description:
-            "Messages or events, oldest first, in the same shape as a conversation read's.",
+        messages: {
+          description: "Oldest first; empty for `kind` events.",
           type: "array",
           items: {
-            type: "object",
-            additionalProperties: {
-              type: "string",
-              "x-nullable": true,
-            },
+            $ref: "#/definitions/HarnessConversationMessage",
+          },
+        },
+        events: {
+          description: "Oldest first; empty for `kind` messages.",
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessConversationEventRead",
           },
         },
         oldest_sequence: {
@@ -72744,6 +72739,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "events",
         "event_watermark",
         "history",
+        "events_has_newer",
         "runtime",
       ],
       type: "object",
@@ -72796,6 +72792,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         history: {
           $ref: "#/definitions/HarnessConversationHistory",
+        },
+        events_has_newer: {
+          title: "Events has newer",
+          description:
+            "On a read with `events_after`, whether more events past the last one here are left to read.",
+          type: "boolean",
         },
         runtime: {
           $ref: "#/definitions/HarnessConversationRuntime",
@@ -115542,6 +115544,141 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessConversationEventRead: {
+      required: [
+        "event_id",
+        "sequence",
+        "kind",
+        "stage",
+        "payload",
+        "emitted_at",
+      ],
+      type: "object",
+      properties: {
+        event_id: {
+          title: "Event id",
+          type: "string",
+          minLength: 1,
+        },
+        sequence: {
+          title: "Sequence",
+          type: "integer",
+          minimum: 1,
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          minLength: 1,
+        },
+        message_id: {
+          title: "Message id",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+        },
+        invocation_id: {
+          title: "Invocation id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        function_call_id: {
+          title: "Function call id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        payload: {
+          title: "Payload",
+          type: "object",
+        },
+        emitted_at: {
+          title: "Emitted at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
+    HarnessConversationMessage: {
+      required: [
+        "message_id",
+        "sequence",
+        "role",
+        "kind",
+        "state",
+        "stage",
+        "content",
+        "payload",
+        "created_at",
+      ],
+      type: "object",
+      properties: {
+        message_id: {
+          title: "Message id",
+          type: "string",
+          format: "uuid",
+        },
+        sequence: {
+          title: "Sequence",
+          type: "integer",
+          minimum: 1,
+        },
+        role: {
+          title: "Role",
+          type: "string",
+          enum: ["user", "assistant", "system"],
+        },
+        kind: {
+          title: "Kind",
+          type: "string",
+          enum: ["message", "question", "confirmation", "status"],
+        },
+        state: {
+          title: "State",
+          type: "string",
+          enum: ["queued", "delivered", "streaming", "completed", "failed"],
+        },
+        stage: {
+          title: "Stage",
+          type: "string",
+        },
+        content: {
+          title: "Content",
+          type: "string",
+        },
+        payload: {
+          title: "Payload",
+          type: "object",
+        },
+        invocation_id: {
+          title: "Invocation id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        function_call_id: {
+          title: "Function call id",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        reply_to: {
+          title: "Reply to",
+          type: "string",
+          format: "uuid",
+          "x-nullable": true,
+        },
+        created_at: {
+          title: "Created at",
+          type: "string",
+          format: "date-time",
+        },
+      },
+    },
     HarnessLifecycleCounts: {
       description: "Present for a versioned environment.",
       required: [
@@ -115643,69 +115780,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true,
     },
-    HarnessConversationEventRead: {
-      required: [
-        "event_id",
-        "sequence",
-        "kind",
-        "stage",
-        "payload",
-        "emitted_at",
-      ],
-      type: "object",
-      properties: {
-        event_id: {
-          title: "Event id",
-          type: "string",
-          minLength: 1,
-        },
-        sequence: {
-          title: "Sequence",
-          type: "integer",
-          minimum: 1,
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          minLength: 1,
-        },
-        message_id: {
-          title: "Message id",
-          type: "string",
-          format: "uuid",
-          "x-nullable": true,
-        },
-        stage: {
-          title: "Stage",
-          type: "string",
-        },
-        invocation_id: {
-          title: "Invocation id",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        function_call_id: {
-          title: "Function call id",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        payload: {
-          title: "Payload",
-          type: "object",
-        },
-        emitted_at: {
-          title: "Emitted at",
-          type: "string",
-          format: "date-time",
-        },
-      },
-    },
     HarnessConversationHistory: {
       description:
         "Where `messages` and `events` start, and whether older ones can be read with the history read.",
-      required: ["messages", "events"],
+      required: ["messages"],
       type: "object",
       properties: {
         messages: {
@@ -115713,82 +115791,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         events: {
           $ref: "#/definitions/HarnessConversationWindow",
-        },
-      },
-    },
-    HarnessConversationMessage: {
-      required: [
-        "message_id",
-        "sequence",
-        "role",
-        "kind",
-        "state",
-        "stage",
-        "content",
-        "payload",
-        "created_at",
-      ],
-      type: "object",
-      properties: {
-        message_id: {
-          title: "Message id",
-          type: "string",
-          format: "uuid",
-        },
-        sequence: {
-          title: "Sequence",
-          type: "integer",
-          minimum: 1,
-        },
-        role: {
-          title: "Role",
-          type: "string",
-          enum: ["user", "assistant", "system"],
-        },
-        kind: {
-          title: "Kind",
-          type: "string",
-          enum: ["message", "question", "confirmation", "status"],
-        },
-        state: {
-          title: "State",
-          type: "string",
-          enum: ["queued", "delivered", "streaming", "completed", "failed"],
-        },
-        stage: {
-          title: "Stage",
-          type: "string",
-        },
-        content: {
-          title: "Content",
-          type: "string",
-        },
-        payload: {
-          title: "Payload",
-          type: "object",
-        },
-        invocation_id: {
-          title: "Invocation id",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        function_call_id: {
-          title: "Function call id",
-          type: "string",
-          minLength: 1,
-          "x-nullable": true,
-        },
-        reply_to: {
-          title: "Reply to",
-          type: "string",
-          format: "uuid",
-          "x-nullable": true,
-        },
-        created_at: {
-          title: "Created at",
-          type: "string",
-          format: "date-time",
         },
       },
     },
@@ -141221,8 +141223,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         has_older: {
           title: "Has older",
-          description:
-            "Items before `oldest_sequence` this read leaves out (for a read of what is new, only new items too many to carry).",
+          description: "Items before `oldest_sequence` this read leaves out.",
           type: "boolean",
         },
       },
