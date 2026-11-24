@@ -27,7 +27,8 @@ export function alert(theme) {
       [`& .${alertClasses.icon}`]: {
         padding: 0,
         marginRight: 10,
-        marginTop: 2,
+        // Centres the 16px icon on the message's 18px first line.
+        marginTop: 1,
         fontSize: 16,
         opacity: 1,
         color: s.fg,
@@ -40,6 +41,9 @@ export function alert(theme) {
       },
       [`& .${alertClasses.action}`]: {
         paddingTop: 0,
+        // A 28px button in the 18px first line, so it lines up with the text instead of making the banner taller.
+        marginTop: -5,
+        marginBottom: -5,
         marginRight: -4,
       },
     };
