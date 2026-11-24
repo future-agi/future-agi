@@ -10,7 +10,7 @@ export default function SystemBanners({ env }) {
   const buildProgress = env.buildProgress;
   const building = buildStatus === BUILD_STATUS.BUILDING;
 
-  if (!building) return null;
+  if (!building || env.designApproved) return null;
 
   return (
     <Stack spacing={0}>
@@ -53,7 +53,10 @@ export default function SystemBanners({ env }) {
           </Typography>
           <Typography sx={{ typography: "s1", color: "text.secondary" }}>
             {buildProgress?.done != null && buildProgress?.total != null
-              ? WORKSPACE_COPY.building.progress(buildProgress.done, buildProgress.total)
+              ? WORKSPACE_COPY.building.progress(
+                  buildProgress.done,
+                  buildProgress.total,
+                )
               : WORKSPACE_COPY.building.deriving}{" "}
             {WORKSPACE_COPY.building.tail}
           </Typography>
@@ -67,6 +70,10 @@ SystemBanners.propTypes = {
   env: PropTypes.shape({
     id: PropTypes.string,
     buildStatus: PropTypes.string,
-    buildProgress: PropTypes.shape({ done: PropTypes.number, total: PropTypes.number }),
+    designApproved: PropTypes.bool,
+    buildProgress: PropTypes.shape({
+      done: PropTypes.number,
+      total: PropTypes.number,
+    }),
   }).isRequired,
 };

@@ -140,4 +140,28 @@ export const BUILD_COPY = {
     release: () => "Running the release checks",
   },
   stateLabel: { done: "Done", running: "In progress", pending: "Not started" },
+  now: (label, elapsed) => `Now: ${label} · ${elapsed} so far`,
+  stage: {
+    queued: "Waiting for a sandbox",
+    acquiring_source: "Getting the agent's code",
+    understanding_agent: "Reading the agent",
+    generating_environment: "Writing the world from the design",
+    building_environment: "Building the tools",
+    validating_environment: "Checking every tool answers truthfully",
+    generating_data: "Seeding the data",
+    generating_scenarios: "Writing the scenarios",
+    validating_scenarios: "Checking the scenarios",
+    connecting_agent: "Connecting your agent",
+    running: "Running the release checks",
+    grading: "Grading the checks",
+    uploading_artifacts: "Saving the results",
+    finalizing: "Finishing up",
+    cleaning_up: "Cleaning up",
+  },
+};
+
+export const elapsedWords = (ms) => {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`;
 };

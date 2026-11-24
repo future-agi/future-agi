@@ -1,11 +1,14 @@
 import PropTypes from "prop-types";
+import { useEffect, useState } from "react";
 import { Box, CircularProgress, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useDesignReview } from "src/api/simulate-environments/designReview";
-import { BUILD_COPY } from "./designReview.constants";
-import { approvedBuildSteps, plannedScenarios } from "./designReview.utils";
-
-const kept = (items) => (items || []).filter((item) => !item.removed);
+import { BUILD_COPY, elapsedWords } from "./designReview.constants";
+import {
+  approvedBuildSteps,
+  kept,
+  plannedScenarios,
+} from "./designReview.utils";
 
 function StepIcon({ state }) {
   if (state === "done")
@@ -44,6 +47,14 @@ export default function BuildStrip({ envId, stage }) {
   };
   const steps = approvedBuildSteps(stage);
   const finished = steps.every((step) => step.state === "done");
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (finished) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [finished]);
+  const startedAt = review?.approved_at ? Date.parse(review.approved_at) : null;
+  const stageLabel = BUILD_COPY.stage[stage];
   return (
     <Box
       role="status"
@@ -88,6 +99,11 @@ export default function BuildStrip({ envId, stage }) {
           </Stack>
         ))}
       </Stack>
+      {!finished && stageLabel && startedAt && (
+        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
+          {BUILD_COPY.now(stageLabel, elapsedWords(now - startedAt))}
+        </Typography>
+      )}
     </Box>
   );
 }
