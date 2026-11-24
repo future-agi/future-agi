@@ -37,6 +37,10 @@ export const BUILDING_TABS = WORKSPACE_TABS.filter(
   (t) => !NOT_WHILE_BUILDING.has(t.id),
 );
 
+export const JUMP_BAR_HEIGHT = 32;
+// The chat list's padding, in theme spacing.
+export const LIST_PADDING = 3;
+
 export const CONSOLE_COPY = {
   answerWithOptions: "Answer with the options above",
   working: "Working on your last message…",

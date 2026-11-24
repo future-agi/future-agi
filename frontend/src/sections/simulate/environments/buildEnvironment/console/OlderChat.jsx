@@ -4,13 +4,19 @@ import { Button, Fade, Stack, Typography } from "@mui/material";
 import CircularProgress from "@mui/material/CircularProgress";
 import useMediaQuery from "@mui/material/useMediaQuery";
 
-import { CONSOLE_COPY } from "../build.constants";
+import {
+  CONSOLE_COPY,
+  JUMP_BAR_HEIGHT,
+  LIST_PADDING,
+} from "../build.constants";
 
 /**
  * Where the held messages or steps start. Reaching it loads the page before;
- * the button does the same, for a keyboard and after a failure.
+ * the button does the same, for a keyboard and after a failure. While more are
+ * left it sticks to the list's bottom for a reader above it, so it is reached
+ * however fast they get there, and says what it is doing.
  */
-export default function OlderChat({ turn, listRef, auto }) {
+export default function OlderChat({ turn, listRef, auto, aboveBar }) {
   const copy = CONSOLE_COPY.older[turn.kind];
   const reduceMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const markRef = useRef(null);
@@ -39,11 +45,22 @@ export default function OlderChat({ turn, listRef, auto }) {
     // One height in every state, so nothing below moves when it changes.
     <Stack
       ref={markRef}
+      data-testid={`older-${turn.kind}`}
       direction="row"
       alignItems="center"
       justifyContent="center"
       spacing={1}
-      sx={{ minHeight: 30 }}
+      sx={{
+        minHeight: 30,
+        ...(hasOlder && {
+          position: "sticky",
+          // Flush with the list's edge, past its padding, or on the jump bar over it.
+          bottom: (theme) =>
+            `calc(${aboveBar ? JUMP_BAR_HEIGHT : 0}px - ${theme.spacing(LIST_PADDING)})`,
+          zIndex: 1,
+          bgcolor: "background.paper",
+        }),
+      }}
     >
       <Typography
         role="status"
@@ -92,4 +109,6 @@ OlderChat.propTypes = {
   listRef: PropTypes.object.isRequired,
   // Whether reaching it loads: the reader scrolled here.
   auto: PropTypes.bool,
+  // Whether the jump bar shows.
+  aboveBar: PropTypes.bool,
 };

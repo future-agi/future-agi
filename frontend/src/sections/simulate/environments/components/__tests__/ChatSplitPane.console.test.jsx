@@ -177,34 +177,79 @@ describe("ChatSplitPane with a long builder conversation", () => {
     },
   );
 
-  it("keeps the reader's place when older steps load above it", () => {
+  describe("keeps the reader's place when older ones load", () => {
     const start = (oldest) => ({
-      id: "older-events",
+      id: "older-messages",
       role: "history",
-      kind: "events",
+      kind: "messages",
       oldest,
       hasOlder: true,
     });
-    const older = {
-      id: "b-old",
+    const step = (id) => ({
+      id: `t-${id}`,
       role: "builder",
-      steps: [{ id: "s-old", kind: "error", text: "older error" }],
+      steps: [{ id, kind: "error", text: id }],
+    });
+    // Every row is 100px, in the order drawn, in a pane 300px high.
+    const layOut = (list) =>
+      vi
+        .spyOn(window.HTMLElement.prototype, "getBoundingClientRect")
+        .mockImplementation(function rect() {
+          if (this === list) return { top: 0, bottom: 300 };
+          const rows = [...list.querySelectorAll("[data-message-id]")];
+          const top = rows.indexOf(this) * 100 - list.scrollTop;
+          return { top, bottom: top + 100 };
+        });
+    const land = (before, after, scrollTop, following) => {
+      const { rerender } = render(renderSplit(before));
+      const list = screen.getByTestId("builder-console-list");
+      Object.defineProperty(list, "scrollHeight", {
+        configurable: true,
+        value: 9876,
+      });
+      const rect = layOut(list);
+      // Scrolled up by hand, the list no longer follows the latest.
+      if (!following) {
+        fireEvent.scroll(list, { target: { scrollTop: 500 } });
+        fireEvent.scroll(list, { target: { scrollTop } });
+      }
+      list.scrollTop = scrollTop;
+      rerender(renderSplit(after));
+      const at = list.scrollTop;
+      rect.mockRestore();
+      return at;
     };
-    const { rerender } = render(renderSplit([start(201), ...makeTurns(4)]));
-    const list = screen.getByTestId("builder-console-list");
-    list.scrollTop = 40;
-    // The older step adds 300px above everything else.
-    const rect = vi
-      .spyOn(window.HTMLElement.prototype, "getBoundingClientRect")
-      .mockImplementation(() => ({
-        top: screen.queryByText("older error")
-          ? 300 - (list.scrollTop - 40)
-          : 0,
-        bottom: 500,
-      }));
-    rerender(renderSplit([start(1), older, ...makeTurns(4)]));
-    rect.mockRestore();
-    expect(list.scrollTop).toBe(340);
+    const held = ["a", "b", "c", "d"].map(step);
+
+    it("by the first row in view, when they land above it", () => {
+      const older = [step("x"), step("y")];
+      expect(
+        land([start(201), ...held], [start(1), ...older, ...held], 100),
+      ).toBe(300);
+    });
+
+    it("by the first row in view, when they land below it", () => {
+      const [a, b, ...rest] = held;
+      expect(
+        land(
+          [a, b, start(201), ...rest],
+          [a, start(1), b, step("x"), step("y"), ...rest],
+          100,
+        ),
+      ).toBe(100);
+    });
+
+    it("at the latest, for a reader who follows it", () => {
+      const [a, b, ...rest] = held;
+      expect(
+        land(
+          [a, b, start(201), ...rest],
+          [a, start(1), b, step("x"), step("y"), ...rest],
+          100,
+          true,
+        ),
+      ).toBe(300);
+    });
   });
 
   it("receives turns while collapsed and scrolls to the newest on reopen", () => {
@@ -394,6 +439,48 @@ describe("older messages", () => {
       act(() => focusBuilderChat("u0"));
       await settle();
       expect(answers).toHaveLength(0);
+    });
+  });
+
+  describe("for a reader above where both start", () => {
+    const start = (kind, over) => ({
+      id: `older-${kind}`,
+      role: "history",
+      kind,
+      oldest: 201,
+      hasOlder: true,
+      onLoad: vi.fn(() => Promise.resolve()),
+      ...over,
+    });
+    const show = (events, messages) =>
+      render(
+        renderSplit([
+          events,
+          makeTurns(1)[0],
+          messages,
+          ...makeTurns(4).slice(1),
+        ]),
+      );
+
+    it("stays in sight at the bottom, so a jump past it still reaches it", () => {
+      show(start("events"), start("messages"));
+      ["older-events", "older-messages"].forEach((id) =>
+        expect(screen.getByTestId(id)).toHaveStyle({ position: "sticky" }),
+      );
+    });
+
+    it.each([
+      ["first the one that starts lower", {}, 0],
+      ["then the other, once that one ends", { hasOlder: false }, 1],
+      ["the other, when that one failed", { failed: true }, 1],
+    ])("loads %s", async (_, over, events) => {
+      const steps = start("events");
+      const messages = start("messages", over);
+      show(steps, messages);
+      fireEvent.keyDown(list(), { key: "Home" });
+      await settle();
+      expect(steps.onLoad).toHaveBeenCalledTimes(events);
+      expect(messages.onLoad).toHaveBeenCalledTimes(1 - events);
     });
   });
 

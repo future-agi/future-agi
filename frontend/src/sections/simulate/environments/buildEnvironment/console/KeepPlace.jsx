@@ -15,13 +15,16 @@ export default class KeepPlace extends Component {
     if (prev.from === this.props.from || !list) return null;
     const box = list.getBoundingClientRect();
     const shown = items(list);
+    const inView = shown
+      .filter((node) => {
+        const { top, bottom } = node.getBoundingClientRect();
+        return top < box.bottom && bottom > box.top;
+      })
+      .map((node) => ({ id: node.dataset.messageId, top: topOf(node) }));
     return {
       ids: new Set(shown.map((node) => node.dataset.messageId)),
-      // The lowest first: what is being read sits below where steps are added.
-      inView: shown
-        .map((node) => ({ id: node.dataset.messageId, top: topOf(node) }))
-        .filter(({ top }) => top < box.bottom)
-        .reverse(),
+      // What is read first holds still, or the latest for a reader who follows it.
+      inView: this.props.following ? inView.reverse() : inView,
     };
   }
 
@@ -52,6 +55,8 @@ KeepPlace.propTypes = {
   listRef: PropTypes.object.isRequired,
   // Where what is held starts: it changes when older ones load.
   from: PropTypes.string,
+  // Whether the list follows the latest.
+  following: PropTypes.bool,
   duration: PropTypes.number,
   children: PropTypes.node,
 };

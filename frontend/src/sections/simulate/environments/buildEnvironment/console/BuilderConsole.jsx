@@ -7,7 +7,7 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 import { ENV_TAB_RAIL_HEIGHT } from "../../environmentOptions";
-import { CONSOLE_COPY } from "../build.constants";
+import { CONSOLE_COPY, LIST_PADDING } from "../build.constants";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
 import ViewerLock from "../../components/ViewerLock";
 import { WORKSPACE_COPY } from "../../workspace/workspace.constants";
@@ -108,6 +108,12 @@ export default function BuilderConsole({
   const listRef = useRef(null);
   // Where the held messages and steps start.
   const starts = (turns || []).filter((turn) => turn.role === "history");
+  // Messages and steps load one at a time, the one that starts lower first, so
+  // neither shows for long without the other it belongs with.
+  const loadsFirst = (turn) =>
+    starts
+      .slice(starts.indexOf(turn) + 1)
+      .every((lower) => !lower.hasOlder || lower.failed);
   const lastScrollRef = useRef({ top: 0, height: 0 });
   const [following, setFollowing] = useState(true);
   const messageCount = countMessages(turns);
@@ -228,6 +234,7 @@ export default function BuilderConsole({
   // `working` narrows it when Stop also covers work that only waits.
   const busy = running || working;
   const hasNewMessage = !following && messageCount > seenMessages;
+  const showJump = !following && (hasNewMessage || busy);
   // One button: Stop while there's something to stop, Send as soon as the user types.
   const showStop = onStop && (canStop || running) && !locked && !hasContent;
 
@@ -324,13 +331,13 @@ export default function BuilderConsole({
           minWidth: 0,
           overflowY: "auto",
           overflowWrap: "anywhere",
-          px: 3,
-          py: 3,
+          p: LIST_PADDING,
         }}
       >
         <KeepPlace
           listRef={listRef}
           from={from}
+          following={following}
           duration={theme.transitions.duration.standard}
         >
           <Stack spacing={3}>
@@ -371,7 +378,13 @@ export default function BuilderConsole({
                     key={turn.id}
                     turn={turn}
                     listRef={listRef}
-                    auto={active && reader.movedUp && !search.asked}
+                    aboveBar={showJump}
+                    auto={
+                      active &&
+                      reader.movedUp &&
+                      !search.asked &&
+                      loadsFirst(turn)
+                    }
                   />
                 ) : (
                   <Turn key={turn.id} turn={turn} />
@@ -385,7 +398,7 @@ export default function BuilderConsole({
       <Box role="status" sx={visuallyHidden}>
         {hasNewMessage ? CONSOLE_COPY.newMessage : ""}
       </Box>
-      {!following && (hasNewMessage || busy) && (
+      {showJump && (
         <JumpToLatestBar
           hasNewMessage={hasNewMessage}
           onClick={() => {
