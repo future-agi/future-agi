@@ -1587,15 +1587,23 @@ function TableView({
                 <Box minWidth={0}>
                   {/* Title on its own line, full width; the pair and what
                       moved sit quietly under it (no chip beside the title). */}
+                  {/* Wraps to two lines; anything longer is on hover. */}
                   <Typography
-                    noWrap
                     title={row.title}
-                    sx={{ typography: "s2", fontWeight: 600 }}
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 600,
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }}
                   >
                     {row.title}
                   </Typography>
                   <OutcomeLine
                     pair={row.pair}
+                    cells={row.cells}
                     extra={
                       view.rowHeight !== "large" &&
                       typeof row.persona?.name === "string"

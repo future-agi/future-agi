@@ -94,50 +94,73 @@ export default function OutcomeChip({ pair }) {
 }
 OutcomeChip.propTypes = { pair: PropTypes.object };
 
+/* How a run went for one scenario, in words: "all 3 passed",
+   "2 of 3 passed", "none of 3 passed"; the "now" side is just "2 of 3". */
+const trialsWord = (c, { now = false } = {}) => {
+  if (!c || c.status === "missing") return "not run";
+  if (c.status === "unmeasured" || c.measured === false) return "not measured";
+  const n = c.repeats || 1;
+  const k = c.passes ?? (c.status === "passed" ? n : 0);
+  if (n <= 1) return k ? "passed" : "failed";
+  if (now) return k === n ? `all ${n}` : `${k} of ${n}`;
+  if (k === n) return `all ${n} passed`;
+  if (k === 0) return `none of ${n} passed`;
+  return `${k} of ${n} passed`;
+};
+
 /**
- * The same tag as one quiet line under the scenario's title (the compare
- * table): "Exact · passed → flaky · Rachel Greene". No tinted chip, so the
- * title keeps the full width; the flip is red only for an exact regression.
+ * One quiet line under the scenario's title in the compare table, in plain
+ * counts instead of labels: "All 3 passed before · now 2 of 3".
+ * The "now" part is red when it got worse, green when it got better. The
+ * pair class shows only when it isn't the usual exact match, with its
+ * meaning on hover.
  */
-export function OutcomeLine({ pair, extra = null }) {
+export function OutcomeLine({ pair, cells = [], extra = null }) {
   const meta = pair ? PAIR_CLASSES[pair.cls] : null;
-  if (!meta && !extra) return null;
-  const moved = meta?.inDelta && pair.flip && pair.flip.kind !== "same";
-  const bad = pair?.cls === "exact" && pair.flip?.kind === "regressed";
-  const tip = meta
-    ? [
-        meta.tip,
-        ...(pair.reasons || []).filter((r) => !/^Only in the/.test(r)),
-        moved ? `Baseline ${pair.flip.a}, now ${pair.flip.b}.` : null,
-      ]
-        .filter(Boolean)
-        .join(" ")
-    : "";
+  const base = cells[0];
+  const cur = cells[cells.length - 1];
+  const kind = pair?.flip?.kind;
+  const changed =
+    !!base && !!cur && cells.length > 1 && kind && kind !== "same";
+  const tone =
+    kind === "regressed"
+      ? "status.danger.fg"
+      : kind === "improved"
+        ? "status.success.fg"
+        : "text.secondary";
+  const first = trialsWord(base);
+  const lead = first.charAt(0).toUpperCase() + first.slice(1);
+  const unusual = meta && pair.cls !== "exact";
   return (
-    <Tooltip arrow title={tip} placement="bottom-start">
-      <Typography
-        noWrap
-        sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
-      >
-        {meta?.short}
-        {moved && (
-          <>
-            {" · "}
-            <Box
-              component="span"
-              sx={{
-                color: bad ? "status.danger.fg" : "text.secondary",
-                fontWeight: 500,
-              }}
-            >
-              {pair.flip.text}
-            </Box>
-          </>
-        )}
-        {(pair?.criteria || []).length > 0 && " · criteria changed"}
-        {extra && `${meta ? " · " : ""}${extra}`}
-      </Typography>
-    </Tooltip>
+    <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}>
+      {changed ? (
+        <>
+          {`${lead} before · `}
+          <Box component="span" sx={{ color: tone, fontWeight: 500 }}>
+            {`now ${trialsWord(cur, { now: true })}`}
+          </Box>
+        </>
+      ) : base && cur ? (
+        cells.length > 1 ? (
+          `${lead} in both runs`
+        ) : (
+          lead
+        )
+      ) : null}
+      {unusual && (
+        <Tooltip arrow title={meta.tip || ""}>
+          <Box component="span" sx={{ cursor: "help" }}>
+            {` · ${meta.short.toLowerCase()}`}
+          </Box>
+        </Tooltip>
+      )}
+      {(pair?.criteria || []).length > 0 && " · criteria changed"}
+      {extra && ` · ${extra}`}
+    </Typography>
   );
 }
-OutcomeLine.propTypes = { pair: PropTypes.object, extra: PropTypes.string };
+OutcomeLine.propTypes = {
+  pair: PropTypes.object,
+  cells: PropTypes.array,
+  extra: PropTypes.string,
+};

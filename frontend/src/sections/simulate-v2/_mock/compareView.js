@@ -47,7 +47,7 @@ const becameFlaky = (row) =>
 
 const FLIP_LABEL = {
   regressed: "Passed → failed",
-  flaky: "Became flaky",
+  flaky: "Now fails some trials",
   improved: "Failed → passed",
   moved: "Moved otherwise",
   same: "Unchanged",
@@ -72,7 +72,7 @@ export const filterFields = (evals = []) => [
     type: "enum",
     choices: [
       "Passed → failed",
-      "Became flaky",
+      "Now fails some trials",
       "Failed → passed",
       "Moved otherwise",
       "Flaky",
@@ -643,7 +643,7 @@ export const OUTSIDE_BANDS = {
 const FLIP_ORDER = ["regressed", "flaky", "improved", "moved", "same"];
 const FLIP_WORDS = {
   regressed: "passed → failed",
-  flaky: "became flaky",
+  flaky: "now fails some trials",
   improved: "failed → passed",
   moved: "moved otherwise",
   same: "unchanged",
@@ -675,7 +675,7 @@ export const pairGroups = (rows) => {
             }),
           ...(cls === "exact" &&
             flip === "flaky" && {
-              note: "Passed every trial on the baseline; now passes some and fails others",
+              note: "Passed every trial in the earlier run; now some trials fail",
               tone: "bad",
             }),
         });
@@ -737,8 +737,8 @@ export const bandRows = (rows, { group, regressionsFirst, groupFn }) => {
       ? [
           {
             id: "band-became-flaky",
-            label: "Became flaky",
-            note: "Passed every trial on the baseline; now passes some and fails others",
+            label: "Now fails some trials",
+            note: "Passed every trial in the earlier run; now some trials fail",
             tone: "bad",
             rows: top.filter(becameFlaky),
           },
