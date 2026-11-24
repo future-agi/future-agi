@@ -6,6 +6,14 @@ import { render } from "src/utils/test-utils";
 import { MOCK_WORLD } from "src/api/simulate-environments/_fixtures/world";
 import OverviewPanel from "../OverviewPanel";
 
+vi.mock(
+  "src/api/simulate-environments/designReview",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    useDesignReview: vi.fn(() => ({ data: undefined })),
+  }),
+);
+
 // The drawer's real-data panel has its own tests; here it only has to mount.
 vi.mock("../../agents/AgentVersionsPanel", () => ({
   default: ({ env }) => <div data-testid="agent-versions-panel">{env.id}</div>,
