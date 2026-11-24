@@ -28,6 +28,9 @@ vi.mock("src/utils/axios", () => ({
   },
 }));
 
+const { NOT_PROVIDED } = await import(
+  "src/sections/simulate/environments/myEnvironments.constants"
+);
 const { createHarnessJob, preflightHarnessJob, uploadHarnessSecretFile } =
   await import("src/api/harness/harness");
 const { useRuntimePreflight } = await import("../useRuntimePreflight");
@@ -146,6 +149,61 @@ describe("useMyEnvironments", () => {
     });
   });
 
+  it("reads status counts, or marks them missing", async () => {
+    const counts = { building: 1, running: 0, completed: 30, failed: 6 };
+    listHarnessEnvironments.mockResolvedValue({
+      count: 0,
+      results: [],
+      status_counts: counts,
+    });
+    const first = makeWrapper();
+    const withCounts = renderHook(() => useMyEnvironments(), {
+      wrapper: first.Wrapper,
+    });
+    await waitFor(() => expect(withCounts.result.current.isSuccess).toBe(true));
+    expect(withCounts.result.current.data.statusCounts).toEqual(counts);
+
+    listHarnessEnvironments.mockResolvedValue({ count: 0, results: [] });
+    const second = makeWrapper();
+    const without = renderHook(() => useMyEnvironments(), {
+      wrapper: second.Wrapper,
+    });
+    await waitFor(() => expect(without.result.current.isSuccess).toBe(true));
+    expect(without.result.current.data.statusCounts).toBe(NOT_PROVIDED);
+  });
+
+  it("keeps the filters on the polled request", async () => {
+    listHarnessEnvironments.mockResolvedValue({
+      count: 1,
+      results: [
+        {
+          id: "env-b",
+          name: "b",
+          agent_type: "chat",
+          status: "building",
+          stage: "building",
+        },
+      ],
+    });
+    const { Wrapper } = makeWrapper();
+    const filters = { search: "", status: "", agentType: "", agentId: "u1" };
+    renderHook(() => useMyEnvironments({ page: 0, pageSize: 25, filters }), {
+      wrapper: Wrapper,
+    });
+    await waitFor(
+      () =>
+        expect(
+          listHarnessEnvironments.mock.calls.length,
+        ).toBeGreaterThanOrEqual(2),
+      {
+        timeout: 5000,
+      },
+    );
+    for (const [args] of listHarnessEnvironments.mock.calls) {
+      expect(args).toEqual({ page: 1, limit: 25, agentDefinitionId: "u1" });
+    }
+  }, 10000);
+
   it("requests the 1-indexed page for a later table page", async () => {
     const { Wrapper } = makeWrapper();
     renderHook(() => useMyEnvironments({ page: 2, pageSize: 10 }), {
@@ -166,7 +224,11 @@ describe("useMyEnvironments", () => {
       wrapper: Wrapper,
     });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toEqual({ rows: [], total: 0 });
+    expect(result.current.data).toEqual({
+      rows: [],
+      total: 0,
+      statusCounts: NOT_PROVIDED,
+    });
   });
 
   describe("polling", () => {
