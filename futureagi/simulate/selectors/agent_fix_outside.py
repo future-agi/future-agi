@@ -8,19 +8,24 @@ AGI runs every candidate and computes its verdict."""
 
 import math
 from collections.abc import Iterable, Mapping
+from decimal import Decimal
+from hashlib import sha256
 from typing import Any
 
-from django.db.models import QuerySet
+from django.db.models import Exists, OuterRef, Q, QuerySet
+from pydantic import ValidationError
 
-from simulate.models import AgentFixRun, HostedHarnessJob
+from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix import (
     BUDGET_CREDITS_MAX,
     OUTSIDE_ATTEMPTS_MAX,
+    SCENARIOS_MAX,
     AttemptTier,
     AttemptVerdict,
     CheckRecord,
     CodingAgentBrief,
     CodingAgentTarget,
+    Ending,
     FixRequest,
     LaunchBlocked,
     OutsideAttempts,
@@ -58,6 +63,9 @@ HELD_BACK_RULE = (
 # held-back, must-pass and repeats checks run on cases it was not given.
 FEEDBACK_TIERS = frozenset({"static", "target"})
 REASON_CHARS = 300
+# The default budget's room over the worst-case hold: a check run holds its actual cost
+# once that is more than the estimate.
+BUDGET_HEADROOM = Decimal("1.25")
 
 
 def outside_attempts(source_run: HostedHarnessJob) -> QuerySet[AgentFixRun]:
@@ -65,6 +73,18 @@ def outside_attempts(source_run: HostedHarnessJob) -> QuerySet[AgentFixRun]:
     return AgentFixRun.no_workspace_objects.filter(
         source_run=source_run, request__outside_candidate__number__isnull=False
     ).order_by("created_at")
+
+
+def used_attempts(source_run: HostedHarnessJob) -> QuerySet[AgentFixRun]:
+    """The outside attempts that used one of the run's attempts. One that failed with no
+    verdict on its change, the platform's failure or the agent's own, told its coding
+    agent nothing, so it does not count."""
+    verdicts = AgentFixCandidate.no_workspace_objects.filter(
+        fix_run=OuterRef("pk"), verdict__isnull=False
+    )
+    return outside_attempts(source_run).exclude(
+        Q(state=AgentFixRun.State.FAILED) & ~Exists(verdicts)
+    )
 
 
 def attempts_used(attempts: int) -> HostedHarnessError | None:
@@ -83,15 +103,16 @@ def _attempt_scope(
     source_run: HostedHarnessJob, previous: AgentFixRun | None
 ) -> FixRequest:
     """The cases an outside attempt is checked on. A later attempt keeps the request of the
-    one before it, so it reads that one's baseline again. The first takes every failing case
-    of the run as a target and every passing one as protected, and holds back a third of the
-    failing ones (none below twelve). Its budget is sized by outside_attempt_request."""
+    one before it, so it reads that one's baseline again. The first takes the run's failing
+    cases as targets and its passing ones as protected, SCENARIOS_MAX of each at most, and
+    holds back a third of the targets (none below twelve). Its budget is sized by
+    outside_attempt_request."""
     if previous is not None:
         return FixRequest.model_validate(previous.request)
+    seed = str(source_run.id)
     ran = scenario_results(source_run)
-    by_scenario = {
-        one.key: one.failing_sub_goals for one in ran if one.failing_sub_goals
-    }
+    failing = set(_capped([one.key for one in ran if one.failing_sub_goals], seed))
+    by_scenario = {one.key: one.failing_sub_goals for one in ran if one.key in failing}
     if not by_scenario:
         raise HostedHarnessError(
             "fix_targets_passed", "nothing failed in this run", status_code=422
@@ -99,22 +120,48 @@ def _attempt_scope(
     usage = source_run_usage(source_run)
     seen = models_called(usage)
     targets = list(by_scenario)
-    return FixRequest(
-        target_scenario_keys=targets,
-        protected_scenario_keys=[one.key for one in ran if one.passed],
-        held_back_scenario_keys=split_held_back(str(source_run.id), by_scenario),
-        failing_sub_goals=list(
-            dict.fromkeys(name for names in by_scenario.values() for name in names)
-        ),
-        # The coding agent edits the agent's own files, so every part is open to it.
-        surfaces=sorted(agent_kind(source_run.environment).surfaces),
-        budget_usd=BUDGET_CREDITS_MAX / 100,
-        max_minutes=default_max_minutes(len(ran)),
-        evidence=evidence_origins(source_run.environment, targets),
-        allowed_models=seen,
-        observes_models=bool(seen),
-        meters_agent_cost=bool(usage),
-        measured_automatically=bool(usage) and measured_automatically(source_run),
+    try:
+        return FixRequest(
+            target_scenario_keys=targets,
+            protected_scenario_keys=_capped(
+                [one.key for one in ran if one.passed], seed
+            ),
+            held_back_scenario_keys=split_held_back(seed, by_scenario),
+            failing_sub_goals=list(
+                dict.fromkeys(name for names in by_scenario.values() for name in names)
+            ),
+            # The coding agent edits the agent's own files, so every part is open to it.
+            surfaces=sorted(agent_kind(source_run.environment).surfaces),
+            budget_usd=BUDGET_CREDITS_MAX / 100,
+            max_minutes=default_max_minutes(len(ran)),
+            evidence=evidence_origins(source_run.environment, targets),
+            allowed_models=seen,
+            observes_models=bool(seen),
+            meters_agent_cost=bool(usage),
+            measured_automatically=bool(usage) and measured_automatically(source_run),
+        )
+    except ValidationError as exc:
+        raise _scope_refused() from exc
+
+
+def _capped(keys: list[str], seed: str) -> list[str]:
+    """At most SCENARIOS_MAX of ``keys``, in the run's order: with more, the ones a stable
+    hash of the run and the key picks, so every attempt on the run picks the same."""
+    if len(keys) <= SCENARIOS_MAX:
+        return keys
+    ranked = sorted(
+        keys, key=lambda key: sha256(f"{seed}:cap:{key}".encode()).hexdigest()
+    )
+    picked = set(ranked[:SCENARIOS_MAX])
+    return [key for key in keys if key in picked]
+
+
+def _scope_refused() -> HostedHarnessError:
+    return HostedHarnessError(
+        "fix_attempt_scope_invalid",
+        "This run has more cases or models than an attempt can check. Run the"
+        " environment on fewer scenarios, then fix the new run.",
+        status_code=422,
     )
 
 
@@ -129,24 +176,44 @@ def outside_attempt_request(
 ) -> FixRequest:
     """The request of the next outside attempt on a run. Its locked paths are the previous
     attempt's and ``locked_paths``: an attempt may lock more, never unlock. Without
-    ``budget_credits`` its budget is the attempt's own worst-case hold, so its check runs
-    are never refused for it."""
+    ``budget_credits`` its budget is default_budget_credits."""
     scope = _attempt_scope(source_run, previous)
     if budget_credits is None:
-        hold = outside_attempt_hold_usd(source_run, scope, previous)
-        budget_credits = min(BUDGET_CREDITS_MAX, max(1, math.ceil(hold * 100)))
-    return FixRequest.model_validate(
-        {
-            **scope.model_dump(mode="json"),
-            "locked_paths": list(
-                dict.fromkeys([*scope.locked_paths, *(locked_paths or [])])
-            ),
-            "budget_usd": budget_credits / 100,
-            "outside_candidate": OutsideCandidate(
-                summary=summary, number=number
-            ).model_dump(mode="json"),
-        }
-    )
+        budget_credits = default_budget_credits(source_run, scope, previous)
+    try:
+        return FixRequest.model_validate(
+            {
+                **scope.model_dump(mode="json"),
+                "locked_paths": list(
+                    dict.fromkeys([*scope.locked_paths, *(locked_paths or [])])
+                ),
+                "budget_usd": budget_credits / 100,
+                "outside_candidate": OutsideCandidate(
+                    summary=summary, number=number
+                ).model_dump(mode="json"),
+            }
+        )
+    except ValidationError as exc:
+        raise _scope_refused() from exc
+
+
+def default_budget_credits(
+    source_run: HostedHarnessJob, scope: FixRequest, previous: AgentFixRun | None
+) -> int:
+    """An attempt's default limit in credits: its worst-case hold with BUDGET_HEADROOM on
+    top, since a check run holds its actual cost once that is more than the estimate. An
+    attempt that would need more than an Epoch may use is refused, never cut short."""
+    hold = outside_attempt_hold_usd(source_run, scope, previous)
+    credits = max(1, math.ceil(hold * BUDGET_HEADROOM * 100))
+    if credits > BUDGET_CREDITS_MAX:
+        raise HostedHarnessError(
+            "fix_attempt_too_large",
+            f"An attempt on this run could need {credits:,} credits, more than the"
+            f" {BUDGET_CREDITS_MAX:,} an Epoch may use. Run the environment on fewer"
+            " scenarios, then fix the new run.",
+            status_code=422,
+        )
+    return credits
 
 
 def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
@@ -154,14 +221,17 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
     (never a held-back one), the agent's files, the rules, and how to submit."""
     options = launch_options(source_run)
     attempts = list(outside_attempts(source_run))
+    used = used_attempts(source_run).count()
+    previous = attempts[-1] if attempts else None
     blocked = options.blocked
     request, files = None, []
     try:
-        request = _attempt_scope(source_run, attempts[-1] if attempts else None)
+        request = _attempt_scope(source_run, previous)
+        default_budget_credits(source_run, request, previous)
         files = sorted(archive_files(run_source_archive(source_run)))
     except HostedHarnessError as exc:
         blocked = blocked or LaunchBlocked(code=exc.code, message=exc.message)
-    if blocked is None and (refused := attempts_used(len(attempts))):
+    if blocked is None and (refused := attempts_used(used)):
         blocked = LaunchBlocked(code=refused.code, message=refused.message)
     held_back = set(request.held_back_scenario_keys) if request else set()
     scenarios = {one.key: one for one in options.scenarios}
@@ -188,7 +258,7 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
         protected_scenario_keys=request.protected_scenario_keys if request else [],
         locked_paths=request.locked_paths if request else [],
         failures=failures,
-        attempts=OutsideAttempts(used=len(attempts), max=OUTSIDE_ATTEMPTS_MAX),
+        attempts=OutsideAttempts(used=used, max=OUTSIDE_ATTEMPTS_MAX),
         blocked=blocked,
         instructions=_instructions(
             source_run_id=options.source_run.id,
@@ -196,7 +266,7 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
             targets=targets,
             failures=failures,
             commit=commit,
-            used=len(attempts),
+            used=used,
             locked=request.locked_paths if request else [],
         ),
     )
@@ -260,6 +330,12 @@ def _instructions(
     ]
     if commit:
         lines.append(f"- Start from commit `{commit}`. This is the commit the run ran.")
+    else:
+        lines.append(
+            "- Work in a git working tree of the agent's files, and submit from it."
+            " `fagi epoch submit` sends the files git tracks, and new files git would"
+            " track."
+        )
     left = max(0, OUTSIDE_ATTEMPTS_MAX - used)
     lines += [
         "",
@@ -304,9 +380,10 @@ def attempt_verdict(fix_run: AgentFixRun) -> AttemptVerdict:
         if fix_run.failure
         else None,
         summary=shown_summary(
-            report.get("summary") or "",
+            report,
             outside=True,
             candidates=int(candidate is not None),
+            failure=fix_run.failure,
         ),
         tiers=[
             AttemptTier.model_validate(hidden_tier(tier.model_dump()))
@@ -320,12 +397,21 @@ def attempt_verdict(fix_run: AgentFixRun) -> AttemptVerdict:
     )
 
 
-def shown_summary(summary: str, *, outside: bool, candidates: int) -> str:
+def shown_summary(
+    report: Mapping[str, Any],
+    *,
+    outside: bool,
+    candidates: int,
+    failure: Mapping[str, Any] | None,
+) -> str:
     """The engine's closing summary, for a reader not given the held-back cases. It joins
-    every failed tier's detail, held-back ids and rates included, so it is served only
-    where it holds none: a verify run that uploaded no candidate, whose summary is its
-    static refusal. Every other one reads blank."""
-    return summary if outside and candidates == 0 else ""
+    every failed tier's detail, held-back ids and rates included, and a failed engine's
+    is its own error text. So it is served only for a static refusal: a verify run that
+    uploaded no candidate and found no improvement. Any other ending reads as the
+    platform's words for its failure (agent_fix_engine._ending_failure), or blank."""
+    if outside and candidates == 0 and report.get("ending") == Ending.NO_IMPROVEMENT:
+        return str(report.get("summary") or "")
+    return str((failure or {}).get("message") or "")
 
 
 def hidden_checks(checks: Iterable[str], held_back: set[str]) -> list[str]:
@@ -397,9 +483,10 @@ def hidden_epoch(data: Mapping[str, Any], held_back: set[str]) -> dict[str, Any]
         "report": {
             **report,
             "summary": shown_summary(
-                report["summary"],
+                report,
                 outside=request.get("outside_candidate") is not None,
                 candidates=len(data["candidates"]),
+                failure=data.get("failure"),
             ),
         }
         if report
@@ -410,13 +497,21 @@ def hidden_epoch(data: Mapping[str, Any], held_back: set[str]) -> dict[str, Any]
                 "verdict": hidden_verdict(candidate["verdict"], held_back)
                 if candidate["verdict"]
                 else None,
-                "override": {
-                    **candidate["override"],
-                    "regressions": hidden_checks(
-                        candidate["override"]["regressions"], held_back
-                    ),
-                },
+                "override": _hidden_override(candidate["override"], held_back),
             }
             for candidate in data["candidates"]
         ],
+    }
+
+
+def _hidden_override(
+    override: Mapping[str, Any], held_back: set[str]
+) -> dict[str, Any]:
+    """A refused candidate's override, its held-back regressions left out. With only those
+    left out it reads as not allowed: what it would ship over is not shown."""
+    regressions = hidden_checks(override["regressions"], held_back)
+    return {
+        **override,
+        "allowed": bool(override["allowed"] and regressions),
+        "regressions": regressions,
     }

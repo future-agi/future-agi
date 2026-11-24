@@ -12,6 +12,7 @@ import os
 import subprocess
 import tarfile
 import tempfile
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
@@ -24,6 +25,7 @@ from minio.error import S3Error
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
+    CallExecution,
     HostedHarnessJob,
     TestExecution,
 )
@@ -155,8 +157,9 @@ def pack_tree(files: dict[str, bytes]) -> bytes:
 def candidate_patch(
     base: dict[str, bytes], files: dict[str, bytes], locked_paths: list[str]
 ) -> bytes:
-    """The files' change on the base as a git patch, refusing a change to a locked path
-    and a patch over the size limit."""
+    """The files' change on the base as a git patch, refusing a change git cannot write,
+    a change to a locked path and a patch over the size limit."""
+    refuse_unwritable(base, files)
     _refuse_locked_changes(locked_paths, base, files)
     patch = _patch(base, files)
     if len(patch) > MAX_PATCH_BYTES:
@@ -213,6 +216,36 @@ def add_candidate(
             agent_version=str(candidate.agent_version_id),
         )
     return candidate, kind.check(candidate.agent_version)
+
+
+def refuse_unwritable(base: dict[str, bytes], files: dict[str, bytes]) -> None:
+    """Refuse a change to a path git refuses to write: a name that is not UTF-8, or one
+    with a .git part in any case."""
+    changed = base.keys() | files.keys()
+    invalid = sorted(
+        path.encode("utf-8", "backslashreplace").decode()
+        for path in changed
+        if base.get(path) != files.get(path)
+        and (
+            not _is_utf8(path)
+            or any(part.lower() == ".git" for part in path.split("/"))
+        )
+    )
+    if invalid:
+        raise HostedHarnessError(
+            "fix_tree_invalid",
+            f"the tree changes paths git cannot write: {', '.join(invalid[:10])}",
+            status_code=400,
+        )
+
+
+def _is_utf8(path: str) -> bool:
+    # tarfile decodes a name that is not UTF-8 with surrogate escapes.
+    try:
+        path.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _refuse_other_than_submitted(
@@ -548,7 +581,7 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
         # Every config in one pass: queueing one reopens a call's eval side, so a
         # call per config would leave all but the first config ungraded.
         try:
-            queue_evals_for_finished_calls(execution, configs)
+            counts = queue_evals_for_finished_calls(execution, configs)
         except ValueError:
             # A cancelled run is never graded; its evals read as not finished.
             logger.warning(
@@ -558,9 +591,33 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
                 exc_info=True,
             )
             continue
-        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+        # A run with nothing queued, and none graded before, is left for the next
+        # winner. The dispatch runs once the report commits, so the mark comes after it.
+        if any(one["queued"] or one["skipped_existing"] for one in counts.values()):
+            transaction.on_commit(
+                _graded_once_dispatched(run.id, [str(one.id) for one in configs]),
+                robust=True,
+            )
+
+
+def _graded_once_dispatched(run_id: Any, config_ids: list[str]) -> Callable[[], None]:
+    def mark() -> None:
+        """Mark the run graded if its calls still hold the evals' entries: a dispatch
+        that failed put each call back as it was, and the next winner grades it."""
+        run = HostedHarnessJob.no_workspace_objects.filter(id=run_id).first()
+        if (
+            run is None
+            or not CallExecution.objects.filter(
+                test_execution_id=run.test_execution_id,
+                eval_outputs__has_any_keys=config_ids,
+            ).exists()
+        ):
+            return
+        HostedHarnessJob.no_workspace_objects.filter(id=run_id).update(
             graded_at=timezone.now()
         )
+
+    return mark
 
 
 def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:

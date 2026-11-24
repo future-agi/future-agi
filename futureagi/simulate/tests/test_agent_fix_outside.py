@@ -3,20 +3,32 @@ without a model call. The brief, the refusals at submit, the attempts' lineage a
 hold, the two refusals that stop an engine template from before verify mode, the verdict,
 and the Epoch read that names a held-back case to a person's signed-in session only."""
 
+import io
 import json
 import math
 import os
+import tarfile
 from contextlib import ExitStack
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
+from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from accounts.models import OrgApiKey
 from conftest import WorkspaceAwareAPIClient
-from simulate.models import AgentFixCandidate, AgentFixRun, HostedHarnessJob
+from simulate.models import (
+    AgentFixCandidate,
+    AgentFixRun,
+    CallExecution,
+    HostedHarnessJob,
+)
 from simulate.pydantic_schemas.agent_fix import FixRequest, Surface
 from simulate.selectors.agent_fix import (
     VERDICT_TIERS,
@@ -25,7 +37,10 @@ from simulate.selectors.agent_fix import (
     graded_check_runs,
     outside_attempt_hold_usd,
 )
-from simulate.selectors.agent_fix_outside import HELD_BACK_RULE
+from simulate.selectors.agent_fix_outside import (
+    HELD_BACK_RULE,
+    outside_attempt_request,
+)
 from simulate.services import agent_fix_engine as engine
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.hosted_harness import HostedHarnessError
@@ -167,6 +182,30 @@ def _finished(fix_run, label, *, state="completed", key=None):
     return run
 
 
+def _grade(fix_run, winner_id, *, evals=("relevance",), queued=1, lands=True):
+    """A winner's grading, run to its commit, with the queue faked: ``queued`` calls
+    stamped, and the eval entries still on the calls once it commits unless the dispatch
+    failed (``lands`` false), which puts each call back. Returns the executions queued."""
+    configs = [SimpleNamespace(id=name) for name in evals]
+    sent = []
+
+    def queue(execution, chosen):
+        sent.append(execution.id)
+        if queued and lands:
+            CallExecution.objects.filter(test_execution=execution).update(
+                eval_outputs={one.id: {"status": "pending"} for one in chosen}
+            )
+        return {one.id: {"queued": queued, "skipped_existing": 0} for one in chosen}
+
+    with (
+        patch.object(engine, "runnable_eval_configs", return_value=configs),
+        patch.object(engine, "queue_evals_for_finished_calls", side_effect=queue),
+        TestCase.captureOnCommitCallbacks(execute=True),
+    ):
+        engine._grade_winner(fix_run, winner_id)
+    return sent
+
+
 def _scenario_name(source_run, key):
     return (
         _executions(source_run)
@@ -228,7 +267,7 @@ class TestSubmit:
         assert engine.archive_files(stored) == FIXED
         assert engine.archive_files(engine.source_archive(fix_run)) == BASE
 
-    def test_the_default_budget_is_the_attempt_s_own_hold(
+    def test_the_default_budget_is_the_attempt_s_own_hold_with_room(
         self, auth_client, source_run
     ):
         response = _submit(auth_client, source_run)
@@ -236,10 +275,52 @@ class TestSubmit:
         fix_run = AgentFixRun.no_workspace_objects.get(id=response.json()["id"])
         request = FixRequest.model_validate(fix_run.request)
         hold = outside_attempt_hold_usd(source_run, request, None)
-        assert response.json()["request"]["budget_credits"] == math.ceil(hold * 100)
         # Two scenarios, one searched target, no eval: a 0.10 screen, then 0.30 each
-        # for the final check, its must-pass re-runs and the baseline.
+        # for the final check, its must-pass re-runs and the baseline. A run that costs
+        # more than its estimate holds what it costs: a quarter more is room for that.
         assert hold == Decimal("1.00")
+        assert response.json()["request"]["budget_credits"] == math.ceil(
+            hold * Decimal("1.25") * 100
+        )
+
+    def test_an_attempt_too_large_for_an_epoch_is_refused_not_cut_short(
+        self, auth_client, source_run
+    ):
+        # $401 of holds is 50,125 credits with the room, past the 50,000 an Epoch may use.
+        with patch(
+            "simulate.selectors.agent_fix_outside.outside_attempt_hold_usd",
+            return_value=Decimal("401"),
+        ):
+            response = _submit(auth_client, source_run)
+            brief = auth_client.get(
+                f"{EPOCHS}/coding-agent-brief/",
+                {"source_run_id": str(source_run.test_execution_id)},
+            ).json()
+
+        assert (response.status_code, response.json()["error"]) == (
+            422,
+            "fix_attempt_too_large",
+        )
+        assert "50,125 credits" in response.json()["message"]
+        assert brief["blocked"]["code"] == "fix_attempt_too_large"
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_a_summary_may_be_left_out(self, auth_client, source_run):
+        response = auth_client.post(
+            f"{EPOCHS}/coding-agent-attempts/",
+            {
+                "source_run_id": str(source_run.test_execution_id),
+                "base_commit": base_commit(source_run),
+                "tree": SimpleUploadedFile("tree.tar.gz", _tree(FIXED)),
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == 201, response.content
+        assert response.json()["request"]["outside_candidate"] == {
+            "summary": "",
+            "number": 1,
+        }
 
     def test_a_given_budget_is_kept(self, auth_client, source_run):
         response = _submit(auth_client, source_run, budget_credits=900)
@@ -273,7 +354,8 @@ class TestSubmit:
             ({**FIXED, "a//b.py": b"x"}, {}, 400, "fix_tree_invalid"),
             ({**FIXED, "a/./b.py": b"x"}, {}, 400, "fix_tree_invalid"),
             ({**FIXED, "a/b/": b"x"}, {}, 400, "fix_tree_invalid"),
-            ({**FIXED, ".git/hooks/post": b"x"}, {}, 422, "fix_outside_tree_untracked"),
+            ({**FIXED, ".git/hooks/post": b"x"}, {}, 400, "fix_tree_invalid"),
+            ({**FIXED, "src/.GIT/config": b"x"}, {}, 400, "fix_tree_invalid"),
             (
                 {**FIXED, "__pycache__/agent.pyc": b"\0\1"},
                 {},
@@ -310,6 +392,7 @@ class TestSubmit:
             "inner-dot",
             "trailing-slash",
             "under-git",
+            "under-git-any-case",
             "under-pycache",
             "not-utf8",
             "line-endings",
@@ -331,6 +414,30 @@ class TestSubmit:
             data={
                 "source_run_id": str(source_run.test_execution_id),
                 "tree": SimpleUploadedFile("tree.tar.gz", b"not a tarball"),
+            },
+            format="multipart",
+        )
+
+        assert (response.status_code, response.json()["error"]) == (
+            400,
+            "fix_tree_invalid",
+        )
+
+    def test_a_file_name_that_is_not_utf8_is_refused(self, auth_client, source_run):
+        out = io.BytesIO()
+        with tarfile.open(fileobj=out, mode="w:gz", format=tarfile.GNU_FORMAT) as tar:
+            # "café.py" in Latin-1: tarfile reads the name back with surrogate escapes.
+            for name, data in {**FIXED, "caf\udce9.py": b"x = 1\n"}.items():
+                member = tarfile.TarInfo(f"source/{name}")
+                member.size = len(data)
+                tar.addfile(member, io.BytesIO(data))
+
+        response = auth_client.post(
+            f"{EPOCHS}/coding-agent-attempts/",
+            data={
+                "source_run_id": str(source_run.test_execution_id),
+                "base_commit": base_commit(source_run),
+                "tree": SimpleUploadedFile("tree.tar.gz", out.getvalue()),
             },
             format="multipart",
         )
@@ -448,6 +555,53 @@ class TestSubmit:
         )
         temporal.start.assert_not_called()
 
+    @pytest.mark.parametrize("verdict", [False, True], ids=["no-verdict", "verdict"])
+    def test_a_failed_attempt_counts_only_once_its_change_got_a_verdict(
+        self, auth_client, source_run, verdict
+    ):
+        previous = None
+        for number in range(1, 4):
+            previous = _attempt(source_run, number, previous=previous)
+        failed = _attempt(source_run, 4, previous=previous, state=State.FAILED)
+        if verdict:
+            AgentFixCandidate.no_workspace_objects.create(
+                fix_run=failed,
+                attempt=1,
+                agent_version_id=failed.base_agent_version_id,
+                patch_object_key="k",
+                verdict={"accepted": False, "reason": "", "must_pass_regressions": []},
+            )
+
+        response = _submit(auth_client, source_run)
+
+        if verdict:
+            assert response.json()["error"] == "fix_attempts_used"
+            return
+        # The platform's failure told the coding agent nothing: the attempt is free again.
+        assert response.status_code == 201, response.content
+        body = response.json()
+        assert (
+            body["request"]["outside_candidate"]["number"],
+            body["attempt_of_id"],
+        ) == (
+            4,
+            str(failed.id),
+        )
+
+    def test_a_submission_numbers_its_attempt_under_the_run_s_lock(
+        self, auth_client, source_run
+    ):
+        with CaptureQueriesContext(connection) as queries:
+            response = _submit(auth_client, source_run)
+
+        assert response.status_code == 201, response.content
+        assert any(
+            'FROM "simulate_hosted_harness_job"' in one["sql"]
+            and "FOR UPDATE" in one["sql"]
+            and str(source_run.id).replace("-", "") in one["sql"].replace("-", "")
+            for one in queries.captured_queries
+        )
+
     def test_an_engine_epoch_on_the_run_is_not_an_attempt(
         self, auth_client, source_run
     ):
@@ -520,7 +674,7 @@ class TestLineage:
 
     @pytest.mark.parametrize(
         ("first_won", "evals", "graded"),
-        [(True, ["config"], True), (True, [], False), (False, [], False)],
+        [(True, ("relevance",), True), (True, (), False), (False, (), False)],
         ids=["first-graded", "first-won-without-evals", "no-winner"],
     )
     def test_a_baseline_a_winner_graded_keeps_its_grading(
@@ -541,11 +695,7 @@ class TestLineage:
                 outcome="winner"
             )
             # Its grading queues evals only when the environment has some.
-            with (
-                patch.object(engine, "runnable_eval_configs", return_value=evals),
-                patch.object(engine, "queue_evals_for_finished_calls"),
-            ):
-                engine._grade_winner(first, won.id)
+            _grade(first, won.id, evals=evals)
         baseline.refresh_from_db()
         assert (baseline.graded_at is not None) is graded
         close_fix_run(first.id, State.READY if first_won else State.NO_IMPROVEMENT)
@@ -570,16 +720,38 @@ class TestLineage:
         assert graded_check_runs(first, won)[0] == [baseline]
         second = AgentFixRun.no_workspace_objects.get(id=second.id)
         assert graded_check_runs(second, winner)[0] == [baseline]
-        with (
-            patch.object(engine, "runnable_eval_configs", return_value=["config"]),
-            patch.object(engine, "queue_evals_for_finished_calls") as queued,
-        ):
-            engine._grade_winner(second, winner.id)
-        assert [call.args[0].id for call in queued.call_args_list] == (
+        assert _grade(second, winner.id) == (
             [] if graded else [baseline.test_execution_id]
         )
         baseline.refresh_from_db()
         assert baseline.graded_at is not None
+
+    @pytest.mark.parametrize(
+        ("queued", "lands", "graded"),
+        [(1, True, True), (0, True, False), (1, False, False)],
+        ids=["queued", "nothing-queued", "dispatch-failed"],
+    )
+    def test_a_baseline_reads_graded_only_once_its_evals_were_sent(
+        self, auth_client, source_run, queued, lands, graded
+    ):
+        attempt = _running(
+            AgentFixRun.no_workspace_objects.get(
+                id=_submit(auth_client, source_run).json()["id"]
+            )
+        )
+        winner = _add(attempt)
+        baseline = _check(attempt, label="baseline-r1")
+        HostedHarnessJob.no_workspace_objects.filter(id=baseline.id).update(
+            state="completed"
+        )
+        AgentFixCandidate.no_workspace_objects.filter(id=winner.id).update(
+            outcome="winner"
+        )
+
+        _grade(attempt, winner.id, queued=queued, lands=lands)
+
+        baseline.refresh_from_db()
+        assert (baseline.graded_at is not None) is graded
 
     def test_the_hold_holds_each_check_at_its_worst(self, source_run):
         request = FixRequest(
@@ -969,3 +1141,187 @@ class TestHeldBackOnlyInASession:
             body["candidates"][0]["override"]["regressions"]
             == verdict["must_pass_regressions"]
         )
+
+
+def _source_route(client, route, test_execution_id):
+    """One of the routes that start from a run, asked for ``test_execution_id``."""
+    run = {"source_run_id": str(test_execution_id)}
+    if route == "brief":
+        return client.get(f"{EPOCHS}/coding-agent-brief/", run)
+    if route == "launch-options":
+        return client.get(f"{EPOCHS}/launch-options/", run)
+    if route == "submit":
+        return client.post(
+            f"{EPOCHS}/coding-agent-attempts/",
+            {**run, "tree": SimpleUploadedFile("tree.tar.gz", _tree(FIXED))},
+            format="multipart",
+        )
+    return client.post(
+        f"{EPOCHS}/",
+        {
+            **run,
+            "target_scenario_keys": [KEYS[0]],
+            "surfaces": ["prompt"],
+            "budget_credits": 500,
+            "max_minutes": 30,
+        },
+        format="json",
+    )
+
+
+class TestOnlyAPersonsRuns:
+    """An Epoch's own check runs and a verify run are not runs to fix: an attempt on a
+    held-back check run would show its coding agent the cases the Epoch held back."""
+
+    @pytest.mark.parametrize("route", ["brief", "submit", "launch-options", "launch"])
+    @pytest.mark.parametrize("kind", ["check", "verify"])
+    def test_a_run_no_person_started_is_not_found(
+        self, auth_client, source_run, environment, route, kind
+    ):
+        if kind == "check":
+            epoch = _fix_run(source_run)
+            run = _check(epoch, label="c1-held-back")
+        else:
+            run = _run(environment, key="verify-run")
+            HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+                verify_of=environment
+            )
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            state="completed"
+        )
+        run.refresh_from_db()
+
+        response = _source_route(auth_client, route, run.test_execution_id)
+
+        assert (response.status_code, response.json()["error"]) == (404, "not_found")
+        # The person's own run answers on the same route.
+        if route in ("brief", "launch-options"):
+            ok = _source_route(auth_client, route, source_run.test_execution_id)
+            assert ok.status_code == 200, ok.content
+
+
+class TestOnlyAPersonShipsOverARefusal:
+    @pytest.mark.parametrize(
+        "client", ["auth_client", "key_client"], ids=["mcp", "key"]
+    )
+    @pytest.mark.parametrize("ship", ["make-default", "pull-request"])
+    def test_an_override_reason_needs_a_signed_in_person(
+        self, request, browser_client, client, ship
+    ):
+        client = request.getfixturevalue(client)
+        url = f"{EPOCHS}/{uuid4()}/candidates/{uuid4()}/{ship}/"
+        reason = {"override_reason": "reviewed by hand"}
+
+        refused = client.post(url, reason, format="json")
+        plain = client.post(url, {}, format="json")
+        person = browser_client.post(url, reason, format="json")
+
+        assert (refused.status_code, refused.json()["error"]) == (
+            403,
+            "fix_override_needs_person",
+        )
+        assert refused.json()["message"].startswith("A person decides")
+        # Without a reason, and for a person, the route goes on: these ids are unknown.
+        assert (plain.status_code, person.status_code) == (404, 404)
+
+    def test_an_mcp_tool_call_cannot_ship_over_a_refusal(self, auth_client):
+        response = auth_client.post(
+            "/mcp/internal/tool-call/",
+            {
+                "tool_name": "make_epoch_candidate_default",
+                "params": {
+                    "id": str(uuid4()),
+                    "candidate_id": str(uuid4()),
+                    "override_reason": "reviewed by hand",
+                },
+            },
+            format="json",
+        )
+
+        assert "fix_override_needs_person" in json.dumps(response.json())
+
+    def test_an_override_only_over_held_back_cases_reads_as_not_allowed(
+        self, auth_client, browser_client, planted
+    ):
+        AgentFixCandidate.no_workspace_objects.filter(fix_run=planted).update(
+            verdict={**_verdict(HELD), "must_pass_regressions": [f"{HELD}: refunded"]}
+        )
+
+        [hidden] = auth_client.get(f"{EPOCHS}/{planted.id}/").json()["candidates"]
+        [shown] = browser_client.get(f"{EPOCHS}/{planted.id}/").json()["candidates"]
+
+        assert (hidden["override"]["allowed"], hidden["override"]["regressions"]) == (
+            False,
+            [],
+        )
+        assert (shown["override"]["allowed"], shown["override"]["regressions"]) == (
+            True,
+            [f"{HELD}: refunded"],
+        )
+
+
+class TestScope:
+    def test_a_big_run_is_capped_to_what_an_attempt_checks_the_same_each_time(
+        self, both_failing
+    ):
+        def scope():
+            return outside_attempt_request(
+                both_failing,
+                None,
+                number=1,
+                summary="",
+                locked_paths=None,
+                budget_credits=100,
+            ).target_scenario_keys
+
+        with patch("simulate.selectors.agent_fix_outside.SCENARIOS_MAX", 1):
+            first, again = scope(), scope()
+
+        assert len(first) == 1
+        assert first == again
+        assert first[0] in KEYS
+
+    def test_a_run_an_attempt_cannot_hold_is_refused_in_plain_words(
+        self, auth_client, source_run
+    ):
+        models = [f"model-{n}" for n in range(51)]
+        with patch(
+            "simulate.selectors.agent_fix_outside.models_called", return_value=models
+        ):
+            brief = auth_client.get(
+                f"{EPOCHS}/coding-agent-brief/",
+                {"source_run_id": str(source_run.test_execution_id)},
+            )
+            submitted = _submit(auth_client, source_run)
+
+        assert brief.status_code == 200, brief.content
+        assert brief.json()["blocked"]["code"] == "fix_attempt_scope_invalid"
+        assert (submitted.status_code, submitted.json()["error"]) == (
+            422,
+            "fix_attempt_scope_invalid",
+        )
+
+
+class TestEndingWords:
+    def test_a_failed_engine_s_own_words_are_not_served(self, auth_client, source_run):
+        attempt = AgentFixRun.no_workspace_objects.get(
+            id=_submit(auth_client, source_run).json()["id"]
+        )
+        AgentFixRun.no_workspace_objects.filter(id=attempt.id).update(
+            report={
+                "ending": "failed",
+                "summary": "failed: TypeError at /opt/agent-improvement/improve.mjs:12",
+                "winner_candidate_id": None,
+            }
+        )
+        words = "the engine hit an error it could not recover from"
+        close_fix_run(
+            attempt.id,
+            State.FAILED,
+            failure={"code": "fix_engine_failed", "message": words},
+        )
+
+        verdict = auth_client.get(f"{EPOCHS}/{attempt.id}/verdict/").json()
+        read = auth_client.get(f"{EPOCHS}/{attempt.id}/").json()
+
+        assert verdict["summary"] == read["report"]["summary"] == words

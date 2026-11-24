@@ -31,6 +31,7 @@ from simulate.selectors.agent_fix import (
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs
 from simulate.selectors.agent_fix_outside import attempt_verdict, coding_agent_brief
+from simulate.selectors.runs import user_runs
 from simulate.serializers.agent_fix import (
     AgentFixAttemptVerdictSerializer,
     AgentFixCandidateCreatedSerializer,
@@ -146,10 +147,16 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         )
 
     def _source_run(self, request, test_execution_id):
-        """A finished run of one of the caller's environments, by its test execution."""
+        """A user run of one of the caller's environments, by its test execution. An
+        Epoch's own check run or a verify run is never one: an Epoch from it would see the
+        cases its own fix held back."""
         return (
             self._jobs(request)
-            .filter(test_execution_id=test_execution_id, environment__isnull=False)
+            .filter(
+                user_runs(),
+                test_execution_id=test_execution_id,
+                environment__isnull=False,
+            )
             .select_related("environment__environment_version", "environment_version")
             .first()
         )
@@ -355,6 +362,20 @@ class AgentFixRunViewSet(viewsets.ViewSet):
             .first()
         )
 
+    @staticmethod
+    def _override_reason(request) -> str:
+        """The reason to ship a candidate its checks refused. Only a person decides that,
+        in Future AGI: an API key, the CLI or MCP is refused."""
+        reason = request.validated_data["override_reason"]
+        if reason and not is_browser_session(request):
+            raise HostedHarnessError(
+                "fix_override_needs_person",
+                "A person decides whether to ship a candidate its checks refused. Open"
+                " the Epoch in Future AGI to ship it.",
+                status_code=403,
+            )
+        return reason
+
     @validated_request(
         request_serializer=AgentFixShipSerializer,
         responses={200: AgentFixMakeDefaultSerializer},
@@ -366,13 +387,12 @@ class AgentFixRunViewSet(viewsets.ViewSet):
         url_path=r"candidates/(?P<candidate_id>[0-9a-f-]{36})/make-default",
     )
     def make_default(self, request, pk=None, candidate_id=None):
+        reason = self._override_reason(request)
         candidate = self._candidate(request, pk, candidate_id)
         if candidate is None:
             return _not_found()
         outcome = make_candidate_default(
-            candidate,
-            user=request.user,
-            override_reason=request.validated_data["override_reason"],
+            candidate, user=request.user, override_reason=reason
         )
         return Response({"outcome": outcome})
 
@@ -389,14 +409,11 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     def pull_request(self, request, pk=None, candidate_id=None):
         """A GitHub agent's winner, or a candidate only its must-pass check refused with
         the user's reason, opened once as a pull request on its repository."""
+        reason = self._override_reason(request)
         candidate = self._candidate(request, pk, candidate_id)
         if candidate is None:
             return _not_found()
-        url = open_pull_request(
-            candidate,
-            user=request.user,
-            override_reason=request.validated_data["override_reason"],
-        )
+        url = open_pull_request(candidate, user=request.user, override_reason=reason)
         return Response({"pull_request_url": url})
 
     @swagger_auto_schema(

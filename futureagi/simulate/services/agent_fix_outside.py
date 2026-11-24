@@ -5,6 +5,7 @@ import uuid
 from typing import Any
 
 import structlog
+from django.db import transaction
 
 from simulate.models import AgentFixRun, HostedHarnessJob
 from simulate.selectors.agent_fix import base_commit, launch_blocker
@@ -12,11 +13,13 @@ from simulate.selectors.agent_fix_outside import (
     attempts_used,
     outside_attempt_request,
     outside_attempts,
+    used_attempts,
 )
 from simulate.services.agent_fix_agents import agent_kind
 from simulate.services.agent_fix_engine import (
     archive_files,
     candidate_patch,
+    refuse_unwritable,
     run_source_archive,
     store_outside_trees,
 )
@@ -50,8 +53,7 @@ def submit_outside_attempt(
         )
     if blocked := launch_blocker(source_run, usage=False):
         raise blocked
-    attempts = list(outside_attempts(source_run))
-    if refused := attempts_used(len(attempts)):
+    if refused := attempts_used(used_attempts(source_run).count()):
         raise refused
     commit = base_commit(source_run)
     if commit and sent_base_commit != commit:
@@ -61,15 +63,6 @@ def submit_outside_attempt(
             " it again.",
             status_code=409,
         )
-    previous = attempts[-1] if attempts else None
-    request = outside_attempt_request(
-        source_run,
-        previous,
-        number=len(attempts) + 1,
-        summary=summary,
-        locked_paths=locked_paths,
-        budget_credits=budget_credits,
-    )
     files = archive_files(tree)
     base_body = run_source_archive(source_run)
     base = archive_files(base_body)
@@ -79,35 +72,53 @@ def submit_outside_attempt(
             "the submitted tree changes no file of the agent",
             status_code=422,
         )
+    refuse_unwritable(base, files)
     _refuse_unrebuildable(base, files)
-    candidate_patch(base, files, request.locked_paths)
     require_agent_fix_usage(str(environment.organization_id))
     fix_run_id = uuid.uuid4()
-    store_outside_trees(
-        environment.organization_id, fix_run_id, base=base_body, submitted=files
-    )
-    fix_run = create_fix_run(
-        source_run,
-        base_version_id=previous.base_agent_version_id
-        if previous
-        else agent_kind(environment).base_version_id(source_run),
-        request=request.model_dump(mode="json"),
-        user=user,
-        suite_version_id=previous.suite_version_id if previous else None,
-        attempt_of=previous,
-        fix_run_id=fix_run_id,
-    )
+    with transaction.atomic():
+        # Two submissions at once take their numbers one after the other.
+        HostedHarnessJob.no_workspace_objects.select_for_update().get(id=source_run.id)
+        attempts = list(outside_attempts(source_run))
+        used = used_attempts(source_run).count()
+        if refused := attempts_used(used):
+            raise refused
+        previous = attempts[-1] if attempts else None
+        request = outside_attempt_request(
+            source_run,
+            previous,
+            number=used + 1,
+            summary=summary,
+            locked_paths=locked_paths,
+            budget_credits=budget_credits,
+        )
+        # Here, with the locks the previous attempt leaves this one.
+        candidate_patch(base, files, request.locked_paths)
+        store_outside_trees(
+            environment.organization_id, fix_run_id, base=base_body, submitted=files
+        )
+        fix_run = create_fix_run(
+            source_run,
+            base_version_id=previous.base_agent_version_id
+            if previous
+            else agent_kind(environment).base_version_id(source_run),
+            request=request.model_dump(mode="json"),
+            user=user,
+            suite_version_id=previous.suite_version_id if previous else None,
+            attempt_of=previous,
+            fix_run_id=fix_run_id,
+        )
     logger.info(
         "agent_fix_outside_attempt_submitted",
         fix_run=str(fix_run.id),
-        number=len(attempts) + 1,
+        number=used + 1,
         files=len(files),
     )
     return fix_run
 
 
 # Folders git keeps out of a diff, so a change in them would not reach the engine.
-UNTRACKED_FOLDERS = frozenset({".git", "__pycache__"})
+UNTRACKED_FOLDERS = frozenset({"__pycache__"})
 # Attributes that make git rewrite a file on checkout or commit (line endings, filters).
 REWRITING_ATTRIBUTES = frozenset({"text", "eol", "crlf", "filter"})
 
@@ -121,7 +132,7 @@ def _refuse_unrebuildable(base: dict[str, bytes], files: dict[str, bytes]) -> No
     if hidden := [path for path in changed if UNTRACKED_FOLDERS & set(path.split("/"))]:
         raise HostedHarnessError(
             "fix_outside_tree_untracked",
-            "the tree changes files that git does not track, under .git or"
+            "the tree changes files that git does not track, under"
             f" __pycache__: {', '.join(hidden[:10])}",
             status_code=422,
         )
