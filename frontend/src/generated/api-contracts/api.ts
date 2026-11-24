@@ -666,6 +666,7 @@ import type {
   HarnessConversationAdjustmentResponseApi,
   HarnessConversationEventAckApi,
   HarnessConversationEventBatchApi,
+  HarnessConversationHistoryPageApi,
   HarnessConversationMessageCreateApi,
   HarnessConversationOverviewApi,
   HarnessConversationOverviewQueryApi,
@@ -1363,6 +1364,8 @@ import type {
   SimulateApiHarnessEnvironmentsUploadFileBody,
   SimulateApiHarnessEnvironmentsValidationStatusParams,
   SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
+  SimulateApiHarnessJobsConversationConversationHistoryParams,
+  SimulateApiHarnessJobsReadParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
   SimulateApiHarnessJobsSourceUploadBody,
   SimulateApiLivekitWebhookCreateBody,
@@ -65907,8 +65910,27 @@ export type simulateApiHarnessJobsReadResponse =
   | simulateApiHarnessJobsReadResponseSuccess
   | simulateApiHarnessJobsReadResponseError;
 
-export const getSimulateApiHarnessJobsReadUrl = (id: string) => {
-  return `/simulate/api/harness-jobs/${id}/`;
+export const getSimulateApiHarnessJobsReadUrl = (
+  id: string,
+  params?: SimulateApiHarnessJobsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-jobs/${id}/?${stringifiedParams}`
+    : `/simulate/api/harness-jobs/${id}/`;
 };
 
 /**
@@ -65920,10 +65942,11 @@ five metadata keys. It never gets `events`, `stage_outputs`, `scenarios` or
  */
 export const simulateApiHarnessJobsRead = async (
   id: string,
+  params?: SimulateApiHarnessJobsReadParams,
   options?: RequestInit,
 ): Promise<simulateApiHarnessJobsReadResponse> => {
   return apiMutator<simulateApiHarnessJobsReadResponse>(
-    getSimulateApiHarnessJobsReadUrl(id),
+    getSimulateApiHarnessJobsReadUrl(id, params),
     {
       ...options,
       method: "GET",
@@ -66039,6 +66062,71 @@ export const simulateApiHarnessJobsCancel = async (
       method: "POST",
       headers: { "Content-Type": "application/json", ...options?.headers },
       body: JSON.stringify(harnessJobActionApi),
+    },
+  );
+};
+
+export type simulateApiHarnessJobsConversationConversationHistoryResponse200 = {
+  data: HarnessConversationHistoryPageApi;
+  status: 200;
+};
+
+export type simulateApiHarnessJobsConversationConversationHistoryResponseDefault =
+  {
+    data: ManagementAPIErrorResponseApi;
+    status: Exclude<HTTPStatusCodes, 200>;
+  };
+
+export type simulateApiHarnessJobsConversationConversationHistoryResponseSuccess =
+  simulateApiHarnessJobsConversationConversationHistoryResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessJobsConversationConversationHistoryResponseError =
+  simulateApiHarnessJobsConversationConversationHistoryResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessJobsConversationConversationHistoryResponse =
+  | simulateApiHarnessJobsConversationConversationHistoryResponseSuccess
+  | simulateApiHarnessJobsConversationConversationHistoryResponseError;
+
+export const getSimulateApiHarnessJobsConversationConversationHistoryUrl = (
+  id: string,
+  params: SimulateApiHarnessJobsConversationConversationHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-jobs/${id}/conversation/history/?${stringifiedParams}`
+    : `/simulate/api/harness-jobs/${id}/conversation/history/`;
+};
+
+/**
+ * The builder chat's messages or events just before a sequence, oldest first, for reading back past the
+window a job read carries.
+ */
+export const simulateApiHarnessJobsConversationConversationHistory = async (
+  id: string,
+  params: SimulateApiHarnessJobsConversationConversationHistoryParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessJobsConversationConversationHistoryResponse> => {
+  return apiMutator<simulateApiHarnessJobsConversationConversationHistoryResponse>(
+    getSimulateApiHarnessJobsConversationConversationHistoryUrl(id, params),
+    {
+      ...options,
+      method: "GET",
     },
   );
 };
