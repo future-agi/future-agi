@@ -549,7 +549,12 @@ def test_receipt_for_a_call_that_never_connected_is_failed_and_unscored():
     assert call.duration_seconds == 0
     assert call.started_at == datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
     assert call.error_message.startswith("voice_call_not_completed")
-    on_commit.assert_not_called()
+    on_commit.assert_called_once()
+    with patch(
+        "simulate.services.hosted_harness_ingestion.dispatch_worker_read"
+    ) as worker_read:
+        on_commit.call_args.args[0]()
+    worker_read.assert_called_once_with(call.id)
 
 
 def test_recovered_media_fills_only_missing_unambiguous_kinds():
