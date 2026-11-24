@@ -192,7 +192,8 @@ export function readyEpoch(ids: Ids): Json {
     retried_from_id: null,
     retryable: false,
     limited_validation: false,
-    issue: { job_id: ids.job, cluster_id: ids.cluster, project_id: PROJECT_ID },
+    issue: { job_id: ids.job, cluster_id: ids.cluster, project_id: PROJECT_ID, title: ISSUE_TITLE },
+    from_issue: true,
     check_runs: [],
     candidates: [
       {

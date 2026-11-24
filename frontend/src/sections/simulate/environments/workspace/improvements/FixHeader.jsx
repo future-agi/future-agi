@@ -1,11 +1,13 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
   Box,
   Button,
   IconButton,
   Link,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
@@ -21,7 +23,13 @@ import {
 
 import EpochMoreMenu from "./EpochMoreMenu";
 import FixStatusChip from "./FixStatusChip";
-import { fixName, formatCredits, identityLine, stageLabel } from "./fixRunView";
+import {
+  fixName,
+  formatCredits,
+  identityLine,
+  originOf,
+  stageLabel,
+} from "./fixRunView";
 
 const STOPPABLE = new Set(["queued", "running"]);
 
@@ -96,13 +104,35 @@ function StopControl({ fix }) {
 }
 StopControl.propTypes = { fix: PropTypes.object.isRequired };
 
-// An epoch run from an Error Feed issue starts its breadcrumb at the issue, from the
-// link the epoch stores, so a reload or a shared link keeps it.
-export default function FixHeader({ fix, envId, actions }) {
+// Where the origin line links: the Error Feed issue, or the run the epoch started from.
+function originHref(fix, kind, envId, runTestId) {
+  if (kind === "issue")
+    return paths.dashboard.errorFeed.detail(fix.issue.cluster_id);
+  if (kind === "run" && runTestId)
+    return paths.dashboard.simulate.environments.execution(
+      envId,
+      runTestId,
+      fix.source_run_id,
+    );
+  return null;
+}
+
+// The design's epoch header (ImprovementRunsView): the environment, then the epoch,
+// and below it the versions and where it came from, in words. Everything comes from
+// the epoch's own read, so a reload or a shared link keeps it.
+export default function FixHeader({ fix, envId, runTestId, actions }) {
+  const location = useLocation();
   const { issue } = fix;
   const issueHref = issue
     ? paths.dashboard.errorFeed.detail(issue.cluster_id)
     : null;
+  const epochsHref = paths.dashboard.simulate.environments.workspaceTab(
+    envId,
+    "improvements",
+  );
+  const origin = originOf(fix);
+  const originLink = originHref(fix, origin.kind, envId, runTestId);
+  const quiet = { typography: "s3", color: "text.subtitle" };
   return (
     <Stack
       direction="row"
@@ -119,14 +149,8 @@ export default function FixHeader({ fix, envId, actions }) {
       <IconButton
         size="small"
         component={RouterLink}
-        href={
-          issueHref ||
-          paths.dashboard.simulate.environments.workspaceTab(
-            envId,
-            "improvements",
-          )
-        }
-        aria-label={issue ? `Back to ${issue.cluster_id}` : "Back to epochs"}
+        href={issueHref || epochsHref}
+        aria-label={issue ? "Back to the issue" : "Back to epochs"}
       >
         <Iconify
           icon="solar:alt-arrow-left-linear"
@@ -136,24 +160,27 @@ export default function FixHeader({ fix, envId, actions }) {
       </IconButton>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={1}>
-          {issue && (
+          {fix.environment?.name && (
             <Typography
               noWrap
-              sx={{ typography: "m3", color: "text.secondary", flexShrink: 0 }}
+              sx={{ typography: "m3", color: "text.secondary", minWidth: 0 }}
             >
               <Link
                 component={RouterLink}
-                href={issueHref}
+                href={epochsHref}
                 color="inherit"
                 underline="hover"
-                data-testid="epoch-issue-crumb"
+                data-testid="epoch-environment-crumb"
               >
-                {issue.cluster_id}
+                {fix.environment.name}
               </Link>
               {" /"}
             </Typography>
           )}
-          <Typography noWrap sx={{ typography: "m3", fontWeight: 600 }}>
+          <Typography
+            noWrap
+            sx={{ typography: "m3", fontWeight: 600, flexShrink: 0 }}
+          >
             {fixName(fix)}
           </Typography>
           <FixStatusChip state={fix.state} />
@@ -168,8 +195,26 @@ export default function FixHeader({ fix, envId, actions }) {
             </Typography>
           )}
         </Stack>
-        <Typography noWrap sx={{ typography: "s3", color: "text.subtitle" }}>
-          {identityLine(fix)}
+        <Typography noWrap sx={quiet}>
+          {`${identityLine(fix)} · `}
+          {originLink ? (
+            <Tooltip arrow describeChild title={origin.label}>
+              <Link
+                component={RouterLink}
+                href={originLink}
+                state={{ backTo: location.pathname }}
+                color="inherit"
+                underline="hover"
+                data-testid="epoch-origin"
+              >
+                {origin.label}
+              </Link>
+            </Tooltip>
+          ) : (
+            <Box component="span" data-testid="epoch-origin">
+              {origin.label}
+            </Box>
+          )}
         </Typography>
       </Box>
       <Stack direction="row" spacing={1} alignItems="center">
@@ -184,5 +229,7 @@ export default function FixHeader({ fix, envId, actions }) {
 FixHeader.propTypes = {
   fix: PropTypes.object.isRequired,
   envId: PropTypes.string.isRequired,
+  // The environment's run list id: a run's page needs it.
+  runTestId: PropTypes.string,
   actions: PropTypes.node,
 };

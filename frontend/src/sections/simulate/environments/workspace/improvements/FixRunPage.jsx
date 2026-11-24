@@ -48,6 +48,7 @@ export default function FixRunPage({ envId, fixId, runTestId }) {
       <FixHeader
         fix={fix}
         envId={envId}
+        runTestId={runTestId}
         actions={
           live ? null : (
             <FinishedActions

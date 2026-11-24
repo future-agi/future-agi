@@ -106,8 +106,26 @@ export function identityLine(fix) {
     .filter(Boolean)
     .join(" · ");
   const version = fix.environment?.version;
-  const left = version == null ? agent : `${agent} × environment v${version}`;
-  return [left, fix.environment?.name].filter(Boolean).join(" · ");
+  // The environment's name is the header's breadcrumb, so it is not said twice.
+  return version == null ? agent : `${agent} × environment v${version}`;
+}
+
+// Where an epoch came from, in words: its Error Feed issue by title, or the run it
+// started from. `kind` says what to link; a deleted one has nothing to link.
+export function originOf(fix) {
+  if (fix.from_issue) {
+    return fix.issue
+      ? { kind: "issue", label: `From issue: ${fix.issue.title}` }
+      : { kind: null, label: "From a deleted issue" };
+  }
+  if (!fix.source_run_id) return { kind: null, label: "From a deleted run" };
+  return {
+    kind: "run",
+    label:
+      fix.source_run_number == null
+        ? "From its run"
+        : `From run: Run ${fix.source_run_number}`,
+  };
 }
 
 export const winnerOf = (fix) =>

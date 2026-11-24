@@ -20,6 +20,7 @@ import {
   describeChecks,
   flakyProtectedText,
   noSafeNumbers,
+  originOf,
   outcomeLabel,
   rejectionChecks,
   STATE_LABEL,
@@ -42,16 +43,40 @@ describe("labels and identity", () => {
 
   it("names the fix and its agent × environment, dropping unknown parts", () => {
     expect(fixName(byId("fix-ready-archive"))).toBe("Epoch 10");
+    // The environment's name is the breadcrumb, not repeated here.
     expect(identityLine(byId("fix-ready-github"))).toBe(
-      "agent v8 · main @ 0487e25 × environment v1 · new env",
+      "agent v8 · main @ 0487e25 × environment v1",
     );
     expect(identityLine(byId("fix-ready-archive"))).toBe(
-      "agent v8 × environment v1 · new env",
+      "agent v8 × environment v1",
     );
     expect(fixName(byId("fix-unknown-identity"))).toBe("Epoch");
-    expect(identityLine(byId("fix-unknown-identity"))).toBe(
-      "agent v8 · new env",
-    );
+    expect(identityLine(byId("fix-unknown-identity"))).toBe("agent v8");
+  });
+
+  it("names where an epoch came from, in words, never by the issue's id", () => {
+    const run = byId("fix-ready-archive");
+    const issue = {
+      job_id: "j",
+      cluster_id: "S-1A2B",
+      project_id: "p",
+      title: "Refund quoted twice",
+    };
+    expect(originOf({ ...run, from_issue: true, issue })).toEqual({
+      kind: "issue",
+      label: "From issue: Refund quoted twice",
+    });
+    expect(originOf({ ...run, from_issue: true, issue: null })).toEqual({
+      kind: null,
+      label: "From a deleted issue",
+    });
+    expect(originOf({ ...run, from_issue: false })).toEqual({
+      kind: "run",
+      label: "From run: Run 1",
+    });
+    expect(
+      originOf({ ...run, from_issue: false, source_run_id: null }),
+    ).toEqual({ kind: null, label: "From a deleted run" });
   });
 
   it("is shipped when the winner's version is the environment default", () => {

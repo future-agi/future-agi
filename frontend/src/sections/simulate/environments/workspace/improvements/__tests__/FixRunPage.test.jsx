@@ -61,7 +61,7 @@ const fixOf = (id) => ({
   environment_id: "env-1",
 });
 
-function renderPage(fixId) {
+function renderPage(fixId, { runTestId } = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -69,7 +69,7 @@ function renderPage(fixId) {
     <QueryClientProvider client={client}>
       <SnackbarProvider>
         <MemoryRouter>
-          <FixRunPage envId="env-1" fixId={fixId} />
+          <FixRunPage envId="env-1" fixId={fixId} runTestId={runTestId} />
         </MemoryRouter>
       </SnackbarProvider>
     </QueryClientProvider>,
@@ -203,26 +203,70 @@ describe("FixRunPage", () => {
     );
   });
 
-  it("starts the breadcrumb at the Error Feed issue it was run from", async () => {
-    const fix = fixOf("fix-search");
-    fix.issue = {
-      job_id: "job-1",
-      cluster_id: "S-1A2B3C4D",
-      project_id: "proj-1",
+  const ISSUE = {
+    job_id: "job-1",
+    cluster_id: "S-1A2B3C4D",
+    project_id: "proj-1",
+    title: "Refund quoted twice",
+  };
+  const pin = (over) => {
+    hooks.fixRun = {
+      fix: { ...fixOf("fix-search"), ...over },
+      isLoading: false,
+      error: null,
     };
-    hooks.fixRun = { fix, isLoading: false, error: null };
+  };
+
+  it("starts the breadcrumb at the environment, linking to its Epochs tab", () => {
+    pin({ from_issue: true, issue: ISSUE });
     renderPage("fix-search");
-    expect(screen.getByTestId("epoch-issue-crumb")).toHaveAttribute(
+    const crumb = screen.getByTestId("epoch-environment-crumb");
+    expect(crumb).toHaveTextContent("new env");
+    expect(crumb).toHaveAttribute(
       "href",
-      "/dashboard/error-feed/S-1A2B3C4D",
+      "/dashboard/simulate/environments/env-1?tab=improvements",
     );
-    expect(screen.getByTestId("epoch-issue-crumb")).toHaveTextContent(
-      "S-1A2B3C4D",
-    );
+    // The issue's id is never the breadcrumb.
+    expect(screen.queryByText(/S-1A2B3C4D/)).toBeNull();
+    // Nor is the environment named twice.
+    expect(screen.getAllByText(/new env/)).toHaveLength(1);
+  });
+
+  it("links an issue's epoch to its issue by title", () => {
+    pin({ from_issue: true, issue: ISSUE });
+    renderPage("fix-search");
+    const origin = screen.getByTestId("epoch-origin");
+    expect(origin).toHaveTextContent("From issue: Refund quoted twice");
+    expect(origin).toHaveAttribute("href", "/dashboard/error-feed/S-1A2B3C4D");
     expect(
-      screen.getByRole("link", { name: "Back to S-1A2B3C4D" }),
+      screen.getByRole("link", { name: "Back to the issue" }),
     ).toHaveAttribute("href", "/dashboard/error-feed/S-1A2B3C4D");
-    expect(screen.queryByRole("link", { name: "Back to epochs" })).toBeNull();
+  });
+
+  it("links a run's epoch to the run it started from", () => {
+    pin({ from_issue: false, issue: null });
+    renderPage("fix-search", { runTestId: "rt-env" });
+    const origin = screen.getByTestId("epoch-origin");
+    expect(origin).toHaveTextContent("From run: Run 1");
+    expect(origin).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/runs/rt-env/te-source-run-1",
+    );
+  });
+
+  it.each([
+    [{ from_issue: true, issue: null }, "From a deleted issue"],
+    [
+      { from_issue: false, issue: null, source_run_id: null },
+      "From a deleted run",
+    ],
+  ])("says a deleted origin in plain words, with no link", (over, label) => {
+    pin(over);
+    renderPage("fix-search");
+    const origin = screen.getByTestId("epoch-origin");
+    expect(origin).toHaveTextContent(label);
+    expect(origin.tagName).not.toBe("A");
+    expect(within(origin).queryByRole("link")).toBeNull();
   });
 
   it("offers no Stop and no stage on a finished fix", async () => {

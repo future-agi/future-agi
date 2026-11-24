@@ -3,7 +3,7 @@ import math
 from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
-from simulate.models import AgentFixCandidate, AgentFixRun
+from simulate.models import AgentFixCandidate, AgentFixIssueJob, AgentFixRun
 from simulate.pydantic_schemas.agent_fix import (
     ALLOWED_MODELS_MAX,
     BUDGET_CREDITS_MAX,
@@ -333,6 +333,8 @@ class AgentFixEpochIssueSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
     cluster_id = serializers.CharField()
     project_id = serializers.UUIDField()
+    # The issue's title, as the Error Feed shows it.
+    title = serializers.CharField()
 
 
 class AgentFixRunSerializer(serializers.ModelSerializer):
@@ -368,8 +370,11 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
     # Some cases held back, but too few to call the fix verified, whatever its verdict
     # says. With none held back it is proven on the targets only, and this is false.
     limited_validation = serializers.SerializerMethodField()
-    # The Error Feed issue it was run from; null for an epoch run from a run.
+    # The Error Feed issue it was run from; null for an epoch run from a run, or once
+    # its issue is gone.
     issue = serializers.SerializerMethodField()
+    # Run from an Error Feed issue, which `issue` alone can't say once the issue is gone.
+    from_issue = serializers.SerializerMethodField()
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_retryable(self, fix_run: AgentFixRun) -> bool:
@@ -379,10 +384,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
         serializer_or_field=AgentFixEpochIssueSerializer(allow_null=True)
     )
     def get_issue(self, fix_run: AgentFixRun) -> dict | None:
-        links = self.context.get("issue_links")
-        job = (links if links is not None else jobs_of_epochs([fix_run])).get(
-            fix_run.id
-        )
+        job = self._issue_job(fix_run)
         if job is None:
             return None
         issue = live_issue(job.evidence_import.source_issue)
@@ -392,7 +394,23 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "job_id": job.id,
             "cluster_id": issue.cluster_id,
             "project_id": issue.project_id,
+            "title": issue.title,
         }
+
+    @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
+    def get_from_issue(self, fix_run: AgentFixRun) -> bool:
+        """Run from an Error Feed issue, even once the issue is gone."""
+        return self._issue_job(fix_run) is not None
+
+    def _issue_job(self, fix_run: AgentFixRun) -> AgentFixIssueJob | None:
+        """The issue job the epoch came from: a list's ``issue_links``, or read once
+        for a single epoch."""
+        links = self.context.get("issue_links")
+        if links is None:
+            links = self.context.setdefault("_issue_links", {})
+            if fix_run.id not in links:
+                links.update(jobs_of_epochs([fix_run]) or {fix_run.id: None})
+        return links.get(fix_run.id)
 
     @swagger_serializer_method(serializer_or_field=serializers.BooleanField())
     def get_limited_validation(self, fix_run: AgentFixRun) -> bool:
@@ -455,6 +473,7 @@ class AgentFixRunSerializer(serializers.ModelSerializer):
             "retryable",
             "limited_validation",
             "issue",
+            "from_issue",
             "check_runs",
             "candidates",
             "started_at",

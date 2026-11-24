@@ -15,6 +15,8 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from accounts.models import Organization, Workspace
@@ -1062,7 +1064,54 @@ class TestApi:
             "job_id": str(job.id),
             "cluster_id": issue.cluster_id,
             "project_id": str(issue.project_id),
+            "title": "Refund quoted twice",
         }
+        assert response.json()["from_issue"] is True
+
+    def test_an_epoch_says_it_came_from_an_issue_once_the_issue_is_gone(
+        self, auth_client, environment, issue, source_run
+    ):
+        epoch = _fix_run(source_run)
+        made = _import(environment, issue, ["t1"])
+        _job(environment, made, fix_run=epoch)
+        # Deleting the issue leaves its import, with no issue (SET_NULL).
+        EvidenceImport.objects.filter(id=made.id).update(source_issue=None)
+
+        body = auth_client.get(f"{RUNS}/{epoch.id}/").json()
+
+        assert body["issue"] is None
+        assert body["from_issue"] is True
+
+    def test_an_epoch_from_a_run_came_from_no_issue(self, auth_client, source_run):
+        epoch = _fix_run(source_run)
+
+        body = auth_client.get(f"{RUNS}/{epoch.id}/").json()
+
+        assert body["issue"] is None
+        assert body["from_issue"] is False
+
+    def test_listing_more_issue_epochs_costs_no_more_queries(
+        self, auth_client, environment, issue, source_run
+    ):
+        def add():
+            epoch = _fix_run(source_run, state=AgentFixRun.State.READY)
+            _job(environment, _import(environment, issue, ["t1"]), fix_run=epoch)
+
+        def read():
+            with CaptureQueriesContext(connection) as captured:
+                response = auth_client.get(
+                    f"{RUNS}/", {"environment_id": str(environment.id)}
+                )
+            assert response.status_code == 200, response.content
+            assert all(one["from_issue"] for one in response.json()["results"])
+            return len(captured.captured_queries)
+
+        add()
+        one = read()
+        for _ in range(3):
+            add()
+
+        assert read() == one
 
     def test_the_environment_page_leaves_an_issue_import_alone(
         self, auth_client, environment, issue, user
