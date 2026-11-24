@@ -645,7 +645,15 @@ class _M10Probes:
         raw = sql.encode() if isinstance(sql, str) else sql
         words = raw[:80].lstrip().split(None, 1)
         verb = words[0].upper() if words else b""
-        if verb in {b"SELECT", b"DELETE", b"INSERT", b"UPDATE", b"SAVEPOINT", b"RELEASE", b"WITH"}:
+        if verb in {
+            b"SELECT",
+            b"DELETE",
+            b"INSERT",
+            b"UPDATE",
+            b"SAVEPOINT",
+            b"RELEASE",
+            b"WITH",
+        }:
             op = verb.decode("ascii")
         else:
             op = "SQL"
@@ -689,7 +697,10 @@ class _M10Probes:
             if self.gc_start is not None:
                 self.data["unpaired_gc_events"] += 1
             self.gc_start = (
-                generation, now, self.phase(), threading.get_ident() == self.thread,
+                generation,
+                now,
+                self.phase(),
+                threading.get_ident() == self.thread,
             )
         elif event == "stop":
             start, self.gc_start = self.gc_start, None
@@ -716,7 +727,9 @@ class _M10Probes:
 
         stack = ExitStack()
         try:
-            self.observe(lambda: stack.enter_context(connection.execute_wrapper(self.execute)))
+            self.observe(
+                lambda: stack.enter_context(connection.execute_wrapper(self.execute))
+            )
             self.observe(gc.callbacks.append, callback)
             yield
         finally:
@@ -882,7 +895,10 @@ def _m10_sample(store, mode, index, diagnostics):
     check_window = timed("require_window", source_retention.require_window)
 
     def require_window(*args, **kwargs):
-        after_aggregate = active in {"post_aggregate_to_require_window", "post_window_to_pin_exit"}
+        after_aggregate = active in {
+            "post_aggregate_to_require_window",
+            "post_window_to_pin_exit",
+        }
         if not after_aggregate or not on_sample_thread():
             return check_window(*args, **kwargs)
         mark("post_aggregate_require_window_enter")
@@ -935,11 +951,13 @@ def _m10_sample(store, mode, index, diagnostics):
         patch.object(QuerySet, "delete", delete),
         patch.object(source_retention, "require_window", require_window),
         patch.object(
-            source_retention, "retained_start",
+            source_retention,
+            "retained_start",
             timed("retained_start", source_retention.retained_start),
         ),
         patch.object(
-            source_retention, "current_cutoff",
+            source_retention,
+            "current_cutoff",
             timed("retention_policy_cutoff", source_retention.current_cutoff),
         ),
         patch.object(reads, "provenance", timed("response_provenance", reads.provenance)),
