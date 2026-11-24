@@ -24,6 +24,13 @@ import SideDrawer from "../../components/SideDrawer";
 import AgentVersionsPanel from "../agents/AgentVersionsPanel";
 import { GroupHeading, Fact } from "./OverviewPrimitives";
 import AgentSummarySection from "./AgentSummarySection";
+import {
+  CountsSkeleton,
+  FactSkeleton,
+  MapSkeleton,
+  UseCasesSkeleton,
+  WorldSkeleton,
+} from "./OverviewSkeletons";
 import { isCodeSource } from "./agentLine";
 import SourceReadCard from "./SourceReadCard";
 import SourceToSandboxMap from "./SourceToSandboxMap";
@@ -69,6 +76,7 @@ export default function OverviewPanel({
   buildMode,
   counts: builtCounts,
   backedWorld,
+  waits = {},
 }) {
   const { env, fromDesign } = useApprovedDesign(builtEnv);
   const counts = fromDesign
@@ -150,7 +158,13 @@ export default function OverviewPanel({
       >
         <Fact
           label={OVERVIEW_COPY.facts.channel}
-          value={surface?.label ?? "-"}
+          value={
+            !surface && waits.contract && !waits.contract.stopped ? (
+              <FactSkeleton />
+            ) : (
+              surface?.label ?? "-"
+            )
+          }
         />
         {!isCodeSource(env.source) && (
           <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
@@ -239,7 +253,16 @@ export default function OverviewPanel({
       {/* State-of-the-env summary tiles + latest run — the "how's this env doing
           right now?" answer. Each tile jumps to the tab it summarises. For a
           backed env the numbers come from §6 (summaryCounts). */}
-      <StateSummary env={env} envState={envState} counts={counts} onGo={onGo} />
+      {waits.scenarios ? (
+        <CountsSkeleton wait={waits.scenarios} />
+      ) : (
+        <StateSummary
+          env={env}
+          envState={envState}
+          counts={counts}
+          onGo={onGo}
+        />
+      )}
 
       {/* Getting-started checklist for envs that haven't been seeded yet. A
           scratch env arrives carrying a derived world, so the same checklist
@@ -255,7 +278,9 @@ export default function OverviewPanel({
 
       <GroupHeading>{OVERVIEW_COPY.capabilities}</GroupHeading>
 
-      {backedWorld ? (
+      {waits.world ? (
+        <MapSkeleton wait={waits.world} />
+      ) : backedWorld ? (
         <SourceToSandboxMap
           env={env}
           envState={envState}
@@ -271,13 +296,17 @@ export default function OverviewPanel({
           {/* A backed env reads only the real §6 fields; a use case the build
               didn't write stays empty rather than being made up. The fixture
               derivation is for client-only envs (templates, forks). */}
-          <UseCasesCard
-            useCases={
-              backedWorld
-                ? env.useCases ?? []
-                : env.useCases ?? contract.useCases
-            }
-          />
+          {waits.contract ? (
+            <UseCasesSkeleton wait={waits.contract} />
+          ) : (
+            <UseCasesCard
+              useCases={
+                backedWorld
+                  ? env.useCases ?? []
+                  : env.useCases ?? contract.useCases
+              }
+            />
+          )}
         </Grid>
         {showAmendments && (
           <Grid item xs={12} md={5}>
@@ -287,7 +316,7 @@ export default function OverviewPanel({
       </Grid>
 
       <GroupHeading>{OVERVIEW_COPY.world}</GroupHeading>
-      {backedWorld && !hasNoWorld(env) && (
+      {!waits.world && backedWorld && !hasNoWorld(env) && (
         <Stack
           direction="row"
           spacing={1}
@@ -324,7 +353,9 @@ export default function OverviewPanel({
           </Tooltip>
         </Stack>
       )}
-      {backedWorld && hasNoWorld(env) ? (
+      {waits.world ? (
+        <WorldSkeleton wait={waits.world} />
+      ) : backedWorld && hasNoWorld(env) ? (
         <Stack spacing={2} sx={{ mb: 3 }}>
           <ConnectOnlyWorld env={env} />
           <DependsOnCard
@@ -418,6 +449,7 @@ export default function OverviewPanel({
 }
 
 OverviewPanel.propTypes = {
+  waits: PropTypes.objectOf(PropTypes.object),
   env: ENV_SHAPE.isRequired,
   envState: ENV_STATE_SHAPE,
   onGo: PropTypes.func,
