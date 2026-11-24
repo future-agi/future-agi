@@ -658,8 +658,9 @@ enough. An entry that is not by design names the ticket that removes it, an owne
 at most 45 days ahead; after that date it no longer allows the skip. Each listed skip gets a
 warning on the run, and an entry whose test ran and passed is reported as out of date. Expiry is
 judged on the run's date, so re-running only the report job cannot change its verdict. Today it
-lists OBS-E2E-031 and OBS-E2E-032 on both stacks (TH-10597, expiring 2027-01-06): their churn
-guard measures no DOM mutations in CI, so they skip themselves and their bodies never run.
+lists OBS-E2E-031 and OBS-E2E-032 on Standalone only (TH-10597, expiring 2027-01-06): their churn
+guard measured no DOM mutations in CI, so they skipped themselves. They now run and pass on
+Distributed; the Standalone entries go once a Standalone run shows the same.
 
 The backend has a stricter rule for its own skips in `futureagi/.ci/runtime-skips.json`
 (`BACKEND_ENFORCE_RUNTIME_SKIPS`). Each rule names the exact test files it covers, each with the
