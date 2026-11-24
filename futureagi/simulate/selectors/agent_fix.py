@@ -472,6 +472,10 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
     }
     if (receipt.get("failure") or {}).get("domain") == "agent":
         judged = {name: held is True for name, held in judged.items()}
+    # A check never verified for this scenario is undecided: never the agent's pass, never its failure.
+    judged.update(
+        {name: None for name, result in results.items() if result == "unmeasured"}
+    )
     return {
         name: held if isinstance(held, bool) else None for name, held in judged.items()
     }

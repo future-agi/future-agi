@@ -227,9 +227,10 @@ def test_a_check_the_case_s_proof_never_verified_does_not_fail_the_agent(monkeyp
 
     graded = graded_receipt(_RUN4_RECEIPT, unverified)
 
-    assert receipt_outcome_status(graded) == "inconclusive"
-    assert [one["name"] for one in _receipt_evaluations(graded)] == ["crm_deal_lookup"]
-    assert _receipt_evaluation_coverage(graded)["unmeasured"] == 1
+    assert receipt_outcome_status(graded) == "no_score"
+    # Neither check its proof excused counts, the one that held included.
+    assert _receipt_evaluations(graded) == []
+    assert _receipt_evaluation_coverage(graded)["unmeasured"] == 2
     assert _receipt_evaluation_coverage(graded)["complete"] is True
     # The sealed receipt is never rewritten.
     assert _RUN4_RECEIPT["status"] == "failed"
@@ -248,10 +249,13 @@ def test_a_check_the_case_s_proof_never_verified_does_not_fail_the_agent(monkeyp
     call = CallExecution(
         status=CallExecution.CallStatus.COMPLETED, call_metadata=metadata
     )
-    # The run lists it Not measured (the inconclusive outcome), never Failed.
-    assert call_outcome(call, {}) == "inconclusive"
-    # Fix my agent never takes it for a sub-goal the agent failed.
-    assert judged_sub_goals(graded_call_receipt(metadata)) == {"crm_deal_lookup": True}
+    # The run lists it with no score, outside the pass rate, never Failed.
+    assert call_outcome(call, {}) == "no_score"
+    # Fix my agent takes neither for a pass or a failure of the agent's.
+    assert judged_sub_goals(graded_call_receipt(metadata)) == {
+        "crm_deal_lookup": None,
+        "crm_discount_applied": None,
+    }
 
 
 def test_a_verified_check_s_failure_still_fails_the_agent(monkeypatch):
@@ -281,6 +285,30 @@ def test_a_verified_check_s_failure_still_fails_the_agent(monkeypatch):
     ]
 
 
+def test_a_trial_that_ended_on_its_own_failure_stays_failed_though_its_check_was_unverified(
+    monkeypatch,
+):
+    from simulate.services.hosted_harness_ingestion import (
+        graded_receipt,
+        unverified_checks,
+    )
+
+    job = _proofs_on_the_run_s_versions(
+        monkeypatch, {"live-manager-negotiates-discount": _RUN4_PROOF}
+    )
+    # The world applied a write twice: a failure of the agent's, whatever the checks say.
+    twice = {
+        **_RUN4_RECEIPT,
+        "failure": {"domain": "agent", "code": "duplicate_commit"},
+    }
+
+    graded = graded_receipt(twice, unverified_checks(job, twice["scenario_key"]))
+
+    assert receipt_outcome_status(graded) == "failed"
+    # The unverified checks themselves still read unmeasured.
+    assert _receipt_evaluations(graded) == []
+
+
 def test_without_a_proof_or_with_the_agent_s_own_one_the_checks_read_as_the_receipt_says(
     monkeypatch,
 ):
@@ -306,3 +334,90 @@ def test_without_a_proof_or_with_the_agent_s_own_one_the_checks_read_as_the_rece
         monkeypatch, {"live-manager-negotiates-discount": proved}
     )
     assert unverified_checks(job, _RUN4_RECEIPT["scenario_key"]) == []
+
+
+def test_an_unverified_check_that_held_never_passes_the_trial(monkeypatch):
+    from simulate.services.hosted_harness_ingestion import graded_receipt
+
+    held = {
+        **_RUN4_RECEIPT,
+        "status": "passed",
+        "sub_goals": [
+            {**one, "held": True, "verdict": "pass"}
+            for one in _RUN4_RECEIPT["sub_goals"]
+        ],
+    }
+
+    graded = graded_receipt(held, ["crm_discount_applied"])
+
+    assert receipt_outcome_status(graded) == "no_score"
+    assert [one["name"] for one in _receipt_evaluations(graded)] == ["crm_deal_lookup"]
+
+
+def test_a_failed_evaluation_keeps_the_trial_failed_beside_an_unverified_check():
+    from simulate.services.hosted_harness_ingestion import graded_receipt
+
+    judged = {
+        **_RUN4_RECEIPT,
+        "evaluations": [{"name": "tone", "kind": "checkpoint", "passed": False}],
+    }
+
+    assert (
+        receipt_outcome_status(graded_receipt(judged, ["crm_discount_applied"]))
+        == "failed"
+    )
+    # One whose grading failed decides nothing.
+    errored = {
+        **judged,
+        "evaluations": [{"name": "tone", "passed": False, "grading_error": "timeout"}],
+    }
+    assert (
+        receipt_outcome_status(graded_receipt(errored, ["crm_discount_applied"]))
+        == "no_score"
+    )
+
+
+def test_a_proof_made_only_with_another_agent_version_vouches_for_none_of_this_one_s_checks(
+    monkeypatch,
+):
+    from simulate.services.hosted_harness_ingestion import unverified_checks
+
+    other = {**_RUN4_PROOF, "excused": [], "agent_version_id": "another"}
+    job = _proofs_on_the_run_s_versions(
+        monkeypatch, {"live-manager-negotiates-discount": other}
+    )
+    names = ["crm_deal_lookup", "crm_discount_applied"]
+
+    assert unverified_checks(job, _RUN4_RECEIPT["scenario_key"], names) == names
+    # Made with this agent version: its own excused list stands.
+    own = {**other, "agent_version_id": "a"}
+    job = _proofs_on_the_run_s_versions(
+        monkeypatch, {"live-manager-negotiates-discount": own}
+    )
+    assert unverified_checks(job, _RUN4_RECEIPT["scenario_key"], names) == []
+
+
+def test_compare_and_fix_my_agent_read_an_unverified_check_as_undecided_never_a_pass():
+    from simulate.selectors.agent_fix import judged_sub_goals
+    from simulate.services.run_compare import trial_passed
+
+    goals = [
+        {"name": "greeted", "held": True, "verdict": "pass"},
+        {"name": "applied", "held": None, "verdict": "unmeasured"},
+    ]
+
+    assert trial_passed(goals, "passed") is None
+    # Even where the agent broke the conversation, an unverified check is not the agent's failure.
+    broke = {"sub_goals": goals, "failure": {"domain": "agent"}}
+    assert judged_sub_goals(broke) == {"greeted": True, "applied": None}
+
+
+@pytest.mark.parametrize("domain", ["environment", "infrastructure", "simulator"])
+def test_a_trial_that_ended_on_a_failure_of_ours_is_never_the_agent_s_failure(domain):
+    from simulate.services.hosted_harness_ingestion import graded_receipt
+
+    ours = {**_RUN4_RECEIPT, "failure": {"domain": domain, "code": "seed_failed"}}
+
+    graded = graded_receipt(ours, ["crm_discount_applied"])
+
+    assert receipt_outcome_status(graded) == "errored"

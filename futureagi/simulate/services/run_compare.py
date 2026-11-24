@@ -88,7 +88,8 @@ def trial_passed(sub_goals: Any, harness_status: Any) -> bool | None:
     checks = [one for one in sub_goals or [] if isinstance(one, Mapping)]
     if checks:
         results = [sub_goal_result(dict(one)) for one in checks]
-        if any(result is None for result in results):
+        # A check nothing decided, or one never verified for this scenario, leaves the trial undecided: never a pass.
+        if any(result in (None, "unmeasured") for result in results):
             return None
         held = [SUB_GOAL_PASSED[one] for one in results if one in SUB_GOAL_PASSED]
         return all(held) if held else None

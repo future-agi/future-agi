@@ -963,7 +963,13 @@ def _apply_receipt_to_call(
     metadata["hosted_harness_receipt"] = _json_ready(body)
     # Checks the case's proof never verified on these versions are graded unmeasured; the receipt stays as sealed.
     unverified = unverified_checks(
-        job, str(body.get("scenario_key") or allocation.scenario_key)
+        job,
+        str(body.get("scenario_key") or allocation.scenario_key),
+        [
+            str(one["name"])
+            for one in body.get("sub_goals") or []
+            if isinstance(one, dict) and one.get("name")
+        ],
     )
     if unverified:
         metadata[UNVERIFIED_KEY] = unverified
@@ -1318,9 +1324,12 @@ UNVERIFIED_KEY = "harness_unverified_checks"
 UNVERIFIED_REASON = "This check was never verified for this scenario, so it does not count against the agent."
 
 
-def unverified_checks(job: HostedHarnessJob, scenario_key: str) -> list[str]:
+def unverified_checks(
+    job: HostedHarnessJob, scenario_key: str, checks: list[str] | None = None
+) -> list[str]:
     """The checks the case's proof on the run's suite and environment versions could not verify (its `excused`, which a
-    step it could only assume would have decided), for the run's agent version; none without a proof."""
+    step it could only assume would have decided), for the run's agent version; none without a proof. A proof made only
+    with another agent version vouches for none of this agent's `checks`."""
     from simulate.services.harness_starting_records import scenario_token
     from simulate.services.harness_versioning.versions import OTHER_AGENTS
 
@@ -1341,35 +1350,59 @@ def unverified_checks(job: HostedHarnessJob, scenario_key: str) -> list[str]:
     if not isinstance(entry, dict):
         return []
     own = (entry.get(OTHER_AGENTS) or {}).get(str(job.agent_version_id))
-    entry = own if isinstance(own, dict) else entry
+    if isinstance(own, dict):
+        entry = own
+    elif entry.get("agent_version_id") and str(entry["agent_version_id"]) != str(
+        job.agent_version_id
+    ):
+        return sorted(str(one) for one in checks or [])
     return sorted(str(one) for one in entry.get("excused") or [])
 
 
-def graded_receipt(body: dict[str, Any], unverified: list[str]) -> dict[str, Any]:
-    """The receipt as graded: each task check the proof never verified, failed here, reads unmeasured (never the
-    agent's), and a trial those alone failed is inconclusive, not failed."""
-    if not unverified:
-        return body
-    sub_goals = [
+def graded_sub_goals(sub_goals: list[Any], unverified: list[str]) -> list[Any]:
+    """The sub-goals with each task check the proof never verified read unmeasured, whether it held or not: what the
+    proof never showed passes right behaviour and fails wrong behaviour is never the agent's pass or failure."""
+    return [
         (
             {**goal, "held": None, "verdict": "unmeasured", "reason": UNVERIFIED_REASON}
             if isinstance(goal, dict)
             and goal.get("name") in unverified
             and not is_worker_subject(goal.get("subject"))
-            and sub_goal_result(goal) == "fail"
+            and sub_goal_result(goal) in SUB_GOAL_PASSED
             else goal
         )
-        for goal in body.get("sub_goals") or []
+        for goal in sub_goals
     ]
-    status = body["status"]
-    if status == "failed" and sub_goals != list(body.get("sub_goals") or []):
-        failing = any(
-            isinstance(one, dict)
-            and not is_worker_subject(one.get("subject"))
-            and sub_goal_result(one) == "fail"
-            for one in sub_goals
-        )
-        status = "failed" if failing else "inconclusive"
+
+
+def graded_receipt(body: dict[str, Any], unverified: list[str]) -> dict[str, Any]:
+    """The receipt as graded: each task check the proof never verified reads unmeasured, and a trial with one is never
+    passed: it fails only on a verified check or an evaluation that failed, else it has no score. A trial that ended on
+    a failure of the agent's keeps its status; one that ended on a failure of ours (any other domain) is errored, never
+    the agent's failure."""
+    if not unverified:
+        return body
+    sub_goals = graded_sub_goals(body.get("sub_goals") or [], unverified)
+    status = body.get("status")
+    failure = body.get("failure") if isinstance(body.get("failure"), dict) else None
+    if status in ("passed", "failed") and sub_goals != list(
+        body.get("sub_goals") or []
+    ):
+        if failure is not None:
+            status = status if failure.get("domain") == "agent" else "errored"
+        else:
+            failing = any(
+                isinstance(one, dict)
+                and not is_worker_subject(one.get("subject"))
+                and sub_goal_result(one) == "fail"
+                for one in sub_goals
+            ) or any(
+                isinstance(one, dict)
+                and one.get("passed") is False
+                and not one.get("grading_error")
+                for one in body.get("evaluations") or []
+            )
+            status = "failed" if failing else "no_score"
     return {**body, "sub_goals": sub_goals, "status": status}
 
 
