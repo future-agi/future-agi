@@ -516,8 +516,17 @@ describe("older messages", () => {
     ])("gives up once when it is %s", async (_, props, asked, said) => {
       const { answers } = open(props);
       act(() => focusBuilderChat("wanted"));
+      Object.defineProperty(list(), "scrollHeight", {
+        configurable: true,
+        value: 9876,
+      });
       for (let page = 0; page < asked; page += 1) await answer(answers[page]);
       expect(answers).toHaveLength(asked);
+      // At the latest, also for a reader whose list had settled short of it.
+      expect(window.HTMLElement.prototype.scrollTo).toHaveBeenLastCalledWith({
+        top: 9876,
+        behavior: "smooth",
+      });
       expect(enqueueSnackbar.mock.calls).toEqual([[said, { variant: "info" }]]);
     });
 

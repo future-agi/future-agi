@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Box, Stack, Typography, TextField, IconButton } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import { visuallyHidden } from "@mui/utils";
@@ -140,9 +140,19 @@ export default function BuilderConsole({
         behavior: "smooth",
       });
     },
-    onLatest: () => setFollowing(true),
+    onLatest: () => {
+      setFollowing(true);
+      scrollToLatest();
+    },
   });
   const { startOwnScroll } = reader;
+  const scrollToLatest = useCallback(() => {
+    startOwnScroll();
+    // Scroll only the message list. scrollIntoView would also scroll every
+    // ancestor, including the collapsing column's clip box mid-animation.
+    const list = listRef.current;
+    list?.scrollTo?.({ top: list.scrollHeight, behavior: "smooth" });
+  }, [startOwnScroll]);
 
   // Follow the transcript only as it grows, not when a card's state changes.
   const count = turns?.length ?? 0;
@@ -162,11 +172,7 @@ export default function BuilderConsole({
     )
       return;
     if (!active || !following) return;
-    startOwnScroll();
-    // Scroll only the message list. scrollIntoView would also scroll every
-    // ancestor, including the collapsing column's clip box mid-animation.
-    const list = listRef.current;
-    list?.scrollTo?.({ top: list.scrollHeight, behavior: "smooth" });
+    scrollToLatest();
   }, [
     count,
     from,
@@ -176,7 +182,7 @@ export default function BuilderConsole({
     canStop,
     active,
     following,
-    startOwnScroll,
+    scrollToLatest,
   ]);
 
   // Sending from any path (composer, a question card, Stop) and reopening the
