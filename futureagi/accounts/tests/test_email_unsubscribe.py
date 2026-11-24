@@ -134,7 +134,7 @@ class TestOneClick:
         assert response.status_code == 200
         assert b"Unsubscribe?" in response.content
         assert b"integration error emails" in response.content
-        assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+        assert eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS))
 
     def test_rfc8058_post_unsubscribes_only_that_category(self, api_client, user):
         token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
@@ -148,8 +148,8 @@ class TestOneClick:
         assert response.status_code == 200
         assert b"Unsubscribed" in response.content
         assert b"Resubscribe" in response.content
-        assert eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
-        assert not eu.is_opted_out(user.email, eu.ANNOTATION_DISCUSSION)
+        assert not eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS))
+        assert eu.is_subscribed(_link(user, eu.ANNOTATION_DISCUSSION))
 
     def test_opted_out_address_gets_other_categories_and_transactional(self, user):
         eu.set_subscribed(_link(user, eu.INTEGRATION_ERRORS), False)
@@ -201,7 +201,7 @@ class TestOneClick:
             f"{URL}?token={token}", ONE_CLICK, format="multipart"
         )
         assert response.status_code == 400
-        assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+        assert eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS))
 
     def test_unknown_action_is_rejected(self, api_client, user):
         token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
@@ -211,7 +211,7 @@ class TestOneClick:
         )
 
         assert response.status_code == 400
-        assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+        assert eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS))
 
     def test_token_cannot_be_retargeted(self, user):
         token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))
@@ -230,7 +230,7 @@ class TestOneClick:
             )
             page = api_client.get(URL, {"token": token}).content
 
-        assert eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS) is works
+        assert eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS)) is not works
         assert response.status_code == (200 if works else 400)
         assert (b"older than 30 days" in page) is not works
 
@@ -373,7 +373,7 @@ class TestReviewRound2Storage:
 
         self._switch_org(session, user)
 
-        assert eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+        assert not eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS))
         # Clearing the cached session doesn't sign the person out.
         assert session.get("/accounts/organizations/current/").status_code == 200
 
@@ -387,7 +387,7 @@ class TestReviewRound2Storage:
 
         self._switch_org(session, user)
 
-        assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+        assert eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS))
 
     def test_link_acts_on_the_account_it_was_sent_to(self, api_client, user):
         from accounts.models.user import User
@@ -520,7 +520,7 @@ class TestReviewRound2Page:
         response = api_client.post(f"{URL}?token={token}", {}, format="multipart")
 
         assert response.status_code == 400
-        assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+        assert eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS))
 
     def test_page_answers_a_browser_that_accepts_only_html(self, api_client, user):
         token = eu.make_token(*_link(user, eu.INTEGRATION_ERRORS))

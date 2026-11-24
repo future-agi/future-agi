@@ -52,6 +52,10 @@ def _form(page_html):
     return unquote(action_url.group(1)).replace("&amp;", "&"), action.group(1)
 
 
+def _link(user, category):
+    return eu.Link(user.email.lower(), category, None, str(user.pk))
+
+
 def test_footer_link_unsubscribe_then_resubscribe(user):
     (message,) = _send_integration_error([user.email])
     link = _header_link(message)
@@ -61,7 +65,7 @@ def test_footer_link_unsubscribe_then_resubscribe(user):
     page = requests.get(link, timeout=TIMEOUT)
     assert page.status_code == 200
     assert "Unsubscribe?" in page.text
-    assert not eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+    assert eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS))
 
     # Pressing the page's button unsubscribes from that category only.
     target, action = _form(page.text)
@@ -91,7 +95,7 @@ def test_mail_client_one_click_unsubscribe(user):
     )
 
     assert response.status_code == 200
-    assert eu.is_opted_out(user.email, eu.INTEGRATION_ERRORS)
+    assert not eu.is_subscribed(_link(user, eu.INTEGRATION_ERRORS))
     assert len(_send_integration_error(["someone-else@example.com"])) == 1
 
 

@@ -101,16 +101,6 @@ def read_token(token: str) -> Link | None:
     return Link(email, category, payload.get("s"), payload.get("u"))
 
 
-def unsubscribe_url(
-    email: str, category: str, scope: str | None = None, user_id=None
-) -> str:
-    """This install's API host, so a self-hosted link never leaves the install."""
-    if user_id is None and category != MONITOR_ALERTS:
-        user = _user_for_email(email)
-        user_id = user.pk if user else None
-    return link_url(Link(email, category, scope, user_id))
-
-
 def public_api_url() -> str:
     """The API's address as a mail reader's browser reaches it: BACKEND_URL
     when a deployment sets it, else the URL the install publishes for outside
@@ -219,18 +209,6 @@ def _user_for(link: Link):
 
 def _opted_out(user, category: str) -> bool:
     return user.pk in _opted_out_ids([user], category)
-
-
-def is_opted_out(email: str, category: str) -> bool:
-    """Whether ``email`` has turned ``category`` off.
-
-    Monitor alerts always answer False: the monitor's recipient list is the
-    opt-out record, so an unsubscribed address is simply not a recipient.
-    """
-    if category == MONITOR_ALERTS:
-        return False
-    user = _user_for_email(email)
-    return user is not None and _opted_out(user, category)
 
 
 def describe(link: Link) -> str:

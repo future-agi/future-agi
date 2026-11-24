@@ -439,6 +439,27 @@
 - The exact active token row IDs for the actor are unchanged after rejected markers
 - The same authenticated project-list API and UI still expose the seeded project with the unchanged credential pair
 
+### AUTH-E2E-018 — an emailed unsubscribe link turns one notification category off and back on
+
+**Goal:** A user who gets integration error emails opens the unsubscribe link from one, stops that category, and resubscribes from the same page.
+
+**Spec:** `flows/auth/email-unsubscribe.spec.ts:37`
+
+**Tags:** —
+
+**User steps:**
+
+1. mint the signed integration-errors link an email carries for the actor
+2. open the link and see the Unsubscribe? confirmation naming the category and address
+3. press Unsubscribe and see Unsubscribed with a Resubscribe button
+4. press Resubscribe and see Resubscribed
+
+**Backend state verified:**
+
+- opening the link alone leaves the actor with no email opt-outs in PG accounts_user.config
+- Unsubscribe records exactly the integration_errors opt-out on the actor in PG accounts_user.config
+- Resubscribe leaves the actor with an empty opt-out list in PG accounts_user.config
+
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
 **Goal:** A member signs in through the tenant IdP and receives one scoped session
