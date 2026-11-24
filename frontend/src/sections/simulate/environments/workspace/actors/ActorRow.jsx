@@ -1,13 +1,6 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import {
-  Box,
-  Button,
-  Collapse,
-  IconButton,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { Box, Collapse, IconButton, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
@@ -53,6 +46,7 @@ function summary(actor, loudChannels) {
 export default function ActorRow({
   envId,
   actor,
+  callerLine = null,
   locked,
   onEdit,
   onRemove,
@@ -124,9 +118,9 @@ export default function ActorRow({
               </Typography>
             </OverflowTooltip>
           </Box>
-          {actor.goal ? (
+          {callerLine || actor.goal ? (
             <Box>
-              <OverflowTooltip title={`${C.wants}: ${actor.goal}`}>
+              <OverflowTooltip title={callerLine || actor.goal}>
                 <Typography
                   noWrap
                   sx={{
@@ -135,20 +129,11 @@ export default function ActorRow({
                     ...ONE_LINE,
                   }}
                 >
-                  {`${C.wants}: ${actor.goal}`}
+                  {callerLine || actor.goal}
                 </Typography>
               </OverflowTooltip>
             </Box>
           ) : null}
-          <Typography
-            sx={{
-              typography: "s2",
-              color: "text.secondary",
-              wordBreak: "break-word",
-            }}
-          >
-            {summary(actor, loudChannels)}
-          </Typography>
           {actor.arrival_overrides?.length ? (
             <CustomTooltip
               show
@@ -181,9 +166,18 @@ export default function ActorRow({
           alignItems="center"
           sx={{ flexShrink: 0 }}
         >
-          <Button size="small" onClick={() => setOpen((o) => !o)}>
-            {open ? C.hideView : C.showView}
-          </Button>
+          <Typography
+            sx={{
+              typography: "s3",
+              color: "text.tertiary",
+              whiteSpace: "nowrap",
+              mr: 0.5,
+            }}
+          >
+            {callerLine
+              ? actor.when_label
+              : `${actor.when_label} · ${C.rowScenarios(actor.side, actor.scenarios)}`}
+          </Typography>
           {!locked && (
             <>
               <CustomTooltip show size="small" arrow title={C.edit}>
@@ -223,6 +217,18 @@ export default function ActorRow({
         </Stack>
       </Stack>
       <Collapse in={open} unmountOnExit>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.secondary",
+            wordBreak: "break-word",
+            pl: 6,
+            pr: 1.5,
+            pb: 1,
+          }}
+        >
+          {summary(actor, loudChannels)}
+        </Typography>
         {viewLoading && <ContentSkeleton variant="panel" sx={{ pl: 5 }} />}
         {viewFailed && !view && (
           <ErrorState
@@ -270,6 +276,7 @@ export default function ActorRow({
 }
 
 ActorRow.propTypes = {
+  callerLine: PropTypes.string,
   envId: PropTypes.string.isRequired,
   actor: PropTypes.object.isRequired,
   locked: PropTypes.bool,

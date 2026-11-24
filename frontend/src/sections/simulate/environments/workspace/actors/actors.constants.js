@@ -26,13 +26,10 @@ export const ACTORS_COPY = {
     scenarioOverride: "A scenario can set its own values for any of these.",
   },
   relations: {
-    title: "Who can reach whom",
-    subtitle:
-      "Each actor's role, when it comes in and who its actions reach, from the records themselves.",
-    comesIn: (when) => `Comes in: ${when}`,
-    broughtBy: (name) => `Brought in by ${name}`,
-    reaches: (names) => `Its actions reach ${names.join(", ")}`,
-    reachesNoOne: "Its actions reach no other actor",
+    title: "How they connect",
+    subtitle: "Who can reach whom in a run",
+    agent: "Agent",
+    canReach: "can reach them through its actions",
   },
   showSettings: "Limits",
   hideSettings: "Hide limits",
@@ -58,7 +55,14 @@ export const ACTORS_COPY = {
     title: "Actors",
     groupTitle: (title, n) => `${title} (${n})`,
     intro:
-      "Every simulated person in this world: what each knows, when they join and what they're allowed to do. A persona is how one of them behaves. Edits wait in the draft until you save.",
+      "Everyone simulated in this world, the customer included. Your agent's own workers aren't actors.",
+    inEveryRun: "In every run",
+    callerTask: (personas, scenarios) =>
+      `Has the scenario's task · plays ${personas} persona${personas === 1 ? "" : "s"} across ${scenarios} scenario${scenarios === 1 ? "" : "s"}`,
+    callerScenarios: (scenarios) =>
+      `Has the scenario's task · in ${scenarios} scenario${scenarios === 1 ? "" : "s"}`,
+    rowScenarios: (side, n) =>
+      side === "world" ? `Used by ${n}` : `${n} scenario${n === 1 ? "" : "s"}`,
     notSet: "Not set",
     removeTitle: (name) => `Remove ${name}?`,
     removeBody: "They leave the draft. Saved versions keep them.",
@@ -91,12 +95,9 @@ export const ACTORS_COPY = {
     remove: "Remove",
     removeNamed: (name) => `Remove ${name}`,
     empty: "No actors yet. Add one, or ask the builder chat.",
-    wants: "Wants",
     mayDo: "May do",
     nothing: "Nothing in the world",
     notInWorld: "not an action of this world",
-    showView: "What they see",
-    hideView: "Hide what they see",
     sees: "Sees",
     neverSees: "Never sees",
     comesIn: "Comes in",

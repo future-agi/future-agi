@@ -2,6 +2,17 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import ActorsTab from "../ActorsTab";
 
+vi.mock("@tanstack/react-query", async (importOriginal) => {
+  const real = await importOriginal();
+  return {
+    ...real,
+    useQuery: (options, ...rest) =>
+      options?.queryKey?.[0] === "harness-environment"
+        ? { data: undefined }
+        : real.useQuery(options, ...rest),
+  };
+});
+
 vi.mock("src/api/simulate-environments/versions", async () => {
   const { cast: castOf } = await import("./castFixtures");
   return {

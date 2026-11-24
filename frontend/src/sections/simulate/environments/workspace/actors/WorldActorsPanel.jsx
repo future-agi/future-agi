@@ -1,5 +1,7 @@
 import PropTypes from "prop-types";
 import { useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { harnessEnvironmentQuery } from "src/api/simulate-environments/environment";
 import { Alert, Box, Button, Collapse, Stack, Typography } from "@mui/material";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import {
@@ -22,6 +24,7 @@ import AddActorMenu from "./AddActorMenu";
 import { ACTORS_COPY } from "./actors.constants";
 
 const C = ACTORS_COPY.worldActors;
+const CALLER_ID = "caller";
 const OUTLINED = {
   color: "text.primary",
   borderColor: "divider",
@@ -31,6 +34,9 @@ const OUTLINED = {
 // Edits go to the draft; a version changes only when the draft is saved.
 export default function WorldActorsPanel({ envId, locked = false }) {
   const { data, isPending, isError, refetch } = useActors(envId);
+  const { data: detail } = useQuery(harnessEnvironmentQuery(envId));
+  const personas = detail?.overview?.personas_count;
+  const scenarioTotal = detail?.overview?.scenario_count;
   const edit = useEditActor(envId);
   const limits = useSetActorLimits(envId);
   const accept = useAcceptUnresolved(envId);
@@ -128,12 +134,19 @@ export default function WorldActorsPanel({ envId, locked = false }) {
     edit.isPending && edit.variables?.op === "delete"
       ? edit.variables.actorId
       : null;
+  const callerLine =
+    personas != null && scenarioTotal != null
+      ? C.callerTask(personas, scenarioTotal)
+      : C.callerScenarios(
+          cast.find((one) => one.id === CALLER_ID)?.scenarios ?? 0,
+        );
   const rows = (group) =>
     group.map((actor) => (
       <ActorRow
         key={actor.id}
         envId={envId}
         actor={actor}
+        callerLine={actor.id === CALLER_ID ? callerLine : null}
         locked={locked}
         onEdit={() => openForm(actor)}
         onRemove={() => remove(actor)}
@@ -162,11 +175,25 @@ export default function WorldActorsPanel({ envId, locked = false }) {
 
   return (
     <Box sx={{ p: 2 }}>
-      <Typography
-        sx={{ typography: "s2", color: "text.secondary", maxWidth: 780, mb: 2 }}
-      >
-        {C.intro}
-      </Typography>
+      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
+        <Typography
+          sx={{
+            typography: "s2",
+            color: "text.secondary",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          {C.intro}
+        </Typography>
+        {!locked && (
+          <AddActorMenu
+            label={C.add}
+            disabled={edit.isPending}
+            onPick={addOn}
+          />
+        )}
+      </Stack>
       <Stack spacing={1} sx={{ mb: 2, "&:empty": { display: "none" } }}>
         {(edit.isPaused || limits.isPaused) && (
           <Alert severity="info">{C.offline}</Alert>
@@ -246,17 +273,8 @@ export default function WorldActorsPanel({ envId, locked = false }) {
       )}
       <SectionCard
         title={C.groupTitle(C.title, cast.length)}
-        subtitle={C.everyoneAbout}
+        subtitle={C.inEveryRun}
         sx={{ mb: 2 }}
-        action={
-          !locked && (
-            <AddActorMenu
-              label={C.add}
-              disabled={edit.isPending}
-              onPick={addOn}
-            />
-          )
-        }
       >
         {cast.length === 0 ? (
           <Typography
