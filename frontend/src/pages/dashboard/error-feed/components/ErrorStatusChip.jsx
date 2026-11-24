@@ -25,6 +25,11 @@ const STATUS_CONFIG = {
     tip: "Marked resolved by hand.",
     icon: "solar:check-circle-bold",
   },
+  ignored: {
+    label: "Ignored",
+    tip: "Muted: it stays in the list but stops alerting and isn't counted as escalating. Change the status to bring it back.",
+    icon: "solar:bell-off-linear",
+  },
 };
 
 export default function ErrorStatusChip({ status, size = "small", onClick }) {
@@ -57,6 +62,7 @@ ErrorStatusChip.propTypes = {
     "acknowledged",
     "for_review",
     "resolved",
+    "ignored",
   ]),
   size: PropTypes.oneOf(["small", "medium"]),
   onClick: PropTypes.func,

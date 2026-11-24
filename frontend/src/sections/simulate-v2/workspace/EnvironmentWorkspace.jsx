@@ -326,6 +326,8 @@ const tabHintOf = (id, env) =>
   })[id] || "";
 
 const PANEL_IDS = TABS.map((t) => t.id);
+/* Tabs that need a built environment — hidden until the first build finishes. */
+const UNBUILT_HIDDEN_TABS = ["runs", "improvements", "analytics", "history"];
 
 /* Suggested builder prompts per tab — the same console the build screen uses. */
 const CHIPS_BY_TAB = {
@@ -1438,9 +1440,19 @@ export default function EnvironmentWorkspace() {
   */
   /* Every tab is always there, Runs included — a fresh environment's Runs
      tab says there are no runs yet and offers the baseline run. */
-  const visibleTabs = TABS;
+  /* …except while the first build hasn't finished (running or stopped):
+     the environment doesn't exist yet, so there's nothing to run, improve,
+     chart or version. Those tabs come back once the build finishes. */
+  const firstBuildOpen = !!envState?.versionBuild?.first;
+  const visibleTabs = firstBuildOpen
+    ? TABS.filter((t) => !UNBUILT_HIDDEN_TABS.includes(t.id))
+    : TABS;
 
-  const panel = PANEL_IDS.includes(step) ? step : "overview";
+  const panel =
+    PANEL_IDS.includes(step) &&
+    !(firstBuildOpen && UNBUILT_HIDDEN_TABS.includes(step))
+      ? step
+      : "overview";
   /* Which horizontal tab is highlighted — `agent` (no tab of its own) keeps
      Overview lit. */
   const activeTab = visibleTabs.some((t) => t.id === panel)

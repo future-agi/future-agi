@@ -245,6 +245,12 @@ const STATUS_OPTIONS = [
     icon: "solar:check-circle-bold",
     role: "success",
   },
+  {
+    value: "ignored",
+    label: "Ignored",
+    icon: "solar:bell-off-linear",
+    role: "neutral",
+  },
 ];
 
 function StatusDropdown({ clusterId, current, fix, onReopen }) {
