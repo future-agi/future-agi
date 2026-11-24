@@ -573,50 +573,58 @@ class CandidateScope(unittest.TestCase):
                 flags = plan("pull_request", tested, base, head, "qualified")["flags"]
                 self.assertTrue(all(flags.values()), missing)
 
-    def test_retargets_replan_and_metadata_edits_never_issue_protected_names(self):
-        edit = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)"
-
-        def labelled_except(*labels):
-            # A label the workflow does not read is metadata too: its run has no jobs.
-            return (
-                "(("
-                + edit
-                + ") || (github.event.action == 'labeled' && "
-                + " && ".join(
-                    f"github.event.label.name != '{label}'" for label in labels
-                )
-                + "))"
-            )
-
-        for workflow, check, types, metadata in (
-            ("backend-ci", "Backend", "edited", edit),
-            ("e2e-ci", "E2E", "edited, labeled", labelled_except("e2e-standalone")),
-            (
-                "update-ci",
-                None,
-                "edited, labeled",
-                labelled_except("update-rehearsal", "e2e-standalone"),
-            ),
+    def test_required_workflows_start_only_on_code_events(self):
+        # A run for any other activity type (a body or title edit, a label)
+        # becomes its workflow's newest suite for the head commit, and GitHub
+        # then ignores the older suite's required check, so the PR cannot be
+        # enqueued (#4332, #4001). These workflows therefore never start on
+        # one, and nothing in them depends on such an event.
+        for workflow, job, check in (
+            ("backend-ci", "backend-tests", "Backend Tests Pass"),
+            ("e2e-ci", "e2e-tests", "E2E Tests Pass"),
+            ("python-lint", "python-lint-pass", "Python Lint Pass"),
         ):
             text = (SCRIPTS.parent / "workflows" / (workflow + ".yml")).read_text()
-            self.assertIn(
-                "  pull_request:\n    types: [opened, synchronize, reopened, "
-                + types
-                + "]",
-                text,
-            )
-            self.assertIn(metadata + " && github.run_id || 'candidate'", text)
-            guard = metadata if metadata.startswith("((") else "(" + metadata + ")"
-            self.assertIn("  changes:\n    if: ${{ !" + guard + " }}", text)
-            if metadata != edit:
-                # No job keeps the narrower guard, so a stray label starts none.
-                self.assertNotIn("!(" + edit + ")", text)
-            if check:
-                self.assertIn(
-                    metadata + f" && '{check} metadata edit' || '{check} Tests Pass'",
+            with self.subTest(workflow=workflow):
+                self.assertRegex(
                     text,
+                    r"(?m)^  pull_request:\n(?:    #.*\n)*"
+                    r"    types: \[opened, synchronize, reopened\]\n",
                 )
-                self.assertIn("always() && !" + guard, text)
+                for expression in (
+                    "github.event.action",
+                    "github.event.changes",
+                    "github.event.label",
+                    "metadata edit",
+                ):
+                    self.assertNotIn(expression, text)
+                block = re.search(
+                    rf"(?ms)^  {job}:\n(.*?)(?=^  [a-z0-9_-]+:\n|\Z)", text
+                )[1]
+                self.assertRegex(block, rf"(?m)^    name: {check}( #.*)?$")
+                self.assertIn("    if: ${{ always() }}\n", block)
+                self.assertRegex(text, r"(?m)^  group: .*-candidate$")
+
+    def test_update_ci_metadata_events_start_no_jobs(self):
+        # Update CI is not required and still starts on edits and labels:
+        # update-rehearsal starts the Real rehearsals. Any other label,
+        # e2e-standalone included (it only sets the plan's E2E fields, which
+        # no job here reads), and a title or body edit start a run with no jobs.
+        edit = "github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)"
+        metadata = (
+            "(("
+            + edit
+            + ") || (github.event.action == 'labeled' && github.event.label.name != 'update-rehearsal'))"
+        )
+        text = (SCRIPTS.parent / "workflows/update-ci.yml").read_text()
+        self.assertIn(
+            "  pull_request:\n    types: [opened, synchronize, reopened, edited, labeled]",
+            text,
+        )
+        self.assertIn(metadata + " && github.run_id || 'candidate'", text)
+        self.assertIn("  changes:\n    if: ${{ !" + metadata + " }}", text)
+        # No job keeps a narrower guard, so a stray label starts none.
+        self.assertNotIn("!(" + edit + ")", text)
 
     def test_private_overlay_is_not_selected_from_merge_group_heads(self):
         workflow = (SCRIPTS.parent / "workflows/backend-ci.yml").read_text()
