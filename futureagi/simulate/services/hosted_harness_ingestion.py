@@ -14,7 +14,11 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from simulate.constants.hosted_harness import SCENARIO_FAILURE_CODES, TRIAL_STATE_KEY
+from simulate.constants.hosted_harness import (
+    SCENARIO_FAILURE_CODES,
+    SCENARIO_KEY,
+    TRIAL_STATE_KEY,
+)
 from simulate.models import (
     AgentDefinition,
     CallExecution,
@@ -966,9 +970,11 @@ def _apply_receipt_to_call(
         recovered_artifact_ids = metadata.get("hosted_harness_recovered_artifact_ids")
     metadata["hosted_harness_receipt"] = _json_ready(body)
     # Checks the case's proof never verified on these versions are graded unmeasured; the receipt stays as sealed.
+    # The case this call ran, stored once for every reader (a receipt's `scenario_key` names the execution).
+    metadata[SCENARIO_KEY] = metadata.get(SCENARIO_KEY) or case_key(allocation)
     unverified = unverified_checks(
         job,
-        str(body.get("scenario_key") or allocation.scenario_key),
+        metadata[SCENARIO_KEY],
         [
             str(one["name"])
             for one in body.get("sub_goals") or []
@@ -1327,6 +1333,13 @@ def sub_goal_result(goal: dict[str, Any]) -> str | None:
 # The checks of a trial's case its proof never verified on the run's versions, kept on the call (`unverified_checks`).
 UNVERIFIED_KEY = "harness_unverified_checks"
 UNVERIFIED_REASON = "This check was never verified for this scenario, so it does not count against the agent."
+
+
+def case_key(allocation: Any) -> str:
+    """The scenario key of the case a call ran: its execution's source scenario, else its registration's. A receipt's
+    `scenario_key` names the execution (a trial's own key), never the case."""
+    source = getattr(allocation, "source_scenario", None)
+    return str(source.scenario_key if source is not None else allocation.scenario_key)
 
 
 def unverified_checks(

@@ -2,6 +2,9 @@
 
 # Where a call keeps what changed in the world during its trial, per participant, and what each actor decided.
 TRIAL_STATE_KEY = "harness_trial_state"
+# The authored scenario key of the case a call ran, on the call's metadata. A receipt's `scenario_key` names the trial's
+# own execution, never the case.
+SCENARIO_KEY = "harness_scenario_key"
 # The trial notice ALK seals when a separately wired worker reached the world on the shared address.
 WORKER_CHANNEL_BYPASSED = "worker_channel_bypassed"
 # How the world holds a worker to its limits, and the words the cards show for it.

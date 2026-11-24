@@ -1119,16 +1119,22 @@ def test_must_pass_failures_name_only_failed_must_pass_cases():
         ("refund-c", {"name": "Refund C"}),
     ]
     calls = [
+        # The receipt names the trial's own hashed execution key; the case is stored beside it.
         {
-            "hosted_harness_receipt": {"scenario_key": "refund-a"},
+            "hosted_harness_receipt": {"scenario_key": "refund-a-exec-9f2c"},
+            "harness_scenario_key": "refund-a",
             "harness_outcome_status": "failed",
         },
+        # The receipt names the trial's own hashed execution key; the case is stored beside it.
         {
-            "hosted_harness_receipt": {"scenario_key": "refund-b"},
+            "hosted_harness_receipt": {"scenario_key": "refund-b-exec-9f2c"},
+            "harness_scenario_key": "refund-b",
             "harness_outcome_status": "passed",
         },
+        # The receipt names the trial's own hashed execution key; the case is stored beside it.
         {
-            "hosted_harness_receipt": {"scenario_key": "refund-c"},
+            "hosted_harness_receipt": {"scenario_key": "refund-c-exec-9f2c"},
+            "harness_scenario_key": "refund-c",
             "harness_outcome_status": "failed",
         },
     ]
