@@ -859,13 +859,25 @@ class WorkflowTests(unittest.TestCase):
             "  pull_request:\n    types: [opened, synchronize, reopened, edited]", text
         )
 
+    def test_the_fix_asks_for_a_push_only(self):
+        # Agents follow these messages too, and never make close/reopen events.
+        self.assertTrue(gate.FIX.startswith("Push a commit"))
+        self.assertNotIn("reopen", gate.FIX)
+        self.assertNotIn("auto-merge", gate.FIX)
+
     def test_retarget_proof_runs_only_on_a_base_change_and_matches_the_verdict(self):
         text = self.text("retarget-proof.yml")
         self.assertIn("  pull_request:\n    types: [edited]\n", text)
         permissions = re.search(r"(?ms)^permissions:\n(.*?)(?=^\S)", text)[1]
         self.assertEqual(
             sorted(re.findall(r"(?m)^  ([a-z-]+): (\w+)$", permissions)),
-            [("actions", "read"), ("contents", "read"), ("packages", "read")],
+            [
+                ("actions", "read"),
+                ("contents", "read"),
+                # The called E2E CI reads the pull request's current labels.
+                ("issues", "read"),
+                ("packages", "read"),
+            ],
         )
         self.assertNotIn("secrets", text.split("\njobs:\n", 1)[1])
         candidate = re.search(r"(?ms)^  candidate:\n(.*?)(?=^  \S|\Z)", text)[1]

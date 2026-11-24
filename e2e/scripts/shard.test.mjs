@@ -869,6 +869,98 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
   );
 });
 
+test("a pull request run also reads its current labels, adds Standalone only, and keeps the event's labels when the read fails", (t) => {
+  const changes = workflow().jobs.changes;
+  const step = changes.steps.find((s) => s.id === "labels");
+  const planner = changes.steps.find((s) => s.id === "filter");
+  const stacks = changes.steps.find((s) => s.id === "stacks");
+  // Both readers take the step's answer, and it runs before them.
+  for (const reader of [planner, stacks])
+    assert.equal(reader.env.STANDALONE_LABEL, "${{ steps.labels.outputs.standalone }}");
+  assert.ok(changes.steps.indexOf(step) < changes.steps.indexOf(planner));
+  assert.equal(
+    step.env.EVENT_LABEL,
+    "${{ contains(github.event.pull_request.labels.*.name, 'e2e-standalone') }}",
+  );
+  assert.equal(changes.permissions.issues, "read");
+  const dir = mkdtempSync(path.join(tmpdir(), "e2e-labels-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, "bin"));
+  const calls = path.join(dir, "calls");
+  // A fake gh: records each call, then prints FAKE_LABELS (one per line) or fails with FAKE_ERROR.
+  writeFileSync(
+    path.join(dir, "bin", "gh"),
+    `#!/usr/bin/env bash\necho "$*" >> "${calls}"\nif [ -n "\${FAKE_ERROR:-}" ]; then echo "$FAKE_ERROR" >&2; exit 1; fi\nprintf '%s\\n' $FAKE_LABELS\n`,
+    { mode: 0o755 },
+  );
+  const run = (event, eventLabel, env = {}) => {
+    const output = path.join(dir, "output");
+    writeFileSync(output, "");
+    rmSync(calls, { force: true });
+    const result = spawnSync("bash", ["-c", step.run], {
+      encoding: "utf8",
+      env: {
+        PATH: `${path.join(dir, "bin")}${path.delimiter}${process.env.PATH}`,
+        GITHUB_EVENT_NAME: event,
+        GITHUB_REPOSITORY: "owner/repo",
+        GITHUB_OUTPUT: output,
+        RUNNER_TEMP: dir,
+        EVENT_LABEL: String(eventLabel),
+        PR: "4354",
+        FAKE_LABELS: "",
+        ...env,
+      },
+    });
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      output: readFileSync(output, "utf8"),
+      calls: existsSync(calls) ? readFileSync(calls, "utf8") : "",
+    };
+  };
+  // The event carried the label: nothing to read.
+  let r = run("pull_request", true, { FAKE_LABELS: "infra" });
+  assert.deepEqual([r.status, r.output, r.calls], [0, "standalone=true\n", ""]);
+  // Added with the pull request, after "opened" (#4354): the live labels add it.
+  r = run("pull_request", false, { FAKE_LABELS: "infra e2e-standalone" });
+  assert.deepEqual([r.status, r.output], [0, "standalone=true\n"]);
+  assert.match(r.calls, /repos\/owner\/repo\/issues\/4354\/labels/);
+  // Not on the pull request now either (an exact name only): Distributed only.
+  r = run("pull_request", false, { FAKE_LABELS: "infra e2e-standalone-later" });
+  assert.deepEqual([r.status, r.output], [0, "standalone=false\n"]);
+  // The read fails: the event's labels stand, a warning says so, and the job goes on.
+  r = run("pull_request", false, { FAKE_ERROR: "HTTP 502: Bad Gateway" });
+  assert.deepEqual([r.status, r.output], [0, "standalone=false\n"]);
+  assert.match(r.stdout, /::warning title=E2E stacks::.*HTTP 502: Bad Gateway/);
+  // Not a pull request: no read (the stacks step runs both stacks or follows a dispatch).
+  for (const event of ["merge_group", "push", "schedule", "workflow_dispatch"]) {
+    r = run(event, false, { FAKE_LABELS: "e2e-standalone" });
+    assert.deepEqual([r.status, r.output, r.calls], [0, "standalone=false\n", ""], event);
+  }
+});
+
+test("CI guidance asks for a push, never a close and reopen", () => {
+  const files = [
+    ".github/workflows/e2e-ci.yml",
+    ".github/workflows/backend-ci.yml",
+    ".github/workflows/python-lint.yml",
+    ".github/workflows/retarget-proof.yml",
+    ".github/scripts/ci_base_gate.py",
+    "e2e/README.md",
+  ];
+  for (const file of files) {
+    const text = readFileSync(new URL(`../../${file}`, import.meta.url), "utf8");
+    assert.doesNotMatch(text, /close and reopen|\bor reopen\b|\bor a close\b/i, file);
+  }
+  // A change to any of them starts this self-test.
+  const harness = parseYaml(
+    readFileSync(new URL("../../.github/workflows/e2e-harness-selftest.yml", import.meta.url), "utf8"),
+  );
+  for (const { paths } of [harness.on.pull_request, harness.on.push])
+    for (const file of files.filter((f) => !f.startsWith("e2e/")))
+      assert.ok(paths.includes(file), file);
+});
+
 test("the E2E gate passes only on a green suite with its report, or when nothing was needed", () => {
   const gate = workflow().jobs["e2e-tests"].steps[0];
   assert.deepEqual(gate.env, {
