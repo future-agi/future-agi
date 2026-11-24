@@ -352,7 +352,12 @@ def selection_report(
             "next": _unproved_next(pairing, bundle, placement),
             "running": requested - len(by_bucket["blocked"]),
             "held_back": {
-                **_held_list(held_back, _case_names(placed), _held_rows(placement)),
+                **_held_list(
+                    held_back,
+                    _case_names(placed),
+                    _held_rows(placement),
+                    _own_reasons(placement),
+                ),
                 "by": dict(held_counts),
             },
             "reasons": held_reasons,
@@ -472,6 +477,8 @@ class HeldBack(TypedDict):
     by: dict[str, int]
     # The row each listed case is counted under in ``by``, by its key.
     by_key: dict[str, str]
+    # Each listed case's own reason, by its key, where its lifecycle gives one: never another case's.
+    reason_by_key: NotRequired[dict[str, str]]
 
 
 class RunSelection(Scope):
@@ -497,11 +504,15 @@ class RunPlan:
 
 
 def _held_list(
-    held: list[str], names: Mapping[str, str], rows: Mapping[str, str] | None = None
+    held: list[str],
+    names: Mapping[str, str],
+    rows: Mapping[str, str] | None = None,
+    own: Mapping[str, str] | None = None,
 ) -> HeldBack:
-    """The held-back cases as the run dialog lists them, each with its current name and the row it is counted under."""
+    """The held-back cases as the run dialog lists them, each with its current name, the row it is counted under and
+    its own reason."""
     listed = _capped(held)
-    return {
+    shown: HeldBack = {
         "count": len(held),
         **listed,
         "names": {key: names[key] for key in listed["keys"] if names.get(key)},
@@ -509,6 +520,20 @@ def _held_list(
         "by_key": {
             key: (rows or {})[key] for key in listed["keys"] if key in (rows or {})
         },
+    }
+    if own_reasons := {
+        key: (own or {})[key] for key in listed["keys"] if (own or {}).get(key)
+    }:
+        shown["reason_by_key"] = own_reasons
+    return shown
+
+
+def _own_reasons(placement: Any) -> dict[str, str]:
+    """Each held-back case's own lifecycle reason, by its key."""
+    return {
+        one.case.key: one.lifecycle_reason
+        for one in placement.placed
+        if one.bucket == "blocked" and one.lifecycle_reason
     }
 
 
@@ -626,7 +651,10 @@ def select_for_run(
             "running": len(keys) - len(held),
             "held_back": {
                 **_held_list(
-                    held, _case_names(placement.placed), _held_rows(placement)
+                    held,
+                    _case_names(placement.placed),
+                    _held_rows(placement),
+                    _own_reasons(placement),
                 ),
                 "by": dict(by),
             },

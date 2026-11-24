@@ -1799,6 +1799,18 @@ def test_every_reason_a_proof_gives_renders_with_nothing_left_blank(
     )
     assert "control_misses_case_goal" in plan.held
     assert plan.view["held_back"]["by"]["proof_failed"] >= 1
+    # Each held case reads its own reason, never the others' under the same row.
+    own = plan.view["held_back"]["reason_by_key"]
+    assert (
+        own["control_misses_case_goal"]
+        == views["control_misses_case_goal"]["reason_text"]
+    )
+    assert own["tool_not_on_agent"] == views["tool_not_on_agent"]["reason_text"]
+    # The run preview's selection lists them the same way.
+    preview = selection.selection_report(
+        resolve_pairing(environment), keys=list(entries), trials=1
+    )
+    assert preview["selection"]["held_back"]["reason_by_key"] == own
     # A proof that names no goal still reads as a whole sentence.
     from simulate.services.harness_scenario_lifecycle import reason_text
 

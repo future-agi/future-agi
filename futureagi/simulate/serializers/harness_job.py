@@ -997,6 +997,14 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
         required=False,
         help_text="The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
     )
+    reason_by_key = serializers.DictField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof"
+            " failed, archived, seed records unread): show it for that case instead of the row's `reasons`."
+        ),
+    )
 
 
 class HarnessRunReadinessSelectionSerializer(HarnessCapabilityScopeSerializer):
