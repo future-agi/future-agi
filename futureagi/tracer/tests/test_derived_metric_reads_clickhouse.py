@@ -960,8 +960,12 @@ def _m10_sample(store, mode, index, diagnostics):
             "current_cutoff",
             timed("retention_policy_cutoff", source_retention.current_cutoff),
         ),
-        patch.object(reads, "provenance", timed("response_provenance", reads.provenance)),
-        patch.object(reads, "_disclosure", timed("response_disclosure", reads._disclosure)),
+        patch.object(
+            reads, "provenance", timed("response_provenance", reads.provenance)
+        ),
+        patch.object(
+            reads, "_disclosure", timed("response_disclosure", reads._disclosure)
+        ),
         patch.object(
             store, "assert_visible", timed("visibility", store.assert_visible)
         ),
