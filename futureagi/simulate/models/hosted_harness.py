@@ -166,6 +166,9 @@ class HostedHarnessJob(BaseModel):
         blank=True,
         related_name="adopted_check_runs",
     )
+    # When a fix's winner queued its evals of this check run. A run graded once keeps
+    # that grading: a later outside attempt that reads the run again reads its grading too.
+    graded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "simulate_hosted_harness_job"

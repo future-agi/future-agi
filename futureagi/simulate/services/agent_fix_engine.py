@@ -39,7 +39,6 @@ from simulate.selectors.agent_fix import (
     committed_usd,
     fix_lineage,
     graded_check_runs,
-    has_winner,
     is_graded_label,
     is_outside_attempt,
     ran_at,
@@ -299,7 +298,8 @@ def _git(
 
 def archive_files(body: bytes) -> dict[str, bytes]:
     """An agent tree's files by their path from the agent's root, refusing a tree whose
-    unpacked size or file count is over the limit before reading it."""
+    unpacked size or file count is over the limit before reading it, and one with a path
+    a patch cannot name as it is: absolute, or with an empty, "." or ".." part."""
     max_bytes = settings.AGENT_FIX_MAX_TREE_BYTES
     max_files = settings.AGENT_FIX_MAX_TREE_FILES
     try:
@@ -324,6 +324,16 @@ def archive_files(body: bytes) -> dict[str, bytes]:
         raise HostedHarnessError(
             "fix_tree_invalid", "the candidate's tree is not a tar.gz", status_code=400
         ) from exc
+    if invalid := sorted(
+        path
+        for path in files
+        if any(part in ("", ".", "..") for part in path.split("/"))
+    ):
+        raise HostedHarnessError(
+            "fix_tree_invalid",
+            f"the tree has invalid paths: {', '.join(invalid[:10])}",
+            status_code=400,
+        )
     if not files:
         raise HostedHarnessError(
             "fix_tree_empty", "the candidate's tree has no files", status_code=400
@@ -369,17 +379,17 @@ def start_check_run(fix_run: AgentFixRun, request: CheckRunRequest) -> HostedHar
         locked = _locked_running(fix_run.id)
         if finished is not None:
             # Read under the fix's lock: the same request, sent twice at once, adopts once.
-            adopted_by = (
+            adopted_by, graded_at = (
                 HostedHarnessJob.no_workspace_objects.filter(id=finished.id)
-                .values_list("graded_for_id", flat=True)
+                .values_list("graded_for_id", "graded_at")
                 .get()
             )
-            # A run an earlier winner graded keeps its grading, and its bill, with that
+            # A run a winner already graded keeps its grading, and its bill, with that
             # fix: this one reads the grading through its lineage (graded_check_runs).
             if (
                 is_graded_label(request.label)
                 and adopted_by != locked.id
-                and not has_winner(adopted_by or finished.fix_run_id)
+                and graded_at is None
             ):
                 # This retry's winner grades it: its evals are new spend, held against
                 # this fix's limit as its own graded runs' are.
@@ -547,6 +557,10 @@ def _grade_winner(fix_run: AgentFixRun, winner_id: Any) -> None:
                 run=str(run.id),
                 exc_info=True,
             )
+            continue
+        HostedHarnessJob.no_workspace_objects.filter(id=run.id).update(
+            graded_at=timezone.now()
+        )
 
 
 def apply_report(fix_run: AgentFixRun, report: EngineReport) -> AgentFixRun:

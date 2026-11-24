@@ -269,6 +269,10 @@ class TestSubmit:
                 "fix_locked_path_changed",
             ),
             ({**FIXED, "../escape.py": b"x"}, {}, 400, "fix_tree_invalid"),
+            ({**FIXED, "./a.py": b"x"}, {}, 400, "fix_tree_invalid"),
+            ({**FIXED, "a//b.py": b"x"}, {}, 400, "fix_tree_invalid"),
+            ({**FIXED, "a/./b.py": b"x"}, {}, 400, "fix_tree_invalid"),
+            ({**FIXED, "a/b/": b"x"}, {}, 400, "fix_tree_invalid"),
             ({**FIXED, ".git/hooks/post": b"x"}, {}, 422, "fix_outside_tree_untracked"),
             (
                 {**FIXED, "__pycache__/agent.pyc": b"\0\1"},
@@ -301,6 +305,10 @@ class TestSubmit:
             "patch-size",
             "locked-file-deleted",
             "path-escapes",
+            "dot-part",
+            "doubled-slash",
+            "inner-dot",
+            "trailing-slash",
             "under-git",
             "under-pycache",
             "not-utf8",
@@ -365,6 +373,48 @@ class TestSubmit:
         response = _submit(auth_client, source_run, tree)
 
         assert response.status_code == 201, response.content
+
+    def test_the_agent_s_own_attributes_left_as_they_are_are_accepted(
+        self, auth_client, source_run, base_source
+    ):
+        attributes = {".gitattributes": b"* text=auto eol=lf\n*.bin filter=lfs\n"}
+        base_source.return_value.acquire.return_value = (
+            _tree({**BASE, **attributes}),
+            "",
+        )
+
+        response = _submit(auth_client, source_run, {**FIXED, **attributes})
+
+        assert response.status_code == 201, response.content
+
+    def test_an_attempt_keeps_the_locks_before_it_and_may_add_more(
+        self, auth_client, source_run
+    ):
+        first = _submit(auth_client, source_run, locked_paths=["prompts/*"])
+        close_fix_run(first.json()["id"], State.NO_IMPROVEMENT)
+
+        # Sent without the first attempt's lock, the second keeps it.
+        unlocked = _submit(
+            auth_client,
+            source_run,
+            {**FIXED, "prompts/system.md": b"never refund\n"},
+            locked_paths=["tools.py"],
+        )
+        second = _submit(auth_client, source_run, locked_paths=["tools.py"])
+
+        assert (unlocked.status_code, unlocked.json()["error"]) == (
+            422,
+            "fix_locked_path_changed",
+        )
+        assert second.status_code == 201, second.content
+        assert second.json()["request"]["locked_paths"] == ["prompts/*", "tools.py"]
+        close_fix_run(second.json()["id"], State.NO_IMPROVEMENT)
+        brief = auth_client.get(
+            f"{EPOCHS}/coding-agent-brief/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+        assert brief["locked_paths"] == ["prompts/*", "tools.py"]
+        assert "`prompts/*`, `tools.py`" in brief["instructions"]
 
     @pytest.mark.parametrize("sent", ["b" * 40, ""], ids=["other-commit", "none"])
     def test_a_github_agent_s_moved_commit_is_refused(
@@ -468,9 +518,13 @@ class TestLineage:
         )
         assert again.id != mine.id
 
-    @pytest.mark.parametrize("first_won", [True, False], ids=["first-won", "no-winner"])
+    @pytest.mark.parametrize(
+        ("first_won", "evals", "graded"),
+        [(True, ["config"], True), (True, [], False), (False, [], False)],
+        ids=["first-graded", "first-won-without-evals", "no-winner"],
+    )
     def test_a_baseline_a_winner_graded_keeps_its_grading(
-        self, auth_client, source_run, first_won
+        self, auth_client, source_run, first_won, evals, graded
     ):
         first = _running(
             AgentFixRun.no_workspace_objects.get(
@@ -486,6 +540,14 @@ class TestLineage:
             AgentFixCandidate.no_workspace_objects.filter(id=won.id).update(
                 outcome="winner"
             )
+            # Its grading queues evals only when the environment has some.
+            with (
+                patch.object(engine, "runnable_eval_configs", return_value=evals),
+                patch.object(engine, "queue_evals_for_finished_calls"),
+            ):
+                engine._grade_winner(first, won.id)
+        baseline.refresh_from_db()
+        assert (baseline.graded_at is not None) is graded
         close_fix_run(first.id, State.READY if first_won else State.NO_IMPROVEMENT)
         other = {**FIXED, "agent.py": b"PROMPT = 'x'\n"}
         second = _running(
@@ -501,9 +563,9 @@ class TestLineage:
         assert _check(second, label="baseline-r1").id == baseline.id
 
         baseline.refresh_from_db()
-        # A graded baseline stays the first attempt's, in its read and its bill; one no
-        # winner graded is the second's to grade, as a retry's is.
-        assert baseline.graded_for_id == (None if first_won else second.id)
+        # A graded baseline stays the first attempt's, in its read and its bill. One
+        # nothing graded, even under a winner, is the second's to grade, as a retry's is.
+        assert baseline.graded_for_id == (None if graded else second.id)
         first = AgentFixRun.no_workspace_objects.get(id=first.id)
         assert graded_check_runs(first, won)[0] == [baseline]
         second = AgentFixRun.no_workspace_objects.get(id=second.id)
@@ -514,8 +576,10 @@ class TestLineage:
         ):
             engine._grade_winner(second, winner.id)
         assert [call.args[0].id for call in queued.call_args_list] == (
-            [] if first_won else [baseline.test_execution_id]
+            [] if graded else [baseline.test_execution_id]
         )
+        baseline.refresh_from_db()
+        assert baseline.graded_at is not None
 
     def test_the_hold_holds_each_check_at_its_worst(self, source_run):
         request = FixRequest(

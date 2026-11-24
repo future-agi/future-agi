@@ -54012,6 +54012,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "files",
         "targets",
         "protected_scenario_keys",
+        "locked_paths",
         "failures",
         "attempts",
         "blocked",
@@ -54050,6 +54051,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
         },
         protected_scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+        locked_paths: {
+          description:
+            "The paths earlier attempts on the run locked: every later attempt keeps them, and may lock more.",
           type: "array",
           items: {
             type: "string",

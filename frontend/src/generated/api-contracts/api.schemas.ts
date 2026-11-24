@@ -19744,6 +19744,8 @@ export interface AgentFixCodingAgentBriefApi {
   files: string[];
   targets: AgentFixCodingAgentTargetApi[];
   protected_scenario_keys: string[];
+  /** The paths earlier attempts on the run locked: every later attempt keeps them, and may lock more. */
+  locked_paths: string[];
   failures: AgentFixCodingAgentFailureApi[];
   attempts: AgentFixOutsideAttemptsApi;
   blocked: AgentFixFailureApi;

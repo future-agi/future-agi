@@ -127,9 +127,10 @@ def outside_attempt_request(
     locked_paths: list[str] | None,
     budget_credits: int | None,
 ) -> FixRequest:
-    """The request of the next outside attempt on a run. Without ``locked_paths`` it keeps
-    the previous attempt's; without ``budget_credits`` its budget is the attempt's own
-    worst-case hold, so its check runs are never refused for it."""
+    """The request of the next outside attempt on a run. Its locked paths are the previous
+    attempt's and ``locked_paths``: an attempt may lock more, never unlock. Without
+    ``budget_credits`` its budget is the attempt's own worst-case hold, so its check runs
+    are never refused for it."""
     scope = _attempt_scope(source_run, previous)
     if budget_credits is None:
         hold = outside_attempt_hold_usd(source_run, scope, previous)
@@ -137,9 +138,9 @@ def outside_attempt_request(
     return FixRequest.model_validate(
         {
             **scope.model_dump(mode="json"),
-            "locked_paths": scope.locked_paths
-            if locked_paths is None
-            else locked_paths,
+            "locked_paths": list(
+                dict.fromkeys([*scope.locked_paths, *(locked_paths or [])])
+            ),
             "budget_usd": budget_credits / 100,
             "outside_candidate": OutsideCandidate(
                 summary=summary, number=number
@@ -185,6 +186,7 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
         files=files,
         targets=targets,
         protected_scenario_keys=request.protected_scenario_keys if request else [],
+        locked_paths=request.locked_paths if request else [],
         failures=failures,
         attempts=OutsideAttempts(used=len(attempts), max=OUTSIDE_ATTEMPTS_MAX),
         blocked=blocked,
@@ -195,6 +197,7 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
             failures=failures,
             commit=commit,
             used=len(attempts),
+            locked=request.locked_paths if request else [],
         ),
     )
 
@@ -207,6 +210,7 @@ def _instructions(
     failures: list[CheckRecord],
     commit: str,
     used: int,
+    locked: list[str],
 ) -> str:
     """The brief as the prompt a coding agent follows, in markdown."""
     reasons = {
@@ -246,7 +250,12 @@ def _instructions(
         "",
         "- Change the agent's files that the brief lists in `files`. You can add new"
         " files. A file you leave out of the tree is deleted.",
-        "- Do not change a locked file. Future AGI refuses an attempt that does.",
+        "- Do not change or delete a locked file. Future AGI refuses an attempt that does."
+        + (
+            f" Earlier attempts on this run locked: {', '.join(f'`{one}`' for one in locked)}."
+            if locked
+            else ""
+        ),
         f"- Keep the change under {MAX_PATCH_BYTES // (1024 * 1024)} MB as a patch.",
     ]
     if commit:

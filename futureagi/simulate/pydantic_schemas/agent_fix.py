@@ -529,6 +529,8 @@ class CodingAgentBrief(BaseModel):
     files: list[str]
     targets: list[CodingAgentTarget]
     protected_scenario_keys: list[str]
+    # The paths earlier attempts on the run locked; every later attempt keeps them.
+    locked_paths: list[str]
     failures: list[CheckRecord]
     attempts: OutsideAttempts
     blocked: LaunchBlocked | None = None

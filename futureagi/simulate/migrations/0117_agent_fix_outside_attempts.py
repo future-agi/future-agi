@@ -20,4 +20,9 @@ class Migration(migrations.Migration):
                 to="simulate.agentfixrun",
             ),
         ),
+        migrations.AddField(
+            model_name="hostedharnessjob",
+            name="graded_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
     ]

@@ -71,14 +71,6 @@ def submit_outside_attempt(
         budget_credits=budget_credits,
     )
     files = archive_files(tree)
-    if unsafe := sorted(
-        path for path in files if path.startswith("/") or ".." in path.split("/")
-    ):
-        raise HostedHarnessError(
-            "fix_tree_invalid",
-            f"the tree has paths outside the agent: {', '.join(unsafe[:10])}",
-            status_code=400,
-        )
     base_body = run_source_archive(source_run)
     base = archive_files(base_body)
     if files == base:
@@ -140,14 +132,15 @@ def _refuse_unrebuildable(base: dict[str, bytes], files: dict[str, bytes]) -> No
             f" {', '.join(not_utf8[:10])}",
             status_code=422,
         )
+    # The base's own attributes are in its checkout already: only a changed one differs.
     if rewriting := [
         path
-        for path in sorted(files)
+        for path in changed
         if path.rsplit("/", 1)[-1] == ".gitattributes" and _rewrites_files(files[path])
     ]:
         raise HostedHarnessError(
             "fix_outside_tree_attributes",
-            "the tree has a .gitattributes that changes line endings or sets a filter:"
+            "the tree changes a .gitattributes to change line endings or set a filter:"
             f" {', '.join(rewriting)}",
             status_code=422,
         )

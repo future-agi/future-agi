@@ -39209,6 +39209,11 @@ export const SimulateApiAgentFixRunsBriefResponse = zod.object({
     }),
   ),
   protected_scenario_keys: zod.array(zod.string().min(1)),
+  locked_paths: zod
+    .array(zod.string().min(1))
+    .describe(
+      "The paths earlier attempts on the run locked: every later attempt keeps them, and may lock more.",
+    ),
   failures: zod.array(
     zod.object({
       scenario_key: zod.string().min(1),

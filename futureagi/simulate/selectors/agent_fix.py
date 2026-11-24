@@ -1352,13 +1352,6 @@ def _each_repeat(
     return [chosen[repeat] for repeat in sorted(chosen, key=int)]
 
 
-def has_winner(fix_run_id: Any) -> bool:
-    """Whether the fix has a winner, whose grading read its baseline."""
-    return AgentFixCandidate.no_workspace_objects.filter(
-        fix_run_id=fix_run_id, outcome=AgentFixCandidate.Outcome.WINNER
-    ).exists()
-
-
 def fix_winner(fix_run: AgentFixRun) -> AgentFixCandidate | None:
     return next(
         (
@@ -1376,8 +1369,8 @@ def graded_check_runs(
     """The base version's baseline repeats and the winner's final check: the runs a fix's
     evals grade once it has a winner, and all they compare. A retry's baselines include the
     ones it read again from the failed fix, and only those: what its limit holds. A later
-    outside attempt's include the baseline an earlier attempt's winner graded, which keeps
-    that grading (start_check_run): it is read, not graded again."""
+    outside attempt's include the baselines an earlier attempt's winner graded, which keep
+    that grading (start_check_run): they are read, not graded again."""
     check_runs: list[HostedHarnessJob] | None = getattr(fix_run, "check_run_list", None)
     if check_runs is None:
         check_runs = list(HostedHarnessJob.no_workspace_objects.filter(fix_run=fix_run))
@@ -1399,11 +1392,12 @@ def graded_check_runs(
             fix_run_id__in=fix_lineage(fix_run)[1:],
             agent_version_id=fix_run.base_agent_version_id,
             state=HostedHarnessJob.State.COMPLETED,
+            graded_at__isnull=False,
             deleted=False,
-        ).order_by("created_at")
+        )
+        .exclude(fix_label__in=labels)
+        .order_by("created_at")
         if _BASELINE_LABEL.match(run.fix_label)
-        and run.fix_label not in labels
-        and has_winner(run.graded_for_id or run.fix_run_id)
     ]
     base = _each_repeat([*own, *adopted, *graded_earlier], _BASELINE_LABEL)
     final = _each_repeat(

@@ -786,6 +786,11 @@ class AgentFixCodingAgentBriefSerializer(serializers.Serializer):
     )
     targets = AgentFixCodingAgentTargetSerializer(many=True)
     protected_scenario_keys = serializers.ListField(child=serializers.CharField())
+    locked_paths = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="The paths earlier attempts on the run locked: every later attempt "
+        "keeps them, and may lock more.",
+    )
     failures = AgentFixCodingAgentFailureSerializer(many=True)
     attempts = AgentFixOutsideAttemptsSerializer()
     # Set when an attempt would be refused now, with the reason submit would give.
@@ -813,7 +818,7 @@ class AgentFixCodingAgentAttemptSerializer(serializers.Serializer):
         help_text="A GitHub agent's change is refused unless this is the brief's "
         "base_commit.",
     )
-    # Left out, the previous attempt's locked paths, or none on the first.
+    # Added to the previous attempt's locked paths: an attempt never unlocks one.
     locked_paths = serializers.ListField(
         child=serializers.CharField(max_length=512), required=False
     )
