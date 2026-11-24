@@ -44,49 +44,59 @@ export default function ScenarioDrawer({
     <SideDrawer open={!!row} onClose={onClose} width={680}>
       {row && (
         <Stack sx={{ height: "100%" }}>
+          {/* The name and what's done to the scenario, level with the shell's close button; its state and Validate
+              beneath. */}
           <Stack
-            direction="row"
-            alignItems="center"
-            spacing={1.5}
+            spacing={1}
             sx={{
+              pt: 1,
+              pb: 1.5,
               px: 3,
-              py: 2,
-              pr: 6,
               borderBottom: "1px solid",
               borderColor: "divider",
               flexShrink: 0,
             }}
           >
-            <Stack flex={1} minWidth={0} spacing={0.75}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={1}
+              sx={{ minHeight: 28, pr: 3 }}
+            >
               <Typography
                 noWrap
-                sx={{ typography: "m1", fontWeight: "fontWeightMedium" }}
+                sx={{
+                  typography: "m1",
+                  fontWeight: "fontWeightMedium",
+                  flex: 1,
+                  minWidth: 0,
+                }}
               >
                 {row.name || row.title}
               </Typography>
-              <LifecycleHeaderLine envId={envId} row={row} locked={locked} />
+              {!locked && envId && (
+                <ArchiveScenarioButton
+                  envId={envId}
+                  row={row}
+                  onChanged={onLifecycleChange}
+                />
+              )}
+              {!locked && onEdit && (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  onClick={() => onEdit(row)}
+                  startIcon={
+                    <Iconify icon="solar:pen-new-square-linear" width={14} />
+                  }
+                  sx={{ flexShrink: 0 }}
+                >
+                  Edit
+                </Button>
+              )}
             </Stack>
-            {!locked && envId && (
-              <ArchiveScenarioButton
-                envId={envId}
-                row={row}
-                onChanged={onLifecycleChange}
-              />
-            )}
-            {!locked && onEdit && (
-              <Button
-                size="small"
-                variant="outlined"
-                color="inherit"
-                onClick={() => onEdit(row)}
-                startIcon={
-                  <Iconify icon="solar:pen-new-square-linear" width={14} />
-                }
-                sx={{ flexShrink: 0 }}
-              >
-                Edit
-              </Button>
-            )}
+            <LifecycleHeaderLine envId={envId} row={row} locked={locked} />
           </Stack>
           <Box sx={{ flex: 1, overflow: "auto" }}>
             <ScenarioSheet
