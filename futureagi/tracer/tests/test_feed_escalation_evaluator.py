@@ -285,6 +285,77 @@ def test_scheduled_sweep_drains_more_than_one_batch(legacy_issue, monkeypatch):
     assert len(set(visited)) == 502
 
 
+def _legacy(cluster, status):
+    # As written before 0117 or by an old pod during the rollout.
+    TraceErrorGroup.no_workspace_objects.filter(pk=cluster.pk).update(
+        status=status, status_origin="legacy_unknown"
+    )
+    cluster.refresh_from_db()
+
+
+def test_legacy_escalating_issue_keeps_status_until_quiet_then_recovers(legacy_issue):
+    cluster, scan = legacy_issue
+    _legacy(cluster, "escalating")
+    for _ in range(20):
+        add_scan_finding(cluster, scan, T - timedelta(minutes=20))
+    tick(cluster)
+    assert cluster.status == "escalating"
+    assert cluster.status_origin == "system"
+    assert cluster.status_revision == 0
+    for minute in range(5, 60, 5):
+        tick(cluster, minute)
+    assert cluster.status == "for_review"
+    assert cluster.status_revision == 1
+
+
+def test_legacy_for_review_issue_joins_automation(legacy_issue):
+    cluster, scan = legacy_issue
+    _legacy(cluster, "for_review")
+    for _ in range(20):
+        add_scan_finding(cluster, scan, T - timedelta(minutes=20))
+    for minute in (0, 5, 10, 15):
+        tick(cluster, minute)
+    assert cluster.status == "escalating"
+    assert cluster.status_origin == "system"
+
+
+@pytest.mark.parametrize("status", ["acknowledged", "resolved"])
+def test_closed_legacy_issue_stays_out_of_automation(legacy_issue, status):
+    cluster, scan = legacy_issue
+    _legacy(cluster, status)
+    for _ in range(40):
+        add_scan_finding(cluster, scan, T - timedelta(minutes=20))
+    for minute in (0, 5, 10, 15, 80):
+        assert tick(cluster, minute) == "skipped"
+    assert (cluster.status, cluster.status_origin) == (status, "legacy_unknown")
+    assert cluster.status_revision == 0
+
+
+def test_shadow_mode_leaves_legacy_issue_unchanged_until_enabled(
+    legacy_issue, settings
+):
+    settings.ERROR_FEED_ESCALATION_MODE = "shadow"
+    cluster, _scan = legacy_issue
+    _legacy(cluster, "escalating")
+    for minute in (0, 5, 10):
+        tick(cluster, minute)
+    assert (cluster.status, cluster.status_origin) == ("escalating", "legacy_unknown")
+    assert cluster.status_revision == 0
+    assert cluster.escalation_state["shadow_status"] == "for_review"
+    settings.ERROR_FEED_ESCALATION_MODE = "enabled"
+    for minute in (15, 20, 25):
+        tick(cluster, minute)
+    assert (cluster.status, cluster.status_origin) == ("for_review", "system")
+
+
+def test_merge_skips_a_pair_deleted_concurrently(legacy_issue):
+    from tracer.queries.scan_clustering import _merge_pg
+
+    cluster, _scan = legacy_issue
+    with pytest.raises(TraceErrorGroup.DoesNotExist):
+        _merge_pg(cluster.cluster_id, "S-DELETED", str(cluster.project_id))
+
+
 def test_legacy_merge_requests_fresh_confirmation_and_keeps_occurrence_times(
     legacy_issue,
 ):

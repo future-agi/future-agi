@@ -16,17 +16,18 @@ issue status revisions and membership revisions fence concurrent updates.
 ## Schema and rollout
 
 Migration 0117 adds one workspace policy table, issue ownership/evidence fields,
-and finding occurrence timestamps. Migration 0118 resets every live legacy Error
-Feed issue with status Escalating to For review and system ownership, in bounded
-batches. This intentionally includes past user-selected Escalating values because
-the old schema cannot distinguish them from the creation default. Other legacy
-statuses, deleted issues, and explicit manual choices recorded by the new code
-are preserved. Rerunning the migration does not reset already adopted issues.
+and finding occurrence timestamps. Migration 0118 provisions workspace policies
+and recovers finding times in bounded batches; it changes no issue status.
 No AuditLog or source-configuration/task schema changes are included.
 
-The migration does not replay historical growth or immediately re-escalate issues.
-It schedules runtime checks, which require fresh confirmation before escalation
-and honor the rollout controls below. A missing source timestamp blocks automatic
+Existing issues keep their status. Rows written before 0117, or by old pods during
+the rollout, carry `legacy_unknown` ownership. Open ones (For review, Escalating)
+join automation, because the old schema cannot tell a creation default from a
+user's choice; Acknowledged and Resolved stay out of it. In `enabled` mode the
+first check makes the issue system-owned. A legacy Escalating issue then freezes
+the current baseline and recovers once it stays quiet; it is not escalated again
+without fresh confirmation. In `shadow` mode nothing visible changes, so issues that
+were Escalating stay Escalating until a workspace is enabled. A missing source timestamp blocks automatic
 transitions only when its finding was recorded inside the evaluation range (the
 current and baseline windows plus the processing allowance, about 25 hours): a
 finding is recorded after it occurs, so older rows can never change a count.

@@ -4,6 +4,29 @@ import django.db.models.deletion
 from django.conf import settings
 from django.db import migrations, models
 
+UPDATE_SAFETY = {
+    "schema_version": 1,
+    "risk_classes": ["constraint", "index", "volatile_default"],
+    "tables": [
+        "postgres:tracer_error_cluster_traces",
+        "postgres:tracer_feed_escalation_policy",
+        "postgres:tracer_trace_error_group",
+        "postgres:tracer_trace_scan_issue",
+    ],
+    "mitigation": (
+        "Creates the new per-workspace tracer_feed_escalation_policy table with its eight CHECK "
+        "constraints, and adds escalation ownership/evidence columns to tracer_trace_error_group and "
+        "occurrence-time columns to tracer_error_cluster_traces and tracer_trace_scan_issue. Added "
+        "non-null columns carry db_default, so existing rows are not rewritten. One index is added on "
+        "each of tracer_error_cluster_traces, tracer_trace_scan_issue and tracer_trace_error_group; "
+        "those builds lock in proportion to table size, so qualify on a large-volume snapshot. "
+        "Recovery restores the sealed source snapshot rather than reversing migrations."
+    ),
+    "reviewer": "NVJKKartik",
+    "review": "https://github.com/future-agi/future-agi/pull/3560#discussion_r4525052450",
+    "large_volume_rehearsal": True,
+}
+
 
 class Migration(migrations.Migration):
     dependencies = [

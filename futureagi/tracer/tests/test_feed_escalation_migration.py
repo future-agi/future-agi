@@ -1,4 +1,4 @@
-"""Real pre-escalation upgrades and bounded, repeatable legacy resets."""
+"""Real pre-escalation upgrades: statuses are kept and open legacy issues join automation."""
 
 import importlib
 import uuid
@@ -13,7 +13,7 @@ from tracer.tests.test_feed_escalation_policy import T
 
 @pytest.mark.integration
 @pytest.mark.django_db(transaction=True)
-def test_upgrade_resets_legacy_escalating_and_preserves_other_statuses(
+def test_upgrade_keeps_legacy_statuses_and_automation_adopts_open_issues(
     observe_project, monkeypatch, settings
 ):
     from simulate.models import RunTest, TestExecution
@@ -113,15 +113,12 @@ def test_upgrade_resets_legacy_escalating_and_preserves_other_statuses(
         )
         executor = MigrationExecutor(connection)
         executor.migrate(latest)
-        reset_ids = [issues["escalating"].pk, *(issue.pk for issue in defaults)]
-        for issue in TraceErrorGroup.no_workspace_objects.filter(pk__in=reset_ids):
-            assert issue.status == "for_review"
-            assert issue.status_origin == "system"
-            assert issue.status_revision == 1
-            assert issue.status_changed_at is not None
-            assert issue.status_changed_by_id is None
+        legacy_ids = [issues["escalating"].pk, *(issue.pk for issue in defaults)]
+        for issue in TraceErrorGroup.no_workspace_objects.filter(pk__in=legacy_ids):
+            assert issue.status == "escalating"
+            assert issue.status_origin == "legacy_unknown"
+            assert issue.status_revision == 0
             assert issue.escalation_state == {}
-            assert issue.escalation_next_evaluation_at is not None
         for status in statuses[1:]:
             issue = TraceErrorGroup.no_workspace_objects.get(pk=issues[status].pk)
             assert issue.status == status
@@ -140,8 +137,8 @@ def test_upgrade_resets_legacy_escalating_and_preserves_other_statuses(
             == 20
         )
 
-        # Runtime preserves the reset while timestamps are missing, then repairs
-        # real source times and requires fresh confirmation before escalating.
+        # Runtime keeps the status while timestamps are missing, then repairs real
+        # source times, adopts the issue and recovers it only once it is quiet.
         monkeypatch.setattr(
             "tracer.services.feed_escalation_evidence.capture_trace_occurrences",
             lambda project_id, trace_ids: {str(t): (None, "") for t in trace_ids},
@@ -150,7 +147,8 @@ def test_upgrade_resets_legacy_escalating_and_preserves_other_statuses(
         assert evaluate_issue(cluster.pk, now=now) == "error"
         assert evaluate_issue(cluster.pk, now=now) == "error"
         cluster.refresh_from_db()
-        assert cluster.status == "for_review"
+        assert cluster.status == "escalating"
+        assert cluster.status_origin == "legacy_unknown"
         assert cluster.escalation_state["evaluation_error"] == "CountUnavailable"
         monkeypatch.setattr(
             "tracer.services.feed_escalation_evidence.capture_trace_occurrences",
@@ -168,16 +166,21 @@ def test_upgrade_resets_legacy_escalating_and_preserves_other_statuses(
                 flat=True,
             )
         ) == {T - timedelta(minutes=20)}
-        for minute in (0, 5, 10, 15):
+        for minute in range(0, 45, 5):
             sweep_issues(now=now + timedelta(minutes=minute))
             cluster.refresh_from_db()
-            assert cluster.status == ("escalating" if minute == 15 else "for_review")
+            assert (cluster.status, cluster.status_origin) == ("escalating", "system")
+        for minute in (45, 50, 55):
+            sweep_issues(now=now + timedelta(minutes=minute))
+        cluster.refresh_from_db()
+        assert cluster.status == "for_review"
+        assert cluster.status_revision == 1
         before = cluster.status_revision, cluster.escalation_state
         apps = executor.loader.project_state(latest).apps
         with connection.schema_editor(atomic=False) as editor:
             migration.backfill_feed_issue_statuses(apps, editor)
         cluster.refresh_from_db()
-        assert cluster.status == "escalating"
+        assert cluster.status == "for_review"
         assert (cluster.status_revision, cluster.escalation_state) == before
     finally:
         MigrationExecutor(connection).migrate(latest)

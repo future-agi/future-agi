@@ -984,6 +984,9 @@ def _merge_pg(keep_id: str, absorb_id: str, project_id: str):
         .order_by("id")
     )
     by_cluster = {row.cluster_id: row for row in locked}
+    if keep_id not in by_cluster or absorb_id not in by_cluster:
+        # Deleted concurrently: the caller skips this pair, as before the locks.
+        raise TraceErrorGroup.DoesNotExist
     keep, absorb = by_cluster[keep_id], by_cluster[absorb_id]
     if is_grouping_issue(keep.pk) or is_grouping_issue(absorb.pk):
         return None

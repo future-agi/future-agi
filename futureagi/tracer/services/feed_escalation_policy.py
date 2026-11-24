@@ -239,8 +239,8 @@ def evaluate(
     else:
         entry_checks = 0
         if frozen is None:
-            # Existing validated episodes always supply this; fail closed.
-            raise ValueError("Escalating episode has no frozen baseline")
+            # An adopted legacy Escalating issue has no episode yet; start one here.
+            frozen = str(baseline)
         if counts.current <= recovery:
             if not same_boundary:
                 recovery_checks = min(

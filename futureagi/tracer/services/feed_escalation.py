@@ -30,13 +30,18 @@ from tracer.services.feed_escalation_settings import get_policy_snapshot, lock_p
 
 logger = structlog.get_logger(__name__)
 
+# Rows written before 0117, or by old pods during the rollout, carry legacy
+# ownership. Open ones join automation and become system-owned on the first
+# enabled write; resolved and acknowledged values stay out of it.
+AUTOMATIC_ORIGINS = ("system", "legacy_unknown")
+
 
 def _eligible():
     mode = settings.ERROR_FEED_ESCALATION_MODE
     qs = (
         TraceErrorGroup.no_workspace_objects.filter(
             target_type="error_feed",
-            status_origin="system",
+            status_origin__in=AUTOMATIC_ORIGINS,
             source__in=settings.ERROR_FEED_ESCALATION_SOURCES,
             status__in=["for_review", "escalating"],
             project__workspace__isnull=False,
@@ -68,7 +73,7 @@ def request_evaluation(cluster_id, *, structural=False, now=None):
             .filter(
                 pk=cluster_id,
                 target_type="error_feed",
-                status_origin="system",
+                status_origin__in=AUTOMATIC_ORIGINS,
             )
             .first()
         )
@@ -219,7 +224,7 @@ def evaluate_issue(cluster_id, *, now=None):
         counts = count_occurrences(snapshot, boundary, now=now)
         decision = evaluate(
             status=status,
-            origin=snapshot.status_origin,
+            origin="system",  # _eligible() admits only automatic ownership.
             state=progress,
             counts=counts,
             policy=policy,
@@ -321,6 +326,8 @@ def evaluate_issue(cluster_id, *, now=None):
                     if decision.status == "escalating"
                     else None
                 )
+            if mode == "enabled":
+                cluster.status_origin = "system"
             if mode == "enabled" and decision.status != cluster.status:
                 cluster.status = decision.status
                 cluster.status_revision += 1
@@ -347,6 +354,7 @@ def evaluate_issue(cluster_id, *, now=None):
         cluster.save(
             update_fields=[
                 "status",
+                "status_origin",
                 "status_revision",
                 "status_changed_at",
                 "status_changed_by",
