@@ -7,12 +7,16 @@ from datetime import UTC, datetime
 import pytest
 from rest_framework.test import APIClient
 
+from accounts.models.workspace import Workspace
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
     HarnessEnvironmentRelease,
     HarnessSuiteRelease,
+    HostedHarnessJob,
+    HostedHarnessSecret,
 )
+from simulate.models.agent_definition import ProviderCredentials
 from simulate.services import harness_fit
 from simulate.services.harness_environment import status_for
 from simulate.services.harness_fit import (
@@ -30,9 +34,16 @@ from simulate.services.hosted_harness_conversation import (
     enqueue_message,
     issue_conversation_capability,
 )
+from simulate.services.hosted_sandbox import (
+    SandboxFileNotFoundError,
+    SandboxNotFoundError,
+    SandboxProviderError,
+)
 from simulate.tests.test_hosted_harness_conversation import BASE, _headers, _payload
+from tfc.utils.evaluation_denials import EvaluationDenied
 
 ADAPTATIONS = "/simulate/api/harness-adaptations"
+ASK_MODEL = harness_fit._ask_model
 
 
 def _tool(name, *parameters):
@@ -554,6 +565,216 @@ class TestApproveAndBuild:
         assert response.status_code == 409, response.content
         assert not job.conversation.messages.filter(content="yes").exists()
 
+    @pytest.mark.parametrize(
+        "ended",
+        [
+            {"state": "completed"},
+            {"state": "failed"},
+            {"state": "canceled"},
+            {"cancel_requested_at": datetime.now(UTC)},
+        ],
+        ids=["completed", "failed", "canceled", "cancel-requested"],
+    )
+    def test_an_adaptation_that_has_ended_cannot_be_approved(
+        self, auth_client, organization, retail, shopmate, ended
+    ):
+        job = _reviewed(organization, retail, shopmate)
+        conversation, question = _ask(job, APPROVAL)
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(**ended)
+
+        response = auth_client.post(f"{ADAPTATIONS}/{job.id}/approve/")
+
+        assert response.status_code == 409, response.content
+        assert "conversation_closed" in response.content.decode()
+        assert not conversation.messages.filter(reply_to=question).exists()
+        job.refresh_from_db()
+        assert "approved_at" not in job.payload["metadata"]["adaptation"]
+
+    @pytest.mark.parametrize(
+        "prompt, said, approved",
+        [
+            (APPROVAL, " Yes ", True),
+            (APPROVAL, "approve", True),
+            (APPROVAL, "no, cancel takes a reason", False),
+            ("Should cancel take a reason?", "yes", False),
+        ],
+        ids=["yes", "approve", "not-a-yes", "another-question"],
+    )
+    def test_a_yes_typed_in_the_chat_is_the_approval_too(
+        self, organization, retail, shopmate, prompt, said, approved
+    ):
+        job = _reviewed(organization, retail, shopmate)
+        _conversation, question = _ask(job, prompt)
+
+        enqueue_message(
+            job,
+            content=said,
+            client_request_id="typed",
+            kind="user_response",
+            reply_to=uuid.UUID(question),
+        )
+
+        job.refresh_from_db()
+        assert ("approved_at" in job.payload["metadata"]["adaptation"]) is approved
+
+    def test_an_approval_that_is_not_delivered_is_not_recorded(
+        self, organization, retail, shopmate, monkeypatch
+    ):
+        from simulate.services import hosted_harness_conversation
+        from simulate.services.harness_releases import approve_adaptation
+
+        job = _reviewed(organization, retail, shopmate)
+        conversation, question = _ask(job, APPROVAL)
+
+        def lost(*_arguments, **_options):
+            raise RuntimeError("the answer was not stored")
+
+        monkeypatch.setattr(
+            hosted_harness_conversation.HostedHarnessConversation, "save", lost
+        )
+        with pytest.raises(RuntimeError):
+            approve_adaptation(job)
+
+        job.refresh_from_db()
+        assert "approved_at" not in job.payload["metadata"]["adaptation"]
+        assert not conversation.messages.filter(reply_to=question).exists()
+
+
+@pytest.fixture
+def elsewhere(organization, user):
+    """Another workspace of the organization, which the caller is not in."""
+    return Workspace.objects.create(
+        name="Elsewhere", organization=organization, created_by=user
+    )
+
+
+@pytest.mark.django_db
+class TestWorkspaceScope:
+    def _elsewhere(self, organization, retail, shopmate, workspace):
+        job = _reviewed(organization, retail, shopmate)
+        HostedHarnessJob.no_workspace_objects.filter(id=job.id).update(
+            workspace=workspace
+        )
+        return job
+
+    def test_an_adaptation_of_another_workspace_is_not_found(
+        self, auth_client, organization, retail, shopmate, elsewhere
+    ):
+        job = self._elsewhere(organization, retail, shopmate, elsewhere)
+        conversation, question = _ask(job, APPROVAL)
+
+        design = auth_client.get(f"{ADAPTATIONS}/{job.id}/design/")
+        approve = auth_client.post(f"{ADAPTATIONS}/{job.id}/approve/")
+
+        assert design.status_code == 404, design.content
+        assert approve.status_code == 404, approve.content
+        assert not conversation.messages.filter(reply_to=question).exists()
+
+    def test_an_id_that_is_not_one_is_not_found(self, auth_client):
+        assert auth_client.get(f"{ADAPTATIONS}/nope/design/").status_code == 404
+        assert auth_client.post(f"{ADAPTATIONS}/nope/approve/").status_code == 404
+
+    def test_an_agent_of_another_workspace_is_neither_fitted_nor_adapted(
+        self, auth_client, retail, shopmate, fitted, elsewhere
+    ):
+        AgentDefinition.no_workspace_objects.filter(
+            id=shopmate.agent_definition_id
+        ).update(workspace=elsewhere)
+        asked = {"suite_id": str(retail.id), "agent_version_id": str(shopmate.id)}
+
+        fit = auth_client.post(
+            "/simulate/api/harness-releases/fit/", asked, format="json"
+        )
+        created = auth_client.post(
+            f"{ADAPTATIONS}/",
+            {**asked, "name": "Retail", "idempotency_key": f"adapt-{uuid.uuid4()}"},
+            format="json",
+        )
+
+        assert fit.status_code == 404, fit.content
+        assert created.status_code == 404, created.content
+
+
+@pytest.mark.django_db
+class TestAdaptationReplay:
+    @pytest.fixture
+    def submit(self, auth_client, retail, shopmate, fitted, monkeypatch):
+        from simulate.services import harness_provider
+        from simulate.temporal import client
+
+        ProviderCredentials.objects.create(
+            agent_version=shopmate, provider_type="retell", api_key="test-key"
+        )
+        started = []
+        monkeypatch.setattr(
+            client,
+            "start_hosted_harness_gateway_workflow",
+            lambda job_id, *args: started.append(job_id),
+        )
+        monkeypatch.setattr(
+            harness_provider, "_validate_known_hosted_egress", lambda *args: None
+        )
+
+        def send(key="adapt-once", **changed):
+            return auth_client.post(
+                f"{ADAPTATIONS}/",
+                {
+                    "suite_id": str(retail.id),
+                    "agent_version_id": str(shopmate.id),
+                    "name": "Retail",
+                    "idempotency_key": key,
+                    "pairing": {"cancel_order": None},
+                    **changed,
+                },
+                format="json",
+            )
+
+        send.started = started
+        retail.personas = [{"name": "Gareth Hughes"}]
+        retail.save(update_fields=["personas"])
+        return send
+
+    def test_the_same_request_sent_twice_is_one_job(
+        self, submit, organization, monkeypatch
+    ):
+        first = submit()
+        assert first.status_code == 202, first.content
+        job = HostedHarnessJob.no_workspace_objects.get(idempotency_key="adapt-once")
+        assert list(job.payload["agent"]["secret_refs"]) == ["RETELL_API_KEY"]
+        assert "test-key" not in str(job.payload)
+        secrets = HostedHarnessSecret.no_workspace_objects.filter(
+            organization=organization
+        )
+        assert secrets.count() == 1
+
+        # The suggestion the partial pairing is completed with is another by now, and the
+        # agent can't be read at all: neither is the client's request.
+        monkeypatch.setattr(harness_fit, "profile_for_version", lambda version: None)
+        second = submit()
+
+        assert second.status_code == 202, second.content
+        assert (
+            HostedHarnessJob.no_workspace_objects.filter(
+                idempotency_key="adapt-once"
+            ).count()
+            == 1
+        )
+        assert secrets.count() == 1
+        assert submit.started == [str(job.id), str(job.id)]
+
+    def test_another_request_under_the_same_key_is_refused(self, submit):
+        assert submit().status_code == 202
+
+        assert submit(name="Another").status_code == 409
+
+    def test_a_refused_request_leaves_no_secret(self, submit, organization):
+        response = submit(pairing={"nope": "cancel"})
+
+        assert response.status_code == 400, response.content
+        assert not HostedHarnessSecret.no_workspace_objects.filter(
+            organization=organization
+        ).exists()
+
 
 @pytest.mark.django_db(transaction=True)
 def test_review_the_design_reads_the_ready_world_and_the_pairing(
@@ -681,7 +902,7 @@ def test_the_builder_is_asked_to_keep_the_reviewed_pairing(organization, monkeyp
 def test_a_sealed_run_mode_adaptation_runs_its_measurable_cases(
     organization, retail, monkeypatch
 ):
-    from simulate.services import harness_releases, hosted_harness
+    from simulate.services import harness_releases, harness_usage, hosted_harness
     from simulate.temporal import client
 
     retail.manifest = {"scenarios": [{"key": "a"}, {"key": "b"}, {"key": "c"}]}
@@ -714,6 +935,11 @@ def test_a_sealed_run_mode_adaptation_runs_its_measurable_cases(
 
     monkeypatch.setattr(hosted_harness, "create_selected_harness_run", create)
     monkeypatch.setattr(
+        harness_usage,
+        "require_harness_call_usage",
+        lambda job: started.update(checked=job.id),
+    )
+    monkeypatch.setattr(
         client,
         "start_hosted_harness_gateway_workflow",
         lambda job_id, *args: started.setdefault("dispatched", job_id),
@@ -721,7 +947,7 @@ def test_a_sealed_run_mode_adaptation_runs_its_measurable_cases(
 
     adaptation = harness_releases._run_measurable(adaptation, str(composition.id))
 
-    assert started["environment"] == composition.id
+    assert started["checked"] == started["environment"] == composition.id
     assert started["scenario_keys"] == ["a", "c"]
     assert started["dispatched"] == "run-1"
     assert adaptation.payload["metadata"]["adaptation_result"]["run"] == {
@@ -729,6 +955,99 @@ def test_a_sealed_run_mode_adaptation_runs_its_measurable_cases(
         "run_test_id": "rt-1",
         "test_execution_id": "te-1",
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "refusal, said",
+    [
+        (
+            HostedHarnessError("parallelism_unavailable", "no capacity now"),
+            {"code": "parallelism_unavailable", "message": "no capacity now"},
+        ),
+        (
+            EvaluationDenied("the free calls are used", code="FREE_TIER_LIMIT"),
+            {"code": "FREE_TIER_LIMIT", "message": "the free calls are used"},
+        ),
+        (
+            RuntimeError("temporal is down at 10.0.0.1"),
+            {
+                "code": "run_not_started",
+                "message": "the run could not be started; run the environment to try again",
+            },
+        ),
+    ],
+    ids=["refused", "usage", "unexpected"],
+)
+def test_a_run_that_cant_start_says_why_on_the_adaptation(
+    organization, retail, monkeypatch, refusal, said
+):
+    from simulate.services import harness_releases, harness_usage, hosted_harness
+
+    retail.manifest = {"scenarios": [{"key": "a"}]}
+    retail.save(update_fields=["manifest"])
+    composition = _adaptation(organization)
+    composition.payload["metadata"]["release_composition"] = {
+        "suite": {"digest": retail.digest}
+    }
+    composition.save(update_fields=["payload"])
+    adaptation = _adaptation(organization, mode="run")
+    adaptation.payload["metadata"]["adaptation_result"] = {
+        "composition_id": str(composition.id)
+    }
+    created = []
+
+    def refuse(environment):
+        raise refusal
+
+    monkeypatch.setattr(harness_usage, "require_harness_call_usage", refuse)
+    monkeypatch.setattr(
+        hosted_harness,
+        "create_selected_harness_run",
+        lambda *args, **kwargs: created.append(args),
+    )
+
+    harness_releases._run_measurable(adaptation, str(composition.id))
+
+    adaptation.refresh_from_db()
+    assert adaptation.payload["metadata"]["adaptation_result"] == {
+        "composition_id": str(composition.id),
+        "run_failure": said,
+    }
+    assert created == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"choices": []},
+        {"choices": [{"message": {"content": None}}]},
+        {"choices": [{"message": {"content": '["pairs"]'}}]},
+        ["no", "choices"],
+        {"choices": [{"message": {"content": "no JSON"}}]},
+    ],
+    ids=["no-choices", "no-content", "a-list", "not-an-answer", "not-json"],
+)
+@pytest.mark.django_db
+def test_a_malformed_model_answer_is_answered_by_names(
+    retail, shopmate, fitted, monkeypatch, body
+):
+    import httpx
+
+    monkeypatch.setattr(harness_fit, "_ask_model", ASK_MODEL)
+    monkeypatch.setattr(
+        harness_fit, "platform_model_gateway", lambda: ("https://gw", "k")
+    )
+    monkeypatch.setattr(
+        harness_fit.httpx,
+        "post",
+        lambda url, **kwargs: httpx.Response(
+            200, json=body, request=httpx.Request("POST", url)
+        ),
+    )
+
+    assert resolved_pairing(retail, shopmate)["cancel_order"] == "cancel"
+    assert release_conflicts(retail, shopmate) == {"checked": False, "conflicts": []}
 
 
 def test_a_model_call_that_hits_a_gateway_error_is_tried_once_more(monkeypatch):
@@ -977,7 +1296,8 @@ def _left_in_the_output(tmp_path, binding, proof, monkeypatch):
         "status": "completed",
         "suite": {"digest": "sha256:" + "s" * 64, "derived": False},
         "binding_proof": {"digest": harness_releases.proof_digest(proof)},
-        "alignment": {},
+        # The session's own word on what can't be scored; the verified proof's is taken.
+        "alignment": {"mapped": [], "unscorable": [{"scenario_key": "forged"}]},
     }
     for name, body in (
         ("result.json", result),
@@ -1025,7 +1345,7 @@ def _verified(binding, proof):
 
     return {
         "schema_version": harness_releases.ADAPTATION_VERIFIED_SCHEMA,
-        "binding": {"digest": binding["digest"], "mode": "tool_routed"},
+        "binding": {"digest": binding["digest"], "mode": binding["mode"]},
         "binding_proof": {"digest": harness_releases.proof_digest(proof)},
     }
 
@@ -1041,6 +1361,10 @@ def test_the_proof_the_control_process_verified_is_accepted(tmp_path, monkeypatc
 
     assert failure is None and result["composition_id"] == "composition-1"
     assert composed["binding_proof"] == proof
+    assert composed["alignment"] == {
+        "mapped": [],
+        "unscorable": [{"scenario_key": "b", "reason": ""}],
+    }
 
 
 def test_a_matching_pair_the_control_process_did_not_verify_is_refused(
@@ -1106,6 +1430,33 @@ def test_another_binding_than_the_one_verified_is_refused(tmp_path, monkeypatch)
     assert composed == {}
 
 
+@pytest.mark.parametrize(
+    "said", [None, "canonical", "tool_routed"], ids=["nothing", "canonical", "routed"]
+)
+def test_a_canonical_binding_is_held_to_the_record_too(tmp_path, monkeypatch, said):
+    from simulate.services import harness_releases
+
+    document = {**_routed_binding(), "mode": "canonical"}
+    del document["digest"]
+    binding = {**document, "digest": canonical_digest(document)}
+    job, composed = _left_in_the_output(tmp_path, binding, {}, monkeypatch)
+    verified = said and {
+        "schema_version": harness_releases.ADAPTATION_VERIFIED_SCHEMA,
+        "binding": {"digest": binding["digest"], "mode": said},
+        "binding_proof": None,
+    }
+
+    if said == "canonical":
+        result, failure = harness_releases._adapt(job, tmp_path, verified)
+        assert failure is None and result["composition_id"] == "composition-1"
+        assert composed["binding_proof"] is None
+        return
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_releases._adapt(job, tmp_path, verified)
+    assert refused.value.code == "binding_unproved"
+    assert composed == {}
+
+
 def test_the_verified_record_is_read_from_its_own_path_never_the_output():
     import json
 
@@ -1132,6 +1483,42 @@ def test_the_verified_record_is_read_from_its_own_path_never_the_output():
     assert not ADAPTATION_VERIFIED.startswith(ADAPTATION_OUTPUT.rsplit("/", 1)[0] + "/")
     # A sandbox that left none, or something unreadable, verified nothing.
     assert hosted_harness_gateway._read_verified(sandbox, "/work/missing.json") is None
+
+
+@pytest.mark.parametrize(
+    "found",
+    [
+        SandboxFileNotFoundError("no file"),
+        SandboxNotFoundError("404"),
+        b"{not json",
+        b"[]",
+    ],
+    ids=["no-file", "not-found", "not-json", "not-a-record"],
+)
+def test_a_record_the_sandbox_does_not_hold_verifies_nothing(found):
+    from simulate.services import hosted_harness_gateway
+
+    assert hosted_harness_gateway._read_verified(_holding(found), "/work/r") is None
+
+
+def test_a_record_the_provider_could_not_read_is_raised_to_be_read_again():
+    from simulate.services import hosted_harness_gateway
+
+    with pytest.raises(SandboxProviderError):
+        hosted_harness_gateway._read_verified(
+            _holding(SandboxProviderError("gateway timeout", status_code=504)),
+            "/work/r",
+        )
+
+
+def _holding(found):
+    class Files:
+        def download_file(self, path, timeout):
+            if isinstance(found, Exception):
+                raise found
+            return found
+
+    return type("Sandbox", (), {"fs": Files()})()
 
 
 def test_the_fit_waits_one_short_budget_for_the_model_retry_included(monkeypatch):

@@ -2715,6 +2715,7 @@ class TestErrorTrackerScrubbing:
             _secret_ref_minter,
             run_preflight_checks,
         )
+        from simulate.services.harness_releases import connected_agent_connection
         from simulate.views.harness_job import HarnessJobViewSet
         from tfc.logging.sentry import _is_sensitive_key
 
@@ -2770,6 +2771,8 @@ class TestErrorTrackerScrubbing:
             ),
             HostedHarnessProvider.rerun_saved: ("environment_values", "secret_value"),
             HostedHarnessProvider._submit: ("secret_values",),
+            HostedHarnessProvider.create_adaptation: ("secret_values",),
+            connected_agent_connection: ("secret_values",),
             staged_files_view: ("secret_content", "secret_document"),
         }
         for function, names in holders.items():

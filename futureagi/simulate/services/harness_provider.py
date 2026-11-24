@@ -9,6 +9,7 @@ The hosted gateway independently selects Daytona or E2B through
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import re
 import uuid
@@ -1507,7 +1508,10 @@ class HostedHarnessProvider:
             organization_agent_version,
             visible_suite,
         )
-        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.services.hosted_harness import (
+            HostedHarnessError,
+            find_replayed_job,
+        )
 
         organization = request_organization(request)
         if organization is None:
@@ -1518,22 +1522,42 @@ class HostedHarnessProvider:
                 status=status.HTTP_404_NOT_FOUND,
             )
         data = request.validated_data
+        workspace = request_workspace(request)
+        agent = request.data.get("agent")
+        # What the client asked for, not what it resolves to: the suggested pairing may be
+        # another by the time the same request is sent again.
+        request_digest = canonical_digest(
+            json.loads(json.dumps({**data, "agent": agent}, default=str))
+        )
         try:
+            replayed = find_replayed_job(
+                organization,
+                {},
+                idempotency_key=data["idempotency_key"],
+                workspace=workspace,
+                request_digest=request_digest,
+            )
+            if replayed is not None:
+                return self._dispatch(request, replayed)
             agent_version = organization_agent_version(
-                organization, data["agent_version_id"]
+                organization, workspace, data["agent_version_id"]
             )
             suite = visible_suite(organization, data["suite_id"])
-            agent = request.data.get("agent")
+            secret_values: dict[str, str] = {}
             if agent:
                 # A given connection must reach the selected version's own provider agent:
                 # the adaptation inspects what it reaches, and results are the version's.
                 check_agent_connection(agent_version, agent)
+            else:
+                # Without one, the connected agent's own connection is used.
+                agent, secret_values = connected_agent_connection(
+                    organization, agent_version
+                )
             payload = adaptation_payload(
                 organization,
                 suite=suite,
                 # Re-validated as a hosted job agent; the request serializer only shapes it.
-                # Without one, the connected agent's own connection is used.
-                agent=agent or connected_agent_connection(organization, agent_version),
+                agent=agent,
                 agent_version=agent_version,
                 name=data["name"],
                 parallelism=data.get("parallelism"),
@@ -1541,15 +1565,29 @@ class HostedHarnessProvider:
                 # job stores and the one the binding is held to are the same map.
                 pairing=resolved_pairing(suite, agent_version, data.get("pairing")),
                 mode=data.get("mode", "review"),
+                secret_values=secret_values,
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)
-        return self._submit(request, organization, payload, data["idempotency_key"])
+        return self._submit(
+            request,
+            organization,
+            payload,
+            data["idempotency_key"],
+            request_digest=request_digest,
+        )
 
     def _submit(
-        self, request, organization, payload: dict, idempotency_key: str
+        self,
+        request,
+        organization,
+        payload: dict,
+        idempotency_key: str,
+        *,
+        request_digest: str | None = None,
     ) -> Response:
-        """Admit one validated hosted job payload and start its gateway workflow."""
+        """Admit one validated hosted job payload and start its gateway workflow.
+        `request_digest` is of the client's request, when the payload resolves more than it."""
         from simulate.services.harness_agent_versions import advisory_xact_lock
         from simulate.services.harness_versioning.versions import versioning_enabled
         from simulate.services.hosted_harness import (
@@ -1558,11 +1596,10 @@ class HostedHarnessProvider:
             find_replayed_job,
             idempotency_lock_name,
         )
-        from simulate.temporal.client import start_hosted_harness_gateway_workflow
 
         # Taken out first: values never reach the checks, the digest or the job.
         secret_values = payload.pop("credential_values", None) or {}
-        client_digest = canonical_digest(payload)
+        client_digest = request_digest or canonical_digest(payload)
         base_url = (
             getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
             or request.build_absolute_uri("/")
@@ -1705,6 +1742,17 @@ class HostedHarnessProvider:
                 {"detail": "Hosted harness scheduler is unavailable"},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+        return self._dispatch(request, job)
+
+    def _dispatch(self, request, job: HostedHarnessJob) -> Response:
+        """Start a job's gateway workflow, or join the one running, and answer the job."""
+        from simulate.services.hosted_harness import HostedHarnessError
+        from simulate.temporal.client import start_hosted_harness_gateway_workflow
+
+        base_url = (
+            getattr(settings, "HARNESS_PUBLIC_BASE_URL", "")
+            or request.build_absolute_uri("/")
+        ).rstrip("/")
         try:
             retry_cfg = job.payload["retry"]
             start_hosted_harness_gateway_workflow(

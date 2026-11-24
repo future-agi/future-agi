@@ -235,8 +235,14 @@ def _ask_model(task: str, material: dict[str, Any]) -> dict[str, Any]:
         ):
             break
     response.raise_for_status()
-    text = response.json()["choices"][0]["message"]["content"]
-    return json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip()))
+    try:
+        text = response.json()["choices"][0]["message"]["content"]
+        answer = json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip()))
+    except (AttributeError, LookupError, TypeError) as exc:
+        raise ValueError("the model's answer has no text") from exc
+    if not isinstance(answer, dict):
+        raise ValueError("the model's answer is not a JSON object")
+    return answer
 
 
 class _Busy(Exception):
@@ -514,7 +520,7 @@ def adaptation_design(job) -> dict[str, Any]:
     organization = job.organization
     suite = _visible(HarnessSuiteRelease, organization, adaptation["suite"]["digest"])
     agent_version = organization_agent_version(
-        organization, adaptation["agent_version_id"]
+        organization, job.workspace, adaptation["agent_version_id"]
     )
     environment = _chain(suite)[-1]
     catalogue = (environment.manifest.get("metadata") or {}).get("catalogue") or {}

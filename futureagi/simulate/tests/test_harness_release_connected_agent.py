@@ -2,7 +2,7 @@
 
 import pytest
 
-from simulate.models import AgentDefinition, AgentVersion
+from simulate.models import AgentDefinition, AgentVersion, HostedHarnessSecret
 from simulate.models.agent_definition import ProviderCredentials
 from simulate.services.harness_releases import connected_agent_connection
 from simulate.services.hosted_harness import HostedHarnessError
@@ -42,14 +42,15 @@ class TestConnectedAgentConnection:
     ):
         _key(version)
 
-        connection = connected_agent_connection(organization, version)
+        connection, secret_values = connected_agent_connection(organization, version)
 
         assert connection["connector"] == "retell_chat"
         assert connection["mode"] == "provider_import"
         assert connection["config"] == {"agent_id": "agent_clinic"}
-        # Only a ref leaves: the key itself is stored as an organization secret.
-        assert list(connection["secret_refs"]) == ["RETELL_API_KEY"]
+        # The key is kept apart: nothing is stored for it until a job is made.
+        assert secret_values == {"RETELL_API_KEY": "test-key"}
         assert "test-key" not in str(connection)
+        assert not HostedHarnessSecret.no_workspace_objects.exists()
 
     def test_a_voice_retell_agent_is_the_voice_connector(self, organization, version):
         version.agent_definition.agent_type = "voice"
@@ -57,7 +58,8 @@ class TestConnectedAgentConnection:
         _key(version)
 
         assert (
-            connected_agent_connection(organization, version)["connector"] == "retell"
+            connected_agent_connection(organization, version)[0]["connector"]
+            == "retell"
         )
 
     def test_a_vapi_agent_is_reached_by_its_assistant_id(self, organization, version):
@@ -65,11 +67,11 @@ class TestConnectedAgentConnection:
         version.agent_definition.save(update_fields=["provider"])
         _key(version, provider_type="vapi")
 
-        connection = connected_agent_connection(organization, version)
+        connection, secret_values = connected_agent_connection(organization, version)
 
         assert connection["connector"] == "vapi"
         assert connection["config"] == {"assistant_id": "agent_clinic"}
-        assert list(connection["secret_refs"]) == ["VAPI_API_KEY"]
+        assert secret_values == {"VAPI_API_KEY": "test-key"}
 
     def test_a_version_without_its_providers_key_is_refused(
         self, organization, version

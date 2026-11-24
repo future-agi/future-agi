@@ -11,6 +11,8 @@ STATUS_AWAITING_APPROVAL = "awaiting_approval"
 # The question being open is what "awaiting approval" means: before it, the mapping is still
 # being checked and there is nothing to approve.
 ADAPTATION_APPROVAL_PREFIX = "Use this binding for "
+# The answers that workbench takes as yes (`_YES`); any other keeps the binding open.
+ADAPTATION_APPROVALS = frozenset({"yes", "y", "true", "approve", "approved", "ok"})
 STATUS_BUILDING = "building"
 STATUS_RUNNING = "running"
 STATUS_COMPLETED = "completed"
