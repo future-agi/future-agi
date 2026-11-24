@@ -309,6 +309,22 @@ describe("ReviewChangesDrawer", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      "its name and row",
+      { name: "o.csv", row: 7 },
+      "From o.csv · row 7",
+      "Open o.csv · row 7",
+    ],
+    ["no name yet", { row: null }, "From an imported file", "Open"],
+  ])("shows a file source with %s", (_, file, line, link) => {
+    const used = [{ kind: "file", id: "f-1", ...file }];
+    setFlow([change({ sources: [{ origin: "manual", used }] })]);
+    renderDrawer();
+    expect(screen.getByText(line)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: link })).toBeInTheDocument();
+  });
+
   it("holds Validate and Discard while the builder is working", () => {
     setFlow([change({ decision: "accepted" })]);
     renderDrawer({ busy: true });
