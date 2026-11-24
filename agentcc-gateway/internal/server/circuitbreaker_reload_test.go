@@ -33,9 +33,13 @@ func TestCircuitBreaker_ReloadKeepsOldReadmissionOnOldRouter(t *testing.T) {
 	oldRouter := srv.registry.Router()
 	oldRegistry := srv.handlers.healthMonitor.CircuitBreakerRegistry()
 	oldBreaker := oldRegistry.Get("fast")
-	oldBreaker.RecordFailure(errors.New("synthetic failure before reload"))
+	lateGeneration, ok := oldBreaker.Allow()
+	if !ok {
+		t.Fatal("closed breaker refused in-flight request")
+	}
+	openReconciliationBreaker(t, oldBreaker)
 	time.Sleep(60 * time.Millisecond)
-	oldBreaker.RecordFailure(errors.New("synthetic late failure before reload"))
+	oldBreaker.RecordFailure(lateGeneration, errors.New("synthetic late failure before reload"))
 
 	cfg.Routing.CircuitBreaker.Cooldown = time.Second
 	if err := srv.handlers.ReloadRouting(cfg, srv.registry); err != nil {
@@ -47,7 +51,7 @@ func TestCircuitBreaker_ReloadKeepsOldReadmissionOnOldRouter(t *testing.T) {
 		t.Fatal("reload must replace the router and registry as on dev")
 	}
 	newBreaker := newRegistry.Get("fast")
-	newBreaker.RecordFailure(errors.New("synthetic failure after reload"))
+	openReconciliationBreaker(t, newBreaker)
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for {
@@ -59,13 +63,13 @@ func TestCircuitBreaker_ReloadKeepsOldReadmissionOnOldRouter(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	if !oldBreaker.Allow() {
+	if _, allowed := oldBreaker.Allow(); !allowed {
 		t.Fatal("old router was readmitted before its late-failure cooldown ended")
 	}
 	if _, err := newRouter.Select("adaptive-sample"); err == nil {
 		t.Fatal("old callback changed the replacement router's health")
 	}
-	if newBreaker.Allow() {
+	if _, allowed := newBreaker.Allow(); allowed {
 		t.Fatal("replacement breaker did not retain its longer cooldown")
 	}
 }
