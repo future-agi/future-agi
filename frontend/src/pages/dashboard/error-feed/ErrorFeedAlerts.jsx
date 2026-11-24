@@ -213,7 +213,7 @@ function AlertRuleForm({ rule, draft, onClose }) {
   );
   const selectedProjectName =
     selectedProject?.label || selectedProject?.name || "Selected project";
-  const initialTrigger = draft?.trigger ?? config.trigger_type ?? "escalating";
+  const initialTrigger = draft?.trigger ?? config.trigger_type ?? "new_issue";
   const [trigger, setTrigger] = useState(initialTrigger);
   const [triggerValue, setTriggerValue] = useState(
     draft?.triggerValue ??
