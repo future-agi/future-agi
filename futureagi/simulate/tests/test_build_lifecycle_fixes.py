@@ -492,8 +492,10 @@ def _launch_until_capacity(organization, monkeypatch, key, *, seed_profile):
 @pytest.mark.django_db
 class TestSeededProviderKey:
     @pytest.fixture(autouse=True)
-    def builder_session(self, settings):
+    def builder_session(self, settings, monkeypatch):
         settings.ALK_HOSTED_BUILDER_SESSION = True
+        monkeypatch.setenv("AGENTCC_BASE_URL", "https://gateway.example.test")
+        monkeypatch.setenv("AGENTCC_HARNESS_API_KEY", "harness-virtual-key")
 
     def test_a_build_handed_the_providers_profile_gets_no_provider_key(
         self, organization, monkeypatch
