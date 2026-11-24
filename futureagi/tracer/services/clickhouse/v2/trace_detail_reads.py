@@ -364,9 +364,10 @@ class TraceDetailReadBuilder:
                     argMax(target_type, {version}) AS latest_target_type,
                     {deleted} AS latest_is_deleted
                 FROM {table}
-                PREWHERE custom_eval_config_id IN %(detail_eval_config_ids)s
-                  AND trace_id = %(detail_eval_trace_id)s
+                PREWHERE trace_id = %(detail_eval_trace_id)s
                   AND observation_span_id IN %(detail_eval_span_ids)s
+                  AND toString(custom_eval_config_id)
+                        IN %(detail_eval_config_ids)s
                 GROUP BY id
             ) AS latest_trace_evals
             WHERE latest_is_deleted = 0

@@ -1055,14 +1055,7 @@ class TestV2EvalScoreRendering:
             if "latest_trace_evals" in query
         )
         assert eval_call["detail_eval_config_ids"] == ("C1",)
-        # The UUID column is compared directly so its sort-key position applies.
-        assert (
-            "custom_eval_config_id IN %(detail_eval_config_ids)s"
-            in eval_query.split("GROUP BY id")[0]
-        )
-        assert (
-            "toString(custom_eval_config_id)" not in eval_query.split("GROUP BY id")[0]
-        )
+        assert "toString(custom_eval_config_id)" in eval_query.split("GROUP BY id")[0]
 
     def test_no_project_configs_skips_eval_query_and_returns_empty(self):
         analytics = _FakeAnalytics(
