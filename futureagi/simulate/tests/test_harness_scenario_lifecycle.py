@@ -1160,6 +1160,20 @@ def test_must_pass_failures_name_only_failed_must_pass_cases():
     ):
         assert lifecycle.must_pass_failures(execution) == ["Refund A"]
     assert lifecycle.must_pass_failures(SimpleNamespace(hosted_harness_job=None)) == []
+    # A registration's call stored before the case key was written: its receipt key is the case's own.
+    older = [
+        {
+            "hosted_harness_receipt": {"scenario_key": "refund-b"},
+            "harness_outcome_status": "failed",
+        }
+    ]
+    with (
+        patch.object(
+            lifecycle.HarnessSuiteMember, "no_workspace_objects", _Rows(members)
+        ),
+        patch("simulate.models.CallExecution.objects", _Rows(older)),
+    ):
+        assert lifecycle.must_pass_failures(execution) == ["Refund B"]
 
 
 def _workflow_view(state, outcome="change", controls=()):

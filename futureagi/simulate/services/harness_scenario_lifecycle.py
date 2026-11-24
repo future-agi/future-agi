@@ -1089,7 +1089,10 @@ def must_pass_failures(execution: Any) -> list[str]:
     ):
         metadata = metadata if isinstance(metadata, Mapping) else {}
         # The case the call ran, as ingestion stores it: a receipt's `scenario_key` names the execution, not the case.
-        key = metadata.get(SCENARIO_KEY)
+        # A registration's call stored before the key was written has none, and its receipt key is the case's own.
+        key = metadata.get(SCENARIO_KEY) or (
+            metadata.get("hosted_harness_receipt") or {}
+        ).get("scenario_key")
         if key in must and metadata.get("harness_outcome_status") == "failed":
             failed.add(must[key])
     return sorted(failed)
