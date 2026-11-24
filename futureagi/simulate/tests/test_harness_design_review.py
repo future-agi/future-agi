@@ -1,3 +1,4 @@
+import copy
 import uuid
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -6,14 +7,15 @@ import pytest
 from rest_framework.test import APIClient
 
 from simulate.models import HostedHarnessConversationMessage, HostedHarnessJob
+from simulate.services.harness_design_contract import (
+    apply_edits_to_contract,
+    build_proposal,
+)
 from simulate.services.harness_design_review import (
     AWAITING_APPROVAL,
     AWAITING_STAGE,
     DISCARD_REASON,
     _effective,
-    apply_edits_to_contract,
-    build_proposal,
-    contract_hash,
     create_design_review,
     stored_review,
 )
@@ -44,6 +46,7 @@ CONTRACT = {
     "real_use_cases": ["Refund a damaged item", "Cancel a booking", "Change address"],
 }
 URL = "/simulate/api/harness-environments/{}/design-review/"
+APPROVED_KEY = "environment-contracts/org/env/approved.json"
 
 
 @pytest.fixture
@@ -64,6 +67,21 @@ def waiting(user, workspace):
     )
     create_design_review(job, SimpleNamespace(agent_version_id=None), CONTRACT)
     return job
+
+
+@pytest.fixture
+def stored_contracts():
+    with (
+        patch(
+            "simulate.services.agent_contracts.read_contract",
+            return_value=copy.deepcopy(CONTRACT),
+        ),
+        patch(
+            "simulate.services.agent_contracts.store_environment_contract",
+            return_value=APPROVED_KEY,
+        ) as store,
+    ):
+        yield store
 
 
 def _post(client, workspace, path, body=None):
@@ -113,7 +131,7 @@ class TestProposal:
 
 class TestEditedContract:
     def test_the_edits_apply_to_a_copy_and_leave_the_agents_contract_alone(self):
-        before = contract_hash(CONTRACT)
+        before = copy.deepcopy(CONTRACT)
         edits = [
             {"op": "remove", "kind": "tool", "id": "notify"},
             {"op": "remove", "kind": "table", "id": "HOTELS"},
@@ -132,7 +150,7 @@ class TestEditedContract:
         assert list(edited["data_schema"]) == ["BOOKINGS"]
         assert edited["real_use_cases"] == ["Refund a damaged item", "Change address"]
         assert edited["hard_constraints"] == ["Over 50"]
-        assert contract_hash(CONTRACT) == before
+        assert CONTRACT == before
 
 
 @pytest.mark.django_db
@@ -150,7 +168,7 @@ class TestReviewApi:
         assert len(body["tools"]) == 4
         waiting.refresh_from_db()
         assert waiting.current_stage == AWAITING_STAGE
-        assert stored_review(waiting)["source_contract_hash"] == contract_hash(CONTRACT)
+        assert stored_review(waiting)["source_contract_key"] == ""
 
     def test_removing_a_tool_shows_the_tools_that_need_it(
         self, client, workspace, waiting
@@ -236,7 +254,9 @@ class TestReviewApi:
         assert response.status_code == 422
         assert response.json()["error"] == "design_keep_one_use_case"
 
-    def test_approving_starts_the_build_once(self, client, user, workspace, waiting):
+    def test_approving_starts_the_build_once(
+        self, client, user, workspace, waiting, stored_contracts
+    ):
         with patch(
             "simulate.temporal.client.start_hosted_harness_gateway_workflow"
         ) as start:
@@ -249,10 +269,36 @@ class TestReviewApi:
         waiting.refresh_from_db()
         assert waiting.state == HostedHarnessJob.State.QUEUED
         assert stored_review(waiting)["approved_by"]["id"] == str(user.pk)
+        assert stored_review(waiting)["approved_contract_key"] == ""
+        stored_contracts.assert_not_called()
         assert again.status_code == 409
         assert again.json()["error"] == "design_review_closed"
 
-    def test_a_build_that_cannot_start_stays_waiting(self, client, workspace, waiting):
+    def test_approving_with_edits_stores_the_edited_design(
+        self, client, workspace, waiting, stored_contracts
+    ):
+        _post(
+            client,
+            workspace,
+            URL.format(waiting.id) + "edits/",
+            {"op": "remove", "kind": "tool", "id": "notify"},
+        )
+        with patch("simulate.temporal.client.start_hosted_harness_gateway_workflow"):
+            response = _post(client, workspace, URL.format(waiting.id) + "approve/")
+
+        assert response.status_code == 200, response.content
+        waiting.refresh_from_db()
+        assert stored_review(waiting)["approved_contract_key"] == APPROVED_KEY
+        stored = stored_contracts.call_args.kwargs["contract"]
+        assert [tool["name"] for tool in stored["tools"]] == [
+            "check_otp",
+            "issue_refund",
+            "find_hotels",
+        ]
+
+    def test_a_build_that_cannot_start_stays_waiting(
+        self, client, workspace, waiting, stored_contracts
+    ):
         with patch(
             "simulate.temporal.client.start_hosted_harness_gateway_workflow",
             side_effect=RuntimeError("temporal down"),

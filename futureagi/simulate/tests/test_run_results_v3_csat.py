@@ -125,6 +125,7 @@ def test_v3_detail_uses_explicit_csat_for_existing_score_fields(csat):
             "sub_goals",
             "sub_goal_results",
             "outcome",
+            "required_evals_failed",
             "cost_breakdown_cents",
             "evaluations",
             "csat",
