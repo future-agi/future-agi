@@ -45,18 +45,18 @@ export const BUILD_STEPS = [
     stage: "building_environment",
     label: "Building environment",
   },
+  { no: 4, phase: "world", stage: "generating_data", label: "Generating data" },
   {
-    no: 4,
-    phase: "world",
-    stage: "validating_environment",
-    label: "Validating environment",
-  },
-  { no: 5, phase: "world", stage: "generating_data", label: "Generating data" },
-  {
-    no: 6,
+    no: 5,
     phase: "scenarios",
     stage: "generating_scenarios",
     label: "Generating scenarios",
+  },
+  {
+    no: 6,
+    phase: "scenarios",
+    stage: "validating_environment",
+    label: "Validating environment",
   },
   {
     no: 7,
@@ -102,7 +102,7 @@ const stepNo = (no) => BUILD_STEPS.find((step) => step.no === no);
 function producedStep(outputs) {
   const kinds = new Set((outputs || []).map((output) => output?.kind));
   if (kinds.has("scenarios")) return stepNo(8);
-  if (kinds.has("environment")) return stepNo(6);
+  if (kinds.has("environment")) return stepNo(5);
   if (kinds.has("contract")) return stepNo(2);
   return null;
 }
@@ -245,7 +245,10 @@ export function stopSentence(status, step) {
   const words = BUILD_STOPPED_COPY.sentence;
   if (kase === "checks")
     return failureHeadline(status?.failure) || words.checks;
-  if (kase === "world" && step.stage === "validating_environment") {
+  if (
+    (kase === "world" || kase === "scenarios") &&
+    step.stage === "validating_environment"
+  ) {
     const tool = rejectedTool(status?.failure);
     return tool ? words.toolUntruthful(tool) : words.worldCheck;
   }
