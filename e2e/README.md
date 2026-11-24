@@ -697,10 +697,11 @@ merge queue refuses the PR, although the real run is green. Blacksmith edits eve
 about 4 s after it opens, which is how #4332 (green run 45070958943, then skipped run 45070969031)
 and #4001 were refused. This is not documented by GitHub, and `gh pr checks --required` cannot
 show it, because it still lists the older green runs. A retarget therefore starts no run of these
-workflows either: the merge queue re-tests every merge into dev, and the non-required
-"CI ran on this base" check (`.github/workflows/ci-base-gate.yml`) turns red on a PR moved onto
-main until a push or reopen runs CI against main. Update CI is not required and still starts on
-edits and labels (`update-rehearsal` starts the Real rehearsals).
+workflows either. The merge queue re-tests every merge into dev, but main has no queue: a pull
+request moved onto main keeps checks from its old base until a push or reopen runs CI against main.
+Until a check that proves the tested merge candidate lands, do that after every retarget into main.
+Update CI is not required and still starts on edits and labels (`update-rehearsal` starts the Real
+rehearsals).
 
 To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
 artifact of a green run and regenerate the recorded times:
