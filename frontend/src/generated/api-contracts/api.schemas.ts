@@ -19762,7 +19762,7 @@ export interface AgentFixLaunchLimitsApi {
 export interface AgentFixLaunchOptionsApi {
   source_run: AgentFixLaunchSourceRunApi;
   environment: AgentFixLaunchEnvironmentApi;
-  agent: AgentFixAgentApi;
+  agent: AgentFixAgentApi | null;
   scenarios: AgentFixLaunchScenarioApi[];
   suggested: AgentFixLaunchSuggestedApi;
   surfaces: AgentFixLaunchSurfaceApi[];
@@ -19771,7 +19771,7 @@ export interface AgentFixLaunchOptionsApi {
   blocked: AgentFixFailureApi | null;
   variations_blocked: AgentFixFailureApi | null;
   held_back_scenario_keys: string[] | null;
-  ship: AgentFixShipReadinessApi;
+  ship: AgentFixShipReadinessApi | null;
 }
 
 export type AgentFixRunDetailApiState =
@@ -20596,6 +20596,8 @@ export interface HarnessEnvironmentApi {
   last_updated: string;
   created_at: string;
   last_run: HarnessRunSummaryApi;
+  /** Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing. */
+  epoch_pickable: boolean;
 }
 
 export interface HarnessEnvironmentListResponseApi {

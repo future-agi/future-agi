@@ -114779,6 +114779,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "last_updated",
         "created_at",
         "last_run",
+        "epoch_pickable",
       ],
       type: "object",
       properties: {
@@ -114863,6 +114864,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         last_run: {
           $ref: "#/definitions/HarnessRunSummary",
+        },
+        epoch_pickable: {
+          title: "Epoch pickable",
+          description:
+            "Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing.",
+          type: "boolean",
         },
       },
     },

@@ -39150,13 +39150,16 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
     name: zod.string().min(1),
     version: zod.number(),
   }),
-  agent: zod.object({
-    name: zod.string().min(1),
-    kind: zod.string().min(1),
-    version_id: zod.string().uuid(),
-    version_number: zod.number(),
-    ref: zod.string().min(1),
-  }),
+  agent: zod.union([
+    zod.object({
+      name: zod.string().min(1),
+      kind: zod.string().min(1),
+      version_id: zod.string().uuid(),
+      version_number: zod.number(),
+      ref: zod.string().min(1),
+    }),
+    zod.null(),
+  ]),
   scenarios: zod.array(
     zod.object({
       key: zod.string().min(1),
@@ -39224,20 +39227,23 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
       ),
     zod.null(),
   ]),
-  ship: zod.object({
-    path: zod
-      .enum(["pull_request", "make_default"])
-      .describe(
-        "pull_request for a GitHub agent; make_default for an uploaded one.",
-      ),
-    blocked: zod.union([
-      zod.object({
-        code: zod.string().min(1),
-        message: zod.string().min(1),
-      }),
-      zod.null(),
-    ]),
-  }),
+  ship: zod.union([
+    zod.object({
+      path: zod
+        .enum(["pull_request", "make_default"])
+        .describe(
+          "pull_request for a GitHub agent; make_default for an uploaded one.",
+        ),
+      blocked: zod.union([
+        zod.object({
+          code: zod.string().min(1),
+          message: zod.string().min(1),
+        }),
+        zod.null(),
+      ]),
+    }),
+    zod.null(),
+  ]),
 });
 
 /**
@@ -41513,6 +41519,11 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
         started_at: zod.string().datetime({ offset: true }),
         completed_at: zod.string().datetime({ offset: true }),
       }),
+      epoch_pickable: zod
+        .boolean()
+        .describe(
+          "Whether Run Epoch can be picked for it: an uploaded or GitHub agent, with or without its agent version yet. Once picked, the plan says what is still missing.",
+        ),
     }),
   ),
 });

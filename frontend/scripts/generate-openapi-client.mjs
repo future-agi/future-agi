@@ -127,8 +127,9 @@ const AGENT_FIX_ISSUE_NULLABLE_REFS = {
   AgentFixIssuePlan: ["environment", "blocked", "issue_scenarios", "ship"],
   // A pull request that can open has no reason it can't.
   AgentFixShipReadiness: ["blocked"],
-  // A launch nothing refuses has neither refusal.
-  AgentFixLaunchOptions: ["blocked", "variations_blocked"],
+  // A launch nothing refuses has neither refusal; a run whose environment has no
+  // agent version has no agent, and an agent Epoch can't change ships nothing.
+  AgentFixLaunchOptions: ["blocked", "variations_blocked", "agent", "ship"],
   AgentFixIssueJob: ["issue", "ending", "baseline", "epoch"],
   AgentFixIssueJobDetail: ["issue", "ending", "baseline", "epoch"],
   // The epoch an issue's page opens: before it ends it has no report, and only a
