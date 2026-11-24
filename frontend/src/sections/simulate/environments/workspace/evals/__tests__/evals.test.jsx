@@ -287,7 +287,7 @@ describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () =>
 
     expect(patchSpy).toHaveBeenCalledWith({ evals: [] });
     // The persisted seed flag keeps the suggestions from looping straight back in.
-    expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
+    expect(screen.getByText("Added evaluations")).toBeInTheDocument();
     expect(screen.getByText(EVALS_COPY.emptyTitle)).toBeInTheDocument();
   });
 
@@ -327,12 +327,12 @@ describe("EvalsStep — preset auto-seeds into Added (no Suggested card)", () =>
         screen.getAllByRole("button", { name: EVALS_COPY.remove })[0],
       );
     }
-    expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
+    expect(screen.getByText("Added evaluations")).toBeInTheDocument();
 
     // Switch away and back — the deliberate empty set must survive.
     fireEvent.click(screen.getByRole("button", { name: "toggle" }));
     fireEvent.click(screen.getByRole("button", { name: "toggle" }));
-    expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
+    expect(screen.getByText("Added evaluations")).toBeInTheDocument();
   });
 });
 
@@ -535,7 +535,7 @@ describe("EvalsStep — remove on a backend-backed env", () => {
 
     expect(await screen.findByText(EVALS_COPY.emptyTitle)).toBeInTheDocument();
     expect(screen.getByText(EVALS_COPY.emptyNoSuggestions)).toBeInTheDocument();
-    expect(screen.getByText("Added evaluations (0)")).toBeInTheDocument();
+    expect(screen.getByText("Added evaluations")).toBeInTheDocument();
   });
 
   it("asks first, then fires the real DELETE with the config id", async () => {

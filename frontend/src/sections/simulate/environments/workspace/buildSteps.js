@@ -4,6 +4,7 @@ import {
 } from "src/pages/dashboard/harness/harnessShared";
 import { failureHeadline } from "../buildEnvironment/failureWords";
 import { BUILD_STOPPED_COPY } from "./workspace.constants";
+import { isConnectOnly, worldTableCount } from "./world/world.constants";
 
 export const BUILD_STEP_TOTAL = 12;
 
@@ -23,10 +24,10 @@ const BUILD_PHASES = [
   { id: "checks", label: "Running the release checks", short: "the checks" },
 ];
 
-export const buildPhases = (readsAgent) =>
+const buildPhases = (readsAgent) =>
   readsAgent ? [AGENT_PHASE, ...BUILD_PHASES] : BUILD_PHASES;
 
-export const BUILD_STEPS = [
+const BUILD_STEPS = [
   {
     no: 1,
     phase: "agent",
@@ -88,10 +89,13 @@ const BEFORE_FIRST_STEP = new Set([
   "acquiring_source",
 ]);
 
+const STAGE_ALIAS = { finalizing: "uploading_artifacts" };
+
 export function stepOfStage(stage, { readsAgent = true } = {}) {
-  const step = BEFORE_FIRST_STEP.has(stage)
+  const named = STAGE_ALIAS[stage] || stage;
+  const step = BEFORE_FIRST_STEP.has(named)
     ? BUILD_STEPS[0]
-    : BUILD_STEPS.find((one) => one.stage === stage) || null;
+    : BUILD_STEPS.find((one) => one.stage === named) || null;
   return step && !readsAgent && step.no < 2 ? BUILD_STEPS[1] : step;
 }
 
@@ -163,10 +167,13 @@ export function phaseRows(
     }
     if (index === at) {
       const before = steps.filter((one) => one.no < step.no).length;
+      const progress = before
+        ? ` · ${before} of ${steps.length} steps done`
+        : "";
       return {
         ...base,
         state: stopped ? "stopped" : "now",
-        note: `${stopped ? "Stopped at" : "Now:"} ${step.label} · ${before} of ${steps.length} steps done`,
+        note: `${stopped ? "Stopped at" : "Now:"} ${step.label}${progress}`,
       };
     }
     return {
@@ -187,7 +194,9 @@ export function keptLine(step, counts = {}, designApproved = false) {
     parts.push(
       counts.tables
         ? `The world and its ${plural(counts.tables, "table")} are kept`
-        : `The world and its ${plural(counts.tools || 0, "tool")} are kept`,
+        : counts.tools
+          ? `The world and its ${plural(counts.tools, "tool")} are kept`
+          : "The world is kept",
     );
   else if (designApproved) parts.push("Your design is kept");
   if (done("scenarios") && counts.scenarios)
@@ -206,19 +215,37 @@ const TAB_WRITTEN_BY = {
   actors: "scenarios",
   scenarios: "scenarios",
   evals: "scenarios",
+  versions: "checks",
 };
 
-export function tabWaits(step, { stopped = false, reason = null } = {}) {
+const OPENS_WHEN_LANDED = new Set(["versions"]);
+
+const WORLD_SEALED_STEP = 6;
+
+export const landedOf = (env, step, { versions = false } = {}) => ({
+  contract: Boolean(env?.contractReady),
+  world:
+    isConnectOnly(env) ||
+    worldTableCount(env) > 0 ||
+    (step?.no || 0) > WORLD_SEALED_STEP,
+  versions: Boolean(versions),
+});
+
+export function tabWaits(
+  step,
+  { stopped = false, reason = null, landed = {} } = {},
+) {
   if (!step) return {};
   const waits = {};
   Object.entries(TAB_WRITTEN_BY).forEach(([tab, phaseId]) => {
     const steps = BUILD_STEPS.filter((one) => one.phase === phaseId);
     const written = steps.every((one) => one.no < step.no);
-    if (written) return;
-    const phase = phaseOfStep(steps[0]);
+    if (OPENS_WHEN_LANDED.has(tab) && landed[tab] !== false) return;
+    if (written && landed[tab] !== false) return;
+    const phase = phaseOfStep(written ? step : steps[0]);
     waits[tab] = {
       phase: phase.label,
-      now: !stopped && step.phase === phaseId,
+      now: !stopped && (written || step.phase === phaseId),
       stopped,
       step: step.label,
       reason: stopped ? reason : null,
@@ -241,7 +268,7 @@ export function stopCase(status, step) {
 
 const REJECTED_TOOL = /certification rejected:\s*([A-Za-z0-9_.-]+)/;
 
-export const rejectedTool = (failure) =>
+const rejectedTool = (failure) =>
   REJECTED_TOOL.exec(failure?.message || "")?.[1] || null;
 
 export function stopSentence(status, step) {

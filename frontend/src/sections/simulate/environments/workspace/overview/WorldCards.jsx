@@ -45,6 +45,7 @@ export function SeededDataCard({ env }) {
   // A table the API sent without a row count adds nothing and shows no count.
   const hasRows = (t) => Number.isFinite(t.rows);
   const totalRows = tables.filter(hasRows).reduce((a, t) => a + t.rows, 0);
+  if (!tables.length) return null;
   return (
     <SectionCard
       dense
@@ -90,13 +91,6 @@ export function SeededDataCard({ env }) {
             {hasRows(t) && <RowCount rows={t.rows} />}
           </Stack>
         ))}
-        {tables.length === 0 && (
-          <Typography
-            sx={{ typography: "s2", color: "text.tertiary", px: 2.5, py: 1.25 }}
-          >
-            {OVERVIEW_COPY.noSeededData}
-          </Typography>
-        )}
       </Stack>
     </SectionCard>
   );
@@ -162,53 +156,42 @@ export function DependsOnCard({ dependsOn, runtimeDependsOn }) {
     },
   ].filter((group) => group.rows.length);
   const split = groups.length > 1;
+  if (!groups.length) return null;
   return (
     <SectionCard
       dense
       title={OVERVIEW_COPY.dependsTitle}
-      subtitle={
-        split
-          ? OVERVIEW_COPY.dependsSubtitle
-          : groups[0]?.label || OVERVIEW_COPY.dependsBuilt
-      }
+      subtitle={split ? OVERVIEW_COPY.dependsSubtitle : groups[0].label}
     >
-      {groups.length === 0 ? (
-        <Box sx={{ p: 1.5 }}>
-          <Typography sx={{ typography: "s1", color: "text.subtitle" }}>
-            {OVERVIEW_COPY.dependsEmpty}
-          </Typography>
+      {groups.map((group, index) => (
+        <Box
+          key={group.id}
+          role="group"
+          aria-label={group.label}
+          sx={{
+            borderTop: index ? "1px solid" : "none",
+            borderColor: "divider",
+          }}
+        >
+          {split && (
+            <Typography
+              sx={{
+                px: 2.5,
+                py: 0.75,
+                typography: "s3",
+                fontWeight: 500,
+                color: "text.tertiary",
+                bgcolor: "background.neutral",
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              {group.label}
+            </Typography>
+          )}
+          <DependencyRows rows={group.rows} />
         </Box>
-      ) : (
-        groups.map((group, index) => (
-          <Box
-            key={group.id}
-            role="group"
-            aria-label={group.label}
-            sx={{
-              borderTop: index ? "1px solid" : "none",
-              borderColor: "divider",
-            }}
-          >
-            {split && (
-              <Typography
-                sx={{
-                  px: 2.5,
-                  py: 0.75,
-                  typography: "s3",
-                  fontWeight: 500,
-                  color: "text.tertiary",
-                  bgcolor: "background.neutral",
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                {group.label}
-              </Typography>
-            )}
-            <DependencyRows rows={group.rows} />
-          </Box>
-        ))
-      )}
+      ))}
     </SectionCard>
   );
 }
@@ -261,7 +244,10 @@ function DependencyRows({ rows }) {
 }
 DependencyRows.propTypes = { rows: DEPENDENCY_SHAPE };
 
-export function StartingDataCard({ baseEnvironment }) {
+export function StartingDataCard({
+  baseEnvironment,
+  title = OVERVIEW_COPY.seededTitle,
+}) {
   const [open, setOpen] = useState(false);
   const collections = startingCollections(baseEnvironment);
   const totalRows = collections.reduce(
@@ -275,7 +261,7 @@ export function StartingDataCard({ baseEnvironment }) {
   return (
     <SectionCard
       dense
-      title={OVERVIEW_COPY.seededTitle}
+      title={title}
       subtitle={OVERVIEW_COPY.seedBlurb(totalRows)}
       action={
         <Button
@@ -349,4 +335,5 @@ StartingDataCard.propTypes = {
     PropTypes.array,
     PropTypes.string,
   ]).isRequired,
+  title: PropTypes.string,
 };

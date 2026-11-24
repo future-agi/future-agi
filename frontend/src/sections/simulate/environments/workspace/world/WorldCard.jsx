@@ -1,19 +1,34 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { Box, ButtonBase, Stack, Tooltip, Typography } from "@mui/material";
+import {
+  Box,
+  ButtonBase,
+  IconButton,
+  Stack,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 import Iconify from "src/components/iconify";
 import OverflowTooltip from "src/components/tooltip/OverflowTooltip";
 import SectionCard from "../../components/SectionCard";
+import ViewerLock from "../../components/ViewerLock";
 import {
   MONO,
+  TOOL_DRAWER_COPY as D,
   TOOL_STATUS_ORDER,
   WORLD_CARD_COPY as C,
   placeTools,
 } from "./world.constants";
 
+const REMOVAL = PropTypes.shape({
+  onRemove: PropTypes.func.isRequired,
+  blockedReason: PropTypes.string,
+});
+
 const GRID = "12px minmax(160px, 220px) 90px 80px minmax(0, 1fr)";
 
-function ToolChip({ tool, changes, open, onOpen }) {
+function ToolChip({ tool, changes, open, onOpen, removal }) {
+  const Base = onOpen ? ButtonBase : Box;
   return (
     <Tooltip
       arrow
@@ -23,16 +38,21 @@ function ToolChip({ tool, changes, open, onOpen }) {
           : C.readsThis(tool.description)
       }
     >
-      <ButtonBase
-        onClick={() => onOpen(tool)}
+      <Base
+        onClick={onOpen ? () => onOpen(tool) : undefined}
         sx={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 0.25,
           px: 0.875,
           py: 0.25,
           borderRadius: "6px",
           border: "1px solid",
           borderColor: "divider",
           bgcolor: open ? "action.selected" : "transparent",
-          "&:hover": { bgcolor: open ? "action.selected" : "action.hover" },
+          ...(onOpen && {
+            "&:hover": { bgcolor: open ? "action.selected" : "action.hover" },
+          }),
         }}
       >
         <Typography
@@ -41,7 +61,23 @@ function ToolChip({ tool, changes, open, onOpen }) {
         >
           {tool.tool}
         </Typography>
-      </ButtonBase>
+        {!onOpen && removal && (
+          <ViewerLock
+            locked={Boolean(removal.blockedReason)}
+            title={removal.blockedReason || D.remove}
+          >
+            <IconButton
+              size="small"
+              aria-label={D.removeNamed(tool.tool)}
+              disabled={Boolean(removal.blockedReason)}
+              onClick={() => removal.onRemove(tool)}
+              sx={{ p: 0.25, mr: -0.5, color: "text.tertiary" }}
+            >
+              <Iconify icon="solar:close-circle-linear" width={14} />
+            </IconButton>
+          </ViewerLock>
+        )}
+      </Base>
     </Tooltip>
   );
 }
@@ -53,7 +89,8 @@ ToolChip.propTypes = {
   }).isRequired,
   changes: PropTypes.bool,
   open: PropTypes.bool,
-  onOpen: PropTypes.func.isRequired,
+  onOpen: PropTypes.func,
+  removal: REMOVAL,
 };
 
 function TierStrip({ tools }) {
@@ -98,7 +135,7 @@ function TierStrip({ tools }) {
   });
 }
 
-function Chips({ entries, openTool, onOpenTool }) {
+function Chips({ entries, openTool, onOpenTool, removal }) {
   if (!entries.length)
     return (
       <Typography sx={{ typography: "s3", color: "text.tertiary", pt: 0.25 }}>
@@ -114,6 +151,7 @@ function Chips({ entries, openTool, onOpenTool }) {
           changes={changes}
           open={openTool === tool.tool}
           onOpen={onOpenTool}
+          removal={removal}
         />
       ))}
     </Stack>
@@ -123,10 +161,11 @@ function Chips({ entries, openTool, onOpenTool }) {
 Chips.propTypes = {
   entries: PropTypes.arrayOf(PropTypes.object).isRequired,
   openTool: PropTypes.string,
-  onOpenTool: PropTypes.func.isRequired,
+  onOpenTool: PropTypes.func,
+  removal: REMOVAL,
 };
 
-function TableRow({ table, entries, openTool, onOpenTool }) {
+function TableRow({ table, entries, openTool, onOpenTool, removal }) {
   const [open, setOpen] = useState(false);
   const fields = table.fields || [];
   return (
@@ -203,6 +242,7 @@ function TableRow({ table, entries, openTool, onOpenTool }) {
             entries={entries}
             openTool={openTool}
             onOpenTool={onOpenTool}
+            removal={removal}
           />
         </Box>
       </Box>
@@ -271,7 +311,8 @@ TableRow.propTypes = {
   }).isRequired,
   entries: PropTypes.arrayOf(PropTypes.object).isRequired,
   openTool: PropTypes.string,
-  onOpenTool: PropTypes.func.isRequired,
+  onOpenTool: PropTypes.func,
+  removal: REMOVAL,
 };
 
 export default function WorldCard({
@@ -280,6 +321,7 @@ export default function WorldCard({
   totalRows,
   openTool,
   onOpenTool,
+  removal,
   sx,
 }) {
   const { byTable, none } = placeTools(tables, tools);
@@ -318,6 +360,7 @@ export default function WorldCard({
           entries={byTable.get(table.name) || []}
           openTool={openTool}
           onOpenTool={onOpenTool}
+          removal={removal}
         />
       ))}
       {none.length > 0 && (
@@ -339,7 +382,12 @@ export default function WorldCard({
           </Typography>
           <Box />
           <Box />
-          <Chips entries={none} openTool={openTool} onOpenTool={onOpenTool} />
+          <Chips
+            entries={none}
+            openTool={openTool}
+            onOpenTool={onOpenTool}
+            removal={removal}
+          />
         </Box>
       )}
     </SectionCard>
@@ -351,6 +399,7 @@ WorldCard.propTypes = {
   tools: PropTypes.arrayOf(PropTypes.object).isRequired,
   totalRows: PropTypes.number,
   openTool: PropTypes.string,
-  onOpenTool: PropTypes.func.isRequired,
+  onOpenTool: PropTypes.func,
+  removal: REMOVAL,
   sx: PropTypes.object,
 };

@@ -57,10 +57,6 @@ export const WORKSPACE_TABS = [
   },
 ];
 
-// Setup-gap areas map onto the tab that owns the underlying answer, so a
-// blocking gap surfaces as an amber dot on that tab. Only the areas the user
-// can resolve inside this workspace are routed; the designer's Sandbox
-// entries point at an Agents tab we do not render, so they are omitted.
 export const GAP_AREA_TO_TAB = {
   Contract: "contract",
   Grading: "evals",

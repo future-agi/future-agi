@@ -54,7 +54,7 @@ export const EVALS_COPY = {
     "Not added yet. Only the evaluations you add score a run. The scenarios' own checks always run.",
   addAll: "Add all",
   addOne: "Add",
-  addedTitle: (n) => `Added evaluations (${n})`,
+  addedTitle: (n) => (n ? `Added evaluations (${n})` : "Added evaluations"),
   // The same card while the server's list is unknown — a number here would be
   // a count of something nobody has read yet.
   addedTitleUnknown: "Added evaluations",
@@ -90,7 +90,7 @@ export const EVAL_SHAPE = PropTypes.shape({
 
 // Applied evals are stored either as bare ids (older state) or configured
 // objects (picker adds), so the slice accepts both shapes.
-export const APPLIED_EVAL_SHAPE = PropTypes.oneOfType([
+const APPLIED_EVAL_SHAPE = PropTypes.oneOfType([
   PropTypes.string,
   EVAL_SHAPE,
 ]);

@@ -87,13 +87,10 @@ export default function OverviewPanel({
   const canManageVersions = !locked && Boolean(env.versioning?.enabled);
   const surface = getSurface(env.surface);
   const contract = contractFor(env);
-  // The real connector for a backed env (envState.agent.typeId = the job poll's
-  // detected connector, e.g. "livekit"). No transports field is served, so this
-  // replaces the old hardcoded transports fact.
-  const connector = envState?.agent?.typeId;
+  const connector = env.connector || envState?.agent?.typeId;
   const connectorLabel = connector
     ? CONNECTOR_LABEL[connector] || connector
-    : "-";
+    : null;
 
   const parallelism = env.parallelism;
   const degradeReasons = parallelism?.degrade_reasons || [];
@@ -112,6 +109,34 @@ export default function OverviewPanel({
     useCaseCount && scenarioTotal != null
       ? OVERVIEW_COPY.scenarioPacks(useCaseCount, scenarioTotal)
       : null;
+
+  const useCases = backedWorld
+    ? env.useCases ?? []
+    : env.useCases ?? contract.useCases;
+  const hasUseCases = (useCases?.length || 0) > 0;
+  const showUseCases = Boolean(waits.contract) || hasUseCases;
+
+  const noWorld = Boolean(backedWorld) && hasNoWorld(env);
+  const worldKnown = !waits.world;
+  const dependsOn = backedWorld
+    ? dependsFromContract(backedWorld.dependencies)
+    : contract.dependsOn || [];
+  const runtimeDependsOn = backedWorld
+    ? dependsFromContract(backedWorld.runtimeDependencies)
+    : [];
+  const hasDepends = dependsOn.length + runtimeDependsOn.length > 0;
+  const tablesCard =
+    seeded || !startingData ? (
+      worldTables(env).length > 0 ? (
+        <SeededDataCard env={env} />
+      ) : null
+    ) : (
+      <StartingDataCard baseEnvironment={env.baseEnvironment} />
+    );
+  const hasWorldCards = Boolean(tablesCard) || hasDepends;
+  const showWorld = !worldKnown || noWorld || hasWorldCards;
+  const showWorldKind =
+    worldKnown && Boolean(backedWorld) && !noWorld && hasWorldCards;
 
   const hasDerivedWorld =
     (env.rules?.length || 0) > 0 ||
@@ -166,7 +191,7 @@ export default function OverviewPanel({
             )
           }
         />
-        {!isCodeSource(env.source) && (
+        {connectorLabel && !isCodeSource(env.source) && (
           <Fact label={OVERVIEW_COPY.facts.connector} value={connectorLabel} />
         )}
         {/* Domain, direction, source and mode are real §6 fields; a client-only
@@ -242,7 +267,7 @@ export default function OverviewPanel({
         source={env.source}
         connector={connector}
         policy={env.agentPolicy}
-        noWorld={Boolean(backedWorld) && hasNoWorld(env)}
+        noWorld={worldKnown ? noWorld : null}
         systemPrompt={env.systemPrompt}
         systemPromptOrigin={env.systemPromptOrigin}
         onManageVersions={
@@ -291,32 +316,27 @@ export default function OverviewPanel({
         <SourceReadCard tools={env.tools} rules={env.rules} />
       )}
 
-      <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-        <Grid item xs={12} md={showAmendments ? 7 : 12}>
-          {/* A backed env reads only the real §6 fields; a use case the build
-              didn't write stays empty rather than being made up. The fixture
-              derivation is for client-only envs (templates, forks). */}
-          {waits.contract ? (
-            <UseCasesSkeleton wait={waits.contract} />
-          ) : (
-            <UseCasesCard
-              useCases={
-                backedWorld
-                  ? env.useCases ?? []
-                  : env.useCases ?? contract.useCases
-              }
-            />
+      {(showUseCases || showAmendments) && (
+        <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
+          {showUseCases && (
+            <Grid item xs={12} md={showAmendments ? 7 : 12}>
+              {waits.contract ? (
+                <UseCasesSkeleton wait={waits.contract} />
+              ) : (
+                <UseCasesCard useCases={useCases} />
+              )}
+            </Grid>
+          )}
+          {showAmendments && (
+            <Grid item xs={12} md={showUseCases ? 5 : 12}>
+              <AmendmentsCard amendments={amendments} />
+            </Grid>
           )}
         </Grid>
-        {showAmendments && (
-          <Grid item xs={12} md={5}>
-            <AmendmentsCard amendments={amendments} />
-          </Grid>
-        )}
-      </Grid>
+      )}
 
-      <GroupHeading>{OVERVIEW_COPY.world}</GroupHeading>
-      {!waits.world && backedWorld && !hasNoWorld(env) && (
+      {showWorld && <GroupHeading>{OVERVIEW_COPY.world}</GroupHeading>}
+      {showWorldKind && (
         <Stack
           direction="row"
           spacing={1}
@@ -355,48 +375,43 @@ export default function OverviewPanel({
       )}
       {waits.world ? (
         <WorldSkeleton wait={waits.world} />
-      ) : backedWorld && hasNoWorld(env) ? (
+      ) : noWorld ? (
         <Stack spacing={2} sx={{ mb: 3 }}>
           <ConnectOnlyWorld env={env} />
           <DependsOnCard
-            dependsOn={dependsFromContract(backedWorld.dependencies)}
-            runtimeDependsOn={dependsFromContract(
-              backedWorld.runtimeDependencies,
-            )}
+            dependsOn={dependsOn}
+            runtimeDependsOn={runtimeDependsOn}
           />
           {startingData && (
             <StartingDataCard baseEnvironment={env.baseEnvironment} />
           )}
         </Stack>
       ) : (
-        <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
-          <Grid item xs={12} md={7}>
-            {seeded || !startingData ? (
-              <SeededDataCard env={env} />
-            ) : (
-              <StartingDataCard baseEnvironment={env.baseEnvironment} />
+        hasWorldCards && (
+          <Grid container spacing={2} alignItems="flex-start" sx={{ mb: 3 }}>
+            {tablesCard && (
+              <Grid item xs={12} md={hasDepends ? 7 : 12}>
+                {tablesCard}
+              </Grid>
+            )}
+            {hasDepends && (
+              <Grid item xs={12} md={tablesCard ? 5 : 12}>
+                <DependsOnCard
+                  dependsOn={dependsOn}
+                  runtimeDependsOn={runtimeDependsOn}
+                />
+              </Grid>
+            )}
+            {seeded && startingData && (
+              <Grid item xs={12}>
+                <StartingDataCard
+                  baseEnvironment={env.baseEnvironment}
+                  title={OVERVIEW_COPY.startingTitle}
+                />
+              </Grid>
             )}
           </Grid>
-          <Grid item xs={12} md={5}>
-            <DependsOnCard
-              dependsOn={
-                backedWorld
-                  ? dependsFromContract(backedWorld.dependencies)
-                  : contract.dependsOn
-              }
-              runtimeDependsOn={
-                backedWorld
-                  ? dependsFromContract(backedWorld.runtimeDependencies)
-                  : []
-              }
-            />
-          </Grid>
-          {seeded && startingData && (
-            <Grid item xs={12}>
-              <StartingDataCard baseEnvironment={env.baseEnvironment} />
-            </Grid>
-          )}
-        </Grid>
+        )
       )}
 
       {/* Agent version-management drawer, overlaid on Overview so the user

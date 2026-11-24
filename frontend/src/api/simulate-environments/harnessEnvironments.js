@@ -98,9 +98,6 @@ export const renameHarnessEnvironment = async (id, name) =>
 export const deleteAppliedEvaluation = async (id, evalConfigId) =>
   (await axios.delete(environmentEvaluationPath(id, evalConfigId))).data;
 
-// Edit an applied evaluation. Same path as the remove; the body carries only
-// the fields being changed and never grades. The 200 body is the updated eval
-// in the run test's `simulate_eval_configs_detail` item shape.
 export const addSuggestedEvaluation = async (
   id,
   { name, required, passThreshold },
@@ -125,6 +122,9 @@ export const setEvaluationRequirement = async (
     })
   ).data;
 
+// Edit an applied evaluation. Same path as the remove; the body carries only
+// the fields being changed and never grades. The 200 body is the updated eval
+// in the run test's `simulate_eval_configs_detail` item shape.
 export const updateAppliedEvaluation = async (id, evalConfigId, body) =>
   (await axios.patch(environmentEvaluationPath(id, evalConfigId), body)).data;
 

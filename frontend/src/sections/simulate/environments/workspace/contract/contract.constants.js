@@ -128,7 +128,7 @@ export const GAP_LEGEND_ORDER = ["blocking", "assumed", "resolved"];
 
 export const CONTRACT_LISTS_COPY = {
   rules: {
-    title: (n) => `Rules (${n})`,
+    title: (n) => (n ? `Rules (${n})` : "Rules"),
     subtitle: "From the agent's prompt",
     empty: "No rules yet.",
     add: "Add rule",
@@ -140,7 +140,7 @@ export const CONTRACT_LISTS_COPY = {
     field: "Rule",
   },
   useCases: {
-    title: (n) => `Use cases (${n})`,
+    title: (n) => (n ? `Use cases (${n})` : "Use cases"),
     subtitle: "What your agent is actually for",
     empty: "No use cases yet.",
     add: "Add use case",
@@ -152,7 +152,14 @@ export const CONTRACT_LISTS_COPY = {
     field: "Use case",
   },
   coverage: (subGoals, scenarios) =>
-    `${subGoals} ${subGoals === 1 ? "sub-goal" : "sub-goals"} · ${scenarios} ${scenarios === 1 ? "scenario" : "scenarios"}`,
+    [
+      `${subGoals} ${subGoals === 1 ? "sub-goal" : "sub-goals"}`,
+      scenarios
+        ? `${scenarios} ${scenarios === 1 ? "scenario" : "scenarios"}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   notTested: "Not tested",
   edit: "Edit",
   remove: "Remove",

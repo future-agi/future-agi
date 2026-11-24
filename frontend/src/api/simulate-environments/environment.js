@@ -277,6 +277,7 @@ const EARLY_DETAIL_FIELDS = [
   "agentPolicy",
   "source",
   "agentMode",
+  "connector",
 ];
 
 const withEarlyDetail = (env, detailEnv) => {

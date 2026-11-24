@@ -36,11 +36,11 @@ export const ACTORS_COPY = {
   noCaller:
     "There is no caller record yet. The caller is an actor too: the builder writes one when it builds or first edits this environment, or add one with the id caller.",
   callActors: {
-    title: (n) => `Actors (${n})`,
+    title: (n) => (n ? `Actors (${n})` : "Actors"),
     subtitle:
       "People on the person's side who are not the person. Change them in the builder chat.",
     channels: ACTOR_CHANNEL_LABELS,
-    scenarios: (n) => `In ${n} scenario${n === 1 ? "" : "s"}`,
+    scenarios: (n) => (n ? `In ${n} scenario${n === 1 ? "" : "s"}` : null),
   },
 
   spec: {
@@ -75,7 +75,7 @@ export const ACTORS_COPY = {
       edit: "Edit actor",
     },
     title: "Actors",
-    groupTitle: (title, n) => `${title} (${n})`,
+    groupTitle: (title, n) => (n ? `${title} (${n})` : title),
     intro:
       "Everyone simulated in this world, the customer included. Your agent's own workers aren't actors.",
     inEveryRun: "In every run",

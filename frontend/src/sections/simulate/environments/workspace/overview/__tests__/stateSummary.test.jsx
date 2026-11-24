@@ -63,18 +63,32 @@ describe("StateSummary", () => {
     ]);
   });
 
-  it("does not link to runs before the first run", async () => {
-    const onGo = vi.fn();
+  it("leaves out every count that is zero", () => {
     render(
       <StateSummary
-        env={{ rules: [] }}
+        env={{ rules: ["a", "b"] }}
         envState={{ runs: [] }}
-        counts={{ runs: 0 }}
-        onGo={onGo}
+        counts={{ scenarios: 3, evaluations: 0, runs: 0, hardRules: 8 }}
+        onGo={vi.fn()}
       />,
     );
-    expect(screen.queryByRole("button", { name: "0 runs" })).toBeNull();
-    await userEvent.click(screen.getByText(/runs$/));
-    expect(onGo).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "3 scenarios" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "8 rules" })).toBeInTheDocument();
+    expect(screen.queryByText(/evaluation/)).toBeNull();
+    expect(screen.queryByText(/runs?$/)).toBeNull();
+  });
+
+  it("shows nothing when every count is zero", () => {
+    const { container } = render(
+      <StateSummary
+        env={{ rules: [] }}
+        envState={{ scenarios: [], evals: [], runs: [] }}
+        counts={{ scenarios: 0, evaluations: 0, runs: 0, hardRules: 0 }}
+        onGo={vi.fn()}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
   });
 });

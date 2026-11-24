@@ -116,6 +116,12 @@ describe("ToolsCard", () => {
     expect(within(row).getByText("Refunds a charge.")).toBeInTheDocument();
   });
 
+  it("lists the tools as plain rows when there is nothing to open", () => {
+    render(<ToolsCard tools={tools} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText(tools[1].tool)).toBeInTheDocument();
+  });
+
   it("hands the clicked tool to the drawer opener", () => {
     const onOpenTool = vi.fn();
     render(<ToolsCard tools={tools} onOpenTool={onOpenTool} />);

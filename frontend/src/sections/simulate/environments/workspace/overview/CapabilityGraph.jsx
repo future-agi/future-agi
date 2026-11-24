@@ -16,8 +16,8 @@ import SectionCard from "../../components/SectionCard";
  * four kinds of thing hanging off it — Tools, Flows, Personas, Guardrails.
  *
  * A backed env passes real §6 data through `data` (tools names, real_use_cases,
- * world.personas names, hard_constraints); a branch the backend returned empty
- * renders an honest "none yet" leaf rather than a fixture stand-in. Without
+ * world.personas names, hard_constraints); a branch with nothing in it is left
+ * out rather than drawn empty or filled with a fixture stand-in. Without
  * `data` (a non-backed template/fork) it derives from the env + contract fixture.
  *
  * Plain SVG on purpose. MUI's Box routes width/height through the style system
@@ -99,12 +99,13 @@ export default function CapabilityGraph({
     ...b,
     color: theme.palette.data[b.dataIndex],
     items: branchData[b.id] || [],
-  }));
-  const shown = focus ? branches.filter((b) => b.id === focus) : branches;
+  })).filter((b) => b.items.length > 0);
+  const focused = branches.some((b) => b.id === focus) ? focus : null;
+  const shown = focused ? branches.filter((b) => b.id === focused) : branches;
   // The focused tab shows its branch in full; the "All" view caps each branch at
   // MAX_LEAVES and surfaces the rest in a hover tooltip on "+N more" — no click,
   // so the user is never moved off the view they're on.
-  const cap = focus ? Infinity : MAX_LEAVES;
+  const cap = focused ? Infinity : MAX_LEAVES;
 
   // geometry
   const rowH = 22;
@@ -112,10 +113,7 @@ export default function CapabilityGraph({
   const gap = 26;
   const colX = 250;
   const leafX = 400;
-  // Every branch draws at least one row (a real leaf, the "+N more" line, or the
-  // empty "none yet" placeholder), so the hub never floats over blank space.
   const rowsFor = (b) => {
-    if (b.items.length === 0) return 1;
     const visible = Math.min(b.items.length, cap);
     return visible + (b.items.length > cap ? 1 : 0);
   };
@@ -135,9 +133,10 @@ export default function CapabilityGraph({
 
   const line = theme.palette.divider;
   const dim = theme.palette.text.secondary;
-  const faint = theme.palette.text.disabled;
   const strong = theme.palette.text.primary;
   const medium = theme.typography.fontWeightMedium;
+
+  if (!branches.length) return null;
 
   if (!open) {
     return (
@@ -198,13 +197,13 @@ export default function CapabilityGraph({
             sx={{ flexShrink: 0 }}
           >
             <SegmentedTabs
-              value={focus || "all"}
+              value={focused || "all"}
               onChange={(_, v) => setFocus(v === "all" ? null : v)}
               variant="scrollable"
               scrollButtons={false}
             >
               <Tab value="all" label="All" />
-              {BRANCHES.map((b) => (
+              {branches.map((b) => (
                 <Tab key={b.id} value={b.id} label={b.label} />
               ))}
             </SegmentedTabs>
@@ -229,7 +228,6 @@ export default function CapabilityGraph({
             viewBox={`0 0 ${W} ${H}`}
             style={{ maxWidth: "100%", height: "auto", display: "block" }}
           >
-            {/* agent → hub edges */}
             {placed.map((b) => (
               <path
                 key={`e-${b.id}`}
@@ -241,7 +239,6 @@ export default function CapabilityGraph({
               />
             ))}
 
-            {/* the agent */}
             <rect
               x={16}
               y={agentY - 21}
@@ -277,7 +274,6 @@ export default function CapabilityGraph({
               const hidden = b.items.slice(cap);
               return (
                 <g key={b.id}>
-                  {/* hub */}
                   <rect
                     x={colX - 10}
                     y={b.top}
@@ -309,35 +305,6 @@ export default function CapabilityGraph({
                     {b.items.length}
                   </text>
 
-                  {/* empty branch — an honest placeholder drawn like a leaf (edge
-                    + faint dot) so it reads as connected to the hub, not floating */}
-                  {b.items.length === 0 && (
-                    <>
-                      <path
-                        d={`M ${colX + 120} ${b.hubY} C ${colX + 160} ${b.hubY}, ${leafX - 30} ${b.top + headH + 8}, ${leafX - 6} ${b.top + headH + 8}`}
-                        fill="none"
-                        stroke={line}
-                        strokeWidth={1}
-                      />
-                      <circle
-                        cx={leafX - 3}
-                        cy={b.top + headH + 8}
-                        r={2.5}
-                        fill={faint}
-                      />
-                      <text
-                        x={leafX + 8}
-                        y={b.top + headH + 12}
-                        fill={faint}
-                        fontSize={11}
-                        fontStyle="italic"
-                      >
-                        none yet
-                      </text>
-                    </>
-                  )}
-
-                  {/* hub → leaf edges + leaves */}
                   {leaves.map((item, j) => {
                     const y = b.top + headH + j * rowH + 8;
                     return (
@@ -373,8 +340,6 @@ export default function CapabilityGraph({
                     );
                   })}
 
-                  {/* "+N more": hover lists the rest in a tooltip (product flow).
-                    Not clickable — it never moves the user off the current view. */}
                   {hidden.length > 0 && (
                     <CustomTooltip
                       show

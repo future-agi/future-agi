@@ -44,9 +44,11 @@ export function agentLineOf({ subject, source, connector, policy, noWorld }) {
     facts: subject
       ? [
           where,
-          noWorld
-            ? AGENT_SUMMARY_COPY.connectOnly
-            : AGENT_SUMMARY_COPY.simulated,
+          noWorld == null
+            ? null
+            : noWorld
+              ? AGENT_SUMMARY_COPY.connectOnly
+              : AGENT_SUMMARY_COPY.simulated,
           policy === "pinned" && version
             ? AGENT_SUMMARY_COPY.defaultPinned(version)
             : AGENT_SUMMARY_COPY.defaultProduction,

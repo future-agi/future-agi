@@ -9,6 +9,7 @@ import CapabilityGraph from "../overview/CapabilityGraph";
 import ConnectOnlyWorld from "./ConnectOnlyWorld";
 import ToolsCard from "./ToolsCard";
 import ToolDrawer from "./ToolDrawer";
+import { isCodeSource } from "../overview/agentLine";
 import WorldCard from "./WorldCard";
 import WorldFactsCard from "./WorldFactsCard";
 import useSimulationAccess from "../../hooks/useSimulationAccess";
@@ -65,8 +66,14 @@ export default function WorldPanel({ env, envState, graphData, chat = null }) {
   const answered = toolStatus.filter((t) => t.status === "simulated").length;
   const showGraph = Boolean(envState?.agent) || toolCount > 0;
   const drawerTool = tools.find((t) => t.tool === openTool) || null;
-  const onOpenTool = (tool) =>
-    setOpenTool((current) => (current === tool.tool ? null : tool.tool));
+  const removal =
+    canRemove && !isCodeSource(env?.source)
+      ? { onRemove: (tool) => setRemoving(tool.tool), blockedReason }
+      : null;
+  const onOpenTool = isCodeSource(env?.source)
+    ? (tool) =>
+        setOpenTool((current) => (current === tool.tool ? null : tool.tool))
+    : null;
 
   if (!noWorld && !tables.length && !toolStatus.length && !showGraph) {
     return (
@@ -155,7 +162,7 @@ export default function WorldPanel({ env, envState, graphData, chat = null }) {
 
       {noWorld && <ConnectOnlyWorld env={env} sx={{ mb: 2 }} />}
 
-      {isWritingWorld(env) && !tables.length && (
+      {isWritingWorld(env) && !tables.length && !noWorld && (
         <EmptyState
           icon="solar:global-linear"
           title={WORLD_COPY.writing.title}
@@ -177,6 +184,7 @@ export default function WorldPanel({ env, envState, graphData, chat = null }) {
           totalRows={env.worldTotalRows}
           openTool={openTool}
           onOpenTool={onOpenTool}
+          removal={removal}
           sx={{ mb: 2 }}
         />
       ) : (
@@ -185,6 +193,7 @@ export default function WorldPanel({ env, envState, graphData, chat = null }) {
             tools={tools}
             openTool={openTool}
             onOpenTool={onOpenTool}
+            removal={removal}
             sx={{ mb: 2 }}
           />
         )

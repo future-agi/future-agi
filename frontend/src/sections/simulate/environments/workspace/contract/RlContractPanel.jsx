@@ -63,6 +63,7 @@ export default function RlContractPanel({
   locked = false,
   chat = null,
   scenarios = [],
+  coverageReady = true,
   onGo,
 }) {
   const { canEdit } = useSimulationAccess();
@@ -105,18 +106,20 @@ export default function RlContractPanel({
 
   return (
     <Box sx={{ p: 2 }}>
-      <ContractListCard
-        list={CONTRACT_LISTS_COPY.rules}
-        items={rules}
-        coverageOf={coverageOf}
-        onGo={onGo}
-        showActions={showActions}
-        blockedReason={blockedReason}
-        onAdd={() => open("rule", "add")()}
-        onEdit={open("rule", "edit")}
-        onRemove={open("rule", "remove")}
-        sx={{ mb: 2 }}
-      />
+      {(rules.length > 0 || showActions) && (
+        <ContractListCard
+          list={CONTRACT_LISTS_COPY.rules}
+          items={rules}
+          coverageOf={coverageReady ? coverageOf : undefined}
+          onGo={onGo}
+          showActions={showActions}
+          blockedReason={blockedReason}
+          onAdd={() => open("rule", "add")()}
+          onEdit={open("rule", "edit")}
+          onRemove={open("rule", "remove")}
+          sx={{ mb: 2 }}
+        />
+      )}
 
       {(useCases.length > 0 || showActions) && (
         <ContractListCard
@@ -285,6 +288,7 @@ RlContractPanel.propTypes = {
   backed: PropTypes.bool,
   locked: PropTypes.bool,
   scenarios: PropTypes.arrayOf(PropTypes.object),
+  coverageReady: PropTypes.bool,
   onGo: PropTypes.func,
   chat: PropTypes.shape({
     send: PropTypes.func,

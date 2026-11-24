@@ -17,15 +17,11 @@ export default function StateSummary({ env, envState, counts, onGo }) {
       to: "scenarios",
     },
     { id: "evals", value: evalCount, word: "evaluation", to: "evals" },
-    {
-      id: "runs",
-      value: runCount,
-      word: "run",
-      to: "runs",
-      disabled: !runCount,
-    },
+    { id: "runs", value: runCount, word: "run", to: "runs" },
     { id: "rules", value: ruleCount, word: "rule", to: "contract" },
-  ];
+  ].filter((item) => item.value > 0);
+
+  if (!items.length) return null;
 
   return (
     <Stack
@@ -42,9 +38,9 @@ export default function StateSummary({ env, envState, counts, onGo }) {
             </Box>
           )}
           <Box
-            component={item.disabled ? "span" : "button"}
-            type={item.disabled ? undefined : "button"}
-            onClick={item.disabled ? undefined : () => onGo?.(item.to)}
+            component="button"
+            type="button"
+            onClick={() => onGo?.(item.to)}
             sx={{
               p: 0,
               border: 0,
@@ -52,10 +48,8 @@ export default function StateSummary({ env, envState, counts, onGo }) {
               font: "inherit",
               color: "text.secondary",
               fontVariantNumeric: "tabular-nums",
-              cursor: item.disabled ? "default" : "pointer",
-              "&:hover": item.disabled
-                ? {}
-                : { color: "text.primary", textDecoration: "underline" },
+              cursor: "pointer",
+              "&:hover": { color: "text.primary", textDecoration: "underline" },
             }}
           >
             <Box

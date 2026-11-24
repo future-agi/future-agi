@@ -165,4 +165,88 @@ describe("SourceToSandboxMap", () => {
       screen.getAllByText("reads from fixture state").length,
     ).toBeGreaterThan(0);
   });
+
+  describe("for a backed environment", () => {
+    const backedEnv = {
+      ...MOCK_WORLD,
+      rules: [],
+      toolStatus: [{ tool: "book_ride", status: "simulated" }],
+    };
+    const harnessStore = {
+      capability: "harness",
+      tables: [
+        { name: "harness_calls", rows: 4, internal: true },
+        { name: "harness_turns", rows: 9, internal: true },
+      ],
+    };
+
+    it("leaves out a group with nothing mapped", () => {
+      render(
+        <SourceToSandboxMap
+          env={backedEnv}
+          stores={[
+            {
+              capability: "world_db",
+              tables: [{ name: "rides", rows: 3 }],
+            },
+          ]}
+          backed
+        />,
+      );
+      expect(screen.getByText("Tools")).toBeInTheDocument();
+      expect(screen.getByText("Stores")).toBeInTheDocument();
+      expect(screen.queryByText("Rules")).toBeNull();
+      expect(screen.queryByText("0 mapped")).toBeNull();
+    });
+
+    it("does not count the harness's own tables as stores", () => {
+      render(
+        <SourceToSandboxMap env={backedEnv} stores={[harnessStore]} backed />,
+      );
+      expect(screen.queryByText("Stores")).toBeNull();
+    });
+
+    it("maps no stores for a connect-only agent, even from its starting data", () => {
+      render(
+        <SourceToSandboxMap
+          env={{
+            ...backedEnv,
+            agentMode: "connect_only",
+            baseEnvironment: { rides: [{ id: 1 }] },
+          }}
+          stores={[harnessStore]}
+          backed
+        />,
+      );
+      expect(screen.getByText("Tools")).toBeInTheDocument();
+      expect(screen.queryByText("Stores")).toBeNull();
+    });
+
+    it("says the agent's own systems answer a connect-only agent's tools", async () => {
+      render(
+        <SourceToSandboxMap
+          env={{ ...backedEnv, agentMode: "connect_only" }}
+          stores={[]}
+          backed
+        />,
+      );
+      await userEvent.hover(screen.getByText("Tools"));
+      expect(
+        await screen.findByText(
+          "Mapped means the build found it in your agent. Your own systems answer its tools during a run.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("draws nothing when nothing was mapped", () => {
+      const { container } = render(
+        <SourceToSandboxMap
+          env={{ ...backedEnv, toolStatus: [] }}
+          stores={[]}
+          backed
+        />,
+      );
+      expect(container).toBeEmptyDOMElement();
+    });
+  });
 });

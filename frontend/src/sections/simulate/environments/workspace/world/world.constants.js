@@ -31,7 +31,7 @@ export const TOOL_STATUS_ORDER = [
   "unknown",
 ];
 
-export const TOOL_STATUS_GROUP = {
+const TOOL_STATUS_GROUP = {
   simulated: {
     label: "Simulated",
     note: "The test world answers these calls during a run.",
@@ -74,9 +74,6 @@ export const WORLD_COPY = {
     tools: (n) => `Tools · ${n}`,
     toolsLead: "In the contract only: ",
     toolsTail: ". Your systems answer them during a run.",
-    noTools: "None read from your agent.",
-    data: "Data",
-    dataValue: "No tables or stores are seeded for this environment.",
   },
   writing: {
     title: "Writing the world",
@@ -92,12 +89,23 @@ export const WORLD_COPY = {
 
 export const isWritingWorld = (env) => env?.buildStatus === "building";
 
+export const isConnectOnly = (env) => env?.agentMode === "connect_only";
+
+export function worldTableCount(env) {
+  if (isConnectOnly(env)) return 0;
+  if (Array.isArray(env?.worldTables) && env.worldTables.length)
+    return env.worldTables.length;
+  return (Array.isArray(env?.stores) ? env.stores : [])
+    .flatMap((store) => (Array.isArray(store?.tables) ? store.tables : []))
+    .filter((table) => table?.name && !table.internal).length;
+}
+
 export function hasNoWorld(env) {
+  if (isConnectOnly(env)) return true;
   return (
     Boolean(env?.detailReady) &&
-    !isWritingWorld(env) &&
-    !(env?.worldTables?.length > 0) &&
-    !(env?.stores?.length > 0)
+    env?.buildStatus === "ready" &&
+    worldTableCount(env) === 0
   );
 }
 
@@ -167,7 +175,7 @@ export function withToolEvidence(toolStatus = [], env) {
   }));
 }
 
-export function withTypedColumns(tables = [], columns) {
+function withTypedColumns(tables = [], columns) {
   if (!columns || typeof columns !== "object") return tables;
   return tables.map((table) => {
     const typed = columns[table.name];
@@ -205,7 +213,9 @@ export const WORLD_CARD_COPY = {
   title: (tables, tools) =>
     `World · ${plural(tables, "table")} · ${plural(tools, "tool")}`,
   subtitle: (rows) =>
-    `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"}. Each table with the tools that use it; a tool opens its details.`,
+    rows
+      ? `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"}. Each table with the tools that use it; a tool opens its details.`
+      : "Each table with the tools that use it; a tool opens its details.",
   head: ["", "Table", "Rows", "Columns", "Tools that use it"],
   noTable: "No table",
   noToolUsesIt: "No tool uses it",
@@ -238,6 +248,7 @@ export const WORLD_CARD_COPY = {
 export const TOOL_DRAWER_COPY = {
   codePending: "The code shows here once the build writes this tool.",
   remove: "Remove from the world",
+  removeNamed: (tool) => `Remove ${tool} from the world`,
   removeTitle: (name) => `Remove ${name}?`,
   removeContent:
     "This asks the builder to remove the tool from the environment. It lands as a draft that you save as a new environment version, and the scenarios that call it are checked again.",

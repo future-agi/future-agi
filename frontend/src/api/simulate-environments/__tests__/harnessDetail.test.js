@@ -310,6 +310,11 @@ describe("harnessDetailToEnvironment", () => {
     expect(env.agentMode).toBe("connect_only");
   });
 
+  it("puts the agent's connector on the environment", () => {
+    const { env } = harnessDetailToEnvironment(DETAIL);
+    expect(env.connector).toBe("livekit");
+  });
+
   it("leaves direction, source and mode empty when nothing sends them", () => {
     const { env } = harnessDetailToEnvironment({
       ...DETAIL,
@@ -319,6 +324,7 @@ describe("harnessDetailToEnvironment", () => {
     expect(env.callDirection).toBeNull();
     expect(env.source).toBeNull();
     expect(env.agentMode).toBeNull();
+    expect(env.connector).toBeNull();
   });
 
   it("flattens world.stores into seed tables and keeps the raw stores", () => {
@@ -473,18 +479,16 @@ describe("harnessDetailToEnvironment", () => {
     expect(harnessDetailToEnvironment(failed).env.buildStatus).toBe("failed");
   });
 
-  // §1/§6 report a four-state environment status (building | running |
-  // completed | failed) where "running" means the calls are running — the
-  // environment is built. That is NOT the harness-job pipeline vocabulary,
-  // where "running" means the build itself is still in flight.
-  it("reads a running overview as a built environment, not one still building", () => {
+  it("reads a running overview as still building: the release checks are build steps", () => {
     const running = {
       id: "j1",
       overview: { id: "j1", name: "live", status: "running" },
       contract: null,
       world: null,
     };
-    expect(harnessDetailToEnvironment(running).env.buildStatus).toBe("ready");
+    expect(harnessDetailToEnvironment(running).env.buildStatus).toBe(
+      "building",
+    );
   });
 
   it("passes tool effect, certification, world facts and actors through", () => {

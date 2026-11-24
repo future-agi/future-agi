@@ -81,6 +81,57 @@ describe("RlContractPanel", () => {
     expect(onGo).toHaveBeenCalledWith("scenarios");
   });
 
+  it("never counts zero scenarios on a rule's coverage", () => {
+    renderPanel({
+      env: {
+        ...env,
+        ruleDetails: [
+          {
+            text: "Only refund verified callers.",
+            sub_goal: "identity_checked",
+          },
+        ],
+      },
+      scenarios: [],
+    });
+
+    expect(screen.getByText("1 sub-goal")).toBeInTheDocument();
+    expect(screen.queryByText(/0 scenarios/)).toBeNull();
+  });
+
+  it("leaves the coverage out until the scenarios are written", () => {
+    renderPanel({
+      env: {
+        ...env,
+        ruleDetails: [
+          {
+            text: "Only refund verified callers.",
+            sub_goal: "identity_checked",
+          },
+        ],
+      },
+      coverageReady: false,
+    });
+
+    expect(screen.getByText("Rules (2)")).toBeInTheDocument();
+    expect(screen.queryByText("Not tested")).toBeNull();
+    expect(screen.queryByText(/sub-goal/)).toBeNull();
+  });
+
+  it("leaves the rules card out when there are no rules and nothing to add them with", () => {
+    renderPanel({ env: { ...env, rules: [] } });
+    expect(screen.queryByText(/^Rules/)).toBeNull();
+  });
+
+  it("keeps an empty rules card when a rule can be added, with no zero count", () => {
+    renderPanel({ env: { ...env, rules: [] }, chat: liveChat() });
+    expect(screen.getByText("Rules")).toBeInTheDocument();
+    expect(screen.queryByText("Rules (0)")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Add rule" }),
+    ).toBeInTheDocument();
+  });
+
   it("lists the use cases", () => {
     renderPanel();
     expect(screen.getByText("Use cases (2)")).toBeInTheDocument();

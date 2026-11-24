@@ -9,11 +9,6 @@ export const MAP_COPY = {
     "Every derived fact carries where it was read from and what it became in the sandbox. A tool whose effect you set on the Contract tab shows here as confirmed.",
   backedSubtitle:
     "Where each tool, rule and store came from. The details are on World & tools and Contract.",
-  backedGroups: {
-    tools: "from the agent's code",
-    rules: "from the agent's prompt",
-    stores: "seeded by the build",
-  },
   toolTarget: {
     simulated: (writes) =>
       writes
@@ -27,6 +22,8 @@ export const MAP_COPY = {
   ruleTarget: "Checked in every run",
   mappedMeans:
     "Mapped means the build found it in your agent and set it up in the test world.",
+  mappedMeansConnectOnly:
+    "Mapped means the build found it in your agent. Your own systems answer its tools during a run.",
   toolsHint: ({ simulated, inProcess, unsupported, unknown }) =>
     [
       simulated &&
@@ -40,14 +37,9 @@ export const MAP_COPY = {
       .filter(Boolean)
       .join(" "),
   rulesHint: (n) =>
-    n
-      ? `${n} ${n === 1 ? "rule was" : "rules were"} read from the agent's prompt. Each is checked in every run.`
-      : "No rules were found in the agent's prompt.",
+    `${n} ${n === 1 ? "rule was" : "rules were"} read from the agent's prompt. Each is checked in every run.`,
   storesHint: (n) =>
-    n
-      ? `${n} ${n === 1 ? "table is" : "tables are"} seeded before every run, so each run starts from the same records.`
-      : "No data tables were found to seed, so the world starts with no records.",
-  storesNotYet: "Seeded once the build writes the world.",
+    `${n} ${n === 1 ? "table is" : "tables are"} seeded before every run, so each run starts from the same records.`,
   readHead: "Read from source",
   sandboxHead: "In the sandbox world",
   needsAnswer: "Needs your answer",
@@ -62,7 +54,6 @@ export const MAP_COPY = {
     `${n} mapped${toAnswer ? ` · ${toAnswer} to answer` : ""}`,
   rulesRight: (n) => `${n} mapped`,
   storesRight: (n) => `${n} mapped`,
-  storesEmpty: "No stores seeded for this environment.",
   resolve: {
     question: (name) => `Does ${name} change data?`,
     why: "Called from the agent's code, unnamed in the prompt. We can't tell from static analysis alone.",
@@ -116,11 +107,8 @@ const NORMALIZE_EFFECT = {
 };
 
 // The tool rows for the map: name, origin chip, and sandbox target. The
-// read/write classification is a verb-heuristic guess; resolving/overriding it
-// lives on the Contract tab (WorldInternalsSection's effect picker). This ledger
-// is read-only, but it REFLECTS a Contract override — a resolved tool shows the
-// overridden target and a "you confirmed" mark, so the reader can see which
-// decisions a human made vs. which the reader made itself.
+// read/write classification is a verb-heuristic guess unless a stored
+// resolution overrides it, and a resolved tool is marked as confirmed.
 export const toolMapRows = (env, envState) => {
   const tools = env?.tools || [];
   const resolutions = envState?.toolResolutions || {};
@@ -186,15 +174,17 @@ export const storeMapRows = (env) => {
 // even read).
 export const storeRowsFromStores = (stores = []) =>
   (Array.isArray(stores) ? stores : []).flatMap((store) =>
-    (store?.tables || []).map((t) => {
-      const rows = Number(t?.rows) || 0;
-      return {
-        key: `${store?.capability || store?.engine || "store"}:${t?.name}`,
-        name: `${t?.name} · ${rows.toLocaleString()}`,
-        origin: ORIGIN_ID.FIXTURE,
-        target: `${t?.name} (${rows.toLocaleString()})`,
-      };
-    }),
+    (store?.tables || [])
+      .filter((t) => t?.name && !t.internal)
+      .map((t) => {
+        const rows = Number(t?.rows) || 0;
+        return {
+          key: `${store?.capability || store?.engine || "store"}:${t?.name}`,
+          name: `${t?.name} · ${rows.toLocaleString()}`,
+          origin: ORIGIN_ID.FIXTURE,
+          target: `${t?.name} (${rows.toLocaleString()})`,
+        };
+      }),
   );
 
 export const backedToolRows = (env) =>

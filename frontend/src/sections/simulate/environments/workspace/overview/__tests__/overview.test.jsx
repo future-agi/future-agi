@@ -187,12 +187,13 @@ describe("OverviewPanel", () => {
     expect(screen.getAllByText(/^used by/)).toHaveLength(1);
   });
 
-  it("says no dependencies were recorded when both lists are empty", () => {
+  it("leaves What it depends on out when both lists are empty", () => {
     renderPanel({
       backedWorld: { ...BACKED_WORLD, runtimeDependencies: [] },
     });
 
-    expect(screen.getByText(/No dependencies recorded/)).toBeInTheDocument();
+    expect(screen.queryByText("What it depends on")).toBeNull();
+    expect(screen.queryByText(/No dependencies recorded/)).toBeNull();
   });
 
   it("counts each starting-data collection and shows the data on request", async () => {
@@ -208,7 +209,8 @@ describe("OverviewPanel", () => {
       backedWorld: BACKED_WORLD,
     });
 
-    expect(screen.getAllByText("Seeded data")).toHaveLength(2);
+    expect(screen.getAllByText("Seeded data")).toHaveLength(1);
+    expect(screen.getByText("Starting data")).toBeInTheDocument();
     expect(screen.getByText("patients")).toBeInTheDocument();
     expect(
       screen.getByText("2 rows, rebuilt fresh for every task."),
@@ -303,7 +305,7 @@ describe("OverviewPanel", () => {
     expect(screen.queryByText(/NaN/)).toBeNull();
   });
 
-  it("leaves the harness's own tables out of Seeded data and says no rows are seeded", () => {
+  it("leaves the harness's own tables out, and Seeded data with them when nothing else is seeded", () => {
     renderPanel({
       env: {
         ...MOCK_WORLD,
@@ -316,12 +318,8 @@ describe("OverviewPanel", () => {
       },
       backedWorld: BACKED_WORLD,
     });
-    expect(screen.getByText("Seeded data")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "No rows are seeded, so the world starts with no records.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.queryByText("Seeded data")).toBeNull();
+    expect(screen.queryByText(/No rows are seeded/)).toBeNull();
     expect(screen.queryByText("_alk_tool_trace")).toBeNull();
     expect(screen.queryByText("harness_seed_sentinel")).toBeNull();
   });
@@ -352,6 +350,7 @@ describe("OverviewPanel", () => {
       env: {
         ...MOCK_WORLD,
         detailReady: true,
+        buildStatus: "ready",
         seed: undefined,
         worldTables: [],
         stores: [],
@@ -366,12 +365,63 @@ describe("OverviewPanel", () => {
       },
     });
     expect(screen.getByText("No world to reset")).toBeInTheDocument();
-    expect(
-      screen.getByText("No tables or stores are seeded for this environment."),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/No tables or stores are seeded/)).toBeNull();
     expect(screen.queryByText("Seeded data")).toBeNull();
     expect(screen.getByText("What it depends on")).toBeInTheDocument();
     expect(screen.getByText("postgres")).toBeInTheDocument();
+  });
+
+  it("treats a connect-only agent as having no world, whatever the harness stored", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        detailReady: true,
+        buildStatus: "building",
+        agentMode: "connect_only",
+        connector: "vapi",
+        source: { kind: "provider" },
+        seed: undefined,
+        stores: [
+          {
+            capability: "harness",
+            tables: [
+              { name: "harness_calls", rows: 0, internal: true },
+              { name: "harness_turns", rows: 0, internal: true },
+            ],
+          },
+        ],
+        toolStatus: [{ tool: "book_ride", status: "in_process" }],
+        testSubject: { id: "a", name: "Ride bot", active_version: "v1" },
+      },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("No world to reset")).toBeInTheDocument();
+    expect(screen.queryByText("Simulated")).toBeNull();
+    expect(screen.queryByText(/Seeded data/)).toBeNull();
+    expect(screen.queryByText("Stores")).toBeNull();
+    expect(
+      screen.getByText(
+        "· Vapi · Answered by your systems · default: production",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about the world in the agent line until the world is written", () => {
+    renderPanel({
+      env: {
+        ...MOCK_WORLD,
+        buildStatus: "building",
+        source: { kind: "github", repository: "acme/ride-agent" },
+        testSubject: { id: "a", name: "Ride bot", active_version: "v1" },
+      },
+      backedWorld: BACKED_WORLD,
+      waits: { world: { phase: "Writing the world", now: true } },
+    });
+    expect(
+      screen.getByText("· GitHub · default: production"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Simulated/)).toBeNull();
+    expect(screen.getByTestId("overview-world-loading")).toBeInTheDocument();
   });
 
   it("shows no no-world card for a template, which has no built detail", () => {
@@ -420,6 +470,33 @@ describe("OverviewPanel", () => {
       screen.getByText("· GitHub · Simulated · default: production"),
     ).toBeInTheDocument();
     expect(screen.queryByText("Connector")).toBeNull();
+  });
+
+  it("reads the connector off the environment while the build has no agent state", () => {
+    renderPanel({
+      envState: { scenarios: [] },
+      env: { ...MOCK_WORLD, connector: "vapi", source: { kind: "provider" } },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.getByText("Connector")).toBeInTheDocument();
+    expect(screen.getByText("Vapi")).toBeInTheDocument();
+  });
+
+  it("leaves the connector out rather than printing a dash when it is unknown", () => {
+    renderPanel({
+      envState: { scenarios: [] },
+      env: { ...MOCK_WORLD, source: { kind: "provider" } },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.queryByText("Connector")).toBeNull();
+  });
+
+  it("leaves the use cases card out when there are none", () => {
+    renderPanel({
+      env: { ...MOCK_WORLD, useCases: [] },
+      backedWorld: BACKED_WORLD,
+    });
+    expect(screen.queryByText("Use cases")).toBeNull();
   });
 
   it("names the agent's platform and version, with a link to the agent", () => {

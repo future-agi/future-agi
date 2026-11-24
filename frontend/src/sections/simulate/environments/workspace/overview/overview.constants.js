@@ -48,7 +48,6 @@ export const OVERVIEW_COPY = {
   dependsTitle: "What it depends on",
   dependsSubtitle:
     "What the environment builds, and the services the agent calls",
-  dependsEmpty: "No dependencies recorded for this environment.",
   dependsBuilt: "Built and torn down with the environment",
   dependsRuntime: "Services the agent calls",
   seedBlurb: (rows) =>
@@ -56,7 +55,6 @@ export const OVERVIEW_COPY = {
   usedBy: (name) => `used by ${Array.isArray(name) ? name.join(", ") : name}`,
   moreNames: (n) => `+${n} more`,
   emptyTable: "Empty",
-  noSeededData: "No rows are seeded, so the world starts with no records.",
   startingTitle: "Starting data",
   startingShow: "Show the starting data",
   startingHide: "Hide the starting data",
@@ -293,7 +291,7 @@ export const CHECKLIST_COPY = {
 // The seeded tables the agent works with. The harness's own bookkeeping
 // tables (`_alk_tool_trace`, `harness_seed_sentinel`) share the store but
 // aren't the agent's world, so they stay out of Seeded data.
-export const isHarnessTable = (name = "") =>
+const isHarnessTable = (name = "") =>
   name.startsWith("_") || name.startsWith("harness_");
 export const worldTables = (env) =>
   (env?.seed?.tables || []).filter((t) => !isHarnessTable(t.name));

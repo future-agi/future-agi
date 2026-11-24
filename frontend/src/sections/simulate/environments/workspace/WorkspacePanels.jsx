@@ -63,6 +63,7 @@ export default function WorkspacePanels({
   canRun = false,
   runBlockedReason,
   contractChat = null,
+  contractScenarios,
   tabWaits = {},
 }) {
   const navigate = useNavigate();
@@ -162,7 +163,13 @@ export default function WorkspacePanels({
             backed={backed}
             locked={locked}
             chat={contractChat}
-            scenarios={serverEnvState?.scenarios || envState?.scenarios || []}
+            scenarios={
+              contractScenarios ||
+              serverEnvState?.scenarios ||
+              envState?.scenarios ||
+              []
+            }
+            coverageReady={!tabWaits.scenarios}
             onGo={go}
           />
         );
@@ -358,7 +365,6 @@ WorkspacePanels.propTypes = {
   overviewCounts: PropTypes.object,
   // Its real world content (stores/amendments/dependencies) for the Overview.
   overviewWorld: PropTypes.object,
-  // Its real capability-graph data (tools/flows/personas/guardrails) for World & tools.
   graphData: PropTypes.object,
   // Starts a run scoped to the scenario selection × trials — (ids, trials).
   onStartRun: PropTypes.func,
@@ -379,4 +385,5 @@ WorkspacePanels.propTypes = {
     busy: PropTypes.bool,
     live: PropTypes.bool,
   }),
+  contractScenarios: PropTypes.arrayOf(PropTypes.object),
 };

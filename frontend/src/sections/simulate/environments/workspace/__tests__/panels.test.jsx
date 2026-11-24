@@ -36,8 +36,11 @@ OverviewPanelStub.propTypes = {
 vi.mock("../overview/OverviewPanel", () => ({ default: OverviewPanelStub }));
 vi.mock("../contract/RlContractPanel", () => ({
   // eslint-disable-next-line react/prop-types
-  default: ({ chat }) => (
-    <div>{`contract-body:chat=${typeof chat?.send === "function"}`}</div>
+  default: ({ chat, scenarios, coverageReady }) => (
+    <>
+      <div>{`contract-body:chat=${typeof chat?.send === "function"}`}</div>
+      <div>{`contract-coverage:${coverageReady}:${scenarios.length}`}</div>
+    </>
   ),
 }));
 vi.mock("../world/WorldPanel", () => ({
@@ -350,6 +353,22 @@ describe("WorkspacePanels", () => {
     unmount();
     renderPanels({ tab: "contract" });
     expect(screen.getByText("contract-body:chat=false")).toBeInTheDocument();
+  });
+
+  it("hands the Contract tab the detail's scenarios, and no coverage until the scenarios are written", () => {
+    const { unmount } = renderPanels({
+      tab: "contract",
+      contractScenarios: [{ subTasks: [] }, { subTasks: [] }],
+    });
+    expect(screen.getByText("contract-coverage:true:2")).toBeInTheDocument();
+    unmount();
+    renderPanels({
+      tab: "contract",
+      tabWaits: {
+        scenarios: { phase: "Writing and checking scenarios", now: true },
+      },
+    });
+    expect(screen.getByText(/^contract-coverage:false:/)).toBeInTheDocument();
   });
 
   it("renders the body for the active tab", () => {

@@ -7,6 +7,7 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 import { ROW_HEIGHT } from "src/theme/sizes";
 import OriginChip from "../../components/OriginChip";
 import { ENV_SHAPE, startingCollections } from "./overview.constants";
+import { isConnectOnly } from "../world/world.constants";
 import {
   MAP_COPY,
   toolMapRows,
@@ -34,7 +35,7 @@ const MAP_PX = 1.5;
 // a Contract override: a resolved tool shows the overridden target and a "you
 // confirmed" mark. This is the artifact someone returns to weeks later to see
 // which decisions a human made and which the reader made itself.
-function MapSummary({ groups }) {
+function MapSummary({ groups, mappedMeans }) {
   return (
     <Box
       sx={{
@@ -78,9 +79,7 @@ function MapSummary({ groups }) {
             size="small"
             title={
               <Stack spacing={0.5}>
-                <Typography sx={{ typography: "s2" }}>
-                  {MAP_COPY.mappedMeans}
-                </Typography>
+                <Typography sx={{ typography: "s2" }}>{mappedMeans}</Typography>
                 <Typography sx={{ typography: "s2" }}>{group.hint}</Typography>
               </Stack>
             }
@@ -124,6 +123,7 @@ MapSummary.propTypes = {
       right: PropTypes.string,
     }),
   ).isRequired,
+  mappedMeans: PropTypes.string.isRequired,
 };
 
 export default function SourceToSandboxMap({
@@ -145,32 +145,42 @@ export default function SourceToSandboxMap({
       (Array.isArray(env?.toolStatus) ? env.toolStatus : []).filter(
         (row) => row.status === status,
       ).length;
-    const storeCount =
-      storeRows.length || startingCollections(env?.baseEnvironment).length;
+    const connectOnly = isConnectOnly(env);
+    const storeCount = connectOnly
+      ? 0
+      : storeRows.length || startingCollections(env?.baseEnvironment).length;
+    const groups = [
+      {
+        count: toolRows.length,
+        label: MAP_COPY.groups.tools.label,
+        hint: MAP_COPY.toolsHint({
+          simulated: statusCount("simulated"),
+          inProcess: statusCount("in_process"),
+          unsupported: statusCount("unsupported"),
+          unknown: statusCount("unknown"),
+        }),
+        right: MAP_COPY.toolsRight(toolRows.length),
+      },
+      {
+        count: ruleRows.length,
+        label: MAP_COPY.groups.rules.label,
+        hint: MAP_COPY.rulesHint(ruleRows.length),
+        right: MAP_COPY.rulesRight(ruleRows.length),
+      },
+      {
+        count: storeCount,
+        label: MAP_COPY.groups.stores.label,
+        hint: MAP_COPY.storesHint(storeCount),
+        right: MAP_COPY.storesRight(storeCount),
+      },
+    ].filter((group) => group.count > 0);
+    if (!groups.length) return null;
     return (
       <MapSummary
-        groups={[
-          {
-            label: MAP_COPY.groups.tools.label,
-            hint: MAP_COPY.toolsHint({
-              simulated: statusCount("simulated"),
-              inProcess: statusCount("in_process"),
-              unsupported: statusCount("unsupported"),
-              unknown: statusCount("unknown"),
-            }),
-            right: MAP_COPY.toolsRight(toolRows.length),
-          },
-          {
-            label: MAP_COPY.groups.rules.label,
-            hint: MAP_COPY.rulesHint(ruleRows.length),
-            right: MAP_COPY.rulesRight(ruleRows.length),
-          },
-          {
-            label: MAP_COPY.groups.stores.label,
-            hint: MAP_COPY.storesHint(storeCount),
-            right: MAP_COPY.storesRight(storeCount),
-          },
-        ]}
+        groups={groups}
+        mappedMeans={
+          connectOnly ? MAP_COPY.mappedMeansConnectOnly : MAP_COPY.mappedMeans
+        }
       />
     );
   }
@@ -199,7 +209,7 @@ export default function SourceToSandboxMap({
         <Typography
           sx={{ typography: "s3", color: "text.subtitle", maxWidth: 720 }}
         >
-          {backed ? MAP_COPY.backedSubtitle : MAP_COPY.subtitle}
+          {MAP_COPY.subtitle}
         </Typography>
       </Box>
 
@@ -221,52 +231,52 @@ export default function SourceToSandboxMap({
         <ColHead>{MAP_COPY.sandboxHead}</ColHead>
       </Box>
 
-      <MapGroup
-        label={MAP_COPY.groups.tools.label}
-        hint={backed ? MAP_COPY.backedGroups.tools : MAP_COPY.groups.tools.hint}
-        right={MAP_COPY.toolsRight(toolRows.length)}
-        first
-      >
-        {toolRows.map((r) => (
-          <MapRow
-            key={r.key}
-            name={r.name}
-            origin={r.origin}
-            target={r.target}
-            mono
-            trailing={r.confirmed ? <ConfirmedChip /> : null}
-          />
-        ))}
-      </MapGroup>
+      {toolRows.length > 0 && (
+        <MapGroup
+          label={MAP_COPY.groups.tools.label}
+          hint={MAP_COPY.groups.tools.hint}
+          right={MAP_COPY.toolsRight(toolRows.length)}
+          first
+        >
+          {toolRows.map((r) => (
+            <MapRow
+              key={r.key}
+              name={r.name}
+              origin={r.origin}
+              target={r.target}
+              mono
+              trailing={r.confirmed ? <ConfirmedChip /> : null}
+            />
+          ))}
+        </MapGroup>
+      )}
 
-      <MapGroup
-        label={MAP_COPY.groups.rules.label}
-        hint={backed ? MAP_COPY.backedGroups.rules : MAP_COPY.groups.rules.hint}
-        right={MAP_COPY.rulesRight(ruleRows.length)}
-      >
-        {ruleRows.map((r) => (
-          <MapRow
-            key={r.key}
-            name={r.name}
-            origin={r.origin}
-            target={r.target}
-          />
-        ))}
-      </MapGroup>
+      {ruleRows.length > 0 && (
+        <MapGroup
+          label={MAP_COPY.groups.rules.label}
+          hint={MAP_COPY.groups.rules.hint}
+          right={MAP_COPY.rulesRight(ruleRows.length)}
+          first={!toolRows.length}
+        >
+          {ruleRows.map((r) => (
+            <MapRow
+              key={r.key}
+              name={r.name}
+              origin={r.origin}
+              target={r.target}
+            />
+          ))}
+        </MapGroup>
+      )}
 
-      <MapGroup
-        label={MAP_COPY.groups.stores.label}
-        hint={
-          backed ? MAP_COPY.backedGroups.stores : MAP_COPY.groups.stores.hint
-        }
-        right={MAP_COPY.storesRight(storeRows.length)}
-      >
-        {storeRows.length === 0 ? (
-          <EmptyRow>
-            {backed ? MAP_COPY.storesNotYet : MAP_COPY.storesEmpty}
-          </EmptyRow>
-        ) : (
-          storeRows.map((r) => (
+      {storeRows.length > 0 && (
+        <MapGroup
+          label={MAP_COPY.groups.stores.label}
+          hint={MAP_COPY.groups.stores.hint}
+          right={MAP_COPY.storesRight(storeRows.length)}
+          first={!toolRows.length && !ruleRows.length}
+        >
+          {storeRows.map((r) => (
             <MapRow
               key={r.key}
               name={r.name}
@@ -274,9 +284,9 @@ export default function SourceToSandboxMap({
               target={r.target}
               mono
             />
-          ))
-        )}
-      </MapGroup>
+          ))}
+        </MapGroup>
+      )}
     </Box>
   );
 }
@@ -290,20 +300,6 @@ SourceToSandboxMap.propTypes = {
   // client/fixture seed tables.
   stores: PropTypes.array,
 };
-
-// A muted full-width row for a group the backend returned empty.
-function EmptyRow({ children }) {
-  return (
-    <Box sx={{ px: MAP_PX, py: 1 }}>
-      <Typography
-        sx={{ typography: "s3", color: "text.subtitle", fontStyle: "italic" }}
-      >
-        {children}
-      </Typography>
-    </Box>
-  );
-}
-EmptyRow.propTypes = { children: PropTypes.node };
 
 // A small "you confirmed" pill for a tool row whose read/write effect was
 // overridden by a human on the Contract tab — the map reflects that decision.

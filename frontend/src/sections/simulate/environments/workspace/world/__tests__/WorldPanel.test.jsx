@@ -143,6 +143,7 @@ describe("WorldPanel", () => {
     unmount();
     renderPanel({
       detailReady: true,
+      agentMode: "connect_only",
       tools: [{ name: "book_ride" }],
       worldTables: [],
       stores: [],
@@ -315,6 +316,24 @@ describe("WorldPanel", () => {
     expect(screen.queryByText("Refunds a charge.")).toBeNull();
   });
 
+  it("removes a hosted agent's tool from its row, with no drawer", async () => {
+    const user = userEvent.setup();
+    const chat = { send: vi.fn(), live: true, busy: false };
+    renderPanel({ ...builtEnv, source: { kind: "provider" } }, undefined, chat);
+    expect(screen.queryByRole("button", { name: REFUND_CHIP })).toBeNull();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Remove issue_refund from the world",
+      }),
+    );
+    expect(screen.getByText("Remove issue_refund?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove tool" }));
+    expect(chat.send).toHaveBeenCalledWith(
+      toolRemovalInstruction("issue_refund"),
+    );
+  });
+
   it("sends nothing when the removal is cancelled", async () => {
     const user = userEvent.setup();
     const chat = { send: vi.fn(), live: true, busy: false };
@@ -349,9 +368,10 @@ describe("WorldPanel", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("shows the no-world card for an environment with no tables and no stores", () => {
+  it("shows the no-world card for a ready environment with no tables and no stores", () => {
     renderPanel({
       detailReady: true,
+      buildStatus: "ready",
       tools: [{ name: "book_ride" }],
       worldTables: [],
       stores: [],
@@ -361,10 +381,63 @@ describe("WorldPanel", () => {
     expect(
       screen.getByText("book_ride", { selector: "span" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("No tables or stores are seeded for this environment."),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/No tables or stores are seeded/)).toBeNull();
     expect(screen.queryByText(/^World · /)).toBeNull();
+  });
+
+  it("shows a connect-only agent no world while it builds, whatever its harness tables", () => {
+    renderPanel({
+      detailReady: true,
+      buildStatus: "building",
+      agentMode: "connect_only",
+      tools: [{ name: "book_ride" }],
+      stores: [
+        { tables: [{ name: "harness_calls", rows: 3, internal: true }] },
+      ],
+      toolStatus: [status("book_ride", "in_process")],
+    });
+    expect(screen.getByText("No world to reset")).toBeInTheDocument();
+    expect(screen.queryByText("Simulated")).toBeNull();
+    expect(screen.queryByText("Writing the world")).toBeNull();
+  });
+
+  it("does not call a stopped build's unsealed world a no-world one", () => {
+    renderPanel({
+      detailReady: true,
+      buildStatus: "failed",
+      agentMode: "environment_backed",
+      tools: [{ name: "book_ride" }],
+      worldTables: [],
+      stores: [],
+      toolStatus: [status("book_ride", "simulated")],
+    });
+    expect(screen.queryByText("No world to reset")).toBeNull();
+  });
+
+  it("leaves the row count out of the world card when no rows are seeded", () => {
+    renderPanel({
+      ...builtEnv,
+      worldTables: builtEnv.worldTables.map((table) => ({ ...table, rows: 0 })),
+      worldTotalRows: 0,
+    });
+    expect(
+      screen.getByText(
+        "Each table with the tools that use it; a tool opens its details.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^0 rows/)).toBeNull();
+  });
+
+  it("leaves the tools row out of the no-world card when there are none", () => {
+    renderPanel({
+      detailReady: true,
+      agentMode: "connect_only",
+      tools: [],
+      worldTables: [],
+      stores: [],
+      toolStatus: [],
+    });
+    expect(screen.queryByText(/^Tools · /)).toBeNull();
   });
 
   it("does not call an environment without detail yet a no-world one", () => {

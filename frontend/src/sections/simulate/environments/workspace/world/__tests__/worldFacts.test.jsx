@@ -22,6 +22,7 @@ const status = (tool, extra = {}) => ({
 
 const baseEnv = {
   detailReady: true,
+  source: { kind: "github", repository: "acme/refund-agent", ref: "main" },
   tools: [
     { name: "lookup_order", desc: "Reads one order." },
     { name: "issue_refund", desc: "Refunds a charge." },
@@ -77,6 +78,17 @@ describe("WorldPanel contract evidence", () => {
     await openTool(user, "Refunds a charge.");
     expect(screen.getByText("billing.py:8-9")).toBeInTheDocument();
     expect(screen.getByText(/ledger\.refund/)).toBeInTheDocument();
+  });
+
+  it("opens no drawer for a hosted agent's tool, which has no code", () => {
+    renderPanel({ source: { kind: "provider" } });
+
+    expect(
+      screen.queryByRole("button", {
+        name: "Refunds a charge. · reads this table",
+      }),
+    ).toBeNull();
+    expect(screen.getByText("issue_refund")).toBeInTheDocument();
   });
 
   it("shows no source for a tool the build supplied none for", async () => {

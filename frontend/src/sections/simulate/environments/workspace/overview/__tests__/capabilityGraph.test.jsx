@@ -7,7 +7,7 @@ import CapabilityGraph from "../CapabilityGraph";
 const env = { name: "ride-voice-agent", surface: "voice", tools: [] };
 
 describe("CapabilityGraph", () => {
-  it("uses the real §6 data, renders a Personas branch (not 'Personas & actors'), and an empty state", () => {
+  it("uses the real §6 data, renders a Personas branch (not 'Personas & actors')", () => {
     render(
       <CapabilityGraph
         env={env}
@@ -16,20 +16,51 @@ describe("CapabilityGraph", () => {
         data={{
           tools: ["book_ride"],
           flows: ["Book a ride"],
-          personas: [], // empty §6 world.personas
+          personas: ["Late rider"],
           guardrails: ["Never invent a fare"],
         }}
       />,
     );
 
-    // Renamed branch: "Personas", and no "actors".
     expect(screen.getAllByText("Personas").length).toBeGreaterThan(0);
     expect(screen.queryByText(/Personas & actors/)).toBeNull();
-    // Real data leaves render.
     expect(screen.getByText("book_ride")).toBeInTheDocument();
     expect(screen.getByText("Book a ride")).toBeInTheDocument();
-    // Empty personas branch shows the honest placeholder, not a fixture actor.
-    expect(screen.getByText("none yet")).toBeInTheDocument();
+    expect(screen.getByText("Late rider")).toBeInTheDocument();
+  });
+
+  it("leaves an empty branch out of the graph and its tabs", () => {
+    render(
+      <CapabilityGraph
+        env={env}
+        envState={{}}
+        defaultOpen
+        data={{
+          tools: ["book_ride"],
+          flows: ["Book a ride"],
+          personas: [],
+          guardrails: [],
+        }}
+      />,
+    );
+
+    expect(screen.queryByText("Personas")).toBeNull();
+    expect(screen.queryByText("Guardrails")).toBeNull();
+    expect(screen.queryByText("none yet")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Tools" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Flows" })).toBeInTheDocument();
+  });
+
+  it("draws nothing when every branch is empty", () => {
+    const { container } = render(
+      <CapabilityGraph
+        env={env}
+        envState={{}}
+        data={{ tools: [], flows: [], personas: [], guardrails: [] }}
+      />,
+    );
+
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("caps a long branch at 5 and surfaces the rest without moving the view", () => {

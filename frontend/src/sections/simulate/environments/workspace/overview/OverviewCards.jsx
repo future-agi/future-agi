@@ -114,7 +114,6 @@ ToolsCard.propTypes = {
   agentConnected: PropTypes.bool,
 };
 
-// The hard rules told to the agent and graded afterwards.
 export function HardRulesCard({ env }) {
   const rules = ruleRowsFor(env);
   return (
@@ -176,6 +175,7 @@ HardRulesCard.propTypes = { env: ENV_SHAPE.isRequired };
 
 // What the environment is actually for.
 export function UseCasesCard({ useCases }) {
+  if (!useCases?.length) return null;
   return (
     <SectionCard dense title={OVERVIEW_COPY.useCasesTitle}>
       <Stack sx={{ p: 1.5 }} spacing={1}>

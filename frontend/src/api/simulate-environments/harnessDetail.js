@@ -59,7 +59,6 @@ const certificationsByTool = (certifications) =>
       .map((entry) => [entry.tool, entry]),
   );
 
-// ALK sends `{}` rather than null when an environment has no starting data.
 const nonEmpty = (value) => (value && Object.keys(value).length ? value : null);
 
 const runtimeExtras = (runtime) => {
@@ -102,7 +101,7 @@ const withoutTables = (tables, names) =>
 // per-scenario sub_goals become `subTasks` (the row's real-first source that
 // ScenarioDetail already prefers over the fixture), and use_case is copied
 // verbatim so Flows grouping matches `real_use_cases` by exact string.
-const toScenarioRow = (row) => ({
+export const toScenarioRow = (row) => ({
   id: row?.scenario_key || row?.scenario_id || row?.name,
   name: row?.name,
   title: row?.name,
@@ -194,6 +193,7 @@ export function harnessDetailToEnvironment(detail) {
       ? buildStatusFor(overview.status)
       : BUILD_STATUS.BUILDING,
     awaitingApproval: overview.stage === AWAITING_APPROVAL_STAGE,
+    contractReady: Boolean(contract),
     tools: derivedWorld.tools,
     rules: derivedWorld.rules,
     seed: derivedWorld.seed,
@@ -222,6 +222,7 @@ export function harnessDetailToEnvironment(detail) {
     // and how it is run (`settings.agent.mode`), for the Overview's facts.
     source: settings.source ?? null,
     agentMode: settings.agent?.mode ?? null,
+    connector: settings.agent?.connector ?? null,
     // Real per-table field types, when ALK read them from source. Empty for
     // provider agents, which have none.
     dataSchema: withoutTables(contract?.data_schema, internalTables),

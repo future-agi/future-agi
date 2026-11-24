@@ -170,13 +170,10 @@ describe("buildStatusFor", () => {
     expect(buildStatusFor("canceled")).toBe(BUILD_STATUS.FAILED);
   });
 
-  // "running" is stage 10 of 14 in `stages` — after validating_scenarios and
-  // connecting_agent — so by then the world is fully derived and the agent is
-  // attached; what is running is the calls. The backend agrees: status_for()
-  // reports RUNNING/FINALIZING/CLEANING_UP as "running" and only the states
-  // before them as "building". A build spinner here would never stop.
-  it("maps running → ready: the environment is built, the calls are running", () => {
-    expect(buildStatusFor("running")).toBe(BUILD_STATUS.READY);
+  it("maps every stage before completed → building", () => {
+    ["running", "finalizing", "cleaning_up"].forEach((s) =>
+      expect(buildStatusFor(s)).toBe(BUILD_STATUS.BUILDING),
+    );
   });
 
   it("maps every stage before the agent connects → building", () => {
