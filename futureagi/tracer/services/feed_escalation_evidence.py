@@ -1,5 +1,7 @@
 """Prepare missing occurrence timestamps outside calculation/write locks."""
 
+from typing import Any
+
 from django.db import transaction
 from django.utils import timezone
 
@@ -32,10 +34,10 @@ def prepare_issue_evidence(
         .exclude(issue_state__retired=True)
         .first()
     )
-    if issue is None:
+    if issue is None or issue.project_id is None:
         return {"prepared": 0, "unresolved": 0}
     recent = {} if since is None else {"created_at__gte": since}
-    rows = list(
+    rows: list[Any] = list(
         TraceScanIssue.no_workspace_objects.filter(
             cluster=issue,
             occurred_at__isnull=True,
@@ -61,7 +63,8 @@ def prepare_issue_evidence(
             )
             .order_by("id")[:remaining]
         )
-    cache, resolved, pending = {}, [], []
+    cache: dict[tuple[str, str], tuple] = {}
+    resolved, pending = [], []
     unresolved = 0
     for row in rows:
         at, provenance = None, ""
@@ -107,7 +110,7 @@ def prepare_issue_evidence(
             ).items()
         )
     for row, at, provenance, key, source in pending:
-        if key:
+        if key and source is not None:  # Keyed rows always carry their lookup.
             if key not in cache:
                 cache[key] = capture_occurrence(project_id=issue.project_id, **source)
             at, provenance = cache[key]

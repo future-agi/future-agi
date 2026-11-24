@@ -1,9 +1,11 @@
 """Current canonical occurrences, counted in event-time windows."""
 
 from datetime import UTC, datetime
+from typing import Any
 
 from django.db.models import CharField, Count, F, Min, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Cast, Coalesce, Concat
+from django.db.models.query import QuerySet
 
 from tracer.models.trace_error_analysis import ErrorClusterTraces
 from tracer.models.trace_scan import TraceScanIssue
@@ -20,7 +22,7 @@ class CountUnavailable(ValueError):
     """Required occurrence evidence cannot be calculated reliably."""
 
 
-def current_memberships():
+def current_memberships() -> QuerySet[Any]:
     """Shared source-aware selector, independent of worker request context."""
     return ErrorClusterTraces.no_workspace_objects.filter(
         cluster__deleted=False,
@@ -54,7 +56,7 @@ def evidence_since(boundary: datetime) -> datetime:
     return boundary - WINDOW - BASELINE_WINDOW - PROCESSING_ALLOWANCE
 
 
-def _aggregate(qs, *, identity, trace, boundary, now, unit="findings"):
+def _aggregate(qs, *, identity, trace, boundary, now, unit="findings") -> Counts:
     # Rows recorded before the range cannot count, so a missing time there
     # must not block evaluation (pre-upgrade history is never repaired).
     if qs.filter(

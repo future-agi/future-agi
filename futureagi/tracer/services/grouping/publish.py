@@ -745,6 +745,7 @@ def _assign(
         raise GroupingConflict("finding has another active membership")
     if finding.cluster_id not in {None, state.cluster_id}:
         raise GroupingConflict("finding is owned by another issue")
+    job = finding.report.job
     junction, _ = ErrorClusterTraces.no_workspace_objects.get_or_create(
         cluster=state.cluster,
         finding=finding,
@@ -752,11 +753,9 @@ def _assign(
             "trace_id": finding.report.trace_id,
             "span_id": None,
             "trace_session_id": None,
-            "occurred_at": finding.report.job.root_end_time
-            if finding.report.job_id
-            else None,
+            "occurred_at": job.root_end_time if job else None,
             "occurrence_time_source": "omega_root_end"
-            if finding.report.job_id and finding.report.job.root_end_time
+            if job and job.root_end_time
             else "",
         },
     )

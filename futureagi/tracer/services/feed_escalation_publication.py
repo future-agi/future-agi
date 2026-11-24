@@ -108,8 +108,10 @@ def eval_occurrence_time(project_id, result):
     if entry is None:
         # Deleted after the fetch: the caller's live-eval lock skips it.
         return None, ""
+    config = entry.custom_eval_config
     if (
-        str(entry.custom_eval_config.project_id) != str(project_id)
+        config is None
+        or str(config.project_id) != str(project_id)
         or entry.target_type != result.target_type
     ):
         raise ValueError("Evaluation publication scope changed")

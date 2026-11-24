@@ -3,6 +3,7 @@
 import copy
 from datetime import timedelta
 from time import monotonic
+from uuid import UUID
 
 import structlog
 from django.conf import settings
@@ -449,7 +450,7 @@ def sweep_feed_escalations(workspace_id: str | None = None):
     # Drain batches within one settled boundary instead of delaying every 501st
     # issue by five minutes. Leave time to enqueue a continuation before timeout.
     now, started = timezone.now(), monotonic()
-    attempted = set()
+    attempted: set[UUID] = set()
     result = {"evaluated": 0, "error": 0, "stale": 0, "skipped": 0}
     while monotonic() - started < 240:
         ids = list(

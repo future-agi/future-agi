@@ -39,7 +39,7 @@ class Policy:
                 raise ValueError(f"{name} must be an integer from {lower} to {upper}")
             if name.endswith("minutes") and value % 5:
                 raise ValueError(f"{name} must be a multiple of five")
-        for name, lower in (
+        for name, floor in (
             ("entry_multiplier", Decimal("1.1")),
             ("recovery_multiplier", Decimal("1.0")),
         ):
@@ -48,8 +48,8 @@ class Policy:
                 value = Decimal(str(raw))
             except (InvalidOperation, ValueError):
                 raise ValueError(f"{name} must be a finite decimal") from None
-            if not value.is_finite() or not lower <= value <= 20:
-                raise ValueError(f"{name} must be between {lower} and 20")
+            if not value.is_finite() or not floor <= value <= 20:
+                raise ValueError(f"{name} must be between {floor} and 20")
             if value * 10 != (value * 10).to_integral_value():
                 raise ValueError(f"{name} must use increments of 0.1")
             object.__setattr__(self, name, value.quantize(Decimal("0.1")))

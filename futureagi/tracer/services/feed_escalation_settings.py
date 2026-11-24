@@ -1,5 +1,7 @@
 """Scoped current settings and serialized policy writes; no change-history store."""
 
+from datetime import datetime
+
 from django.db import transaction
 
 from accounts.models.workspace import Workspace
@@ -66,7 +68,7 @@ def get_policy(workspace_id) -> Policy:
     return get_policy_snapshot(workspace_id)[0]
 
 
-def get_policy_snapshot(workspace_id):
+def get_policy_snapshot(workspace_id) -> tuple[Policy, datetime | None]:
     row = FeedEscalationPolicy.no_workspace_objects.filter(
         workspace_id=workspace_id
     ).first()
