@@ -9,9 +9,14 @@ reads:
   The pull request's own base.sha is older than the tip, as recorded.
 - pr-4335-e8e8b458: the same PR's earlier head, whose Backend CI and E2E CI
   succeeded.
+  Its artifacts-45079002539.json keeps 5 of the run's 85 artifacts (its
+  total_count still says 85).
 - skipped-4332: a Backend CI run that an edit started with every job skipped.
 - timeline-4022 (GitHub's automatic retarget), timeline-4293 (a manual
-  retarget) and timeline-4332 (none).
+  retarget) and timeline-4332 (none), each trimmed to a few events: 5 of 46,
+  5 of 72 and 4 of 20. Each keeps every base-change event of the full
+  timeline (one, one and none).
+- rerun-45140763390: an E2E CI run with three attempts (re-run failed jobs).
 
 No producer records receipts until this change is live, so every receipt
 here is CONSTRUCTED inside a test, bound to the recorded state, and labelled
@@ -316,6 +321,21 @@ class VerdictTests(unittest.TestCase):
                 key = next(iter(change))
                 self.assertIn(f"it tested {key} {change[key]!r}", text)
 
+    def test_a_receipt_from_another_run_or_attempt_is_rejected(self):
+        for kind in ("run_id", "run_attempt"):
+            with self.subTest(kind=kind):
+                state = State().succeeded()
+                other = state.producer("e2e")["id"]
+                # Another run of this same head, or a later attempt than the
+                # one whose receipt job wrote it (attempt 1).
+                change = {"run_id": other} if kind == "run_id" else {"run_attempt": 2}
+                run = state.receipt("backend", **change)
+                state.receipt("e2e")
+                code, text, _ = judge(state)
+                self.assertEqual(code, 1, text)
+                now = run["id"] if kind == "run_id" else 1
+                self.assertIn(f"it tested {kind} {change[kind]!r}; now {now!r}", text)
+
     def test_a_skipped_producer_is_rejected(self):
         state = State().succeeded()
         skipped = load("skipped-4332/run-45070969031.json")
@@ -596,6 +616,32 @@ class AttemptTests(unittest.TestCase):
         code, text, _ = judge(state)
         self.assertEqual(code, 0, text)
 
+    def test_an_earlier_attempt_s_receipt_does_not_outlive_a_later_failure(self):
+        # Attempt 1 passed and wrote a receipt; attempt 2 ran the suite again
+        # and it failed, so its receipt job was skipped (or is not listed).
+        for relisted in (True, False):
+            with self.subTest(receipt_job_relisted=relisted):
+                state = State().succeeded()
+                run = state.receipt("backend", attempt=1)
+                state.receipt("e2e")
+                again = {
+                    "status": "completed",
+                    "run_attempt": 2,
+                    "started_at": "2026-11-24T09:00:00Z",
+                    "completed_at": "2026-11-24T09:20:00Z",
+                }
+                jobs = state.jobs[run["id"]]
+                jobs.append(
+                    dict(again, name="Backend Tests Pass", conclusion="failure")
+                )
+                if relisted:
+                    jobs.append(
+                        dict(again, name=gate.RECEIPT_JOB, conclusion="skipped")
+                    )
+                code, text, _ = judge(state)
+                self.assertEqual(code, 1, text)
+                self.assertIn("Backend Tests Pass is failure", text)
+
 
 class ReceiptIntegrityTests(unittest.TestCase):
     def test_a_digest_mismatch_is_rejected(self):
@@ -716,6 +762,76 @@ class ReceiptIntegrityTests(unittest.TestCase):
             ],
         )
 
+    def test_the_token_goes_only_to_the_api_and_never_along_a_redirect(self):
+        github = gate.GitHub("secret-token")
+        request = github._request("https://api.github.com/repos/o/r/pulls/1")
+        # Unredirected: urllib does not copy it onto a redirected request.
+        self.assertEqual(
+            request.unredirected_hdrs, {"Authorization": "Bearer secret-token"}
+        )
+        self.assertNotIn("Authorization", request.headers)
+        for url in (
+            "https://storage.example/blob",
+            "http://api.github.com/repos/o/r",
+            "https://api.github.com.example/repos/o/r",
+            "https://api.github.com@storage.example/repos/o/r",
+            "https://api.github.com:8443/repos/o/r",
+            "https://user@api.github.com/repos/o/r",
+            "https://api.github.com",
+        ):
+            with self.subTest(url=url), self.assertRaises(gate.Unknown):
+                github._request(url)
+        # The refusal names where, never a signed query.
+        with self.assertRaises(gate.Unknown) as refused:
+            github._request("https://storage.example/blob?sig=secret")
+        self.assertIn("https://storage.example/blob", str(refused.exception))
+        self.assertNotIn("sig=secret", str(refused.exception))
+
+    def test_a_url_off_the_api_is_refused_before_anything_is_sent(self):
+        github = gate.GitHub("secret-token", pause=lambda _: None)
+        opened = []
+
+        class Response(io.BytesIO):
+            # The first page links its next page to another host.
+            headers = {"Link": '<https://storage.example/runs?page=2>; rel="next"'}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def urlopen(request, timeout):
+            opened.append((request.full_url, request.get_header("Authorization")))
+            return Response(b'{"workflow_runs": [{"id": 1}]}')
+
+        first = "/repos/o/r/actions/runs?per_page=100"
+        with (
+            mock.patch.object(gate.urllib.request, "urlopen", urlopen),
+            mock.patch.object(github.bare, "open", side_effect=AssertionError),
+        ):
+            with self.assertRaises(gate.Unknown):
+                gate.pages(github.json, first, "workflow_runs")
+            with self.assertRaises(gate.Unknown):
+                github.json("https://storage.example/repos/o/r")
+            with self.assertRaises(gate.Unknown):
+                github.download("https://storage.example/artifacts/1/zip")
+        # Only the first page was ever requested, from the API, with the token.
+        self.assertEqual(opened, [(gate.API + first, "Bearer secret-token")])
+        # In the verdict an off-API URL is a fact it cannot establish: into
+        # main it fails closed.
+        state = State().succeeded()
+        state.receipt("backend")
+        state.receipt("e2e")
+
+        def download(url):
+            raise gate.Unknown(f"refusing to send the token outside {gate.API}: {url}")
+
+        state.download = download
+        code, text, _ = judge(state)
+        self.assertEqual(code, 1, text)
+        self.assertIn("refusing to send the token outside", text)
+
 
 class WorkflowTests(unittest.TestCase):
     WORKFLOWS = SCRIPTS.parent / "workflows"
@@ -728,7 +844,12 @@ class WorkflowTests(unittest.TestCase):
         permissions = re.search(r"(?ms)^permissions:\n(.*?)(?=^\S)", text)[1]
         self.assertEqual(
             sorted(re.findall(r"(?m)^  ([a-z-]+): (\w+)$", permissions)),
-            [("actions", "read"), ("contents", "read"), ("pull-requests", "read")],
+            [
+                ("actions", "read"),
+                ("contents", "read"),
+                ("issues", "read"),
+                ("pull-requests", "read"),
+            ],
         )
         jobs = text.split("\njobs:\n", 1)[1]
         self.assertNotRegex(jobs, r"(?m)^    if:")

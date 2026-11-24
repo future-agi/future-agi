@@ -21,6 +21,9 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  # The pull request's timeline (issues/{number}/timeline): the permission
+  # GitHub documents for it, so a base change is never missed for want of it.
+  issues: read
   # Workflow runs, their jobs and their artifacts.
   actions: read
 

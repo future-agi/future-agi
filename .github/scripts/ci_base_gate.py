@@ -125,14 +125,23 @@ class GitHub:
         self.bare = urllib.request.build_opener(_NoRedirect)
 
     def _request(self, url):
-        return urllib.request.Request(
+        # The token goes only to the API over HTTPS: any other URL, from a
+        # caller, a pagination link or an artifact record, is refused before
+        # a request exists. It is also unredirected: urllib copies ordinary
+        # headers onto a redirected request, but never these.
+        if not url.startswith(API + "/"):
+            # Without its query: a signed storage URL is not logged.
+            where = url.split("?", 1)[0]
+            raise Unknown(f"refusing to send the token outside {API}: {where}")
+        request = urllib.request.Request(
             url,
             headers={
                 "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {self.token}",
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
+        request.add_unredirected_header("Authorization", f"Bearer {self.token}")
+        return request
 
     def json(self, path):
         url = path if path.startswith("https://") else API + path
