@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
 import { evalDisplayName } from "../_mock/callRecord";
+import { requiredEvalIds } from "../_mock/evals";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
@@ -2376,6 +2377,17 @@ function SubGoalsSummary({ task, env, envState, basis = null }) {
   const missed = rows.filter((r) => r.status !== "met");
   /* A sub-actor who didn't come in: listed with the rest, in no count. */
   const list = expanded ? [...rows, ...notApplicable] : missed;
+  /* Evaluations, listed like the sub-goals under their own header (Dileep,
+     24 Nov). A failed required one fails the conversation, so it shows
+     even when the row is folded; the rest only under Show all. */
+  const required = new Set(requiredEvalIds(envState?.evals || []));
+  const evalRows = (task.evalResults || []).filter(
+    (e) => e && typeof e.passed === "boolean",
+  );
+  const evalList = expanded
+    ? evalRows
+    : evalRows.filter((e) => !e.passed && required.has(e.id));
+  const headed = evalList.length > 0;
   const verdictIcon = {
     failed: "solar:close-linear",
     inconclusive: "solar:question-circle-linear",
@@ -2402,7 +2414,7 @@ function SubGoalsSummary({ task, env, envState, basis = null }) {
           {rollupLine(rollup)}
         </Typography>
         <Typography noWrap sx={{ typography: "s3", color: "text.tertiary" }}>
-          {`· ${met} of ${rows.length} met`}
+          {`· ${met} of ${rows.length} sub-goals met`}
         </Typography>
         {basis && (
           <Tooltip arrow title={basis.note}>
@@ -2435,6 +2447,7 @@ function SubGoalsSummary({ task, env, envState, basis = null }) {
           {expanded ? "Hide" : "Show all"}
         </ButtonBase>
       </Stack>
+      {headed && list.length > 0 && <CellHeader>Sub-goals</CellHeader>}
       {list.map((r) => (
         <Stack
           key={r.key}
@@ -2525,6 +2538,58 @@ function SubGoalsSummary({ task, env, envState, basis = null }) {
           )}
         </Stack>
       ))}
+      {headed && <CellHeader>Evaluations</CellHeader>}
+      {evalList.map((e) => {
+        const req = required.has(e.id);
+        return (
+          <Stack
+            key={e.id}
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{ pl: 2 }}
+          >
+            <Typography
+              noWrap
+              sx={{
+                typography: "s3",
+                color: "text.secondary",
+                maxWidth: SUBGOAL_LINE_MAX,
+              }}
+            >
+              {evalDisplayName(e.name) || e.id}
+            </Typography>
+            {req && (
+              <Tooltip
+                arrow
+                title="Required — a failing score fails the conversation"
+              >
+                <Typography
+                  sx={{
+                    typography: "s3",
+                    color: "text.tertiary",
+                    cursor: "default",
+                  }}
+                >
+                  · Required
+                </Typography>
+              </Tooltip>
+            )}
+            <Iconify
+              icon={e.passed ? "solar:check-linear" : "solar:close-linear"}
+              width={12}
+              sx={{
+                color: e.passed
+                  ? "status.success.fg"
+                  : req
+                    ? "status.danger.fg"
+                    : "text.tertiary",
+                flexShrink: 0,
+              }}
+            />
+          </Stack>
+        );
+      })}
     </Stack>
   );
 }
@@ -2534,6 +2599,24 @@ SubGoalsSummary.propTypes = {
   envState: PropTypes.object,
   basis: PropTypes.object,
 };
+
+/* "Sub-goals" / "Evaluations" over their lists in the Run details cell. */
+function CellHeader({ children }) {
+  return (
+    <Typography
+      sx={{
+        typography: "s3",
+        color: "text.tertiary",
+        fontWeight: 500,
+        pl: 2,
+        pt: 0.375,
+      }}
+    >
+      {children}
+    </Typography>
+  );
+}
+CellHeader.propTypes = { children: PropTypes.node };
 
 function Field({ icon, label, value }) {
   if (value == null || value === "") return null;

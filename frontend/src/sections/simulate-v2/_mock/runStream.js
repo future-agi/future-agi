@@ -915,7 +915,7 @@ export function buildRun({
           passed: false,
           ...(!required && { reportedOnly: true }),
           reason: required
-            ? `${line} — a required evaluation: flagged beside the task result, which it doesn't change.`
+            ? `${line} — a required evaluation, so the conversation fails even though every critical sub-goal held.`
             : `${line} — reported only; every critical sub-goal held, so the conversation still passes.`,
         };
         if (required && !requiredHit) requiredHit = evalResults[k];
@@ -925,13 +925,16 @@ export function buildRun({
     /* The verdict of the kept episode. Older runs: the graders' — with none
        applied the scenario is not measured (above). Sub-goal rule: the
        critical sub-goals', or a required evaluation's. */
-    /* The task checks decide; a required evaluation's failure is shown
-       beside them, never folded in (plan evals "Task pass, poor explanation"). */
+    /* The task checks decide the call log. The verdict (Option B, Chintan
+       via Dileep, 24 Nov): a required evaluation that failed fails the
+       conversation even when every critical sub-goal held; other
+       evaluations are reported beside it and never change it. */
     const gradedFail = subGoalsDecide
       ? failed
       : evalResults.length
         ? evalResults.some((e) => !e.passed)
         : failed;
+    const verdictFail = gradedFail || (subGoalsDecide && !!requiredHit);
     const callLog = buildCallLog(sc, tools, r, gradedFail);
 
     /*
@@ -962,7 +965,11 @@ export function buildRun({
       faultFailEvals(evalResults, injected.failed);
     }
     const samples = [
-      forced ? forced[0] : gradedFail || injected?.failed ? "failed" : "passed",
+      forced
+        ? forced[0]
+        : verdictFail || injected?.failed
+          ? "failed"
+          : "passed",
     ];
     /*
       Only scenarios near their own threshold disagree with themselves. Drawing
@@ -975,7 +982,7 @@ export function buildRun({
     const margin = Math.abs(draw - failChance);
     const flipChance = Math.max(0, 0.55 - margin * 4);
     for (let k = 1; k < Math.max(1, repeats); k += 1) {
-      const flipped = r() < flipChance ? !gradedFail : gradedFail;
+      const flipped = r() < flipChance ? !verdictFail : verdictFail;
       /* A later sample meets the same fault profile, drawn afresh. */
       const faultFailed = condition?.failed
         ? true
