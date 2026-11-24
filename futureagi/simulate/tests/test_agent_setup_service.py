@@ -393,9 +393,7 @@ def test_a_malformed_model_source_is_not_shown(version, part):
     ],
 )
 @pytest.mark.django_db
-def test_a_malformed_path_or_line_is_dropped_and_the_setting_kept(
-    version, path, line
-):
+def test_a_malformed_path_or_line_is_dropped_and_the_setting_kept(version, path, line):
     agent = _shown_model_source(
         version, {"setting": "_MODEL_2", "path": path, "line": line}
     )
