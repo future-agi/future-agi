@@ -217,15 +217,22 @@ describe("FixRunPage", () => {
     };
   };
 
-  it("starts the breadcrumb at the environment, linking to its Epochs tab", () => {
+  it("crumbs the environment, then its Epochs tab, then the epoch", () => {
     pin({ from_issue: true, issue: ISSUE });
     renderPage("fix-search");
     const crumb = screen.getByTestId("epoch-environment-crumb");
     expect(crumb).toHaveTextContent("new env");
     expect(crumb).toHaveAttribute(
       "href",
+      "/dashboard/simulate/environments/env-1",
+    );
+    const epochs = screen.getByTestId("epoch-epochs-crumb");
+    expect(epochs).toHaveTextContent("Epochs");
+    expect(epochs).toHaveAttribute(
+      "href",
       "/dashboard/simulate/environments/env-1?tab=improvements",
     );
+    expect(screen.getByText("Epoch 13")).toBeInTheDocument();
     // The issue's id is never the breadcrumb.
     expect(screen.queryByText(/S-1A2B3C4D/)).toBeNull();
     // Nor is the environment named twice.

@@ -144,7 +144,7 @@ test('ERR-E2E-006: a developer runs an Epoch from an Error Feed issue and follow
       'the create POST body is exactly the issue, project, environment and the picks after the swap',
       'the run POST body is exactly the kept scenario and the review\'s launch rows at their defaults',
       'the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload',
-      'the epoch page\'s breadcrumb is the environment linking to its Epochs tab, the header reads "From issue: <title>" linking to the issue, and both survive a reload',
+      'the epoch page\'s breadcrumb is the environment linking to the environment, then Epochs linking to its Epochs tab, the header reads "From issue: <title>" linking to the issue, and both survive a reload',
       'the list reads the page\'s cluster ids in one batch and the issue\'s icon reads "Epoch 3 · Ready for review"',
     ],
   }),
@@ -228,7 +228,10 @@ test('ERR-E2E-006: a developer runs an Epoch from an Error Feed issue and follow
       exactPath(`/dashboard/simulate/environments/${ENV_ID}/improvements/${ids.epoch}`), { timeout: UI_READY },
     );
     await expect(crumb).toHaveText(ENV_NAME, { timeout: UI_READY });
-    await expect(crumb).toHaveAttribute('href', `/dashboard/simulate/environments/${ENV_ID}?tab=improvements`);
+    await expect(crumb).toHaveAttribute('href', `/dashboard/simulate/environments/${ENV_ID}`);
+    const epochs = page.getByTestId('epoch-epochs-crumb');
+    await expect(epochs).toHaveText('Epochs');
+    await expect(epochs).toHaveAttribute('href', `/dashboard/simulate/environments/${ENV_ID}?tab=improvements`);
     await expect(origin).toHaveText(`From issue: ${ISSUE_TITLE}`);
     await expect(origin).toHaveAttribute('href', `/dashboard/error-feed/${ids.cluster}`);
   }, { timeout: UI_READY });

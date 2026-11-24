@@ -160,6 +160,7 @@ export default function FixHeader({ fix, envId, runTestId, actions }) {
       </IconButton>
       <Box flex={1} minWidth={0}>
         <Stack direction="row" alignItems="center" spacing={1}>
+          {/* The design's crumbs: the environment, then its Epochs tab. */}
           {fix.environment?.name && (
             <Typography
               noWrap
@@ -167,7 +168,7 @@ export default function FixHeader({ fix, envId, runTestId, actions }) {
             >
               <Link
                 component={RouterLink}
-                href={epochsHref}
+                href={paths.dashboard.simulate.environments.detail(envId)}
                 color="inherit"
                 underline="hover"
                 data-testid="epoch-environment-crumb"
@@ -177,6 +178,21 @@ export default function FixHeader({ fix, envId, runTestId, actions }) {
               {" /"}
             </Typography>
           )}
+          <Typography
+            noWrap
+            sx={{ typography: "m3", color: "text.secondary", flexShrink: 0 }}
+          >
+            <Link
+              component={RouterLink}
+              href={epochsHref}
+              color="inherit"
+              underline="hover"
+              data-testid="epoch-epochs-crumb"
+            >
+              Epochs
+            </Link>
+            {" /"}
+          </Typography>
           <Typography
             noWrap
             sx={{ typography: "m3", fontWeight: 600, flexShrink: 0 }}
