@@ -34,8 +34,12 @@ import {
   ghJson,
   readRuntimeSkips,
   receiptArtifact,
+  runAttempt,
   runDate,
+  settledListings,
+  SETTLE_PAUSES,
   shardAttempts,
+  unsettled,
 } from "./shard-report.mjs";
 
 const flat = (groups) => groups.flat().sort();
@@ -448,6 +452,135 @@ test("a download cut short is fetched again until it matches its digest", () => 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("the report reads both listings again until they show every shard and receipt", () => {
+  // As in merge group run 45343675711: a shard had finished, but neither
+  // listing showed it yet.
+  const job = (i) => ({
+    name: `e2e (distributed, ${i}/2)`,
+    run_attempt: 1,
+    started_at: "2026-11-24T07:20:00Z",
+    completed_at: "2026-11-24T07:30:04Z",
+  });
+  const receipts = (i) => [
+    { name: `blob-report-distributed-${i}-attempt-1`, expired: false },
+    { name: `stack-images-distributed-${i}-attempt-1`, expired: false },
+  ];
+  const record = { name: "once-per-stack-distributed-attempt-1", expired: false };
+  const full = { jobs: [job(1), job(2)], artifacts: [...receipts(1), ...receipts(2), record] };
+  const lagging = { jobs: [job(1)], artifacts: receipts(1) };
+  const settle = (...rounds) => {
+    const reads = [];
+    const sleeps = [];
+    const logs = [];
+    const read = (what) => {
+      const round = rounds[Math.min(Math.floor(reads.length / 2), rounds.length - 1)];
+      reads.push(what);
+      return structuredClone(round[what]);
+    };
+    try {
+      const result = settledListings(
+        read,
+        { stack: "distributed", total: 2, attempt: 1 },
+        { sleep: (ms) => sleeps.push(ms), log: (line) => logs.push(line) },
+      );
+      return { result, reads, sleeps, logs };
+    } catch (error) {
+      return { error, reads, sleeps, logs };
+    }
+  };
+  // Listed in full: one read of each, and no wait.
+  let s = settle(full);
+  assert.deepEqual([s.reads, s.sleeps, s.logs], [["jobs", "artifacts"], [], []]);
+  assert.deepEqual(s.result, full);
+  // Behind twice, then caught up: both read again, in full, after each pause.
+  s = settle(lagging, lagging, full);
+  assert.deepEqual(s.sleeps, [5000, 10000]);
+  assert.deepEqual(s.reads, ["jobs", "artifacts", "jobs", "artifacts", "jobs", "artifacts"]);
+  assert.deepEqual(s.result, full);
+  assert.match(s.logs[0], /do not show job e2e \(distributed, 2\/2\) yet; reading them again in 5 s$/);
+  // Never caught up: after the pauses it fails closed, naming what is missing.
+  s = settle(lagging);
+  assert.deepEqual(s.sleeps, SETTLE_PAUSES.map((pause) => pause * 1000));
+  assert.equal(SETTLE_PAUSES.reduce((sum, pause) => sum + pause, 0), 90);
+  assert.equal(s.reads.length, 2 * (SETTLE_PAUSES.length + 1));
+  assert.match(
+    s.error.message,
+    /^after 90 s of reading, the run's listings still do not show job e2e \(distributed, 2\/2\)$/,
+  );
+  // Every job listed, one receipt not yet: it waits for that receipt too.
+  s = settle({ jobs: full.jobs, artifacts: [...receipts(1), receipts(2)[0], record] });
+  assert.match(s.error.message, /still do not show artifact stack-images-distributed-2-attempt-1$/);
+  // A plan or caller prefix that cannot name the shards fails before any read.
+  for (const [plan, cause] of [
+    [{ stack: "distributed", total: 2, prefix: "retarget-e2e" }, /invalid job prefix/],
+    [{ stack: "both", total: 2 }, /invalid stack plan/],
+    [{ stack: "distributed", total: 0 }, /invalid stack plan/],
+  ]) {
+    const reads = [];
+    assert.throws(
+      () => settledListings((what) => reads.push(what) && [], plan, { sleep: () => assert.fail("slept") }),
+      cause,
+    );
+    assert.deepEqual(reads, []);
+  }
+});
+
+test("a shard shows once its job in this attempt has finished; its receipts are the producing attempt's", () => {
+  const job = (i, attempt, ran = attempt, finished = true) => ({
+    name: `e2e (distributed, ${i}/2)`,
+    run_attempt: attempt,
+    started_at: `2026-11-24T0${ran}:00:00Z`,
+    completed_at: finished ? `2026-11-24T0${ran}:30:00Z` : null,
+  });
+  const listed = (...names) => names.map((name) => ({ name, expired: false }));
+  // Attempt 2 re-ran shard 2; shard 1 appears again as a copy of attempt 1.
+  const jobs = [job(1, 1), job(2, 1), job(1, 2, 1), job(2, 2)];
+  const artifacts = listed(
+    "blob-report-distributed-1-attempt-1",
+    "stack-images-distributed-1-attempt-1",
+    "blob-report-distributed-2-attempt-2",
+    "stack-images-distributed-2-attempt-2",
+    "once-per-stack-distributed-attempt-2",
+  );
+  assert.deepEqual(unsettled("distributed", 2, jobs, artifacts, "", 2), []);
+  // Attempt 2 lists only attempt 1's job for shard 2 so far, or not finished.
+  for (const shown of [jobs.slice(0, 3), [...jobs.slice(0, 3), job(2, 2, 2, false)]])
+    assert.deepEqual(unsettled("distributed", 2, shown, artifacts, "", 2), [
+      "job e2e (distributed, 2/2)",
+    ]);
+  // The re-run shard's receipts are attempt 2's; the record is the last shard's.
+  assert.deepEqual(unsettled("distributed", 2, jobs, artifacts.slice(0, 2), "", 2), [
+    "artifact blob-report-distributed-2-attempt-2",
+    "artifact stack-images-distributed-2-attempt-2",
+    "artifact once-per-stack-distributed-attempt-2",
+  ]);
+  // An expired receipt counts as listed: waiting cannot bring it back, and
+  // the report rejects it at once.
+  const expired = artifacts.map((row, i) => (i === 0 ? { ...row, expired: true } : row));
+  assert.deepEqual(unsettled("distributed", 2, jobs, expired, "", 2), []);
+  assert.throws(
+    () => receiptArtifact(expired, "blob-report-distributed-1-attempt-1"),
+    /missing or repeated receipt/,
+  );
+  // A caller's prefix names the jobs.
+  const called = jobs.map((row) => ({ ...row, name: `retarget-e2e / ${row.name}` }));
+  assert.deepEqual(unsettled("distributed", 2, called, artifacts, "retarget-e2e / ", 2), []);
+  assert.deepEqual(unsettled("distributed", 2, called, artifacts, "", 2), [
+    "job e2e (distributed, 1/2)",
+    "job e2e (distributed, 2/2)",
+  ]);
+  // Outside Actions the attempt is unknown: a shard's latest job counts.
+  assert.deepEqual(unsettled("distributed", 2, jobs, artifacts), []);
+  // Copies with a gap are not a listing delay: nothing to wait for, and the
+  // report fails on them as before.
+  const gap = [job(1, 1), job(2, 1), job(1, 3, 1), job(2, 3)];
+  assert.deepEqual(unsettled("distributed", 2, gap, artifacts, "", 3), []);
+  assert.throws(() => shardAttempts("distributed", 2, gap), /inconsistent/);
+  assert.equal(runAttempt({ GITHUB_RUN_ATTEMPT: "3" }), 3);
+  for (const env of [{}, { GITHUB_RUN_ATTEMPT: "" }, { GITHUB_RUN_ATTEMPT: "0" }, { GITHUB_RUN_ATTEMPT: "x" }])
+    assert.equal(runAttempt(env), 0);
 });
 
 test("a receipt is exactly one unexpired artifact", () => {
@@ -1247,6 +1380,8 @@ process.stdout.write(hash + "  " + file + "\\n");`,
           E2E_STACK: "distributed",
           SHARD_TOTAL: "3",
           E2E_QUARANTINE_TODAY: "2026-11-22",
+          // The attempt the report job runs in: the last one.
+          GITHUB_RUN_ATTEMPT: String(ran.length),
         },
       },
     );
