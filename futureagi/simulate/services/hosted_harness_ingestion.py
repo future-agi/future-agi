@@ -1389,7 +1389,8 @@ def graded_receipt(body: dict[str, Any], unverified: list[str]) -> dict[str, Any
     sub_goals = graded_sub_goals(body.get("sub_goals") or [], unverified)
     status = body.get("status")
     failure = body.get("failure") if isinstance(body.get("failure"), dict) else None
-    call = body.get("call") if isinstance(body.get("call"), dict) else {}
+    found = body.get("call")
+    call: dict[str, Any] = found if isinstance(found, dict) else {}
     if status in ("passed", "failed") and sub_goals != list(
         body.get("sub_goals") or []
     ):

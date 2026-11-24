@@ -178,7 +178,8 @@ def outcome_fields(
     return {
         # A passed receipt whose call has no score is not a pass, as `receipt_counts` reads it.
         "outcome_passed": (
-            by_status.get("passed", 0) - receipts["no_score_by_status"].get("passed", 0)
+            receipts["by_status"].get("passed", 0)
+            - receipts["no_score_by_status"].get("passed", 0)
             if receipts is not None
             else None
         ),
