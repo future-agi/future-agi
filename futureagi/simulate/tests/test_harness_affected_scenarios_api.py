@@ -238,7 +238,9 @@ class TestDoneWhen:
             "keys": REFUND_KEYS,
             "truncated": False,
         }
-        assert routing["fix"]["action"] == "Point issue_refund at the test world"
+        assert routing["fix"]["action"] == (
+            "Upload a new agent version that serves issue_refund from its tools service, or remove it"
+        )
         assert before["selection"]["blocked"] == 4
 
         e2 = _redirected(environment)

@@ -1013,6 +1013,36 @@ def test_validate_before_save_is_required_by_default(
     assert drafts.open_draft(environment, "environment") is not None
 
 
+def test_an_agent_fix_saves_its_own_cases_without_validate_while_a_person_still_validates(
+    user, workspace, storage, auth_client
+):
+    """An agent fix's own add-to-suite is gated by readiness, not by Validate: its runs measure the cases it adds. The
+    same drafts saved by a person are still refused until validated."""
+    environment = _with_world(user, workspace, "cand-agent-fix", storage)
+    _two_actors(auth_client, environment)
+    draft = drafts.open_draft(environment, "environment")
+    request = {
+        "environment": drafts.SaveRequest(
+            expected_parent_id=draft.parent_id, expected_revision=draft.revision
+        )
+    }
+
+    refused = _plain_save(auth_client, environment)
+    assert (refused.status_code, refused.json()["error"]) == (
+        409,
+        "validation_required",
+    )
+    drafts.save_drafts(
+        environment,
+        request,
+        idempotency_key="agent-fix-1",
+        user=user,
+        for_agent_fix=True,
+    )
+
+    assert drafts.open_draft(environment, "environment") is None
+
+
 def test_plain_drafts_save_works_as_today(
     user, workspace, storage, auth_client, settings
 ):

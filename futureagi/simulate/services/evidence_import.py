@@ -519,6 +519,7 @@ def add_to_suite(
     expected: dict[str, drafts.DraftRef],
     idempotency_key: str,
     user,
+    for_agent_fix: bool = False,
 ) -> bool:
     """Add the drafted scenarios of ``case_ids`` to the environment's suite, in one
     transaction under the environment's lock. ``expected`` is the unsaved changes
@@ -614,18 +615,25 @@ def add_to_suite(
         # The checks only skip an attempt bound to be refused; the savepoint keeps the cases whatever refuses.
         saved = (
             all(ref == drafts.NO_DRAFT for ref in seen.values())
-            and not drafts.must_validate(locked)
+            and (for_agent_fix or not drafts.must_validate(locked))
             and live_validation(locked) is None
         )
         if saved:
-            saved = _save_added(locked, write, idempotency_key, user)
+            saved = _save_added(
+                locked, write, idempotency_key, user, for_agent_fix=for_agent_fix
+            )
         _record_add(locked.id, evidence_import, wanted, saved, idempotency_key)
         transaction.on_commit(lambda: drafts.retire_chat_runtime(locked))
     return saved
 
 
 def _save_added(
-    locked: HostedHarnessJob, write: drafts.DraftWrite, idempotency_key: str, user
+    locked: HostedHarnessJob,
+    write: drafts.DraftWrite,
+    idempotency_key: str,
+    user,
+    *,
+    for_agent_fix: bool = False,
 ) -> bool:
     """Save the drafts the add wrote; a Save refused for now is undone alone and leaves them unsaved."""
     try:
@@ -645,6 +653,7 @@ def _save_added(
                 },
                 idempotency_key=idempotency_key,
                 user=user,
+                for_agent_fix=for_agent_fix,
             )
     except HostedHarnessError as refused:
         if refused.status_code >= 500 or refused.code in _REFUSE_WHOLE_ADD:

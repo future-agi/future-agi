@@ -32,6 +32,24 @@ class HostedHarnessJob(BaseModel):
         FAILED = "failed", "Failed"
         CANCELED = "canceled", "Canceled"
 
+    class CancelConfirmation(models.TextChoices):
+        SANDBOX_ABSENT = "sandbox_absent", "Sandbox absent"
+        PROVIDER_CALL_ENDED = "provider_call_ended", "Provider call ended"
+        CLEANUP_FAILED = "cleanup_failed", "Cleanup failed"
+        PROVIDER_CALL_OPEN = "provider_call_open", "Provider call still open"
+        PROVIDER_UNCHECKED = "provider_unchecked", "Provider calls not checked"
+        UNCHECKED_NO_KEY = "unchecked_no_key", "Not checked: no provider key"
+        UNCHECKED_KEY_REJECTED = (
+            "unchecked_key_rejected",
+            "Not checked: provider rejected the key",
+        )
+        UNCHECKED_NO_TARGET = "unchecked_no_target", "Not checked: no provider agent ID"
+        UNCHECKED_NO_CALLS = "unchecked_no_calls", "Not checked: no calls listed"
+        UNCHECKED_TOO_MANY_CALLS = (
+            "unchecked_too_many_calls",
+            "Not checked: more calls than one page",
+        )
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="hosted_harness_jobs"
@@ -75,6 +93,10 @@ class HostedHarnessJob(BaseModel):
     deadline_at = models.DateTimeField()
     cancel_requested_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=32, null=True, blank=True)
+    cancel_confirmed_at = models.DateTimeField(null=True, blank=True)
+    cancel_confirmed_by = models.CharField(
+        max_length=32, choices=CancelConfirmation.choices, blank=True, default=""
+    )
     terminal_at = models.DateTimeField(null=True, blank=True)
     content_updated_at = models.DateTimeField(null=True, blank=True)
     failure = models.JSONField(null=True, blank=True)

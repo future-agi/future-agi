@@ -341,6 +341,7 @@ def create_selected_harness_run(
     parallelism: int | None = None,
     verify: bool = False,
     coding_agent_key_id: str | None = None,
+    for_agent_fix: bool = False,
 ) -> tuple[HostedHarnessJob, bool]:
     """Freeze and preallocate one selected-scenario Run for an authored environment.
 
@@ -407,6 +408,7 @@ def create_selected_harness_run(
             fix_run=fix_run,
             scenario_keys=scenario_keys,
             trials=trials,
+            for_agent_fix=for_agent_fix,
         )
     except HostedHarnessError as exc:
         if exc.code != "readiness_unavailable":
@@ -968,6 +970,7 @@ def _readiness_plan(
     fix_run: Any = None,
     scenario_keys: list[str],
     trials: int,
+    for_agent_fix: bool = False,
 ) -> _ReadinessPlan | None:
     """Which requested cases this run's pairing holds back; ``None`` when runs are not
     pinned to versions or the selection is refused (the run refuses it too).
@@ -997,8 +1000,8 @@ def _readiness_plan(
             pairing,
             keys=scenario_keys,
             trials=trials,
-            # A fix's check run measures the cases it wrote for the fix; readiness still gates it.
-            lifecycle_gate=fix_run is None,
+            # An agent fix's own runs measure the cases it wrote for the fix; readiness still gates them.
+            lifecycle_gate=fix_run is None and not for_agent_fix,
         )
     except HostedHarnessError as exc:
         if exc.status_code != 400:
@@ -1969,6 +1972,8 @@ def rerun_calls_in_run(
         job.terminal_at = None
         job.cancel_requested_at = None
         job.cancel_reason = None
+        job.cancel_confirmed_at = None
+        job.cancel_confirmed_by = ""
         job.save(
             update_fields=[
                 "payload",
@@ -1978,6 +1983,8 @@ def rerun_calls_in_run(
                 "terminal_at",
                 "cancel_requested_at",
                 "cancel_reason",
+                "cancel_confirmed_at",
+                "cancel_confirmed_by",
                 "updated_at",
             ]
         )
@@ -2599,6 +2606,8 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
             return locked
         locked.cancel_requested_at = timezone.now()
         locked.cancel_reason = reason
+        locked.cancel_confirmed_at = None
+        locked.cancel_confirmed_by = ""
         locked.state = HostedHarnessJob.State.CLEANING_UP
         # State and stage are both part of the public read model. Leaving the
         # previous authoring stage here makes a successful cancel request look
@@ -2608,6 +2617,8 @@ def request_cancellation(job: HostedHarnessJob, reason: str) -> HostedHarnessJob
             update_fields=[
                 "cancel_requested_at",
                 "cancel_reason",
+                "cancel_confirmed_at",
+                "cancel_confirmed_by",
                 "state",
                 "current_stage",
                 "updated_at",
