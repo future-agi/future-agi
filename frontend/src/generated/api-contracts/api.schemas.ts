@@ -4039,6 +4039,7 @@ export interface CapabilitiesResponseApi {
   license_state: CapabilitiesResponseApiLicenseState;
   features: CapabilitiesResponseApiFeatures;
   metrics_enabled?: boolean;
+  coding_agent_attempts_enabled?: boolean;
   license?: LicenseDetailsApi;
   instance_id?: string;
 }

@@ -61201,6 +61201,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "boolean",
           default: false,
         },
+        coding_agent_attempts_enabled: {
+          title: "Coding agent attempts enabled",
+          type: "boolean",
+          default: false,
+        },
         license: {
           $ref: "#/definitions/LicenseDetails",
         },

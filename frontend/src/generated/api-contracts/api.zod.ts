@@ -9461,6 +9461,8 @@ export const AiToolsToolsListResponse = zod.object({
 });
 
 export const apiCapabilitiesListResponseMetricsEnabledDefault = false;
+export const apiCapabilitiesListResponseCodingAgentAttemptsEnabledDefault =
+  false;
 export const apiCapabilitiesListResponseLicenseFeaturesCountMin = 0;
 
 export const ApiCapabilitiesListResponse = zod.object({
@@ -9509,6 +9511,9 @@ export const ApiCapabilitiesListResponse = zod.object({
   metrics_enabled: zod
     .boolean()
     .default(apiCapabilitiesListResponseMetricsEnabledDefault),
+  coding_agent_attempts_enabled: zod
+    .boolean()
+    .default(apiCapabilitiesListResponseCodingAgentAttemptsEnabledDefault),
   license: zod
     .object({
       issued_to: zod.string(),
