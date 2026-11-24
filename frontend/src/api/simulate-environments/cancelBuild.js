@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cancelHarnessJob } from "src/api/harness/harness";
+import { myEnvironmentsListKey } from "./environments";
 
 /**
  * Cancel an in-progress environment build (§ POST harness-jobs/{id}/cancel/).
@@ -13,19 +14,21 @@ import { cancelHarnessJob } from "src/api/harness/harness";
  * `meta.errorHandled` lets the caller own the failure message (a cancel that
  * fails quietly reads as a dead button), so the global toast stays out of it.
  *
- * Query keys are the literals environment.js defines (["harness-job", id] and
- * harnessEnvironmentKey === ["harness-environment", id]); kept inline so this
- * thin hook doesn't pull that module's whole import chain.
+ * The job and detail keys are the literals environment.js defines
+ * (["harness-job", id] and harnessEnvironmentKey === ["harness-environment", id]).
  */
 export function useCancelHarnessJob(envId) {
   const queryClient = useQueryClient();
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: (reason) => cancelHarnessJob(envId, reason),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
-      queryClient.invalidateQueries({ queryKey: ["harness-environment", envId] });
-      queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
-    },
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["harness-job", envId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["harness-environment", envId],
+        }),
+        queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() }),
+      ]),
   });
 }

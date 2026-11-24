@@ -34,5 +34,9 @@ describe("useCancelHarnessJob", () => {
       expect(spy).toHaveBeenCalledWith({ queryKey: ["harness-job", "env-1"] }),
     );
     expect(spy).toHaveBeenCalledWith({ queryKey: ["harness-environment", "env-1"] });
+    expect(spy).toHaveBeenCalledWith({
+      queryKey: ["simulate-environments", "list"],
+    });
+    expect(spy).not.toHaveBeenCalledWith({ queryKey: ["harness-jobs"] });
   });
 });

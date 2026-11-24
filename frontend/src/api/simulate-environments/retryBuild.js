@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
+import { myEnvironmentsListKey } from "./environments";
 
 const retryPath = (envId) =>
   apiPath("/simulate/api/harness-environments/{id}/build/retry/", {
@@ -15,12 +16,13 @@ export function useRetryBuild(envId) {
   return useMutation({
     meta: { errorHandled: true },
     mutationFn: () => retryBuild(envId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["harness-job", envId] });
-      queryClient.invalidateQueries({
-        queryKey: ["harness-environment", envId],
-      });
-      queryClient.invalidateQueries({ queryKey: ["harness-jobs"] });
-    },
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["harness-job", envId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["harness-environment", envId],
+        }),
+        queryClient.invalidateQueries({ queryKey: myEnvironmentsListKey() }),
+      ]),
   });
 }
