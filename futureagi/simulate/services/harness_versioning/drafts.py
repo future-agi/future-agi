@@ -1400,17 +1400,6 @@ def save_drafts(
         }
         before = {piece: getattr(locked, f"{piece}_version_id") for piece in pieces}
         activated = activate_drafts(locked, pieces, origin=None, user=user)
-        moved = activated.get("environment")
-        if moved is not None and before["environment"] not in (None, moved[0].id):
-            from simulate.services.harness_versioning.nudges import (
-                schedule_environment_moved,
-            )
-
-            schedule_environment_moved(
-                locked.id,
-                from_environment_version_id=before["environment"],
-                environment_version_id=moved[0].id,
-            )
         payload = dict(locked.payload or {})
         metadata = dict(payload.get("metadata") or {})
         saves = {
