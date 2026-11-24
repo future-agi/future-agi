@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
-  Chip,
   IconButton,
   Stack,
   TextField,
@@ -50,12 +49,14 @@ function CategoryEditor({ categories, definitions, onChange }) {
           alignItems="center"
           spacing={1}
         >
-          <Chip
-            label={category}
-            size="small"
+          <Typography
+            variant="body2"
+            noWrap
             title={category}
-            sx={{ maxWidth: 160, flexShrink: 0 }}
-          />
+            sx={{ width: 120, flexShrink: 0 }}
+          >
+            {category}
+          </Typography>
           <TextField
             size="small"
             fullWidth
@@ -71,7 +72,7 @@ function CategoryEditor({ categories, definitions, onChange }) {
               maxLength: MAX_DEFINITION_LENGTH,
               "aria-label": `Definition of ${category}`,
             }}
-            sx={{ "& .MuiInputBase-input": { py: 0.5, fontSize: 12 } }}
+            sx={{ "& .MuiInputBase-input": { py: 0.5 } }}
           />
           <Tooltip title={`Remove ${category}`}>
             <IconButton
@@ -79,7 +80,7 @@ function CategoryEditor({ categories, definitions, onChange }) {
               onClick={() => remove(index)}
               aria-label={`Remove ${category}`}
             >
-              <Iconify icon="mdi:close" width={16} />
+              <Iconify icon="solar:close-linear" width={16} />
             </IconButton>
           </Tooltip>
         </Stack>
@@ -120,7 +121,7 @@ const answerTypeSx = {
   py: 0.25,
   "&:focus-visible": {
     outline: "2px solid",
-    outlineColor: "primary.main",
+    outlineColor: "border.focus",
     outlineOffset: 1,
   },
 };
@@ -139,8 +140,8 @@ export default function QuestionEditor({
     <Box
       sx={{
         border: "1px solid",
-        borderColor: error ? "error.main" : "divider",
-        borderRadius: 1,
+        borderColor: error ? "status.danger.solid" : "divider",
+        borderRadius: "8px",
         p: 1.5,
       }}
     >
@@ -160,7 +161,7 @@ export default function QuestionEditor({
               onClick={onRemove}
               aria-label={`Remove question ${index + 1}`}
             >
-              <Iconify icon="mdi:close" width={16} />
+              <Iconify icon="solar:close-linear" width={16} />
             </IconButton>
           </Tooltip>
         )}

@@ -1,5 +1,5 @@
 from .agent_definition import AgentDefinition, ProviderCredentials
-from .agent_fix import AgentFixCandidate, AgentFixRun
+from .agent_fix import AgentFixCandidate, AgentFixIssueJob, AgentFixRun
 from .agent_optimiser import AgentOptimiser
 from .agent_optimiser_run import AgentOptimiserRun
 from .agent_prompt_optimiser_run import AgentPromptOptimiserRun
@@ -77,6 +77,7 @@ from .trial_item_result import TrialItemResult
 
 __all__ = [
     "AgentFixCandidate",
+    "AgentFixIssueJob",
     "AgentFixRun",
     "EvidenceImport",
     "EvidenceImportCase",

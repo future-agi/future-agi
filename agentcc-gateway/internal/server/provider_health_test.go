@@ -161,7 +161,9 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			}
 			srv, gateway := adaptiveServer(t, cfg)
 			orgModels := []string{"different-model"}
-			if path == "org-first" {
+			if path == "org-first" || path == "failover-override" {
+				// Multi-provider traversal is unlocked and uses eligible org
+				// models; an explicit fast lock cannot authorize backup.
 				orgModels = []string{"adaptive-sample"}
 			}
 			store := tenant.NewStore()
@@ -187,7 +189,7 @@ func TestAdaptiveGlobalHealthExcludesOrgInstances(t *testing.T) {
 			}
 			before := srv.handlers.healthMonitor.GetHealth("fast")
 			headers := http.Header{}
-			if path != "org-first" {
+			if path == "override" {
 				headers.Set("x-agentcc-provider-lock", "fast")
 			}
 			wantOrgCalls := int64(3)

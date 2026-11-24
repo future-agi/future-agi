@@ -138,6 +138,26 @@ async def test_token_lists_only_tools_inside_its_scope(scoped_client, scope, gro
     assert ("list_datasets" in names) is ("datasets" in groups)
 
 
+@pytest.mark.parametrize(
+    "scope, listed", [("context simulation", False), ("context epoch", True)]
+)
+async def test_epoch_tools_need_a_token_granted_the_epoch_group(
+    scoped_client, monkeypatch, scope, listed
+):
+    """A token granted before the epoch group existed keeps its grant; the user
+    authorizes again to give a client the Epoch tools."""
+    monkeypatch.setattr(
+        "mcp_server.usage_helpers.check_ee_feature", lambda *_, **__: None
+    )
+    async with scoped_client(scope) as client:
+        listing = await client.list_tools()
+
+    names = {tool.name for tool in listing.tools}
+    assert ("launch_epoch" in names) is listed
+    assert ("run_debug_failures" in names) is listed
+    assert "whoami" in names
+
+
 @pytest.mark.parametrize("scope", ["", []])
 async def test_token_with_no_scope_gets_no_tools(
     scoped_client, executor_spy, user, scope

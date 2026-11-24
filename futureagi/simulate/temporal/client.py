@@ -666,6 +666,32 @@ async def _cancel_hosted_harness_gateway_workflow_async(job_id: str) -> None:
     await handle.signal("cancel")
 
 
+def start_agent_fix_issue_workflow(job_id: str) -> str:
+    return async_to_sync(_start_agent_fix_issue_workflow_async)(job_id)
+
+
+async def _start_agent_fix_issue_workflow_async(job_id: str) -> str:
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+    from simulate.temporal.types.agent_fix import AgentFixIssueInput
+    from simulate.temporal.workflows.agent_fix_issue_workflow import (
+        AgentFixIssueWorkflow,
+    )
+    from tfc.temporal.common.client import get_client
+
+    client = await get_client()
+    workflow_id = f"agent-fix-issue-{job_id}"
+    await client.start_workflow(
+        AgentFixIssueWorkflow.run,
+        AgentFixIssueInput(job_id=job_id),
+        id=workflow_id,
+        task_queue=QUEUE_RUNNER,
+        id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
+        id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+    )
+    return workflow_id
+
+
 def start_agent_fix_workflow(fix_run_id: str) -> str:
     return async_to_sync(_start_agent_fix_workflow_async)(fix_run_id)
 

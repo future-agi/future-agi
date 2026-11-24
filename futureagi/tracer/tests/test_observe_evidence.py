@@ -238,6 +238,70 @@ class TestCalls:
 
 
 @pytest.mark.django_db
+class TestTraces:
+    """An SDK agent's trace with no session and no conversation root."""
+
+    def test_reads_as_one_exchange_from_its_root(self, project):
+        trace = _id()
+        roots = [
+            _root(
+                trace,
+                kind="chain",
+                attrs={
+                    "input.value": "Cancel order 7",
+                    "output.value": "Cancelled order 8.",
+                },
+            )
+        ]
+
+        found, reader = _read(project, "trace", [trace], roots)
+
+        evidence = found[trace]
+        assert [(t.role, t.text) for t in evidence.turns] == [
+            ("user", "Cancel order 7"),
+            ("agent", "Cancelled order 8."),
+        ]
+        assert evidence.trace_ids == (trace,)
+        assert evidence.transcript_unreadable is False
+        # The root's own input and output are enough: no raw call log is read.
+        reader.roots_by_trace_ids.assert_called_once_with(
+            [trace], project_id=str(project.id), include_heavy=False
+        )
+
+    def test_its_tool_calls_are_read_as_a_calls_are(self, project):
+        trace = _id()
+        roots = [_root(trace, kind="agent", input="Refund 42", output="Refunded.")]
+
+        found, _ = _read(
+            project,
+            "trace",
+            [trace],
+            roots,
+            activity=[_step(trace, "issue_refund", status="ERROR", message="denied")],
+        )
+
+        [call] = found[trace].tool_calls
+        assert (call.name, call.failed) == ("issue_refund", True)
+
+    def test_a_call_is_never_read_as_a_trace(self, project):
+        call = _id()
+        roots = [_root(call, kind="conversation", input="hi", output="hello")]
+
+        found, _ = _read(project, "trace", [call], roots)
+
+        assert found == {}
+
+    def test_a_deleted_trace_stays_out(self, observe_project, project):
+        deleted = Trace.objects.create(project=observe_project, name="gone")
+        Trace.objects.filter(id=deleted.id).update(deleted=True)
+        roots = [_root(str(deleted.id), kind="chain", input="secret", output="x")]
+
+        found, _ = _read(project, "trace", [str(deleted.id)], roots)
+
+        assert found == {}
+
+
+@pytest.mark.django_db
 class TestToolCalls:
     def test_tool_calls_with_their_inputs_outputs_and_failures(self, project):
         session, trace = _id(), _id()

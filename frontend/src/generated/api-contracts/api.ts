@@ -98,6 +98,11 @@ import type {
   AgentFixCheckRunRequestApi,
   AgentFixEngineReportApi,
   AgentFixEngineStateApi,
+  AgentFixIssueCreateApi,
+  AgentFixIssueJobDetailApi,
+  AgentFixIssuePlanApi,
+  AgentFixIssueRunApi,
+  AgentFixIssueStatusListApi,
   AgentFixLaunchApi,
   AgentFixLaunchOptionsApi,
   AgentFixMakeDefaultApi,
@@ -137,9 +142,9 @@ import type {
   AgentVersionCompatibilityResponseApi,
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
+  AgentVersionDetailResponseApi,
   AgentVersionListResponseApi,
   AgentVersionProductionResponseApi,
-  AgentVersionResponseApi,
   AgentVersionRestoreResponseApi,
   AgentccAPIKeyApi,
   AgentccAnalyticsCostBreakdown200,
@@ -286,6 +291,8 @@ import type {
   CallWebsocketErrorResponseApi,
   CallWebsocketRequestApi,
   CallWebsocketResponseApi,
+  CallWorkersPendingApi,
+  CallWorkersResponseApi,
   CancelTestExecutionResponseApi,
   CapabilitiesResponseApi,
   CellErrorLocalizerResponseApi,
@@ -427,6 +434,17 @@ import type {
   DeploymentInfoResponseApi,
   DeploymentRegistrationApi,
   DeploymentRegistrationResponseApi,
+  DerivedMetricApi,
+  DerivedMetricCommittedResultPageApi,
+  DerivedMetricContributorPageApi,
+  DerivedMetricEvaluatorPageApi,
+  DerivedMetricListApi,
+  DerivedMetricRecomputeApi,
+  DerivedMetricRunApi,
+  DerivedMetricRunRequestApi,
+  DerivedMetricRunsApi,
+  DerivedMetricValidationApi,
+  DerivedMetricWriteApi,
   DerivedVariableDetailResponseApi,
   DerivedVariableExtractRequestApi,
   DerivedVariablePreviewRequestApi,
@@ -852,7 +870,26 @@ import type {
   MergeDatasetResponseApi,
   MessageFeedbackApi,
   MessageFeedbackResponseApi,
+  MetricActivationRequestApi,
+  MetricCapabilitiesApi,
+  MetricDraftPreviewCancelApi,
+  MetricDraftPreviewRequestApi,
+  MetricDriversApi,
+  MetricFieldsApi,
+  MetricHistoryApi,
+  MetricKpiApi,
+  MetricPreviewApi,
+  MetricPreviewCancelApi,
+  MetricPreviewCancelledApi,
+  MetricPreviewRequestApi,
+  MetricRefreshApi,
+  MetricRefreshRequestApi,
+  MetricSnapshotDeleteApi,
+  MetricSnapshotRequestApi,
   MetricTagOptionApi,
+  MetricTrendApi,
+  MetricUnavailableApi,
+  MetricUnitValuesRequestApi,
   MetricsByColumnResponseApi,
   ModelHubAnnotationQueuesAutomationRulesList200,
   ModelHubAnnotationQueuesAutomationRulesListParams,
@@ -1281,6 +1318,8 @@ import type {
   SimulateApiAgentFixEngineCandidatesBodyOne,
   SimulateApiAgentFixEngineCandidatesBodyTwo,
   SimulateApiAgentFixEngineV1ChatCompletionsCreateBody,
+  SimulateApiAgentFixIssuesListParams,
+  SimulateApiAgentFixIssuesPlanParams,
   SimulateApiAgentFixRunsLaunchOptionsParams,
   SimulateApiAgentFixRunsListParams,
   SimulateApiAgentPromptOptimiserList200,
@@ -1321,8 +1360,10 @@ import type {
   SimulateScenariosListParams,
   SimulateTestExecutionsPreviewCallsListParams,
   SimulateTestExecutionsReadParams,
+  SimulateV3CallExecutionWorkersParams,
   SimulateV3TestExecutionCallsParams,
   SimulateV3TestExecutionTracesParams,
+  SimulateV3TestExecutionTrialRoutesParams,
   SimulationEvidenceRequestApi,
   SimulationPreviewErrorApi,
   SimulationPreviewPageApi,
@@ -1450,6 +1491,18 @@ import type {
   TracerDashboardWidgetsPreviewQueryParams,
   TracerDatasetList200,
   TracerDatasetListParams,
+  TracerDerivedMetricRunsContributorsParams,
+  TracerDerivedMetricRunsResultsParams,
+  TracerDerivedMetricsDriversParams,
+  TracerDerivedMetricsEvaluatorsParams,
+  TracerDerivedMetricsFieldsParams,
+  TracerDerivedMetricsHistoryParams,
+  TracerDerivedMetricsKpiParams,
+  TracerDerivedMetricsListParams,
+  TracerDerivedMetricsRunsReadParams,
+  TracerDerivedMetricsSnapshotsReadParams,
+  TracerDerivedMetricsTrendParams,
+  TracerDerivedMetricsUnitValuesParams,
   TracerEvalTaskGetEvalDetailsParams,
   TracerEvalTaskGetEvalTaskLogs200,
   TracerEvalTaskGetEvalTaskLogsParams,
@@ -1562,6 +1615,7 @@ import type {
   TracerUsersListParams,
   TracesTabApiResponseApi,
   TrendsTabApiResponseApi,
+  TrialRoutesResponseApi,
   TriggerAnalysisApi,
   TwoFactorChallengeTokenApi,
   TwoFactorPasskeyVerifyRequestApi,
@@ -1622,8 +1676,10 @@ import type {
   UsageWorkspaceUsageSummaryListParams,
   UserAlertMonitorApi,
   UserAlertMonitorBulkMuteRequestApi,
+  UserAlertMonitorCreateResponseApi,
   UserAlertMonitorDuplicateApi,
   UserAlertMonitorDuplicateResponseApi,
+  UserAlertMonitorEntitlementResponseApi,
   UserAlertMonitorGraphResponseApi,
   UserAlertMonitorListResponseApi,
   UserAlertMonitorLogApi,
@@ -15710,7 +15766,7 @@ export const getAgentccGuardrailPoliciesApplyUrl = (id: string) => {
 };
 
 /**
- * Apply this policy to specific keys or projects.
+ * Apply to dashboard key UUIDs, or persist a project-only assignment.
  */
 export const agentccGuardrailPoliciesApply = async (
   id: string,
@@ -56856,6 +56912,20 @@ export const getSimulateAgentDefinitionsListUrl = (
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
+    const explodeParameters = [
+      "agent_type",
+      "source",
+      "environments",
+      "observe",
+    ];
+
+    if (Array.isArray(value) && explodeParameters.includes(key)) {
+      value.forEach((v) => {
+        normalizedParams.append(key, v === null ? "null" : v.toString());
+      });
+      return;
+    }
+
     if (Array.isArray(value)) {
       value
         .filter((item) => item !== undefined && item !== null)
@@ -57314,9 +57384,14 @@ export type simulateAgentDefinitionsFoundCheckCreateResponse404 = {
   status: 404;
 };
 
+export type simulateAgentDefinitionsFoundCheckCreateResponse409 = {
+  data: ApiErrorWithDetailsResponseApi;
+  status: 409;
+};
+
 export type simulateAgentDefinitionsFoundCheckCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>;
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 409>;
 };
 
 export type simulateAgentDefinitionsFoundCheckCreateResponseSuccess =
@@ -57326,6 +57401,7 @@ export type simulateAgentDefinitionsFoundCheckCreateResponseSuccess =
 export type simulateAgentDefinitionsFoundCheckCreateResponseError = (
   | simulateAgentDefinitionsFoundCheckCreateResponse403
   | simulateAgentDefinitionsFoundCheckCreateResponse404
+  | simulateAgentDefinitionsFoundCheckCreateResponse409
   | simulateAgentDefinitionsFoundCheckCreateResponseDefault
 ) & {
   headers: ApiResponseHeaders;
@@ -57650,7 +57726,7 @@ export const simulateAgentDefinitionsVersionsCreateCreate = async (
 };
 
 export type simulateAgentDefinitionsVersionsReadResponse200 = {
-  data: AgentVersionResponseApi;
+  data: AgentVersionDetailResponseApi;
   status: 200;
 };
 
@@ -59830,6 +59906,319 @@ export const simulateApiAgentFixEngineV1ChatCompletionsCreate = async (
   );
 };
 
+export type simulateApiAgentFixIssuesListResponse200 = {
+  data: AgentFixIssueStatusListApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixIssuesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixIssuesListResponseSuccess =
+  simulateApiAgentFixIssuesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesListResponseError =
+  simulateApiAgentFixIssuesListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesListResponse =
+  | simulateApiAgentFixIssuesListResponseSuccess
+  | simulateApiAgentFixIssuesListResponseError;
+
+export const getSimulateApiAgentFixIssuesListUrl = (
+  params: SimulateApiAgentFixIssuesListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-issues/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-issues/`;
+};
+
+/**
+ * Each named issue's newest job, for the issue list's epoch icon: one call per
+page of issues. Without ``project_id`` the ids are read in every project the
+caller may read, so a page across projects is one call too; each result names
+its project.
+ */
+export const simulateApiAgentFixIssuesList = async (
+  params: SimulateApiAgentFixIssuesListParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesListResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesListResponse>(
+    getSimulateApiAgentFixIssuesListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesCreateResponse201 = {
+  data: AgentFixIssueJobDetailApi;
+  status: 201;
+};
+
+export type simulateApiAgentFixIssuesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type simulateApiAgentFixIssuesCreateResponseSuccess =
+  simulateApiAgentFixIssuesCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesCreateResponseError =
+  simulateApiAgentFixIssuesCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesCreateResponse =
+  | simulateApiAgentFixIssuesCreateResponseSuccess
+  | simulateApiAgentFixIssuesCreateResponseError;
+
+export const getSimulateApiAgentFixIssuesCreateUrl = () => {
+  return `/simulate/api/agent-fix-issues/`;
+};
+
+/**
+ * Start Run Epoch from an issue: import the picked traces as evidence for the
+environment and ask its builder to draft them. One builder turn, billed as
+authoring credits.
+ */
+export const simulateApiAgentFixIssuesCreate = async (
+  agentFixIssueCreateApi: AgentFixIssueCreateApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesCreateResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesCreateResponse>(
+    getSimulateApiAgentFixIssuesCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixIssueCreateApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesPlanResponse200 = {
+  data: AgentFixIssuePlanApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixIssuesPlanResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixIssuesPlanResponseSuccess =
+  simulateApiAgentFixIssuesPlanResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesPlanResponseError =
+  simulateApiAgentFixIssuesPlanResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesPlanResponse =
+  | simulateApiAgentFixIssuesPlanResponseSuccess
+  | simulateApiAgentFixIssuesPlanResponseError;
+
+export const getSimulateApiAgentFixIssuesPlanUrl = (
+  params: SimulateApiAgentFixIssuesPlanParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/agent-fix-issues/plan/?${stringifiedParams}`
+    : `/simulate/api/agent-fix-issues/plan/`;
+};
+
+/**
+ * What Run Epoch on an issue shows before anything is drafted: the environment,
+a sample of the issue's traces with why each was picked, and the launch form's
+defaults. It reads the picked traces' roots once, and calls no model.
+ */
+export const simulateApiAgentFixIssuesPlan = async (
+  params: SimulateApiAgentFixIssuesPlanParams,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesPlanResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesPlanResponse>(
+    getSimulateApiAgentFixIssuesPlanUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesReadResponse200 = {
+  data: AgentFixIssueJobDetailApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixIssuesReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixIssuesReadResponseSuccess =
+  simulateApiAgentFixIssuesReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesReadResponseError =
+  simulateApiAgentFixIssuesReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesReadResponse =
+  | simulateApiAgentFixIssuesReadResponseSuccess
+  | simulateApiAgentFixIssuesReadResponseError;
+
+export const getSimulateApiAgentFixIssuesReadUrl = (id: string) => {
+  return `/simulate/api/agent-fix-issues/${id}/`;
+};
+
+/**
+ * Run Epoch from an Error Feed issue: plan it, start it from the picked traces,
+follow it, run it after the review, and stop it before its epoch starts.
+ */
+export const simulateApiAgentFixIssuesRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesReadResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesReadResponse>(
+    getSimulateApiAgentFixIssuesReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesRunResponse202 = {
+  data: AgentFixIssueJobDetailApi;
+  status: 202;
+};
+
+export type simulateApiAgentFixIssuesRunResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type simulateApiAgentFixIssuesRunResponseSuccess =
+  simulateApiAgentFixIssuesRunResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesRunResponseError =
+  simulateApiAgentFixIssuesRunResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesRunResponse =
+  | simulateApiAgentFixIssuesRunResponseSuccess
+  | simulateApiAgentFixIssuesRunResponseError;
+
+export const getSimulateApiAgentFixIssuesRunUrl = (id: string) => {
+  return `/simulate/api/agent-fix-issues/${id}/run/`;
+};
+
+/**
+ * Run Epoch after the review: the kept drafts join the environment's suite, and
+the current version runs on the kept scenarios. The epoch starts from that run
+once it finishes.
+ */
+export const simulateApiAgentFixIssuesRun = async (
+  id: string,
+  agentFixIssueRunApi: AgentFixIssueRunApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesRunResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesRunResponse>(
+    getSimulateApiAgentFixIssuesRunUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(agentFixIssueRunApi),
+    },
+  );
+};
+
+export type simulateApiAgentFixIssuesStopResponse200 = {
+  data: AgentFixIssueJobDetailApi;
+  status: 200;
+};
+
+export type simulateApiAgentFixIssuesStopResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiAgentFixIssuesStopResponseSuccess =
+  simulateApiAgentFixIssuesStopResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiAgentFixIssuesStopResponseError =
+  simulateApiAgentFixIssuesStopResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiAgentFixIssuesStopResponse =
+  | simulateApiAgentFixIssuesStopResponseSuccess
+  | simulateApiAgentFixIssuesStopResponseError;
+
+export const getSimulateApiAgentFixIssuesStopUrl = (id: string) => {
+  return `/simulate/api/agent-fix-issues/${id}/stop/`;
+};
+
+/**
+ * Stop before the epoch starts: drafting is dropped, or the baseline canceled.
+A started epoch stops on its own route.
+ */
+export const simulateApiAgentFixIssuesStop = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiAgentFixIssuesStopResponse> => {
+  return apiMutator<simulateApiAgentFixIssuesStopResponse>(
+    getSimulateApiAgentFixIssuesStopUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
 export type simulateApiAgentFixRunsListResponse200 = {
   data: AgentFixRunListApi;
   status: 200;
@@ -59876,7 +60265,7 @@ export const getSimulateApiAgentFixRunsListUrl = (
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsList = async (
@@ -59920,7 +60309,7 @@ export const getSimulateApiAgentFixRunsCreateUrl = () => {
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCreate = async (
@@ -60028,7 +60417,7 @@ export const getSimulateApiAgentFixRunsReadUrl = (id: string) => {
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsRead = async (
@@ -60075,7 +60464,7 @@ export const getSimulateApiAgentFixRunsCandidatesMakeDefaultUrl = (
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsCandidatesMakeDefault = async (
@@ -60268,7 +60657,7 @@ export const getSimulateApiAgentFixRunsStopUrl = (id: string) => {
 };
 
 /**
- * A user's "Fix my agent" runs: start one from a finished run, follow it, stop it,
+ * A user's epochs: start one from a finished run, follow it, stop it,
 and ship its winner: the environment's default, or a GitHub pull request.
  */
 export const simulateApiAgentFixRunsStop = async (
@@ -63999,8 +64388,9 @@ export const getSimulateApiHarnessEnvironmentsVersionsSuiteSuiteMembersUrl = (
 };
 
 /**
- * The scenarios in one suite version, by number; a coding agent's read leaves
-out the held-back cases.
+ * The scenarios in one suite version, by number, each with the Error Feed
+issue it came from, if any; a coding agent's read leaves out the held-back
+cases.
  */
 export const simulateApiHarnessEnvironmentsVersionsSuiteSuiteMembers = async (
   id: string,
@@ -72638,6 +73028,82 @@ export const simulateV3CallExecutionDetail = async (
   );
 };
 
+export type simulateV3CallExecutionWorkersResponse200 = {
+  data: CallWorkersResponseApi;
+  status: 200;
+};
+
+export type simulateV3CallExecutionWorkersResponse202 = {
+  data: CallWorkersPendingApi;
+  status: 202;
+};
+
+export type simulateV3CallExecutionWorkersResponse204 = {
+  data: void;
+  status: 204;
+};
+
+export type simulateV3CallExecutionWorkersResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 202 | 204>;
+};
+
+export type simulateV3CallExecutionWorkersResponseSuccess = (
+  | simulateV3CallExecutionWorkersResponse200
+  | simulateV3CallExecutionWorkersResponse202
+  | simulateV3CallExecutionWorkersResponse204
+) & {
+  headers: ApiResponseHeaders;
+};
+export type simulateV3CallExecutionWorkersResponseError =
+  simulateV3CallExecutionWorkersResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateV3CallExecutionWorkersResponse =
+  | simulateV3CallExecutionWorkersResponseSuccess
+  | simulateV3CallExecutionWorkersResponseError;
+
+export const getSimulateV3CallExecutionWorkersUrl = (
+  callExecutionId: string,
+  params?: SimulateV3CallExecutionWorkersParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/call-executions/${callExecutionId}/workers/?${stringifiedParams}`
+    : `/simulate/v3/call-executions/${callExecutionId}/workers/`;
+};
+
+/**
+ * Which of a multi-agent app's participants did what in this trial, read from the traces the app sent.
+ */
+export const simulateV3CallExecutionWorkers = async (
+  callExecutionId: string,
+  params?: SimulateV3CallExecutionWorkersParams,
+  options?: RequestInit,
+): Promise<simulateV3CallExecutionWorkersResponse> => {
+  return apiMutator<simulateV3CallExecutionWorkersResponse>(
+    getSimulateV3CallExecutionWorkersUrl(callExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateV3TestExecutionAnalyticsResponse200 = {
   data: RunAnalyticsV3ResponseApi;
   status: 200;
@@ -72890,6 +73356,69 @@ export const simulateV3TestExecutionTraces = async (
 ): Promise<simulateV3TestExecutionTracesResponse> => {
   return apiMutator<simulateV3TestExecutionTracesResponse>(
     getSimulateV3TestExecutionTracesUrl(testExecutionId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateV3TestExecutionTrialRoutesResponse200 = {
+  data: TrialRoutesResponseApi;
+  status: 200;
+};
+
+export type simulateV3TestExecutionTrialRoutesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateV3TestExecutionTrialRoutesResponseSuccess =
+  simulateV3TestExecutionTrialRoutesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateV3TestExecutionTrialRoutesResponseError =
+  simulateV3TestExecutionTrialRoutesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateV3TestExecutionTrialRoutesResponse =
+  | simulateV3TestExecutionTrialRoutesResponseSuccess
+  | simulateV3TestExecutionTrialRoutesResponseError;
+
+export const getSimulateV3TestExecutionTrialRoutesUrl = (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTrialRoutesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/v3/test-executions/${testExecutionId}/trial-routes/?${stringifiedParams}`
+    : `/simulate/v3/test-executions/${testExecutionId}/trial-routes/`;
+};
+
+/**
+ * One scenario's trials in the run lined up by who asked whom, and the first step where they went different ways.
+ */
+export const simulateV3TestExecutionTrialRoutes = async (
+  testExecutionId: string,
+  params: SimulateV3TestExecutionTrialRoutesParams,
+  options?: RequestInit,
+): Promise<simulateV3TestExecutionTrialRoutesResponse> => {
+  return apiMutator<simulateV3TestExecutionTrialRoutesResponse>(
+    getSimulateV3TestExecutionTrialRoutesUrl(testExecutionId, params),
     {
       ...options,
       method: "GET",
@@ -75474,6 +76003,1542 @@ export const tracerDatasetDelete = async (
     {
       ...options,
       method: "DELETE",
+    },
+  );
+};
+
+export type tracerDerivedMetricRunsReadResponse200 = {
+  data: DerivedMetricRunApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricRunsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricRunsReadResponseSuccess =
+  tracerDerivedMetricRunsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricRunsReadResponseError =
+  tracerDerivedMetricRunsReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricRunsReadResponse =
+  | tracerDerivedMetricRunsReadResponseSuccess
+  | tracerDerivedMetricRunsReadResponseError;
+
+export const getTracerDerivedMetricRunsReadUrl = (id: string) => {
+  return `/tracer/derived-metric-runs/${id}/`;
+};
+
+export const tracerDerivedMetricRunsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricRunsReadResponse> => {
+  return apiMutator<tracerDerivedMetricRunsReadResponse>(
+    getTracerDerivedMetricRunsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricRunsContributorsResponse200 = {
+  data: DerivedMetricContributorPageApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricRunsContributorsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricRunsContributorsResponseSuccess =
+  tracerDerivedMetricRunsContributorsResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricRunsContributorsResponseError =
+  tracerDerivedMetricRunsContributorsResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricRunsContributorsResponse =
+  | tracerDerivedMetricRunsContributorsResponseSuccess
+  | tracerDerivedMetricRunsContributorsResponseError;
+
+export const getTracerDerivedMetricRunsContributorsUrl = (
+  id: string,
+  params?: TracerDerivedMetricRunsContributorsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metric-runs/${id}/contributors/?${stringifiedParams}`
+    : `/tracer/derived-metric-runs/${id}/contributors/`;
+};
+
+export const tracerDerivedMetricRunsContributors = async (
+  id: string,
+  params?: TracerDerivedMetricRunsContributorsParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricRunsContributorsResponse> => {
+  return apiMutator<tracerDerivedMetricRunsContributorsResponse>(
+    getTracerDerivedMetricRunsContributorsUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricRunsRecomputeResponse202 = {
+  data: DerivedMetricRunApi;
+  status: 202;
+};
+
+export type tracerDerivedMetricRunsRecomputeResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type tracerDerivedMetricRunsRecomputeResponseSuccess =
+  tracerDerivedMetricRunsRecomputeResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricRunsRecomputeResponseError =
+  tracerDerivedMetricRunsRecomputeResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricRunsRecomputeResponse =
+  | tracerDerivedMetricRunsRecomputeResponseSuccess
+  | tracerDerivedMetricRunsRecomputeResponseError;
+
+export const getTracerDerivedMetricRunsRecomputeUrl = (id: string) => {
+  return `/tracer/derived-metric-runs/${id}/recompute/`;
+};
+
+export const tracerDerivedMetricRunsRecompute = async (
+  id: string,
+  derivedMetricRecomputeApi: DerivedMetricRecomputeApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricRunsRecomputeResponse> => {
+  return apiMutator<tracerDerivedMetricRunsRecomputeResponse>(
+    getTracerDerivedMetricRunsRecomputeUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(derivedMetricRecomputeApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricRunsResultsResponse200 = {
+  data: DerivedMetricCommittedResultPageApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricRunsResultsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricRunsResultsResponseSuccess =
+  tracerDerivedMetricRunsResultsResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricRunsResultsResponseError =
+  tracerDerivedMetricRunsResultsResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricRunsResultsResponse =
+  | tracerDerivedMetricRunsResultsResponseSuccess
+  | tracerDerivedMetricRunsResultsResponseError;
+
+export const getTracerDerivedMetricRunsResultsUrl = (
+  id: string,
+  params?: TracerDerivedMetricRunsResultsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metric-runs/${id}/results/?${stringifiedParams}`
+    : `/tracer/derived-metric-runs/${id}/results/`;
+};
+
+export const tracerDerivedMetricRunsResults = async (
+  id: string,
+  params?: TracerDerivedMetricRunsResultsParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricRunsResultsResponse> => {
+  return apiMutator<tracerDerivedMetricRunsResultsResponse>(
+    getTracerDerivedMetricRunsResultsUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsListResponse200 = {
+  data: DerivedMetricListApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsListResponseSuccess =
+  tracerDerivedMetricsListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsListResponseError =
+  tracerDerivedMetricsListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsListResponse =
+  | tracerDerivedMetricsListResponseSuccess
+  | tracerDerivedMetricsListResponseError;
+
+export const getTracerDerivedMetricsListUrl = (
+  params?: TracerDerivedMetricsListParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/?${stringifiedParams}`
+    : `/tracer/derived-metrics/`;
+};
+
+export const tracerDerivedMetricsList = async (
+  params?: TracerDerivedMetricsListParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsListResponse> => {
+  return apiMutator<tracerDerivedMetricsListResponse>(
+    getTracerDerivedMetricsListUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsCreateResponse201 = {
+  data: DerivedMetricApi;
+  status: 201;
+};
+
+export type tracerDerivedMetricsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201>;
+};
+
+export type tracerDerivedMetricsCreateResponseSuccess =
+  tracerDerivedMetricsCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsCreateResponseError =
+  tracerDerivedMetricsCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsCreateResponse =
+  | tracerDerivedMetricsCreateResponseSuccess
+  | tracerDerivedMetricsCreateResponseError;
+
+export const getTracerDerivedMetricsCreateUrl = () => {
+  return `/tracer/derived-metrics/`;
+};
+
+export const tracerDerivedMetricsCreate = async (
+  derivedMetricWriteApi: DerivedMetricWriteApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsCreateResponse> => {
+  return apiMutator<tracerDerivedMetricsCreateResponse>(
+    getTracerDerivedMetricsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(derivedMetricWriteApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsCapabilitiesResponse200 = {
+  data: MetricCapabilitiesApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsCapabilitiesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsCapabilitiesResponseSuccess =
+  tracerDerivedMetricsCapabilitiesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsCapabilitiesResponseError =
+  tracerDerivedMetricsCapabilitiesResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsCapabilitiesResponse =
+  | tracerDerivedMetricsCapabilitiesResponseSuccess
+  | tracerDerivedMetricsCapabilitiesResponseError;
+
+export const getTracerDerivedMetricsCapabilitiesUrl = () => {
+  return `/tracer/derived-metrics/capabilities/`;
+};
+
+export const tracerDerivedMetricsCapabilities = async (
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsCapabilitiesResponse> => {
+  return apiMutator<tracerDerivedMetricsCapabilitiesResponse>(
+    getTracerDerivedMetricsCapabilitiesUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsEvaluatorsResponse200 = {
+  data: DerivedMetricEvaluatorPageApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsEvaluatorsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsEvaluatorsResponseSuccess =
+  tracerDerivedMetricsEvaluatorsResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsEvaluatorsResponseError =
+  tracerDerivedMetricsEvaluatorsResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsEvaluatorsResponse =
+  | tracerDerivedMetricsEvaluatorsResponseSuccess
+  | tracerDerivedMetricsEvaluatorsResponseError;
+
+export const getTracerDerivedMetricsEvaluatorsUrl = (
+  params: TracerDerivedMetricsEvaluatorsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/evaluators/?${stringifiedParams}`
+    : `/tracer/derived-metrics/evaluators/`;
+};
+
+export const tracerDerivedMetricsEvaluators = async (
+  params: TracerDerivedMetricsEvaluatorsParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsEvaluatorsResponse> => {
+  return apiMutator<tracerDerivedMetricsEvaluatorsResponse>(
+    getTracerDerivedMetricsEvaluatorsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsPreviewDraftResponse200 = {
+  data: MetricPreviewApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsPreviewDraftResponse409 = {
+  data: MetricUnavailableApi;
+  status: 409;
+};
+
+export type tracerDerivedMetricsPreviewDraftResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsPreviewDraftResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 409 | 503>;
+};
+
+export type tracerDerivedMetricsPreviewDraftResponseSuccess =
+  tracerDerivedMetricsPreviewDraftResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsPreviewDraftResponseError = (
+  | tracerDerivedMetricsPreviewDraftResponse409
+  | tracerDerivedMetricsPreviewDraftResponse503
+  | tracerDerivedMetricsPreviewDraftResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsPreviewDraftResponse =
+  | tracerDerivedMetricsPreviewDraftResponseSuccess
+  | tracerDerivedMetricsPreviewDraftResponseError;
+
+export const getTracerDerivedMetricsPreviewDraftUrl = () => {
+  return `/tracer/derived-metrics/preview/`;
+};
+
+export const tracerDerivedMetricsPreviewDraft = async (
+  metricDraftPreviewRequestApi: MetricDraftPreviewRequestApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsPreviewDraftResponse> => {
+  return apiMutator<tracerDerivedMetricsPreviewDraftResponse>(
+    getTracerDerivedMetricsPreviewDraftUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(metricDraftPreviewRequestApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsPreviewCancelDraftPreviewResponse200 = {
+  data: MetricPreviewCancelledApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsPreviewCancelDraftPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsPreviewCancelDraftPreviewResponseSuccess =
+  tracerDerivedMetricsPreviewCancelDraftPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsPreviewCancelDraftPreviewResponseError =
+  tracerDerivedMetricsPreviewCancelDraftPreviewResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsPreviewCancelDraftPreviewResponse =
+  | tracerDerivedMetricsPreviewCancelDraftPreviewResponseSuccess
+  | tracerDerivedMetricsPreviewCancelDraftPreviewResponseError;
+
+export const getTracerDerivedMetricsPreviewCancelDraftPreviewUrl = () => {
+  return `/tracer/derived-metrics/preview/cancel/`;
+};
+
+export const tracerDerivedMetricsPreviewCancelDraftPreview = async (
+  metricDraftPreviewCancelApi: MetricDraftPreviewCancelApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsPreviewCancelDraftPreviewResponse> => {
+  return apiMutator<tracerDerivedMetricsPreviewCancelDraftPreviewResponse>(
+    getTracerDerivedMetricsPreviewCancelDraftPreviewUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(metricDraftPreviewCancelApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsValidateFormulaResponse200 = {
+  data: DerivedMetricValidationApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsValidateFormulaResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsValidateFormulaResponseSuccess =
+  tracerDerivedMetricsValidateFormulaResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsValidateFormulaResponseError =
+  tracerDerivedMetricsValidateFormulaResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsValidateFormulaResponse =
+  | tracerDerivedMetricsValidateFormulaResponseSuccess
+  | tracerDerivedMetricsValidateFormulaResponseError;
+
+export const getTracerDerivedMetricsValidateFormulaUrl = () => {
+  return `/tracer/derived-metrics/validate/`;
+};
+
+export const tracerDerivedMetricsValidateFormula = async (
+  derivedMetricWriteApi: DerivedMetricWriteApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsValidateFormulaResponse> => {
+  return apiMutator<tracerDerivedMetricsValidateFormulaResponse>(
+    getTracerDerivedMetricsValidateFormulaUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(derivedMetricWriteApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsReadResponse200 = {
+  data: DerivedMetricApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsReadResponseSuccess =
+  tracerDerivedMetricsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsReadResponseError =
+  tracerDerivedMetricsReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsReadResponse =
+  | tracerDerivedMetricsReadResponseSuccess
+  | tracerDerivedMetricsReadResponseError;
+
+export const getTracerDerivedMetricsReadUrl = (id: string) => {
+  return `/tracer/derived-metrics/${id}/`;
+};
+
+export const tracerDerivedMetricsRead = async (
+  id: string,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsReadResponse> => {
+  return apiMutator<tracerDerivedMetricsReadResponse>(
+    getTracerDerivedMetricsReadUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsUpdateResponse200 = {
+  data: DerivedMetricApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsUpdateResponseSuccess =
+  tracerDerivedMetricsUpdateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsUpdateResponseError =
+  tracerDerivedMetricsUpdateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsUpdateResponse =
+  | tracerDerivedMetricsUpdateResponseSuccess
+  | tracerDerivedMetricsUpdateResponseError;
+
+export const getTracerDerivedMetricsUpdateUrl = (id: string) => {
+  return `/tracer/derived-metrics/${id}/`;
+};
+
+export const tracerDerivedMetricsUpdate = async (
+  id: string,
+  derivedMetricWriteApi: DerivedMetricWriteApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsUpdateResponse> => {
+  return apiMutator<tracerDerivedMetricsUpdateResponse>(
+    getTracerDerivedMetricsUpdateUrl(id),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(derivedMetricWriteApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsActivateResponse200 = {
+  data: DerivedMetricApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsActivateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsActivateResponseSuccess =
+  tracerDerivedMetricsActivateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsActivateResponseError =
+  tracerDerivedMetricsActivateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsActivateResponse =
+  | tracerDerivedMetricsActivateResponseSuccess
+  | tracerDerivedMetricsActivateResponseError;
+
+export const getTracerDerivedMetricsActivateUrl = (id: string) => {
+  return `/tracer/derived-metrics/${id}/activate/`;
+};
+
+export const tracerDerivedMetricsActivate = async (
+  id: string,
+  metricActivationRequestApi: MetricActivationRequestApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsActivateResponse> => {
+  return apiMutator<tracerDerivedMetricsActivateResponse>(
+    getTracerDerivedMetricsActivateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(metricActivationRequestApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsDriversResponse200 = {
+  data: MetricDriversApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsDriversResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsDriversResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type tracerDerivedMetricsDriversResponseSuccess =
+  tracerDerivedMetricsDriversResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsDriversResponseError = (
+  | tracerDerivedMetricsDriversResponse503
+  | tracerDerivedMetricsDriversResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsDriversResponse =
+  | tracerDerivedMetricsDriversResponseSuccess
+  | tracerDerivedMetricsDriversResponseError;
+
+export const getTracerDerivedMetricsDriversUrl = (
+  id: string,
+  params: TracerDerivedMetricsDriversParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/${id}/drivers/?${stringifiedParams}`
+    : `/tracer/derived-metrics/${id}/drivers/`;
+};
+
+export const tracerDerivedMetricsDrivers = async (
+  id: string,
+  params: TracerDerivedMetricsDriversParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsDriversResponse> => {
+  return apiMutator<tracerDerivedMetricsDriversResponse>(
+    getTracerDerivedMetricsDriversUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsFieldsResponse200 = {
+  data: MetricFieldsApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsFieldsResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsFieldsResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type tracerDerivedMetricsFieldsResponseSuccess =
+  tracerDerivedMetricsFieldsResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsFieldsResponseError = (
+  | tracerDerivedMetricsFieldsResponse503
+  | tracerDerivedMetricsFieldsResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsFieldsResponse =
+  | tracerDerivedMetricsFieldsResponseSuccess
+  | tracerDerivedMetricsFieldsResponseError;
+
+export const getTracerDerivedMetricsFieldsUrl = (
+  id: string,
+  params?: TracerDerivedMetricsFieldsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/${id}/fields/?${stringifiedParams}`
+    : `/tracer/derived-metrics/${id}/fields/`;
+};
+
+export const tracerDerivedMetricsFields = async (
+  id: string,
+  params?: TracerDerivedMetricsFieldsParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsFieldsResponse> => {
+  return apiMutator<tracerDerivedMetricsFieldsResponse>(
+    getTracerDerivedMetricsFieldsUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsHistoryResponse200 = {
+  data: MetricHistoryApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsHistoryResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsHistoryResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type tracerDerivedMetricsHistoryResponseSuccess =
+  tracerDerivedMetricsHistoryResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsHistoryResponseError = (
+  | tracerDerivedMetricsHistoryResponse503
+  | tracerDerivedMetricsHistoryResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsHistoryResponse =
+  | tracerDerivedMetricsHistoryResponseSuccess
+  | tracerDerivedMetricsHistoryResponseError;
+
+export const getTracerDerivedMetricsHistoryUrl = (
+  id: string,
+  params?: TracerDerivedMetricsHistoryParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/${id}/history/?${stringifiedParams}`
+    : `/tracer/derived-metrics/${id}/history/`;
+};
+
+export const tracerDerivedMetricsHistory = async (
+  id: string,
+  params?: TracerDerivedMetricsHistoryParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsHistoryResponse> => {
+  return apiMutator<tracerDerivedMetricsHistoryResponse>(
+    getTracerDerivedMetricsHistoryUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsKpiResponse200 = {
+  data: MetricKpiApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsKpiResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsKpiResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type tracerDerivedMetricsKpiResponseSuccess =
+  tracerDerivedMetricsKpiResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsKpiResponseError = (
+  | tracerDerivedMetricsKpiResponse503
+  | tracerDerivedMetricsKpiResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsKpiResponse =
+  | tracerDerivedMetricsKpiResponseSuccess
+  | tracerDerivedMetricsKpiResponseError;
+
+export const getTracerDerivedMetricsKpiUrl = (
+  id: string,
+  params: TracerDerivedMetricsKpiParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/${id}/kpi/?${stringifiedParams}`
+    : `/tracer/derived-metrics/${id}/kpi/`;
+};
+
+export const tracerDerivedMetricsKpi = async (
+  id: string,
+  params: TracerDerivedMetricsKpiParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsKpiResponse> => {
+  return apiMutator<tracerDerivedMetricsKpiResponse>(
+    getTracerDerivedMetricsKpiUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsPreviewResponse200 = {
+  data: MetricPreviewApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsPreviewResponse409 = {
+  data: MetricUnavailableApi;
+  status: 409;
+};
+
+export type tracerDerivedMetricsPreviewResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 409 | 503>;
+};
+
+export type tracerDerivedMetricsPreviewResponseSuccess =
+  tracerDerivedMetricsPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsPreviewResponseError = (
+  | tracerDerivedMetricsPreviewResponse409
+  | tracerDerivedMetricsPreviewResponse503
+  | tracerDerivedMetricsPreviewResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsPreviewResponse =
+  | tracerDerivedMetricsPreviewResponseSuccess
+  | tracerDerivedMetricsPreviewResponseError;
+
+export const getTracerDerivedMetricsPreviewUrl = (id: string) => {
+  return `/tracer/derived-metrics/${id}/preview/`;
+};
+
+export const tracerDerivedMetricsPreview = async (
+  id: string,
+  metricPreviewRequestApi: MetricPreviewRequestApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsPreviewResponse> => {
+  return apiMutator<tracerDerivedMetricsPreviewResponse>(
+    getTracerDerivedMetricsPreviewUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(metricPreviewRequestApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsPreviewCancelPreviewResponse200 = {
+  data: MetricPreviewCancelledApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsPreviewCancelPreviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsPreviewCancelPreviewResponseSuccess =
+  tracerDerivedMetricsPreviewCancelPreviewResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsPreviewCancelPreviewResponseError =
+  tracerDerivedMetricsPreviewCancelPreviewResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsPreviewCancelPreviewResponse =
+  | tracerDerivedMetricsPreviewCancelPreviewResponseSuccess
+  | tracerDerivedMetricsPreviewCancelPreviewResponseError;
+
+export const getTracerDerivedMetricsPreviewCancelPreviewUrl = (id: string) => {
+  return `/tracer/derived-metrics/${id}/preview/cancel/`;
+};
+
+export const tracerDerivedMetricsPreviewCancelPreview = async (
+  id: string,
+  metricPreviewCancelApi: MetricPreviewCancelApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsPreviewCancelPreviewResponse> => {
+  return apiMutator<tracerDerivedMetricsPreviewCancelPreviewResponse>(
+    getTracerDerivedMetricsPreviewCancelPreviewUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(metricPreviewCancelApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsRefreshNowResponse202 = {
+  data: MetricRefreshApi;
+  status: 202;
+};
+
+export type tracerDerivedMetricsRefreshNowResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsRefreshNowResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 503>;
+};
+
+export type tracerDerivedMetricsRefreshNowResponseSuccess =
+  tracerDerivedMetricsRefreshNowResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsRefreshNowResponseError = (
+  | tracerDerivedMetricsRefreshNowResponse503
+  | tracerDerivedMetricsRefreshNowResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsRefreshNowResponse =
+  | tracerDerivedMetricsRefreshNowResponseSuccess
+  | tracerDerivedMetricsRefreshNowResponseError;
+
+export const getTracerDerivedMetricsRefreshNowUrl = (id: string) => {
+  return `/tracer/derived-metrics/${id}/refresh/`;
+};
+
+export const tracerDerivedMetricsRefreshNow = async (
+  id: string,
+  metricRefreshRequestApi: MetricRefreshRequestApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsRefreshNowResponse> => {
+  return apiMutator<tracerDerivedMetricsRefreshNowResponse>(
+    getTracerDerivedMetricsRefreshNowUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(metricRefreshRequestApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsRunsReadResponse200 = {
+  data: DerivedMetricRunsApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsRunsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsRunsReadResponseSuccess =
+  tracerDerivedMetricsRunsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsRunsReadResponseError =
+  tracerDerivedMetricsRunsReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsRunsReadResponse =
+  | tracerDerivedMetricsRunsReadResponseSuccess
+  | tracerDerivedMetricsRunsReadResponseError;
+
+export const getTracerDerivedMetricsRunsReadUrl = (
+  id: string,
+  params?: TracerDerivedMetricsRunsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/${id}/runs/?${stringifiedParams}`
+    : `/tracer/derived-metrics/${id}/runs/`;
+};
+
+export const tracerDerivedMetricsRunsRead = async (
+  id: string,
+  params?: TracerDerivedMetricsRunsReadParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsRunsReadResponse> => {
+  return apiMutator<tracerDerivedMetricsRunsReadResponse>(
+    getTracerDerivedMetricsRunsReadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsRunsCreateResponse202 = {
+  data: DerivedMetricRunApi;
+  status: 202;
+};
+
+export type tracerDerivedMetricsRunsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202>;
+};
+
+export type tracerDerivedMetricsRunsCreateResponseSuccess =
+  tracerDerivedMetricsRunsCreateResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsRunsCreateResponseError =
+  tracerDerivedMetricsRunsCreateResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsRunsCreateResponse =
+  | tracerDerivedMetricsRunsCreateResponseSuccess
+  | tracerDerivedMetricsRunsCreateResponseError;
+
+export const getTracerDerivedMetricsRunsCreateUrl = (id: string) => {
+  return `/tracer/derived-metrics/${id}/runs/`;
+};
+
+export const tracerDerivedMetricsRunsCreate = async (
+  id: string,
+  derivedMetricRunRequestApi: DerivedMetricRunRequestApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsRunsCreateResponse> => {
+  return apiMutator<tracerDerivedMetricsRunsCreateResponse>(
+    getTracerDerivedMetricsRunsCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(derivedMetricRunRequestApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsSnapshotsReadResponse200 = {
+  data: DerivedMetricRunsApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsSnapshotsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type tracerDerivedMetricsSnapshotsReadResponseSuccess =
+  tracerDerivedMetricsSnapshotsReadResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsSnapshotsReadResponseError =
+  tracerDerivedMetricsSnapshotsReadResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type tracerDerivedMetricsSnapshotsReadResponse =
+  | tracerDerivedMetricsSnapshotsReadResponseSuccess
+  | tracerDerivedMetricsSnapshotsReadResponseError;
+
+export const getTracerDerivedMetricsSnapshotsReadUrl = (
+  id: string,
+  params?: TracerDerivedMetricsSnapshotsReadParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/${id}/snapshots/?${stringifiedParams}`
+    : `/tracer/derived-metrics/${id}/snapshots/`;
+};
+
+export const tracerDerivedMetricsSnapshotsRead = async (
+  id: string,
+  params?: TracerDerivedMetricsSnapshotsReadParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsSnapshotsReadResponse> => {
+  return apiMutator<tracerDerivedMetricsSnapshotsReadResponse>(
+    getTracerDerivedMetricsSnapshotsReadUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsSnapshotsCreateResponse202 = {
+  data: DerivedMetricRunApi;
+  status: 202;
+};
+
+export type tracerDerivedMetricsSnapshotsCreateResponse400 = {
+  data: MetricUnavailableApi;
+  status: 400;
+};
+
+export type tracerDerivedMetricsSnapshotsCreateResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsSnapshotsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 400 | 503>;
+};
+
+export type tracerDerivedMetricsSnapshotsCreateResponseSuccess =
+  tracerDerivedMetricsSnapshotsCreateResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsSnapshotsCreateResponseError = (
+  | tracerDerivedMetricsSnapshotsCreateResponse400
+  | tracerDerivedMetricsSnapshotsCreateResponse503
+  | tracerDerivedMetricsSnapshotsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsSnapshotsCreateResponse =
+  | tracerDerivedMetricsSnapshotsCreateResponseSuccess
+  | tracerDerivedMetricsSnapshotsCreateResponseError;
+
+export const getTracerDerivedMetricsSnapshotsCreateUrl = (id: string) => {
+  return `/tracer/derived-metrics/${id}/snapshots/`;
+};
+
+export const tracerDerivedMetricsSnapshotsCreate = async (
+  id: string,
+  metricSnapshotRequestApi: MetricSnapshotRequestApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsSnapshotsCreateResponse> => {
+  return apiMutator<tracerDerivedMetricsSnapshotsCreateResponse>(
+    getTracerDerivedMetricsSnapshotsCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(metricSnapshotRequestApi),
+    },
+  );
+};
+
+export type tracerDerivedMetricsDeleteSnapshotResponse202 = {
+  data: MetricSnapshotDeleteApi;
+  status: 202;
+};
+
+export type tracerDerivedMetricsDeleteSnapshotResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsDeleteSnapshotResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 503>;
+};
+
+export type tracerDerivedMetricsDeleteSnapshotResponseSuccess =
+  tracerDerivedMetricsDeleteSnapshotResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsDeleteSnapshotResponseError = (
+  | tracerDerivedMetricsDeleteSnapshotResponse503
+  | tracerDerivedMetricsDeleteSnapshotResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsDeleteSnapshotResponse =
+  | tracerDerivedMetricsDeleteSnapshotResponseSuccess
+  | tracerDerivedMetricsDeleteSnapshotResponseError;
+
+export const getTracerDerivedMetricsDeleteSnapshotUrl = (
+  id: string,
+  snapshotId: string,
+) => {
+  return `/tracer/derived-metrics/${id}/snapshots/${snapshotId}/`;
+};
+
+export const tracerDerivedMetricsDeleteSnapshot = async (
+  id: string,
+  snapshotId: string,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsDeleteSnapshotResponse> => {
+  return apiMutator<tracerDerivedMetricsDeleteSnapshotResponse>(
+    getTracerDerivedMetricsDeleteSnapshotUrl(id, snapshotId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export type tracerDerivedMetricsTrendResponse200 = {
+  data: MetricTrendApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsTrendResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsTrendResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type tracerDerivedMetricsTrendResponseSuccess =
+  tracerDerivedMetricsTrendResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsTrendResponseError = (
+  | tracerDerivedMetricsTrendResponse503
+  | tracerDerivedMetricsTrendResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsTrendResponse =
+  | tracerDerivedMetricsTrendResponseSuccess
+  | tracerDerivedMetricsTrendResponseError;
+
+export const getTracerDerivedMetricsTrendUrl = (
+  id: string,
+  params: TracerDerivedMetricsTrendParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/${id}/trend/?${stringifiedParams}`
+    : `/tracer/derived-metrics/${id}/trend/`;
+};
+
+export const tracerDerivedMetricsTrend = async (
+  id: string,
+  params: TracerDerivedMetricsTrendParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsTrendResponse> => {
+  return apiMutator<tracerDerivedMetricsTrendResponse>(
+    getTracerDerivedMetricsTrendUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsUnitValuesResponse200 = {
+  data: MetricDriversApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsUnitValuesResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsUnitValuesResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type tracerDerivedMetricsUnitValuesResponseSuccess =
+  tracerDerivedMetricsUnitValuesResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsUnitValuesResponseError = (
+  | tracerDerivedMetricsUnitValuesResponse503
+  | tracerDerivedMetricsUnitValuesResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsUnitValuesResponse =
+  | tracerDerivedMetricsUnitValuesResponseSuccess
+  | tracerDerivedMetricsUnitValuesResponseError;
+
+export const getTracerDerivedMetricsUnitValuesUrl = (
+  id: string,
+  params: TracerDerivedMetricsUnitValuesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/tracer/derived-metrics/${id}/unit-values/?${stringifiedParams}`
+    : `/tracer/derived-metrics/${id}/unit-values/`;
+};
+
+export const tracerDerivedMetricsUnitValues = async (
+  id: string,
+  params: TracerDerivedMetricsUnitValuesParams,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsUnitValuesResponse> => {
+  return apiMutator<tracerDerivedMetricsUnitValuesResponse>(
+    getTracerDerivedMetricsUnitValuesUrl(id, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type tracerDerivedMetricsUnitValuesCreateResponse200 = {
+  data: MetricDriversApi;
+  status: 200;
+};
+
+export type tracerDerivedMetricsUnitValuesCreateResponse503 = {
+  data: MetricUnavailableApi;
+  status: 503;
+};
+
+export type tracerDerivedMetricsUnitValuesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 503>;
+};
+
+export type tracerDerivedMetricsUnitValuesCreateResponseSuccess =
+  tracerDerivedMetricsUnitValuesCreateResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type tracerDerivedMetricsUnitValuesCreateResponseError = (
+  | tracerDerivedMetricsUnitValuesCreateResponse503
+  | tracerDerivedMetricsUnitValuesCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type tracerDerivedMetricsUnitValuesCreateResponse =
+  | tracerDerivedMetricsUnitValuesCreateResponseSuccess
+  | tracerDerivedMetricsUnitValuesCreateResponseError;
+
+export const getTracerDerivedMetricsUnitValuesCreateUrl = (id: string) => {
+  return `/tracer/derived-metrics/${id}/unit-values/`;
+};
+
+export const tracerDerivedMetricsUnitValuesCreate = async (
+  id: string,
+  metricUnitValuesRequestApi: MetricUnitValuesRequestApi,
+  options?: RequestInit,
+): Promise<tracerDerivedMetricsUnitValuesCreateResponse> => {
+  return apiMutator<tracerDerivedMetricsUnitValuesCreateResponse>(
+    getTracerDerivedMetricsUnitValuesCreateUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(metricUnitValuesRequestApi),
     },
   );
 };
@@ -90469,24 +92534,31 @@ export const tracerUserAlertsList = async (
   );
 };
 
-export type tracerUserAlertsCreateResponse201 = {
-  data: UserAlertMonitorApi;
-  status: 201;
+export type tracerUserAlertsCreateResponse200 = {
+  data: UserAlertMonitorCreateResponseApi;
+  status: 200;
+};
+
+export type tracerUserAlertsCreateResponse402 = {
+  data: UserAlertMonitorEntitlementResponseApi;
+  status: 402;
 };
 
 export type tracerUserAlertsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi;
-  status: Exclude<HTTPStatusCodes, 201>;
+  status: Exclude<HTTPStatusCodes, 200 | 402>;
 };
 
 export type tracerUserAlertsCreateResponseSuccess =
-  tracerUserAlertsCreateResponse201 & {
+  tracerUserAlertsCreateResponse200 & {
     headers: ApiResponseHeaders;
   };
-export type tracerUserAlertsCreateResponseError =
-  tracerUserAlertsCreateResponseDefault & {
-    headers: ApiResponseHeaders;
-  };
+export type tracerUserAlertsCreateResponseError = (
+  | tracerUserAlertsCreateResponse402
+  | tracerUserAlertsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
 
 export type tracerUserAlertsCreateResponse =
   | tracerUserAlertsCreateResponseSuccess

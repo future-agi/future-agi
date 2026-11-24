@@ -214,8 +214,7 @@ export default function AgentSourceChange({
   // old default and drop it.
   const checking = versions.some(checkRunning);
   const busy = create.isPending || uploading !== null || checking;
-  const watched =
-    source.visibility !== "private" && !PINNED_REF.test(source.ref || "");
+  const watched = !PINNED_REF.test(source.ref || "");
   const prompted = ["phone", "livekit", "provider"].includes(source.kind);
 
   return (
@@ -236,11 +235,7 @@ export default function AgentSourceChange({
               source.ref,
             )}
           </Typography>
-          {source.visibility === "private" ? (
-            <Note>{COPY.privateNotWatched}</Note>
-          ) : (
-            watched && <Note>{COPY.watchHint}</Note>
-          )}
+          {watched && <Note>{COPY.watchHint}</Note>}
         </>
       )}
 

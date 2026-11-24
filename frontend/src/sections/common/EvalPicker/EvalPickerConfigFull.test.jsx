@@ -7,7 +7,12 @@ import EvalPickerProvider from "./context/EvalPickerProvider";
 import EvalPickerConfigFull from "./EvalPickerConfigFull";
 
 const { capturedProps } = vi.hoisted(() => ({
-  capturedProps: { tracing: null, llmPrompt: null, instruction: null },
+  capturedProps: {
+    tracing: null,
+    simulation: null,
+    llmPrompt: null,
+    instruction: null,
+  },
 }));
 
 vi.mock("src/sections/evals/components/TracingTestMode", () => {
@@ -26,7 +31,10 @@ vi.mock("src/sections/evals/components/DatasetTestMode", () => {
 });
 
 vi.mock("src/sections/evals/components/SimulationTestMode", () => {
-  const M = React.forwardRef(() => <div />);
+  const M = React.forwardRef((props, _ref) => {
+    capturedProps.simulation = props;
+    return <div />;
+  });
   M.displayName = "SimulationTestModeMock";
   return { default: M };
 });
@@ -147,7 +155,7 @@ vi.mock("src/sections/evals/hooks/useCompositeEval", () => ({
 }));
 
 vi.mock("src/sections/evals/hooks/useCompositeChildrenKeys", () => ({
-  useCompositeChildrenUnionKeys: () => stableUnionKeys,
+  useCompositeChildrenInputs: () => ({ keys: stableUnionKeys }),
 }));
 
 vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
@@ -199,16 +207,18 @@ const DEFAULT_DETAIL = {
 };
 
 const configFullTree = ({
+  source = "task",
+  sourceColumns = [],
   sourceTimeWindow,
   evalData,
   requireInputs,
   onSave = () => {},
 } = {}) => (
   <EvalPickerProvider
-    source="task"
+    source={source}
     sourceId="project-1"
     sourceRowType="traces"
-    sourceColumns={[]}
+    sourceColumns={sourceColumns}
     existingEvals={[]}
     onEvalAdded={() => {}}
     onClose={() => {}}
@@ -226,6 +236,14 @@ const configFullTree = ({
 );
 
 const renderConfigFull = (options = {}) => render(configFullTree(options));
+
+it("supplies the simulation's configured fields to the variable mapper", async () => {
+  const sourceColumns = [{ field: "call.transcript" }];
+  renderConfigFull({ source: "simulation", sourceColumns });
+  await waitFor(() =>
+    expect(capturedProps.simulation?.sourceColumns).toEqual(sourceColumns),
+  );
+});
 
 it("authors a decision rubric in the attach drawer and forwards the exact route and mapping to preview and binding", async () => {
   const previous = stableEvalDetail.data;

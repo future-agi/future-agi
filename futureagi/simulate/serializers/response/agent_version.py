@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentVersion
+from simulate.serializers.harness_environment import HarnessEnvironmentWorkerSerializer
 from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.agent_setup import agent_summary
 from tfc.permissions.utils import cached_is_read_only_user
@@ -105,7 +106,7 @@ class AgentVersionResponseSerializer(VersionCheckFields, serializers.ModelSerial
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     agent_kind = serializers.SerializerMethodField()
     api_key = serializers.SerializerMethodField()
-    source = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()  # type: ignore[assignment]  # the API field is named source, as Field's own
 
     class Meta:
         model = AgentVersion
@@ -230,7 +231,7 @@ class AgentVersionListResponseSerializer(
     is_active = serializers.ReadOnlyField()
     is_latest = serializers.ReadOnlyField()
     in_production = serializers.BooleanField(source="is_active", read_only=True)
-    source = serializers.SerializerMethodField()
+    source = serializers.SerializerMethodField()  # type: ignore[assignment]  # the API field is named source, as Field's own
 
     class Meta:
         model = AgentVersion
@@ -312,6 +313,25 @@ class AgentVersionRestoreResponseSerializer(serializers.Serializer):
     version = AgentVersionResponseSerializer(read_only=True)
 
 
+class AgentVersionDetailResponseSerializer(AgentVersionResponseSerializer):
+    """The version detail, with the workers its newest built environment declares (Agent > Definition > Participants)."""
+
+    participants = serializers.SerializerMethodField()
+
+    class Meta(AgentVersionResponseSerializer.Meta):
+        fields = [*AgentVersionResponseSerializer.Meta.fields, "participants"]
+        read_only_fields = fields
+
+    @swagger_serializer_method(
+        serializer_or_field=HarnessEnvironmentWorkerSerializer(many=True)
+    )
+    def get_participants(self, obj):
+        # Imported here: the environment service reaches this module back through the run results.
+        from simulate.services.harness_environment import version_participants
+
+        return version_participants(obj)
+
+
 class AgentVersionChangeResponseSerializer(serializers.Serializer):
     """The version a change made, or the one already standing for that content."""
 
@@ -333,7 +353,7 @@ class AgentVersionActionResponseSerializer(serializers.Serializer):
 
 class AgentToolSignatureSerializer(serializers.Serializer):
     arguments = serializers.ListField(child=serializers.CharField(), read_only=True)
-    required = serializers.ListField(child=serializers.CharField(), read_only=True)
+    required = serializers.ListField(child=serializers.CharField(), read_only=True)  # type: ignore[assignment]  # the API field is named required, as Field's own
     kind = serializers.CharField(read_only=True, allow_null=True)
 
 

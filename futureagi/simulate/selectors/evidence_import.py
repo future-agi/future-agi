@@ -332,11 +332,12 @@ class OpenEvidenceImport:
 
 def open_evidence_imports(environment: HostedHarnessJob) -> list[OpenEvidenceImport]:
     """The environment's imports a person can still finish, newest first: those
-    with a case to draft, add or retry, or being drafted. Read from what the
+    with a case to draft, add or retry, or being drafted. An Error Feed issue's
+    import is finished on its epoch's page, so it is not listed. Read from what the
     import stores only: no source is read again and nothing is redacted."""
     imports = (
         EvidenceImport.no_workspace_objects.filter(
-            environment=environment, deleted=False
+            environment=environment, deleted=False, source_issue__isnull=True
         )
         .annotate(
             case_count=Count("cases"),

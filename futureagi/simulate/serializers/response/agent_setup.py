@@ -50,7 +50,7 @@ class StoredTelephonySerializer(serializers.Serializer):
 class StoredFrameworkSerializer(serializers.Serializer):
     name = serializers.CharField()
     version = serializers.CharField(allow_null=True)
-    label = serializers.CharField(required=False, allow_null=True)
+    label = serializers.CharField(required=False, allow_null=True)  # type: ignore[assignment]  # the API field is named label, as Field's own
 
 
 class StoredSourceEchoSerializer(serializers.Serializer):
@@ -59,7 +59,7 @@ class StoredSourceEchoSerializer(serializers.Serializer):
 
 class StoredExtensionSerializer(serializers.Serializer):
     framework = StoredFrameworkSerializer(allow_null=True)
-    source = StoredSourceEchoSerializer(allow_null=True)
+    source = StoredSourceEchoSerializer(allow_null=True)  # type: ignore[assignment]  # the API field is named source, as Field's own
 
 
 class StoredAgentSerializer(serializers.Serializer):

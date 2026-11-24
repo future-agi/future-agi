@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from io import BytesIO
+from itertools import pairwise
 from typing import Any
 
 import structlog
@@ -37,6 +38,7 @@ from simulate.models.chat_message import ChatMessageModel
 from simulate.models.test_execution import CallTranscript
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.semantics import SupportedProviders
+from simulate.services.call_provider import HOSTED_TARGET_PROVIDER
 from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.harness_run_evals import stamp_eval_queued
 from simulate.services.scoring_status import (
@@ -49,6 +51,7 @@ from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
 )
+from simulate.types import worker_subject_id
 from simulate.utils.ended_reason import to_canonical_ended_reason
 from simulate.utils.eval_summary import INCONCLUSIVE_OUTPUT, NOT_APPLICABLE_OUTPUT
 from simulate.utils.test_execution_utils import (
@@ -73,6 +76,7 @@ _ALK_BATCH_CLAIMED_KEY = "alk_batch_claimed"
 _RESERVED_CALL_METADATA_KEYS = frozenset(
     {
         _ALK_BATCH_CLAIMED_KEY,
+        HOSTED_TARGET_PROVIDER,
         "cost_deducted",
         "csat_dispatched",
         # Eval/CSAT idempotency guards + failure diagnostics the backend owns;
@@ -1562,9 +1566,13 @@ def _store_alk_chat_messages(
     ``tool_calls``, ``tool_call_result``) folds into that exchange's single
     ASSISTANT row. Folding keeps the agent's real tool activity visible while
     ``turn_count`` (COUNT of ASSISTANT rows) still equals the exchange count, the
-    native chat semantic. The USER and ASSISTANT rows of one exchange **share a
-    created_at**: that is what the chat UI groups a turn by — staggering per row
-    made every message render as interrupted.
+    native chat semantic.
+
+    Each row gets its own ``created_at``, in conversation order, anchored at the
+    call's ``started_at`` (the receipt's start time): the row's first segment's
+    ``start_time_ms`` offset when the transcript's offsets rise row by row, else
+    one second per row. Readers order a chat by ``created_at`` alone, so rows
+    must not share one.
 
     Mirrors ``simulate/tasks/chat_sim.py`` store_chat_messages (agent → ASSISTANT,
     simulator → USER). ``latency_ms`` is carried from the last agent segment that
@@ -1639,10 +1647,11 @@ def _store_alk_chat_messages(
         )
 
     rows: list[ChatMessageModel] = []
-    for index, exchange in enumerate(exchanges):
-        created_at = base + timedelta(seconds=index)
+    row_offsets_ms: list[int | None] = []
+    for exchange in exchanges:
         if exchange["user"] is not None:
-            rows.append(_row(ChatRole.USER, "user", [exchange["user"]], created_at))
+            rows.append(_row(ChatRole.USER, "user", [exchange["user"]], base))
+            row_offsets_ms.append(exchange["user"].get("start_time_ms"))
         agent_segs = exchange["agent"]
         if agent_segs:
             latency = next(
@@ -1654,11 +1663,29 @@ def _store_alk_chat_messages(
                 None,
             )
             rows.append(
-                _row(ChatRole.ASSISTANT, "assistant", agent_segs, created_at, latency)
+                _row(ChatRole.ASSISTANT, "assistant", agent_segs, base, latency)
             )
+            row_offsets_ms.append(agent_segs[0].get("start_time_ms"))
+
+    offsets_ms = [ms for ms in row_offsets_ms if isinstance(ms, int)]
+    timed = len(offsets_ms) == len(row_offsets_ms) and all(
+        later > earlier for earlier, later in pairwise(offsets_ms)
+    )
+    if timed:
+        transcript_times = [base + timedelta(milliseconds=ms) for ms in offsets_ms]
+    else:
+        transcript_times = [
+            base + timedelta(seconds=index) for index in range(len(row_offsets_ms))
+        ]
 
     if rows:
+        # ``created_at`` is ``auto_now_add``, so bulk_create stamps every row
+        # with the import time. Write the transcript's own times back after the
+        # insert so the conversation keeps the date it actually happened.
         ChatMessageModel.objects.bulk_create(rows)
+        for row, created_at in zip(rows, transcript_times, strict=True):
+            row.created_at = created_at
+        ChatMessageModel.all_objects.bulk_update(rows, ["created_at"])
     return len(rows)
 
 
@@ -1918,7 +1945,14 @@ def _apply_harness_evaluation_outputs(
         if not name:
             continue
         kind = str(evaluation.get("kind") or "checkpoint").strip()[:50]
-        template = _resolve_harness_eval_template(run_test, evaluation, name)
+        subject = str(evaluation.get("subject") or "")
+        worker = worker_subject_id(subject) or ""
+        # A worker's own check is never the task's column: it gets its own id and no error localizer.
+        template = (
+            None
+            if worker
+            else _resolve_harness_eval_template(run_test, evaluation, name)
+        )
         config = None
         if template is not None:
             config = _get_or_create_harness_eval_config(run_test, template, name)
@@ -1927,7 +1961,9 @@ def _apply_harness_evaluation_outputs(
             output_id = str(
                 uuid.uuid5(
                     _HARNESS_EVAL_NAMESPACE,
-                    f"{run_test.id}:{kind}:{name}",
+                    f"{run_test.id}:{kind}:{subject}:{name}"
+                    if worker
+                    else f"{run_test.id}:{kind}:{name}",
                 )
             )
 
@@ -1954,6 +1990,8 @@ def _apply_harness_evaluation_outputs(
             "output_type": output_type,
             **({"result": evaluation["result"]} if evaluation.get("result") else {}),
             "reason": str(evaluation.get("reason") or "")[:10000],
+            # A worker's own check names its worker by subject; the reader's label is the client's.
+            **({"subject": subject} if worker else {}),
             "status": "completed",
             "source": "harness",
             "kind": kind,

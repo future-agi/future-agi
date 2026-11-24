@@ -6,6 +6,7 @@ from simulate.views.agent_fix import (
     AgentFixModelView,
     AgentFixRunViewSet,
 )
+from simulate.views.agent_fix_issue import AgentFixIssueJobViewSet
 from simulate.views.agent_prompt_optimiser import AgentPromptOptimiserRunViewSet
 from simulate.views.call_transcript import (
     CallBranchAnalysisView,
@@ -156,11 +157,13 @@ from .views.livekit_api import (
 from .views.persona import PersonaDuplicateView, PersonaViewSet
 from .views.run_results_v3 import (
     CallExecutionV3DetailView,
+    CallExecutionV3WorkersView,
     RunAnalyticsV3View,
     RunCallsV3View,
     RunExportV3View,
     RunReliabilityV3View,
     RunTracesV3View,
+    RunTrialRoutesV3View,
 )
 from .views.scenarios import EditScenarioPromptsView
 
@@ -176,6 +179,9 @@ router.register(
 )
 router.register(r"agent-prompt-optimiser", AgentPromptOptimiserRunViewSet)
 router.register(r"agent-fix-runs", AgentFixRunViewSet, basename="agent-fix-run")
+router.register(
+    r"agent-fix-issues", AgentFixIssueJobViewSet, basename="agent-fix-issue"
+)
 router.register(r"agent-fix-engine", AgentFixEngineViewSet, basename="agent-fix-engine")
 router.register(
     r"alk-simulate", ALKSimulateIngestionViewSet, basename="alk-simulate-ingestion"
@@ -230,6 +236,16 @@ urlpatterns = [
         "v3/call-executions/<uuid:call_execution_id>/",
         CallExecutionV3DetailView.as_view(),
         name="v3-call-execution-detail",
+    ),
+    path(
+        "v3/call-executions/<uuid:call_execution_id>/workers/",
+        CallExecutionV3WorkersView.as_view(),
+        name="v3-call-execution-workers",
+    ),
+    path(
+        "v3/test-executions/<uuid:test_execution_id>/trial-routes/",
+        RunTrialRoutesV3View.as_view(),
+        name="v3-test-execution-trial-routes",
     ),
     path(
         "v3/test-executions/<uuid:test_execution_id>/analytics/",

@@ -80,7 +80,7 @@ class VersionCode:
 
     @cached_property
     def archive(self) -> bytes:
-        archive = self.load()
+        archive: bytes | None = self.load()
         if archive is None:
             raise _unavailable()
         return archive

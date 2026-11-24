@@ -51,7 +51,13 @@ type APIError struct {
 	// sent as x-agentcc-upstream-status so a caller can tell the gateway's
 	// refusal from the vendor's.
 	UpstreamStatus int
+
+	// Set only by the gateway's provider admission constructors, never from the wire.
+	localAdmission bool
 }
+
+// IsLocalAdmission distinguishes a routing refusal from an identically coded upstream error.
+func (e *APIError) IsLocalAdmission() bool { return e.localAdmission }
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
@@ -111,6 +117,20 @@ func ErrServiceUnavailable(message string) *APIError {
 	return newAPIError(http.StatusServiceUnavailable, ErrTypeServer, "all_providers_unavailable", message)
 }
 
+// ErrProviderCircuitOpen reports a local circuit breaker's refusal to dispatch.
+func ErrProviderCircuitOpen() *APIError {
+	err := newAPIError(http.StatusServiceUnavailable, ErrTypeServer, "circuit_open", "Provider circuit is open or at its probe limit")
+	err.localAdmission = true
+	return err
+}
+
+// ErrProvidersUnavailable reports that local selection exhausted the available providers.
+func ErrProvidersUnavailable(message string) *APIError {
+	err := ErrServiceUnavailable(message)
+	err.localAdmission = true
+	return err
+}
+
 func ErrInternal(message string) *APIError {
 	return newAPIError(http.StatusInternalServerError, ErrTypeServer, "internal_error", message)
 }
@@ -140,6 +160,12 @@ func ErrGuardrailUnavailable(message string) *APIError {
 // those never pass through newAPIError. Redacting at the boundary every
 // response leaves through needs no site to remember.
 func WriteError(w http.ResponseWriter, err *APIError) {
+	// Explicitly notify a guarded release boundary. It may replace an upstream
+	// error (which can quote uninspected content) with a safe terminal envelope.
+	// A raw WriteHeader(4xx/5xx) must never grant the same exemption.
+	if guarded, ok := w.(interface{ GuardrailError(*APIError) *APIError }); ok {
+		err = guarded.GuardrailError(err)
+	}
 	// A post-stage refusal must not replay the already completed provider call.
 	if err.Code == "guardrail_unavailable" {
 		w.Header().Set("x-should-retry", "false")

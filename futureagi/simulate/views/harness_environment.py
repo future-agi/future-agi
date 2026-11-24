@@ -18,6 +18,7 @@ from simulate.models import (
     HostedHarnessJob,
 )
 from simulate.pydantic_schemas.evidence_import import DatasetColumns
+from simulate.selectors.agent_fix_issue import issue_scenarios
 from simulate.selectors.evidence_import import (
     environment_evidence_import,
     evidence_dataset,
@@ -125,6 +126,7 @@ from simulate.services.harness_environment import (
     eval_modality,
     filter_for_list,
     status_counts,
+    with_version_contract,
 )
 from simulate.services.harness_provider import (
     _usage_limit_response,
@@ -264,6 +266,22 @@ def _uuid_or_none(value):
         return UUID(str(value))
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _editable_import(job, identifier):
+    """An import this page may draft, add or discard. An Error Feed issue's import
+    belongs to its epoch, whose page finishes it."""
+    evidence_import = environment_evidence_import(job, identifier)
+    if evidence_import is None:
+        raise NotFound("Evidence import not found")
+    if evidence_import.source_issue_id is not None:
+        raise HostedHarnessError(
+            "evidence_import_of_issue",
+            "This import belongs to an epoch from an Error Feed issue. Review it on"
+            " that epoch's page.",
+            status_code=409,
+        )
+    return evidence_import
 
 
 class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
@@ -520,9 +538,11 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         locked = set_environment_policy(
             job, user=request.user, **request.validated_data
         )
-        version = AgentVersion.no_workspace_objects.filter(
-            id=locked.agent_version_id
-        ).first()
+        version = (
+            AgentVersion.no_workspace_objects.filter(id=locked.agent_version_id).first()
+            if locked.agent_version_id is not None
+            else None
+        )
         return Response(
             HarnessAgentPolicyResponseSerializer(
                 {
@@ -543,8 +563,9 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         url_path=r"versions/suite/(?P<version_id>[0-9a-fA-F-]{36})/members",
     )
     def suite_members(self, request, pk=None, version_id=None):
-        """The scenarios in one suite version, by number; a coding agent's read leaves
-        out the held-back cases."""
+        """The scenarios in one suite version, by number, each with the Error Feed
+        issue it came from, if any; a coding agent's read leaves out the held-back
+        cases."""
         version_reads.require_versioning()
         job = self._job(request, pk)
         if job is None:
@@ -553,8 +574,19 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         if identifier is None:
             raise version_reads.version_not_found()
         hidden = _held_back_from(request, job, identifier)
-        members = version_reads.suite_members(job, identifier)
-        return Response(members_without(members, hidden))
+        members = members_without(version_reads.suite_members(job, identifier), hidden)
+        issues = issue_scenarios(job, [member["scenario_key"] for member in members])
+        return Response(
+            [
+                {
+                    **member,
+                    "issue_cluster_id": issue.cluster_id if issue else None,
+                    "issue_project_id": issue.project_id if issue else None,
+                }
+                for member in members
+                for issue in [issues.get(member["scenario_key"])]
+            ]
+        )
 
     @validated_request(
         request_serializer=HarnessVerifyCreateSerializer,
@@ -602,6 +634,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def actors(self, request, pk=None):
         """The environment's cast as the next run would use it: the draft's when there is one."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -629,6 +662,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def actor_detail(self, request, pk=None, actor_id=None):
         """What one actor sees and may do, optionally in one scenario, and what it never sees."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -678,6 +712,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """What a create, replace or removal of one actor would say, writing nothing: its problems, the actions it
         would share that `share_actions` does not confirm, the id a create gets, and how far it is over the bound."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -715,6 +750,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def actor_limits(self, request, pk=None):
         """Set the environment's actor limits in its draft (each a number, or null for no limit) and its actors' model."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -739,6 +775,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     def accept_unresolved(self, request, pk=None):
         """Accept the cast as written for one policy point the builder could not model."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -767,6 +804,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         """Put one uploaded file into the environment's draft under its kind; the cast's knowledge sources then list
         it, for picking per actor."""
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -785,6 +823,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
 
     def _actor_edit(self, request, pk, *, op, actor_id=None):
         version_reads.require_versioning()
+        version_reads.require_actors()
         job = self._job(request, pk)
         if job is None:
             return self._not_found()
@@ -986,9 +1025,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         identifier = _uuid_or_none(import_id)
         if job is None or identifier is None:
             return self._not_found()
-        evidence_import = environment_evidence_import(job, identifier)
-        if evidence_import is None:
-            raise NotFound("Evidence import not found")
+        evidence_import = _editable_import(job, identifier)
         discard_evidence_import(evidence_import)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -1014,9 +1051,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         identifier = _uuid_or_none(import_id)
         if job is None or identifier is None:
             return self._not_found()
-        evidence_import = environment_evidence_import(job, identifier)
-        if evidence_import is None:
-            raise NotFound("Evidence import not found")
+        evidence_import = _editable_import(job, identifier)
         start_drafting(
             evidence_import,
             [str(case_id) for case_id in request.validated_data["case_ids"]],
@@ -1052,9 +1087,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
         identifier = _uuid_or_none(import_id)
         if job is None or identifier is None:
             return self._not_found()
-        evidence_import = environment_evidence_import(job, identifier)
-        if evidence_import is None:
-            raise NotFound("Evidence import not found")
+        evidence_import = _editable_import(job, identifier)
         body = request.validated_data
         saved = add_to_suite(
             evidence_import,
@@ -1280,7 +1313,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             )
         query = request.validated_query_data
         jobs = filter_for_list(
-            self._queryset(request),
+            with_version_contract(self._queryset(request)),
             search=query.get("search"),
             status=query.get("status"),
             agent_type=query.get("agent_type"),
@@ -1290,7 +1323,7 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
             jobs = jobs.filter(run_test__agent_definition_id=agent_definition_id)
         paginator = self.pagination_class()
         page = paginator.paginate_queryset(jobs, request, view=self)
-        response = paginator.get_paginated_response(environment_rows(page))
+        response = paginator.get_paginated_response(environment_rows(page or []))
         response.data["status_counts"] = status_counts(self._scoped_jobs(request))
         return response
 
