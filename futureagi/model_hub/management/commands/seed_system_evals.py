@@ -39,10 +39,11 @@ logger = structlog.get_logger(__name__)
 # 33: mean_average_precision credits each relevant document once, so duplicate
 # retrievals no longer push AP past 1.0.
 # 34: retrieval evals normalize scalar references and hypotheses as single items.
-# 35: link checks validate URL format only, without DNS or network requests
-# (shipped on main as version 33 in v1.59.0; renumbered above dev's 33 and 34
-# so installs at either 33 or 34 re-seed and pick up both sets of changes).
-SYSTEM_EVALS_VERSION = 35
+# 37: install citation_quality on existing catalogs.
+# 38: link checks validate URL format only, without DNS or network requests
+# (shipped on main as version 33 in v1.59.0; renumbered above dev's 37 so
+# installs at 33, 34 or 37 re-seed and pick up every change).
+SYSTEM_EVALS_VERSION = 38
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any

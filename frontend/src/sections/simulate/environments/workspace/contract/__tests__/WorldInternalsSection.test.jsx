@@ -177,4 +177,37 @@ describe("WorldInternalsSection tools", () => {
     );
     expect(within(toolOf("mystery")).queryByText("Reset")).toBeNull();
   });
+
+  it("says under Unsupported why the tool is blocked, in the server's words", () => {
+    const reason =
+      "charge_card reaches production and is blocked in this controlled test: serve it from the agent's tools service or remove it.";
+    render(
+      <WorldInternalsSection
+        env={{
+          ...env,
+          toolStatus: [
+            ...env.toolStatus,
+            status("charge_card", "unsupported", { status_reason: reason }),
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByTestId("tool-status-reason")).toHaveTextContent(reason);
+    // Only the blocked tool says why.
+    expect(screen.getAllByTestId("tool-status-reason")).toHaveLength(1);
+  });
+
+  it("says when the tools are an open draft's, which runs do not use until it is saved", () => {
+    const { unmount } = render(
+      <WorldInternalsSection env={{ ...env, contractFromDraft: true }} />,
+    );
+    expect(
+      screen.getByText(/Draft: not used by runs until saved/),
+    ).toBeTruthy();
+    unmount();
+    render(<WorldInternalsSection env={env} />);
+    expect(
+      screen.queryByText(/Draft: not used by runs until saved/),
+    ).toBeNull();
+  });
 });

@@ -37,3 +37,22 @@ test('the E2E stack applies the whole packaged Metrics ClickHouse schema before 
     assert.equal(all[name].depends_on['metrics-schema-bootstrap'].condition, 'service_completed_successfully', name);
   }
 });
+
+// Standalone has no compose job for it: bin/e2e runs the same runner over the
+// same files in the app container once the app's bootstrap has finished.
+test('Standalone applies the same Metrics schema files as the Distributed job', async () => {
+  const job = (await services())['metrics-schema-bootstrap'];
+  const distributed = job.command.slice(job.command.indexOf('--files') + 1);
+  const script = await readFile(path.join(root, 'bin/e2e'), 'utf8');
+  const list = script.match(/^METRICS_SCHEMA_FILES=\(([^)]*)\)$/m);
+  assert.ok(list, 'bin/e2e defines METRICS_SCHEMA_FILES');
+  assert.deepEqual(list[1].trim().split(/\s+/), distributed);
+  const standalone = script.slice(script.indexOf('if [[ "${E2E_STACK:-distributed}" == standalone ]]; then'));
+  const apply = standalone.slice(standalone.indexOf('Applying the Metrics ClickHouse schema'), standalone.indexOf('phase metrics-schema'));
+  assert.match(apply, /exec -T -w \/app\/backend .* app \\\n/s);
+  assert.match(apply, /python -m tracer\.services\.clickhouse\.v2\.apply_schema --ch-host="\$CH_HOST"/);
+  assert.match(apply, /--files "\$@"' \\\n\s+metrics-schema "\$\{METRICS_SCHEMA_FILES\[@\]\}"/);
+  assert.ok(!/--ch-password|--force/.test(apply), 'no password in argv, no forced replay');
+  // Before the frontend wait, so it precedes every test in this run.
+  assert.ok(standalone.indexOf('phase metrics-schema') < standalone.indexOf('Waiting for frontend'));
+});
