@@ -14,14 +14,35 @@ def contract_data(job: HostedHarnessJob) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+# The revision of how a save records the contract a version runs with. A record without it was written before this
+# reading of reach (by an earlier build of this code) and may name a reach its own build's seal does not: it is never
+# trusted, and the version's ancestry is read instead.
+RUN_CONTRACT_VERSION = 2
+
+
+def stamped_run_contract(documents: Any) -> dict[str, Any] | None:
+    """The run contract a version's save recorded, when this revision of the reading recorded it; None otherwise."""
+    documents = documents if isinstance(documents, dict) else {}
+    contract = documents.get("run_contract")
+    if (
+        isinstance(contract, dict)
+        and contract
+        and documents.get("run_contract_version") == RUN_CONTRACT_VERSION
+    ):
+        return contract
+    return None
+
+
 def recorded_contract(documents: Any) -> dict[str, Any]:
     """The contract a version's documents record it runs with: the one its build sealed (or the default's it
     keeps), else the authored one."""
     documents = documents if isinstance(documents, dict) else {}
-    for field in ("run_contract", "contract"):
-        contract = documents.get(field)
-        if isinstance(contract, dict) and contract:
-            return contract
+    recorded = stamped_run_contract(documents)
+    if recorded is not None:
+        return recorded
+    contract = documents.get("contract")
+    if isinstance(contract, dict) and contract:
+        return contract
     return {}
 
 
@@ -110,12 +131,10 @@ def _resolve(job: HostedHarnessJob, version: Any, key: str | None) -> dict[str, 
             # A build's seal: how it reaches each tool.
             base, stop = seal.contract, node
             break
-        if (
-            isinstance(documents.get("run_contract"), dict)
-            and documents["run_contract"]
-        ):
+        recorded = stamped_run_contract(documents)
+        if recorded is not None:
             # Recorded as this version runs, its reseal included: nothing further back is read.
-            base, stop = documents["run_contract"], node
+            base, stop = recorded, node
             break
         if seal is not None:
             own = seal.contract
