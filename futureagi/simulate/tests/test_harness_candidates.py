@@ -630,7 +630,7 @@ def test_failed_validation_keeps_draft_and_names_affected_scenarios(
         state=HarnessAssembledBundle.State.FAILED,
         error={
             "code": "authoring_runtime_validation_failed",
-            "message": "certify failed",
+            "message": "RuntimeError: submitted command exited 1: stdout: Traceback",
             "failed_actions": failed_actions,
             "source": "validation",
         },
@@ -638,9 +638,10 @@ def test_failed_validation_keeps_draft_and_names_affected_scenarios(
 
     validation = _drafts(auth_client, environment)["validation"]
     assert validation["state"] == "failed"
+    # The sandbox's own text never reaches the person: the reason is in plain words.
     assert validation["error"] == {
         "code": "authoring_runtime_validation_failed",
-        "message": "certify failed",
+        "message": "the agent did not pass this environment's checks (failed actions: approve_discount)",
         "failed_actions": failed_actions,
     }
     assert validation["affected_scenarios"] == [_key(NAMES[0])]
