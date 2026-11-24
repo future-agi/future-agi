@@ -8,7 +8,6 @@ import re
 import subprocess
 import tempfile
 from collections.abc import Callable
-from math import floor
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -21,6 +20,7 @@ from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
 from simulate.pydantic_schemas.agent_fix import (
     HELD_BACK_VERIFIED_MIN,
     EvalGrading,
+    EvalReview,
     VerdictTier,
     VerdictTierPart,
 )
@@ -32,6 +32,15 @@ from simulate.selectors.agent_fix import (
     verdict_tiers,
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
+from simulate.selectors.agent_fix_wording import (
+    CandidateWording,
+    ChangedFile,
+    candidate_wording,
+    changed_files,
+    must_pass_check,
+    percent,
+    plural,
+)
 from simulate.services.agent_fix_engine import load_object
 from simulate.services.agent_fix_runs import (
     base_moved,
@@ -131,64 +140,27 @@ def open_pull_request(
     return url
 
 
-def _percent(rate: float) -> str:
-    # Half up, as the fix page rounds: 62.5% reads 63% in both places.
-    return f"{floor(rate * 100 + 0.5)}%"
-
-
-def _evidence(verdict: dict) -> str:
-    """The pass rates a reviewer weighs and the must-pass cases it broke, as the fix page's
-    headline says them."""
-    rates = [
-        f"{name} pass rate {_percent(before)} → {_percent(after)}"
-        for name, (before, after) in (
-            ("held-back", verdict.get("held_back_pass_rate") or (None, None)),
-            ("target", verdict.get("target_pass_rate") or (None, None)),
-        )
-        if after is not None
-    ]
-    if not rates:
-        return ""
-    broke = len(verdict.get("must_pass_regressions") or [])
-    return ", ".join([*rates, f"broke {broke or 'none'}"])
-
-
-# The FE says the same where the user ships.
-_EVALS_INCOMPLETE = (
-    "**Platform evals did not finish on this candidate,** so their results are missing."
-    " Review it closely before you merge."
-)
-
-
-def _evals_note(candidate: AgentFixCandidate) -> str:
+def _evals_note(candidate: AgentFixCandidate, review: EvalReview) -> str:
     """The platform evals the winner does worse on than the current version. They do not
-    decide a fix, so the reviewer reads them here, or that none did, or that they did not
-    finish. Only a winner is graded."""
+    decide a fix, so the reviewer reads them here, or that none did. That they did not
+    finish is a caveat. Only a winner is graded."""
     if candidate.outcome != AgentFixCandidate.Outcome.WINNER:
         return ""
-    review = eval_review(candidate.fix_run)
-    lines = [_EVALS_INCOMPLETE] if review.grading == EvalGrading.INCOMPLETE else []
+    lines = []
     if review.warnings:
         lines.append(
             "**Platform evals this change does worse on.** They do not pick the winner;"
             " review them before you merge."
         )
         lines += [
-            f"- {_text(one.name)}: {_percent(one.pass_rate)} passed ({one.trials} trials),"
-            f" {_percent(one.base_pass_rate)} on the current version"
+            f"- {_text(one.name)}: {percent(one.pass_rate)} passed ({one.trials} trials),"
+            f" {percent(one.base_pass_rate)} on the current version"
             f" ({one.base_trials} trials)"
             for one in review.warnings
         ]
     elif review.grading == EvalGrading.DONE and review.compared:
         lines.append("Platform evals: none did worse than the current version.")
     return "\n".join(lines)
-
-
-def _must_pass_check(check: str) -> str:
-    """A must-pass check, sent as "scenario key: sub-goal", as its case and its check."""
-    case, _, sub_goal = check.partition(": ")
-    named = f"Must-pass case “{_text(case)}”"
-    return f"{named}: its “{_text(sub_goal)}” check" if sub_goal else named
 
 
 def _strength(held: int) -> str:
@@ -216,7 +188,8 @@ def _limited_note(candidate: AgentFixCandidate) -> str:
 def _override_note(candidate: AgentFixCandidate) -> str:
     """What a candidate the must-pass check refused is opened with, and the user's reason."""
     checks = "\n".join(
-        f"- {_must_pass_check(check)}" for check in overridable_regressions(candidate)
+        f"- {_text(must_pass_check(check))}"
+        for check in overridable_regressions(candidate)
     )
     reason = "\n".join(
         f"> {_line(line)}" for line in candidate.override_reason.splitlines()
@@ -228,50 +201,27 @@ def _override_note(candidate: AgentFixCandidate) -> str:
     )
 
 
-def _changed_files(patch: bytes) -> list[tuple[str, int, int]]:
-    """Each file the patch changes, in patch order, with its added and removed lines."""
-    files: dict[str, list[int]] = {}
-    path, in_hunk = None, False
-    for line in patch.decode("utf-8", "replace").splitlines():
-        if line.startswith("diff --git "):
-            path, in_hunk = line.rsplit(" b/", 1)[-1], False
-            files.setdefault(path, [0, 0])
-        elif path is None:
-            continue
-        elif line.startswith("@@"):
-            in_hunk = True
-        elif in_hunk and line.startswith("+"):
-            files[path][0] += 1
-        elif in_hunk and line.startswith("-"):
-            files[path][1] += 1
-    return [(name, added, removed) for name, (added, removed) in files.items()]
-
-
 def _causes(candidate: AgentFixCandidate) -> list[str]:
     """What the fix's diagnosis found its target cases fail on, in its own words."""
     causes = (candidate.fix_run.diagnosis or {}).get("causes") or []
     return [str(cause).strip() for cause in causes if str(cause).strip()]
 
 
-def _title(
-    candidate: AgentFixCandidate, files: list[tuple[str, int, int]], marks: str
-) -> str:
+def _title(candidate: AgentFixCandidate, files: list[ChangedFile], marks: str) -> str:
     """What the pull request is for and where: the causes the diagnosis found, fixed in
     the files the whole diff changes. Made only of counts and a file name, so it never
     cuts a sentence; the first wording that fits is used."""
     name = f"Epoch ({marks})" if marks else "Epoch"
     causes = len(_causes(candidate))
-    counted = _plural(len(files), "file", "files") if files else "the agent"
+    counted = plural(len(files), "file", "files") if files else "the agent"
     places = [Path(files[0][0]).name, counted] if len(files) == 1 else [counted]
     if not causes:
         wordings = [f"{name}: change {place}" for place in places]
     else:
-        fixes = _plural(causes, "diagnosed cause", "diagnosed causes")
+        fixes = plural(causes, "diagnosed cause", "diagnosed causes")
         wordings = [f"{name}: fix {fixes} in {place}" for place in places]
         # Both marks leave room only for the shorter word, or for no causes at all.
-        wordings.append(
-            f"{name}: fix {_plural(causes, 'cause', 'causes')} in {counted}"
-        )
+        wordings.append(f"{name}: fix {plural(causes, 'cause', 'causes')} in {counted}")
         wordings.append(f"{name}: change {counted}")
     return next((one for one in wordings if len(one) <= _TITLE_CHARS), wordings[-1])
 
@@ -403,7 +353,7 @@ def _part_row(part: VerdictTierPart, request: dict) -> str:
 def _rate_line(rate: Any, gain: bool, tail: str = "") -> str:
     said = "a clear gain" if gain else "not a clear gain"
     if rate:
-        return f"{_percent(rate[0])} → {_percent(rate[1])}{tail}, {said}."
+        return f"{percent(rate[0])} → {percent(rate[1])}{tail}, {said}."
     return f"{said[:1].upper()}{said[1:]}{tail}."
 
 
@@ -415,7 +365,9 @@ _PASSED = {
 }
 
 
-def _tier_line(tier: VerdictTier, verdict: dict, plan: dict, request: dict) -> str:
+def _tier_line(
+    tier: VerdictTier, verdict: dict, request: dict, wording: CandidateWording
+) -> str:
     """A check's result in plain words from the verdict's own numbers, as the fix page says
     it (fixRunView.js tierLine). A shipped candidate passed every check but must-pass, or
     could not measure one; the parts of one that could not measure say why."""
@@ -426,15 +378,7 @@ def _tier_line(tier: VerdictTier, verdict: dict, plan: dict, request: dict) -> s
         tail = " on scenarios the epoch never saw"
         return _rate_line(verdict.get("held_back_pass_rate"), passed, tail)
     if name == "must-pass":
-        broke = len(verdict.get("must_pass_regressions") or [])
-        if not passed:
-            scenarios = _plural(broke, "must-pass scenario", "must-pass scenarios")
-            return f"{scenarios} broke." if broke else "A must-pass scenario broke."
-        total, protected = plan.get("must_pass"), plan.get("protected")
-        kept = f", including the {protected} you protected" if protected else ""
-        if not total:
-            return "No must-pass scenario broke."
-        return f"None of the {total} must-pass scenarios broke{kept}."
+        return wording.must_pass
     if name == "model-lock":
         models = request.get("allowed_models") or []
         if passed:
@@ -489,7 +433,11 @@ def _decided_section(tiers: list[VerdictTier], verdict: dict, request: dict) -> 
 
 
 def _verdict_section(
-    tiers: list[VerdictTier], verdict: dict, standing: str, request: dict, plan: dict
+    tiers: list[VerdictTier],
+    verdict: dict,
+    standing: str,
+    request: dict,
+    wording: CandidateWording,
 ) -> str:
     """The verdict's checks in the fix page's words, each part of one on its own row, and
     the engine's statistics folded below them. A normal result has no standing, so its
@@ -502,7 +450,7 @@ def _verdict_section(
         rows.append(
             f"| {_cell(_check_label(tier.name, request))}"
             f" | {_result(tier.status)}"
-            f" | {_cell(_tier_line(tier, verdict, plan, request))} |"
+            f" | {_cell(_tier_line(tier, verdict, request, wording))} |"
         )
         rows += [_part_row(part, request) for part in tier.parts]
     listed = "\n".join(rows)
@@ -517,7 +465,7 @@ def _verdict_section(
     )
 
 
-def _files_section(files: list[tuple[str, int, int]]) -> str:
+def _files_section(files: list[ChangedFile], wording: CandidateWording) -> str:
     if not files:
         return ""
     rows = "\n".join(
@@ -525,9 +473,10 @@ def _files_section(files: list[tuple[str, int, int]]) -> str:
         for path, added, removed in files[:_FILES_LISTED]
     )
     more = len(files) - _FILES_LISTED
-    tail = f"\n\nand {_plural(more, 'more file', 'more files')}" if more > 0 else ""
+    tail = f"\n\nand {plural(more, 'more file', 'more files')}" if more > 0 else ""
     return (
-        f"### What changed\n\n| File | Added | Removed |\n|---|---|---|\n{rows}{tail}"
+        f"### What changed\n\n{_text(wording.changes)}\n\n"
+        f"| File | Added | Removed |\n|---|---|---|\n{rows}{tail}"
     )
 
 
@@ -555,14 +504,12 @@ def _why_section(candidate: AgentFixCandidate) -> str:
     )
 
 
-def _risks_section(candidate: AgentFixCandidate, verdict: dict) -> str:
-    """What the checks could not hold this change to, or flagged without refusing it."""
-    # The fix page's words for both (FixVerdict.jsx MustPassBreaks, flakyProtectedText).
-    lines = [
-        f"- {_must_pass_check(check)} passed less often, within normal noise, so it was"
-        " not counted."
-        for check in verdict.get("must_pass_within_noise") or []
-    ]
+def _risks_section(
+    candidate: AgentFixCandidate, wording: CandidateWording, review: EvalReview | None
+) -> str:
+    """What the checks could not hold this change to, or flagged without refusing it: the
+    epoch page's caveats, word for word, then the flaky protected cases and the evals."""
+    lines = [f"- {_text(caveat)}" for caveat in wording.caveats]
     # Each protected case once, by its name, or by its key when the engine sent none.
     flaky: dict[str, list[dict]] = {}
     for row in (candidate.fix_run.report or {}).get("flaky_protected") or []:
@@ -578,7 +525,7 @@ def _risks_section(candidate: AgentFixCandidate, verdict: dict) -> str:
             f"- Protected case “{name}” is flaky on the current version, so this epoch"
             f" wasn't held to it: {checks}."
         )
-    evals = _evals_note(candidate)
+    evals = _evals_note(candidate, review) if review is not None else ""
     if not lines and not evals:
         return "### What could still go wrong\n\nNothing the checks flagged."
     return "\n\n".join(
@@ -598,10 +545,6 @@ _EVIDENCE_SOURCES = {
 }
 
 
-def _plural(count: int, one: str, many: str) -> str:
-    return f"{count} {one if count == 1 else many}"
-
-
 def _evidence_origin(candidate: AgentFixCandidate) -> str:
     """The evidence the fix started from: how many sources of each import's kind, each
     one added as one case. Never an id, a source's name or its content."""
@@ -613,9 +556,9 @@ def _evidence_origin(candidate: AgentFixCandidate) -> str:
         cases = len(one.get("scenario_keys") or [])
         kind = _EVIDENCE_SOURCES.get(str(one.get("source_kind")))
         lines.append(
-            f"- {_plural(cases, kind[0], kind[1])}{kind[2]}"
+            f"- {plural(cases, kind[0], kind[1])}{kind[2]}"
             if kind
-            else f"- {_plural(cases, 'imported case', 'imported cases')}"
+            else f"- {plural(cases, 'imported case', 'imported cases')}"
         )
     listed = "\n".join(lines)
     return f"### Evidence\n\nThis epoch started from imported evidence:\n\n{listed}"
@@ -674,30 +617,31 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     too few cases were held back to verify it, and when it ships with a known regression
     on the user's reason."""
     verdict = candidate.verdict or {}
-    # Not the engine's own reason: the checks below say the same in the page's words.
-    rates = _evidence(verdict)
+    tiers = verdict_tiers(candidate)
+    # Only a winner is graded.
+    winner = candidate.outcome == AgentFixCandidate.Outcome.WINNER
+    review = eval_review(candidate.fix_run) if winner else None
+    files = changed_files(patch)
+    # The epoch page's words: the read takes them from the same place.
+    wording = candidate_wording(candidate, tiers, review=review, files=files)
     held = held_back_cases(candidate.fix_run)
     limited = too_few_held_back(candidate.fix_run)
     overridden = bool(candidate.override_reason)
     # A normal result carries no label; only a weaker one says how strong it is.
     standing = "Known regression" if overridden else _strength(held) if limited else ""
-    files = _changed_files(patch)
     head = "\n\n".join(
         part
         for part in (
             _override_note(candidate) if overridden else "",
             _limited_note(candidate) if limited else "",
-            f"Checked by Epoch: {rates}" if rates else "",
+            # Not the engine's own reason: the checks below say the same in words.
+            _text(wording.headline),
             _verdict_section(
-                verdict_tiers(candidate),
-                verdict,
-                standing,
-                candidate.fix_run.request or {},
-                candidate.fix_run.plan or {},
+                tiers, verdict, standing, candidate.fix_run.request or {}, wording
             ),
-            _files_section(files),
+            _files_section(files, wording),
             _why_section(candidate),
-            _risks_section(candidate, verdict),
+            _risks_section(candidate, wording, review),
             _evidence_origin(candidate),
             _notes_section(candidate),
         )

@@ -1930,7 +1930,7 @@ class TestUserApi:
             " epoch to verify it; it takes 4 or more."
         )
         assert (
-            "Checked by Epoch: target pass rate 0% → 63%, broke none\n"
+            "Target pass rate 0% → 63%. No must-pass scenario broke.\n"
             in (sent["json"]["body"])
         )
         assert "### Verdict: Proven on the targets only" in sent["json"]["body"]
@@ -1967,8 +1967,8 @@ class TestUserApi:
             assert label not in sent["json"]["title"].lower()
             assert label not in sent["json"]["body"].lower()
         assert (
-            "Checked by Epoch: held-back pass rate 0% → 61%, target pass rate"
-            " 0% → 63%, broke none\n" in sent["json"]["body"]
+            "Held-back pass rate 0% → 61%. No must-pass scenario broke.\n"
+            in sent["json"]["body"]
         )
         # Not the last revision's summary: with no diagnosis, the files the whole diff changes.
         assert sent["json"]["title"] == "Epoch: change agent.py"

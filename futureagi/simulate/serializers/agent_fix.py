@@ -29,6 +29,7 @@ from simulate.selectors.agent_fix import (
     verdict_tiers,
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
+from simulate.selectors.agent_fix_wording import candidate_files, candidate_wording
 from simulate.serializers.harness_environment import HarnessVersionPersonSerializer
 from simulate.services.harness_environment import environment_name
 
@@ -328,6 +329,39 @@ class AgentFixCandidateSerializer(serializers.ModelSerializer):
         ]
 
 
+class AgentFixCandidateWordingSerializer(serializers.Serializer):
+    """What the epoch page says about a candidate, word for word as its pull request."""
+
+    # Its pass rate and whether a must-pass scenario broke; blank before it has a rate.
+    headline = serializers.CharField(allow_blank=True)
+    # The must-pass check's result; blank before the check ran.
+    must_pass = serializers.CharField(allow_blank=True)
+    # The files and lines its patch changes; null when the patch could not be read.
+    changes = serializers.CharField(allow_null=True)
+    # What a reviewer must know before trusting it.
+    caveats = serializers.ListField(child=serializers.CharField())
+
+
+class AgentFixCandidateDetailSerializer(AgentFixCandidateSerializer):
+    """A candidate in one epoch's read, with its words. They read its patch, so a list
+    leaves them out."""
+
+    wording = serializers.SerializerMethodField()
+
+    @swagger_serializer_method(serializer_or_field=AgentFixCandidateWordingSerializer)
+    def get_wording(self, candidate: AgentFixCandidate) -> dict:
+        wording = candidate_wording(
+            candidate,
+            verdict_tiers(candidate),
+            review=self.context.get("eval_review"),
+            files=candidate_files(candidate),
+        )
+        return AgentFixCandidateWordingSerializer(wording.model_dump()).data
+
+    class Meta(AgentFixCandidateSerializer.Meta):
+        fields = [*AgentFixCandidateSerializer.Meta.fields, "wording"]
+
+
 class AgentFixEpochIssueSerializer(serializers.Serializer):
     """The Error Feed issue an epoch was run from, as the feed shows it now."""
 
@@ -501,9 +535,12 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
 
     eval_warnings = serializers.SerializerMethodField()
     eval_grading = serializers.SerializerMethodField()
+    candidates = AgentFixCandidateDetailSerializer(many=True)
 
     def to_representation(self, instance: AgentFixRun) -> dict:
         self._review = eval_review(instance)
+        # Its candidates' caveats say when the winner's evals did not finish.
+        self.context["eval_review"] = self._review
         return super().to_representation(instance)
 
     @swagger_serializer_method(

@@ -3454,8 +3454,8 @@ class TestPullRequestEvals:
             source_run, EvalReview(grading=EvalGrading.DONE, compared=1)
         )
         assert (
-            "**Platform evals did not finish on this candidate,** so their results are missing."
-            " Review it closely before you merge."
+            "- Platform evals did not finish on this candidate, so their results are"
+            " missing. Review it closely."
             in self._body(
                 source_run, EvalReview(grading=EvalGrading.INCOMPLETE, compared=1)
             )
@@ -3709,8 +3709,8 @@ class TestPullRequestDescription:
         # The fix page's headline: the pass rates and the must-pass cases it broke.
         # A normal result carries no strength label.
         assert (
-            "Checked by Epoch: held-back pass rate 25% → 75%, target pass rate"
-            " 0% → 63%, broke none\n\n### Verdict\n\n| Check |" in body
+            "Held-back pass rate 25% → 75%. No must-pass scenario broke."
+            "\n\n### Verdict\n\n| Check |" in body
         )
         assert "Verified" not in title and "Verified" not in body
         # The engine's own reason is not product text: the checks say it in words.
@@ -3739,7 +3739,11 @@ class TestPullRequestDescription:
         assert "Measured automatically" not in body
         # The feature is Epoch wherever the user reads it.
         assert "Fix my agent" not in title + body
-        assert "### What changed" in body
+        # The change in one line, then each file, from the patch that ships.
+        assert (
+            "### What changed\n\nChanges concierge/agents.py, prompts/booking.md and"
+            " config.yaml: 17 lines added, 5 removed.\n\n| File |" in body
+        )
         assert "| `concierge/agents.py` | +12 | −3 |" in body
         assert "| `prompts/booking.md` | +4 | −1 |" in body
         assert "### Why" in body and f"- {_CAUSES[1]}" in body
@@ -4030,7 +4034,7 @@ class TestPullRequestDescription:
             "**Limited validation.** Only 2 failing cases were held back from the epoch to"
             " verify it; it takes 4 or more."
         )
-        assert "Checked by Epoch" in body and "Verified by" not in body
+        assert "Target pass rate 0% → 63%." in body and "Verified by" not in body
         assert "### Verdict: Limited validation" in body
         assert "### Why" not in body
         # A check that could not measure says so, and an untraced agent's cost says why.
@@ -4108,7 +4112,7 @@ class TestPullRequestDescription:
         assert "- Must-pass case “case-1”: its “refunded” check" in body
         assert "It was opened anyway, for this reason:" in body
         assert "> The regression is a test we are retiring." in body
-        assert "Checked by Epoch: target pass rate 0% → 63%, broke 1" in body
+        assert "Target pass rate 0% → 63%. 1 must-pass scenario broke." in body
         assert "### Verdict: Known regression" in body
         assert "| Must-pass scenarios | Failed | 1 must-pass scenario broke. |" in body
         assert "- Must-pass scenarios: 1 of 6 regressed." in body
