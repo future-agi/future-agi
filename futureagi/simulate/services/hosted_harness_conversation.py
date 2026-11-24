@@ -167,23 +167,62 @@ def serialize_conversation(
     }
 
 
+class MessageNotInConversation(LookupError):
+    """The message a history read is asked to show is not one of this conversation's."""
+
+
 def conversation_history(
-    conversation: HostedHarnessConversation, *, kind: str, before: int
+    conversation: HostedHarnessConversation,
+    *,
+    kind: str,
+    before: int | None = None,
+    around: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    """The `EVENT_LIMIT` messages or events just before sequence `before`, oldest first, for reading back past the
-    window a conversation read carries."""
-    rows, older = _window(
-        conversation.messages if kind == "messages" else conversation.events,
-        before=before,
-    )
+    """One page of `EVENT_LIMIT` messages or events, oldest first: the ones just before sequence `before`, for reading
+    back past the window a conversation read carries, or, with `around`, the messages around that message, so a change
+    that cites it can show it in place. Raises `MessageNotInConversation` when `around` is not this conversation's."""
+    rows_of = conversation.messages if kind == "messages" else conversation.events
+    if around is not None:
+        target = (
+            conversation.messages.filter(id=around)
+            .values_list("sequence", flat=True)
+            .first()
+        )
+        if target is None:
+            raise MessageNotInConversation(str(around))
+        older = list(
+            rows_of.filter(sequence__lt=target).order_by("-sequence")[
+                : EVENT_LIMIT // 2
+            ]
+        )
+        newer = list(
+            rows_of.filter(sequence__gte=target).order_by("sequence")[
+                : EVENT_LIMIT - len(older)
+            ]
+        )
+        if len(older) + len(newer) < EVENT_LIMIT:
+            older = list(
+                rows_of.filter(sequence__lt=target).order_by("-sequence")[
+                    : EVENT_LIMIT - len(newer)
+                ]
+            )
+        rows = [*reversed(older), *newer]
+    else:
+        rows, _ = _window(rows_of, before=before)
+    oldest = rows[0].sequence if rows else None
+    newest = rows[-1].sequence if rows else None
     return {
         "kind": kind,
         "messages": (
             [_serialize_message(row) for row in rows] if kind == "messages" else []
         ),
         "events": [_serialize_event(row) for row in rows] if kind == "events" else [],
-        "oldest_sequence": rows[0].sequence if rows else None,
-        "has_older": older,
+        "oldest_sequence": oldest,
+        "newest_sequence": newest,
+        "has_older": oldest is not None
+        and rows_of.filter(sequence__lt=oldest).exists(),
+        "has_newer": newest is not None
+        and rows_of.filter(sequence__gt=newest).exists(),
     }
 
 

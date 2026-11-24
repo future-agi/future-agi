@@ -2765,4 +2765,70 @@ def test_the_sandbox_provider_refuses_a_read_of_only_new_events():
     )
 
     assert answer.status_code == 501
-    assert answer.data["error"] == "events_after_not_supported"
+    assert answer.data["code"] == "events_after_not_supported"
+
+
+@pytest.mark.django_db
+def test_a_history_read_around_a_message_returns_the_page_that_holds_it(
+    organization, workspace, auth_client, monkeypatch
+):
+    from uuid import uuid4
+
+    from simulate.services import hosted_harness_conversation as conversations
+
+    monkeypatch.setattr(conversations, "EVENT_LIMIT", 3)
+    job, _ = create_hosted_job(
+        organization, _payload(), idempotency_key="history-around", workspace=workspace
+    )
+    other, _ = create_hosted_job(
+        organization,
+        _payload(),
+        idempotency_key="history-around-other",
+        workspace=workspace,
+    )
+    for number in range(1, 8):
+        enqueue_message(job, content=f"m{number}", client_request_id=f"around-{number}")
+    enqueue_message(other, content="elsewhere", client_request_id="around-other")
+    ids = {
+        one.sequence: str(one.id)
+        for one in job.conversation.messages.order_by("sequence")
+    }
+    base = f"/simulate/api/harness-jobs/{job.id}/conversation/history/"
+
+    def page(around):
+        answer = auth_client.get(base, {"kind": "messages", "around": around})
+        assert answer.status_code == 200, answer.content
+        body = answer.json()
+        return (
+            [item["sequence"] for item in body["messages"]],
+            body["oldest_sequence"],
+            body["newest_sequence"],
+            body["has_older"],
+            body["has_newer"],
+        )
+
+    assert page(ids[4]) == ([3, 4, 5], 3, 5, True, True)
+    # At the very start and the very end, the page fills from the other side.
+    assert page(ids[1]) == ([1, 2, 3], 1, 3, False, True)
+    assert page(ids[7]) == ([5, 6, 7], 5, 7, True, False)
+
+    elsewhere = str(other.conversation.messages.get().id)
+    for unknown in (str(uuid4()), elsewhere):
+        missing = auth_client.get(base, {"kind": "messages", "around": unknown})
+        assert missing.status_code == 404
+        assert elsewhere not in missing.content.decode()
+    both = auth_client.get(base, {"kind": "messages", "around": ids[4], "before": 4})
+    assert both.status_code == 400
+    assert (
+        auth_client.get(base, {"kind": "events", "around": ids[4]}).status_code == 400
+    )
+    assert auth_client.get(base, {"kind": "messages"}).status_code == 400
+
+    # A read back before a sequence says what lies on either side of it too.
+    before = auth_client.get(base, {"kind": "messages", "before": 4}).json()
+    assert [item["sequence"] for item in before["messages"]] == [1, 2, 3]
+    assert (before["newest_sequence"], before["has_older"], before["has_newer"]) == (
+        3,
+        False,
+        True,
+    )

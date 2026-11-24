@@ -491,7 +491,8 @@ def judged_sub_goals(receipt: Mapping[str, Any]) -> dict[str, bool | None]:
         {name: None for name, result in results.items() if result == "unmeasured"}
     )
     # A trial graded failed with no check failing failed beyond its checks: the world committed a write twice.
-    call = receipt.get("call") if isinstance(receipt.get("call"), Mapping) else {}
+    found = receipt.get("call")
+    call: Mapping[str, Any] = found if isinstance(found, Mapping) else {}
     if (
         call.get("duplicate_commits") or receipt.get("status") == "failed"
     ) and False not in judged.values():

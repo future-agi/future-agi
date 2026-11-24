@@ -537,7 +537,7 @@ def test_a_trial_that_ended_on_our_side_never_blames_the_agent_in_verify_or_fix_
     assert trial_passed(agent["sub_goals"], "errored", agent["failure"]) is False
 
 
-def test_compare_counts_an_agent_that_stalled_as_a_failed_trial_and_our_failure_as_no_trial():
+def test_compare_counts_an_agent_that_stalled_as_a_failed_trial_and_our_failure_as_undecided():
     from simulate.services.run_compare import ScenarioTrials
 
     goals = [{"name": "replied", "held": False, "verdict": "fail"}]
@@ -560,7 +560,7 @@ def test_compare_counts_an_agent_that_stalled_as_a_failed_trial_and_our_failure_
         None,
         {"domain": "simulator", "code": "caller_off_script"},
     )
-    assert (ours.side()["trials"], ours.side()["undecided"]) == (0, 0)
+    assert (ours.side()["trials"], ours.side()["undecided"]) == (0, 1)
 
 
 def test_a_trial_the_agent_itself_errored_reads_failed_in_the_row_the_scan_and_the_pass_rate():

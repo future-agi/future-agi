@@ -149,8 +149,26 @@ class HarnessConversationHistorySerializer(serializers.Serializer):
 class HarnessConversationHistoryQuerySerializer(serializers.Serializer):
     kind = serializers.ChoiceField(choices=("messages", "events"))
     before = serializers.IntegerField(
-        min_value=1, help_text="Read the items just before this sequence."
+        min_value=1,
+        required=False,
+        help_text="Read the items just before this sequence. Give this or `around`.",
     )
+    around = serializers.UUIDField(
+        required=False,
+        help_text=(
+            "Read the page of messages that holds this message (a change's `used` message id). Give this or"
+            " `before`; only with `kind` messages."
+        ),
+    )
+
+    def validate(self, attrs):
+        if ("before" in attrs) == ("around" in attrs):
+            raise serializers.ValidationError(
+                "Give exactly one of `before` and `around`."
+            )
+        if "around" in attrs and attrs["kind"] != "messages":
+            raise serializers.ValidationError("`around` reads messages only.")
+        return attrs
 
 
 class HarnessJobReadQuerySerializer(serializers.Serializer):
@@ -173,7 +191,13 @@ class HarnessConversationHistoryPageSerializer(serializers.Serializer):
         many=True, help_text="Oldest first; empty for `kind` messages."
     )
     oldest_sequence = serializers.IntegerField(allow_null=True)
-    has_older = serializers.BooleanField()
+    newest_sequence = serializers.IntegerField(allow_null=True)
+    has_older = serializers.BooleanField(
+        help_text="Items before `oldest_sequence` this page leaves out."
+    )
+    has_newer = serializers.BooleanField(
+        help_text="Items after `newest_sequence` this page leaves out."
+    )
 
 
 class HarnessConversationReadSerializer(serializers.Serializer):

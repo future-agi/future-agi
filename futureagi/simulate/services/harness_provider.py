@@ -1815,7 +1815,10 @@ class HostedHarnessProvider:
 
     def conversation_history(self, request, pk) -> Response:
         """The builder chat's messages or events before a sequence, for reading back past a job read's window."""
-        from simulate.services.hosted_harness_conversation import conversation_history
+        from simulate.services.hosted_harness_conversation import (
+            MessageNotInConversation,
+            conversation_history,
+        )
 
         job = self._job(request, pk)
         conversation = (
@@ -1825,15 +1828,29 @@ class HostedHarnessProvider:
         )
         if conversation is None:
             return Response(
-                {"detail": "Hosted harness conversation not found"},
+                build_error_envelope(
+                    "Hosted harness conversation not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
                 status=status.HTTP_404_NOT_FOUND,
             )
         query = request.validated_query_data
-        return Response(
-            conversation_history(
-                conversation, kind=query["kind"], before=query["before"]
+        try:
+            page = conversation_history(
+                conversation,
+                kind=query["kind"],
+                before=query.get("before"),
+                around=query.get("around"),
             )
-        )
+        except MessageNotInConversation:
+            return Response(
+                build_error_envelope(
+                    "Message not found in this builder chat",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response(page)
 
     def run(self, request, pk) -> Response:
         """Create and dispatch one immutable selected-scenario simulation Run."""
@@ -3449,10 +3466,11 @@ class SandboxHarnessProvider:
 
     def conversation_history(self, request, pk) -> Response:
         return Response(
-            {
-                "error": "conversation_history_not_supported",
-                "message": "reading back the builder chat is only available on the hosted provider",
-            },
+            build_error_envelope(
+                "reading back the builder chat is only available on the hosted provider",
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                code="conversation_history_not_supported",
+            ),
             status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
@@ -3583,10 +3601,11 @@ class SandboxHarnessProvider:
             "events_after"
         ) is not None:
             return Response(
-                {
-                    "error": "events_after_not_supported",
-                    "message": "reading only new builder chat events is only available on the hosted provider",
-                },
+                build_error_envelope(
+                    "reading only new builder chat events is only available on the hosted provider",
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    code="events_after_not_supported",
+                ),
                 status=status.HTTP_501_NOT_IMPLEMENTED,
             )
         from simulate.services.harness_sandbox import (

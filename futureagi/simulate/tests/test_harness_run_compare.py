@@ -118,39 +118,83 @@ class TestTrialPassed:
     def test_every_sub_goal_held(self):
         held = [{"name": "a", "held": True}, {"name": "b", "held": True}]
 
-        assert run_compare.trial_passed(held, "failed") is True
+        assert run_compare.trial_passed(held, "passed") is True
+        # Graded failed with every check held: the world committed a write twice, or an evaluation failed.
+        assert run_compare.trial_passed(held, "failed") is False
 
     def test_one_sub_goal_failed(self):
         held = [{"name": "a", "held": True}, {"name": "b", "held": False}]
 
         assert run_compare.trial_passed(held, "passed") is False
 
-    @pytest.mark.parametrize("other", [True, False])
-    def test_an_undecided_sub_goal_leaves_the_trial_undecided(self, other):
-        held = [{"name": "a", "held": other}, {"name": "b", "held": None}]
+    def test_an_undecided_sub_goal_leaves_the_trial_undecided(self):
+        held = [{"name": "a", "held": True}, {"name": "b", "held": None}]
 
         assert run_compare.trial_passed(held, "passed") is None
-        assert run_compare.trial_passed(held, "failed") is None
+        # Graded failed beside an open check, with every other check held: it failed beyond its checks.
+        assert run_compare.trial_passed(held, "failed") is False
+
+    @pytest.mark.parametrize("status", ["passed", "failed"])
+    def test_a_failed_check_fails_the_trial_beside_an_undecided_one(self, status):
+        held = [{"name": "a", "held": False}, {"name": "b", "held": None}]
+
+        assert run_compare.trial_passed(held, status) is False
 
     def test_undecided_sub_goals_never_read_as_a_regression(self):
-        # A judge that left one check open on every trial: failing and passing
-        # trials drop out alike, so the pass rate is not pushed down.
+        # A judge that left one check open on every trial, as the harness seals it: a trial whose other check failed is
+        # failed, one whose other checks all held ends errored on our side (judge_undecided). The agent did not change.
         before, after = (run_compare.ScenarioTrials("refund") for _ in range(2))
         for held in [True] * 5 + [False] * 5:
             outcome = "passed" if held else "failed"
             before.add([{"name": "a", "held": held}], outcome, outcome, None)
-            after.add(
-                [{"name": "a", "held": held}, {"name": "b", "held": None}],
-                outcome,
-                outcome,
-                None,
-            )
+            checks = [{"name": "a", "held": held}, {"name": "b", "held": None}]
+            if held:
+                after.add(
+                    checks,
+                    "errored",
+                    "error",
+                    None,
+                    {"domain": "simulator", "code": "judge_undecided"},
+                )
+            else:
+                after.add(checks, "failed", "failed", None)
 
         assert (before.passed, before.decided) == (5, 10)
-        assert after.decided == 0
+        # The open trials are counted undecided, never dropped as unrun.
+        assert (after.passed, after.decided, after.undecided) == (0, 5, 5)
         assert run_compare.verdict(
-            after.passed, after.decided, before.passed, before.decided
-        ) == ("inconclusive", None)
+            after.passed,
+            after.decided,
+            before.passed,
+            before.decided,
+            after.undecided,
+            before.undecided,
+        ) == ("inconclusive", run_compare.verdict(0, 5, 5, 10)[1])
+
+    def test_a_regression_or_an_improvement_holds_however_the_undecided_trials_went(
+        self,
+    ):
+        # 2 of 20 against 18 of 20 regresses even if both undecided trials passed; 2 of 10 against 9 of 10 does not
+        # once eight undecided trials could have passed. The same both ways for an improvement.
+        assert run_compare.verdict(2, 20, 18, 20, 2, 0)[0] == "regressed"
+        assert run_compare.verdict(2, 10, 9, 10, 8, 0)[0] == "inconclusive"
+        assert run_compare.verdict(18, 20, 2, 20, 0, 2)[0] == "improved"
+        assert run_compare.verdict(9, 10, 2, 10, 0, 8)[0] == "inconclusive"
+
+    def test_a_call_that_never_ran_is_not_a_trial_but_one_our_side_ended_is_undecided(
+        self,
+    ):
+        trials = run_compare.ScenarioTrials("refund")
+        trials.add([{"name": "a", "held": None}], "errored", "error", None)
+        trials.add(
+            [{"name": "a", "held": None}],
+            "errored",
+            "error",
+            None,
+            {"domain": "infrastructure"},
+        )
+
+        assert (trials.side()["trials"], trials.side()["undecided"]) == (0, 1)
 
     def test_only_not_applicable_sub_goals_leave_the_trial_undecided(self):
         # The harness sends a not applicable sub-goal as held, with its verdict beside it.
@@ -193,9 +237,9 @@ class TestTrialPassed:
     def test_a_finished_trial_nothing_decided_is_counted_undecided(self):
         trials = run_compare.ScenarioTrials("refund")
         trials.add(
-            [{"name": "a", "held": False}, {"name": "b", "held": None}],
-            "failed",
-            "failed",
+            [{"name": "a", "held": True}, {"name": "b", "held": None}],
+            "inconclusive",
+            "inconclusive",
             None,
         )
         trials.add([{"name": "a", "held": True}], "passed", "passed", None)
@@ -323,7 +367,12 @@ class TestBuildRunComparison:
         call = CallExecution.no_workspace_objects.get(
             test_execution_id=after.test_execution_id
         )
-        call.call_metadata = {**call.call_metadata, UNVERIFIED_KEY: ["refunded"]}
+        # As ingestion stores it: the unverified check graded, and the call's status graded with it.
+        call.call_metadata = {
+            **call.call_metadata,
+            UNVERIFIED_KEY: ["refunded"],
+            "harness_outcome_status": "no_score",
+        }
         call.save(update_fields=["call_metadata"])
         _done(before, ago=timedelta(minutes=5))
 
@@ -506,6 +555,40 @@ class TestBuildRunComparison:
         assert (added["band"], added["current"]) == ("new", None)
         assert comparison["summary"]["new"] == 1
 
+    def test_trials_our_judge_left_open_are_counted_undecided_and_keep_a_regression_unproven(
+        self, user, workspace, storage
+    ):
+        environment = _two_scenarios(user, workspace, storage, "cmp-judge-open")
+        before = _run(environment, KEYS[:1], trials=10, key="before")
+        _trials(before, [(KEYS[0], True)] * 10)
+        after = _run(environment, KEYS[:1], trials=10, key="after")
+        _trials(after, [(KEYS[0], False)] * 2 + [(KEYS[0], True)] * 8)
+        # The judge left a check open on the eight that held, and the harness sealed them errored on our side.
+        for call in CallExecution.no_workspace_objects.filter(
+            test_execution_id=after.test_execution_id
+        ).order_by("id")[2:]:
+            receipt = call.call_metadata["hosted_harness_receipt"]
+            call.call_metadata = {
+                **call.call_metadata,
+                "harness_outcome_status": "errored",
+                "hosted_harness_receipt": {
+                    **receipt,
+                    "status": "errored",
+                    "failure": {"domain": "simulator", "code": "judge_undecided"},
+                    "sub_goals": [
+                        {"name": "refunded", "held": True},
+                        {"name": "refunded-1", "held": None},
+                    ],
+                },
+            }
+            call.save(update_fields=["call_metadata"])
+        _done(before, ago=timedelta(minutes=5))
+
+        pair = _by_key(_compare(_done(after)))[KEYS[0]]
+
+        assert (pair["current"]["trials"], pair["current"]["undecided"]) == (2, 8)
+        assert pair["verdict"] == "inconclusive"
+
     def test_undecided_trials_are_counted_beside_the_decided(
         self, user, workspace, storage
     ):
@@ -513,9 +596,9 @@ class TestBuildRunComparison:
         before = _run(environment, KEYS[:1], trials=2, key="before")
         _trials(before, [(KEYS[0], True), (KEYS[0], True)])
         after = _run(environment, KEYS[:1], trials=2, key="after")
-        # The judge failed beside a check that did not hold: the run's results
-        # count this trial failed, the comparison leaves it out and says so.
-        _trials(after, [(KEYS[0], (False, None)), (KEYS[0], True)])
+        # The judge decided nothing beside a check that held: the comparison
+        # leaves this trial out and says so.
+        _trials(after, [(KEYS[0], (True, None)), (KEYS[0], True)])
         _done(before, ago=timedelta(minutes=5))
 
         pair = _by_key(_compare(_done(after)))[KEYS[0]]
