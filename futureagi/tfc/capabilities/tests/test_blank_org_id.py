@@ -10,6 +10,10 @@ it. Normalising to None routes it to the existing "no org" denial.
 
 import pytest
 from tfc.capabilities import service
+from tfc.capabilities.testing import (  # noqa: F401, F811 - pytest fixture registration
+    check_capability_isolation,
+    preserve_capability_service,
+)
 from tfc.licensing.types import (
     DenialReason,
     DeploymentFlavor,

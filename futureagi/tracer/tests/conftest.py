@@ -14,10 +14,6 @@ from django.utils import timezone
 
 from model_hub.models.ai_model import AIModel
 from model_hub.models.evals_metric import EvalTemplate
-from tfc.capabilities.testing import (  # noqa: F401 - pytest fixture registration
-    check_capability_isolation,
-    preserve_capability_service,
-)
 from tfc.middleware.workspace_context import (
     clear_workspace_context,
     set_workspace_context,

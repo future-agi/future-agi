@@ -17,6 +17,9 @@ from tfc.capabilities.registry import (
     OSS_LOCKED_FEATURES,
     PAID_FEATURES,
 )
+from tfc.capabilities.testing import (  # noqa: F401, F811 - pytest fixture registration
+    preserve_capability_service,
+)
 from tfc.licensing.types import (
     DenialReason,
     DeploymentFlavor,

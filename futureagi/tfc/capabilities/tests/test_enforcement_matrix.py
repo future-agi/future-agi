@@ -11,6 +11,10 @@ from datetime import UTC, datetime
 import pytest
 from tfc.capabilities import service
 from tfc.capabilities.registry import OSS_LOCKED_FEATURES, PAID_FEATURES
+from tfc.capabilities.testing import (  # noqa: F401, F811 - pytest fixture registration
+    check_capability_isolation,
+    preserve_capability_service,
+)
 from tfc.ee_gating import FeatureUnavailable, check_ee_feature
 from tfc.licensing.types import (
     DeploymentFlavor,

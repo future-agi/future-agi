@@ -10,6 +10,9 @@ from django.urls import Resolver404, clear_url_caches, resolve
 from rest_framework.test import APIRequestFactory
 
 from tfc.capabilities import service
+from tfc.capabilities.testing import (  # noqa: F401, F811 - pytest fixture registration
+    preserve_capability_service,
+)
 from tfc.capabilities.views import CapabilitiesView
 from tfc.licensing.types import (
     DeploymentFlavor,

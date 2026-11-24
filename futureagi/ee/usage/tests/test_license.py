@@ -9,6 +9,10 @@ import pytest
 from django.test import override_settings
 
 from tfc.capabilities import service
+from tfc.capabilities.testing import (  # noqa: F401, F811 - pytest fixture registration
+    check_capability_isolation,
+    preserve_capability_service,
+)
 from tfc.licensing.types import (
     DeploymentFlavor,
     DeploymentLocation,

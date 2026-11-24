@@ -13,6 +13,9 @@ from datetime import UTC, datetime
 import pytest
 
 from tfc.capabilities import service
+from tfc.capabilities.testing import (  # noqa: F401 - pytest fixture registration
+    preserve_capability_service,
+)
 from tfc.ee_gating import EEFeature, FeatureUnavailable, check_ee_feature
 from tfc.licensing.types import (
     DeploymentFlavor,

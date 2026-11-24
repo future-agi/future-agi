@@ -18,6 +18,9 @@ import pytest
 from rest_framework import status as drf_status
 
 from tfc.capabilities.registry import PAID_FEATURES
+from tfc.capabilities.testing import (  # noqa: F401 - pytest fixture registration
+    check_capability_isolation,
+)
 from tfc.ee_gating import (
     EE_FEATURES_OSS,
     EEFeature,
