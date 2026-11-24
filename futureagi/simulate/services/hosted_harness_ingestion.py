@@ -945,7 +945,9 @@ def _apply_receipt_to_call(
     if call_data:
         call.started_at, call.ended_at = receipt_call_times(call_data)
         call.completed_at = call.ended_at
-        call.duration_seconds = round(call_data["duration_ms"] / 1000)
+        call.duration_seconds = (
+            0 if _call_never_connected(body) else round(call_data["duration_ms"] / 1000)
+        )
     elif body["status"] == "skipped":
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
@@ -1246,12 +1248,22 @@ def _call_lifecycle_status(body: dict[str, Any]) -> str:
     outcome = body["status"]
     if outcome == "skipped":
         return CallExecution.CallStatus.CANCELLED
+    if _call_never_connected(body):
+        return CallExecution.CallStatus.FAILED
     call = body.get("call")
     if isinstance(call, dict) and call.get("started_at") and call.get("ended_at"):
         return CallExecution.CallStatus.COMPLETED
     if outcome in {"passed", "failed"}:
         return CallExecution.CallStatus.COMPLETED
     return CallExecution.CallStatus.FAILED
+
+
+def _call_never_connected(body: dict[str, Any]) -> bool:
+    call = body.get("call")
+    if body["status"] != "errored" or not isinstance(call, dict):
+        return False
+    turns = call.get("turns")
+    return isinstance(turns, int) and not isinstance(turns, bool) and turns == 0
 
 
 def receipt_outcome_status(body: dict[str, Any]) -> str:

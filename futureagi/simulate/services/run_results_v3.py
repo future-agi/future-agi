@@ -703,6 +703,13 @@ def _reader_failure_reason(receipt: Mapping[str, Any]) -> str | None:
     return message or None
 
 
+def _errored_reason(outcome: str, error_message: str | None) -> str | None:
+    """Why a call ended in error, from the message it recorded; None for any other outcome."""
+    if outcome != "error":
+        return None
+    return (error_message or "").strip() or None
+
+
 def build_call_rows(
     execution: TestExecution,
     calls: list[CallExecution] | None = None,
@@ -899,6 +906,7 @@ def build_call_rows(
                     if call.status == CallExecution.CallStatus.CANCELLED
                     else None
                 )
+                or _errored_reason(outcome, call.error_message)
                 or _unscored_reason(outcome, sub_goal_results),
                 "source_scenario_key": metadata.get("harness_scenario_key"),
                 "trial_index": metadata.get("harness_trial_index"),

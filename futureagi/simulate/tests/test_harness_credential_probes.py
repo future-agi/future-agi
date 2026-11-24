@@ -239,8 +239,10 @@ def test_livekit_target_probe_fails_when_no_agent_joins_in_time():
     assert result.message == (
         "No agent named 'returns-agent' joined a test room within "
         f"{LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS}s; check the agent name and that "
-        "the agent is running on this LiveKit project"
+        "the agent is running on this LiveKit project, or try again if it just "
+        "started"
     )
+    assert result.retryable is True
     assert [method for method, _ in calls].count("ListDispatch") == 2
     assert calls[-1][0] == "DeleteRoom"
 
@@ -256,6 +258,8 @@ def test_livekit_target_probe_reports_rejected_credentials(status):
     assert result.message == (
         f"LiveKit rejected LIVEKIT_API_KEY + LIVEKIT_API_SECRET (HTTP {status})"
     )
+    assert result.retryable is False
+    assert "retryable" not in result.as_dict()
     assert [method for method, _ in calls] == ["CreateRoom"]
 
 
@@ -269,6 +273,7 @@ def test_livekit_target_probe_reports_other_http_errors():
     assert result.message == (
         "LiveKit returned HTTP 500 while checking agent 'returns-agent'"
     )
+    assert result.retryable is True
 
 
 def test_livekit_target_probe_reports_an_unreachable_server():
@@ -278,8 +283,58 @@ def test_livekit_target_probe_reports_an_unreachable_server():
         result = probe_provider_target("livekit", "returns-agent", LIVEKIT_VALUES)
 
     assert result is not None and result.ok is False
+    assert result.message == "Couldn't reach LiveKit (ConnectionError); try again"
+    assert result.as_dict()["retryable"] is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        requests.ConnectTimeout("cold connect"),
+        requests.ConnectionError("Name or service not known"),
+        requests.exceptions.SSLError("handshake"),
+    ],
+)
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_livekit_credential_probe_reports_a_network_error_as_retryable(request, error):
+    request.side_effect = error
+
+    result = probe("livekit", LIVEKIT_VALUES)
+
+    assert result.ok is False
+    assert result.retryable is True
     assert result.message == (
-        "LiveKit is unreachable (ConnectionError); retry Preflight"
+        f"Couldn't reach LiveKit ({type(error).__name__}); try again"
+    )
+    assert "LIVEKIT_API_KEY" not in result.message
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503])
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_livekit_credential_probe_reports_a_server_error_as_retryable(request, status):
+    request.return_value = Mock(status_code=status)
+
+    result = probe("livekit", LIVEKIT_VALUES)
+
+    assert result.ok is False
+    assert result.retryable is True
+    assert result.message == f"LiveKit returned HTTP {status}; try again"
+
+
+@pytest.mark.parametrize("status", [401, 403])
+@patch("simulate.services.harness_credential_probes.requests.request")
+def test_livekit_credential_probe_reports_rejected_keys_as_not_retryable(
+    request, status
+):
+    request.return_value = Mock(status_code=status)
+
+    result = probe("livekit", LIVEKIT_VALUES)
+
+    assert result.ok is False
+    assert result.retryable is False
+    assert result.message == (
+        "LiveKit rejected LIVEKIT_URL + LIVEKIT_API_KEY + LIVEKIT_API_SECRET "
+        f"(HTTP {status})"
     )
 
 
@@ -847,7 +902,8 @@ def test_routing_probe_reports_an_unreachable_server():
         result = probe_livekit_phone_routing(NUMBER, ROUTING_VALUES, CALLER)
 
     assert result is not None and result.ok is False
-    assert result.message == "LiveKit is unreachable (ConnectionError); retry Preflight"
+    assert result.message == "Couldn't reach LiveKit (ConnectionError); try again"
+    assert result.retryable is True
 
 
 @patch(

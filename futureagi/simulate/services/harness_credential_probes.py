@@ -33,6 +33,7 @@ LIVEKIT_ALIASES = ("LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET")
 LIVEKIT_PROBE_BUDGET_SECONDS = 20
 LIVEKIT_MAX_RESPONSE_BYTES = 1024 * 1024
 LIVEKIT_TOKEN_TTL = timedelta(seconds=60)
+TRANSIENT_HTTP_STATUSES = frozenset({408, 425, 429})
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,7 @@ class ProbeResult:
     # The name the provider holds for a looked-up target, so a build can be
     # labelled by it instead of by the opaque ID the user pasted.
     target_name: str = ""
+    retryable: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         result = {
@@ -75,7 +77,13 @@ class ProbeResult:
         }
         if self.target_name:
             result["target_name"] = self.target_name
+        if self.retryable:
+            result["retryable"] = True
         return result
+
+
+def _is_transient_status(status: int) -> bool:
+    return status >= 500 or status in TRANSIENT_HTTP_STATUSES
 
 
 def _bearer(url: str, alias: str, **extra_headers: str):
@@ -284,15 +292,27 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
             f"{spec.label} URL refused: {exc}",
         )
     except requests.RequestException as exc:
-        # The run's own connect stage would hit the same wall, so this is a failure too.
+        logger.warning(
+            "credential_probe_unreachable",
+            provider=provider,
+            error=type(exc).__name__,
+            exc_info=True,
+        )
         return ProbeResult(
             provider,
             spec.label,
             spec.aliases,
             False,
-            f"{spec.label} is unreachable ({type(exc).__name__}); check {named}",
+            f"Couldn't reach {spec.label} ({type(exc).__name__}); try again",
+            retryable=True,
         )
     except Exception as exc:  # noqa: BLE001 - a malformed URL/secret must not 500 preflight
+        logger.warning(
+            "credential_probe_could_not_run",
+            provider=provider,
+            error=type(exc).__name__,
+            exc_info=True,
+        )
         return ProbeResult(
             provider,
             spec.label,
@@ -310,6 +330,11 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
             f" check {named}",
         )
     if response.status_code in spec.rejected_statuses:
+        logger.warning(
+            "credential_probe_rejected",
+            provider=provider,
+            status=response.status_code,
+        )
         return ProbeResult(
             provider,
             spec.label,
@@ -317,7 +342,26 @@ def probe(provider: str, values: Mapping[str, str]) -> ProbeResult:
             False,
             f"{spec.label} rejected {named} (HTTP {response.status_code})",
         )
+    if _is_transient_status(response.status_code):
+        logger.warning(
+            "credential_probe_transient_status",
+            provider=provider,
+            status=response.status_code,
+        )
+        return ProbeResult(
+            provider,
+            spec.label,
+            spec.aliases,
+            False,
+            f"{spec.label} returned HTTP {response.status_code}; try again",
+            retryable=True,
+        )
     if response.status_code >= 400:
+        logger.warning(
+            "credential_probe_http_error",
+            provider=provider,
+            status=response.status_code,
+        )
         return ProbeResult(
             provider,
             spec.label,
@@ -360,7 +404,7 @@ def probe_livekit_agent(
     ):
         return None
 
-    def result(ok: bool, message: str) -> ProbeResult:
+    def result(ok: bool, message: str, retryable: bool = False) -> ProbeResult:
         return ProbeResult(
             "livekit_target",
             "LiveKit agent",
@@ -368,6 +412,7 @@ def probe_livekit_agent(
             ok,
             message,
             agent_name if ok else "",
+            retryable,
         )
 
     try:
@@ -454,6 +499,7 @@ def probe_livekit_agent(
         return result(
             False,
             f"LiveKit returned HTTP {status} while checking agent '{agent_name}'",
+            _is_transient_status(status),
         )
     except (ValueError, json_format.ParseError) as exc:
         logger.warning("livekit_agent_probe_bad_response", exc_info=True)
@@ -461,17 +507,23 @@ def probe_livekit_agent(
             False,
             f"LiveKit returned an unreadable response ({type(exc).__name__}); "
             "retry Preflight",
+            True,
         )
     except requests.RequestException as exc:
         logger.warning("livekit_agent_probe_unreachable", exc_info=True)
         return result(
-            False, f"LiveKit is unreachable ({type(exc).__name__}); retry Preflight"
+            False,
+            f"Couldn't reach LiveKit ({type(exc).__name__}); try again",
+            True,
         )
+    logger.warning("livekit_agent_probe_no_join", agent_name=agent_name)
     return result(
         False,
         f"No agent named '{agent_name}' joined a test room within "
         f"{LIVEKIT_AGENT_JOIN_TIMEOUT_SECONDS}s; check the agent name and that "
-        "the agent is running on this LiveKit project",
+        "the agent is running on this LiveKit project, or try again if it just "
+        "started",
+        True,
     )
 
 
@@ -619,7 +671,7 @@ def probe_livekit_phone_routing(
     ):
         return None
 
-    def result(ok: bool, message: str) -> ProbeResult:
+    def result(ok: bool, message: str, retryable: bool = False) -> ProbeResult:
         return ProbeResult(
             "livekit_routing",
             "LiveKit phone routing",
@@ -627,6 +679,7 @@ def probe_livekit_phone_routing(
             ok,
             message,
             agent_name if ok else "",
+            retryable,
         )
 
     try:
@@ -683,7 +736,9 @@ def probe_livekit_phone_routing(
             )
         logger.warning("livekit_routing_probe_http_error", status=status, exc_info=True)
         return result(
-            False, f"LiveKit returned HTTP {status} while checking {phone_number}"
+            False,
+            f"LiveKit returned HTTP {status} while checking {phone_number}",
+            _is_transient_status(status),
         )
     except (ValueError, json_format.ParseError) as exc:
         logger.warning("livekit_routing_probe_bad_response", exc_info=True)
@@ -691,11 +746,14 @@ def probe_livekit_phone_routing(
             False,
             f"LiveKit returned an unreadable response ({type(exc).__name__}); "
             "retry Preflight",
+            True,
         )
     except requests.RequestException as exc:
         logger.warning("livekit_routing_probe_unreachable", exc_info=True)
         return result(
-            False, f"LiveKit is unreachable ({type(exc).__name__}); retry Preflight"
+            False,
+            f"Couldn't reach LiveKit ({type(exc).__name__}); try again",
+            True,
         )
     ok, message = _phone_routing_verdict(
         phone_number, agent_name, caller_number, cloud_numbers, trunks, rules
@@ -755,6 +813,7 @@ def probe_provider_target(
             aliases,
             False,
             f"{label} lookup is unreachable ({type(exc).__name__}); retry Preflight",
+            retryable=True,
         )
 
     if response.status_code == 404:

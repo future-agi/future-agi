@@ -490,6 +490,68 @@ def test_errored_scenario_with_completed_call_keeps_completed_lifecycle():
     )
 
 
+def test_errored_call_with_no_turns_is_a_failed_call():
+    interval = {
+        "started_at": "2026-08-27T10:00:00Z",
+        "ended_at": "2026-08-27T10:00:45Z",
+    }
+    assert (
+        _call_lifecycle_status({"status": "errored", "call": {**interval, "turns": 0}})
+        == CallExecution.CallStatus.FAILED
+    )
+    assert (
+        _call_lifecycle_status({"status": "errored", "call": {**interval, "turns": 3}})
+        == CallExecution.CallStatus.COMPLETED
+    )
+    assert (
+        _call_lifecycle_status({"status": "failed", "call": {**interval, "turns": 0}})
+        == CallExecution.CallStatus.COMPLETED
+    )
+
+
+def test_receipt_for_a_call_that_never_connected_is_failed_and_unscored():
+    registration = MagicMock()
+    call = registration.call_execution
+    call.call_metadata = {}
+    body = {
+        "status": "errored",
+        "call": {
+            "started_at": "2026-08-27T10:00:00Z",
+            "ended_at": "2026-08-27T10:00:45Z",
+            "duration_ms": 44_838,
+            "turns": 0,
+            "recording_artifacts": [],
+            "transcript_artifact": None,
+        },
+        "failure": {
+            "code": "call_failed",
+            "stage": "running",
+            "domain": "infrastructure",
+            "message": "voice_call_not_completed: failed: Failed to start the provider web bridge",
+        },
+        "sub_goals": [],
+        "evaluations": [],
+    }
+
+    with (
+        patch(
+            "simulate.services.hosted_harness_ingestion."
+            "HostedHarnessArtifact.no_workspace_objects"
+        ) as artifacts,
+        patch(
+            "simulate.services.hosted_harness_ingestion.transaction.on_commit"
+        ) as on_commit,
+    ):
+        artifacts.filter.return_value.order_by.return_value.last.return_value = None
+        _apply_receipt_to_call(registration, body)
+
+    assert call.status == CallExecution.CallStatus.FAILED
+    assert call.duration_seconds == 0
+    assert call.started_at == datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
+    assert call.error_message.startswith("voice_call_not_completed")
+    on_commit.assert_not_called()
+
+
 def test_recovered_media_fills_only_missing_unambiguous_kinds():
     from types import SimpleNamespace
 

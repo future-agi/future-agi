@@ -79,10 +79,13 @@ REASON_CSAT_TIMED_OUT_NOT_STARTED = (
 )
 REASON_CSAT_EXPIRED = "CSAT did not finish."
 REASON_CSAT_NO_EVIDENCE = "Nothing to score: the call has no transcript or recording."
+REASON_CSAT_NOT_CONNECTED = "Nothing to score: the call did not connect."
 REASON_CSAT_RUN_CANCELLED = "Not scored: the run was cancelled."
 REASON_CSAT_FAILED = "CSAT could not be scored."
 REASON_CSAT_SKIPPED = "CSAT was not scored."
-CSAT_SKIPPED_REASONS = frozenset({REASON_CSAT_NO_EVIDENCE, REASON_CSAT_RUN_CANCELLED})
+CSAT_SKIPPED_REASONS = frozenset(
+    {REASON_CSAT_NO_EVIDENCE, REASON_CSAT_NOT_CONNECTED, REASON_CSAT_RUN_CANCELLED}
+)
 CSAT_TIMED_OUT_REASONS = frozenset(
     {
         REASON_CSAT_TIMED_OUT_RUNNING,

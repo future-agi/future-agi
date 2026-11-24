@@ -6229,6 +6229,28 @@ class TestAlkVoiceCsatScoring:
         events = [line["event"] for line in logs]
         assert events.count("alk_csat_skipped_no_evidence") == 1
 
+    def test_csat_skips_a_call_that_is_not_completed(self, auth_client, run_test):
+        from simulate.services.scoring_status import REASON_CSAT_NOT_CONNECTED
+        from simulate.tasks import alk_sim
+
+        call = self._completed_voice_call(auth_client, run_test)
+        call.status = CallExecution.CallStatus.FAILED
+        call.save(update_fields=["status"])
+        assert call.recording_url
+
+        with (
+            patch("simulate.tasks.alk_sim.close_old_connections"),
+            patch.object(alk_sim, "_run_agent_csat", return_value=5.0) as scorer,
+        ):
+            alk_sim.calculate_alk_voice_csat_score._original_func(str(call.id))
+
+        scorer.assert_not_called()
+        call.refresh_from_db()
+        assert call.call_metadata["csat_status"] == "skipped"
+        assert call.call_metadata["csat_error"] == REASON_CSAT_NOT_CONNECTED
+        assert "csat_score" not in (call.conversation_metrics_data or {})
+        assert call.overall_score is None
+
     def test_text_call_falls_back_to_call_transcript(self, auth_client, run_test):
         from simulate.tasks import alk_sim
 

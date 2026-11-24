@@ -22,6 +22,7 @@ from simulate.models import CallExecution
 from simulate.services.scoring_status import (
     CSAT_STAMP_KEY,
     REASON_CSAT_NO_EVIDENCE,
+    REASON_CSAT_NOT_CONNECTED,
     settle_run,
 )
 from tfc.logging.temporal import try_activity_info
@@ -60,6 +61,12 @@ def calculate_alk_voice_csat_score(call_execution_id: str) -> None:
     existing_csat = (call.conversation_metrics_data or {}).get("csat_score")
     if existing_csat is not None:
         _set_csat_state(call, "completed")
+        settle_run(call.test_execution_id)
+        return
+
+    if call.status != CallExecution.CallStatus.COMPLETED:
+        _set_csat_state(call, "skipped", REASON_CSAT_NOT_CONNECTED)
+        logger.info("alk_csat_skipped_not_connected", call_execution_id=str(call.id))
         settle_run(call.test_execution_id)
         return
 
