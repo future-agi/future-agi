@@ -32,6 +32,7 @@ from django.db.models import Q
 from django.utils import timezone
 from minio.error import S3Error
 
+from simulate.constants.harness_environment import ADAPTATION_APPROVAL_PREFIX
 from simulate.models import (
     AgentDefinition,
     AgentVersion,
@@ -522,10 +523,12 @@ def _checked_binding(
     environment_digest: str,
     suite_digest: str,
     proof: Any,
+    scenario_keys: set[str],
 ) -> dict[str, Any]:
     """A given binding the composition may use: normalized, sealed over exactly its content,
     adapted for this agent version, connection and provider target, targeting this environment,
-    and proved against this suite when routed.
+    and proved against this suite when routed: a passing proof that names this binding, suite
+    and environment and gives every scenario of the suite, and no other, a verdict.
     """
     if (
         not isinstance(document, dict)
@@ -560,6 +563,15 @@ def _checked_binding(
             "a conversation_only binding reaches no environment tool and is not composed",
         )
     if mode == "tool_routed":
+        verdicts = proof.get("scenarios") if isinstance(proof, dict) else None
+        statuses = (
+            {
+                key: entry.get("status") if isinstance(entry, dict) else None
+                for key, entry in verdicts.items()
+            }
+            if isinstance(verdicts, dict)
+            else {}
+        )
         if not (
             isinstance(proof, dict)
             and proof.get("schema_version") == BINDING_PROOF_SCHEMA
@@ -567,11 +579,12 @@ def _checked_binding(
             and (proof.get("binding") or {}).get("digest") == document["digest"]
             and (proof.get("suite") or {}).get("digest") == suite_digest
             and (proof.get("environment") or {}).get("digest") == environment_digest
+            # Exactly the suite: a case the proof leaves out, or one the suite does not have,
+            # is a proof of something else.
+            and set(statuses) == scenario_keys
+            and set(statuses.values()) <= {"proved", "unscorable"}
             # A binding with nothing to run must not become a composition.
-            and any(
-                (entry or {}).get("status") == "proved"
-                for entry in (proof.get("scenarios") or {}).values()
-            )
+            and "proved" in statuses.values()
         ):
             raise _error(
                 "binding_unproved",
@@ -699,6 +712,9 @@ def create_composition(
         environment_digest=chain[-1].digest,
         suite_digest=suite.digest,
         proof=binding_proof,
+        scenario_keys={
+            str(entry["key"]) for entry in suite.manifest.get("scenarios") or []
+        },
     )
     HarnessAgentBinding.no_workspace_objects.get_or_create(
         organization=organization,
@@ -965,6 +981,24 @@ def _simulator(run_test, connector: str) -> dict[str, Any]:
     }
 
 
+def proof_digest(proof: dict[str, Any]) -> str:
+    """A binding proof's content address, as agent-learning-kit computes it
+    (`binding_proof.proof_digest`): every status, reason and reference in it."""
+    return canonical_digest(proof)
+
+
+def _frozen_proof(composition: dict[str, Any]) -> dict[str, Any]:
+    """The manifest's `binding_proof`: the digest of the proof this platform holds for a
+    tool-routed composition. Compose reads scenario statuses only from a proof with this digest,
+    so the proof a run is given cannot differ from the one accepted with the composition."""
+    proof = composition.get("binding_proof")
+    if composition["binding"].get("mode") != "tool_routed" or not isinstance(
+        proof, dict
+    ):
+        return {}
+    return {"binding_proof": {"digest": proof_digest(proof)}}
+
+
 def freeze_run_manifest(
     environment: HostedHarnessJob,
     child: HostedHarnessJob,
@@ -1025,6 +1059,7 @@ def freeze_run_manifest(
             ],
             "suite": {"digest": composition["suite"]["digest"]},
             "binding": {"digest": binding["digest"]},
+            **_frozen_proof(composition),
             "agent": binding["agent"],
             "selection": {"scenario_keys": list(scenario_keys), "trials": trials},
             "simulator": _simulator(
@@ -1223,6 +1258,35 @@ def connected_agent_connection(
     }
 
 
+_PROVIDER_CONNECTORS = {"vapi": {"vapi"}, "retell": {"retell", "retell_chat"}}
+
+
+def check_agent_connection(agent_version: AgentVersion, agent: Any) -> None:
+    """Refuse a connection given with an adaptation request that reaches another provider agent
+    than the selected version's own. The adaptation inspects and binds the agent the connection
+    reaches, while the composition and its results are recorded under the version."""
+    definition = agent_version.agent_definition
+    provider = str(definition.provider or "").strip().lower()
+    target = str(definition.assistant_id or "").strip()
+    agent = agent if isinstance(agent, dict) else {}
+    connector = str(agent.get("connector") or "").strip().lower()
+    config = agent.get("config") if isinstance(agent.get("config"), dict) else {}
+    given = str(
+        config.get("assistant_id" if connector == "vapi" else "agent_id") or ""
+    ).strip()
+    if (
+        connector not in _PROVIDER_CONNECTORS.get(provider, set())
+        or not target
+        or given != target
+    ):
+        raise _error(
+            "agent_connection_mismatch",
+            "the connection given does not reach the selected agent version's own provider "
+            "agent; leave it out to use the version's connection",
+            409,
+        )
+
+
 def adaptation_payload(
     organization,
     *,
@@ -1283,6 +1347,7 @@ def adaptation_payload(
         "agent": agent_reference(
             agent_version, connector, payload["agent"].get("config") or {}
         ),
+        # The complete pairing (`harness_fit.resolved_pairing`), every world tool in it.
         **({"pairing": pairing} if pairing else {}),
         "mode": mode,
     }
@@ -1375,6 +1440,21 @@ def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | 
             "message": "the agent reaches no environment tool",
         }
         return adaptation_result, None
+    # A missing proof is refused by the composition as binding_unproved.
+    binding_proof = (
+        _read(output, "binding-proof.json")
+        if mode == "tool_routed" and (output / "binding-proof.json").is_file()
+        else None
+    )
+    if binding_proof is not None:
+        # The adaptation's control process proves the sealed binding itself and records the
+        # proof's digest in its result: a proof file that is not that proof is refused.
+        sealed = (result.get("binding_proof") or {}).get("digest")
+        if not sealed or proof_digest(binding_proof) != sealed:
+            raise _error(
+                "binding_unproved",
+                "binding-proof.json is not the proof the adaptation's result names",
+            )
     composition = create_composition(
         organization,
         job.workspace,
@@ -1386,12 +1466,7 @@ def _adapt(job: HostedHarnessJob, output: Path) -> tuple[dict[str, Any], dict | 
         parallelism=adaptation.get("parallelism"),
         binding=binding,
         alignment=result.get("alignment"),
-        # A missing proof is refused by the composition as binding_unproved.
-        binding_proof=(
-            _read(output, "binding-proof.json")
-            if mode == "tool_routed" and (output / "binding-proof.json").is_file()
-            else None
-        ),
+        binding_proof=binding_proof,
         trajectories=(
             _read(output, "trajectories.json")
             if mode == "tool_routed" and (output / "trajectories.json").is_file()
@@ -1462,10 +1537,6 @@ def complete_adaptation(job: HostedHarnessJob, output: Path | None) -> HostedHar
     ):
         locked = _run_measurable(locked, adaptation_result["composition_id"])
     return locked
-
-
-# How agent-learning-kit's adaptation workbench opens its approval question (`approval_question`).
-ADAPTATION_APPROVAL_PREFIX = "Use this binding for "
 
 
 def approve_adaptation(organization, job_id) -> HostedHarnessJob:

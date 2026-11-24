@@ -38,6 +38,7 @@ from minio.error import S3Error
 from urllib3.exceptions import HTTPError
 
 from simulate.constants.harness_environment import (
+    ADAPTATION_APPROVAL_PREFIX,
     AGENT_TYPE_CHAT,
     AGENT_TYPE_VOICE,
     RUN_KIND_ENVIRONMENT,
@@ -52,6 +53,7 @@ from simulate.constants.harness_environment import (
 from simulate.models import (
     AgentVersion,
     HarnessEnvironmentVersion,
+    HostedHarnessConversation,
     HostedHarnessJob,
     HostedHarnessReceipt,
     HostedHarnessScenario,
@@ -228,25 +230,37 @@ def status_counts(queryset: QuerySet[HostedHarnessJob]) -> dict[str, int]:
     )
 
 
-# An adaptation in review whose design nobody has approved yet: nothing is built until it is.
-_AWAITING_Q = Q(payload__metadata__adaptation__mode="review") & ~Q(
-    payload__metadata__adaptation__has_key="approved_at"
-)
+def _asked_to_approve() -> QuerySet[HostedHarnessConversation]:
+    """Conversations whose open question is the adaptation's approval: the mapping has been
+    checked on every case and the person is asked whether to build it."""
+    return HostedHarnessConversation.no_workspace_objects.filter(
+        blocking_input__prompt__startswith=ADAPTATION_APPROVAL_PREFIX
+    )
+
+
+def _awaiting_ids() -> QuerySet[HostedHarnessJob]:
+    """Adaptations in review that are awaiting approval: the approval question is open and
+    nobody has answered it. Until it is asked the mapping is still being checked (building),
+    as the design says, and Approve has nothing to answer."""
+    return HostedHarnessJob.no_workspace_objects.filter(
+        Q(payload__metadata__adaptation__mode="review")
+        & ~Q(payload__metadata__adaptation__has_key="approved_at"),
+        id__in=_asked_to_approve().values("job_id"),
+    ).values("id")
 
 
 def _status_q(status: str) -> Q:
     known = _TERMINAL_FAILED | _RUN_STATES | {HostedHarnessJob.State.COMPLETED}
+    # By id: a negated JSON lookup is NULL, not true, on a job that has no adaptation.
     if status == STATUS_AWAITING_APPROVAL:
-        return ~Q(state__in=known) & _AWAITING_Q
+        return ~Q(state__in=known) & Q(id__in=_awaiting_ids())
     if status == STATUS_COMPLETED:
         return Q(state=HostedHarnessJob.State.COMPLETED)
     if status == STATUS_FAILED:
         return Q(state__in=_TERMINAL_FAILED)
     if status == STATUS_RUNNING:
         return Q(state__in=_RUN_STATES)
-    # By id: a negated JSON lookup is NULL, not true, on a job that has no adaptation.
-    awaiting = HostedHarnessJob.no_workspace_objects.filter(_AWAITING_Q).values("id")
-    return ~Q(state__in=known) & ~Q(id__in=awaiting)
+    return ~Q(state__in=known) & ~Q(id__in=_awaiting_ids())
 
 
 def _voice_q() -> Q:
@@ -489,7 +503,12 @@ def status_for(job: HostedHarnessJob) -> str:
     if job.state in _RUN_STATES:
         return STATUS_RUNNING
     adaptation = ((job.payload or {}).get("metadata") or {}).get("adaptation") or {}
-    if adaptation.get("mode") == "review" and not adaptation.get("approved_at"):
+    if (
+        adaptation.get("mode") == "review"
+        and not adaptation.get("approved_at")
+        # Only once the approval is asked: before it, the mapping is still being checked.
+        and _asked_to_approve().filter(job=job).exists()
+    ):
         return STATUS_AWAITING_APPROVAL
     return STATUS_BUILDING
 
