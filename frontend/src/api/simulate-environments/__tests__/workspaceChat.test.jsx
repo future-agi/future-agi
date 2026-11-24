@@ -124,7 +124,9 @@ describe("useWorkspaceChat (real)", () => {
       expect(start(result)).toMatchObject({ oldest: 3, hasOlder: true });
 
       listOlderHarnessChat.mockRejectedValueOnce(new Error("offline"));
-      act(() => start(result).onLoad());
+      act(() => {
+        start(result).onLoad();
+      });
       await waitFor(() => expect(start(result).failed).toBe(true));
       expect(tools(result)).toEqual(["tool 3", "tool 4"]);
 
@@ -133,7 +135,9 @@ describe("useWorkspaceChat (real)", () => {
         oldest_sequence: 1,
         has_older: false,
       });
-      act(() => start(result).onLoad());
+      act(() => {
+        start(result).onLoad();
+      });
       await waitFor(() =>
         expect(start(result)).toMatchObject({
           oldest: 1,
@@ -156,7 +160,9 @@ describe("useWorkspaceChat (real)", () => {
           answer = resolve;
         }),
       );
-      act(() => start(result).onLoad());
+      act(() => {
+        start(result).onLoad();
+      });
       await waitFor(() => expect(start(result).loading).toBe(true));
       act(() => {
         client.setQueryData(
@@ -214,7 +220,9 @@ describe("useWorkspaceChat (real)", () => {
     });
     const start = () =>
       result.current.turns.find((turn) => turn.role === "history");
-    act(() => start().onLoad());
+    act(() => {
+      start().onLoad();
+    });
     await waitFor(() =>
       expect(result.current.turns.map((turn) => turn.text)).toEqual([
         undefined,

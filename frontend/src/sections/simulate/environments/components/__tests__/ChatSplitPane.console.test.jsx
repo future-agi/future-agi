@@ -1,6 +1,21 @@
-import { useEffect } from "react";
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { useEffect, useState } from "react";
+import PropTypes from "prop-types";
+import {
+  afterEach,
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  vi,
+} from "vitest";
 import { act, render, screen, fireEvent } from "src/utils/test-utils";
+
+const { enqueueSnackbar } = vi.hoisted(() => ({ enqueueSnackbar: vi.fn() }));
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar,
+}));
 
 import ChatSplitPane from "../ChatSplitPane";
 import BuilderConsole from "../../buildEnvironment/console/BuilderConsole";
@@ -149,35 +164,6 @@ describe("ChatSplitPane with a long builder conversation", () => {
     expect(scrollTo.mock.calls).toEqual([[{ top: 321, behavior: "smooth" }]]);
   });
 
-  it("loads older messages until the one asked for is there", () => {
-    const onLoad = vi.fn();
-    const start = (oldest) => ({
-      id: "older-messages",
-      role: "history",
-      kind: "messages",
-      oldest,
-      hasOlder: true,
-      onLoad,
-    });
-    const { rerender } = render(renderSplit([start(201), ...makeTurns(4)]));
-    collapse();
-    const scrollTo = window.HTMLElement.prototype.scrollTo;
-    act(() => focusBuilderChat("old"));
-    expect(onLoad).toHaveBeenCalledTimes(1);
-    rerender(renderSplit([{ ...start(201), loading: true }, ...makeTurns(4)]));
-    expect(onLoad).toHaveBeenCalledTimes(1);
-    scrollTo.mockClear();
-    rerender(
-      renderSplit([
-        start(1),
-        { id: "old", role: "user", text: "an old message" },
-        ...makeTurns(4),
-      ]),
-    );
-    expect(onLoad).toHaveBeenCalledTimes(1);
-    expect(scrollTo.mock.calls).toEqual([[{ top: 0, behavior: "smooth" }]]);
-  });
-
   it.each([undefined, "not-loaded"])(
     "opens at the newest when there is no message to show (%s)",
     (messageId) => {
@@ -258,5 +244,218 @@ describe("ChatSplitPane with a long builder conversation", () => {
     expect(unmounts).toBe(0);
     // scrollIntoView would scroll the collapsing column too; the console never uses it.
     expect(window.HTMLElement.prototype.scrollIntoView).not.toHaveBeenCalled();
+  });
+});
+
+describe("older messages", () => {
+  const PAGE = 200;
+  let observers = [];
+  let original;
+
+  // The marker is in view from the moment it is watched, until told otherwise.
+  let markerInView = true;
+  class FakeObserver {
+    constructor(callback) {
+      this.callback = callback;
+    }
+    observe() {
+      observers.push(this);
+    }
+    disconnect() {
+      observers = observers.filter((one) => one !== this);
+    }
+  }
+  const settle = async () => {
+    await act(async () => {
+      [...observers].forEach((one) =>
+        one.callback([{ isIntersecting: markerInView }]),
+      );
+    });
+  };
+
+  beforeEach(() => {
+    observers = [];
+    markerInView = true;
+    original = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = FakeObserver;
+    enqueueSnackbar.mockReset();
+  });
+  afterEach(() => {
+    globalThis.IntersectionObserver = original;
+  });
+
+  // A chat with `pages` older pages, each answered when the test says so.
+  function Chat({ pages, answers, found, running = false }) {
+    const [held, setHeld] = useState({ pages: 0, loading: false });
+    const onLoad = () => {
+      setHeld((was) => ({ ...was, loading: true, failed: false }));
+      return new Promise((resolve, reject) => {
+        answers.push({
+          ok: () => {
+            setHeld((was) => ({ pages: was.pages + 1, loading: false }));
+            resolve();
+          },
+          fail: () => {
+            setHeld((was) => ({ ...was, loading: false, failed: true }));
+            reject(new Error("offline"));
+          },
+        });
+      });
+    };
+    const turns = [
+      {
+        id: "older-messages",
+        role: "history",
+        kind: "messages",
+        oldest: (pages - held.pages) * PAGE + 1,
+        hasOlder: held.pages < pages,
+        loading: held.loading,
+        failed: held.failed,
+        onLoad,
+      },
+      ...(found && held.pages >= found
+        ? [{ id: "wanted", role: "user", text: "the old message" }]
+        : []),
+      ...makeTurns(4),
+    ];
+    return (
+      <ChatSplitPane
+        chat={({ collapse, open }) => (
+          <BuilderConsole
+            turns={turns}
+            running={running}
+            onCollapse={collapse}
+            active={open}
+          />
+        )}
+      >
+        <div>right pane</div>
+      </ChatSplitPane>
+    );
+  }
+  Chat.propTypes = {
+    pages: PropTypes.number,
+    answers: PropTypes.array,
+    found: PropTypes.number,
+    running: PropTypes.bool,
+  };
+  const open = (props) => {
+    const answers = [];
+    const view = render(<Chat answers={answers} {...props} />);
+    return {
+      answers,
+      rerender: (more) =>
+        view.rerender(<Chat answers={answers} {...props} {...more} />),
+    };
+  };
+  const list = () => screen.getByTestId("builder-console-list");
+  const scrollUp = () => fireEvent.wheel(list(), { deltaY: -100 });
+  const answer = async (one, how = "ok") => {
+    await act(async () => one[how]());
+    await settle();
+  };
+
+  describe("load when the reader reaches where they start", () => {
+    it("one page per reach, and the next only while the start is still in view", async () => {
+      const { answers } = open({ pages: 4 });
+      await settle();
+      // Not on open, however short the chat is.
+      expect(answers).toHaveLength(0);
+
+      scrollUp();
+      await settle();
+      await settle();
+      expect(answers).toHaveLength(1);
+
+      // The page added too little to push the start out of view.
+      await answer(answers[0]);
+      expect(answers).toHaveLength(2);
+
+      markerInView = false;
+      await answer(answers[1]);
+      expect(answers).toHaveLength(2);
+    });
+
+    it("stops after a failure until Try again", async () => {
+      const { answers } = open({ pages: 4 });
+      scrollUp();
+      await settle();
+      await answer(answers[0], "fail");
+      scrollUp();
+      await settle();
+      expect(answers).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(answers).toHaveLength(2);
+    });
+
+    it("not when the chat scrolled itself there", async () => {
+      const { answers } = open({ pages: 4 });
+      scrollUp();
+      act(() => focusBuilderChat("u0"));
+      await settle();
+      expect(answers).toHaveLength(0);
+    });
+  });
+
+  describe("read to open the chat at a message that isn't loaded", () => {
+    const looking = () => screen.queryByText("Looking for that message…");
+
+    it("loads pages until it is there, then shows it", async () => {
+      const { answers } = open({ pages: 9, found: 2 });
+      act(() => focusBuilderChat("wanted"));
+      expect(looking()).toBeInTheDocument();
+      await answer(answers[0]);
+      const { scrollTo } = window.HTMLElement.prototype;
+      scrollTo.mockClear();
+      await answer(answers[1]);
+      expect(answers).toHaveLength(2);
+      expect(scrollTo).toHaveBeenCalledTimes(1);
+      expect(enqueueSnackbar).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        "too far back",
+        { pages: 9 },
+        5,
+        "That message is too far back to open here.",
+      ],
+      [
+        "not in the chat",
+        { pages: 2 },
+        2,
+        "That message isn't in this chat, so it can't be shown.",
+      ],
+    ])("gives up once when it is %s", async (_, props, asked, said) => {
+      const { answers } = open(props);
+      act(() => focusBuilderChat("wanted"));
+      for (let page = 0; page < asked; page += 1) await answer(answers[page]);
+      expect(answers).toHaveLength(asked);
+      expect(enqueueSnackbar.mock.calls).toEqual([[said, { variant: "info" }]]);
+    });
+
+    it("gives up when a page fails, and looks again when asked again", async () => {
+      const { answers } = open({ pages: 9 });
+      act(() => focusBuilderChat("wanted"));
+      await answer(answers[0], "fail");
+      expect(answers).toHaveLength(1);
+      expect(enqueueSnackbar.mock.calls).toEqual([
+        ["Couldn't load the earlier messages. Try again.", { variant: "info" }],
+      ]);
+      act(() => focusBuilderChat("wanted"));
+      expect(answers).toHaveLength(2);
+    });
+
+    it.each([
+      ["scrolls by hand", () => fireEvent.wheel(list(), { deltaY: 100 })],
+      ["sends a message", (rerender) => rerender({ running: true })],
+    ])("stops looking when the reader %s", async (_, interrupt) => {
+      const { answers, rerender } = open({ pages: 9 });
+      act(() => focusBuilderChat("wanted"));
+      interrupt(rerender);
+      await answer(answers[0]);
+      expect(answers).toHaveLength(1);
+      expect(enqueueSnackbar).not.toHaveBeenCalled();
+    });
   });
 });

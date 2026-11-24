@@ -132,14 +132,19 @@ export function useOlderChat(kind, jobId, conversation) {
       });
     },
   });
-  const { mutate } = older;
+  const { mutateAsync } = older;
   const load = useCallback(() => {
     const { jobId: id, conversation: held } = latest.current;
     const before = firstHeld[kind](held);
-    if (before) {
-      mutate({ id, before, conversationId: held.conversation_id });
-    }
-  }, [kind, mutate]);
+    const page = mutateAsync({
+      id,
+      before,
+      conversationId: held.conversation_id,
+    });
+    // A failure shows at the marker, also when the caller doesn't wait for it.
+    page.catch(() => {});
+    return page;
+  }, [kind, mutateAsync]);
   const here = older.variables?.id === jobId;
   return {
     loading: here && older.isPending,

@@ -69,6 +69,12 @@ export const CONSOLE_COPY = {
     },
     retry: "Try again",
   },
+  search: {
+    looking: "Looking for that message…",
+    tooFar: "That message is too far back to open here.",
+    missing: "That message isn't in this chat, so it can't be shown.",
+    failed: "Couldn't load the earlier messages. Try again.",
+  },
 };
 
 export const PIPELINE_CHECKS_COPY = {
