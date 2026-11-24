@@ -26,6 +26,7 @@ from sdk.serializers.contracts import (
 from sdk.utils.api_errors import sdk_validation_error_response
 from simulate.models import CallExecution, TestExecution
 from simulate.models.run_test import RunTest
+from simulate.models.test_execution import EvalExplanationSummaryStatus
 from simulate.selectors.runs import user_executions
 from simulate.utils.eval_summary import (
     _build_template_statistics,
@@ -40,6 +41,23 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
 logger = structlog.get_logger(__name__)
+
+
+def _summary_fields(execution) -> dict:
+    """The run's stored summary, its status, and whether anyone asked for it.
+
+    The summary is made only when a person presses Refresh in the app.
+    "pending" means nobody has asked since the run's verdicts last changed:
+    any stored summary is from before then, and none is on its way.
+    """
+    status = execution.eval_explanation_summary_status
+    return {
+        "eval_explanation_summary": execution.eval_explanation_summary,
+        "eval_explanation_summary_status": status,
+        "eval_explanation_summary_requested": (
+            status != EvalExplanationSummaryStatus.PENDING
+        ),
+    }
 
 
 def _compute_latency_percentiles_sql(execution_id):
@@ -387,10 +405,7 @@ class SimulationRunsView(APIView):
         }
 
         if include_summary:
-            result["eval_explanation_summary"] = execution.eval_explanation_summary
-            result["eval_explanation_summary_status"] = (
-                execution.eval_explanation_summary_status
-            )
+            result.update(_summary_fields(execution))
 
         return self._gm.success_response(result)
 
@@ -607,10 +622,7 @@ class SimulationAnalyticsView(APIView):
         }
 
         if include_summary:
-            result["eval_explanation_summary"] = execution.eval_explanation_summary
-            result["eval_explanation_summary_status"] = (
-                execution.eval_explanation_summary_status
-            )
+            result.update(_summary_fields(execution))
 
         output = AnalyticsResponseSerializer(result).data
         return self._gm.success_response(output)

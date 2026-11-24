@@ -125866,6 +125866,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "string",
           "x-nullable": true,
         },
+        eval_explanation_summary_requested: {
+          title: "Eval explanation summary requested",
+          type: "boolean",
+        },
       },
     },
     SDKSimulationMetricsResult: {
@@ -126053,6 +126057,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Eval explanation summary status",
           type: "string",
           "x-nullable": true,
+        },
+        eval_explanation_summary_requested: {
+          title: "Eval explanation summary requested",
+          type: "boolean",
         },
         total_pages: {
           title: "Total pages",

@@ -4083,6 +4083,10 @@ class TestExecutor:
                                     self._check_and_update_test_execution_completion(
                                         call_execution_locked.test_execution_id
                                     )
+                        else:
+                            self._mark_summary_out_of_date(
+                                call_execution_locked.test_execution_id
+                            )
                 except Exception as e:
                     # If select_for_update fails (e.g., outside transaction), fall back to regular update
                     # This can happen in some Celery task contexts
@@ -4127,6 +4131,8 @@ class TestExecutor:
                                 self._check_and_update_test_execution_completion(
                                     call_execution.test_execution_id
                                 )
+                    else:
+                        self._mark_summary_out_of_date(call_execution.test_execution_id)
             else:
                 logger.debug(
                     f"Not all eval configs completed for call {call_execution.id}. "
@@ -4247,6 +4253,20 @@ class TestExecutor:
             )
             traceback.print_exc()
             return False
+
+    def _mark_summary_out_of_date(self, test_execution_id):
+        """A late verdict on a completed run: mark its finished summary pending.
+
+        The summary was made without this verdict. It is kept, and nothing is
+        queued: pending tells the page, and the SDK, that nobody has asked
+        for a summary since the run's verdicts last changed. A summary that
+        is running, failed, or was never made keeps its state.
+        """
+        TestExecution.objects.filter(
+            id=test_execution_id,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            eval_explanation_summary_status=EvalExplanationSummaryStatus.COMPLETED,
+        ).update(eval_explanation_summary_status=EvalExplanationSummaryStatus.PENDING)
 
     def _after_run_completed(self, test_execution_id):
         """Live update for a run the settle just completed.

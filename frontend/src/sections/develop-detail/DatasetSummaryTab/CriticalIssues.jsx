@@ -19,8 +19,10 @@ import Iconify from "src/components/iconify";
 import {
   CriticalIssueStatus,
   NOT_ANALYSED_MESSAGE,
+  OUT_OF_DATE_MESSAGE,
   isCriticalIssueInProgress,
   isCriticalIssueNotAnalysed,
+  isCriticalIssueOutOfDate,
 } from "./criticalIssueStatus";
 
 const MinimumTotalCallsForCriticalIssue = 5;
@@ -262,6 +264,15 @@ const CriticalIssues = ({ mode = "develop" }) => {
             Updated {format(new Date(data?.lastUpdated), "dd/MM/yyyy, hh:mm a")}
           </Typography>
         </Stack>
+      )}
+      {isCriticalIssueOutOfDate(mode, data?.status, data?.result) && (
+        <Typography
+          typography="s2"
+          fontWeight={"fontWeightRegular"}
+          color={"text.secondary"}
+        >
+          {OUT_OF_DATE_MESSAGE}
+        </Typography>
       )}
 
       <Box
