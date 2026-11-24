@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import ast
-from typing import Any
+import tarfile
+from typing import Any, TypedDict
 
 import structlog
 from django.core.cache import cache
@@ -16,23 +17,57 @@ logger = structlog.get_logger(__name__)
 
 CACHE_SECONDS = 24 * 3600
 _MISSING = "missing"
+_DEFINITIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
-def cut_definition(text: str, name: str) -> tuple[int, int, str] | None:
-    """The lines of the first function or class named ``name``, its decorators included."""
+class ToolSource(TypedDict):
+    path: str
+    line_start: int
+    line_end: int
+    code: str
+
+
+def _named(body: list[ast.stmt], name: str) -> ast.stmt | None:
+    return next(
+        (node for node in body if isinstance(node, _DEFINITIONS) and node.name == name),
+        None,
+    )
+
+
+def _definition(tree: ast.Module, dotted: str) -> ast.stmt | None:
+    parts = dotted.split(".")
+    node: Any = tree
+    for part in parts:
+        node = _named(node.body, part)
+        if node is None:
+            break
+    if node is not None:
+        return node
+    if len(parts) > 1:
+        return None
+    return next(
+        (
+            one
+            for one in ast.walk(tree)
+            if isinstance(one, _DEFINITIONS) and one.name == dotted
+        ),
+        None,
+    )
+
+
+def cut_definition(text: str, dotted: str) -> tuple[int, int, str] | None:
+    """The lines of the function or class ``dotted`` names (``Class.method`` follows the
+    class), its decorators included."""
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError):
         return None
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            and node.name == name
-        ):
-            start = min([node.lineno, *(one.lineno for one in node.decorator_list)])
-            end = node.end_lineno or node.lineno
-            return start, end, "\n".join(text.splitlines()[start - 1 : end])
-    return None
+    node = _definition(tree, dotted)
+    if node is None:
+        return None
+    start = min([node.lineno, *(one.lineno for one in node.decorator_list)])
+    end = node.end_lineno or node.lineno
+    return start, end, "\n".join(text.splitlines()[start - 1 : end])
 
 
 def _candidates(module: str, subfolder: str) -> list[str]:
@@ -43,76 +78,77 @@ def _candidates(module: str, subfolder: str) -> list[str]:
 
 
 def _wanted(entry: Any) -> tuple[str, str] | None:
-    if not isinstance(entry, dict):
+    if not isinstance(entry, dict) or entry.get("mode") == "unreachable":
         return None
     source = entry.get("source")
     if isinstance(source, dict) and source.get("code"):
         return None
     module = str(entry.get("module") or "")
-    name = str(entry.get("callable") or "").rsplit(".", 1)[-1]
+    name = str(entry.get("callable") or "")
     return (module, name) if module and name else None
 
 
-class _Finder:
-    def __init__(self, job: HostedHarnessJob) -> None:
-        self.version = job.agent_version
-        self.code: agent_code.VersionCode | None = None
-        self.index: dict[str, Any] | None = None
-        self.texts: dict[str, str] = {}
+def _key(version_id: Any, module: str, name: str) -> str:
+    return f"harness_tool_source:{version_id}:{module}:{name}"
 
-    def _open(self) -> bool:
-        if self.index is not None:
-            return True
-        if self.version is None:
-            return False
-        self.code = agent_code.version_code(self.version)
-        self.index = agent_code.archive_index(self.code)
-        return True
 
-    def _text(self, path: str) -> str:
-        if path not in self.texts:
-            body = agent_code.read_file(self.version, path)
-            self.texts[path] = str(body.get("content") or "")
-        return self.texts[path]
-
-    def find(self, module: str, name: str) -> dict[str, Any] | None:
-        if not self._open():
-            return None
-        key = f"harness_tool_source:{self.code.identity}:{module}:{name}"
-        cached = cache.get(key)
-        if cached is not None:
-            return None if cached == _MISSING else cached
-        found = None
-        for path in _candidates(module, self.code.subfolder):
-            if path not in self.index:
-                continue
-            cut = cut_definition(self._text(path), name)
+def _find(
+    code: agent_code.VersionCode, wanted: set[tuple[str, str]]
+) -> dict[tuple[str, str], ToolSource | None]:
+    paths = {
+        (module, name): _candidates(module, code.subfolder) for module, name in wanted
+    }
+    texts = agent_code.read_texts(
+        code, sorted({path for found in paths.values() for path in found})
+    )
+    sources: dict[tuple[str, str], ToolSource | None] = {}
+    for (module, name), candidates in paths.items():
+        sources[(module, name)] = None
+        for path in candidates:
+            cut = cut_definition(texts[path], name) if path in texts else None
             if cut is not None:
                 start, end, text = cut
-                found = {
+                sources[(module, name)] = {
                     "path": path,
                     "line_start": start,
                     "line_end": end,
                     "code": text,
                 }
                 break
-        cache.set(key, found or _MISSING, CACHE_SECONDS)
-        return found
+    return sources
 
 
 def with_tool_sources(job: HostedHarnessJob, entries: list[Any]) -> list[Any]:
-    """The entrypoints, each without code given the code of the function it names; unchanged when the
-    agent's files cannot be read."""
-    if not any(_wanted(entry) for entry in entries):
+    """The entrypoints, each without code given the code of the function it names; unchanged
+    when the agent's files cannot be read."""
+    version_id = job.agent_version_id
+    wanted = {pair for pair in map(_wanted, entries) if pair}
+    if version_id is None or not wanted:
         return entries
-    finder = _Finder(job)
+    keys = {pair: _key(version_id, *pair) for pair in wanted}
+    cached = cache.get_many(list(keys.values()))
+    sources = {pair: cached[key] for pair, key in keys.items() if key in cached}
+    missing = wanted - set(sources)
+    if missing:
+        try:
+            found = _find(agent_code.version_code(job.agent_version), missing)
+        except (HostedHarnessError, tarfile.TarError, OSError) as exc:
+            logger.warning(
+                "harness_tool_source_unavailable",
+                job=str(job.id),
+                error=type(exc).__name__,
+            )
+            return entries
+        cache.set_many(
+            {keys[pair]: value or _MISSING for pair, value in found.items()},
+            CACHE_SECONDS,
+        )
+        sources.update(found)
     filled: list[Any] = []
-    try:
-        for entry in entries:
-            wanted = _wanted(entry)
-            source = finder.find(*wanted) if wanted else None
-            filled.append({**entry, "source": source} if source else entry)
-    except HostedHarnessError as exc:
-        logger.info("harness_tool_source_unavailable", job=str(job.id), code=exc.code)
-        return entries
+    for entry in entries:
+        pair = _wanted(entry)
+        source = sources.get(pair) if pair else None
+        filled.append(
+            {**entry, "source": source} if source and source != _MISSING else entry
+        )
     return filled
