@@ -80,41 +80,37 @@ def compute_trace_summary_and_graph(
     call this so the two interchangeable paths cannot drift in the totals or the
     graph shape. Works with both PG and CH span dicts.
     """
-    all_spans: list[dict[str, Any]] = []
-    graph_nodes: list[dict[str, Any]] = []
-    graph_edges: list[dict[str, Any]] = []
+    all_spans = []
+    graph_nodes = []
+    graph_edges = []
 
-    # Iterative preorder walk preserves exact DFS order without hitting Python's
-    # recursion limit on deep (>1,000-level) agent span trees.
-    stack: list[tuple[dict[str, Any], str | None]] = [
-        (entry, None) for entry in reversed(spans_tree)
-    ]
-    while stack:
-        entry, parent_id = stack.pop()
-        span = entry.get("observation_span") or entry.get("observationSpan") or {}
-        span_id = span.get("id", "")
-        all_spans.append(
-            {
-                "span": span,
-                "parent_id": parent_id,
-            }
-        )
-        graph_nodes.append(
-            {
-                "id": span_id,
-                "name": span.get("name", ""),
-                "type": span.get("observation_type", "unknown"),
-                "latency_ms": span.get("latency_ms") or span.get("latency") or 0,
-                "tokens": span.get("total_tokens") or 0,
-                "status": span.get("status"),
-            }
-        )
-        if parent_id:
-            graph_edges.append({"from": parent_id, "to": span_id})
-        children = entry.get("children", [])
-        if children:
-            for child in reversed(children):
-                stack.append((child, span_id))
+    def walk(entries, parent_id=None):
+        for entry in entries:
+            span = entry.get("observation_span") or entry.get("observationSpan") or {}
+            span_id = span.get("id", "")
+            all_spans.append(
+                {
+                    "span": span,
+                    "parent_id": parent_id,
+                }
+            )
+            graph_nodes.append(
+                {
+                    "id": span_id,
+                    "name": span.get("name", ""),
+                    "type": span.get("observation_type", "unknown"),
+                    "latency_ms": span.get("latency_ms") or span.get("latency") or 0,
+                    "tokens": span.get("total_tokens") or 0,
+                    "status": span.get("status"),
+                }
+            )
+            if parent_id:
+                graph_edges.append({"from": parent_id, "to": span_id})
+            children = entry.get("children", [])
+            if children:
+                walk(children, parent_id=span_id)
+
+    walk(spans_tree)
 
     usage_rows = [
         {**item["span"], "parent_span_id": item["parent_id"] or ""}

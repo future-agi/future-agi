@@ -51,7 +51,6 @@ from tracer.services.clickhouse.query_builders.exact_graph_predicates import (
 )
 from tracer.services.clickhouse.query_builders.filters import (
     build_numeric_filter_predicate,
-    build_session_message_having_predicate,
 )
 from tracer.services.clickhouse.query_builders.latest_filter_predicates import (
     compile_exact_graph_filter_predicates,
@@ -2959,17 +2958,34 @@ def _session_having_clause(
         # span attributes silently changes membership and usually returns an
         # empty graph.
         if message_column is not None:
+            if filter_op in ("is_null", "is_not_null"):
+                clauses.append(
+                    f"({message_column} IS NULL OR {message_column} = '')"
+                    if filter_op == "is_null"
+                    else (f"({message_column} IS NOT NULL AND {message_column} != '')")
+                )
+                continue
+            text_operator = {
+                "equals": "=",
+                "not_equals": "!=",
+                "contains": "ILIKE",
+                "not_contains": "NOT ILIKE",
+                "starts_with": "ILIKE",
+                "ends_with": "ILIKE",
+            }.get(str(filter_op or ""))
+            if text_operator is None:
+                clauses.append("0 = 1")
+                continue
             counter += 1
             param_name = f"session_having_{counter}"
-            clauses.append(
-                build_session_message_having_predicate(
-                    message_column,
-                    filter_op,
-                    filter_value,
-                    param_prefix=param_name,
-                    params=params,
-                )
-            )
+            if filter_op in ("contains", "not_contains"):
+                filter_value = f"%{filter_value}%"
+            elif filter_op == "starts_with":
+                filter_value = f"{filter_value}%"
+            elif filter_op == "ends_with":
+                filter_value = f"%{filter_value}"
+            params[param_name] = filter_value
+            clauses.append(f"{message_column} {text_operator} %({param_name})s")
             continue
 
         counter += 1

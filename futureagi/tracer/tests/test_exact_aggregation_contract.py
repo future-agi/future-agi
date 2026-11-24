@@ -6710,7 +6710,7 @@ def test_exact_session_graph_combines_native_session_and_aggregate_filters():
     assert params["exact_session_id_1"] == (session_id,)
     assert params["session_having_1"] == 5
     assert params["session_having_2"] == 10
-    assert params["session_having_3"] == "hello"
+    assert params["session_having_3"] == "%hello%"
     assert "session_duration >= %(session_having_1)s" in query
     assert "session_start >= fromUnixTimestamp64Micro(%(start_date_us)s)" in query
     assert "candidate_physical_session_ids AS" in query
@@ -6720,10 +6720,7 @@ def test_exact_session_graph_combines_native_session_and_aggregate_filters():
     assert "session_total_cost < %(session_having_2)s" in query
     assert "argMin(rs.input, rs.start_time) AS first_message" in query
     assert "argMax(rs.input, rs.start_time) AS last_message" in query
-    assert (
-        "positionUTF8(lowerUTF8(toString(first_message)), lowerUTF8(toString(%(session_having_3)s))) > 0"
-        in query
-    )
+    assert "first_message ILIKE %(session_having_3)s" in query
     assert "(last_message IS NOT NULL AND last_message != '')" in query
     assert "span_attr_str['first_message']" not in query
     assert "span_attr_str['last_message']" not in query
@@ -6907,29 +6904,29 @@ def test_exact_session_graph_freezes_combined_filter_relations(monkeypatch):
             "first_message",
             "contains",
             "hello",
-            "positionUTF8(lowerUTF8(toString(first_message)), lowerUTF8(toString(%(session_having_1)s))) > 0",
-            "hello",
+            "first_message ILIKE %(session_having_1)s",
+            "%hello%",
         ),
         (
             "last_message",
             "not_contains",
             "bye",
-            "positionUTF8(lowerUTF8(toString(last_message)), lowerUTF8(toString(%(session_having_1)s))) = 0",
-            "bye",
+            "last_message NOT ILIKE %(session_having_1)s",
+            "%bye%",
         ),
         (
             "first_message",
             "starts_with",
             "hello",
-            "startsWith(lowerUTF8(toString(first_message)), lowerUTF8(toString(%(session_having_1)s)))",
-            "hello",
+            "first_message ILIKE %(session_having_1)s",
+            "hello%",
         ),
         (
             "last_message",
             "ends_with",
             "bye",
-            "endsWith(lowerUTF8(toString(last_message)), lowerUTF8(toString(%(session_having_1)s)))",
-            "bye",
+            "last_message ILIKE %(session_having_1)s",
+            "%bye",
         ),
         (
             "first_message",
@@ -6945,15 +6942,9 @@ def test_exact_session_graph_freezes_combined_filter_relations(monkeypatch):
             "(last_message IS NOT NULL AND last_message != '')",
             None,
         ),
-        # Same membership semantics as SessionListQueryBuilderV2: exact and
-        # case-sensitive, like equals.
-        (
-            "first_message",
-            "in",
-            ["hello", "bye"],
-            "first_message IN %(session_having_1)s",
-            ("hello", "bye"),
-        ),
+        # Keep the same fail-closed behavior as SessionListQueryBuilderV2 for
+        # message operators it does not support.
+        ("first_message", "in", ["hello", "bye"], "0 = 1", None),
     ],
 )
 def test_exact_session_message_filters_match_session_list_having_semantics(
@@ -7057,10 +7048,7 @@ def _assert_session_membership_sql(query, params, start, end):
     assert "FROM (" in query and "AS selected_sessions" in query
     assert "argMin(rs.input, rs.start_time) AS first_message" in query
     assert "session_duration >= %(session_having_1)s" in query
-    assert (
-        "positionUTF8(lowerUTF8(toString(first_message)), lowerUTF8(toString(%(session_having_2)s))) > 0"
-        in query
-    )
+    assert "first_message ILIKE %(session_having_2)s" in query
     assert "rs.trace_session_id, ts_remap.survivor_id) IN" in query
     assert "span_attr_str['first_message']" not in query
     assert params["snapshot_start_date"] == start
@@ -7068,7 +7056,7 @@ def _assert_session_membership_sql(query, params, start, end):
     assert params["snapshot_scan_start_date"] == start
     assert params["snapshot_scan_end_date"] == end
     assert params["session_having_1"] == 5
-    assert params["session_having_2"] == "hello"
+    assert params["session_having_2"] == "%hello%"
 
 
 @pytest.mark.unit

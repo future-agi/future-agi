@@ -4215,22 +4215,10 @@ class AttributeReadSelector:
                 and active_segment_start is None
                 and exact_probe_segment_end is None
             ):
-                exact_probe_proven_empty = False
                 try:
-                    # When JSON overflow is disabled, probe the full remaining
-                    # [start, current_segment_end) window via Map-key blooms so
-                    # sparse/older keys are found on page one and missing keys
-                    # prove exhaustion in one query. When JSON overflow is on,
-                    # keep the bounded first slice pinned by the structured
-                    # exact-search contract.
-                    probe_segment = (
-                        (start, current_segment_end)
-                        if not self._reads_json_overflow
-                        else segment
-                    )
                     exact_candidate_ids, _exact_truncated, _ = self._candidate_ids(
                         projects,
-                        probe_segment,
+                        segment,
                         predicate=exact_typed_predicate,
                         attribute_key=exact_key,
                         # This is an existence accelerator, not a published
@@ -4262,8 +4250,6 @@ class AttributeReadSelector:
                         if emitted and not exhaustive_exact_types:
                             break
                     exact_probe_segment_end = current_segment_end
-                    if not _exact_truncated and not self._reads_json_overflow:
-                        exact_probe_proven_empty = True
                 except Exception as exc:
                     if not is_read_budget_error(exc):
                         raise
@@ -4272,14 +4258,6 @@ class AttributeReadSelector:
                     # backoff; the physical exact walk remains authoritative.
                     exact_probe_segment_end = current_segment_end
                 if emitted and not exhaustive_exact_types:
-                    break
-                if exact_probe_proven_empty:
-                    # When JSON overflow is disabled, the full-window typed
-                    # bloom probe is exhaustive: if it did not truncate, no
-                    # further physical slices can contain exact_key.
-                    current_segment_end = start
-                    cursor_before = None
-                    active_segment_start = None
                     break
 
             try:

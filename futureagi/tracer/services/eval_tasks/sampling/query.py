@@ -103,8 +103,8 @@ class SamplingQuery:
     def attribute(self, item: dict) -> tuple[str, str]:
         key = self.bind(item["key"])
         if item.get("source", "span") == "span":
-            exists = f"(mapContains(s.attrs_string, {key}) OR mapContains(s.attrs_number, {key}) OR mapContains(s.attrs_bool, {key}) OR (length(s.attributes_extra) > 2 AND JSONHas(s.attributes_extra, {key})))"
-            value = f"multiIf(mapContains(s.attrs_string, {key}), s.attrs_string[{key}], mapContains(s.attrs_number, {key}), toString(s.attrs_number[{key}]), mapContains(s.attrs_bool, {key}), if(s.attrs_bool[{key}], 'true', 'false'), JSON_VALUE(s.attributes_extra, {self._json_path(item['key'])}))"
+            exists = f"(mapContains(s.attrs_string, {key}) OR mapContains(s.attrs_number, {key}) OR mapContains(s.attrs_bool, {key}) OR JSONHas(toJSONString(s.attributes_extra), {key}))"
+            value = f"multiIf(mapContains(s.attrs_string, {key}), s.attrs_string[{key}], mapContains(s.attrs_number, {key}), toString(s.attrs_number[{key}]), mapContains(s.attrs_bool, {key}), if(s.attrs_bool[{key}], 'true', 'false'), JSON_VALUE(toJSONString(s.attributes_extra), {self._json_path(item['key'])}))"
         else:
             column = "resource_attrs" if item["source"] == "resource" else "metadata"
             exists = f"JSONHas(toJSONString(s.{column}), {key})"

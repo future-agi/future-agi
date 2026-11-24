@@ -27,12 +27,6 @@ from tracer.services.clickhouse.read_budget import (
 _MAX_ACCESSIBLE_PROJECTS = 4096
 _MAX_PHYSICAL_SPANS = 1000
 _CONTENT_BATCH_SIZE = 200
-# Up to this many span IDs, evals and annotations are read with the span list
-# bound into one statement, as before. A trace above it (only reachable when an
-# operator raises TRACE_DETAIL_MAX_PHYSICAL_SPANS) is read trace-wide in one
-# statement and filtered to its live spans in Python, so argMax still sees every
-# version of each row and the statement stays under max_query_size.
-_SPAN_ID_LIST_LIMIT = 1000
 _MAX_EVAL_ROWS = 5000
 _MAX_ANNOTATION_ROWS = 5000
 MAX_TRACE_DETAIL_EVAL_CONFIGS = 4096
@@ -46,34 +40,6 @@ _READ_SETTINGS = {
     "read_overflow_mode": "throw",
     "result_overflow_mode": "throw",
 }
-
-
-def _configured_limit(setting_name: str, default: int) -> int:
-    """A positive integer Django setting, else ``default``."""
-    from django.conf import settings as django_settings
-
-    if not django_settings.configured:
-        return default
-    raw = getattr(django_settings, setting_name, None)
-    if raw is None or isinstance(raw, bool):
-        return default
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
-
-
-def _max_physical_spans() -> int:
-    return _configured_limit("TRACE_DETAIL_MAX_PHYSICAL_SPANS", _MAX_PHYSICAL_SPANS)
-
-
-def _max_eval_rows() -> int:
-    return _configured_limit("TRACE_DETAIL_MAX_EVAL_ROWS", _MAX_EVAL_ROWS)
-
-
-def _max_annotation_rows() -> int:
-    return _configured_limit("TRACE_DETAIL_MAX_ANNOTATION_ROWS", _MAX_ANNOTATION_ROWS)
 
 
 class TraceDetailReadUnavailable(RuntimeError):
@@ -168,7 +134,7 @@ class TraceDetailReadBuilder:
             GROUP BY project_id, trace_id, id, start_time
             HAVING latest_is_deleted = 0
             ORDER BY start_time ASC, span_id ASC
-            LIMIT {_max_physical_spans() + 1}
+            LIMIT {_MAX_PHYSICAL_SPANS + 1}
             """,
             {
                 "detail_project_ids": self.project_ids,
@@ -334,8 +300,6 @@ class TraceDetailReadBuilder:
         project_id: str,
         span_ids: list[str],
         eval_config_ids: Iterable[str],
-        limit: int | None = None,
-        trace_wide: bool = False,
     ) -> tuple[str, dict[str, Any]]:
         normalized_config_ids = tuple(
             dict.fromkeys(str(value) for value in eval_config_ids if value)
@@ -361,18 +325,6 @@ class TraceDetailReadBuilder:
                 f"coalesce(argMax(deleted, {version}), 0))"
             )
         )
-        params: dict[str, Any] = {
-            "detail_eval_trace_id": self.trace_id,
-            "detail_eval_config_ids": normalized_config_ids,
-            # Retained for executor auditing/log correlation and to make
-            # the tenant proof explicit at the call boundary; the eval
-            # table itself has no tracer-project column.
-            "detail_project_id": project_id,
-        }
-        span_clause = ""
-        if not trace_wide:
-            params["detail_eval_span_ids"] = tuple(dict.fromkeys(span_ids))
-            span_clause = "\n                  AND observation_span_id IN %(detail_eval_span_ids)s"
         return (
             f"""
             SELECT
@@ -413,41 +365,34 @@ class TraceDetailReadBuilder:
                     {deleted} AS latest_is_deleted
                 FROM {table}
                 PREWHERE custom_eval_config_id IN %(detail_eval_config_ids)s
-                  AND trace_id = %(detail_eval_trace_id)s{span_clause}
+                  AND trace_id = %(detail_eval_trace_id)s
+                  AND observation_span_id IN %(detail_eval_span_ids)s
                 GROUP BY id
             ) AS latest_trace_evals
             WHERE latest_is_deleted = 0
               AND toString(latest_eval_config_id)
                     IN %(detail_eval_config_ids)s
             ORDER BY span_id ASC, eval_config_id ASC
-            LIMIT {limit if limit is not None else _max_eval_rows() + 1}
+            LIMIT {_MAX_EVAL_ROWS + 1}
             """,
-            params,
+            {
+                "detail_eval_trace_id": self.trace_id,
+                "detail_eval_span_ids": tuple(dict.fromkeys(span_ids)),
+                "detail_eval_config_ids": normalized_config_ids,
+                # Retained for executor auditing/log correlation and to make
+                # the tenant proof explicit at the call boundary; the eval
+                # table itself has no tracer-project column.
+                "detail_project_id": project_id,
+            },
         )
 
     def build_annotation_query(
-        self,
-        *,
-        project_id: str,
-        span_ids: list[str],
-        limit: int | None = None,
-        trace_wide: bool = False,
+        self, *, project_id: str, span_ids: list[str]
     ) -> tuple[str, dict[str, Any]]:
         if not span_ids:
             return "", {}
         if str(project_id) not in self.project_ids:
             raise TraceDetailReadUnavailable("annotation_project_out_of_scope")
-        params: dict[str, Any] = {
-            "detail_annotation_project_id": project_id,
-            "detail_annotation_trace_id": self.trace_id,
-        }
-        span_clause = ""
-        if not trace_wide:
-            params["detail_annotation_span_ids"] = tuple(dict.fromkeys(span_ids))
-            span_clause = (
-                "\n                  AND observation_span_id IN "
-                "%(detail_annotation_span_ids)s"
-            )
         return (
             f"""
             SELECT
@@ -467,14 +412,19 @@ class TraceDetailReadBuilder:
                     ) AS latest_is_deleted
                 FROM {self.SCORE_TABLE}
                 PREWHERE tracer_project_id = %(detail_annotation_project_id)s
-                  AND trace_id = %(detail_annotation_trace_id)s{span_clause}
+                  AND trace_id = %(detail_annotation_trace_id)s
+                  AND observation_span_id IN %(detail_annotation_span_ids)s
                 GROUP BY id
             ) AS latest_trace_annotations
             WHERE latest_is_deleted = 0
             ORDER BY span_id ASC, label_id ASC
-            LIMIT {limit if limit is not None else _max_annotation_rows() + 1}
+            LIMIT {_MAX_ANNOTATION_ROWS + 1}
             """,
-            params,
+            {
+                "detail_annotation_project_id": project_id,
+                "detail_annotation_trace_id": self.trace_id,
+                "detail_annotation_span_ids": tuple(dict.fromkeys(span_ids)),
+            },
         )
 
 
@@ -520,17 +470,13 @@ def read_trace_detail(
         query_count += 1
         return list(result.data or [])
 
-    max_spans = _max_physical_spans()
-    max_evals = _max_eval_rows()
-    max_annotations = _max_annotation_rows()
-
     identity_query, identity_params = builder.build_identity_query()
     identity_rows = execute(
         identity_query,
         identity_params,
-        max_result_rows=max_spans + 1,
+        max_result_rows=_MAX_PHYSICAL_SPANS + 1,
     )
-    if len(identity_rows) > max_spans:
+    if len(identity_rows) > _MAX_PHYSICAL_SPANS:
         raise TraceDetailReadUnavailable("span_limit_exceeded")
 
     live_rows = [
@@ -606,23 +552,18 @@ def read_trace_detail(
     )
     if len(eval_config_ids) > MAX_TRACE_DETAIL_EVAL_CONFIGS:
         raise TraceDetailReadUnavailable("eval_config_scope_too_large")
-    eval_rows: list[dict[str, Any]] = []
-    eval_unavailable = False
-    trace_wide = len(span_ids) > _SPAN_ID_LIST_LIMIT
-    live_span_ids = set(span_ids)
     eval_query, eval_params = builder.build_eval_query(
         project_id=project_id,
         span_ids=span_ids,
         eval_config_ids=eval_config_ids,
-        limit=max_evals + 1,
-        trace_wide=trace_wide,
     )
+    eval_unavailable = False
     try:
         eval_rows = (
             execute(
                 eval_query,
                 eval_params,
-                max_result_rows=max_evals + 1,
+                max_result_rows=_MAX_EVAL_ROWS + 1,
             )
             if eval_query
             else []
@@ -635,34 +576,21 @@ def read_trace_detail(
             raise
         eval_rows = []
         eval_unavailable = True
-    if len(eval_rows) > max_evals:
+    if len(eval_rows) > _MAX_EVAL_ROWS:
         raise TraceDetailReadUnavailable("eval_limit_exceeded")
-    if trace_wide:
-        eval_rows = [row for row in eval_rows if row.get("span_id") in live_span_ids]
 
     annotation_rows: list[dict[str, Any]] = []
     if include_annotations:
         annotation_query, annotation_params = builder.build_annotation_query(
-            project_id=project_id,
-            span_ids=span_ids,
-            limit=max_annotations + 1,
-            trace_wide=trace_wide,
+            project_id=project_id, span_ids=span_ids
         )
-        annotation_rows = (
-            execute(
-                annotation_query,
-                annotation_params,
-                max_result_rows=max_annotations + 1,
-            )
-            if annotation_query
-            else []
+        annotation_rows = execute(
+            annotation_query,
+            annotation_params,
+            max_result_rows=_MAX_ANNOTATION_ROWS + 1,
         )
-    if len(annotation_rows) > max_annotations:
+    if len(annotation_rows) > _MAX_ANNOTATION_ROWS:
         raise TraceDetailReadUnavailable("annotation_limit_exceeded")
-    if trace_wide:
-        annotation_rows = [
-            row for row in annotation_rows if row.get("span_id") in live_span_ids
-        ]
 
     return TraceDetailRead(
         project_id=project_id,

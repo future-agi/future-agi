@@ -36,7 +36,6 @@ from tracer.services.clickhouse.query_builders.filters import (
     ClickHouseFilterBuilder,
     boolean_meta_presence_condition,
     build_numeric_filter_predicate,
-    build_session_message_having_predicate,
     parse_boolean_meta_filter,
     resolve_boolean_meta_value,
 )
@@ -4457,17 +4456,34 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             )
 
             if col_id in self.MESSAGE_FILTER_MAP:
+                if filter_op in ("is_null", "is_not_null"):
+                    conditions.append(
+                        f"({ch_col} IS NULL OR {ch_col} = '')"
+                        if filter_op == "is_null"
+                        else f"({ch_col} IS NOT NULL AND {ch_col} != '')"
+                    )
+                    continue
+                text_op = {
+                    "equals": "=",
+                    "not_equals": "!=",
+                    "contains": "ILIKE",
+                    "not_contains": "NOT ILIKE",
+                    "starts_with": "ILIKE",
+                    "ends_with": "ILIKE",
+                }.get(filter_op)
+                if text_op is None:
+                    conditions.append("0 = 1")
+                    continue
                 param_counter += 1
                 param_name = f"having_{param_counter}"
-                conditions.append(
-                    build_session_message_having_predicate(
-                        ch_col,
-                        filter_op,
-                        filter_value,
-                        param_prefix=param_name,
-                        params=target_params,
-                    )
-                )
+                if filter_op in ("contains", "not_contains"):
+                    filter_value = f"%{filter_value}%"
+                elif filter_op == "starts_with":
+                    filter_value = f"{filter_value}%"
+                elif filter_op == "ends_with":
+                    filter_value = f"%{filter_value}"
+                target_params[param_name] = filter_value
+                conditions.append(f"{ch_col} {text_op} %({param_name})s")
                 continue
 
             param_counter += 1

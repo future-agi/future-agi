@@ -316,14 +316,9 @@ class TestV2TenantGate:
                 retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
 
     def test_span_sentinel_fails_closed_before_content_hydration(self):
-        from tracer.services.clickhouse.v2.trace_detail_reads import (
-            _MAX_PHYSICAL_SPANS,
-        )
-
         started = datetime(2026, 1, 1, tzinfo=UTC)
         span_rows = [
-            _root_span_row(id=f"S{index}", start_time=started)
-            for index in range(_MAX_PHYSICAL_SPANS + 1)
+            _root_span_row(id=f"S{index}", start_time=started) for index in range(1001)
         ]
         analytics = _FakeAnalytics(
             project_rows=[{"project_id": "P1"}], span_rows=span_rows
@@ -338,86 +333,9 @@ class TestV2TenantGate:
             )
 
         assert len(analytics.queries) == 1
-        assert f"LIMIT {_MAX_PHYSICAL_SPANS + 1}" in analytics.queries[0]
+        assert "LIMIT 1001" in analytics.queries[0]
+        # Deleted identities no longer count toward the span cap.
         assert "HAVING latest_is_deleted = 0" in analytics.queries[0]
-
-    @override_settings(TRACE_DETAIL_MAX_PHYSICAL_SPANS=2000)
-    def test_high_fan_out_coding_agent_trace_batches_evals_and_annotations(self):
-        # The default cap stays at 1,000 spans; an operator can raise it.
-        started = datetime(2026, 1, 1, tzinfo=UTC)
-        span_count = 1200
-        identity_rows = [
-            {
-                "project_id": "P1",
-                "trace_id": "T-SWARM",
-                "span_id": f"S{index}",
-                "start_time": started,
-                "latest_is_deleted": 0,
-                "latest_version": 1,
-            }
-            for index in range(span_count)
-        ]
-        content_batches = [
-            [
-                _root_span_row(
-                    id=f"S{index}",
-                    trace_id="T-SWARM",
-                    parent_span_id="" if index == 0 else f"S{index - 1}",
-                    start_time=started,
-                )
-                for index in range(offset, min(offset + 200, span_count))
-            ]
-            for offset in range(0, span_count, 200)
-        ]
-        # 1 identity + 6 content batches of 200 + 1 trace-wide eval read
-        # + 1 trace-wide annotation read
-        trace_wide_evals = [
-            {"span_id": "S5", "eval_config_id": "E1", "log_id": "L1"},
-            # A span no longer live in this trace (e.g. deleted): dropped.
-            {"span_id": "GONE", "eval_config_id": "E1", "log_id": "L2"},
-        ]
-        analytics = _SequenceAnalytics(
-            [identity_rows, *content_batches, trace_wide_evals, []]
-        )
-        detail = read_trace_detail(
-            analytics=analytics,
-            project_ids=["P1"],
-            trace_id="T-SWARM",
-            eval_config_ids_resolver=lambda _pid: ["E1"],
-            deadline_ms=5000,
-        )
-        assert len(detail.spans) == span_count
-        assert [row["log_id"] for row in detail.evals] == ["L1"]
-        # 1 identity + 6 content + 1 eval + 1 annotation = 9 queries
-        assert detail.query_count == 9
-        eval_query, eval_params = analytics.query_calls[7][:2]
-        annotation_query, annotation_params = analytics.query_calls[8][:2]
-        # Above the span-list limit the reads are trace-wide: no span IDs are
-        # bound, so the statement stays small and argMax sees every version.
-        assert "latest_trace_evals" in eval_query
-        assert "detail_eval_span_ids" not in eval_params
-        assert "observation_span_id IN" not in eval_query
-        assert "latest_trace_annotations" in annotation_query
-        assert "detail_annotation_span_ids" not in annotation_params
-        assert "observation_span_id IN" not in annotation_query
-        # Verify deep 1,200-level tree walks iteratively without RecursionError
-        from tracer.services.clickhouse.query_builders.trace_detail import (
-            compute_trace_summary_and_graph,
-        )
-
-        node = {
-            "observation_span": {**detail.spans[-1], "span_attributes": {}},
-            "children": [],
-        }
-        for row in reversed(detail.spans[:-1]):
-            node = {
-                "observation_span": {**row, "span_attributes": {}},
-                "children": [node],
-            }
-        summary, graph = compute_trace_summary_and_graph([node])
-        assert summary["total_spans"] == span_count
-        assert len(graph["nodes"]) == span_count
-        assert len(graph["edges"]) == span_count - 1
 
     def test_cross_project_trace_collision_serves_newest_copy(self):
         started = datetime(2026, 1, 1, tzinfo=UTC)
@@ -1137,9 +1055,13 @@ class TestV2EvalScoreRendering:
             if "latest_trace_evals" in query
         )
         assert eval_call["detail_eval_config_ids"] == ("C1",)
+        # The UUID column is compared directly so its sort-key position applies.
         assert (
             "custom_eval_config_id IN %(detail_eval_config_ids)s"
             in eval_query.split("GROUP BY id")[0]
+        )
+        assert (
+            "toString(custom_eval_config_id)" not in eval_query.split("GROUP BY id")[0]
         )
 
     def test_no_project_configs_skips_eval_query_and_returns_empty(self):

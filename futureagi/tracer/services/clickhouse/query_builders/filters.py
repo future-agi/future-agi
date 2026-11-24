@@ -262,55 +262,6 @@ def build_literal_text_predicate(
     return f"{function}({haystack}, {needle})"
 
 
-def build_session_message_having_predicate(
-    expression: str,
-    filter_op: str | None,
-    filter_value: Any,
-    *,
-    param_prefix: str,
-    params: dict[str, Any],
-) -> str:
-    """Compile post-GROUP BY HAVING text predicates for first/last session messages.
-
-    Supports the full Observe text filter vocabulary (equals, not_equals, in,
-    not_in, contains, not_contains, starts_with, ends_with, is_null, is_not_null)
-    using wildcard-safe literal UTF-8 comparisons instead of unescaped ILIKE.
-    """
-    op = normalize_filter_op(str(filter_op or ""))
-    if op == "is_null":
-        return f"({expression} IS NULL OR {expression} = '')"
-    if op == "is_not_null":
-        return f"({expression} IS NOT NULL AND {expression} != '')"
-    if op in {"in", "not_in"}:
-        values = (
-            filter_value if isinstance(filter_value, (list, tuple)) else [filter_value]
-        )
-        values = [str(v) for v in values if v is not None]
-        if not values:
-            return "0 = 1" if op == "in" else "1 = 1"
-        # Exact comparisons stay case-sensitive, as `equals` always was here.
-        params[param_prefix] = tuple(values)
-        sql_op = "IN" if op == "in" else "NOT IN"
-        return f"{expression} {sql_op} %({param_prefix})s"
-    if op in {"equals", "not_equals"}:
-        if filter_value is None:
-            return "0 = 1"
-        params[param_prefix] = str(filter_value)
-        sql_op = "=" if op == "equals" else "!="
-        return f"{expression} {sql_op} %({param_prefix})s"
-    if op in _LITERAL_TEXT_MATCH_OPS:
-        if filter_value is None:
-            return "0 = 1"
-        params[param_prefix] = str(filter_value)
-        return build_literal_text_predicate(
-            expression,
-            param_prefix,
-            op,
-            case_insensitive=True,
-        )
-    return "0 = 1"
-
-
 def build_numeric_filter_predicate(
     expression: str,
     filter_op: str | None,
