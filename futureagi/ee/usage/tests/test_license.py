@@ -9,10 +9,7 @@ import pytest
 from django.test import override_settings
 
 from tfc.capabilities import service
-from tfc.capabilities.testing import (  # noqa: F401, F811 - pytest fixture registration
-    check_capability_isolation,
-    preserve_capability_service,
-)
+from tfc.capabilities import testing as capability_testing
 from tfc.licensing.types import (
     DeploymentFlavor,
     DeploymentLocation,
@@ -23,6 +20,10 @@ from tfc.licensing.types import (
 from ee.licensing import state
 from ee.usage import deployment
 from ee.usage.services.license import LicenseResult, LicenseValidator
+
+
+check_capability_isolation = capability_testing.check_capability_isolation
+preserve_capability_service = capability_testing.preserve_capability_service
 
 
 @pytest.fixture(autouse=True)

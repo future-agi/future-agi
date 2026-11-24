@@ -10,11 +10,8 @@ from datetime import UTC, datetime
 
 import pytest
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
 from tfc.capabilities.registry import OSS_LOCKED_FEATURES, PAID_FEATURES
-from tfc.capabilities.testing import (  # noqa: F401, F811 - pytest fixture registration
-    check_capability_isolation,
-    preserve_capability_service,
-)
 from tfc.ee_gating import FeatureUnavailable, check_ee_feature
 from tfc.licensing.types import (
     DeploymentFlavor,
@@ -23,6 +20,10 @@ from tfc.licensing.types import (
     LicenseState,
     LicenseType,
 )
+
+
+check_capability_isolation = capability_testing.check_capability_isolation
+preserve_capability_service = capability_testing.preserve_capability_service
 
 
 class _FakeResolver:

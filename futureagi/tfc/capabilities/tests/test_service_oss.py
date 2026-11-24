@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from tfc.capabilities import service
+from tfc.capabilities import testing as capability_testing
 from tfc.capabilities.errors import CapabilityDenied
 from tfc.capabilities.registry import (
     FEATURE_REGISTRY,
@@ -17,14 +18,14 @@ from tfc.capabilities.registry import (
     OSS_LOCKED_FEATURES,
     PAID_FEATURES,
 )
-from tfc.capabilities.testing import (  # noqa: F401, F811 - pytest fixture registration
-    preserve_capability_service,
-)
 from tfc.licensing.types import (
     DenialReason,
     DeploymentFlavor,
     DeploymentLocation,
 )
+
+
+preserve_capability_service = capability_testing.preserve_capability_service
 
 
 @pytest.fixture(autouse=True)
