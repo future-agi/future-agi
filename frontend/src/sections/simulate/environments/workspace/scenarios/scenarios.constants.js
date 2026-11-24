@@ -151,6 +151,7 @@ export const LIFECYCLE_COPY = {
   notMeasured: "Not measured at run time",
   statusTitle: "Status",
   stateLabel: "State",
+  notMeasuredLabel: "Not measured",
   proofLabel: "Proof",
   activeLabel: "Active",
   validatedLabel: "Validated, saves with the unsaved changes",

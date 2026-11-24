@@ -27,21 +27,17 @@ const LIFECYCLE_ICON_COLORS = {
   neutral: "text.secondary",
 };
 
-// A proved scenario whose check reads evidence this agent doesn't give, the server's reason on hover.
+// A proved scenario whose check reads evidence this agent doesn't give; the Status section says which.
 export function NotMeasuredChip({ lifecycle }) {
   if (!isNotMeasured(lifecycle)) return null;
   return (
-    <Tooltip arrow title={lifecycle.warning_text || ""}>
-      <span data-testid="not-measured-chip">
-        <StatusBadge
-          status="not_measured"
-          role="warning"
-          label={LIFECYCLE_COPY.notMeasured}
-          size="sm"
-          dot={false}
-        />
-      </span>
-    </Tooltip>
+    <StatusBadge
+      status="not_measured"
+      role="warning"
+      label={LIFECYCLE_COPY.notMeasured}
+      size="sm"
+      dot={false}
+    />
   );
 }
 NotMeasuredChip.propTypes = { lifecycle: PropTypes.object };

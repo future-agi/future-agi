@@ -388,6 +388,19 @@ describe("ScenarioDrawer status", () => {
     ]);
   });
 
+  it("says which check isn't measured, and why, without a hover", () => {
+    const why =
+      "refunded reads the tool calls, which this agent does not share with the test; it will read Not measured.";
+    const row = (warning) =>
+      withLifecycle({ state: "active", warning, warning_text: why });
+    const { unmount } = open(row("evidence_not_captured"));
+    expect(screen.getByText("Not measured")).toBeInTheDocument();
+    expect(screen.getByText(why)).toBeInTheDocument();
+    unmount();
+    open(row("recorded_not_run"));
+    expect(screen.queryByText("Not measured")).toBeNull();
+  });
+
   it("says an older kept-as-written scenario has no wrong-way example yet", () => {
     open(
       withLifecycle({

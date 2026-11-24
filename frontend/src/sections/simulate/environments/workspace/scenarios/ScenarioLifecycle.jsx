@@ -7,6 +7,7 @@ import StatusBadge from "src/components/status-badge/StatusBadge";
 import { LIFECYCLE_COPY } from "./scenarios.constants";
 import {
   citationState,
+  isNotMeasured,
   lifecycleChip,
   stateText,
   wrongWayRows,
@@ -140,6 +141,11 @@ export function LifecycleSection({ envId, lifecycle, Row, sectionSx }) {
         <Row label={LIFECYCLE_COPY.stateLabel}>
           <Typography className="sd-val">{stateText(lifecycle)}</Typography>
         </Row>
+        {isNotMeasured(lifecycle) && lifecycle.warning_text && (
+          <Row label={LIFECYCLE_COPY.notMeasuredLabel}>
+            <Typography className="sd-val">{lifecycle.warning_text}</Typography>
+          </Row>
+        )}
         {lifecycle.sources?.length > 0 && (
           <Row label={LIFECYCLE_COPY.sourcesLabel}>
             <Stack spacing={0.5}>
