@@ -44,18 +44,19 @@ _READ_SETTINGS = {
 
 
 def _configured_limit(setting_name: str, default: int) -> int:
-    try:
-        from django.conf import settings as django_settings
+    """A positive integer Django setting, else ``default``."""
+    from django.conf import settings as django_settings
 
-        if getattr(django_settings, "configured", False) and hasattr(
-            django_settings, setting_name
-        ):
-            value = int(getattr(django_settings, setting_name))
-            if value > 0:
-                return value
-    except Exception:
-        pass
-    return default
+    if not django_settings.configured:
+        return default
+    raw = getattr(django_settings, setting_name, None)
+    if raw is None or isinstance(raw, bool):
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 def _max_physical_spans() -> int:
