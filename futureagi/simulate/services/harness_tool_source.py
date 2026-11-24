@@ -27,20 +27,25 @@ class ToolSource(TypedDict):
     code: str
 
 
-def _named(body: list[ast.stmt], name: str) -> ast.stmt | None:
+_Definition = ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef
+
+
+def _named(body: list[ast.stmt], name: str) -> _Definition | None:
     return next(
         (node for node in body if isinstance(node, _DEFINITIONS) and node.name == name),
         None,
     )
 
 
-def _definition(tree: ast.Module, dotted: str) -> ast.stmt | None:
+def _definition(tree: ast.Module, dotted: str) -> _Definition | None:
     parts = dotted.split(".")
-    node: Any = tree
+    body: list[ast.stmt] = tree.body
+    node: _Definition | None = None
     for part in parts:
-        node = _named(node.body, part)
+        node = _named(body, part)
         if node is None:
             break
+        body = node.body
     if node is not None:
         return node
     if len(parts) > 1:
@@ -130,8 +135,11 @@ def with_tool_sources(job: HostedHarnessJob, entries: list[Any]) -> list[Any]:
     sources = {pair: cached[key] for pair, key in keys.items() if key in cached}
     missing = wanted - set(sources)
     if missing:
+        version = job.agent_version
+        if version is None:
+            return entries
         try:
-            found = _find(agent_code.version_code(job.agent_version), missing)
+            found = _find(agent_code.version_code(version), missing)
         except (HostedHarnessError, tarfile.TarError, OSError) as exc:
             logger.warning(
                 "harness_tool_source_unavailable",

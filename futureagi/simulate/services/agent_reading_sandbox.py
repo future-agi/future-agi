@@ -612,7 +612,7 @@ def read_version_contract(
     )
 
     check_id = check_id or str(uuid4())
-    stored_key = version_contract_key(version_id)
+    stored_key = version_contract_key(UUID(str(version_id)))
     if stored_key and has_reading_record(read_contract(stored_key)):
         return ReadOutcome("skipped", code="already_stored")
     runtime = (

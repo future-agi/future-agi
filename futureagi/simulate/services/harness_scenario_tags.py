@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from django.db import transaction
 from django.db.models import QuerySet
@@ -15,6 +15,8 @@ from simulate.services.hosted_harness import HostedHarnessError
 
 if TYPE_CHECKING:
     from simulate.services.harness_scenarios import ScenarioRows
+
+_Rows = TypeVar("_Rows", "QuerySet[HostedHarnessScenario]", "ScenarioRows")
 
 MAX_TAGS_PER_SCENARIO = 20
 MAX_TAG_LENGTH = 64
@@ -163,9 +165,9 @@ def _wanted(params: QueryDict, name: str) -> list[str]:
 
 def filter_by_tags(
     environment: HostedHarnessJob,
-    rows: QuerySet[HostedHarnessScenario] | ScenarioRows,
+    rows: _Rows,
     params: QueryDict,
-) -> QuerySet[HostedHarnessScenario] | ScenarioRows:
+) -> _Rows:
     """Keep the scenarios with any of the picked tags, then drop those with any `tags_not` tag."""
     from simulate.services.harness_scenarios import ScenarioRows
 

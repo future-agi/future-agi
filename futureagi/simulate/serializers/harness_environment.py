@@ -830,19 +830,19 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     system_prompt_excerpt = serializers.CharField(
         required=False, allow_null=True, allow_blank=True
     )
-    tools = serializers.ListField(
+    tools: serializers.Field = serializers.ListField(
         child=serializers.JSONField(),
         required=False,
         allow_null=True,
         help_text="ALK tool specifications, including origin, legacy effect text, optional effect_kind (read, write, external, control), and effect_evidence {origin, excerpt}.",
     )
-    real_use_cases = serializers.ListField(
+    real_use_cases: serializers.Field = serializers.ListField(
         child=serializers.CharField(), required=False, allow_null=True
     )
     real_use_case_details = HarnessEnvironmentContractItemSerializer(
         many=True, required=False, allow_null=True
     )
-    hard_constraints = serializers.ListField(
+    hard_constraints: serializers.Field = serializers.ListField(
         child=serializers.CharField(), required=False, allow_null=True
     )
     hard_constraint_details = HarnessEnvironmentContractItemSerializer(
@@ -861,18 +861,20 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     implementation = serializers.CharField(
         required=False, allow_null=True, allow_blank=True
     )
-    tool_entrypoints = serializers.ListField(
+    tool_entrypoints: serializers.Field = serializers.ListField(
         child=serializers.JSONField(),
         required=False,
         allow_null=True,
         help_text="Implementation seams with source code where available, implementation_origin, and provider_function {url, parameters} for provider functions. Parameters retain the provider JSON Schema after secret redaction.",
     )
-    data_store = serializers.JSONField(
+    data_store: serializers.Field = serializers.JSONField(
         required=False,
         allow_null=True,
         help_text="ALK datastore facts. configured_by remains a string; optional location and configuration {source, ref, section} carry observed configuration evidence.",
     )
-    data_schema = serializers.JSONField(required=False, allow_null=True)
+    data_schema: serializers.Field = serializers.JSONField(
+        required=False, allow_null=True
+    )
     base_environment = serializers.JSONField(required=False, allow_null=True)
     refusal_signature = serializers.CharField(
         required=False, allow_null=True, allow_blank=True
@@ -897,7 +899,7 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     open_questions = serializers.ListField(
         child=serializers.CharField(), required=False, allow_null=True
     )
-    amendments = HarnessEnvironmentAmendmentSerializer(many=True)
+    amendments: serializers.Field = HarnessEnvironmentAmendmentSerializer(many=True)
     amendment_details = HarnessEnvironmentAmendmentDetailSerializer(
         many=True, required=False, allow_null=True
     )
@@ -1988,7 +1990,9 @@ class HarnessEnvironmentToolEntrypointV2Serializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
-    source = HarnessEnvironmentToolSourceSerializer(required=False, allow_null=True)
+    source = HarnessEnvironmentToolSourceSerializer(  # type: ignore[assignment]
+        required=False, allow_null=True
+    )
     provider_function = HarnessEnvironmentProviderFunctionSerializer(
         required=False, allow_null=True
     )
