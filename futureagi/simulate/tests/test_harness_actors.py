@@ -2676,6 +2676,7 @@ def _contract_workers(contract):
 
     from simulate.services import harness_environment
     from simulate.services.harness_actor_rules import actor_rules
+    from simulate.services.harness_environment_evidence import EnvironmentEvidence
 
     with (
         patch.object(harness_environment, "_catalogue_entries", return_value=[]),
@@ -2685,9 +2686,15 @@ def _contract_workers(contract):
     ):
         return harness_environment._contract_section(
             SimpleNamespace(),
-            contract,
-            None,
-            None,
+            EnvironmentEvidence(
+                contract=contract,
+                environment=None,
+                scenarios=None,
+                sub_goals=None,
+                stores=None,
+                source_model=None,
+                tool_certification=None,
+            ),
             None,
             call_actors=None,
             rules=actor_rules({}),
