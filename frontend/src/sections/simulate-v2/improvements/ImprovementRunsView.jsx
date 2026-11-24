@@ -73,9 +73,9 @@ import {
 import { behindProductionOf } from "./behindProduction";
 import ImprovementStages from "./ImprovementStages";
 import ClosableDialog from "../components/ClosableDialog";
-import { improvementRunName } from "../_mock/optimizer";
+import { diagnosisSummaryOf, improvementRunName } from "../_mock/optimizer";
 import { SegmentedTabs } from "src/components/tabs/tabs";
-import EpochVerdict from "./EpochVerdict";
+import EpochVerdict, { DiagnosisLine } from "./EpochVerdict";
 import EpochCandidatesTable from "./EpochCandidatesTable";
 import CandidateChangeDrawer from "./CandidateChangeDrawer";
 import {
@@ -550,6 +550,31 @@ export default function ImprovementRunsView({
           `${paths.dashboard.agents}/connected/${agentIdOf(envAgentKey(envState.agent, env.id))}?tab=constraints`,
         )
     : null;
+  /* What the epoch set out to fix, for the Diagnosis line every finished
+     epoch keeps (a winner's verdict and a failed ending alike). */
+  const epochDiagnosis = (() => {
+    /* An issue's entry carries the cause as its headline; a finding from
+       Debug failures carries its name as the label and only a count
+       ("1 gaming signal") as the headline — so it reads by its name. */
+    const wordOf = (x) =>
+      String(
+        (x?.source === "debug-failures"
+          ? x?.label || x?.headline
+          : x?.headline || x?.label) || "",
+      ).replace(/\.$/, "");
+    const d = diagnosisSummaryOf(record, result);
+    const items = (record.diagnosis || []).map(wordOf).filter(Boolean);
+    const cause = (
+      record.snapshot?.diagnosis?.cause ||
+      record.snapshot?.rootCause ||
+      items[0] ||
+      d?.cause ||
+      ""
+    ).replace(/\.$/, "");
+    if (!cause) return null;
+    const more = items.filter((x) => x !== cause);
+    return { cause, more: [...new Set(more)] };
+  })();
   const endingCopy = ending
     ? endingCopyOf(ending, {
         record,
@@ -1102,6 +1127,9 @@ export default function ImprovementRunsView({
                   ? `Its patch is rebased onto ${behind.prod}${behind.conflict ? ` (${behind.conflict.path} merged by you)` : ""} and re-checked there before it is merged — its proof is on ${behind.base}.`
                   : `Its proof is on ${behind.base}, so it's re-checked on ${behind.prod} before it ships.`
           }
+          /* One line: how it's handled is on hover — unless a conflict
+             needs the reader's attention. */
+          spentOnHover={!rebaseFirst && !behind.recheck}
         />
       )}
 
@@ -1126,6 +1154,7 @@ export default function ImprovementRunsView({
           primary={endingActions.primary}
           links={endingActions.links}
         >
+          <DiagnosisLine diagnosis={epochDiagnosis} />
           {ending === "no-fix" ? (
             /* Never a dead end: what to try instead, one way on each. */
             <NextSteps
@@ -1165,6 +1194,7 @@ export default function ImprovementRunsView({
               ? evidenceRowsOf(outcome, result, winnerRow, proofLine)
               : []
           }
+          diagnosis={epochDiagnosis}
           onSeeDiff={noChanges ? undefined : () => setTab("changes")}
           onSeeChange={setChangeOf}
           onOpenRun={openRun}
@@ -1377,6 +1407,7 @@ export default function ImprovementRunsView({
             env={env}
             winner={shipped}
             record={record}
+            hideCause={!!epochDiagnosis}
             members={members}
             patchName={`${env.name} ${row?.name || record.name}`}
           />

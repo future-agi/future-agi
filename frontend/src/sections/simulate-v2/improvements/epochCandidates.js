@@ -254,6 +254,45 @@ export const winnerSentenceOf = (outcome, result, kept) => {
   return `${kept.name}: ${parts.join("; ")}.${thinNote} ${mustPass}${otherNote}`;
 };
 
+/**
+ * What the winner did, as short figures for one line: "Fixed 4 of 5
+ * failing", "held-back 0% → 100%", "no must-pass broke". A bad one (a
+ * must-pass broke, another scenario broke) is flagged so it reads red.
+ * The full sentence (winnerSentenceOf) stays on hover.
+ */
+export const winnerFiguresOf = (outcome, result, kept) => {
+  if (!kept || !result) return [];
+  const out = [];
+  const issue = outcome?.issue;
+  if (issue?.targets && issue.fixed)
+    out.push({ text: `Fixed ${issue.fixed} of ${issue.targets} failing` });
+  if (result.split?.thin) {
+    out.push({ text: `target ${result.base}% → ${kept.score}%` });
+  } else {
+    const held = outcome?.heldScore ?? result.heldScore;
+    if (held != null && result.heldBase != null)
+      out.push({
+        text: `held-back ${result.heldBase}% → ${held}%${outcome?.chosen?.projected ? " (likely)" : ""}`,
+      });
+  }
+  const blockers = (outcome?.checks || []).find((c) => c.id === "blockers");
+  if (blockers?.pass === null)
+    out.push({ text: "must-pass runs when you verify" });
+  else if (blockers?.pass === false)
+    out.push({ text: "a must-pass broke", bad: true });
+  else out.push({ text: "no must-pass broke" });
+  const otherBroke =
+    blockers?.pass === null ? 0 : brokeOutsideMustPassOf(result).length;
+  if (otherBroke)
+    out.push({
+      text: `${plural(otherBroke, "other scenario")} broke`,
+      bad: true,
+    });
+  if (out.length)
+    out[0].text = out[0].text.charAt(0).toUpperCase() + out[0].text.slice(1);
+  return out;
+};
+
 /** The checks line: passed, unmeasured and failed, in that order. */
 export const checksCountOf = (checks = []) => ({
   passed: checks.filter((c) => c.pass === true).length,

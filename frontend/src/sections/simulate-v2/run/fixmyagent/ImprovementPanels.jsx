@@ -519,7 +519,7 @@ const CODE_SURFACES = ["code", "structure"];
  * The plan a code or structural change was built to — root cause, the steps,
  * the files — shown above its diff, and where it was built.
  */
-export function CodePlan({ env, record, proposals = [] }) {
+export function CodePlan({ env, record, proposals = [], hideCause = false }) {
   const code = proposals.filter((p) =>
     CODE_SURFACES.includes(KIND_SURFACE[p.kind] || "code"),
   );
@@ -552,9 +552,11 @@ export function CodePlan({ env, record, proposals = [] }) {
   return (
     <Box sx={{ px: 2, py: 1.5 }}>
       <Typography sx={{ ...heading, mb: 0.5 }}>Plan</Typography>
-      <Typography
-        sx={{ typography: "s2", color: "text.secondary" }}
-      >{`Root cause: ${String(cause || "—").replace(/\.$/, "")}.`}</Typography>
+      {!hideCause && (
+        <Typography
+          sx={{ typography: "s2", color: "text.secondary" }}
+        >{`Root cause: ${String(cause || "—").replace(/\.$/, "")}.`}</Typography>
+      )}
       <Stack component="ol" spacing={0.25} sx={{ m: 0, mt: 0.75, pl: 2.5 }}>
         {steps.map((st) => (
           <Typography key={st} component="li" sx={{ typography: "s2" }}>
@@ -598,6 +600,7 @@ export function CodePlan({ env, record, proposals = [] }) {
 }
 CodePlan.propTypes = {
   env: PropTypes.object,
+  hideCause: PropTypes.bool,
   record: PropTypes.object,
   proposals: PropTypes.array,
 };

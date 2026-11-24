@@ -20,6 +20,8 @@ export default function WinnerChanges({
   members,
   record,
   patchName,
+  /* The epoch page already says the cause in its Diagnosis line. */
+  hideCause = false,
 }) {
   const store = useOptionalSimStore();
   const proposals = winner?.proposals || [];
@@ -66,7 +68,12 @@ export default function WinnerChanges({
         </Stack>
       )}
       {/* A code or structural change says its plan before its diff. */}
-      <CodePlan env={env} record={record} proposals={proposals} />
+      <CodePlan
+        env={env}
+        record={record}
+        proposals={proposals}
+        hideCause={hideCause}
+      />
       {proposals.map((p) => (
         <Box key={p.id} sx={{ px: 2, py: 1.5 }}>
           <Stack
@@ -207,6 +214,7 @@ export default function WinnerChanges({
 }
 WinnerChanges.propTypes = {
   env: PropTypes.object,
+  hideCause: PropTypes.bool,
   winner: PropTypes.object,
   members: PropTypes.object,
   record: PropTypes.object,

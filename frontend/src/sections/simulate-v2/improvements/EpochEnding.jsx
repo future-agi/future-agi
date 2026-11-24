@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Box, Button, Link, Stack, Typography } from "@mui/material";
+import { Box, Button, Link, Stack, Tooltip, Typography } from "@mui/material";
+import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 
 const linkSx = {
@@ -23,6 +24,9 @@ export default function EpochEnding({
   spent,
   primary,
   links = [],
+  /* The second line on hover instead (an info mark after the sentence),
+     for a status box whose detail isn't needed at a glance. */
+  spentOnHover = false,
   children,
 }) {
   const shown = links.filter(Boolean).slice(0, 2);
@@ -54,16 +58,34 @@ export default function EpochEnding({
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <Typography sx={{ typography: "s2", color: "text.primary" }}>
             {sentence}
+            {spentOnHover && spent && (
+              <Tooltip arrow title={spent}>
+                <Box
+                  component="span"
+                  sx={{
+                    display: "inline-flex",
+                    verticalAlign: "-2px",
+                    ml: 0.75,
+                  }}
+                >
+                  <Iconify
+                    icon="solar:info-circle-linear"
+                    width={14}
+                    sx={{ color: "text.tertiary" }}
+                  />
+                </Box>
+              </Tooltip>
+            )}
           </Typography>
-          {(spent || shown.length > 0) && (
+          {((spent && !spentOnHover) || shown.length > 0) && (
             <Typography
               component="div"
               sx={{ typography: "s3", color: "text.tertiary", mt: 0.25 }}
             >
-              {spent}
+              {!spentOnHover && spent}
               {shown.map((l, i) => (
                 <Box component="span" key={l.label}>
-                  {spent || i > 0 ? " · " : ""}
+                  {(spent && !spentOnHover) || i > 0 ? " · " : ""}
                   <Link
                     component="button"
                     type="button"
@@ -108,6 +130,7 @@ EpochEnding.propTypes = {
   sentence: PropTypes.node.isRequired,
   /* "Spent 1,234 credits before it stopped." */
   spent: PropTypes.string,
+  spentOnHover: PropTypes.bool,
   primary: PropTypes.shape({
     label: PropTypes.string,
     onClick: PropTypes.func,
