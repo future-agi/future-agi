@@ -205,6 +205,9 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	if err := RejectUnsupportedTools(req.Tools); err != nil {
 		return nil, err
 	}
+	if err := validateToolStrictness(req.Tools); err != nil {
+		return nil, models.ErrBadRequest("conflicting_tool_strictness", "gemini: "+err.Error())
+	}
 
 	if err := p.acquireSemaphore(ctx); err != nil {
 		return nil, models.ErrGatewayTimeout("gemini: concurrency limit reached")
@@ -271,6 +274,10 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 
 		if err := RejectUnsupportedTools(req.Tools); err != nil {
 			errs <- err
+			return
+		}
+		if err := validateToolStrictness(req.Tools); err != nil {
+			errs <- models.ErrBadRequest("conflicting_tool_strictness", "gemini: "+err.Error())
 			return
 		}
 

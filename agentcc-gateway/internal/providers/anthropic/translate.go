@@ -65,6 +65,7 @@ type anthropicTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema"`
+	Strict      *bool           `json:"strict,omitempty"`
 }
 
 type anthropicToolChoice struct {
@@ -182,6 +183,7 @@ func translateRequest(req *models.ChatCompletionRequest) (*anthropicRequest, err
 				Name:        t.Function.Name,
 				Description: t.Function.Description,
 				InputSchema: t.Function.Parameters,
+				Strict:      t.Function.Strict,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("encoding tool %q: %w", t.Function.Name, err)
