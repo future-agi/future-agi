@@ -66,6 +66,12 @@ describe("labels and identity", () => {
       kind: "issue",
       label: "From issue: Refund quoted twice",
     });
+    // An issue with no title yet still links, in words.
+    for (const title of [null, "", "  "]) {
+      expect(
+        originOf({ ...run, from_issue: true, issue: { ...issue, title } }),
+      ).toEqual({ kind: "issue", label: "From an issue" });
+    }
     expect(originOf({ ...run, from_issue: true, issue: null })).toEqual({
       kind: null,
       label: "From a deleted issue",
@@ -913,7 +919,7 @@ describe("candidateGroups", () => {
     expect(groups.map((g) => [g.id, g.label, g.open])).toEqual([
       ["winner", "Winner", true],
       ["finalist", "Passed, not picked", true],
-      ["target", "Rejected at target scenarios", false],
+      ["target", "Didn't improve the target scenarios", false],
     ]);
     expect(groups[0].rows).toEqual([
       expect.objectContaining({
@@ -930,6 +936,26 @@ describe("candidateGroups", () => {
       result: "0% → 0%, not a clear gain.",
       broke: false,
     });
+  });
+
+  it("heads each rejecting check's group in plain words, whatever the model lock is called", () => {
+    const fix = {
+      ...structuredClone(byId("fix-no-improvement")),
+      request: {
+        ...byId("fix-no-improvement").request,
+        allowed_models: ["a", "b"],
+      },
+      candidates: [
+        cand(1, "rejected", rejectedAt("repeats")),
+        cand(2, "rejected", rejectedAt("ceilings")),
+        cand(3, "rejected", rejectedAt("model-lock")),
+      ],
+    };
+    expect(candidateGroups(fix).map((g) => g.label)).toEqual([
+      "Didn't hold over repeat runs",
+      "Went over the reply-time or cost limit",
+      "Called a model outside the approved list",
+    ]);
   });
 
   it("orders the furthest check first, opens held back with no winner, and keeps every candidate", () => {
@@ -969,11 +995,12 @@ describe("candidateGroups", () => {
     };
     const groups = candidateGroups(fix);
     expect(groups.map((g) => [g.id, g.label, g.open])).toEqual([
-      ["must-pass", "Rejected at must-pass scenarios", true],
-      ["held-back", "Rejected at held-back scenarios", true],
-      ["target", "Rejected at target scenarios", false],
-      ["sandbox-fit", "Rejected at sandbox fit", false],
-      ["static", "Rejected at change is valid", false],
+      ["must-pass", "Broke a must-pass scenario", true],
+      ["held-back", "Didn't hold on the held-back scenarios", true],
+      ["target", "Didn't improve the target scenarios", false],
+      // A check without its own heading reads by its name.
+      ["sandbox-fit", "Stopped at “Sandbox fit”", false],
+      ["static", "The change wasn't valid", false],
       ["rejected", "Rejected", false],
       ["pending", "Did not run", false],
     ]);

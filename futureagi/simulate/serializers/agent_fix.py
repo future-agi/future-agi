@@ -333,8 +333,8 @@ class AgentFixEpochIssueSerializer(serializers.Serializer):
     job_id = serializers.UUIDField()
     cluster_id = serializers.CharField()
     project_id = serializers.UUIDField()
-    # The issue's title, as the Error Feed shows it.
-    title = serializers.CharField()
+    # The issue's title, as the Error Feed shows it; an issue may have none yet.
+    title = serializers.CharField(allow_null=True)
 
 
 class AgentFixRunSerializer(serializers.ModelSerializer):

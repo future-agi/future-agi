@@ -136,6 +136,37 @@ describe("Scenarios tab", () => {
     expect(rowIds().at(-1)).toBe("scenario-on-time-cancel");
   });
 
+  it("falls back to All when the chosen set is left with no scenario", async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tab = (fix) => (
+      <ThemeProvider theme={appTheme}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <FixScenariosTab fix={fix} />
+          </MemoryRouter>
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const fix = byId("fix-ready-archive");
+    const { rerender } = render(tab(fix));
+    await user.click(await screen.findByRole("tab", { name: "Held back 2" }));
+    expect(rowIds()).toHaveLength(2);
+
+    // The same calls, read with nothing held back: no Held back tab.
+    rerender(
+      tab({ ...fix, request: { ...fix.request, held_back_scenario_keys: [] } }),
+    );
+    expect(screen.queryByRole("tab", { name: /Held back/ })).toBeNull();
+    expect(screen.getByRole("tab", { name: "All 5" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(rowIds()).toHaveLength(5);
+  });
+
   it("opens a scenario's calls before the change beside the candidate's", async () => {
     const user = userEvent.setup();
     wrap(<FixScenariosTab fix={byId("fix-ready-archive")} />);

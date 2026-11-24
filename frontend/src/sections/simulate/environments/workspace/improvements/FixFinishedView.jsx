@@ -254,7 +254,8 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
       {current === "trials" ? (
         trials.length > 0 ? (
           <>
-            <CandidatesTable fix={fix} />
+            {/* Another epoch starts from its own folds, never this one's. */}
+            <CandidatesTable key={fix.id} fix={fix} />
             {/* Every candidate's target pass rate, until the design's
                 All measurements view replaces it. */}
             <Box sx={{ mt: 2 }}>

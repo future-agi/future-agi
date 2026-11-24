@@ -1068,6 +1068,19 @@ class TestApi:
         }
         assert response.json()["from_issue"] is True
 
+    def test_an_issue_with_no_title_yet_reads_as_null(
+        self, auth_client, environment, issue, source_run
+    ):
+        epoch = _fix_run(source_run)
+        _job(environment, _import(environment, issue, ["t1"]), fix_run=epoch)
+        TraceErrorGroup.objects.filter(id=issue.id).update(title=None)
+
+        response = auth_client.get(f"{RUNS}/{epoch.id}/")
+
+        assert response.status_code == 200, response.content
+        assert response.json()["issue"]["title"] is None
+        assert response.json()["from_issue"] is True
+
     def test_an_epoch_says_it_came_from_an_issue_once_the_issue_is_gone(
         self, auth_client, environment, issue, source_run
     ):

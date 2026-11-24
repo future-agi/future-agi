@@ -87,6 +87,10 @@ export function createFixRunsAxios(actual) {
       );
       const page = params.page ?? 1;
       const limit = params.limit ?? 25;
+      // A page past the end, as the paginator refuses it.
+      if (page > 1 && (page - 1) * limit >= all.length) {
+        return fail(404, { status: false, result: "Invalid page." });
+      }
       return ok({
         count: all.length,
         results: all.slice((page - 1) * limit, page * limit),

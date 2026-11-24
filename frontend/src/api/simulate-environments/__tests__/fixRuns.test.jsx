@@ -1,7 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import PropTypes from "prop-types";
 import { renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryCache,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
+
+// The app's global error toast, recorded.
+const toast = vi.hoisted(() => vi.fn());
+vi.mock("notistack", async (importOriginal) => ({
+  ...(await importOriginal()),
+  enqueueSnackbar: toast,
+}));
 
 vi.mock("src/utils/axios", async (importOriginal) => {
   const { withFakeFixRunsApi } = await import(
@@ -148,6 +159,42 @@ describe("fix-run list", () => {
     expect(result.current.fixes.map((f) => f.id).sort()).toEqual(
       expected.map((f) => f.id).sort(),
     );
+  });
+
+  it("steps past the end quietly: no toast and no retry of a 404", async () => {
+    const { handleError } = await import("src/utils/queryErrorHandler");
+    // The app's client: its cache toasts every failed read, and it retries once.
+    const client = new QueryClient({
+      queryCache: new QueryCache({ onError: handleError }),
+      defaultOptions: { queries: { retry: 1, retryDelay: 0 } },
+    });
+    const Wrapper = ({ children }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    Wrapper.propTypes = { children: PropTypes.node };
+    toast.mockClear();
+    const { result } = renderHook(
+      () => useEnvironmentFixRuns("env-1", { page: 5, pageSize: 25 }),
+      { wrapper: Wrapper },
+    );
+    await waitFor(() => expect(result.current.error).toBeTruthy());
+    expect(result.current.error.statusCode).toBe(404);
+    expect(toast).not.toHaveBeenCalled();
+    const pageReads = axios.get.mock.calls.filter(
+      ([url, config]) =>
+        url === "/simulate/api/agent-fix-runs/" && config.params.page === 6,
+    );
+    expect(pageReads).toHaveLength(1);
+  });
+
+  it("never shows another environment's fixes while its own load", async () => {
+    const { result, rerender } = renderHook(
+      ({ envId }) => useEnvironmentFixRuns(envId),
+      { wrapper: makeWrapper(), initialProps: { envId: "env-1" } },
+    );
+    await waitFor(() => expect(result.current.fixes.length).toBeGreaterThan(0));
+    rerender({ envId: "env-2" });
+    expect(result.current.fixes).toEqual([]);
   });
 
   it("never shows the last filter's fixes while another filter loads", async () => {

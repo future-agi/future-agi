@@ -47,6 +47,11 @@ export async function getFixRun(fixId) {
   return res.data;
 }
 
+// The app's axios rejects with the body spread plus statusCode; an
+// axios-style { response } is accepted too.
+export const isNotFound = (error) =>
+  (error?.response?.status ?? error?.statusCode) === 404;
+
 // 0-based page in, like the other environment lists; count is the server's
 // total across pages, of the given states when there are some. Polls while a
 // fix on the visible page is live. Asks nothing when the org lacks Fix my
@@ -64,10 +69,17 @@ export function useEnvironmentFixRuns(
     queryFn: () =>
       listFixRuns(envId, { page: page + 1, limit: pageSize, states }),
     enabled: allowed && !!envId,
+    // The list says why it failed, and steps back from a page past the end
+    // at once: no toast, and no retry of a 404.
+    meta: { errorHandled: true },
+    retry: (failures, failure) => !isNotFound(failure) && failures < 1,
     // Another page keeps the last one on screen while it loads; another
-    // filter never shows the last filter's fixes.
+    // environment or filter never shows the last one's fixes.
     placeholderData: (previous, previousQuery) =>
-      previousQuery?.queryKey[4] === key[4] ? previous : undefined,
+      previousQuery?.queryKey[1] === key[1] &&
+      previousQuery?.queryKey[4] === key[4]
+        ? previous
+        : undefined,
     refetchInterval: (query) =>
       (query.state.data?.results || []).some((f) =>
         FIX_LIVE_STATES.has(f.state),

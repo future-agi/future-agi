@@ -50,13 +50,17 @@ vi.mock("src/components/data-table", () => {
 // records the states of each read; `loading` holds a read in flight.
 let allFixes;
 let loading = false;
+let failing = null;
 const asked = [];
 vi.mock("src/api/simulate-environments/fixRuns", () => ({
   FIX_RUNS_PAGE_SIZE: 25,
   FIX_LIVE_STATES: new Set(["queued", "running", "stopping"]),
+  isNotFound: (error) => error?.statusCode === 404,
   useEnvironmentFixRuns: (_envId, { page, pageSize, states = [] } = {}) => {
     asked.push(states.join(","));
     if (loading) return { fixes: [], count: 0, isLoading: true, error: null };
+    if (failing)
+      return { fixes: [], count: 0, isLoading: false, error: failing };
     const matched = allFixes.filter(
       (f) => !states.length || states.includes(f.state),
     );
@@ -86,6 +90,7 @@ describe("ImprovementsPanel", () => {
     navigate.mockReset();
     asked.length = 0;
     loading = false;
+    failing = null;
     allFixes = FIX_RUN_FIXTURES.map((f) => ({ ...f, environment_id: "env-1" }));
   });
 
@@ -166,6 +171,17 @@ describe("ImprovementsPanel", () => {
         "No epoch in this environment has the status “Too few failing scenarios”. Choose All statuses to see every epoch.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("says the list failed to load, since no toast says it", () => {
+    failing = { statusCode: 500 };
+    render(<ImprovementsPanel env={env} />);
+    expect(
+      screen.getByText(
+        "Could not load the epochs. Reload the page to try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No epochs have run/)).toBeNull();
   });
 
   it("says nothing is missing while the filtered page is still loading", async () => {

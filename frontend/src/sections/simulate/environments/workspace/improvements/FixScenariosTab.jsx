@@ -100,7 +100,10 @@ export default function FixScenariosTab({ fix, candidateId }) {
   const counts = Object.fromEntries(
     SETS.map((s) => [s.id, rows.filter((r) => r.set === s.id).length]),
   );
-  const shown = rows.filter((r) => set === "all" || r.set === set);
+  // A set left with no scenario (another candidate reviewed) has no tab, so the
+  // table falls back to All rather than read empty.
+  const chosen = counts[set] ? set : "all";
+  const shown = rows.filter((r) => chosen === "all" || r.set === chosen);
   // Sorted Broke first; the other way puts it last.
   if (dir === "desc") shown.reverse();
   const name = candidate ? `Candidate ${candidate.attempt}` : "the candidate";
@@ -110,7 +113,7 @@ export default function FixScenariosTab({ fix, candidateId }) {
     <Box>
       <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
         <SegmentedTabs
-          value={set}
+          value={chosen}
           onChange={(_, v) => setSet(v)}
           aria-label="Scenario set"
         >

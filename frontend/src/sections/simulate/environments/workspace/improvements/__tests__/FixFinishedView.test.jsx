@@ -72,6 +72,7 @@ const { default: FixFinishedView, FinishedActions } = await import(
 );
 const { default: FixVerdict } = await import("../FixVerdict");
 const { default: FixDecisionDrawer } = await import("../FixDecisionDrawer");
+const { default: CandidatesTable } = await import("../CandidatesTable");
 
 const fixOf = (id, extra = {}) => ({
   ...structuredClone(fixtureFixRun(id)),
@@ -753,7 +754,7 @@ describe("FixFinishedView, candidates", () => {
     ).toBeInTheDocument();
     // A rejected group starts folded.
     const rejected = screen.getByTestId("candidate-group-target");
-    expect(rejected).toHaveTextContent("Rejected at target scenarios");
+    expect(rejected).toHaveTextContent("Didn't improve the target scenarios");
     expect(screen.queryByTestId("candidate-1")).toBeNull();
     await userEvent.setup().click(rejected);
     const row = within(screen.getByTestId("candidate-1"));
@@ -819,6 +820,32 @@ describe("FixFinishedView, candidates", () => {
       />,
     );
     expect(screen.queryByTestId("finished-diagnosis")).toBeNull();
+  });
+
+  it("opens a group that appears on a later read as its default says, and keeps a person's fold", async () => {
+    const before = fixOf("fix-ready-archive");
+    before.candidates = before.candidates.filter((c) => c.outcome !== "winner");
+    const { rerender } = renderUi(<CandidatesTable fix={before} />);
+    expect(screen.queryByTestId("candidate-group-winner")).toBeNull();
+    // The person folds Passed, not picked.
+    await userEvent
+      .setup()
+      .click(screen.getByTestId("candidate-group-finalist"));
+    expect(screen.getByTestId("candidate-group-finalist")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    rerender(wrap(<CandidatesTable fix={fixOf("fix-ready-archive")} />));
+    expect(screen.getByTestId("candidate-group-winner")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByTestId("candidate-3")).toBeInTheDocument();
+    expect(screen.getByTestId("candidate-group-finalist")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   it("opens a candidate's change beside the page", async () => {

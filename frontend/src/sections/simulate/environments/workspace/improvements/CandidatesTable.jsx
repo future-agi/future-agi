@@ -90,11 +90,14 @@ ResultCell.propTypes = {
 export default function CandidatesTable({ fix }) {
   const location = useLocation();
   const groups = candidateGroups(fix);
-  const [open, setOpen] = useState(() =>
-    Object.fromEntries(groups.map((g) => [g.id, g.open])),
+  // A group's own default until the person folds or opens it, so a group that
+  // appears later (a winner, on the next read) starts as it should.
+  const [toggled, setToggled] = useState({});
+  const open = Object.fromEntries(
+    groups.map((g) => [g.id, toggled[g.id] ?? g.open]),
   );
   const [seeing, setSeeing] = useState(null);
-  const toggle = (id) => setOpen((o) => ({ ...o, [id]: !o[id] }));
+  const toggle = (id) => setToggled((t) => ({ ...t, [id]: !open[id] }));
   const seen = (fix.candidates || []).find((c) => c.id === seeing);
   return (
     <>

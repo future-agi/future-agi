@@ -114,9 +114,13 @@ export function identityLine(fix) {
 // started from. `kind` says what to link; a deleted one has nothing to link.
 export function originOf(fix) {
   if (fix.from_issue) {
-    return fix.issue
-      ? { kind: "issue", label: `From issue: ${fix.issue.title}` }
-      : { kind: null, label: "From a deleted issue" };
+    if (!fix.issue) return { kind: null, label: "From a deleted issue" };
+    // An issue can have no title yet: it still links.
+    const title = (fix.issue.title || "").trim();
+    return {
+      kind: "issue",
+      label: title ? `From issue: ${title}` : "From an issue",
+    };
   }
   if (!fix.source_run_id) return { kind: null, label: "From a deleted run" };
   return {
@@ -669,13 +673,22 @@ const groupOf = (c) =>
     ? c.outcome
     : failedTierOf(c)?.name || "rejected";
 
-const lowerFirst = (s) => `${s.charAt(0).toLowerCase()}${s.slice(1)}`;
+// Each rejecting check's group, in plain words: what the candidates in it did.
+const GROUP_HEADING = {
+  "must-pass": "Broke a must-pass scenario",
+  "held-back": "Didn't hold on the held-back scenarios",
+  repeats: "Didn't hold over repeat runs",
+  target: "Didn't improve the target scenarios",
+  ceilings: "Went over the reply-time or cost limit",
+  "model-lock": "Called a model outside the approved list",
+  static: "The change wasn't valid",
+};
 
 function groupLabel(id, fix, live) {
   if (["winner", "finalist", "pending"].includes(id))
     return outcomeLabel(id, live);
   if (id === "rejected") return "Rejected";
-  return `Rejected at ${lowerFirst(checkLabel(id, fix.request))}`;
+  return GROUP_HEADING[id] || `Stopped at “${checkLabel(id, fix.request)}”`;
 }
 
 // What stopped a candidate, in the words its verdict's own numbers give.

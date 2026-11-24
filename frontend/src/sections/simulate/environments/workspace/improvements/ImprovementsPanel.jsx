@@ -11,6 +11,7 @@ import { fDateTime } from "src/utils/format-time";
 import {
   FIX_LIVE_STATES,
   FIX_RUNS_PAGE_SIZE,
+  isNotFound,
   useEnvironmentFixRuns,
 } from "src/api/simulate-environments/fixRuns";
 
@@ -157,8 +158,6 @@ const STATUS_OPTIONS = [
     .map(([value, label]) => ({ value, label, states: [value] })),
 ];
 
-const statusOf = (error) => error?.response?.status ?? error?.statusCode;
-
 export default function ImprovementsPanel({ env }) {
   const navigate = useNavigate();
   const [page, setPage] = useState(0);
@@ -175,7 +174,7 @@ export default function ImprovementsPanel({ env }) {
   // this page: the server refuses a page past the end, and the one before it
   // says where the end is now. Until then nothing reads as empty.
   const lastPage = Math.max(0, Math.ceil(count / pageSize) - 1);
-  const gone = statusOf(error) === 404;
+  const gone = isNotFound(error);
   const pastEnd = page > 0 && (gone || (!isLoading && page > lastPage));
   useEffect(() => {
     if (pastEnd) setPage(gone ? page - 1 : lastPage);
@@ -225,9 +224,12 @@ export default function ImprovementsPanel({ env }) {
         rowHeight={ROW_HEIGHT}
         headerHeight={HEADER_HEIGHT}
         emptyMessage={
-          filtering
-            ? `No epoch in this environment has the status “${option.label}”. Choose All statuses to see every epoch.`
-            : "No epochs have run in this environment yet. To start one, open Debug failures on a finished run and choose Run Epoch."
+          // The list reports its own failures (no global toast).
+          error && !gone
+            ? "Could not load the epochs. Reload the page to try again."
+            : filtering
+              ? `No epoch in this environment has the status “${option.label}”. Choose All statuses to see every epoch.`
+              : "No epochs have run in this environment yet. To start one, open Debug failures on a finished run and choose Run Epoch."
         }
       />
       {count > 0 && (
