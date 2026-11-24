@@ -268,3 +268,13 @@ export function runOutcome(status) {
     color: `status.${role}.fg`,
   };
 }
+
+export const REQUIRED_EVAL_COPY = {
+  flag: (names) =>
+    names.length === 1
+      ? `Required eval failed: ${names[0]}`
+      : `${names.length} required evals failed`,
+  tip: "Flagged beside the task result; it doesn't change the sub-goals' verdict.",
+  label: "Required eval failed",
+  required: "Required",
+};

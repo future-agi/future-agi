@@ -33,6 +33,7 @@ import {
   CLOSED_GROUP_VIEW,
   neutralCheckboxSx,
   pinnedLeftSx,
+  REQUIRED_EVAL_COPY,
 } from "./traceTable.constants";
 import {
   SubTasksCell,
@@ -348,6 +349,26 @@ export default function TraceTable({
                 >
                   {t.outcomeReason}
                 </Typography>
+              )}
+              {t.requiredEvalsFailed?.length > 0 && (
+                <CustomTooltip
+                  show
+                  arrow
+                  title={`${t.requiredEvalsFailed.join(", ")}. ${REQUIRED_EVAL_COPY.tip}`}
+                >
+                  <Stack direction="row" alignItems="center" spacing={0.5}>
+                    <Iconify
+                      icon="solar:danger-circle-linear"
+                      width={12}
+                      sx={{ color: "status.warning.fg", flexShrink: 0 }}
+                    />
+                    <Typography
+                      sx={{ typography: "s3", color: "status.warning.fg" }}
+                    >
+                      {REQUIRED_EVAL_COPY.flag(t.requiredEvalsFailed)}
+                    </Typography>
+                  </Stack>
+                </CustomTooltip>
               )}
               {t.subGoalResults?.length > 0 && (
                 <Stack spacing={0.5} sx={{ mt: 1 }}>

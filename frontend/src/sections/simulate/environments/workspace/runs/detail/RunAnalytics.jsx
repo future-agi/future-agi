@@ -32,6 +32,7 @@ import DashboardControls, {
 } from "./analytics/DashboardControls";
 import DashboardHistogram from "./analytics/DashboardHistogram";
 import { CHART_GUIDE } from "./analytics/chartGuide";
+import { REQUIRED_EVAL_COPY } from "./trace/traceTable.constants";
 import { LoadingScreen } from "src/components/loading-screen";
 
 const WIDGETS = [
@@ -453,7 +454,21 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
             <TableBody>
               {data.evaluations.map((row) => (
                 <TableRow key={row.id}>
-                  <TableCell>{row.name}</TableCell>
+                  <TableCell>
+                    {row.name}
+                    {row.required && (
+                      <Typography
+                        component="span"
+                        sx={{
+                          typography: "s3",
+                          color: "text.tertiary",
+                          ml: 0.75,
+                        }}
+                      >
+                        {`· ${REQUIRED_EVAL_COPY.required}`}
+                      </Typography>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {row.pass_rate == null ? (
                       "-"

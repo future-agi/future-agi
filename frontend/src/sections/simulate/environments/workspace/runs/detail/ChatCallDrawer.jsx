@@ -21,7 +21,7 @@ import {
 } from "src/api/simulate-environments/runDetail";
 
 import { SCORING_STATUS } from "../runs.constants";
-import { runOutcome } from "./trace/traceTable.constants";
+import { REQUIRED_EVAL_COPY, runOutcome } from "./trace/traceTable.constants";
 import ChatTranscriptPane from "./ChatTranscriptPane";
 import CallTracesPanel from "./CallTracesPanel";
 import { CALL_TRACES_COPY } from "./callTraces.constants";
@@ -324,6 +324,12 @@ export default function ChatCallDrawer({
             <Stack direction="row" flexWrap="wrap" gap={0.75}>
               <Meta label="Type" value="Chat" />
               <Meta label="Status" value={runOutcome(task.status).label} />
+              {task.requiredEvalsFailed?.length > 0 && (
+                <Meta
+                  label={REQUIRED_EVAL_COPY.label}
+                  value={task.requiredEvalsFailed.join(", ")}
+                />
+              )}
               <Meta label="Duration" value={secs(durationMs)} />
               <Meta label="Turns" value={turnCount ?? "-"} />
               <Meta
@@ -487,6 +493,7 @@ ChatCallDrawer.propTypes = {
     scenario: PropTypes.string,
     persona: PropTypes.string,
     status: PropTypes.string,
+    requiredEvalsFailed: PropTypes.arrayOf(PropTypes.string),
     turns: PropTypes.number,
     tokens: PropTypes.number,
     durationMs: PropTypes.number,

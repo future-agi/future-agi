@@ -118,6 +118,7 @@ export function mapCallRow(row, evalColumns = []) {
     sourceScenarioKey: row?.source_scenario_key ?? null,
     harnessOutcomeStatus: row?.harness_outcome_status ?? outcome ?? null,
     outcomeReason: row?.outcome_reason ?? null,
+    requiredEvalsFailed: row?.required_evals_failed ?? [],
     trialIndex,
     scenarioDetails: row?.scenario_details ?? null,
     idealOutcome: row?.ideal_outcome ?? null,
