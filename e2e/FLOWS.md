@@ -3467,7 +3467,7 @@
 
 **Browser observations:**
 
-- the ending reads "The only candidate went over the cost or latency limit."
+- the ending reads "The only candidate went over the reply-time or cost limit."
 - the rejected candidate's Reply time line reads "Over the limit: 19.38 s against 13.22 s on the current version, allowed up to 16.53 s." and its cost line has its numbers too
 - the launch form asks launch-options for the epoch's own run and locks the model its spans named, gpt-4o-mini
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
