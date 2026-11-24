@@ -231,7 +231,9 @@ def _current_chat_workspace(job: HostedHarnessJob, checkpoint: bytes) -> bytes |
         current = composition_workspace_archive(environment)
     else:
         revision = str(
-            ((environment.payload or {}).get("metadata") or {}).get("authoring_revision")
+            ((environment.payload or {}).get("metadata") or {}).get(
+                "authoring_revision"
+            )
             or ""
         )
         if not revision:
@@ -342,15 +344,39 @@ def _ask_harness_to_adapt(
     from simulate.services.hosted_harness_conversation import enqueue_message
     from simulate.tasks.hosted_harness_conversation import schedule_conversation_runtime
 
+    pairing = (
+        ((job.payload or {}).get("metadata") or {}).get("adaptation", {}).get("pairing")
+    )
+    reviewed = (
+        " The person paired the tools (environment tool <- agent tool): "
+        + "; ".join(
+            f"{world} <- {agent}" for world, agent in sorted(pairing.items()) if agent
+        )
+        + ". Keep that pairing; an agent tool not in it is unsupported."
+        if pairing
+        else ""
+    )
     conversation, _message, _created = enqueue_message(
         job,
         content=(
             "Bind this agent to the environment: write the binding, prove it, report where "
-            "the agent's instructions conflict with the policy, then finish."
+            "the agent's instructions conflict with the policy, then finish." + reviewed
         ),
         client_request_id=f"adapt-{attempt.id}",
     )
     schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
+
+
+def _read_verified(sandbox: Any, path: str) -> dict[str, Any] | None:
+    """The adaptation control process's record at `path`, or None when it left none (a failed
+    adaptation, or an image that does not write one): the platform then accepts no routed
+    binding from that sandbox."""
+    try:
+        body = sandbox.fs.download_file(path, _PROVIDER_POLL_TIMEOUT_SECONDS)
+        document = json.loads(body)
+    except Exception:  # noqa: BLE001 - absent or unreadable is the same answer: nothing verified
+        return None
+    return document if isinstance(document, dict) else None
 
 
 def _alk_source_overlay() -> bytes | None:
@@ -462,6 +488,8 @@ def platform_model_gateway() -> tuple[str, str]:
             status_code=503,
         )
     return url.rstrip("/"), key
+
+
 def simulator_settings() -> dict[str, str]:
     """The simulated caller's model and speech settings from deployment configuration, as the
     sandbox receives them. Release runs freeze exactly this at submission (contract §2.5), so a
@@ -2707,6 +2735,7 @@ class HostedHarnessGateway:
         authoring_archive = _authoring_archive_for(job)
         from simulate.services.harness_releases import (
             adaptation_launch_for,
+            adaptation_of,
             apply_frozen_simulator,
             release_launch_for,
         )
@@ -3072,7 +3101,9 @@ class HostedHarnessGateway:
             # The control processes (build and adaptation) otherwise wait ALK's own 55-minute
             # default, not the authoring budget this deployment sized the sandbox for.
             authoring_exports["ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS"] = str(
-                int(getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600))
+                int(
+                    getattr(settings, "ALK_HOSTED_AUTHORING_MAX_DURATION_SECONDS", 3600)
+                )
             )
             if overlay is not None:
                 authoring_exports["PYTHONPATH"] = "/work/alk-src"
@@ -3176,7 +3207,11 @@ class HostedHarnessGateway:
             attempt.save(update_fields=["state", "heartbeat_at", "updated_at"])
             if harness_builds:
                 _ask_harness_to_build(job, attempt, endpoint_base_url)
-            elif adaptation is not None:
+            elif (
+                adaptation is not None
+                and (adaptation_of(job) or {}).get("mode") != "run"
+            ):
+                # Run mode drafts in the control process; review mode is the builder's.
                 _ask_harness_to_adapt(job, attempt, endpoint_base_url)
             return attempt
         except Exception as exc:
@@ -5172,12 +5207,16 @@ class HostedHarnessGateway:
         directory (contract §7.5), then clean up through the normal attempt protocol."""
         from simulate.services.harness_releases import (
             ADAPTATION_OUTPUT,
+            ADAPTATION_VERIFIED,
             complete_adaptation,
         )
 
         sandbox = self.client.get(
             str(attempt.provider_ref), request_timeout=_PROVIDER_POLL_TIMEOUT_SECONDS
         )
+        # Read first and on its own: the control process's record of what it verified, from the
+        # folder the builder session's tools refuse. It is never taken from the output archive.
+        verified = _read_verified(sandbox, ADAPTATION_VERIFIED)
         packed = sandbox.process.exec(
             f"mkdir -p {ADAPTATION_OUTPUT} && "
             f"tar -czf /tmp/adaptation.tar.gz -C {ADAPTATION_OUTPUT} .",
@@ -5198,7 +5237,7 @@ class HostedHarnessGateway:
                     archive.extractall(directory, filter="data")
             except tarfile.TarError:
                 output = None
-            job = complete_adaptation(attempt.job, output)
+            job = complete_adaptation(attempt.job, output, verified)
         attempt.terminal_stage = (
             "completed" if job.state == HostedHarnessJob.State.COMPLETED else "failed"
         )

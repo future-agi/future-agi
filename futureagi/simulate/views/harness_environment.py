@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from django.db.models import Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status, viewsets
@@ -302,13 +303,20 @@ class HarnessEnvironmentViewSet(HarnessStartingRecordsMixin, viewsets.ViewSet):
     pagination_class = ExtendedPageNumberPagination
 
     def _scoped_jobs(self, request):
-        # An adaptation is followed as a job; its composition is the environment.
+        # An adaptation is followed as a job; its composition is the environment. One in review
+        # is listed until it's done, awaiting approval of its design first.
         return scope_jobs(
             HostedHarnessJob.no_workspace_objects.filter(
                 organization=request_organization(request),
                 environment__isnull=True,
                 deleted=False,
-            ).exclude(payload__metadata__has_key="adaptation"),
+            ).exclude(
+                Q(payload__metadata__has_key="adaptation")
+                & ~(
+                    Q(payload__metadata__adaptation__mode="review")
+                    & ~Q(state=HostedHarnessJob.State.COMPLETED)
+                )
+            ),
             request,
         )
 

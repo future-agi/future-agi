@@ -1499,8 +1499,11 @@ class HostedHarnessProvider:
     def create_adaptation(self, request) -> Response:
         """Start adapting an agent to a release suite (contract §7.5): a hosted job like any
         other, whose payload carries `metadata.adaptation`."""
+        from simulate.services.harness_fit import resolved_pairing
         from simulate.services.harness_releases import (
             adaptation_payload,
+            check_agent_connection,
+            connected_agent_connection,
             organization_agent_version,
             visible_suite,
         )
@@ -1516,16 +1519,28 @@ class HostedHarnessProvider:
             )
         data = request.validated_data
         try:
+            agent_version = organization_agent_version(
+                organization, data["agent_version_id"]
+            )
+            suite = visible_suite(organization, data["suite_id"])
+            agent = request.data.get("agent")
+            if agent:
+                # A given connection must reach the selected version's own provider agent:
+                # the adaptation inspects what it reaches, and results are the version's.
+                check_agent_connection(agent_version, agent)
             payload = adaptation_payload(
                 organization,
-                suite=visible_suite(organization, data["suite_id"]),
+                suite=suite,
                 # Re-validated as a hosted job agent; the request serializer only shapes it.
-                agent=request.data["agent"],
-                agent_version=organization_agent_version(
-                    organization, data["agent_version_id"]
-                ),
+                # Without one, the connected agent's own connection is used.
+                agent=agent or connected_agent_connection(organization, agent_version),
+                agent_version=agent_version,
                 name=data["name"],
                 parallelism=data.get("parallelism"),
+                # Checked and completed here, so the design the person reviewed, the one the
+                # job stores and the one the binding is held to are the same map.
+                pairing=resolved_pairing(suite, agent_version, data.get("pairing")),
+                mode=data.get("mode", "review"),
             )
         except HostedHarnessError as exc:
             return Response(exc.as_dict(), status=exc.status_code)

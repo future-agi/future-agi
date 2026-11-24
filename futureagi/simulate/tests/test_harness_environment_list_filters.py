@@ -80,7 +80,13 @@ def test_status_filter_matches_the_status_each_row_reports(
         assert {row["status"] for row in body["results"]} == {wanted}
 
     counts = _get(auth_client, workspace, status="failed")["status_counts"]
-    assert counts == {"building": 2, "running": 3, "completed": 1, "failed": 2}
+    assert counts == {
+        "awaiting_approval": 0,
+        "building": 2,
+        "running": 3,
+        "completed": 1,
+        "failed": 2,
+    }
 
 
 @pytest.mark.django_db

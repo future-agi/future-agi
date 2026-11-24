@@ -650,6 +650,7 @@ import type {
   HarnessActorValidationApi,
   HarnessActorViewApi,
   HarnessActorWriteApi,
+  HarnessAdaptationDesignApi,
   HarnessAgentCredentialsResponseApi,
   HarnessAgentPolicyApi,
   HarnessAgentPolicyResponseApi,
@@ -690,6 +691,8 @@ import type {
   HarnessEnvironmentToolCallEvaluationApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
+  HarnessHostedAgentRequestApi,
+  HarnessHostedAgentResponseApi,
   HarnessIngressProxyRequestApi,
   HarnessIngressRequestApi,
   HarnessIngressResponseApi,
@@ -703,10 +706,15 @@ import type {
   HarnessNudgeApi,
   HarnessPreflightApi,
   HarnessPreflightResponseApi,
+  HarnessReleaseAgentRequestApi,
+  HarnessReleaseFitRequestApi,
+  HarnessReleaseFitResponseApi,
+  HarnessReleaseListResponseApi,
   HarnessResultReceiptApi,
   HarnessRunCreateApi,
   HarnessRunCreateResponseApi,
   HarnessRunPlanApi,
+  HarnessRunReportApi,
   HarnessScenarioAmendApi,
   HarnessScenarioAmendResponseApi,
   HarnessScenarioListResponseApi,
@@ -1334,6 +1342,7 @@ import type {
   SimulateApiHarnessEnvironmentsListParams,
   SimulateApiHarnessEnvironmentsNudgesParams,
   SimulateApiHarnessEnvironmentsRunPlanParams,
+  SimulateApiHarnessEnvironmentsRunsRunReportParams,
   SimulateApiHarnessEnvironmentsUploadFileBody,
   SimulateApiHarnessEnvironmentsVersionsVersionDiffParams,
   SimulateApiHarnessJobsSecretFileUploadBody,
@@ -61914,6 +61923,167 @@ export const simulateApiCallExecutionsList = async (
   );
 };
 
+export type simulateApiHarnessAdaptationsCreateResponse202 = {
+  data: HarnessJobReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessAdaptationsCreateResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessAdaptationsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 404>;
+};
+
+export type simulateApiHarnessAdaptationsCreateResponseSuccess =
+  simulateApiHarnessAdaptationsCreateResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessAdaptationsCreateResponseError = (
+  | simulateApiHarnessAdaptationsCreateResponse404
+  | simulateApiHarnessAdaptationsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessAdaptationsCreateResponse =
+  | simulateApiHarnessAdaptationsCreateResponseSuccess
+  | simulateApiHarnessAdaptationsCreateResponseError;
+
+export const getSimulateApiHarnessAdaptationsCreateUrl = () => {
+  return `/simulate/api/harness-adaptations/`;
+};
+
+/**
+ * Adapt an agent to a release suite. The job is followed like any harness job.
+ */
+export const simulateApiHarnessAdaptationsCreate = async (
+  harnessReleaseAgentRequestApi: HarnessReleaseAgentRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAdaptationsCreateResponse> => {
+  return apiMutator<simulateApiHarnessAdaptationsCreateResponse>(
+    getSimulateApiHarnessAdaptationsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessReleaseAgentRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse202 = {
+  data: HarnessJobReadApi;
+  status: 202;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 202 | 404 | 409>;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponseSuccess =
+  simulateApiHarnessAdaptationsApproveResponse202 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessAdaptationsApproveResponseError = (
+  | simulateApiHarnessAdaptationsApproveResponse404
+  | simulateApiHarnessAdaptationsApproveResponse409
+  | simulateApiHarnessAdaptationsApproveResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessAdaptationsApproveResponse =
+  | simulateApiHarnessAdaptationsApproveResponseSuccess
+  | simulateApiHarnessAdaptationsApproveResponseError;
+
+export const getSimulateApiHarnessAdaptationsApproveUrl = (id: string) => {
+  return `/simulate/api/harness-adaptations/${id}/approve/`;
+};
+
+/**
+ * Approve and build: the design is taken once the mapping has been checked on every case.
+ */
+export const simulateApiHarnessAdaptationsApprove = async (
+  id: string,
+  emptyRequestApi: EmptyRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAdaptationsApproveResponse> => {
+  return apiMutator<simulateApiHarnessAdaptationsApproveResponse>(
+    getSimulateApiHarnessAdaptationsApproveUrl(id),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(emptyRequestApi),
+    },
+  );
+};
+
+export type simulateApiHarnessAdaptationsDesignResponse200 = {
+  data: HarnessAdaptationDesignApi;
+  status: 200;
+};
+
+export type simulateApiHarnessAdaptationsDesignResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessAdaptationsDesignResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 404>;
+};
+
+export type simulateApiHarnessAdaptationsDesignResponseSuccess =
+  simulateApiHarnessAdaptationsDesignResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessAdaptationsDesignResponseError = (
+  | simulateApiHarnessAdaptationsDesignResponse404
+  | simulateApiHarnessAdaptationsDesignResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessAdaptationsDesignResponse =
+  | simulateApiHarnessAdaptationsDesignResponseSuccess
+  | simulateApiHarnessAdaptationsDesignResponseError;
+
+export const getSimulateApiHarnessAdaptationsDesignUrl = (id: string) => {
+  return `/simulate/api/harness-adaptations/${id}/design/`;
+};
+
+/**
+ * Review the design: what the adaptation takes from the ready world, before it's built.
+ */
+export const simulateApiHarnessAdaptationsDesign = async (
+  id: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessAdaptationsDesignResponse> => {
+  return apiMutator<simulateApiHarnessAdaptationsDesignResponse>(
+    getSimulateApiHarnessAdaptationsDesignUrl(id),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsListResponse200 = {
   data: HarnessEnvironmentListResponseApi;
   status: 200;
@@ -63930,6 +64100,71 @@ export const simulateApiHarnessEnvironmentsRunsEvaluationsRunEvaluations =
     );
   };
 
+export type simulateApiHarnessEnvironmentsRunsRunReportResponse200 = {
+  data: HarnessRunReportApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsRunsRunReportResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsRunsRunReportResponseSuccess =
+  simulateApiHarnessEnvironmentsRunsRunReportResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsRunsRunReportResponseError =
+  simulateApiHarnessEnvironmentsRunsRunReportResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsRunsRunReportResponse =
+  | simulateApiHarnessEnvironmentsRunsRunReportResponseSuccess
+  | simulateApiHarnessEnvironmentsRunsRunReportResponseError;
+
+export const getSimulateApiHarnessEnvironmentsRunsRunReportUrl = (
+  id: string,
+  runId: string,
+  params?: SimulateApiHarnessEnvironmentsRunsRunReportParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()));
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/simulate/api/harness-environments/${id}/runs/${runId}/report/?${stringifiedParams}`
+    : `/simulate/api/harness-environments/${id}/runs/${runId}/report/`;
+};
+
+/**
+ * The report of one run of a composition, optionally compared with a baseline run.
+ */
+export const simulateApiHarnessEnvironmentsRunsRunReport = async (
+  id: string,
+  runId: string,
+  params?: SimulateApiHarnessEnvironmentsRunsRunReportParams,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsRunsRunReportResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsRunsRunReportResponse>(
+    getSimulateApiHarnessEnvironmentsRunsRunReportUrl(id, runId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
 export type simulateApiHarnessEnvironmentsStartingRecordsResponse200 = {
   data: HarnessStartingRecordsApi;
   status: 200;
@@ -64541,6 +64776,64 @@ export const simulateApiHarnessEnvironmentsVersionsVersionDiff = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse201 = {
+  data: HarnessHostedAgentResponseApi;
+  status: 201;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse404 = {
+  data: ApiTextErrorResponseApi;
+  status: 404;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse409 = {
+  data: ApiTextErrorResponseApi;
+  status: 409;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 201 | 404 | 409>;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponseSuccess =
+  simulateApiHarnessHostedAgentsCreateResponse201 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessHostedAgentsCreateResponseError = (
+  | simulateApiHarnessHostedAgentsCreateResponse404
+  | simulateApiHarnessHostedAgentsCreateResponse409
+  | simulateApiHarnessHostedAgentsCreateResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessHostedAgentsCreateResponse =
+  | simulateApiHarnessHostedAgentsCreateResponseSuccess
+  | simulateApiHarnessHostedAgentsCreateResponseError;
+
+export const getSimulateApiHarnessHostedAgentsCreateUrl = () => {
+  return `/simulate/api/harness-hosted-agents/`;
+};
+
+/**
+ * Compose our own agent with a release suite; it answers the composed environment.
+ */
+export const simulateApiHarnessHostedAgentsCreate = async (
+  harnessHostedAgentRequestApi: HarnessHostedAgentRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessHostedAgentsCreateResponse> => {
+  return apiMutator<simulateApiHarnessHostedAgentsCreateResponse>(
+    getSimulateApiHarnessHostedAgentsCreateUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessHostedAgentRequestApi),
     },
   );
 };
@@ -65416,6 +65709,91 @@ export const simulateApiHarnessJobsScenariosScenarioCoverage = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessReleasesListResponse200 = {
+  data: HarnessReleaseListResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessReleasesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessReleasesListResponseSuccess =
+  simulateApiHarnessReleasesListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessReleasesListResponseError =
+  simulateApiHarnessReleasesListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessReleasesListResponse =
+  | simulateApiHarnessReleasesListResponseSuccess
+  | simulateApiHarnessReleasesListResponseError;
+
+export const getSimulateApiHarnessReleasesListUrl = () => {
+  return `/simulate/api/harness-releases/`;
+};
+
+export const simulateApiHarnessReleasesList = async (
+  options?: RequestInit,
+): Promise<simulateApiHarnessReleasesListResponse> => {
+  return apiMutator<simulateApiHarnessReleasesListResponse>(
+    getSimulateApiHarnessReleasesListUrl(),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessReleasesFitResponse200 = {
+  data: HarnessReleaseFitResponseApi;
+  status: 200;
+};
+
+export type simulateApiHarnessReleasesFitResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessReleasesFitResponseSuccess =
+  simulateApiHarnessReleasesFitResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessReleasesFitResponseError =
+  simulateApiHarnessReleasesFitResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessReleasesFitResponse =
+  | simulateApiHarnessReleasesFitResponseSuccess
+  | simulateApiHarnessReleasesFitResponseError;
+
+export const getSimulateApiHarnessReleasesFitUrl = () => {
+  return `/simulate/api/harness-releases/fit/`;
+};
+
+/**
+ * How a connected agent fits a release suite: its tools paired with the world's and
+the cases that pairing can measure. Nothing is built.
+ */
+export const simulateApiHarnessReleasesFit = async (
+  harnessReleaseFitRequestApi: HarnessReleaseFitRequestApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessReleasesFitResponse> => {
+  return apiMutator<simulateApiHarnessReleasesFitResponse>(
+    getSimulateApiHarnessReleasesFitUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessReleaseFitRequestApi),
     },
   );
 };
