@@ -30,7 +30,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from math import isfinite
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID, uuid4
 
 from tracer.services.private_boundary_log import PrivateBoundaryLogger
@@ -325,7 +325,9 @@ def _run_stage(
         return outcome, None
     if process.exitcode != 0 or not payload:
         return "failed", None
-    return pickle.loads(payload)  # noqa: S301 - private child-owned IPC
+    # The child sends a pickled (state, value) pair.
+    result: tuple[str, object] = pickle.loads(payload)  # noqa: S301 - private child-owned IPC
+    return result
 
 
 @dataclass(frozen=True, repr=False)
@@ -443,7 +445,7 @@ def bounded_read(
         if isinstance(capture, PinCapture) and capture.query_compiler is not None:
             # The real pin's plan was built inside the bounded PG capture stage.
             # Supplied SQL cannot override that immutable generation selection.
-            sql, params = _snapshot
+            sql, params = cast("tuple[str, dict]", _snapshot)
         if cancel is not None and cancel.is_set():
             raise ReadCancelled("read cancelled before submission")
         # Set BEFORE spawn: any failure after this point can be an uncertain send.

@@ -33,6 +33,7 @@ type Catalogue struct {
 	mu        sync.Mutex
 	models    map[string]*ModelInfo // bundled overlaid by the last good fetch
 	overrides map[string]ModelOverride
+	zero      priceDeclarations
 	info      CatalogueInfo
 	target    *atomic.Pointer[ModelDB]
 }
@@ -41,6 +42,7 @@ type Catalogue struct {
 func NewCatalogue(target *atomic.Pointer[ModelDB], overrides map[string]ModelOverride) *Catalogue {
 	c := &Catalogue{
 		models:    BundledModels,
+		zero:      bundledZero,
 		overrides: overrides,
 		info:      CatalogueInfo{Source: SourceBundled, LoadedAt: time.Now()},
 		target:    target,
@@ -59,8 +61,26 @@ func (c *Catalogue) SetOverrides(overrides map[string]ModelOverride) {
 
 // Overlay lays fetched over the bundled models, under the overrides.
 func (c *Catalogue) Overlay(fetched map[string]*ModelInfo, url string) {
+	c.overlay(fetched, nil, url)
+}
+
+func (c *Catalogue) overlay(fetched map[string]*ModelInfo, zero priceDeclarations, url string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.zero = make(priceDeclarations, len(bundledZero)+len(zero))
+	for k, v := range bundledZero {
+		c.zero[k] = v
+	}
+	// A regular entry wins over a skipped row with the same key.
+	for k := range fetched {
+		delete(c.zero, k)
+	}
+	for k, v := range zero {
+		if fetched[k] == nil && BundledModels[k] != nil {
+			continue
+		}
+		c.zero[k] = v
+	}
 	merged := make(map[string]*ModelInfo, len(BundledModels)+len(fetched))
 	for id, m := range BundledModels {
 		merged[id] = m
@@ -88,7 +108,7 @@ func (c *Catalogue) recordFailure(err error) {
 
 // rebuild must run with c.mu held.
 func (c *Catalogue) rebuild() {
-	db := New(c.models, c.overrides)
+	db := newWithZero(c.models, c.overrides, c.zero)
 	c.info.Entries = db.Count()
 	c.target.Store(db)
 }

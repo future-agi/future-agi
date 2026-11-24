@@ -14,6 +14,7 @@ import {
   isCallLive,
   numCellSx,
   runOutcome,
+  subGoalLabel,
   subGoalOutcome,
 } from "./traceTable.constants";
 import {
@@ -87,7 +88,7 @@ export function SubGoalVerdicts({ goals, sx }) {
             spacing={0.75}
           >
             <Typography sx={{ typography: "s3", color: "text.secondary" }}>
-              {goal.name}
+              {subGoalLabel(goal)}
             </Typography>
             {goal.evidence?.length > 0 && (
               <Typography sx={{ typography: "s3", color: "text.disabled" }}>
@@ -312,7 +313,7 @@ export function TraceCell({
           {...span}
         >
           <SubTasksCell
-            subTasks={(t.subGoalResults || []).map((goal) => goal.name)}
+            subTasks={(t.subGoalResults || []).map(subGoalLabel)}
           />
         </TableCell>
       );
