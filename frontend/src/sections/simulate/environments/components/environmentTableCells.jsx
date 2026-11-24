@@ -101,7 +101,12 @@ AgentCell.propTypes = { row: PropTypes.object };
 
 export const LastRunCell = ({ row }) => {
   const lastRun = row?.original?.lastRun;
-  if (isMissing(lastRun) || lastRun.rate == null) return <Dash />;
+  if (isMissing(lastRun) || lastRun.rate == null)
+    return (
+      <Typography sx={{ typography: "s1", color: "text.disabled" }}>
+        Not run yet
+      </Typography>
+    );
   const title =
     lastRun.ordinal != null
       ? `Run ${lastRun.ordinal} · scenarios passed`

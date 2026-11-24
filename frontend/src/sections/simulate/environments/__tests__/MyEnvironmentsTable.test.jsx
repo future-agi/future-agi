@@ -192,6 +192,7 @@ describe("MyEnvironmentsTable", () => {
     // fall back to a dash, and a null runs_count reads as a dash too.
     const row = within(rowFor("Repo Triage Bot"));
     expect(row.getAllByText("-").length).toBeGreaterThan(0);
+    expect(row.getByText("Not run yet")).toBeInTheDocument();
   });
 
   it("shows the empty state when the environments list resolves empty", async () => {

@@ -19,7 +19,7 @@ import { LineSkeleton } from "./bits";
  * Observability on/off for the agent, from its observability_enabled. A
  * refused change snaps back and says why.
  */
-export default function ObservabilityToggle({ agent }) {
+export default function ObservabilityToggle({ agent, isCode = false }) {
   const [override, setOverride] = useState(null);
   const [error, setError] = useState(null);
   const mutation = useSetObservability(agent.id);
@@ -45,9 +45,13 @@ export default function ObservabilityToggle({ agent }) {
     );
   };
 
-  const caption = checked
-    ? "Tracking this agent's calls and logs in Observe."
-    : "Turn on to track calls, monitor logs and debug this agent.";
+  const caption = isCode
+    ? checked
+      ? "Sending this agent's traces from simulation runs to Observe, prompts and replies included."
+      : "Turn on to send this agent's traces from simulation runs to Observe, prompts and replies included."
+    : checked
+      ? "Tracking this agent's calls and logs in Observe."
+      : "Turn on to track calls, monitor logs and debug this agent.";
 
   return (
     <Box
@@ -136,7 +140,10 @@ export default function ObservabilityToggle({ agent }) {
   );
 }
 
-ObservabilityToggle.propTypes = { agent: PropTypes.object.isRequired };
+ObservabilityToggle.propTypes = {
+  agent: PropTypes.object.isRequired,
+  isCode: PropTypes.bool,
+};
 
 /** The toggle's row while the agent loads: same box, label and height. */
 export function ObservabilityToggleSkeleton() {

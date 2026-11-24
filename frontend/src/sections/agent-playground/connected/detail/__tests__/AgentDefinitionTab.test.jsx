@@ -186,7 +186,7 @@ describe("AgentDefinitionTab", () => {
     ).toHaveAttribute("href", "/dashboard/observe/p-prod/llm-tracing");
   });
 
-  it("offers Link a project for an unlinked code agent, opening the setup drawer", async () => {
+  it("opens the tracing setup for a code agent with no tracing, with no switch or link", async () => {
     serve(
       CODE_AGENT_DETAIL,
       { [CODE_VERSION_DETAIL.id]: CODE_VERSION_DETAIL },
@@ -194,13 +194,49 @@ describe("AgentDefinitionTab", () => {
     );
     renderAt(CODE_AGENT_DETAIL);
     const row = await screen.findByTestId("observe-project-link");
+    expect(row).toHaveTextContent("Not traced");
+    expect(
+      screen.queryByRole("checkbox", { name: "Observability" }),
+    ).toBeNull();
+    expect(
+      within(row).queryByRole("button", { name: "Link a project" }),
+    ).toBeNull();
+    fireEvent.click(
+      within(row).getByRole("button", { name: "Set up tracing" }),
+    );
+    const drawer = await screen.findByRole("presentation");
+    expect(within(drawer).getByText("Set up tracing")).toBeInTheDocument();
+    expect(within(drawer).queryByLabelText("Observe project")).toBeNull();
+  });
+
+  it("lets a traced code agent link a project and switch observability on", async () => {
+    serve(
+      CODE_AGENT_DETAIL,
+      { [CODE_VERSION_DETAIL.id]: CODE_VERSION_DETAIL },
+      {
+        [CODE_VERSION_DETAIL.id]: {
+          ...STORED_AGENT,
+          agent: { ...STORED_AGENT.agent, instrumentation: "traceai" },
+        },
+      },
+    );
+    renderAt(CODE_AGENT_DETAIL);
+    const row = await screen.findByTestId("observe-project-link");
     expect(row).toHaveTextContent("Not linked");
+    expect(
+      await screen.findByText(
+        "Turn on to send this agent's traces from simulation runs to Observe, prompts and replies included.",
+      ),
+    ).toBeInTheDocument();
     fireEvent.click(
       within(row).getByRole("button", { name: "Link a project" }),
     );
     const drawer = await screen.findByRole("presentation");
     expect(
-      within(drawer).getByText("Connect production traces"),
+      within(drawer).getByText("Link an Observe project"),
+    ).toBeInTheDocument();
+    expect(
+      within(drawer).getByLabelText("Observe project"),
     ).toBeInTheDocument();
   });
 
@@ -222,7 +258,7 @@ describe("AgentDefinitionTab", () => {
     renderAt(CODE_AGENT_DETAIL);
     const row = await screen.findByTestId("observe-project-link");
     expect(
-      within(row).getByRole("button", { name: "Link a project" }),
+      within(row).getByRole("button", { name: "Set up tracing" }),
     ).toBeDisabled();
   });
 
