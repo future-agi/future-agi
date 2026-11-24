@@ -528,10 +528,12 @@ test("the run-time skip list is strict, and the committed one is what CI measure
       .filter((entry) => entry.stack === stack)
       .map((entry) => entry.id)
       .sort();
-  // Exact flow ids, ticketed, owned and expiring: the pager tests skip
-  // themselves in CI (TH-10597). The two Distributed-only tests are
-  // discovery-time skips on Standalone, so they need no entry.
-  assert.deepEqual(by("distributed"), ["OBS-E2E-031", "OBS-E2E-032"]);
+  // Exact flow ids, ticketed, owned and expiring (TH-10597). The pager tests
+  // ran and passed on Distributed (E2E CI run 45072697985), so they have no
+  // entry there; Standalone keeps its entries until a Standalone run shows
+  // the same. The two Distributed-only tests are discovery-time skips on
+  // Standalone, so they need no entry.
+  assert.deepEqual(by("distributed"), []);
   assert.deepEqual(by("standalone"), ["OBS-E2E-031", "OBS-E2E-032"]);
   for (const entry of committed) {
     assert.equal(entry.issue, "TH-10597");
@@ -735,47 +737,26 @@ test("e2e-ci.yml runs each shard's share, proves parity, and gates the merge on 
     "${{ !cancelled() && needs.changes.outputs.any == 'true' }}",
   );
   assert.deepEqual(jobs["e2e-tests"].needs, ["changes", "e2e", "report"]);
-  // A title or body edit, or a label other than e2e-standalone, is metadata:
-  // its run has no jobs and no "E2E Tests Pass" check.
-  const metadata =
-    "((github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) || (github.event.action == 'labeled' && github.event.label.name != 'e2e-standalone'))";
-  assert.equal(
-    jobs["e2e-tests"].name,
-    `\${{ ${metadata} && 'E2E metadata edit' || 'E2E Tests Pass' }}`,
-  );
-  assert.equal(jobs["e2e-tests"].if, `\${{ always() && !${metadata} }}`);
-  assert.equal(jobs.changes.if, `\${{ !${metadata} }}`);
-  assert.ok(
-    workflowText().includes(`${metadata} && github.run_id || 'candidate'`),
-  );
+  // Edits and labels start no run: a run would become this workflow's newest
+  // suite for the head commit and hide the required check (#4332). So the
+  // check's name and condition are fixed, and no job reads such an event.
+  assert.equal(jobs["e2e-tests"].name, "E2E Tests Pass");
+  assert.equal(jobs["e2e-tests"].if, "${{ always() }}");
+  assert.equal(jobs.changes.if, undefined);
   assert.deepEqual(workflow().on.pull_request.types, [
     "opened",
     "synchronize",
     "reopened",
-    "edited",
-    "labeled",
   ]);
-  // The same expressions, evaluated: only a real candidate event, or adding
-  // e2e-standalone, gets jobs and the protected check name.
-  const evaluate = (expression, event) =>
-    new Function("github", `return (${expression});`)({ event });
-  const name = jobs["e2e-tests"].name.slice(4, -3);
-  for (const [event, real] of [
-    [{ action: "opened", changes: {} }, true],
-    [{ action: "synchronize", changes: {} }, true],
-    [{ action: "edited", changes: { body: { from: "x" } } }, false],
-    [{ action: "edited", changes: { title: { from: "x" } } }, false],
-    [{ action: "edited", changes: { base: { ref: { from: "main" } }, body: {} } }, true],
-    [{ action: "labeled", changes: {}, label: { name: "e2e-standalone" } }, true],
-    [{ action: "labeled", changes: {}, label: { name: "general-factory" } }, false],
-  ]) {
-    assert.equal(!evaluate(metadata, event), real, JSON.stringify(event));
-    assert.equal(
-      evaluate(name, event),
-      real ? "E2E Tests Pass" : "E2E metadata edit",
-      JSON.stringify(event),
-    );
-  }
+  const text = workflowText();
+  for (const expression of [
+    "github.event.action",
+    "github.event.changes",
+    "github.event.label",
+    "metadata edit",
+  ])
+    assert.ok(!text.includes(expression), expression);
+  assert.match(workflow().concurrency.group, /-candidate$/);
 });
 
 test("the E2E gate passes only on a green suite with its report, or when nothing was needed", () => {

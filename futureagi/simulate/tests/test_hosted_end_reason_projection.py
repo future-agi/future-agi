@@ -1,3 +1,4 @@
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -126,14 +127,29 @@ def _apply_ungraded_receipt(call, failure):
     return call.call_metadata["harness_grading_error"]
 
 
-def test_an_errored_trial_is_not_called_a_grading_failure(projected_call):
-    message = _apply_ungraded_receipt(
-        projected_call,
-        {"code": "target_agent_stalled", "message": "the agent stopped responding"},
-    )
+@pytest.mark.parametrize(
+    ("code", "ending"),
+    [
+        ("target_agent_stalled", "The agent stopped responding during the trial."),
+        ("agent_exited_before_ready", "The agent stopped before it was ready."),
+        ("new_engine_code", "The trial ended before grading could finish."),
+        ({"reason": "stalled"}, "The trial ended before grading could finish."),
+        (["agent_exited_before_ready"], "The trial ended before grading could finish."),
+        (None, "The trial ended before grading could finish."),
+    ],
+)
+def test_ungraded_trial_explains_its_ending(projected_call, code, ending):
+    failure = {"message": "internal engine diagnostic"}
+    if code is not None:
+        failure["code"] = code
+    message = _apply_ungraded_receipt(projected_call, deepcopy(failure))
 
+    assert message.endswith(ending)
     assert "grading failure" not in message
-    assert "target_agent_stalled" in message
+    assert failure["message"] not in message
+    if code is not None:
+        assert str(code) not in message
+    assert projected_call.call_metadata["hosted_harness_receipt"]["failure"] == failure
 
 
 def test_a_completed_trial_with_missing_verdicts_is_a_grading_failure(

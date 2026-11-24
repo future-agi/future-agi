@@ -98,6 +98,10 @@ _DEGRADE_REASONS = {
     "conformance_gate_failed",
 }
 _TERMINAL_STAGES = {"completed", "failed", "canceled"}
+_TRIAL_FAILURE_COPY = {
+    "agent_exited_before_ready": "The agent stopped before it was ready.",
+    "target_agent_stalled": "The agent stopped responding during the trial.",
+}
 _ARTIFACT_KINDS = {
     "recording_combined",
     "recording_stereo",
@@ -986,6 +990,12 @@ def _apply_receipt_to_call(
     else:
         metadata["harness_grading_status"] = "failed"
         failure = body.get("failure") or {}
+        ending = "This is a grading failure, not an agent failure."
+        if failure:
+            ending = "The trial ended before grading could finish."
+            code = failure.get("code")
+            if isinstance(code, str):
+                ending = _TRIAL_FAILURE_COPY.get(code, ending)
         metadata["harness_grading_error"] = (
             "Required evaluation coverage was incomplete "
             f"({coverage['executed']}/{coverage['expected']} executed"
@@ -994,12 +1004,7 @@ def _apply_receipt_to_call(
                 if coverage.get("unmeasured")
                 else ""
             )
-            + "). "
-            + (
-                f"The trial ended with {failure.get('code') or failure.get('message')}."
-                if failure
-                else "This is a grading failure, not an agent failure."
-            )
+            + f"). {ending}"
         )
     update_fields = [
         "status",
