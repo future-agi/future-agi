@@ -683,7 +683,11 @@ class AgentFixLaunchLimitsSerializer(serializers.Serializer):
 class AgentFixLaunchOptionsSerializer(serializers.Serializer):
     source_run = AgentFixLaunchSourceRunSerializer()
     environment = AgentFixLaunchEnvironmentSerializer()
-    agent = AgentFixAgentSerializer()
+    agent = AgentFixAgentSerializer(
+        allow_null=True,
+        help_text="Null when neither the run nor its environment has an agent version;"
+        " blocked then says what to do.",
+    )
     scenarios = AgentFixLaunchScenarioSerializer(many=True)
     suggested = AgentFixLaunchSuggestedSerializer()
     surfaces = AgentFixLaunchSurfaceSerializer(many=True)

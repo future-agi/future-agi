@@ -36,6 +36,7 @@ from simulate.pydantic_schemas.agent_fix_issue import (
 )
 from simulate.selectors.agent_fix import (
     DEFAULT_BUDGET_CREDITS,
+    agent_blocker,
     environment_state_blocker,
     fix_lineage,
     fix_winner,
@@ -46,12 +47,7 @@ from simulate.selectors.agent_fix import (
     unsaved_changes,
 )
 from simulate.selectors.evidence_import import import_bundle
-from simulate.services.agent_fix_agents import (
-    agent_kind,
-    not_editable,
-    pickable_environments,
-    pickable_kind,
-)
+from simulate.services.agent_fix_agents import agent_kind, pickable_environments
 from simulate.services.harness_environment import environment_name
 from simulate.services.harness_versioning import drafts
 from simulate.services.hosted_harness import HostedHarnessError
@@ -105,14 +101,7 @@ def environment_blocker(environment: HostedHarnessJob) -> HostedHarnessError | N
     can. In launch_blocker's order: an agent Epoch can change, on a deployment that can
     change it, then the environment built and idle, and no unsaved changes for the
     builder to draft over."""
-    kind = pickable_kind(environment)
-    if kind is None:
-        return not_editable()
-    try:
-        kind.require_available()
-    except HostedHarnessError as exc:
-        return exc
-    if blocked := environment_state_blocker(environment):
+    if blocked := agent_blocker(environment) or environment_state_blocker(environment):
         return blocked
     if not drafts.drafts_apply(environment):
         return HostedHarnessError(

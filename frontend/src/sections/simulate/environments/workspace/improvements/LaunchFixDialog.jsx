@@ -130,7 +130,7 @@ export default function LaunchFixDialog({
     ? [blocker.message, blockerHint(blocker.code)].filter(Boolean).join(" ")
     : null;
   const next = blocker ? blockerAction(blocker.code, envId) : null;
-  const variations = variationsNote(targets.length, limits, agent.kind);
+  const variations = variationsNote(targets.length, limits, agent?.kind);
   const heldBack = heldBackOf(options, targets);
   const nameOf = (key) =>
     options.scenarios.find((one) => one.key === key)?.name || key;
@@ -139,14 +139,16 @@ export default function LaunchFixDialog({
     ? blockerAction(ship.blocked.code, envId)
     : null;
   const startDisabled = !!blockedReason || !!error || launch.isPending;
-  const agentLine = [
-    `${agent.name} · agent v${agent.version_number}`,
-    agent.ref,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  // No agent when neither the run nor its environment has an agent version: the
+  // refusal says what to do, and there is no version to name.
+  const agentName = agent?.name ?? "this agent";
+  const agentLine = agent
+    ? [`${agent.name} · agent v${agent.version_number}`, agent.ref]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
   const identity =
-    environment.version == null
+    agentLine == null || environment.version == null
       ? agentLine
       : `${agentLine} × environment v${environment.version}`;
 
@@ -199,9 +201,9 @@ export default function LaunchFixDialog({
             <Typography
               id="launch-fix-title"
               sx={{ typography: "s1", fontWeight: 600 }}
-            >{`Run Epoch on ${agent.name}`}</Typography>
+            >{`Run Epoch on ${agentName}`}</Typography>
             <Typography sx={{ typography: "s3", color: "text.subtitle" }}>
-              {`Searches for a better ${agent.name}, scored by this environment`}
+              {`Searches for a better ${agentName}, scored by this environment`}
             </Typography>
           </Box>
         </Stack>
@@ -218,9 +220,11 @@ export default function LaunchFixDialog({
             })}
           </Typography>
           <Box>
-            <Row k="Agent">
-              <Typography sx={{ typography: "s2" }}>{identity}</Typography>
-            </Row>
+            {identity ? (
+              <Row k="Agent">
+                <Typography sx={{ typography: "s2" }}>{identity}</Typography>
+              </Row>
+            ) : null}
             <Row k="Runs in">
               <Typography sx={{ typography: "s2" }}>
                 {environment.name}

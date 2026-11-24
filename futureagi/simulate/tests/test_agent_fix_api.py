@@ -1301,6 +1301,46 @@ class TestUserApi:
             "fix_run_active",
         )
 
+    @pytest.mark.parametrize(
+        ("agent", "code"),
+        [
+            # Made before agent versions were kept: neither it nor its run has one.
+            ("unversioned", "environment_agent_unversioned"),
+            ("provider", "fix_agent_not_editable"),
+        ],
+    )
+    def test_a_run_epoch_cannot_start_from_says_why_on_the_form_and_the_launch(
+        self, auth_client, environment, source_run, agent, code
+    ):
+        if agent == "unversioned":
+            HostedHarnessJob.no_workspace_objects.filter(
+                id__in=[environment.id, source_run.id]
+            ).update(agent_version=None)
+            HostedHarnessJob.no_workspace_objects.filter(id=environment.id).update(
+                payload={**environment.payload, "source": {"kind": "github"}}
+            )
+        else:
+            HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                agent_version_id=source_run.agent_version_id
+            ).update(source_kind="provider")
+
+        response = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        )
+        launched = auth_client.post(f"{BASE}/", _launch_body(source_run), format="json")
+
+        assert response.status_code == 200, response.content
+        options = response.json()
+        # The variations' check says the same as the launch's.
+        assert (options["blocked"]["code"], options["variations_blocked"]["code"]) == (
+            code,
+            code,
+        )
+        assert options["ship"] is None
+        assert (options["agent"] is None) == (agent == "unversioned")
+        assert (launched.status_code, launched.json()["error"]) == (422, code)
+
     def test_launch_options_hold_back_what_the_launch_holds_back(
         self, auth_client, source_run
     ):

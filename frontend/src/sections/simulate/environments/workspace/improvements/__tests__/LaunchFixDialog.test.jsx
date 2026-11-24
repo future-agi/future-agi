@@ -392,6 +392,34 @@ describe("LaunchFixDialog", () => {
     expect(screen.queryByText("Ships as")).toBeNull();
   });
 
+  it("says a run with no agent version needs a new environment, and names no version", async () => {
+    // As the server answers: no agent to name, nothing to ship, and the refusal.
+    const refusal = {
+      code: "environment_agent_unversioned",
+      message: "This environment has no saved version of its agent.",
+    };
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      agent: null,
+      blocked: refusal,
+      variations_blocked: refusal,
+      ship: null,
+    });
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "This environment has no saved version of its agent.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Run Epoch on this agent")).toBeInTheDocument();
+    expect(screen.queryByText("Agent")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
+    await userEvent.click(screen.getByTestId("epoch-blocker-action"));
+    expect(navigate).toHaveBeenCalledWith(
+      paths.dashboard.simulate.environments.root,
+    );
+  });
+
   it("offers no draft link when the variations are not needed", async () => {
     const base = fixtureLaunchOptions("te-run-6");
     pinOptions({

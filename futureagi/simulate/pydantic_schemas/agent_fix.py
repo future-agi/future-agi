@@ -490,7 +490,8 @@ class LaunchOptions(BaseModel):
 
     source_run: LaunchSourceRun
     environment: LaunchEnvironment
-    agent: AgentIdentity
+    # None when neither the run nor its environment has an agent version.
+    agent: AgentIdentity | None
     scenarios: list[LaunchScenario]
     suggested: LaunchSuggested
     surfaces: list[LaunchSurface]

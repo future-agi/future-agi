@@ -86,7 +86,12 @@ from simulate.pydantic_schemas.agent_fix import (
 )
 from simulate.selectors.evidence_import import evidence_origins
 from simulate.selectors.runs import user_executions
-from simulate.services.agent_fix_agents import AgentKind, agent_kind
+from simulate.services.agent_fix_agents import (
+    AgentKind,
+    agent_kind,
+    not_editable,
+    pickable_kind,
+)
 from simulate.services.harness_environment import environment_name
 from simulate.services.harness_evals import (
     runnable_eval_config_ids,
@@ -1412,10 +1417,10 @@ def launch_blocker(
             "This run is still going. Run an epoch once it finishes.",
             status_code=409,
         )
-    try:
-        agent_kind(source_run.environment).require_available()
-    except HostedHarnessError as exc:
-        return exc
+    if blocked := agent_blocker(source_run.environment) or unversioned_blocker(
+        source_run.environment
+    ):
+        return blocked
     if AgentFixRun.no_workspace_objects.filter(
         environment=source_run.environment, state__in=AgentFixRun.ACTIVE_STATES
     ).exists():
@@ -1492,6 +1497,36 @@ def split_held_back(
     return held
 
 
+def agent_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
+    """Why Epoch can't change the environment's agent here, checked first on every way
+    an epoch starts: an agent no kind can change, then a deployment that can't change it.
+    Read without the agent version, which unversioned_blocker asks for."""
+    kind = pickable_kind(environment)
+    if kind is None:
+        return not_editable()
+    try:
+        kind.require_available()
+    except HostedHarnessError as exc:
+        return exc
+    return None
+
+
+def unversioned_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
+    """An environment with no agent version (made before they were kept, or its version
+    was deleted) has none for an epoch to change, and every later step works on it. More
+    scenarios may pin one, but no later chat, edit or extend saves the first environment
+    versions drafting needs; a new environment's build makes both."""
+    if environment.agent_version_id is not None:
+        return None
+    return HostedHarnessError(
+        "environment_agent_unversioned",
+        "This environment has no saved version of its agent, so Epoch can't change"
+        " it. Build a new environment from the same upload or GitHub repository,"
+        " then Run Epoch there.",
+        status_code=422,
+    )
+
+
 def environment_state_blocker(
     environment: HostedHarnessJob,
 ) -> HostedHarnessError | None:
@@ -1500,10 +1535,8 @@ def environment_state_blocker(
     its versions: before that its build is running or did not finish, and after it an
     update (a rebuild, more scenarios, or a re-run of its calls) is. More scenarios run
     the environment again, so its state says so; a settled environment's leftover
-    ``scenario_extend`` marker is not an update. A settled environment with no agent
-    version (made before they were kept, or its version was deleted) has none for an
-    epoch to change. More scenarios may pin one, but no later chat, edit or extend saves
-    the first environment versions drafting needs; a new environment's build makes both."""
+    ``scenario_extend`` marker is not an update. A settled one with no agent version
+    answers unversioned_blocker."""
     from simulate.services.harness_versioning import drafts
 
     built = environment.environment_version_id is not None
@@ -1531,14 +1564,8 @@ def environment_state_blocker(
             " it again, then Run Epoch.",
             status_code=409,
         )
-    if environment.agent_version_id is None:
-        return HostedHarnessError(
-            "environment_agent_unversioned",
-            "This environment has no saved version of its agent, so Epoch can't change"
-            " it. Build a new environment from the same upload or GitHub repository,"
-            " then Run Epoch there.",
-            status_code=422,
-        )
+    if blocked := unversioned_blocker(environment):
+        return blocked
     if not built:
         # Built before versions were saved: the checks after this one say why.
         return None
@@ -1703,6 +1730,10 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
         return HostedHarnessError(
             "fix_source_not_a_run", "Epoch starts from a run", status_code=422
         )
+    # As launch_blocker says it: a run on an environment with no agent version is
+    # unpinned too, and running it again would not change that.
+    if blocked := agent_blocker(environment) or unversioned_blocker(environment):
+        return blocked
     if source_run.suite_version_id is None or source_run.environment_version_id is None:
         return HostedHarnessError(
             "fix_variations_unpinned",
@@ -1803,9 +1834,14 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         if kind
         else source_run.agent_version_id or environment.agent_version_id
     )
-    version = AgentVersion.no_workspace_objects.select_related(
-        "agent_definition", "harness_runtime"
-    ).get(id=version_id)
+    # None with no agent version on the run or its environment: launch_blocker says so.
+    version = (
+        AgentVersion.no_workspace_objects.select_related(
+            "agent_definition", "harness_runtime"
+        )
+        .filter(id=version_id)
+        .first()
+    )
     scenarios = scenario_results(source_run)
     # A scenario an evidence import added offers Run Epoch from that evidence.
     origins = (
@@ -1863,7 +1899,7 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
             name=environment_name(environment),
             version=environment_version.version_number if environment_version else None,
         ),
-        agent=agent_identity(version),
+        agent=agent_identity(version) if version else None,
         scenarios=scenarios,
         suggested=LaunchSuggested(
             target_scenario_keys=[
