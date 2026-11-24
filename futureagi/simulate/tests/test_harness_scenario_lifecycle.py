@@ -1799,6 +1799,18 @@ def test_every_reason_a_proof_gives_renders_with_nothing_left_blank(
     )
     assert "control_misses_case_goal" in plan.held
     assert plan.view["held_back"]["by"]["proof_failed"] >= 1
+    # Each held case reads its own reason, never the others' under the same row.
+    own = plan.view["held_back"]["reason_by_key"]
+    assert (
+        own["control_misses_case_goal"]
+        == views["control_misses_case_goal"]["reason_text"]
+    )
+    assert own["tool_not_on_agent"] == views["tool_not_on_agent"]["reason_text"]
+    # The run preview's selection lists them the same way.
+    preview = selection.selection_report(
+        resolve_pairing(environment), keys=list(entries), trials=1
+    )
+    assert preview["selection"]["held_back"]["reason_by_key"] == own
     # A proof that names no goal still reads as a whole sentence.
     from simulate.services.harness_scenario_lifecycle import reason_text
 
@@ -1889,3 +1901,57 @@ def test_a_case_its_validation_did_not_finish_is_held_back_in_words_true_of_any_
 
     assert (view["state"], view["reason"]) == ("draft", "validation_incomplete")
     assert view["reason_text"] == "Validation did not finish this case; validate again."
+
+
+def test_every_reason_a_case_can_be_held_for_names_who_holds_it():
+    import ast
+    import inspect
+
+    from simulate.services import harness_scenario_lifecycle as lifecycle
+
+    # Every code with words, and every code this module writes as a reason, is classified, so a new one fails here.
+    tree = ast.parse(inspect.getsource(lifecycle))
+    written = {
+        node.value.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.keyword)
+        and node.arg == "reason"
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    } | {
+        node.args[1].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", "") == "_demote"
+        and isinstance(node.args[1], ast.Constant)
+    }
+    assert written and written <= set(lifecycle.HELD_BY)
+    assert set(lifecycle.ENDING_REASONS.values()) <= set(lifecycle.HELD_BY)
+    assert set(lifecycle.REASON_TEXTS) == set(lifecycle.HELD_BY)
+    assert lifecycle.UNREAD_REASONS <= {
+        code for code, who in lifecycle.HELD_BY.items() if who == "ours"
+    }
+
+
+@pytest.mark.parametrize(
+    ("reason", "held_by"),
+    [
+        ("proofs_unread", "ours"),
+        ("tools_unread", "ours"),
+        ("validation_unavailable", "ours"),
+        ("not_validated", "unproved"),
+        ("apply_failed", "unproved"),
+        ("tool_not_on_agent", "unproved"),
+        ("not_solvable", "proof_failed"),
+        ("archived", None),
+        (None, None),
+    ],
+)
+def test_a_case_s_view_says_who_holds_it(reason, held_by):
+    from simulate.services.harness_scenario_lifecycle import _demote, _view
+
+    assert _view("draft", reason=reason)["held_by"] == held_by
+    view = _view("active")
+    if reason is not None:
+        _demote(view, reason, "why")
+        assert view["held_by"] == held_by

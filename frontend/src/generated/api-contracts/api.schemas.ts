@@ -22783,7 +22783,7 @@ export const HarnessCapabilitySelectionCountsApiNext = {
 export type HarnessRunHeldBackApiNames = { [key: string]: string };
 
 /**
- * Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).
+ * Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).
  */
 export type HarnessRunHeldBackApiBy = { [key: string]: number };
 
@@ -22792,6 +22792,11 @@ export type HarnessRunHeldBackApiBy = { [key: string]: number };
  */
 export type HarnessRunHeldBackApiByKey = { [key: string]: string };
 
+/**
+ * Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`.
+ */
+export type HarnessRunHeldBackApiReasonByKey = { [key: string]: string };
+
 export interface HarnessRunHeldBackApi {
   /** @minimum 0 */
   count: number;
@@ -22799,10 +22804,12 @@ export interface HarnessRunHeldBackApi {
   truncated: boolean;
   /** Each listed case's current name, by its key; a case without one is shown by its key. */
   names: HarnessRunHeldBackApiNames;
-  /** Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now). */
+  /** Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and unreadable for a case whose cited seed records could not be read just now). */
   by: HarnessRunHeldBackApiBy;
   /** The row each listed case is counted under in `by`, by its key; its words are in `reasons`. */
   by_key?: HarnessRunHeldBackApiByKey;
+  /** Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`. */
+  reason_by_key?: HarnessRunHeldBackApiReasonByKey;
 }
 
 /**
@@ -24317,6 +24324,18 @@ export const HarnessScenarioLifecycleApiState = {
   archived: "archived",
 } as const;
 
+/**
+ * Who holds it back, by its reason: ours (something on our side could not be read, or validation could not finish or run; try again), unproved (not checked on these versions yet), proof_failed (its proof found something wrong with the case). Null when nothing holds it, or it is archived.
+ */
+export type HarnessScenarioLifecycleApiHeldBy =
+  (typeof HarnessScenarioLifecycleApiHeldBy)[keyof typeof HarnessScenarioLifecycleApiHeldBy];
+
+export const HarnessScenarioLifecycleApiHeldBy = {
+  ours: "ours",
+  unproved: "unproved",
+  proof_failed: "proof_failed",
+} as const;
+
 export interface HarnessProofControlApi {
   /** @minLength 1 */
   name: string;
@@ -24401,6 +24420,8 @@ export interface HarnessScenarioLifecycleApi {
    * @minLength 1
    */
   reason: string;
+  /** Who holds it back, by its reason: ours (something on our side could not be read, or validation could not finish or run; try again), unproved (not checked on these versions yet), proof_failed (its proof found something wrong with the case). Null when nothing holds it, or it is archived. */
+  held_by: HarnessScenarioLifecycleApiHeldBy;
   /** @minLength 1 */
   reason_text: string;
   /** @minLength 1 */

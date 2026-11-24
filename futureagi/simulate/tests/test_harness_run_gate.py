@@ -318,3 +318,35 @@ def test_no_next_step_while_some_cases_run_or_no_check_can(user, workspace, stor
         assert _preview_next(environment, REFUND_KEYS) is None
     with patch.object(validation, "live_check", return_value=object()):
         assert _preview_next(environment, REFUND_KEYS) is None
+
+
+def test_a_released_case_leaves_no_reason_of_its_own_in_the_held_back_list():
+    from simulate.services.harness_readiness.selection import NOT_VALIDATED_ROW
+    from simulate.services.hosted_harness import _released_view
+
+    view = {
+        "requested": 3,
+        "running": 1,
+        "held_back": {
+            "count": 2,
+            "keys": ["refund", "late"],
+            "truncated": False,
+            "names": {},
+            "by": {NOT_VALIDATED_ROW: 2},
+            "by_key": {"refund": NOT_VALIDATED_ROW, "late": NOT_VALIDATED_ROW},
+            "reason_by_key": {
+                "refund": "Not validated on these versions yet.",
+                "late": "Validation did not finish this case; validate again.",
+            },
+        },
+        "reasons": {NOT_VALIDATED_ROW: "Not validated on these versions yet."},
+    }
+
+    one = _released_view(view, frozenset({"refund", "late"}), {"refund"})
+    both = _released_view(view, frozenset({"refund", "late"}), {"refund", "late"})
+
+    assert one["held_back"]["keys"] == ["late"]
+    assert one["held_back"]["reason_by_key"] == {
+        "late": "Validation did not finish this case; validate again."
+    }
+    assert "reason_by_key" not in both["held_back"]

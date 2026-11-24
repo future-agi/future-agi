@@ -988,7 +988,7 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
         child=serializers.IntegerField(min_value=0),
         help_text=(
             "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, "
-            "no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and "
+            "no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and "
             "unreadable for a case whose cited seed records could not be read just now)."
         ),
     )
@@ -996,6 +996,14 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
         child=serializers.CharField(),
         required=False,
         help_text="The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+    )
+    reason_by_key = serializers.DictField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof"
+            " failed, archived, seed records unread): show it for that case instead of the row's `reasons`."
+        ),
     )
 
 

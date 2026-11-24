@@ -239,12 +239,14 @@ def validation_state(
     if state == "failed" and bundle is not None:
         # Imported here: readiness reaches the drafts, which import this module.
         from simulate.services.harness_readiness.rules import failed_actions
+        from simulate.services.harness_versioning.validation import failed_reason
 
         error = bundle.error if isinstance(bundle.error, dict) else {}
         failed = [dict(one) for one in failed_actions(bundle)]
         body["error"] = FailedValidation(
             code=str(error.get("code") or ""),
-            message=str(error.get("message") or ""),
+            # In plain words, as readiness shows it: the sandbox's own text stays on the stored bundle.
+            message=failed_reason({**error, "failed_actions": failed}),
             failed_actions=failed,
         )
         body["affected_scenarios"] = _affected_scenarios(

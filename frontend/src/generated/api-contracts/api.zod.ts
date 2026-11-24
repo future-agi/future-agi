@@ -47753,13 +47753,19 @@ export const SimulateApiHarnessEnvironmentsCapabilitiesResponse = zod.object({
             ),
         )
         .describe(
-          "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
+          "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
         ),
       by_key: zod
         .record(zod.string(), zod.string().min(1))
         .optional()
         .describe(
           "The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+        ),
+      reason_by_key: zod
+        .record(zod.string(), zod.string().min(1))
+        .optional()
+        .describe(
+          "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`.",
         ),
     }),
     reasons: zod
@@ -48354,13 +48360,19 @@ export const SimulateApiHarnessEnvironmentsSelectCapabilitiesResponse =
               ),
           )
           .describe(
-            "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
+            "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
           ),
         by_key: zod
           .record(zod.string(), zod.string().min(1))
           .optional()
           .describe(
             "The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+          ),
+        reason_by_key: zod
+          .record(zod.string(), zod.string().min(1))
+          .optional()
+          .describe(
+            "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`.",
           ),
       }),
       reasons: zod
@@ -53898,6 +53910,11 @@ export const SimulateApiHarnessEnvironmentsArchiveScenarioResponse = zod.object(
         .describe(
           "Why it is in this state, as a code; null when nothing holds it.",
         ),
+      held_by: zod
+        .enum(["ours", "unproved", "proof_failed"])
+        .describe(
+          "Who holds it back, by its reason: ours (something on our side could not be read, or validation could not finish or run; try again), unproved (not checked on these versions yet), proof_failed (its proof found something wrong with the case). Null when nothing holds it, or it is archived.",
+        ),
       reason_text: zod.string().min(1),
       warning: zod.string().min(1),
       warning_text: zod.string().min(1),
@@ -54052,6 +54069,11 @@ export const SimulateApiHarnessEnvironmentsRestoreScenarioResponse = zod.object(
         .describe(
           "Why it is in this state, as a code; null when nothing holds it.",
         ),
+      held_by: zod
+        .enum(["ours", "unproved", "proof_failed"])
+        .describe(
+          "Who holds it back, by its reason: ours (something on our side could not be read, or validation could not finish or run; try again), unproved (not checked on these versions yet), proof_failed (its proof found something wrong with the case). Null when nothing holds it, or it is archived.",
+        ),
       reason_text: zod.string().min(1),
       warning: zod.string().min(1),
       warning_text: zod.string().min(1),
@@ -54186,6 +54208,11 @@ export const SimulateApiHarnessEnvironmentsScenarioRevisionsResponse =
             .min(1)
             .describe(
               "Why it is in this state, as a code; null when nothing holds it.",
+            ),
+          held_by: zod
+            .enum(["ours", "unproved", "proof_failed"])
+            .describe(
+              "Who holds it back, by its reason: ours (something on our side could not be read, or validation could not finish or run; try again), unproved (not checked on these versions yet), proof_failed (its proof found something wrong with the case). Null when nothing holds it, or it is archived.",
             ),
           reason_text: zod.string().min(1),
           warning: zod.string().min(1),
@@ -57948,6 +57975,11 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
             .min(1)
             .describe(
               "Why it is in this state, as a code; null when nothing holds it.",
+            ),
+          held_by: zod
+            .enum(["ours", "unproved", "proof_failed"])
+            .describe(
+              "Who holds it back, by its reason: ours (something on our side could not be read, or validation could not finish or run; try again), unproved (not checked on these versions yet), proof_failed (its proof found something wrong with the case). Null when nothing holds it, or it is archived.",
             ),
           reason_text: zod.string().min(1),
           warning: zod.string().min(1),
@@ -71138,13 +71170,19 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
                 ),
             )
             .describe(
-              "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
+              "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and unreadable for a case whose cited seed records could not be read just now).",
             ),
           by_key: zod
             .record(zod.string(), zod.string().min(1))
             .optional()
             .describe(
               "The row each listed case is counted under in `by`, by its key; its words are in `reasons`.",
+            ),
+          reason_by_key: zod
+            .record(zod.string(), zod.string().min(1))
+            .optional()
+            .describe(
+              "Each listed case's own reason, by its key, where its lifecycle gives one (not validated, not active, proof failed, archived, seed records unread): show it for that case instead of the row's `reasons`.",
             ),
         }),
         reasons: zod

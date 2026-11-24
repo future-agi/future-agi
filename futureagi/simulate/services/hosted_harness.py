@@ -1125,6 +1125,13 @@ def _released_view(
         "reasons": reasons,
         "validation": "not_enforced",
     }
+    released_view["held_back"].pop("reason_by_key", None)
+    if own := {
+        key: text
+        for key, text in view["held_back"].get("reason_by_key", {}).items()
+        if key not in freed
+    }:
+        released_view["held_back"]["reason_by_key"] = own
     return released_view
 
 

@@ -1118,6 +1118,15 @@ class HarnessScenarioLifecycleSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Why it is in this state, as a code; null when nothing holds it.",
     )
+    held_by = serializers.ChoiceField(
+        choices=("ours", "unproved", "proof_failed"),
+        allow_null=True,
+        help_text=(
+            "Who holds it back, by its reason: ours (something on our side could not be read, or validation could not"
+            " finish or run; try again), unproved (not checked on these versions yet), proof_failed (its proof found"
+            " something wrong with the case). Null when nothing holds it, or it is archived."
+        ),
+    )
     reason_text = serializers.CharField(allow_null=True)
     warning = serializers.CharField(allow_null=True)
     warning_text = serializers.CharField(allow_null=True)

@@ -86,6 +86,56 @@ REASON_TEXTS = {
     "validation_failed": "The last validation of these versions failed: {failure}.",
     "validation_ended_on_our_side": "The last validation of these versions did not finish: {failure}.",
 }
+# Who holds a case back, by its reason: our side (something could not be read, or validation could not finish or run),
+# a check that has not been made on these versions yet, or a proof that found something wrong with the case. Every
+# reason in REASON_TEXTS is here; an archived case is not held, so it names no one.
+HELD_BY: dict[str, Literal["ours", "unproved", "proof_failed"] | None] = {
+    **dict.fromkeys(
+        (
+            "seed_records_unread",
+            "storage_unreadable",
+            "proofs_unread",
+            "validation_incomplete",
+            "validation_ended_on_our_side",
+            "tools_unread",
+            "validation_unavailable",
+        ),
+        "ours",
+    ),
+    **dict.fromkeys(
+        (
+            "not_validated",
+            "in_draft",
+            "proved_on_other_agent",
+            "validation_failed",
+            "apply_failed",
+            "not_active",
+            "tool_not_on_agent",
+        ),
+        "unproved",
+    ),
+    **dict.fromkeys(
+        (
+            "not_ready",
+            "not_solvable",
+            "vacuous",
+            "broken_check",
+            "weak_check",
+            "credits_failed_attempt",
+            "too_strict",
+            "unchecked",
+            "no_negative_control",
+            "control_misses_case_goal",
+            "broken_join",
+            "negative_control_passed",
+            "answer_leaked",
+            "source_unresolved",
+            "policy_conflict",
+        ),
+        "proof_failed",
+    ),
+    "archived": None,
+}
 # A failed validation's ending, as `check_ending` reads it, by the reason its unproved cases give.
 ENDING_REASONS = {
     "failed": "validation_failed",
@@ -179,6 +229,8 @@ class ProofSummary(TypedDict):
 class LifecycleView(TypedDict):
     state: LifecycleState
     reason: str | None
+    # Who holds it back, by its reason (`HELD_BY`); None when nothing does.
+    held_by: Literal["ours", "unproved", "proof_failed"] | None
     reason_text: str | None
     warning: str | None
     warning_text: str | None
@@ -354,6 +406,7 @@ def _view(
     return LifecycleView(
         state=state,
         reason=reason,
+        held_by=HELD_BY.get(reason) if reason else None,
         reason_text=reason_text(reason, entry, **(reason_extra or {})),
         warning=warning,
         warning_text=warning_text(warning, entry),
@@ -821,6 +874,7 @@ def _demote(view: LifecycleView, reason: str, text: str | None) -> None:
     """A case its proof would run, held back as Draft for a reason found after the proof."""
     view["state"] = "draft"
     view["reason"] = reason
+    view["held_by"] = HELD_BY.get(reason)
     view["reason_text"] = text
     view["warning"] = None
     view["warning_text"] = None

@@ -1567,3 +1567,44 @@ def test_a_case_beside_a_tool_row_s_targets_keeps_what_its_evidence_says(
     )
 
     assert selection._status_for(row, lookup) == expected
+
+
+def test_each_held_case_carries_its_own_reason_never_the_others_under_its_row():
+    from types import SimpleNamespace
+
+    from simulate.services.harness_readiness.selection import (
+        NOT_VALIDATED_ROW,
+        _held_back,
+        _held_list,
+        _held_rows,
+        _own_reasons,
+    )
+
+    def held(key, reason):
+        return SimpleNamespace(
+            case=SimpleNamespace(key=key, name=""),
+            bucket="blocked",
+            by=[NOT_VALIDATED_ROW],
+            lifecycle_reason=reason,
+            hold=SimpleNamespace(held=False, reason=None),
+        )
+
+    placement = SimpleNamespace(
+        placed=[
+            held("refund", "Its checks pass when the agent does nothing."),
+            held("late", "Validation did not finish this case; validate again."),
+            held("plain", None),
+        ],
+        dropped=[],
+    )
+
+    keys, by, reasons = _held_back(placement, [], [])
+    listed = _held_list(keys, {}, _held_rows(placement), _own_reasons(placement))
+
+    assert listed["reason_by_key"] == {
+        "refund": "Its checks pass when the agent does nothing.",
+        "late": "Validation did not finish this case; validate again.",
+    }
+    # The row keeps its label and count; each case reads its own reason.
+    assert by[NOT_VALIDATED_ROW] == 3
+    assert set(listed["by_key"].values()) == {NOT_VALIDATED_ROW}
