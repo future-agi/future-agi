@@ -306,7 +306,7 @@ def selection_report(
     not_gradable = [one.gradable for one in placed if one.gradable is not None]
     rows: list[SelectionRowView] = []
     for row in report["rows"]:
-        held = [one.case.key for one in placed if row["id"] in one.held_by]
+        held = _row_holds(row, placed)
         rows.append(
             {
                 **row,
@@ -392,6 +392,16 @@ def _worker_keys(hold: CaseHold) -> list[str]:
     return [f"worker:{one}" for one in hold.unheld or ()] or [WORKER_LIMITS_HELD]
 
 
+def _row_holds(row: Any, placed: list[Placed]) -> list[str]:
+    """The selected cases a row holds back: a blocked row the cases it blocks, never one it only reads stale or
+    untested for; any other row every case it holds."""
+    if row["status"] == "blocked":
+        return [
+            one.case.key for one in placed if one.bucket == "blocked" and row["id"] in one.by
+        ]
+    return [one.case.key for one in placed if row["id"] in one.held_by]
+
+
 def _held_by(
     rows: list[SelectionRowView],
     workers: list[WorkerBoundaryView],
@@ -407,21 +417,17 @@ def _held_by(
     )
     reasons = _worker_reasons(placed, workers)
     names = {f"worker:{one['worker_id']}": one["name"] for one in workers}
-    # The cases each blocked row holds back: a case it only reads stale or untested for runs, or is held by another.
-    blocking = Counter(
-        row for one in placed if one.bucket == "blocked" for row in set(one.by)
-    )
     held: list[HeldBy] = [
         {
             "id": row["id"],
             "name": row["label"],
             "area": row["area"],
-            "count": blocking[row["id"]],
+            "count": row["affected"]["count"],
             "reason": row["reason"],
             "text": row["reason"] or row["label"],
         }
         for row in rows
-        if row["status"] == "blocked" and blocking[row["id"]] > 0
+        if row["status"] == "blocked" and row["affected"]["count"] > 0
     ]
     held += [
         {
@@ -578,6 +584,8 @@ def _held_back(
     # Each case counts once, under its own lifecycle reason when it has one, else the first row holding it, so the
     # counts add up to the cases held back.
     primary = _held_rows(placement)
+    # A case held only until it is validated comes after one held for something to fix, so the list leads with those.
+    held.sort(key=lambda key: primary.get(key) == NOT_VALIDATED_ROW)
     by = Counter(primary.values())
     reasons = {
         row["id"]: row["reason"] or row["label"] for row in rows if row["id"] in by
