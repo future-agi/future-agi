@@ -1,11 +1,11 @@
-import { request, type APIRequestContext, type Page } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
+import { newBackendRequest } from '../../lib/backend-request';
 import { test, expect } from '../../lib/fixtures';
 import type { TestActor } from '../../lib/provisioning';
 import { sendTrace, type SeededTrace } from '../../lib/otlp';
 import { POLL, type StateProbe } from '../../lib/state-probe';
 import { E2E } from '../../lib/env';
 import { flowAnnotation } from '../../lib/flow-meta';
-
 // tracer/serializers/project.py ProjectSerializer; LLMTracingView renders the
 // CallLogsGrid only for source=simulator, not for an OTLP-created prototype.
 const PROJECT = '/tracer/project/';
@@ -119,7 +119,7 @@ test('OBS-E2E-012: an unreachable recording shows an error, not an endless loade
   }),
 }, async ({ page, actor, probe }, testInfo) => {
   test.setTimeout(300_000); // 30s setup + 15s ingestion + 4*60s UI/API + 15s headroom.
-  const req = await request.newContext();
+  const req = await newBackendRequest();
   try {
     const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
     const projectName = `e2e-voice-err-${suffix}`, callId = `e2e-voice-err-call-${suffix}`;
@@ -171,7 +171,7 @@ test('OBS-E2E-013: a voice call with no recording says so', {
   }),
 }, async ({ page, actor, probe }, testInfo) => {
   test.setTimeout(300_000); // Same ingestion/UI budgets as OBS-E2E-012; no retries.
-  const req = await request.newContext();
+  const req = await newBackendRequest();
   try {
     const suffix = `${testInfo.workerIndex}-${Date.now().toString(36)}`;
     const projectName = `e2e-voice-none-${suffix}`, callId = `e2e-voice-none-call-${suffix}`;
