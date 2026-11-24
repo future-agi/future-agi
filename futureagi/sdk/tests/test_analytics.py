@@ -1761,6 +1761,49 @@ class TestAdditionalCoverage:
         assert result["eval_explanation_summary"] == {"summary": "test summary data"}
         assert result["eval_explanation_summary_status"] == "completed"
 
+    @pytest.mark.parametrize(
+        ("summary_status", "requested"),
+        [
+            ("pending", False),
+            ("running", True),
+            ("completed", True),
+            ("failed", True),
+        ],
+    )
+    @pytest.mark.parametrize(
+        "url", [RUNS_URL, ANALYTICS_URL], ids=["runs", "analytics"]
+    )
+    def test_summary_says_whether_anyone_asked_for_it(
+        self, sdk_client, test_execution, call_execution, url, summary_status, requested
+    ):
+        """A run's summary is made only when a person asks for it in the app.
+        "pending" means nobody has asked since the run last changed, so a
+        script waiting on it would wait forever; the answer says so."""
+        test_execution.eval_explanation_summary_status = summary_status
+        test_execution.save(update_fields=["eval_explanation_summary_status"])
+        with (
+            patch(
+                "sdk.views.analytics._get_eval_configs_with_template"
+            ) as mock_configs,
+            patch("sdk.views.analytics._get_completed_call_executions"),
+            patch("sdk.views.analytics._build_template_statistics"),
+            patch(
+                "sdk.views.analytics._calculate_final_template_summaries",
+                return_value=[],
+            ),
+        ):
+            mock_configs.return_value = MagicMock(
+                filter=MagicMock(return_value=MagicMock())
+            )
+            response = sdk_client.get(
+                url, {"execution_id": str(test_execution.id), "summary": "true"}
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["eval_explanation_summary_status"] == summary_status
+        assert result["eval_explanation_summary_requested"] is requested
+
     def test_pagination_page_2_returns_different_data(
         self, sdk_client, run_test, scenario, db
     ):

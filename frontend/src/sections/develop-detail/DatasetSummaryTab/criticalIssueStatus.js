@@ -30,3 +30,14 @@ export const isCriticalIssueNotAnalysed = (mode, status, result) =>
   mode === "simulate" &&
   status === CriticalIssueStatus.PENDING &&
   (result === null || result === undefined);
+
+export const OUT_OF_DATE_MESSAGE =
+  "Found before the run's latest grading. Press Refresh to update them.";
+
+// A stored summary with "pending" was made before the run's verdicts last
+// changed (a rerun or a late verdict); nobody has asked for a new one.
+export const isCriticalIssueOutOfDate = (mode, status, result) =>
+  mode === "simulate" &&
+  status === CriticalIssueStatus.PENDING &&
+  result !== null &&
+  result !== undefined;

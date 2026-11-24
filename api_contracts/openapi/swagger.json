@@ -138228,6 +138228,10 @@
                     "title": "Eval explanation summary status",
                     "type": "string",
                     "x-nullable": true
+                },
+                "eval_explanation_summary_requested": {
+                    "title": "Eval explanation summary requested",
+                    "type": "boolean"
                 }
             }
         },
@@ -138580,6 +138584,10 @@
                     "title": "Eval explanation summary status",
                     "type": "string",
                     "x-nullable": true
+                },
+                "eval_explanation_summary_requested": {
+                    "title": "Eval explanation summary requested",
+                    "type": "boolean"
                 },
                 "total_pages": {
                     "title": "Total pages",

@@ -3422,13 +3422,15 @@ def test_tool_only_close_is_not_kept_when_the_call_cannot_be_completed(run_test)
 
 @pytest.mark.django_db
 @pytest.mark.parametrize("path", ["locked", "unlocked"])
-def test_late_verdict_on_a_completed_run_starts_nothing(
+def test_late_verdict_on_a_completed_run_marks_the_summary_out_of_date(
     run_test, eval_template, django_capture_on_commit_callbacks, dispatch, path
 ):
     """A job the sweeper gave up on can still land its verdict after the run
     completed. Nothing is queued for it: no summary job, now or later, on the
     row-locked path and on the path that re-reads the call without a lock.
-    The run, its ``completed_at`` and its stored summary are not touched."""
+    The run and its ``completed_at`` are not touched. The stored summary is
+    kept, but marked pending: it was made without this verdict, and the page
+    says so until a person presses Refresh."""
     from simulate.models.test_execution import EvalExplanationSummaryStatus
     from simulate.services.test_executor import TestExecutor
 
@@ -3466,7 +3468,43 @@ def test_late_verdict_on_a_completed_run_starts_nothing(
     done.refresh_from_db()
     assert (done.status, done.completed_at) == (Status.COMPLETED, earlier)
     assert done.eval_explanation_summary == {"build": 0}
-    assert done.eval_explanation_summary_status == Summary.COMPLETED
+    assert done.eval_explanation_summary_status == Summary.PENDING
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("summary_status", ["running", "failed", "pending"])
+def test_late_verdict_leaves_a_summary_that_is_not_finished_alone(
+    run_test,
+    eval_template,
+    django_capture_on_commit_callbacks,
+    dispatch,
+    summary_status,
+):
+    """Only a finished summary goes out of date. One a person asked for and
+    that is still running, one that failed, or none at all keep their state,
+    and nothing is queued."""
+    from simulate.services.test_executor import TestExecutor
+
+    Status = TestExecution.ExecutionStatus
+    config_id = str(_config(run_test, eval_template).id)
+    verdict = {config_id: {"status": "Completed", "output": "Passed"}}
+    done = _run(
+        run_test,
+        Status.COMPLETED,
+        completed_at=timezone.now() - timedelta(hours=1),
+        eval_explanation_summary_status=summary_status,
+    )
+    call = _call(done, metadata=dict(CLOSED), eval_outputs=verdict)
+
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        TestExecutor(initialize_voice_service=False)._check_and_update_eval_completion(
+            call, eval_config_ids=[config_id]
+        )
+
+    assert callbacks == []
+    dispatch.summary.assert_not_called()
+    done.refresh_from_db()
+    assert done.eval_explanation_summary_status == summary_status
 
 
 @pytest.mark.django_db

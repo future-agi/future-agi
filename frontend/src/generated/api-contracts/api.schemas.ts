@@ -16329,6 +16329,7 @@ export interface SDKSimulationAnalyticsResultApi {
   system_summary: SDKSimulationAnalyticsResultApiSystemSummary;
   eval_explanation_summary?: SDKSimulationAnalyticsResultApiEvalExplanationSummary;
   eval_explanation_summary_status?: string;
+  eval_explanation_summary_requested?: boolean;
 }
 
 export interface SDKSimulationAnalyticsResponseApi {
@@ -16481,6 +16482,7 @@ export interface SDKSimulationRunsResultApi {
   call_results?: SDKSimulationRunsResultApiCallResults;
   eval_explanation_summary?: SDKSimulationRunsResultApiEvalExplanationSummary;
   eval_explanation_summary_status?: string;
+  eval_explanation_summary_requested?: boolean;
   total_pages?: number;
   current_page?: number;
   count?: number;

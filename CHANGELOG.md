@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Features
+
+- **simulate:** A run's critical issues summary and its Fix My Agent analysis start only when a person presses Refresh. Finishing a run, a rerun, a late verdict or opening a page no longer starts them, and a summary found before the run's latest grading says so. In the SDK's simulation runs and analytics responses with `summary=true`, the new `eval_explanation_summary_requested` is false while nobody has asked for a summary since the run's verdicts last changed: a script should not wait for a `pending` summary.
+
 ### Bug Fixes
 
 - **annotations:** Open returned disagreed items from the Agreement tab in the appropriate workspace mode, show when the returned list is capped, and offer persistent recovery for unavailable items.

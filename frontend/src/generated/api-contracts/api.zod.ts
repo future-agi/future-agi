@@ -33223,6 +33223,7 @@ export const SdkApiV1SimulationAnalyticsListResponse = zod.object({
     system_summary: zod.object({}).passthrough(),
     eval_explanation_summary: zod.object({}).passthrough().optional(),
     eval_explanation_summary_status: zod.string().optional(),
+    eval_explanation_summary_requested: zod.boolean().optional(),
   }),
 });
 
@@ -33340,6 +33341,7 @@ export const SdkApiV1SimulationRunsListResponse = zod.object({
     call_results: zod.object({}).passthrough().optional(),
     eval_explanation_summary: zod.object({}).passthrough().optional(),
     eval_explanation_summary_status: zod.string().optional(),
+    eval_explanation_summary_requested: zod.boolean().optional(),
     total_pages: zod.number().optional(),
     current_page: zod.number().optional(),
     count: zod.number().optional(),
