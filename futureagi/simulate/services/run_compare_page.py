@@ -822,10 +822,17 @@ def build_compare_page(
         one for facts in compare_facts.values() for one in facts["calls"].values()
     )
     count = len(kept)
-    marks = {
-        entry["id"]: _run_marks(entry, executions, compare_facts, sub_goal_digests)
-        for entry in page_entries
+    # Marks are the scenario's, like its movement, so every trial row agrees.
+    scenario_marks = {
+        row_id: _run_marks(
+            {"row_id": row_id, "calls": scenario_calls[row_id]},
+            executions,
+            compare_facts,
+            sub_goal_digests,
+        )
+        for row_id in {entry["row_id"] for entry in page_entries}
     }
+    marks = {entry["id"]: scenario_marks[entry["row_id"]] for entry in page_entries}
     return {
         "baseline_execution_id": str(baseline.id),
         "runs": runs,

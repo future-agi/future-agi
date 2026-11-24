@@ -1461,6 +1461,29 @@ class TestEditedRuns:
         unverified = self._unverified(auth_client, environment, runs)
         assert unverified == dict.fromkeys(unverified, [[]])
 
+    @pytest.mark.parametrize("pinned", [True, False])
+    def test_marks_hold_on_trials_only_the_candidate_played(
+        self, auth_client, played, pinned
+    ):
+        environment, runs, authored = played
+        if pinned:
+            _pin_suite(environment, runs[0], 1, {})
+        _pin_suite(
+            environment,
+            runs[1],
+            2,
+            {self.KEY: _scenario_content(authored, instruction="Call twice.")},
+        )
+        # The baseline played one trial; the candidate played two.
+        _key_calls(runs[0], self.KEY)[1].delete()
+
+        field = "edited_run_ids" if pinned else "unverified_run_ids"
+        body = _ok(_compare(auth_client, environment, runs, page_size=100))
+        rows = _trial_rows(body, self.KEY)
+
+        assert [len(row["calls"][str(runs[0].id)]) for row in rows] == [1, 0]
+        assert [row[field] for row in rows] == [[str(runs[1].id)]] * 2
+
     def test_a_renamed_scenario_is_not_edited(self, auth_client, played):
         environment, runs, authored = played
         _pin_suite(environment, runs[0], 1, {})
