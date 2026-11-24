@@ -27,7 +27,11 @@ from simulate.services.hosted_harness_gateway import (
     UNKNOWN_FAILURE_CAUSE,
     closed_failure_cause,
 )
-from simulate.services.run_compare import trial_passed, wilson_interval
+from simulate.services.run_compare import (
+    failed_by_required_eval,
+    trial_passed,
+    wilson_interval,
+)
 
 # The environment payload metadata key; never copied to a run's payload.
 HELD_BACK_METADATA_KEY = "verify_held_back"
@@ -292,19 +296,44 @@ def version_verify(
 
 def verify_result(run: HostedHarnessJob) -> dict[str, Any]:
     """How an agent version did on the held-back cases, as counts only. A trial passes
-    when every sub-goal held; one nothing decided counts as neither. The range is the
-    95% Wilson interval of the trial pass rate, once the run has finished."""
+    when every sub-goal held and fails on a failed required eval; one nothing decided
+    counts as neither. The range is the 95% Wilson interval of the trial pass rate,
+    once the run has finished."""
+    from simulate.services.run_results_v3 import call_outcome
+    from simulate.services.run_results_v3_scoring import LiveEvals, live_eval_specs
+
     metadata = (run.payload or {}).get("metadata") or {}
     cases = len(metadata.get("selected_scenario_keys") or [])
+    live = live_eval_specs(run.run_test_id) if run.run_test_id else LiveEvals()
+    configs = {eval_id: one.config for eval_id, one in live.items()}
+    specs = {eval_id: one.spec for eval_id, one in live.items()}
+    judged_by_required = bool(live.required_ids())
     passed = failed = total = 0
-    for call_metadata in HostedHarnessExecution.no_workspace_objects.filter(
-        job=run
-    ).values_list("call_execution__call_metadata", flat=True):
+    for execution in (
+        HostedHarnessExecution.no_workspace_objects.filter(job=run)
+        .select_related("call_execution")
+        .only(
+            "call_execution",
+            "call_execution__status",
+            "call_execution__eval_outputs",
+            "call_execution__call_metadata",
+        )
+    ):
         total += 1
-        receipt = (call_metadata or {}).get("hosted_harness_receipt")
+        call = execution.call_execution
+        call_metadata = call.call_metadata or {}
+        receipt = call_metadata.get("hosted_harness_receipt")
         if not isinstance(receipt, Mapping):
             continue
-        verdict = trial_passed(receipt.get("sub_goals"), receipt.get("status"))
+        verdict = trial_passed(
+            receipt.get("sub_goals"),
+            receipt.get("status"),
+            required_eval_failed=judged_by_required
+            and failed_by_required_eval(
+                call_metadata.get("harness_outcome_status"),
+                call_outcome(call, configs, specs),
+            ),
+        )
         passed += verdict is True
         failed += verdict is False
     rate = None

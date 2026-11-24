@@ -27,6 +27,7 @@ from simulate.selectors.held_back import (
     has_plain_words,
     held_back,
     person_failure_message,
+    verify_result,
     verify_run,
     version_verify,
 )
@@ -51,6 +52,7 @@ from simulate.services.hosted_harness_gateway import (
     RUNTIME_VALIDATION_FAILED,
 )
 from simulate.services.run_compare import wilson_interval
+from simulate.services.run_results_v3_scoring import LiveEval, LiveEvals
 from simulate.tests.test_agent_fix_services import (
     KEYS,
     _executions,
@@ -552,6 +554,36 @@ class TestVerifyApi:
         names = executions[0].source_scenario.scenario.name
         for hidden in (key, names, "refunded"):
             assert hidden not in text
+
+    def test_a_trial_the_run_results_fail_on_a_required_eval_counts_as_failed(
+        self, environment
+    ):
+        run = _verify(environment, _second_agent(environment), trials=1)
+        execution = _executions(run).first()
+        call = execution.call_execution
+        _receipt(call, execution.source_scenario.scenario_key, {"refunded": True})
+        call.status = CallExecution.CallStatus.COMPLETED
+        call.call_metadata = {**call.call_metadata, "harness_outcome_status": "passed"}
+        call.save(update_fields=["status", "call_metadata"])
+        required = LiveEvals(
+            {"policy": LiveEval(SimpleNamespace(config={"required": True}), None)}
+        )
+
+        with (
+            patch(
+                "simulate.services.run_results_v3_scoring.live_eval_specs",
+                return_value=required,
+            ) as specs,
+            patch(
+                "simulate.services.run_results_v3.call_outcome",
+                return_value="failed",
+            ) as outcome,
+        ):
+            result = verify_result(run)
+
+        specs.assert_called_once_with(run.run_test_id)
+        assert outcome.call_count == 1
+        assert (result["passed"], result["failed"]) == (0, 1)
 
     def test_repeat_post_returns_the_same_verify(self, api_client, environment, keys):
         candidate = _second_agent(environment)

@@ -1,6 +1,7 @@
 """Compare two runs scenario by scenario, on pass rates over trials.
 
-A trial passes when every sub-goal check in its receipt held. The verdict on a
+A trial passes when every sub-goal check in its receipt held, and fails when the
+run results fail it on a required eval, as they do the call. The verdict on a
 scenario comes from the difference in pass rates and its Newcombe 95% interval
 against a ±10-point margin; eval scores ride along as context only.
 """
@@ -20,7 +21,12 @@ from simulate.models import (
 from simulate.services.harness_versioning.read import run_version_labels
 from simulate.services.hosted_harness_ingestion import SUB_GOAL_PASSED, sub_goal_result
 from simulate.services.run_reliability_v3 import wilson
-from simulate.services.run_results_v3_scoring import HARNESS_FAILED, HARNESS_PASSED
+from simulate.services.run_results_v3_scoring import (
+    HARNESS_FAILED,
+    HARNESS_INCONCLUSIVE,
+    HARNESS_NO_SCORE,
+    HARNESS_PASSED,
+)
 
 # Two-sided 95%.
 Z = 1.959963984540054
@@ -41,6 +47,11 @@ NOT_APPLICABLE = "not_applicable"
 
 # A call that never ran to an end says nothing about the agent.
 _UNRUN_OUTCOMES = ("queued", "in_progress", "error")
+_FAILED_ONLY_BY_REQUIRED_EVAL = (
+    *HARNESS_PASSED,
+    *HARNESS_NO_SCORE,
+    *HARNESS_INCONCLUSIVE,
+)
 
 
 def wilson_interval(passed: int, trials: int) -> tuple[float, float]:
@@ -82,9 +93,21 @@ def verdict(
     return INCONCLUSIVE, (low, high)
 
 
-def trial_passed(sub_goals: Any, harness_status: Any) -> bool | None:
+def failed_by_required_eval(harness_status: Any, call_outcome: Any) -> bool:
+    return (
+        call_outcome == "failed"
+        and str(harness_status or "").lower() in _FAILED_ONLY_BY_REQUIRED_EVAL
+    )
+
+
+def trial_passed(
+    sub_goals: Any, harness_status: Any, *, required_eval_failed: bool = False
+) -> bool | None:
     """Whether a trial passed: every sub-goal held; None when one was undecided, even beside a failure. Not
-    applicable and inconclusive sub-goals are left out (only those: undecided); no sub-goals reads the status."""
+    applicable and inconclusive sub-goals are left out (only those: undecided); no sub-goals reads the status.
+    A failed required eval fails the trial whatever its sub-goals say."""
+    if required_eval_failed:
+        return False
     checks = [one for one in sub_goals or [] if isinstance(one, Mapping)]
     if checks:
         results = [sub_goal_result(dict(one)) for one in checks]
@@ -120,7 +143,13 @@ class ScenarioTrials:
         outcome = (
             None
             if call_outcome in _UNRUN_OUTCOMES
-            else trial_passed(sub_goals, harness_status)
+            else trial_passed(
+                sub_goals,
+                harness_status,
+                required_eval_failed=failed_by_required_eval(
+                    harness_status, call_outcome
+                ),
+            )
         )
         if outcome is not None:
             self.decided += 1
