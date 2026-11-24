@@ -516,6 +516,29 @@ class TestVerify:
         assert refused.value.code == "held_back_empty"
 
 
+def test_a_held_back_trial_failed_only_by_a_check_its_proof_never_verified_is_not_counted_failed(
+    environment,
+):
+    from simulate.selectors.held_back import verify_result
+    from simulate.services.hosted_harness_ingestion import UNVERIFIED_KEY
+
+    run = _verify(environment, _second_agent(environment))
+    executions = list(_executions(run).order_by("trial_index"))
+    key = executions[0].source_scenario.scenario_key
+    _receipt(executions[0].call_execution, key, {"refunded": True})
+    unverified = executions[1].call_execution
+    _receipt(unverified, key, {"refunded": False})
+    unverified.call_metadata = {
+        **unverified.call_metadata,
+        UNVERIFIED_KEY: ["refunded"],
+    }
+    unverified.save(update_fields=["call_metadata"])
+
+    result = verify_result(run)
+
+    assert (result["passed"], result["failed"], result["total"]) == (1, 0, 2)
+
+
 class TestVerifyApi:
     def test_post_then_get_counts_only(self, api_client, environment, keys):
         candidate = _second_agent(environment)

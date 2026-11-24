@@ -40,6 +40,7 @@ from simulate.services.hosted_harness_ingestion import (
     STARTED_BY_KEY,
     STARTED_BY_TASK,
     SUB_GOAL_PASSED,
+    UNVERIFIED_KEY,
     WORLD_ACTIONS_KEY,
     graded_call_receipt,
     sub_goal_result,
@@ -125,6 +126,7 @@ CALL_ROW_METADATA_KEYS = (
     "use_case",
     "goal",
     "hosted_harness_receipt",
+    UNVERIFIED_KEY,
     "sub_goals",
     "conversation_branch",
     "harness_outcome_status",
@@ -844,7 +846,7 @@ def build_call_rows(
             or scenario_metadata.get("goal")
             or call.scenario.name
         )
-        receipt = metadata.get("hosted_harness_receipt")
+        receipt = graded_call_receipt(metadata)
         receipt = receipt if isinstance(receipt, dict) else {}
         raw_sub_goals = (
             receipt.get("sub_goals")

@@ -61,3 +61,36 @@ def test_a_sub_goal_that_did_not_apply_to_a_call_is_not_counted_as_tested():
 
     [goal] = result["goals"]
     assert (goal["broken_call_ids"], goal["tested_call_count"]) == (["broke"], 1)
+
+
+def test_a_check_the_scenario_s_proof_never_verified_is_neither_broken_nor_tested():
+    from simulate.services.hosted_harness_ingestion import UNVERIFIED_KEY
+
+    def call(key, unverified):
+        return SimpleNamespace(
+            id=key,
+            status="completed",
+            call_metadata={
+                "hosted_harness_receipt": {
+                    "status": "failed",
+                    "sub_goals": [{"name": "refund", "held": False}],
+                },
+                UNVERIFIED_KEY: unverified,
+            },
+            eval_outputs={},
+        )
+
+    calls_run = [call("broke", []), call("unverified", ["refund"])]
+    with (
+        patch(
+            "tracer.services.simulation_diagnosis.CallExecution.no_workspace_objects.filter"
+        ) as calls,
+        patch(
+            "tracer.services.simulation_diagnosis.sub_goal_catalogue", return_value={}
+        ),
+    ):
+        calls.return_value.order_by.return_value = calls_run
+        result = build_diagnosis(SimpleNamespace(run_test_id="run-1"), [], {}, {})
+
+    [goal] = result["goals"]
+    assert (goal["broken_call_ids"], goal["tested_call_count"]) == (["broke"], 1)
