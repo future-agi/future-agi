@@ -28,7 +28,8 @@ class _FakeResolver:
         return self._snapshot
 
 
-def _configure_active_license() -> None:
+@pytest.fixture
+def active_license(preserve_capability_service):
     snapshot = LicenseSnapshot(
         state=LicenseState.ACTIVE,
         license_type=LicenseType.PRODUCTION,
@@ -45,8 +46,7 @@ def _configure_active_license() -> None:
     )
 
 
-def test_capabilities_view_handles_missing_organization_for_staff_user():
-    _configure_active_license()
+def test_capabilities_view_handles_missing_organization_for_staff_user(active_license):
     request = APIRequestFactory().get("/api/capabilities/")
     request.user = SimpleNamespace(is_authenticated=True, is_staff=True)
 
@@ -58,8 +58,7 @@ def test_capabilities_view_handles_missing_organization_for_staff_user():
     assert response.data["license"]["issued_to"] == "View Corp"
 
 
-def test_capabilities_view_hides_license_details_for_non_admin_user():
-    _configure_active_license()
+def test_capabilities_view_hides_license_details_for_non_admin_user(active_license):
     request = APIRequestFactory().get("/api/capabilities/")
     request.user = SimpleNamespace(is_authenticated=True, is_staff=False)
 

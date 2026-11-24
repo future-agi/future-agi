@@ -25,15 +25,8 @@ from tfc.licensing.types import (
 
 
 @pytest.fixture(autouse=True)
-def oss_flavor():
+def oss_flavor(preserve_capability_service):
     """Configure the capability service as an OSS image (no EE code)."""
-    service.configure(
-        flavor=DeploymentFlavor.OSS,
-        location=DeploymentLocation.SELF_HOSTED,
-        license_resolver=None,
-        cloud_plan_resolver=None,
-    )
-    yield
     service.configure(
         flavor=DeploymentFlavor.OSS,
         location=DeploymentLocation.SELF_HOSTED,

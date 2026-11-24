@@ -23,6 +23,8 @@ from tfc.licensing.types import (
 )
 from tracer.views.feed._permissions import ErrorFeedLicenseRequired
 
+pytestmark = pytest.mark.usefixtures("preserve_capability_service")
+
 
 class _FakeResolver:
     def __init__(self, snapshot: LicenseSnapshot):
@@ -44,7 +46,6 @@ def _snapshot(state: LicenseState, features: frozenset[str]) -> LicenseSnapshot:
 
 
 def _configure_ee(snapshot: LicenseSnapshot) -> None:
-    service._configured = False
     service.configure(
         flavor=DeploymentFlavor.SELF_HOSTED_EE,
         location=DeploymentLocation.SELF_HOSTED,
@@ -53,19 +54,11 @@ def _configure_ee(snapshot: LicenseSnapshot) -> None:
 
 
 def _configure_oss() -> None:
-    service._configured = False
     service.configure(
         flavor=DeploymentFlavor.OSS,
         location=DeploymentLocation.SELF_HOSTED,
         license_resolver=None,
     )
-
-
-@pytest.fixture(autouse=True)
-def _reset_service():
-    yield
-    _configure_oss()
-    service._configured = False
 
 
 class TestErrorFeedGate:

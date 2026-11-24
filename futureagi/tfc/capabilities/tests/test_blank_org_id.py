@@ -31,7 +31,7 @@ class _AllowingResolver:
 
 
 @pytest.fixture
-def cloud_service():
+def cloud_service(preserve_capability_service):
     service.configure(
         flavor=DeploymentFlavor.CLOUD,
         location=DeploymentLocation.CLOUD,

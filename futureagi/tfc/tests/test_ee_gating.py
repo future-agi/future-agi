@@ -276,8 +276,17 @@ class TestRequireEEFeatureDecorator:
         def endpoint():
             return "ok"
 
-        with patch("tfc.ee_gating.is_oss", return_value=False):
+        with (
+            patch("tfc.ee_gating._try_capability_service", return_value=False),
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch("ee.usage.deployment.DeploymentMode.is_cloud", return_value=False),
+            patch(
+                "ee.usage.services.entitlements.Entitlements.has_feature_unified",
+                return_value=True,
+            ) as has_feature,
+        ):
             assert endpoint() == "ok"
+        has_feature.assert_called_once_with("", "optimization")
 
 
 # ── Stubs ─────────────────────────────────────────────────────────────────
