@@ -36,21 +36,68 @@ COLLECTIONS = {
     "rule": "rules",
     "use_case": "use_cases",
 }
-_REVIEWABLE_SOURCES = (
-    HarnessAgentVersionRuntime.SourceKind.GITHUB,
-    HarnessAgentVersionRuntime.SourceKind.ARCHIVE,
-)
+READING = "reading"
+READING_STAGE = "understanding_agent"
+READING_FAILED = "reading_failed"
+SourceKind = HarnessAgentVersionRuntime.SourceKind
+_CODE_SOURCES = (SourceKind.GITHUB, SourceKind.ARCHIVE)
+_CONFIGURED_SOURCES = (SourceKind.PHONE, SourceKind.LIVEKIT)
+_PROVIDER_CONNECTORS = frozenset({"vapi", "retell", "retell_chat"})
+_UNREVIEWED_MODES = frozenset({"provider_import"})
+
+
+def _switched_on() -> bool:
+    return bool(
+        getattr(settings, "HARNESS_DESIGN_REVIEW_ENABLED", False)
+        and getattr(settings, "HARNESS_SEED_CONTRACT_ENABLED", False)
+        and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
+    )
+
+
+def reviewable(source_kind: str, connector: str, mode: str = "") -> bool:
+    if mode in _UNREVIEWED_MODES:
+        return False
+    if source_kind in _CODE_SOURCES:
+        return True
+    if not getattr(settings, "HARNESS_HOSTED_DESIGN_REVIEW_ENABLED", False):
+        return False
+    return source_kind in _CONFIGURED_SOURCES or (
+        source_kind == SourceKind.PROVIDER and connector in _PROVIDER_CONNECTORS
+    )
+
+
+def _agent_of(runtime: HarnessAgentVersionRuntime) -> tuple[str, str]:
+    payload = getattr(runtime, "agent_payload", None) or {}
+    source = getattr(runtime, "source", None) or {}
+    return (
+        str(payload.get("connector") or source.get("provider") or ""),
+        str(payload.get("mode") or ""),
+    )
 
 
 def review_applies(runtime: HarnessAgentVersionRuntime | None) -> bool:
     """A design is reviewed only where the build can start from it, so an approved
     change always reaches the sandbox."""
     return bool(
-        getattr(settings, "HARNESS_DESIGN_REVIEW_ENABLED", False)
-        and getattr(settings, "HARNESS_SEED_CONTRACT_ENABLED", False)
-        and getattr(settings, "ALK_HOSTED_BUILDER_SESSION", True)
+        _switched_on()
         and runtime is not None
-        and runtime.source_kind in _REVIEWABLE_SOURCES
+        and reviewable(runtime.source_kind, *_agent_of(runtime))
+    )
+
+
+def review_wanted(
+    payload: dict[str, Any], runtime: HarnessAgentVersionRuntime | None
+) -> bool:
+    if runtime is not None:
+        return review_applies(runtime)
+    if not _switched_on():
+        return False
+    from simulate.services.harness_versioning.backfill import legacy_source
+
+    agent = payload.get("agent") or {}
+    kind, _facts = legacy_source(payload)
+    return reviewable(
+        str(kind), str(agent.get("connector") or ""), str(agent.get("mode") or "")
     )
 
 
@@ -59,9 +106,9 @@ def review_contract_for(
 ) -> dict[str, Any] | None:
     if runtime is None or not review_applies(runtime):
         return None
-    from simulate.services.agent_contracts import stored_version_contract
+    from simulate.services.agent_contracts import stored_read_contract
 
-    return stored_version_contract(runtime.agent_version_id)
+    return stored_read_contract(runtime.agent_version_id)
 
 
 def stored_review(job: HostedHarnessJob) -> dict[str, Any] | None:
@@ -72,6 +119,11 @@ def stored_review(job: HostedHarnessJob) -> dict[str, Any] | None:
 def awaiting_design_approval(job: HostedHarnessJob) -> bool:
     review = stored_review(job)
     return review is not None and review.get("status") == AWAITING_APPROVAL
+
+
+def design_review_pending(job: HostedHarnessJob) -> bool:
+    review = stored_review(job)
+    return review is not None and review.get("status") in (READING, AWAITING_APPROVAL)
 
 
 def approved_contract_key(job: HostedHarnessJob) -> str:
@@ -92,7 +144,7 @@ def close_open_review(job: HostedHarnessJob) -> bool:
     """Mark a design still waiting for approval as discarded on ``job``, unsaved;
     whether it was open."""
     review = stored_review(job)
-    if review is None or review.get("status") != AWAITING_APPROVAL:
+    if review is None or review.get("status") not in (AWAITING_APPROVAL, READING):
         return False
     _write(job, {**review, "status": DISCARDED})
     return True
@@ -117,7 +169,11 @@ def create_design_review(
                 if runtime.agent_version_id
                 else ""
             ),
-            "proposal": build_proposal(contract, job.scenario_count),
+            "proposal": build_proposal(
+                contract,
+                job.scenario_count,
+                source_kind=((job.payload or {}).get("source") or {}).get("kind"),
+            ),
             "edits": [],
             "created_at": timezone.now().isoformat(),
             "approved_by": None,
@@ -127,6 +183,190 @@ def create_design_review(
     )
     job.current_stage = AWAITING_STAGE
     job.save(update_fields=["payload", "current_stage", "updated_at"])
+
+
+def begin_design_review(
+    job: HostedHarnessJob,
+    runtime: HarnessAgentVersionRuntime | None,
+    contract: dict[str, Any] | None,
+) -> None:
+    if contract is not None and runtime is not None:
+        _build_as_read(job, runtime)
+        create_design_review(job, runtime, contract)
+        return
+    from simulate.services.agent_contracts import stored_read_contract
+    from simulate.services.harness_agent_versions import _side_row
+
+    if runtime is None or not getattr(runtime, "agent_version_id", None):
+        runtime = _side_row(job.agent_version_id) if job.agent_version_id else None
+    if runtime is None or not review_applies(runtime):
+        job.state = HostedHarnessJob.State.QUEUED
+        job.current_stage = "queued"
+        job.save(update_fields=["state", "current_stage", "updated_at"])
+        return
+    _build_as_read(job, runtime)
+    contract = stored_read_contract(runtime.agent_version_id)
+    if contract is not None:
+        create_design_review(job, runtime, contract)
+        return
+    _write(
+        job,
+        {
+            "status": READING,
+            "agent_version_id": str(runtime.agent_version_id),
+            "created_at": timezone.now().isoformat(),
+        },
+    )
+    job.current_stage = READING_STAGE
+    job.save(update_fields=["payload", "current_stage", "updated_at"])
+    job_id = str(job.id)
+    transaction.on_commit(lambda: _start_reading(job_id))
+
+
+def _build_as_read(job: HostedHarnessJob, runtime: HarnessAgentVersionRuntime) -> None:
+    from simulate.services.agent_reading_sandbox import hosted_reading_agent
+
+    agent = (job.payload or {}).get("agent")
+    if not isinstance(agent, dict):
+        return
+    matched = hosted_reading_agent(runtime, agent)
+    if matched != agent:
+        job.payload["agent"] = matched
+        job.save(update_fields=["payload", "updated_at"])
+
+
+def _start_reading(job_id: str) -> None:
+    from simulate.tasks.harness_agent_versions import schedule_design_reading
+
+    try:
+        schedule_design_reading(job_id)
+    except Exception:
+        logger.warning(
+            "design_reading_not_started", environment_id=job_id, exc_info=True
+        )
+        fail_design_reading(
+            job_id,
+            code="scheduler_unavailable",
+            message="Reading the agent couldn't start. Build again.",
+            retryable=True,
+        )
+
+
+def _waiting_on_reading(job_id: str) -> tuple[HostedHarnessJob, dict[str, Any]] | None:
+    job = (
+        HostedHarnessJob.no_workspace_objects.select_for_update()
+        .filter(id=job_id)
+        .first()
+    )
+    review = stored_review(job) if job is not None else None
+    if (
+        job is None
+        or review is None
+        or review.get("status") != READING
+        or job.state != HostedHarnessJob.State.RECEIVED
+    ):
+        return None
+    return job, review
+
+
+def reading_version_id(job_id: str) -> str | None:
+    with transaction.atomic():
+        waiting = _waiting_on_reading(job_id)
+    if waiting is None:
+        return None
+    return str(waiting[1].get("agent_version_id") or "") or None
+
+
+def _close_reading(
+    job: HostedHarnessJob,
+    review: dict[str, Any],
+    *,
+    code: str,
+    message: str,
+    retryable: bool,
+) -> None:
+    from simulate.services.hosted_harness import project_terminal_job_onto_run
+
+    now = timezone.now()
+    _write(job, {**review, "status": READING_FAILED})
+    job.state = HostedHarnessJob.State.FAILED
+    job.current_stage = "failed"
+    job.terminal_at = now
+    job.failure = {
+        "domain": "agent",
+        "stage": READING_STAGE,
+        "code": code,
+        "message": message,
+        "retryable": retryable,
+    }
+    job.save(
+        update_fields=[
+            "payload",
+            "state",
+            "current_stage",
+            "terminal_at",
+            "failure",
+            "updated_at",
+        ]
+    )
+    project_terminal_job_onto_run(job, now)
+    logger.info("design_reading_failed", environment_id=str(job.id), code=code)
+
+
+def fail_design_reading(
+    job_id: str, *, code: str, message: str, retryable: bool
+) -> bool:
+    with transaction.atomic():
+        waiting = _waiting_on_reading(job_id)
+        if waiting is None:
+            return False
+        _close_reading(*waiting, code=code, message=message, retryable=retryable)
+    return True
+
+
+def _pin_read_commit(job: HostedHarnessJob, commit_sha: str) -> None:
+    source = (job.payload or {}).get("source") or {}
+    if not commit_sha or source.get("kind") != "github" or source.get("commit_sha"):
+        return
+    job.payload = {**job.payload, "source": {**source, "commit_sha": commit_sha}}
+
+
+def open_review_after_reading(
+    job_id: str,
+    *,
+    code: str = "",
+    message: str = "",
+    retryable: bool = False,
+    commit_sha: str = "",
+) -> str:
+    from simulate.services.agent_contracts import stored_version_contract
+    from simulate.services.harness_agent_versions import _side_row
+
+    with transaction.atomic():
+        waiting = _waiting_on_reading(job_id)
+        if waiting is None:
+            return "closed"
+        job, review = waiting
+        runtime = _side_row(review.get("agent_version_id"))
+        contract = (
+            stored_version_contract(runtime.agent_version_id)
+            if runtime is not None
+            else None
+        )
+        if runtime is None or contract is None:
+            _close_reading(
+                job,
+                review,
+                code=code or "agent_design_missing",
+                message=message
+                or "Reading the agent left no design to review. Build again.",
+                retryable=retryable or not code,
+            )
+            return "failed"
+        _pin_read_commit(job, commit_sha)
+        create_design_review(job, runtime, contract)
+    logger.info("design_review_opened", environment_id=job_id)
+    return "opened"
 
 
 def _spread(total: int, count: int) -> list[int]:
@@ -231,7 +471,7 @@ def _agent_label(agent_version_id: str | None) -> dict[str, str] | None:
 
 def review_for(job: HostedHarnessJob) -> dict[str, Any]:
     review = stored_review(job)
-    if review is None:
+    if review is None or (review.get("status") or AWAITING_APPROVAL) not in STATUSES:
         raise HostedHarnessError(
             "design_review_not_found",
             "This environment has no design waiting for review",
@@ -413,7 +653,11 @@ def impact(job: HostedHarnessJob, kind: str, item_id: str) -> dict[str, Any]:
         "rules": [
             {"id": rule["id"], "text": rule["text"]}
             for rule in rules
-            if any(_mentions(rule["text"], name) for name in named)
+            if any(
+                _mentions(rule["text"], alias)
+                for name in named
+                for alias in (name, name.replace("_", " "))
+            )
         ],
     }
 

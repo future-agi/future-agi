@@ -1269,6 +1269,15 @@ def _project_event(
                 id=command_id,
                 role=HostedHarnessConversationMessage.Role.USER,
             ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
+        conversation.messages.filter(
+            role=HostedHarnessConversationMessage.Role.USER,
+            reply_to__isnull=False,
+            sequence__lte=conversation.command_acked_through,
+            state__in=(
+                HostedHarnessConversationMessage.State.DELIVERED,
+                HostedHarnessConversationMessage.State.STREAMING,
+            ),
+        ).update(state=HostedHarnessConversationMessage.State.COMPLETED)
         blocking_message_id = (conversation.blocking_input or {}).get("message_id")
         answered = bool(
             blocking_message_id

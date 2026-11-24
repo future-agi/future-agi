@@ -1281,6 +1281,9 @@ HARNESS_SEED_CONTRACT_ENABLED = os.getenv(
 HARNESS_DESIGN_REVIEW_ENABLED = os.getenv(
     "HARNESS_DESIGN_REVIEW_ENABLED", ""
 ).lower() in ("1", "true", "yes")
+HARNESS_HOSTED_DESIGN_REVIEW_ENABLED = os.getenv(
+    "HARNESS_HOSTED_DESIGN_REVIEW_ENABLED", "true"
+).lower() in ("1", "true", "yes")
 HARNESS_EVAL_SUGGESTIONS_ENABLED = os.getenv(
     "HARNESS_EVAL_SUGGESTIONS_ENABLED", ""
 ).lower() in ("1", "true", "yes")

@@ -154,6 +154,18 @@ def stored_version_contract(agent_version_id: UUID) -> dict[str, Any] | None:
     return read_contract(version_contract_key(agent_version_id))
 
 
+def has_reading_record(contract: dict[str, Any] | None) -> bool:
+    """Whether a contract carries the record of what its reading was made from."""
+    return isinstance((contract or {}).get(_READING_INPUTS_KEY), dict)
+
+
+def stored_read_contract(agent_version_id: UUID) -> dict[str, Any] | None:
+    """The contract a version's reading left, or None when it has none or the one it
+    has was stored without the reading's record, which a build cannot be seeded from."""
+    contract = stored_version_contract(agent_version_id)
+    return contract if has_reading_record(contract) else None
+
+
 def store_environment_contract(
     *, organization_id: UUID, environment_id: UUID, contract: dict[str, Any]
 ) -> str | None:

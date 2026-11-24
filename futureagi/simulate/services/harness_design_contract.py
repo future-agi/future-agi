@@ -7,6 +7,8 @@ from typing import Any
 
 KINDS = ("table", "tool", "rule", "use_case")
 
+SETTINGS_SOURCE_KINDS = frozenset({"provider", "phone", "livekit"})
+
 
 def _columns(schema: Any) -> list[str]:
     if not isinstance(schema, dict):
@@ -22,7 +24,7 @@ def _columns(schema: Any) -> list[str]:
     return []
 
 
-def _tool(spec: dict[str, Any], status: str) -> dict[str, Any]:
+def _tool(spec: dict[str, Any], status: str, source: str) -> dict[str, Any]:
     from simulate.services.harness_tool_reach import tool_arguments
 
     inputs_from = spec.get("inputs_from")
@@ -45,7 +47,7 @@ def _tool(spec: dict[str, Any], status: str) -> dict[str, Any]:
         "tables_read": _texts(spec.get("tables_read")),
         "tables_changed": _texts(spec.get("tables_changed")),
         "status": status,
-        "source": "agent_code",
+        "source": source,
     }
 
 
@@ -93,9 +95,16 @@ def _unsupported(contract: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-def build_proposal(contract: dict[str, Any], scenario_count: int) -> dict[str, Any]:
+def build_proposal(
+    contract: dict[str, Any],
+    scenario_count: int,
+    source_kind: str | None = None,
+) -> dict[str, Any]:
     from simulate.services.harness_tool_reach import tool_status
 
+    tool_source = (
+        "agent_settings" if source_kind in SETTINGS_SOURCE_KINDS else "agent_code"
+    )
     schema = contract.get("data_schema") or {}
     statuses = {row["tool"]: row["status"] for row in tool_status(contract)}
     return {
@@ -116,7 +125,7 @@ def build_proposal(contract: dict[str, Any], scenario_count: int) -> dict[str, A
             for name, body in (schema.items() if isinstance(schema, dict) else [])
         ],
         "tools": [
-            _tool(spec, statuses.get(str(spec["name"]), "unknown"))
+            _tool(spec, statuses.get(str(spec["name"]), "unknown"), tool_source)
             for spec in contract.get("tools") or []
             if isinstance(spec, dict) and spec.get("name")
         ],

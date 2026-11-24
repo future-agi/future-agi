@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -74,6 +74,9 @@ READ_ARGS = "--read-agent-only"
 # The "find the agents" command is settled on the agent-learning-kit side after the
 # reading; this is the one place it changes.
 SCAN_ARGS = "--find-agents"
+PROFILE_PATH = "/work/provider-import-profile.json"
+PROFILE_ARGS = f"--provider-profile-cache {PROFILE_PATH}"
+PROFILE_KINDS = (SourceKind.PROVIDER, SourceKind.PHONE, SourceKind.LIVEKIT)
 SECRETS_PATH = "/run/futureagi/secrets.json"
 SIMULATOR_SECRETS_PATH = "/run/futureagi/simulator-secrets.json"
 COST_FILE = f"{READING_DIR}/cost.json"
@@ -110,6 +113,7 @@ class ReadOutcome:
     message: str = ""
     retryable: bool = False
     spend: dict[str, Any] | None = None
+    commit_sha: str = ""
 
 
 @dataclass(frozen=True)
@@ -164,7 +168,12 @@ def _launch_spec(provider: SandboxRuntimeProvider, labels: dict[str, str]):
 
 
 @contextmanager
-def _sandbox(source_archive: bytes, job_document: Mapping[str, Any], labels):
+def _sandbox(
+    source_archive: bytes,
+    job_document: Mapping[str, Any],
+    labels,
+    files: Mapping[str, bytes] | None = None,
+):
     """A sandbox with the source and job document in place, deleted on the way out."""
     provider = _provider()
     spec, env, material, timeout = _launch_spec(provider, labels)
@@ -180,6 +189,8 @@ def _sandbox(source_archive: bytes, job_document: Mapping[str, Any], labels):
             json.dumps(material, sort_keys=True, separators=(",", ":")).encode(),
             SIMULATOR_SECRETS_PATH,
         )
+        for path, body in (files or {}).items():
+            sandbox.fs.upload_file(body, path)
         overlay = _alk_source_overlay()
         if overlay is not None:
             sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -226,10 +237,15 @@ def run_reading(
     args: str,
     labels: dict[str, str],
     collect: Callable[[SandboxRun], Any],
+    files: Mapping[str, bytes] | None = None,
 ) -> Any:
     """Run one reading command in a fresh sandbox and hand its files to ``collect``
     before the sandbox goes away."""
-    with _sandbox(source_archive, job_document, labels) as (sandbox, env, timeout):
+    with _sandbox(source_archive, job_document, labels, files) as (
+        sandbox,
+        env,
+        timeout,
+    ):
         run = sandbox.process.exec(
             f"rm -rf {READING_DIR} && {ENTRYPOINT} {args}", env=env, timeout=timeout
         )
@@ -295,6 +311,8 @@ def _job_defaults() -> dict[str, Any]:
 
 
 def _source_document(kind: str, source: Mapping[str, Any], access: Mapping[str, Any]):
+    if kind in PROFILE_KINDS:
+        return {"kind": "provider", "visibility": "public"}
     if kind == SourceKind.ARCHIVE:
         return {
             "kind": "archive",
@@ -330,6 +348,7 @@ def reading_job_document(
     for name in ("mode", "call_direction"):
         if payload.get(name):
             agent[name] = payload[name]
+    agent = hosted_reading_agent(runtime, agent)
     metadata = {
         "name": definition.agent_name,
         "agent_name": definition.agent_name,
@@ -472,27 +491,13 @@ def read_version(
         "futureagi.reading": "agent",
     }
 
-    def collect(
-        run: SandboxRun,
-    ) -> tuple[dict | None, dict | None, dict | None, dict | None]:
-        try:
-            reading = collect_reading(run.sandbox)
-        except ReadingResultInvalid as error:
-            failure = _crashed(run) if run.exit_code else _invalid(error)
-            return failure, None, None, _spend(run.sandbox)
-        if reading.failure is not None:
-            return reading.failure, None, None, _spend(run.sandbox)
-        if run.exit_code:
-            return _crashed(run), None, None, _spend(run.sandbox)
-        return None, reading.agent, reading.contract, _spend(run.sandbox)
-
     job_document = reading_job_document(definition, runtime)
     failure, agent, contract, spend = run_reading(
         source_archive,
         job_document,
         args=READ_ARGS,
         labels=labels,
-        collect=collect,
+        collect=_collected,
     )
     _bill(runtime, job_document["run_id"], spend, check_id=check_id)
     if failure is not None:
@@ -506,6 +511,204 @@ def read_version(
     return _store_reading(
         runtime, definition, agent, contract, spend, document_only=document_only
     )
+
+
+def _collected(
+    run: SandboxRun,
+) -> tuple[dict | None, dict | None, dict | None, dict | None]:
+    try:
+        reading = collect_reading(run.sandbox)
+    except ReadingResultInvalid as error:
+        failure = _crashed(run) if run.exit_code else _invalid(error)
+        return failure, None, None, _spend(run.sandbox)
+    if reading.failure is not None:
+        return reading.failure, None, None, _spend(run.sandbox)
+    if run.exit_code:
+        return _crashed(run), None, None, _spend(run.sandbox)
+    return None, reading.agent, reading.contract, _spend(run.sandbox)
+
+
+def hosted_reading_agent(
+    runtime: HarnessAgentVersionRuntime, agent: dict[str, Any]
+) -> dict[str, Any]:
+    if runtime.source_kind not in PROFILE_KINDS:
+        return agent
+    config = dict(agent.get("config") or {})
+    source = runtime.source or {}
+    connector = str(agent.get("connector") or "")
+    if connector in ("", "auto"):
+        connector = str(source.get("provider") or runtime.source_kind)
+    if runtime.source_kind == SourceKind.PROVIDER:
+        key = "assistant_id" if connector == "vapi" else "agent_id"
+        config[key] = str(
+            config.get(key)
+            or config.get("assistant_id")
+            or source.get("assistant_id")
+            or ""
+        )
+    elif not str(config.get("target_system_prompt") or "").strip():
+        config["target_system_prompt"] = str(
+            runtime.agent_version.description or ""
+        ).strip()
+    return {
+        **agent,
+        "connector": connector,
+        "mode": agent.get("mode") or "connect_only",
+        "config": config,
+    }
+
+
+def _pinned_profile(runtime: HarnessAgentVersionRuntime) -> bytes | None:
+    from simulate.services.configured_agent import (
+        CONFIGURED_KINDS,
+        ensure_configured_document,
+    )
+    from simulate.services.provider_profile import (
+        PLATFORM_SDK_VERSION,
+        profile_bytes_for_version,
+        profile_document,
+        profile_for_version,
+    )
+
+    version = runtime.agent_version
+    if runtime.source_kind in CONFIGURED_KINDS:
+        ensure_configured_document(version.id)
+        return None
+    if not _has_document(version.id):
+        profile = profile_for_version(version)
+        if profile is None:
+            return None
+        try:
+            store_agent(
+                agent_version_id=version.id,
+                agent=profile_document(
+                    str(profile.get("provider") or ""),
+                    str(profile.get("source_target_id") or ""),
+                    profile,
+                    modality=str(profile.get("modality") or "voice"),
+                ),
+                sdk_version=PLATFORM_SDK_VERSION,
+                origin=AgentVersionSetup.Origin.READING,
+            )
+        except AgentStoreError as exc:
+            logger.warning(
+                "provider_profile_not_pinned",
+                agent_version_id=str(version.id),
+                code=exc.code,
+            )
+    return profile_bytes_for_version(version)
+
+
+def read_version_contract(
+    version_id: UUID | str, *, check_id: str | None = None
+) -> ReadOutcome:
+    from simulate.services.agent_contracts import (
+        has_reading_record,
+        read_contract,
+        version_contract_key,
+    )
+
+    check_id = check_id or str(uuid4())
+    stored_key = version_contract_key(version_id)
+    if stored_key and has_reading_record(read_contract(stored_key)):
+        return ReadOutcome("skipped", code="already_stored")
+    runtime = (
+        HarnessAgentVersionRuntime.no_workspace_objects.select_related(
+            "agent_definition", "agent_version", "organization", "workspace"
+        )
+        .defer("credential_blob")
+        .filter(agent_version__id=version_id)
+        .first()
+    )
+    if runtime is None:
+        return ReadOutcome("skipped", code="not_found")
+    try:
+        require_harness_authoring(str(runtime.organization_id))
+    except HostedHarnessError as exc:
+        return ReadOutcome("failed", code=exc.code, message=exc.message)
+    hosted = runtime.source_kind in PROFILE_KINDS
+    files: dict[str, bytes] = {}
+    args = READ_ARGS
+    if hosted:
+        profile = _pinned_profile(runtime)
+        if runtime.source_kind == SourceKind.PROVIDER:
+            if profile is None:
+                return ReadOutcome(
+                    "failed",
+                    code="provider_profile_unavailable",
+                    message="The provider's definition of this agent couldn't be read. Try again.",
+                    retryable=True,
+                )
+            files[PROFILE_PATH] = profile
+            args = f"{READ_ARGS} {PROFILE_ARGS}"
+    source_archive, commit_sha = acquire_source_archive(
+        runtime.organization_id,
+        runtime.workspace_id,
+        {"kind": "provider"} if hosted else version_source(runtime),
+        label=str(version_id),
+    )
+    job_document = reading_job_document(runtime.agent_definition, runtime)
+    source = job_document["source"]
+    if commit_sha and source["kind"] == "github" and not source.get("commit_sha"):
+        job_document["source"] = {**source, "commit_sha": commit_sha}
+    failure, agent, contract, spend = run_reading(
+        source_archive,
+        job_document,
+        args=args,
+        labels={
+            "futureagi.agent_version": str(version_id),
+            "futureagi.reading": "design",
+        },
+        collect=_collected,
+        files=files,
+    )
+    _bill(runtime, job_document["run_id"], spend, check_id=check_id)
+    if failure is not None:
+        return ReadOutcome(
+            "failed",
+            code=str(failure["code"]),
+            message=str(failure["message"])[:2000],
+            retryable=bool(failure["retryable"]),
+            spend=spend,
+        )
+    outcome = _store_contract_reading(
+        runtime, runtime.agent_definition, agent, contract, spend
+    )
+    return replace(outcome, commit_sha=commit_sha or "")
+
+
+def _store_contract_reading(
+    runtime: HarnessAgentVersionRuntime,
+    definition: AgentDefinition,
+    agent: dict[str, Any],
+    contract: dict[str, Any],
+    spend: dict[str, Any] | None,
+) -> ReadOutcome:
+    if runtime.source_kind not in PROFILE_KINDS and not _has_document(
+        runtime.agent_version_id
+    ):
+        return _store_reading(
+            runtime, definition, agent, contract, spend, document_only=True
+        )
+    if not store_version_contract(
+        organization_id=runtime.organization_id,
+        agent_version_id=runtime.agent_version_id,
+        contract=contract,
+        replace=True,
+    ):
+        return ReadOutcome(
+            "failed",
+            code="agent_contract_not_stored",
+            message="The agent's design couldn't be kept. Try again.",
+            retryable=True,
+            spend=spend,
+        )
+    logger.info(
+        "agent_contract_read",
+        agent_version_id=str(runtime.agent_version_id),
+        source_kind=str(runtime.source_kind),
+    )
+    return ReadOutcome("stored", spend=spend)
 
 
 def _bill(

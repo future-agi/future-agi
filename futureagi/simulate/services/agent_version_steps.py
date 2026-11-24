@@ -17,7 +17,7 @@ from simulate.models import AgentVersion, HarnessAgentVersionRuntime
 from simulate.models.agent_setup import AgentVersionSetup
 from simulate.services.agent_contracts import (
     store_version_contract,
-    stored_version_contract,
+    stored_read_contract,
 )
 from simulate.services.agent_reading_sandbox import ReadOutcome, read_version
 from simulate.services.agent_setup import AgentStoreError, store_agent, stored_agent
@@ -211,7 +211,10 @@ def _warm_compare(runtime: HarnessAgentVersionRuntime) -> None:
 def _same_code(
     runtime: HarnessAgentVersionRuntime, parent: HarnessAgentVersionRuntime
 ) -> bool:
-    if runtime.source_kind != parent.source_kind:
+    if (
+        runtime.source_kind != parent.source_kind
+        or runtime.source_kind not in CODE_KINDS
+    ):
         return False
     mine, theirs = runtime.source or {}, parent.source or {}
     if runtime.source_kind == SourceKind.ARCHIVE:
@@ -254,7 +257,7 @@ def _reuse_parent_reading(
             code=exc.code,
         )
         return False
-    contract = stored_version_contract(parent.agent_version_id)
+    contract = stored_read_contract(parent.agent_version_id)
     if contract:
         store_version_contract(
             organization_id=runtime.organization_id,

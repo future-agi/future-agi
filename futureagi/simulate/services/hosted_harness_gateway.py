@@ -1905,6 +1905,7 @@ def _connector_egress_domains(
                 domains.add(host)
     elif connector in {"retell", "retell_chat"}:
         domains.add("api.retellai.com")
+        domains.add("turn.retellai.com")
         api_url = _config_value(
             config, "api_url", "api_base_url", "retell_api_url", "RETELL_API_URL"
         )
@@ -2034,6 +2035,7 @@ def _provider_egress_domains(secrets_map: Mapping[str, Any]) -> set[str]:
         domains.update(
             {
                 "api.retellai.com",
+                "turn.retellai.com",
                 "*.livekit.cloud",
                 "*.turn.livekit.cloud",
             }
@@ -2710,6 +2712,7 @@ class HostedHarnessGateway:
                 **(payload.get("metadata") or {}),
                 "seeded_contract": True,
             }
+        seed_profile = _seed_profile_for(job) if seed_contract is not None else None
         if payload != job.payload:
             job.payload = payload
             job.save(update_fields=["payload", "updated_at"])
@@ -2954,6 +2957,8 @@ class HostedHarnessGateway:
                 sandbox.fs.upload_file(authoring_archive, "/work/authoring.tar.gz")
             if seed_contract is not None:
                 sandbox.fs.upload_file(seed_contract, _SEED_CONTRACT_PATH)
+            if seed_profile is not None:
+                sandbox.fs.upload_file(seed_profile, _PROVIDER_PROFILE_PATH)
             overlay = _alk_source_overlay()
             if overlay is not None:
                 sandbox.fs.upload_file(overlay, "/work/alk-src.tar.gz")
@@ -3018,7 +3023,11 @@ class HostedHarnessGateway:
                 f"--target-secrets {authoring_secrets_path} "
                 "--provider-profile-cache /work/provider-import-profile.json "
                 if authoring_target_secrets
-                else ""
+                else (
+                    f"--provider-profile-cache {_PROVIDER_PROFILE_PATH} "
+                    if seed_profile is not None
+                    else ""
+                )
             )
             simulation_only = bool(
                 (dispatch_payload.get("metadata") or {}).get("simulation_only")
@@ -6350,6 +6359,15 @@ def _provider_profile_bytes(agent_version: Any) -> bytes | None:
     from simulate.services.provider_profile import profile_bytes_for_version
 
     return profile_bytes_for_version(agent_version)
+
+
+def _seed_profile_for(job: HostedHarnessJob) -> bytes | None:
+    from simulate.services.hosted_harness import frozen_build_pin
+
+    if ((job.payload or {}).get("source") or {}).get("kind") != "provider":
+        return None
+    pinned = frozen_build_pin(job)
+    return _provider_profile_bytes(pinned if pinned is not None else job.agent_version)
 
 
 def _live_sandbox_refs(job: HostedHarnessJob) -> set[str]:

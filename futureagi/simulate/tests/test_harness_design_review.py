@@ -107,6 +107,30 @@ class TestProposal:
         assert {tool["source"] for tool in proposal["tools"]} == {"agent_code"}
         assert len(proposal["use_cases"]) == 3
 
+    @pytest.mark.parametrize("kind", ["provider", "phone", "livekit"])
+    def test_a_hosted_agents_tools_come_from_its_settings(self, kind):
+        proposal = build_proposal(CONTRACT, 6, source_kind=kind)
+
+        assert {tool["source"] for tool in proposal["tools"]} == {"agent_settings"}
+
+    @pytest.mark.parametrize("kind", ["github", "archive", "remote", None])
+    def test_a_read_agents_tools_come_from_its_code(self, kind):
+        proposal = build_proposal(CONTRACT, 6, source_kind=kind)
+
+        assert {tool["source"] for tool in proposal["tools"]} == {"agent_code"}
+
+    def test_the_review_reads_the_source_kind_off_the_build(self):
+        job = SimpleNamespace(
+            payload={"source": {"kind": "provider"}},
+            scenario_count=6,
+            save=lambda **_: None,
+        )
+
+        create_design_review(job, SimpleNamespace(agent_version_id=None), CONTRACT)
+
+        tools = stored_review(job)["proposal"]["tools"]
+        assert {tool["source"] for tool in tools} == {"agent_settings"}
+
     def test_removing_a_use_case_spreads_its_scenarios_over_the_rest(self):
         proposal = build_proposal(CONTRACT, 6)
 

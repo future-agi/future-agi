@@ -2184,11 +2184,9 @@ def delete_environment(
 
 
 def _never_started(job: HostedHarnessJob) -> bool:
-    from simulate.services.harness_design_review import awaiting_design_approval
+    from simulate.services.harness_design_review import design_review_pending
 
-    return job.state == HostedHarnessJob.State.RECEIVED and awaiting_design_approval(
-        job
-    )
+    return job.state == HostedHarnessJob.State.RECEIVED and design_review_pending(job)
 
 
 def _close_unstarted(job: HostedHarnessJob, reason: str) -> None:
