@@ -858,6 +858,34 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             self.assertTrue(checker.malformed_inventory(bad), bad)
 
 
+class JobPrefixTest(unittest.TestCase):
+    """The shard job names a run's receipts are looked up under."""
+
+    def test_without_a_caller_prefix_today_s_names_hold(self):
+        self.assertEqual(checker.job_prefix({"GITHUB_EVENT_NAME": "pull_request"}), "")
+        self.assertEqual(checker.job_prefix({"GITHUB_EVENT_NAME": "push"}), "")
+        self.assertEqual(
+            checker.job_prefix({"GITHUB_EVENT_NAME": "merge_group"}), "backend / "
+        )
+        # The workflow passes the input even when nobody set it.
+        self.assertEqual(
+            checker.job_prefix(
+                {"GITHUB_EVENT_NAME": "merge_group", "BACKEND_JOB_PREFIX": ""}
+            ),
+            "backend / ",
+        )
+
+    def test_a_caller_s_prefix_is_used_and_must_be_a_job_name(self):
+        env = {"GITHUB_EVENT_NAME": "pull_request"}
+        self.assertEqual(
+            checker.job_prefix({**env, "BACKEND_JOB_PREFIX": "retarget-backend / "}),
+            "retarget-backend / ",
+        )
+        for bad in ("retarget-backend", " / ", "a / b / ", "x/ ", "x\n / "):
+            with self.subTest(prefix=bad), self.assertRaises(ValueError):
+                checker.job_prefix({**env, "BACKEND_JOB_PREFIX": bad})
+
+
 class ProducerIdentityTest(unittest.TestCase):
     def test_partial_rerun_needs_the_latest_success_for_each_leg(self):
         matrix = json.dumps(
@@ -875,6 +903,8 @@ class ProducerIdentityTest(unittest.TestCase):
             "GITHUB_RUN_ID": "100",
             "GITHUB_REPOSITORY": "fixture/repo",
             "GITHUB_SHA": "c" * 40,
+            # Not the runner's own attempt: these listings are attempt-less.
+            "GITHUB_RUN_ATTEMPT": "",
             "SHARDS": matrix,
         }
         common = {
@@ -930,9 +960,52 @@ class ProducerIdentityTest(unittest.TestCase):
             ),
             patch.object(checker, "verify_artifact", side_effect=artifact),
             patch.object(checker, "run_date", return_value=datetime.date(2026, 11, 22)),
+            # A producer the listings do not show is read again after a pause.
+            patch.object(checker.time, "sleep") as slept,
             contextlib.redirect_stdout(io.StringIO()),
         ):
             checker.verify_run()
+            self.assertFalse(slept.called)  # Everything listed: no wait.
+
+            # The listings show shard 2 only from their second read: it
+            # qualifies after one pause. Shown nowhere, it fails closed by name.
+            def lagging(reads):
+                def pages(_, field):
+                    reads.append(field)
+                    if len(reads) > 2:
+                        return jobs if field == "jobs" else artifacts
+                    if field == "jobs":
+                        return [j for j in jobs if j["name"] != "pytest shard 2"]
+                    return artifacts[:1]
+
+                return pages
+
+            with patch.object(checker, "pages", side_effect=lagging([])):
+                checker.verify_run()
+            self.assertEqual([c.args[0] for c in slept.call_args_list], [5])
+            slept.reset_mock()
+            with (
+                # The listings never show shard 2.
+                patch.object(
+                    checker,
+                    "pages",
+                    side_effect=lambda endpoint, field: (
+                        [j for j in jobs if j["name"] != "pytest shard 2"]
+                        if field == "jobs"
+                        else artifacts[:1]
+                    ),
+                ),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "after 90 s of reading, the run's listings still do not show"
+                    " job 'pytest shard 2', artifact collected-ids-main-2",
+                ),
+            ):
+                checker.verify_run()
+            self.assertEqual(
+                [c.args[0] for c in slept.call_args_list], list(checker.SETTLE_PAUSES)
+            )
+            slept.reset_mock()
             with patch.dict(os.environ, GITHUB_EVENT_NAME="merge_group"):
                 with self.assertRaisesRegex(ValueError, "missing producer"):
                     checker.verify_run()
@@ -1067,6 +1140,141 @@ class ProducerIdentityTest(unittest.TestCase):
             checker.verify_artifact({"id": 1, "digest": "sha256:other"}, "fixture/repo")
         # A wrong digest is fetched again from scratch before failing closed.
         self.assertEqual([c.args[0] for c in slept.call_args_list], [2, 4, 8])
+
+
+class ListingSettleTest(unittest.TestCase):
+    """GitHub can list a run's jobs seconds behind the jobs themselves.
+
+    Merge group run 45343675711 read its jobs between 07:30:08 and 07:30:17Z
+    without "backend / metrics shard 4", which had finished at 07:30:04Z; a
+    fresh read shows it. Two of that run's planned metrics legs, as listed.
+    """
+
+    LEGS = {
+        f"collected-ids-metrics-{n}": {
+            "suite": "metrics",
+            "name": "metrics",
+            "group": n,
+        }
+        for n in (3, 4)
+    }
+    PREFIX = "backend / "
+
+    @staticmethod
+    def job(n, attempt=1, finished=True, conclusion="success"):
+        return {
+            "name": f"backend / metrics shard {n}",
+            "run_attempt": attempt,
+            "started_at": "2026-11-24T07:20:00Z",
+            "completed_at": "2026-11-24T07:30:04Z" if finished else None,
+            "conclusion": conclusion if finished else None,
+        }
+
+    @staticmethod
+    def artifact(n):
+        return {"name": f"collected-ids-metrics-{n}", "id": n, "digest": "sha256:x"}
+
+    def settle(self, *rounds, attempt=1):
+        """listings() over these (jobs, artifacts) rounds, the last one repeating."""
+        reads, pauses = [], []
+
+        def pages(endpoint, field):
+            jobs, artifacts = rounds[min(len(reads) // 2, len(rounds) - 1)]
+            reads.append(field)
+            return [dict(row) for row in (jobs if field == "jobs" else artifacts)]
+
+        with (
+            patch.object(checker, "pages", pages),
+            contextlib.redirect_stdout(io.StringIO()) as out,
+        ):
+            jobs, artifacts, missing = checker.listings(
+                "runs/1", self.LEGS, self.PREFIX, attempt, pause=pauses.append
+            )
+        return jobs, artifacts, missing, pauses, reads, out.getvalue()
+
+    def test_a_run_listed_in_full_is_read_once_and_waits_for_nothing(self):
+        full = ([self.job(3), self.job(4)], [self.artifact(3), self.artifact(4)])
+        _, artifacts, missing, pauses, reads, out = self.settle(full)
+        self.assertEqual(
+            (missing, pauses, reads, out), ([], [], ["jobs", "artifacts"], "")
+        )
+        self.assertEqual(
+            sorted(artifacts), ["collected-ids-metrics-3", "collected-ids-metrics-4"]
+        )
+
+    def test_a_producer_the_listings_lag_behind_is_read_again_in_full(self):
+        lagging = ([self.job(3)], [self.artifact(3)])
+        full = ([self.job(3), self.job(4)], [self.artifact(3), self.artifact(4)])
+        jobs, artifacts, missing, pauses, reads, out = self.settle(
+            lagging, lagging, full
+        )
+        self.assertEqual(missing, [])
+        self.assertEqual(pauses, [5, 10])
+        # Both listings, in full, on every read: nothing is kept between reads.
+        self.assertEqual(reads, ["jobs", "artifacts"] * 3)
+        self.assertEqual(jobs["backend / metrics shard 4"], [self.job(4)])
+        self.assertEqual(artifacts["collected-ids-metrics-4"], [self.artifact(4)])
+        self.assertIn(
+            "do not show job 'backend / metrics shard 4', artifact"
+            " collected-ids-metrics-4 yet; reading them again in 5 s",
+            out,
+        )
+
+    def test_a_producer_never_listed_is_still_missing_after_the_pauses(self):
+        lagging = ([self.job(3)], [self.artifact(3)])
+        _, _, missing, pauses, reads, _ = self.settle(lagging)
+        self.assertEqual(
+            missing,
+            ["job 'backend / metrics shard 4'", "artifact collected-ids-metrics-4"],
+        )
+        self.assertEqual(pauses, list(checker.SETTLE_PAUSES))
+        self.assertEqual(sum(pauses), 90)
+        self.assertEqual(len(reads), 2 * (len(checker.SETTLE_PAUSES) + 1))
+
+    def test_only_a_finished_job_of_this_attempt_counts(self):
+        artifacts = [self.artifact(3), self.artifact(4)]
+        for jobs in (
+            # Attempt 2 lists only attempt 1's job for shard 4 so far.
+            [self.job(3, 2), self.job(4, 1)],
+            # Or lists it, but not yet as finished.
+            [self.job(3, 2), self.job(4, 1), self.job(4, 2, finished=False)],
+        ):
+            with self.subTest(jobs=jobs):
+                missing = self.settle((jobs, artifacts), attempt=2)[2]
+                self.assertEqual(missing, ["job 'backend / metrics shard 4'"])
+        # A re-run attempt lists a finished copy of each job it did not re-run.
+        copied = [self.job(3, 2), self.job(4, 1), self.job(4, 2)]
+        self.assertEqual(self.settle((copied, artifacts), attempt=2)[2], [])
+        # Outside Actions the attempt is unknown: the latest job counts.
+        self.assertEqual(self.settle((copied, artifacts), attempt=None)[2], [])
+        unfinished = [self.job(3), self.job(4, 1), self.job(4, 2, finished=False)]
+        self.assertEqual(
+            self.settle((unfinished, artifacts), attempt=None)[2],
+            ["job 'backend / metrics shard 4'"],
+        )
+
+    def test_an_unsuccessful_producer_s_artifact_is_not_waited_for(self):
+        # A shard that failed before its upload never lists an artifact, and
+        # the verdict fails on it anyway: nothing to wait for.
+        for conclusion in ("failure", "cancelled", "timed_out"):
+            with self.subTest(conclusion=conclusion):
+                jobs = [self.job(3), self.job(4, conclusion=conclusion)]
+                _, _, missing, pauses, _, _ = self.settle((jobs, [self.artifact(3)]))
+                self.assertEqual((missing, pauses), ([], []))
+        # Its job not yet listed as finished: still waited for, with its artifact.
+        jobs = [self.job(3), self.job(4, finished=False)]
+        missing = self.settle((jobs, [self.artifact(3)]))[2]
+        self.assertEqual(
+            missing,
+            ["job 'backend / metrics shard 4'", "artifact collected-ids-metrics-4"],
+        )
+
+    def test_the_run_attempt_comes_from_actions(self):
+        self.assertEqual(checker.run_attempt({"GITHUB_RUN_ATTEMPT": "3"}), 3)
+        for environ in ({}, {"GITHUB_RUN_ATTEMPT": ""}, {"GITHUB_RUN_ATTEMPT": "0"}):
+            with self.subTest(environ=environ):
+                self.assertIsNone(checker.run_attempt(environ))
+        self.assertIsNone(checker.run_attempt({"GITHUB_RUN_ATTEMPT": "x"}))
 
 
 class GhApiRetryTest(unittest.TestCase):
