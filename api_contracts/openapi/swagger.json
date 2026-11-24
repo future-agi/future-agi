@@ -62180,7 +62180,7 @@
         "/simulate/test-executions/{test_execution_id}/eval-explanation-summary/": {
             "get": {
                 "operationId": "simulate_test-executions_eval-explanation-summary_list",
-                "description": "Fetch the evaluation explanation summary from the database.\nIf not present, trigger async calculation and return empty response.",
+                "description": "Return the stored summary and its status; write and queue nothing.",
                 "parameters": [],
                 "responses": {
                     "200": {

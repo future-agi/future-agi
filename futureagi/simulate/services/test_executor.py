@@ -175,7 +175,6 @@ from simulate.utils.verdicts import has_stored_verdict
 from tfc.constants.api_calls import FIX_CHECK_RUN_EVAL_SOURCE, APICallStatusChoices
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.temporal.drop_in import temporal_activity
-
 from tfc.utils.error_codes import get_specific_error_message
 from tfc.utils.evaluation_denials import EvaluationDenied
 

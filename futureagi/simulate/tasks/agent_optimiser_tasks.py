@@ -1,11 +1,12 @@
 import structlog
 
-logger = structlog.get_logger(__name__)
 from simulate.models import AgentOptimiserRun, AgentPromptOptimiserRun, TestExecution
 from simulate.utils.agent_optimiser import execute_simulation_analysis
 from simulate.utils.agent_prompt_optimiser import run_agent_prompt_optimiser
 from tfc.temporal.drop_in import temporal_activity
 from tfc.utils.error_codes import get_error_message
+
+logger = structlog.get_logger(__name__)
 
 
 def _with_run_summary(run: AgentOptimiserRun) -> dict:
