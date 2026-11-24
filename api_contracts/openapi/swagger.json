@@ -53327,6 +53327,143 @@
             },
             "parameters": []
         },
+        "/simulate/api/harness-environments/{environment_id}/scenario-tags/": {
+            "get": {
+                "operationId": "simulate_api_harness-environments_scenario_tags_list",
+                "description": "Every tag the environment's scenarios carry.",
+                "parameters": [],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessEnvironmentTags"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "environment_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{environment_id}/scenario-tags/change/": {
+            "post": {
+                "operationId": "simulate_api_harness-environments_scenario_tags_change",
+                "description": "Add and remove tags on many scenarios at once.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioTagsChange"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioTagsChangeResult"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "environment_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
+        "/simulate/api/harness-environments/{environment_id}/scenario-tags/scenarios/{scenario_key}/": {
+            "put": {
+                "operationId": "simulate_api_harness-environments_scenario_tags_set",
+                "description": "Replace one scenario's tags; an empty list clears them.",
+                "parameters": [
+                    {
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioTags"
+                        }
+                    }
+                ],
+                "responses": {
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ViewerReadOnlyError"
+                        }
+                    },
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/HarnessScenarioTagsResult"
+                        }
+                    },
+                    "default": {
+                        "description": "Default error response",
+                        "schema": {
+                            "$ref": "#/definitions/ManagementAPIErrorResponse"
+                        }
+                    }
+                },
+                "tags": [
+                    "simulate"
+                ],
+                "x-runtime-request-validation": true,
+                "x-runtime-response-validation": true
+            },
+            "parameters": [
+                {
+                    "name": "environment_id",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                },
+                {
+                    "name": "scenario_key",
+                    "in": "path",
+                    "required": true,
+                    "type": "string"
+                }
+            ]
+        },
         "/simulate/api/harness-environments/{id}/": {
             "get": {
                 "operationId": "simulate_api_harness-environments_read",
@@ -148347,6 +148484,119 @@
                 }
             }
         },
+        "HarnessEnvironmentTags": {
+            "required": [
+                "tags"
+            ],
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "description": "Every tag the environment's scenarios carry.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessScenarioTagsChange": {
+            "required": [
+                "scenario_keys"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_keys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 255,
+                        "minLength": 1
+                    },
+                    "maxItems": 1000,
+                    "minItems": 1
+                },
+                "add": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "default": [],
+                    "maxItems": 20
+                },
+                "remove": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "default": [],
+                    "maxItems": 20
+                }
+            }
+        },
+        "HarnessScenarioTagsResult": {
+            "required": [
+                "scenario_key",
+                "tags"
+            ],
+            "type": "object",
+            "properties": {
+                "scenario_key": {
+                    "title": "Scenario key",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessScenarioTagsChangeResult": {
+            "required": [
+                "scenarios",
+                "tags"
+            ],
+            "type": "object",
+            "properties": {
+                "scenarios": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/HarnessScenarioTagsResult"
+                    }
+                },
+                "tags": {
+                    "description": "Every tag the environment's scenarios carry after the change.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
+                }
+            }
+        },
+        "HarnessScenarioTags": {
+            "required": [
+                "tags"
+            ],
+            "type": "object",
+            "properties": {
+                "tags": {
+                    "description": "The scenario's tags; an empty list clears them.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "maxLength": 64
+                    },
+                    "maxItems": 20
+                }
+            }
+        },
         "HarnessEnvironmentRunLink": {
             "required": [
                 "run_test_id",
@@ -158897,6 +159147,14 @@
                     "title": "Id",
                     "type": "string",
                     "format": "uuid"
+                },
+                "tags": {
+                    "description": "The free-text tags people put on the scenario; never versioned.",
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "minLength": 1
+                    }
                 },
                 "scenario_id": {
                     "title": "Scenario id",

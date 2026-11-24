@@ -47,6 +47,7 @@ import { useHarnessScenarios } from "src/api/simulate-environments/scenariosHook
 import { useDebounce } from "src/hooks/use-debounce";
 import useSelection from "./useSelection";
 import PagedScenarioViews from "./PagedScenarioViews";
+import BulkTagMenu from "./BulkTagMenu";
 
 // A seeded-from-template env is read-only until forked; every mutating control
 // carries this on its tooltip while locked.
@@ -176,6 +177,7 @@ export default function ScenariosStep({
   // no create route to restore from), so a drop is confirmed first, then run.
   // { count, resolve: () => Promise<string[]> } — resolve yields the names to drop.
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [tagAnchor, setTagAnchor] = useState(null);
   // Grouping axis. Users read the scenarios differently depending on what
   // they're after: by goal for coverage, by persona to spot a caller type the
   // agent handles badly, by sub-goal to see which step everyone lands on. Left
@@ -632,6 +634,7 @@ export default function ScenariosStep({
                       count={sel.count}
                       onDelete={bulkDelete}
                       onClear={sel.clear}
+                      onTag={held || !env?.id ? undefined : setTagAnchor}
                       onRun={
                         canRun && onStartRun ? handleRunSelected : undefined
                       }
@@ -647,6 +650,15 @@ export default function ScenariosStep({
                         onSelectAll: sel.selectAllMatching,
                       }}
                     />
+                    {env?.id && (
+                      <BulkTagMenu
+                        envId={env.id}
+                        anchorEl={tagAnchor}
+                        onClose={() => setTagAnchor(null)}
+                        count={sel.count}
+                        resolveKeys={() => resolveSelection(runnableScenarioKey)}
+                      />
+                    )}
                   </Box>
                 </Box>
               )}

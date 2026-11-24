@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1212,
+  endpointCount: 1215,
   groups: {
     accounts: {
       "/accounts/2fa/recovery-codes/": ["get"],
@@ -909,6 +909,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/simulate/api/call-executions/": ["get"],
       "/simulate/api/harness-environments/": ["get"],
+      "/simulate/api/harness-environments/{environment_id}/scenario-tags/": [
+        "get",
+      ],
+      "/simulate/api/harness-environments/{environment_id}/scenario-tags/change/":
+        ["post"],
+      "/simulate/api/harness-environments/{environment_id}/scenario-tags/scenarios/{scenario_key}/":
+        ["put"],
       "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
       "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
       "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": [
@@ -2395,6 +2402,12 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/simulate/api/call-executions/": ["get"],
   "/simulate/api/harness-environments/": ["get"],
+  "/simulate/api/harness-environments/{environment_id}/scenario-tags/": ["get"],
+  "/simulate/api/harness-environments/{environment_id}/scenario-tags/change/": [
+    "post",
+  ],
+  "/simulate/api/harness-environments/{environment_id}/scenario-tags/scenarios/{scenario_key}/":
+    ["put"],
   "/simulate/api/harness-environments/{id}/": ["delete", "get", "patch"],
   "/simulate/api/harness-environments/{id}/actor-limits/": ["put"],
   "/simulate/api/harness-environments/{id}/actor-unresolved/accept/": ["post"],

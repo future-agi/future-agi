@@ -20501,6 +20501,43 @@ export interface HarnessEnvironmentListResponseApi {
   status_counts: HarnessEnvironmentStatusCountsApi;
 }
 
+export interface HarnessEnvironmentTagsApi {
+  /** Every tag the environment's scenarios carry. */
+  tags: string[];
+}
+
+export interface HarnessScenarioTagsChangeApi {
+  /**
+   * @minItems 1
+   * @maxItems 1000
+   */
+  scenario_keys: string[];
+  /** @maxItems 20 */
+  add?: string[];
+  /** @maxItems 20 */
+  remove?: string[];
+}
+
+export interface HarnessScenarioTagsResultApi {
+  /** @minLength 1 */
+  scenario_key: string;
+  tags: string[];
+}
+
+export interface HarnessScenarioTagsChangeResultApi {
+  scenarios: HarnessScenarioTagsResultApi[];
+  /** Every tag the environment's scenarios carry after the change. */
+  tags: string[];
+}
+
+export interface HarnessScenarioTagsApi {
+  /**
+   * The scenario's tags; an empty list clears them.
+   * @maxItems 20
+   */
+  tags: string[];
+}
+
 /**
  * edit: the cast is edited on the Actors tab; list: its actors are listed read-only; null: no tab.
  */
@@ -24859,6 +24896,8 @@ export const HarnessScenarioRowApiDraftChange = {
 
 export interface HarnessScenarioRowApi {
   id: string;
+  /** The free-text tags people put on the scenario; never versioned. */
+  tags?: string[];
   scenario_id: string;
   /** @minLength 1 */
   scenario_key: string;

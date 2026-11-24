@@ -100,6 +100,7 @@ export const scenarioFromApi = (row = {}) => {
     id: row.id,
     scenarioId: row.scenario_id ?? null,
     scenarioKey: row.scenario_key,
+    tags: Array.isArray(row.tags) ? row.tags : [],
     number: row.number,
     name: row.name,
     useCase: row.use_case,

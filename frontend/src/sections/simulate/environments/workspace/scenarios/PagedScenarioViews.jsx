@@ -142,6 +142,7 @@ export default function PagedScenarioViews({
             locked={locked}
             lockTooltip={lockTooltip}
             rowHeight={rowHeight}
+            envId={env?.id}
           />
         ) : (
           <GroupedScenarioList

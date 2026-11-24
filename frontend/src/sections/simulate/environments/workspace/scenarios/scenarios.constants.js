@@ -21,6 +21,21 @@ export const ROW_HEIGHTS = {
 // label on one line and the button from shrinking.
 export const scenarioToolbarButtonSx = { whiteSpace: "nowrap", flexShrink: 0 };
 
+export const SCENARIO_TAGS_COPY = {
+  tag: "Tag",
+  tagTip: "Add or remove a tag on the selected scenarios",
+  bulkTitle: (n) => `Tag ${n} scenario${n === 1 ? "" : "s"}`,
+  search: "Search tags",
+  add: "Add",
+  remove: "Remove",
+  newTag: "Type a new tag and press Enter",
+  none: "No tags yet",
+  unavailable: "Tags couldn't load",
+  added: (tag, n) => `Added ${tag} to ${n} scenario${n === 1 ? "" : "s"}`,
+  removed: (tag, n) => `Removed ${tag} from ${n} scenario${n === 1 ? "" : "s"}`,
+  failed: "Couldn't change the tags. Try again",
+};
+
 export const SCENARIOS_COPY = {
   searchPlaceholder: "Search scenarios by name, task or use case…",
   addLabel: "Add scenarios",

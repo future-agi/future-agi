@@ -1,45 +1,11 @@
-/* eslint-disable no-restricted-syntax -- ds: data colours (user-pickable tag colours) */
-import {
-  Box,
-  Button,
-  Checkbox,
-  Chip,
-  Divider,
-  Popover,
-  TextField,
-  Typography,
-  ButtonBase,
-} from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import Iconify from "src/components/iconify";
+import { enqueueSnackbar } from "notistack";
 import axios from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 import { fetchAllObserveProjects } from "src/api/project/observe-project-list";
-import { enqueueSnackbar } from "notistack";
-
-// ── Tag colors ──
-
-const TAG_COLORS = [
-  "#EF4444",
-  "#3B82F6",
-  "#F59E0B",
-  "#22C55E",
-  "#7857FC",
-  "#EC4899",
-  "#94A3B8",
-  "#06B6D4",
-];
-
-function getTagColor(tag) {
-  let hash = 0;
-  for (let i = 0; i < tag.length; i++)
-    hash = tag.charCodeAt(i) + ((hash << 5) - hash);
-  return TAG_COLORS[Math.abs(hash) % TAG_COLORS.length];
-}
-
-// ── API ──
+import TagPicker from "src/components/tag-picker";
 
 const fetchProjectTags = async (projectId) => {
   const { data } = await axios.get(
@@ -64,15 +30,10 @@ const fetchAllKnownTags = async ({ signal } = {}) => {
   return Array.from(tagSet).sort();
 };
 
-// ── Component ──
-
-const TagEditor = ({ projectId, variant = "grid" }) => {
-  const [anchorEl, setAnchorEl] = useState(null);
-  const [search, setSearch] = useState("");
-  const [newTagInput, setNewTagInput] = useState("");
+const TagEditor = ({ projectId }) => {
+  const [opened, setOpened] = useState(false);
   const queryClient = useQueryClient();
 
-  // ── Fetch this project's tags ──
   const { data: tags = [] } = useQuery({
     queryKey: ["project-tags", projectId],
     queryFn: () => fetchProjectTags(projectId),
@@ -80,7 +41,6 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
     staleTime: 30_000,
   });
 
-  // ── Fetch all known tags (for the dropdown list) — only when popover is open ──
   const {
     data: allKnownTags = [],
     isError: isKnownTagsError,
@@ -89,278 +49,47 @@ const TagEditor = ({ projectId, variant = "grid" }) => {
   } = useQuery({
     queryKey: ["all-known-tags"],
     queryFn: ({ signal }) => fetchAllKnownTags({ signal }),
-    enabled: Boolean(anchorEl),
+    enabled: opened,
     staleTime: 60_000,
     retry: false,
   });
 
-  // ── Mutation ──
   const mutation = useMutation({
     mutationFn: (newTags) => updateProjectTags(projectId, newTags),
     onMutate: async (newTags) => {
-      // Cancel outgoing refetches
       await queryClient.cancelQueries({
         queryKey: ["project-tags", projectId],
       });
-      // Snapshot previous
       const prev = queryClient.getQueryData(["project-tags", projectId]);
-      // Optimistically set new tags
       queryClient.setQueryData(["project-tags", projectId], newTags);
       return { prev };
     },
     onError: (_err, _newTags, context) => {
-      // Revert on error
       queryClient.setQueryData(["project-tags", projectId], context?.prev);
       enqueueSnackbar("Failed to update tags", { variant: "error" });
     },
     onSettled: () => {
-      // Refetch to ensure server state
       queryClient.invalidateQueries({ queryKey: ["project-tags", projectId] });
       queryClient.invalidateQueries({ queryKey: ["observe-projects"] });
       queryClient.invalidateQueries({ queryKey: ["all-known-tags"] });
     },
   });
 
-  const toggleTag = useCallback(
-    (tag) => {
-      const updated = tags.includes(tag)
-        ? tags.filter((t) => t !== tag)
-        : [...tags, tag];
-      mutation.mutate(updated);
-    },
-    [tags, mutation],
-  );
-
-  const handleNewTag = useCallback(() => {
-    const tag = newTagInput.trim();
-    if (!tag) return;
-    if (!tags.includes(tag)) {
-      mutation.mutate([...tags, tag]);
-    }
-    setNewTagInput("");
-  }, [newTagInput, tags, mutation]);
-
-  // Combine known tags + current tags for the dropdown
-  const availableTags = useMemo(() => {
-    const combined = new Set([...allKnownTags, ...tags]);
-    const q = search.toLowerCase();
-    return Array.from(combined)
-      .filter((t) => !q || t.toLowerCase().includes(q))
-      .sort();
-  }, [allKnownTags, tags, search]);
-
   return (
-    <>
-      {/* ── Inline display — entire area is clickable ── */}
-      <Box
-        onClick={(e) => {
-          e.stopPropagation();
-          setAnchorEl(e.currentTarget);
-        }}
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 0.5,
-          overflow: "hidden",
-          width: "100%",
-          cursor: "pointer",
-          borderRadius: "4px",
-          px: 0.5,
-          py: 0.25,
-          "&:hover": { bgcolor: "action.hover" },
-        }}
-      >
-        {tags.length > 0 ? (
-          <>
-            {tags.slice(0, 2).map((tag) => (
-              <Chip
-                key={tag}
-                label={tag}
-                size="small"
-                sx={{
-                  color: getTagColor(tag),
-                  bgcolor: `${getTagColor(tag)}14`,
-                  border: `1px solid ${getTagColor(tag)}30`,
-                  pointerEvents: "none",
-                }}
-              />
-            ))}
-            {tags.length > 2 && (
-              <Typography sx={{ fontSize: 12, color: "text.disabled" }}>
-                +{tags.length - 2}
-              </Typography>
-            )}
-            <Iconify
-              icon="solar:alt-arrow-down-linear"
-              width={14}
-              sx={{ color: "text.disabled", ml: "auto", flexShrink: 0 }}
-            />
-          </>
-        ) : (
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.5,
-              color: "text.disabled",
-            }}
-          >
-            <Iconify icon="solar:add-square-linear" width={20} />
-          </Box>
-        )}
-      </Box>
-
-      {/* ── Popover ── */}
-      <Popover
-        open={Boolean(anchorEl)}
-        anchorEl={anchorEl}
-        onClose={() => {
-          setAnchorEl(null);
-          setSearch("");
-          setNewTagInput("");
-        }}
-        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
-        transformOrigin={{ vertical: "top", horizontal: "left" }}
-        slotProps={{
-          paper: {
-            sx: { width: 240, borderRadius: "8px", overflow: "hidden" },
-            onClick: (e) => e.stopPropagation(),
-          },
-        }}
-      >
-        <Box sx={{ p: 1.5, pb: 1 }}>
-          <Typography sx={{ fontSize: 12, fontWeight: 600, mb: 1 }}>
-            Tags
-          </Typography>
-          <TextField
-            size="small"
-            fullWidth
-            placeholder="Search tags"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            autoFocus
-            InputProps={{
-              startAdornment: (
-                <Iconify
-                  icon="solar:magnifier-linear"
-                  width={16}
-                  sx={{ color: "text.disabled", mr: 0.5 }}
-                />
-              ),
-              sx: { fontSize: 12, height: 32, borderRadius: "6px" },
-            }}
-          />
-        </Box>
-
-        <Box sx={{ maxHeight: 200, overflow: "auto", px: 0.5 }}>
-          {availableTags.map((tag) => {
-            const checked = tags.includes(tag);
-            const color = getTagColor(tag);
-            return (
-              <ButtonBase
-                component="div"
-                key={tag}
-                onClick={() => toggleTag(tag)}
-                sx={{
-                  justifyContent: "flex-start",
-                  textAlign: "left",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.5,
-                  px: 1,
-                  py: 0.25,
-                  cursor: "pointer",
-                  borderRadius: "4px",
-                  "&:hover": { bgcolor: "action.hover" },
-                }}
-              >
-                <Checkbox
-                  size="small"
-                  checked={checked}
-                  tabIndex={-1}
-                  sx={{ p: 0.25, "& .MuiSvgIcon-root": { fontSize: 16 } }}
-                />
-                <Typography sx={{ fontSize: 12, fontWeight: 500, color }}>
-                  {tag}
-                </Typography>
-              </ButtonBase>
-            );
-          })}
-          {isKnownTagsError && (
-            <Box
-              role="alert"
-              sx={{
-                px: 1,
-                py: 0.75,
-                fontSize: 12,
-                color: "warning.main",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 1,
-              }}
-            >
-              Tag suggestions unavailable.
-              <Button
-                size="small"
-                disabled={isKnownTagsFetching}
-                onClick={() => refetchKnownTags()}
-              >
-                Retry
-              </Button>
-            </Box>
-          )}
-          {availableTags.length === 0 && !isKnownTagsError && (
-            <Typography
-              sx={{
-                px: 1,
-                py: 1,
-                fontSize: 12,
-                color: "text.disabled",
-                textAlign: "center",
-              }}
-            >
-              No tags found
-            </Typography>
-          )}
-        </Box>
-
-        <Divider sx={{ mt: 0.5 }} />
-
-        <Box sx={{ p: 1 }}>
-          <TextField
-            size="small"
-            fullWidth
-            placeholder="Type new tag and press Enter"
-            value={newTagInput}
-            onChange={(e) => setNewTagInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                e.stopPropagation();
-                handleNewTag();
-              }
-            }}
-            InputProps={{
-              startAdornment: (
-                <Iconify
-                  icon="solar:add-linear"
-                  width={14}
-                  sx={{ color: "primary.main", mr: 0.5 }}
-                />
-              ),
-              sx: { fontSize: 12, height: 32, borderRadius: "6px" },
-            }}
-          />
-        </Box>
-      </Popover>
-    </>
+    <TagPicker
+      tags={tags}
+      knownTags={allKnownTags}
+      onChange={(next) => mutation.mutate(next)}
+      onOpen={() => setOpened(true)}
+      knownError={isKnownTagsError}
+      knownFetching={isKnownTagsFetching}
+      onRetryKnown={() => refetchKnownTags()}
+    />
   );
 };
 
 TagEditor.propTypes = {
   projectId: PropTypes.string.isRequired,
-  variant: PropTypes.oneOf(["grid", "header"]),
 };
 
 export default TagEditor;

@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   generatedFrom: "api_contracts/openapi/swagger.json",
   swaggerVersion: "2.0",
-  endpointCount: 1212,
+  endpointCount: 1215,
   endpoints: {
     "/accounts/2fa/recovery-codes/": {
       get: {
@@ -29525,6 +29525,69 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    "/simulate/api/harness-environments/{environment_id}/scenario-tags/": {
+      get: {
+        operationId: "simulate_api_harness-environments_scenario_tags_list",
+        runtimeRequestValidation: false,
+        runtimeResponseValidation: true,
+        requestBody: null,
+        queryParameters: {},
+        responses: {
+          200: {
+            $ref: "#/definitions/HarnessEnvironmentTags",
+          },
+          default: {
+            $ref: "#/definitions/ManagementAPIErrorResponse",
+          },
+        },
+      },
+    },
+    "/simulate/api/harness-environments/{environment_id}/scenario-tags/change/":
+      {
+        post: {
+          operationId: "simulate_api_harness-environments_scenario_tags_change",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessScenarioTagsChange",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessScenarioTagsChangeResult",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
+    "/simulate/api/harness-environments/{environment_id}/scenario-tags/scenarios/{scenario_key}/":
+      {
+        put: {
+          operationId: "simulate_api_harness-environments_scenario_tags_set",
+          runtimeRequestValidation: true,
+          runtimeResponseValidation: true,
+          requestBody: {
+            $ref: "#/definitions/HarnessScenarioTags",
+          },
+          queryParameters: {},
+          responses: {
+            200: {
+              $ref: "#/definitions/HarnessScenarioTagsResult",
+            },
+            403: {
+              $ref: "#/definitions/ViewerReadOnlyError",
+            },
+            default: {
+              $ref: "#/definitions/ManagementAPIErrorResponse",
+            },
+          },
+        },
+      },
     "/simulate/api/harness-environments/{id}/": {
       get: {
         operationId: "simulate_api_harness-environments_read",
@@ -72961,6 +73024,20 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
       },
     },
+    HarnessEnvironmentTags: {
+      required: ["tags"],
+      type: "object",
+      properties: {
+        tags: {
+          description: "Every tag the environment's scenarios carry.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
     HarnessEnvironmentToolCallEvaluation: {
       required: ["enable_tool_evaluation"],
       type: "object",
@@ -74070,6 +74147,94 @@ export const OPENAPI_CONTRACT = Object.freeze({
       properties: {
         result: {
           $ref: "#/definitions/HarnessScenarioOperationResult",
+        },
+      },
+    },
+    HarnessScenarioTags: {
+      required: ["tags"],
+      type: "object",
+      properties: {
+        tags: {
+          description: "The scenario's tags; an empty list clears them.",
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+          },
+          maxItems: 20,
+        },
+      },
+    },
+    HarnessScenarioTagsChange: {
+      required: ["scenario_keys"],
+      type: "object",
+      properties: {
+        scenario_keys: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 255,
+            minLength: 1,
+          },
+          maxItems: 1000,
+          minItems: 1,
+        },
+        add: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+          },
+          default: [],
+          maxItems: 20,
+        },
+        remove: {
+          type: "array",
+          items: {
+            type: "string",
+            maxLength: 64,
+          },
+          default: [],
+          maxItems: 20,
+        },
+      },
+    },
+    HarnessScenarioTagsChangeResult: {
+      required: ["scenarios", "tags"],
+      type: "object",
+      properties: {
+        scenarios: {
+          type: "array",
+          items: {
+            $ref: "#/definitions/HarnessScenarioTagsResult",
+          },
+        },
+        tags: {
+          description:
+            "Every tag the environment's scenarios carry after the change.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+        },
+      },
+    },
+    HarnessScenarioTagsResult: {
+      required: ["scenario_key", "tags"],
+      type: "object",
+      properties: {
+        scenario_key: {
+          title: "Scenario key",
+          type: "string",
+          minLength: 1,
+        },
+        tags: {
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
       },
     },
@@ -116038,6 +116203,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Id",
           type: "string",
           format: "uuid",
+        },
+        tags: {
+          description:
+            "The free-text tags people put on the scenario; never versioned.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
         },
         scenario_id: {
           title: "Scenario id",

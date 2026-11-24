@@ -690,6 +690,7 @@ import type {
   HarnessEnvironmentRunEvaluationQueuedApi,
   HarnessEnvironmentRunEvaluationsApi,
   HarnessEnvironmentRunEvaluationsQueuedApi,
+  HarnessEnvironmentTagsApi,
   HarnessEnvironmentToolCallEvaluationApi,
   HarnessEventBatchApi,
   HarnessEventBatchResponseApi,
@@ -715,6 +716,10 @@ import type {
   HarnessScenarioListResponseApi,
   HarnessScenarioOperationApi,
   HarnessScenarioOperationResponseApi,
+  HarnessScenarioTagsApi,
+  HarnessScenarioTagsChangeApi,
+  HarnessScenarioTagsChangeResultApi,
+  HarnessScenarioTagsResultApi,
   HarnessSecretFileUploadResponseApi,
   HarnessSecretValuesApi,
   HarnessSourceUploadResponseApi,
@@ -61968,6 +61973,166 @@ export const simulateApiHarnessEnvironmentsList = async (
     {
       ...options,
       method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsListResponse200 = {
+  data: HarnessEnvironmentTagsApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200>;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsListResponseSuccess =
+  simulateApiHarnessEnvironmentsScenarioTagsListResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsScenarioTagsListResponseError =
+  simulateApiHarnessEnvironmentsScenarioTagsListResponseDefault & {
+    headers: ApiResponseHeaders;
+  };
+
+export type simulateApiHarnessEnvironmentsScenarioTagsListResponse =
+  | simulateApiHarnessEnvironmentsScenarioTagsListResponseSuccess
+  | simulateApiHarnessEnvironmentsScenarioTagsListResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenarioTagsListUrl = (
+  environmentId: string,
+) => {
+  return `/simulate/api/harness-environments/${environmentId}/scenario-tags/`;
+};
+
+/**
+ * Every tag the environment's scenarios carry.
+ */
+export const simulateApiHarnessEnvironmentsScenarioTagsList = async (
+  environmentId: string,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenarioTagsListResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenarioTagsListResponse>(
+    getSimulateApiHarnessEnvironmentsScenarioTagsListUrl(environmentId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsChangeResponse200 = {
+  data: HarnessScenarioTagsChangeResultApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsChangeResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsChangeResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsChangeResponseSuccess =
+  simulateApiHarnessEnvironmentsScenarioTagsChangeResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsScenarioTagsChangeResponseError = (
+  | simulateApiHarnessEnvironmentsScenarioTagsChangeResponse403
+  | simulateApiHarnessEnvironmentsScenarioTagsChangeResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsChangeResponse =
+  | simulateApiHarnessEnvironmentsScenarioTagsChangeResponseSuccess
+  | simulateApiHarnessEnvironmentsScenarioTagsChangeResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenarioTagsChangeUrl = (
+  environmentId: string,
+) => {
+  return `/simulate/api/harness-environments/${environmentId}/scenario-tags/change/`;
+};
+
+/**
+ * Add and remove tags on many scenarios at once.
+ */
+export const simulateApiHarnessEnvironmentsScenarioTagsChange = async (
+  environmentId: string,
+  harnessScenarioTagsChangeApi: HarnessScenarioTagsChangeApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenarioTagsChangeResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenarioTagsChangeResponse>(
+    getSimulateApiHarnessEnvironmentsScenarioTagsChangeUrl(environmentId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioTagsChangeApi),
+    },
+  );
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsSetResponse200 = {
+  data: HarnessScenarioTagsResultApi;
+  status: 200;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsSetResponse403 = {
+  data: ViewerReadOnlyErrorApi;
+  status: 403;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsSetResponseDefault = {
+  data: ManagementAPIErrorResponseApi;
+  status: Exclude<HTTPStatusCodes, 200 | 403>;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsSetResponseSuccess =
+  simulateApiHarnessEnvironmentsScenarioTagsSetResponse200 & {
+    headers: ApiResponseHeaders;
+  };
+export type simulateApiHarnessEnvironmentsScenarioTagsSetResponseError = (
+  | simulateApiHarnessEnvironmentsScenarioTagsSetResponse403
+  | simulateApiHarnessEnvironmentsScenarioTagsSetResponseDefault
+) & {
+  headers: ApiResponseHeaders;
+};
+
+export type simulateApiHarnessEnvironmentsScenarioTagsSetResponse =
+  | simulateApiHarnessEnvironmentsScenarioTagsSetResponseSuccess
+  | simulateApiHarnessEnvironmentsScenarioTagsSetResponseError;
+
+export const getSimulateApiHarnessEnvironmentsScenarioTagsSetUrl = (
+  environmentId: string,
+  scenarioKey: string,
+) => {
+  return `/simulate/api/harness-environments/${environmentId}/scenario-tags/scenarios/${scenarioKey}/`;
+};
+
+/**
+ * Replace one scenario's tags; an empty list clears them.
+ */
+export const simulateApiHarnessEnvironmentsScenarioTagsSet = async (
+  environmentId: string,
+  scenarioKey: string,
+  harnessScenarioTagsApi: HarnessScenarioTagsApi,
+  options?: RequestInit,
+): Promise<simulateApiHarnessEnvironmentsScenarioTagsSetResponse> => {
+  return apiMutator<simulateApiHarnessEnvironmentsScenarioTagsSetResponse>(
+    getSimulateApiHarnessEnvironmentsScenarioTagsSetUrl(
+      environmentId,
+      scenarioKey,
+    ),
+    {
+      ...options,
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(harnessScenarioTagsApi),
     },
   );
 };

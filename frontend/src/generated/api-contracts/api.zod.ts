@@ -41448,6 +41448,119 @@ export const SimulateApiHarnessEnvironmentsListResponse = zod.object({
 });
 
 /**
+ * Every tag the environment's scenarios carry.
+ */
+export const SimulateApiHarnessEnvironmentsScenarioTagsListParams = zod.object({
+  environment_id: zod.string(),
+});
+
+export const SimulateApiHarnessEnvironmentsScenarioTagsListResponse =
+  zod.object({
+    tags: zod
+      .array(zod.string().min(1))
+      .describe("Every tag the environment's scenarios carry."),
+  });
+
+/**
+ * Add and remove tags on many scenarios at once.
+ */
+export const SimulateApiHarnessEnvironmentsScenarioTagsChangeParams =
+  zod.object({
+    environment_id: zod.string(),
+  });
+
+export const simulateApiHarnessEnvironmentsScenarioTagsChangeBodyScenarioKeysItemMax = 255;
+
+export const simulateApiHarnessEnvironmentsScenarioTagsChangeBodyScenarioKeysMax = 1000;
+
+export const simulateApiHarnessEnvironmentsScenarioTagsChangeBodyAddItemMax = 64;
+
+export const simulateApiHarnessEnvironmentsScenarioTagsChangeBodyAddDefault =
+  [];
+export const simulateApiHarnessEnvironmentsScenarioTagsChangeBodyAddMax = 20;
+
+export const simulateApiHarnessEnvironmentsScenarioTagsChangeBodyRemoveItemMax = 64;
+
+export const simulateApiHarnessEnvironmentsScenarioTagsChangeBodyRemoveDefault =
+  [];
+export const simulateApiHarnessEnvironmentsScenarioTagsChangeBodyRemoveMax = 20;
+
+export const SimulateApiHarnessEnvironmentsScenarioTagsChangeBody = zod.object({
+  scenario_keys: zod
+    .array(
+      zod
+        .string()
+        .min(1)
+        .max(
+          simulateApiHarnessEnvironmentsScenarioTagsChangeBodyScenarioKeysItemMax,
+        ),
+    )
+    .min(1)
+    .max(simulateApiHarnessEnvironmentsScenarioTagsChangeBodyScenarioKeysMax),
+  add: zod
+    .array(
+      zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsScenarioTagsChangeBodyAddItemMax),
+    )
+    .max(simulateApiHarnessEnvironmentsScenarioTagsChangeBodyAddMax)
+    .default(simulateApiHarnessEnvironmentsScenarioTagsChangeBodyAddDefault),
+  remove: zod
+    .array(
+      zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsScenarioTagsChangeBodyRemoveItemMax),
+    )
+    .max(simulateApiHarnessEnvironmentsScenarioTagsChangeBodyRemoveMax)
+    .default(simulateApiHarnessEnvironmentsScenarioTagsChangeBodyRemoveDefault),
+});
+
+export const SimulateApiHarnessEnvironmentsScenarioTagsChangeResponse =
+  zod.object({
+    scenarios: zod.array(
+      zod.object({
+        scenario_key: zod.string().min(1),
+        tags: zod.array(zod.string().min(1)),
+      }),
+    ),
+    tags: zod
+      .array(zod.string().min(1))
+      .describe(
+        "Every tag the environment's scenarios carry after the change.",
+      ),
+  });
+
+/**
+ * Replace one scenario's tags; an empty list clears them.
+ */
+export const SimulateApiHarnessEnvironmentsScenarioTagsSetParams = zod.object({
+  environment_id: zod.string(),
+  scenario_key: zod.string(),
+});
+
+export const simulateApiHarnessEnvironmentsScenarioTagsSetBodyTagsItemMax = 64;
+
+export const simulateApiHarnessEnvironmentsScenarioTagsSetBodyTagsMax = 20;
+
+export const SimulateApiHarnessEnvironmentsScenarioTagsSetBody = zod.object({
+  tags: zod
+    .array(
+      zod
+        .string()
+        .max(simulateApiHarnessEnvironmentsScenarioTagsSetBodyTagsItemMax),
+    )
+    .max(simulateApiHarnessEnvironmentsScenarioTagsSetBodyTagsMax)
+    .describe("The scenario's tags; an empty list clears them."),
+});
+
+export const SimulateApiHarnessEnvironmentsScenarioTagsSetResponse = zod.object(
+  {
+    scenario_key: zod.string().min(1),
+    tags: zod.array(zod.string().min(1)),
+  },
+);
+
+/**
  * Same shape whichever door built it. A section the pipeline has not reached
 yet is null, so the client renders "building" rather than an empty pane. A
 coding agent's read leaves out the held-back cases.
@@ -55781,6 +55894,12 @@ export const SimulateApiHarnessJobsScenariosResponse = zod.object({
   results: zod.array(
     zod.object({
       id: zod.string().uuid(),
+      tags: zod
+        .array(zod.string().min(1))
+        .optional()
+        .describe(
+          "The free-text tags people put on the scenario; never versioned.",
+        ),
       scenario_id: zod.string().uuid(),
       scenario_key: zod.string().min(1),
       number: zod.number(),

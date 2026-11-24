@@ -1,4 +1,5 @@
 import PropTypes from "prop-types";
+import ScenarioTagCell from "./ScenarioTagCell";
 import {
   Fragment,
   useCallback,
@@ -80,6 +81,7 @@ const DEFAULT_WIDTHS = {
   Situation: 320,
   "Sub-goals": 260,
   "Ideal outcome": 320,
+  Tags: 200,
 };
 const FIXED_WIDTHS = { select: 48, "#": 44, "": 96 };
 const FILLER = "filler";
@@ -145,6 +147,7 @@ export default function ScenarioTable({
   locked = false,
   lockTooltip = LOCK_TOOLTIP,
   rowHeight = "Short",
+  envId = null,
 }) {
   const limits = ROW_HEIGHTS[rowHeight] || ROW_HEIGHTS.Short;
   const [widths, setWidths] = useState(readWidths);
@@ -256,6 +259,7 @@ export default function ScenarioTable({
     "Situation",
     "Sub-goals",
     "Ideal outcome",
+    "Tags",
     FILLER,
     "",
   ];
@@ -585,6 +589,21 @@ export default function ScenarioTable({
                     <ClampCell text={idealOutcomeText} lines={limits.lines} />
                   </TableCell>
 
+                  <TableCell
+                    onClick={stopRowClick}
+                    sx={{ overflow: "hidden", verticalAlign: "top" }}
+                  >
+                    {envId && (
+                      <ScenarioTagCell
+                        envId={envId}
+                        scenarioKey={row.scenarioKey}
+                        tags={row.tags}
+                        locked={locked}
+                        lockTooltip={lockTooltip}
+                      />
+                    )}
+                  </TableCell>
+
                   <TableCell />
 
                   <TableCell
@@ -664,5 +683,6 @@ ScenarioTable.propTypes = {
   onTogglePage: PropTypes.func,
   locked: PropTypes.bool,
   lockTooltip: PropTypes.string,
+  envId: PropTypes.string,
   rowHeight: PropTypes.oneOf(Object.keys(ROW_HEIGHTS)),
 };
