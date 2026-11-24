@@ -568,6 +568,7 @@ export default function QueueItemsTable({
           headerName: "Item Status",
           flex: 1,
           minWidth: 130,
+          resizable: true,
           cellRenderer: loading ? SkeletonCell : StatusCellRenderer,
           valueGetter: (params) => {
             const d = params.data;
