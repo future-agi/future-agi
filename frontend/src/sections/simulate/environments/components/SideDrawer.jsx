@@ -1,5 +1,6 @@
 import PropTypes from "prop-types";
-import { Drawer, IconButton } from "@mui/material";
+import { useState } from "react";
+import { Box, Drawer, IconButton, Portal } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 
@@ -16,13 +17,19 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
  * (`.root .MuiDrawer-paper`), which outranks anything passed through PaperProps.
  * `&&` lifts specificity above that rule so the paper itself is
  * `background.paper`, keeping the theme's side borders and its drawer shadow.
+ *
+ * `beside` leaves the page usable while the drawer is open (the builder chat next to Review changes): no backdrop, no
+ * focus trap, and only the close button or Escape closes it. It gets a container of its own because a modal hides
+ * everything else in its container from screen readers.
  */
-export default function SideDrawer({ open, onClose, width = 480, keepMounted = false, children }) {
+export default function SideDrawer({ open, onClose, width = 480, keepMounted = false, beside = false, children }) {
+  const [host, setHost] = useState(null);
   const covered = useDrawerCovered(open);
-  return (
+  const drawer = (
     <Drawer
       anchor="right"
-      open={open}
+      // Its own container first: opened before it exists, the drawer would land in the page's.
+      open={Boolean(open) && (!beside || Boolean(host))}
       onClose={onClose}
       sx={{
         "&& .MuiDrawer-paper": {
@@ -31,15 +38,23 @@ export default function SideDrawer({ open, onClose, width = 480, keepMounted = f
           height: "100vh",
           position: "fixed",
           zIndex: 9999,
+          ...(beside && { pointerEvents: "auto" }),
           borderRadius: "8px",
           backgroundColor: "background.paper",
           backgroundImage: "none",
         },
+        ...(beside && { pointerEvents: "none" }),
         ...coveredDrawerSx(covered),
       }}
       ModalProps={{
         keepMounted,
         BackdropProps: { style: { backgroundColor: "transparent" } },
+        ...(beside && {
+          container: host,
+          hideBackdrop: true,
+          disableEnforceFocus: true,
+          disableScrollLock: true,
+        }),
       }}
     >
       {/* The single close affordance for every drawer built on this shell — the
@@ -56,6 +71,15 @@ export default function SideDrawer({ open, onClose, width = 480, keepMounted = f
       {children}
     </Drawer>
   );
+  if (!beside) return drawer;
+  return (
+    <>
+      <Portal>
+        <Box ref={setHost} />
+      </Portal>
+      {drawer}
+    </>
+  );
 }
 
 SideDrawer.propTypes = {
@@ -63,5 +87,6 @@ SideDrawer.propTypes = {
   onClose: PropTypes.func,
   width: PropTypes.oneOfType([PropTypes.number, PropTypes.string, PropTypes.object]),
   keepMounted: PropTypes.bool,
+  beside: PropTypes.bool,
   children: PropTypes.node,
 };

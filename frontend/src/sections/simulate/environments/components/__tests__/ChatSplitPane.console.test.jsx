@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
-import { render, screen, fireEvent } from "src/utils/test-utils";
+import { act, render, screen, fireEvent } from "src/utils/test-utils";
 
 import ChatSplitPane from "../ChatSplitPane";
 import BuilderConsole from "../../buildEnvironment/console/BuilderConsole";
+import { focusBuilderChat } from "../../buildEnvironment/console/builderChatFocusBus";
 import { CONSOLE_COPY } from "../../buildEnvironment/build.constants";
 
 // The split with the REAL builder console and a long conversation: collapsing
@@ -105,6 +106,61 @@ describe("ChatSplitPane with a long builder conversation", () => {
     );
     expect(mounts).toBe(1);
   });
+
+  it.each([
+    ["a message of the person's", "u4"],
+    ["an answer to the builder's question", "answer-1"],
+  ])("opens at %s when asked, not at the newest", (_, messageId) => {
+    const turns = [
+      ...makeTurns(TURN_COUNT),
+      {
+        id: "b-ask",
+        role: "builder",
+        steps: [
+          {
+            id: "ask-1",
+            kind: "ask",
+            question: { text: "Change it?", options: [] },
+            resolved: true,
+            answerText: "Yes",
+            answerId: "answer-1",
+          },
+        ],
+      },
+    ];
+    render(renderSplit(turns));
+    collapse();
+    const list = screen.getByTestId("builder-console-list");
+    Object.defineProperty(list, "scrollHeight", {
+      configurable: true,
+      value: 9876,
+    });
+    Object.defineProperty(
+      list.querySelector(
+        `[data-message-id="${messageId}"], [data-answer-id="${messageId}"]`,
+      ),
+      "offsetTop",
+      { configurable: true, value: 321 },
+    );
+    const scrollTo = window.HTMLElement.prototype.scrollTo;
+    scrollTo.mockClear();
+    act(() => focusBuilderChat(messageId));
+    expect(chatPane()).toBeVisible();
+    expect(scrollTo.mock.calls).toEqual([[{ top: 321, behavior: "smooth" }]]);
+  });
+
+  it.each([undefined, "not-loaded"])(
+    "opens at the newest when there is no message to show (%s)",
+    (messageId) => {
+      render(renderSplit(makeTurns(TURN_COUNT)));
+      collapse();
+      const scrollTo = window.HTMLElement.prototype.scrollTo;
+      scrollTo.mockClear();
+      act(() => focusBuilderChat(messageId));
+      expect(chatPane()).toBeVisible();
+      expect(scrollTo).toHaveBeenCalled();
+    },
+  );
 
   it("receives turns while collapsed and scrolls to the newest on reopen", () => {
     const { rerender } = render(renderSplit(makeTurns(TURN_COUNT), true));

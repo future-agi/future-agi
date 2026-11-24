@@ -110,23 +110,33 @@ export default function BuilderConsole({
       subscribeComposerScaffold((text) => dispatch({ type: "scaffold", text })),
     [],
   );
-  // Asked to show one of its messages: scroll the list to it and stop following the latest.
+  // Asked to show one of its messages: once open, scroll the list to it and stop following the latest. A message that
+  // isn't loaded leaves the list at the latest.
+  const [asked, setAsked] = useState(null);
   useEffect(
-    () =>
-      subscribeBuilderChatFocus((messageId) => {
-        const list = listRef.current;
-        const target = list?.querySelector(
-          `[data-message-id="${CSS.escape(messageId)}"]`,
-        );
-        if (!list || !target) return;
-        setFollowing(false);
-        list.scrollTo?.({
-          top: target.offsetTop - list.offsetTop,
-          behavior: "smooth",
-        });
-      }),
+    () => subscribeBuilderChatFocus((messageId) => setAsked({ messageId })),
     [],
   );
+  useEffect(() => {
+    if (!active || !asked) return;
+    setAsked(null);
+    const list = listRef.current;
+    const id = asked.messageId && CSS.escape(asked.messageId);
+    const target =
+      id &&
+      list?.querySelector(
+        `[data-message-id="${id}"], [data-answer-id="${id}"]`,
+      );
+    if (!target) {
+      setFollowing(true);
+      return;
+    }
+    setFollowing(false);
+    list.scrollTo?.({
+      top: target.offsetTop - list.offsetTop,
+      behavior: "smooth",
+    });
+  }, [active, asked]);
 
   // Follow the transcript only as it grows, not when a card's state changes.
   const count = turns?.length ?? 0;
@@ -146,8 +156,10 @@ export default function BuilderConsole({
   // paint already follows.
   const [prev, setPrev] = useState({ running, active });
   if (prev.running !== running || prev.active !== active) {
-    if ((running && !prev.running) || (active && !prev.active))
-      setFollowing(true);
+    // Reopened to show a message, it goes to that message instead.
+    const reopened = active && !prev.active;
+    if ((running && !prev.running) || reopened)
+      setFollowing(!(reopened && asked));
     setPrev({ running, active });
   }
 
@@ -156,7 +168,8 @@ export default function BuilderConsole({
     if (!list || !active) return;
     const { scrollTop, scrollHeight, clientHeight } = list;
     if (scrollHeight - scrollTop - clientHeight < NEAR_BOTTOM_PX) {
-      setFollowing(true);
+      // Not on the way up: the first steps of a smooth scroll to an earlier message are still near the bottom.
+      if (scrollTop >= lastScrollRef.current.top) setFollowing(true);
     } else if (
       scrollTop < lastScrollRef.current.top &&
       scrollHeight === lastScrollRef.current.height

@@ -201,6 +201,10 @@ describe("sources", () => {
     });
     expect(sourceLine({ origin: "manual" }).kind).toBe("hand");
     expect(sourceLink(chat)).toMatchObject({ kind: "chat" });
+    // The message it answered, as the server names it.
+    expect(
+      sourceLink({ origin: "chat", used: [{ kind: "message", id: "m2" }] }),
+    ).toEqual({ kind: "chat", messageId: "m2" });
     expect(sourceLink(file)).toMatchObject({ kind: "file", file: "o.csv" });
     expect(sourceLink({ origin: "manual" }).kind).toBe("tab");
   });

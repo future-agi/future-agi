@@ -23,6 +23,12 @@ vi.mock("src/api/simulate-environments/versions", async (importOriginal) => ({
 const flow = {};
 vi.mock("../useDraftSaveFlow", () => ({ default: vi.fn(() => flow) }));
 
+const focusBuilderChat = vi.fn();
+vi.mock("../../../buildEnvironment/console/builderChatFocusBus", () => ({
+  focusBuilderChat: (...args) => focusBuilderChat(...args),
+  subscribeBuilderChatFocus: () => () => {},
+}));
+
 const { default: ReviewChangesDrawer } = await import("../ReviewChangesDrawer");
 
 const change = (overrides) => ({
@@ -77,6 +83,7 @@ const renderDrawer = (props = {}) => {
 beforeEach(() => {
   decide.mockReset();
   enqueueSnackbar.mockReset();
+  focusBuilderChat.mockReset();
 });
 
 describe("ReviewChangesDrawer", () => {
@@ -288,6 +295,18 @@ describe("ReviewChangesDrawer", () => {
     const [needed, free] = screen.getAllByRole("button", { name: /^Reject/ });
     expect(needed).toHaveAttribute("aria-disabled", "true");
     expect(free).not.toHaveAttribute("aria-disabled");
+  });
+
+  it.each([
+    ["at the message it answered", [{ kind: "message", id: "m2" }], "m2"],
+    ["when no message is named", undefined, undefined],
+  ])("opens the chat beside it %s", async (_, used, messageId) => {
+    const user = userEvent.setup();
+    setFlow([change({ sources: [{ origin: "chat", used }] })]);
+    const { onClose } = renderDrawer();
+    await user.click(screen.getByRole("button", { name: "Open in chat" }));
+    expect(focusBuilderChat).toHaveBeenCalledWith(messageId);
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("holds Validate and Discard while the builder is working", () => {

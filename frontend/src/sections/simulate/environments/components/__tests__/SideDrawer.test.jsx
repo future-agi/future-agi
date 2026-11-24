@@ -24,6 +24,24 @@ describe("SideDrawer", () => {
     expect(screen.queryByText("Manage versions")).not.toBeInTheDocument();
   });
 
+  it.each([
+    [false, 0],
+    [true, 1],
+  ])("leaves the page usable only when beside it (%s)", (beside, reachable) => {
+    render(
+      <>
+        <button type="button">Chat</button>
+        <SideDrawer open beside={beside} onClose={() => {}}>
+          <p>Review changes</p>
+        </SideDrawer>
+      </>,
+    );
+    expect(screen.getByText("Review changes")).toBeVisible();
+    expect(screen.queryAllByRole("button", { name: "Chat" })).toHaveLength(
+      reachable,
+    );
+  });
+
   it("exposes an accessible close button that fires onClose", async () => {
     const onClose = vi.fn();
     render(

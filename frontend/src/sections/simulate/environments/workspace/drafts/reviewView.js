@@ -175,7 +175,10 @@ export const sourceLine = (source = {}) => {
 export const sourceLink = (source = {}) => {
   const used = fileOf(source);
   if (used) return { kind: "file", file: used.source_id };
-  return { kind: source.origin === "chat" ? "chat" : "tab" };
+  if (source.origin !== "chat") return { kind: "tab" };
+  // The person's message the change answered, when the server names it.
+  const message = (source.used || []).find((one) => one.kind === "message");
+  return { kind: "chat", messageId: message?.id };
 };
 
 const nextVersion = (version) => {

@@ -217,6 +217,7 @@ export function projectConversation(conversation) {
           confirmation: m.kind === "confirmation",
           resolved: answered,
           answerText: answered ? answerFor[m.message_id].content : undefined,
+          answerId: answered ? answerFor[m.message_id].message_id : undefined,
           // An answer the server did not take: shown failed, with the reason it serves, never as accepted.
           answerFailed:
             answered && answerFor[m.message_id].state === "failed"

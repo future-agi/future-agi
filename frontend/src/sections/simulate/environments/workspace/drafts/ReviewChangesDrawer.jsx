@@ -7,6 +7,8 @@ import {
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
+  useTheme,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import ContentSkeleton from "src/components/content-skeleton";
@@ -18,6 +20,7 @@ import {
   useDecideChanges,
   useEnvironmentVersions,
 } from "src/api/simulate-environments/versions";
+import { focusBuilderChat } from "../../buildEnvironment/console/builderChatFocusBus";
 import { refusalText } from "../evals/refusalText";
 import SideDrawer from "../../components/SideDrawer";
 import { DRAFTS_COPY, REVIEW_COPY as COPY } from "../workspace.constants";
@@ -177,6 +180,15 @@ export default function ReviewChangesDrawer({
       ? COPY.validateFirst(names.length)
       : flow.validationNote;
 
+  const coversChat = useMediaQuery(useTheme().breakpoints.down("lg"));
+  const openLink = (link, tab) => {
+    if (link.kind !== "chat") {
+      goTab(tab);
+      return;
+    }
+    if (coversChat) onClose?.();
+    focusBuilderChat(link.messageId);
+  };
   const goTab = (tab) => {
     onClose?.();
     onOpenTab?.(tab);
@@ -275,9 +287,7 @@ export default function ReviewChangesDrawer({
                   changes={changes}
                   canEdit={canEdit && !flow.validating}
                   onDecide={(decision) => decideChange(change, decision)}
-                  onOpen={(link) =>
-                    link.kind === "chat" ? onClose?.() : goTab(group.tab)
-                  }
+                  onOpen={(link) => openLink(link, group.tab)}
                 />
               ))}
             </Box>
@@ -289,7 +299,7 @@ export default function ReviewChangesDrawer({
   };
 
   return (
-    <SideDrawer open={open} onClose={onClose} width={640}>
+    <SideDrawer open={open} onClose={onClose} width={640} beside>
       <Stack
         role="dialog"
         aria-label={COPY.title}
