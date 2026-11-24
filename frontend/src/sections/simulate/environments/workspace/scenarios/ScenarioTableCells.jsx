@@ -13,7 +13,7 @@ import {
   isUnsavedAddition,
   unsavedReasonId,
 } from "./scenarios.constants";
-import { isNotMeasured, lifecycleChip } from "./lifecycleView";
+import { isNotMeasured, lifecycleChip, markTitle } from "./lifecycleView";
 
 const LIFECYCLE_ICONS = {
   draft: "solar:shield-warning-linear",
@@ -97,7 +97,7 @@ export function LifecycleMark({ lifecycle, validating = false }) {
     <Mark
       icon={LIFECYCLE_ICONS[chip.key]}
       label={chip.label}
-      title={chip.hover ? `${chip.label}: ${chip.hover}` : chip.label}
+      title={markTitle(chip)}
       color={LIFECYCLE_ICON_COLORS[chip.tone]}
       testId="lifecycle-mark"
     />

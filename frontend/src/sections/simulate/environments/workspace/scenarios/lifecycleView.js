@@ -36,6 +36,41 @@ export const lifecycleChip = (lifecycle) => {
   };
 };
 
+// The server's sentence often opens with the state's own name ("Kept as written: …", "Archived on …").
+const opensWithLabel = ({ label, hover }) =>
+  hover.toLowerCase().startsWith(label.toLowerCase());
+
+// A row mark's hover: the state's name, once, and why.
+export const markTitle = (chip) => {
+  if (!chip.hover) return chip.label;
+  return opensWithLabel(chip) ? chip.hover : `${chip.label}: ${chip.hover}`;
+};
+
+// The drawer's State line: the state's name, once, and why.
+export const stateText = (lifecycle) => {
+  const chip = lifecycleChip(lifecycle);
+  if (!chip) {
+    return lifecycle.state === "validated"
+      ? LIFECYCLE_COPY.validatedLabel
+      : LIFECYCLE_COPY.activeLabel;
+  }
+  if (chip.key === "kept_as_written") {
+    // It still runs; say so before the reason, so it doesn't read as blocked.
+    const why = opensWithLabel(chip)
+      ? chip.hover.slice(chip.label.length).replace(/^[:.\s]+/, "")
+      : chip.hover;
+    return [
+      `${chip.label}.`,
+      LIFECYCLE_COPY.keptRuns,
+      why && why[0].toUpperCase() + why.slice(1),
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (!chip.hover) return `${chip.label}.`;
+  return opensWithLabel(chip) ? chip.hover : `${chip.label}. ${chip.hover}`;
+};
+
 // A wrong-way example counts as caught only when it really ran: a step that could not run here
 // (`assumed`) leaves no verdict, as the backend's proof reads it.
 const resultOf = (control) => {

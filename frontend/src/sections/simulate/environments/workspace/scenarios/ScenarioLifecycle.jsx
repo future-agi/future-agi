@@ -5,7 +5,12 @@ import { Box, Button, Stack, Typography } from "@mui/material";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 
 import { LIFECYCLE_COPY } from "./scenarios.constants";
-import { citationState, lifecycleChip, wrongWayRows } from "./lifecycleView";
+import {
+  citationState,
+  lifecycleChip,
+  stateText,
+  wrongWayRows,
+} from "./lifecycleView";
 
 const CITATION_ROLES = {
   confirmed: "success",
@@ -114,19 +119,6 @@ LifecycleHeaderLine.propTypes = {
   envId: PropTypes.string,
   row: PropTypes.object,
   locked: PropTypes.bool,
-};
-
-const stateText = (lifecycle) => {
-  const chip = lifecycleChip(lifecycle);
-  if (chip) {
-    // Kept as written still runs; say so before the reason, so it doesn't read as blocked.
-    const runs =
-      chip.key === "kept_as_written" ? ` ${LIFECYCLE_COPY.keptRuns}` : "";
-    return `${chip.label}.${runs}${chip.hover ? ` ${chip.hover}` : ""}`;
-  }
-  return lifecycle.state === "validated"
-    ? LIFECYCLE_COPY.validatedLabel
-    : LIFECYCLE_COPY.activeLabel;
 };
 
 // The Status sheet: why the scenario is in its state, whether it is proved, and each wrong-way example.

@@ -7,6 +7,8 @@ import {
   isNotMeasured,
   isRunnable,
   lifecycleChip,
+  markTitle,
+  stateText,
   wrongWayRows,
 } from "../lifecycleView";
 
@@ -69,6 +71,35 @@ describe("lifecycleChip and isRunnable", () => {
       warning_text: null,
     });
     expect(chip.hover).not.toBe("");
+  });
+});
+
+describe("the state's name, said once", () => {
+  // The server's own sentences.
+  it.each([
+    [
+      {
+        state: "kept_as_written",
+        warning_text:
+          "Kept as written: only an AI judge grades this case, and nothing has shown it fails a wrong answer.",
+      },
+      "Kept as written: only an AI judge grades this case, and nothing has shown it fails a wrong answer.",
+      "Kept as written. Runs, but not proved. Only an AI judge grades this case, and nothing has shown it fails a wrong answer.",
+    ],
+    [
+      { state: "archived", reason_text: "Archived on 24 Nov 2026: Duplicate" },
+      "Archived on 24 Nov 2026: Duplicate",
+      "Archived on 24 Nov 2026: Duplicate",
+    ],
+    [
+      { state: "draft", reason_text: "Not validated on these versions yet." },
+      "Not proved: Not validated on these versions yet.",
+      "Not proved. Not validated on these versions yet.",
+    ],
+    [{ state: "archived" }, "Archived", "Archived."],
+  ])("%j", (lifecycle, mark, line) => {
+    expect(markTitle(lifecycleChip(lifecycle))).toBe(mark);
+    expect(stateText(lifecycle)).toBe(line);
   });
 });
 
