@@ -12,6 +12,7 @@ const SOURCES_PATH = '/simulate/api/harness-jobs/sources/';
 const PREFLIGHT_PATH = '/simulate/api/harness-jobs/preflight/';
 // e2e/fixtures/agent-source/main.py mentions this key only in a comment.
 const COMMENTED_KEY = 'ANTHROPIC_API_KEY';
+const READ_KEY = 'ACME_API_KEY';
 // e2e/stack/mock-daytona/server.mjs: the one agent every scan finds.
 const FOUND_AGENT = 'support_agent';
 // frontend/src/sections/agent-playground/connect/ConnectAgentSteps.jsx AgentDetails: the Name
@@ -21,7 +22,7 @@ const UI_READY = 60_000;
 
 interface PreflightResponse {
   ready_to_submit: boolean;
-  credentials: { requirements: { name: string; required: boolean; status: string }[] };
+  credentials: { requirements: { environment_name: string; required: boolean; status: string }[] };
 }
 
 test(
@@ -97,7 +98,9 @@ test(
 
     await test.step('preflight asks only for keys the code reads', async () => {
       expect(preflight?.ready_to_submit).toBe(true);
-      expect(preflight?.credentials.requirements.map((r) => r.name)).not.toContain(COMMENTED_KEY);
+      const keys = preflight?.credentials.requirements.map((r) => r.environment_name);
+      expect(keys).toContain(READ_KEY);
+      expect(keys).not.toContain(COMMENTED_KEY);
       await expect(page.getByText(COMMENTED_KEY)).toHaveCount(0);
     });
 
