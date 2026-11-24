@@ -129,6 +129,7 @@ export const WORKSPACE_COPY = {
     delete: "You don't have permission to delete environments.",
     create: "You don't have permission to create environments.",
     cancel: "You don't have permission to cancel builds.",
+    retry: "You don't have permission to start builds.",
     chat: "You don't have permission to send messages to the builder.",
     secrets: "You don't have permission to change secrets.",
     agentVersion: "You don't have permission to create agent versions.",
@@ -635,4 +636,20 @@ export const agentDiffersTag = (agentLabel, envLabel) => {
   return agent && env
     ? `${agent} differs from ${env}`
     : "Agent differs from its environment version";
+};
+
+export const BUILD_STOPPED_COPY = {
+  badge: "Build stopped",
+  agent: "Couldn't reach your agent.",
+  ours: "An issue occurred while building. Nothing you set up was lost.",
+  other: "The build stopped before it finished.",
+  retry: { start: "Try again", checks: "Try again from the checks" },
+  retryTip: {
+    start: "Builds again from your approved design.",
+    checks:
+      "The world and scenarios are kept; the build starts again at the release checks.",
+  },
+  showDetails: "Show details",
+  hideDetails: "Hide details",
+  retryFailed: "Couldn't start the build again. Try again.",
 };

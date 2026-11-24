@@ -58,6 +58,7 @@ import { forkEnvironment as buildFork } from "./helpers/forkEnvironment";
 import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
+import BuildStoppedStrip from "./BuildStoppedStrip";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -451,6 +452,13 @@ export default function EnvironmentWorkspace() {
         />
         {creditBanner}
         {refusalLine}
+        {buildFailed && (
+          <BuildStoppedStrip
+            envId={envId}
+            failure={jobQuery.data?.status?.failure}
+            retryFrom={jobQuery.data?.status?.retry_from || undefined}
+          />
+        )}
         <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
           <BuildingStage
             progress={progress}
