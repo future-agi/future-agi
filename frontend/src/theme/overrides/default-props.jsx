@@ -114,10 +114,10 @@ export function defaultProps(theme) {
     MuiAlert: {
       defaultProps: {
         iconMapping: {
-          error: <Iconify icon="solar:danger-bold" width={16} />,
-          info: <Iconify icon="solar:info-circle-linear" width={16} />,
-          success: <Iconify icon="solar:check-circle-bold" width={16} />,
-          warning: <Iconify icon="solar:danger-triangle-linear" width={16} />,
+          error: <Iconify icon="solar:danger-bold" width={24} />,
+          info: <Iconify icon="solar:info-circle-linear" width={24} />,
+          success: <Iconify icon="solar:check-circle-bold" width={24} />,
+          warning: <Iconify icon="solar:danger-triangle-linear" width={24} />,
         },
       },
     },
