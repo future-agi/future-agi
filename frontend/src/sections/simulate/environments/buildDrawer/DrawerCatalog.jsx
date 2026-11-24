@@ -1,8 +1,11 @@
 import PropTypes from "prop-types";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Box, Button, ButtonBase, Stack, Typography } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useConnectedAgents } from "src/api/agents/connectedAgents";
+import ContentSkeleton from "src/components/content-skeleton";
+import ErrorState from "src/components/error-state";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import UiOnlyFlag from "../components/UiOnlyFlag";
 import ConnectSection from "./ConnectSection";
 import { useReadyEnvironments } from "./readyEnvironments";
@@ -70,7 +73,7 @@ function BuildFromCode({ onOpen }) {
 BuildFromCode.propTypes = { onOpen: PropTypes.func.isRequired };
 
 function PrebuiltSection({ onPick, onBrowse }) {
-  const { worlds, isLoading } = useReadyEnvironments();
+  const { worlds, isLoading, error, refetch } = useReadyEnvironments();
   const featured = worlds.slice(0, 3);
   return (
     <Box>
@@ -90,7 +93,16 @@ function PrebuiltSection({ onPick, onBrowse }) {
           )
         }
       />
-      {!isLoading && worlds.length === 0 ? (
+      {isLoading ? (
+        <ContentSkeleton variant="panel" label="Loading ready environments" />
+      ) : error ? (
+        <ErrorState
+          title="Couldn't load the ready environments"
+          detail={errorMessage(error)}
+          onRetry={() => refetch()}
+          sx={{ height: "auto", flexGrow: 0, py: 3 }}
+        />
+      ) : worlds.length === 0 ? (
         <Typography sx={{ typography: "s3", color: "text.secondary" }}>
           No ready environments are published to this workspace yet.
         </Typography>

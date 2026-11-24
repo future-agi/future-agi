@@ -80,7 +80,6 @@ vi.mock("src/api/harness/releases", () => ({
 
 vi.mock("src/api/harness/harness", () => ({
   preflightHarnessJob: vi.fn(),
-  storeHarnessSecretValues: vi.fn(),
   createHarnessJob: vi.fn(),
   harnessIdempotencyKey: () => "idem-test",
   getHarnessJob: vi.fn(),

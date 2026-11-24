@@ -95,7 +95,12 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
   const [busy, setBusy] = useState(false);
   // Agents connected from here, which the agent pickers list first.
   const [samples, setSamples] = useState([]);
-  const { worlds } = useReadyEnvironments({ enabled: open });
+  const {
+    worlds,
+    isLoading: worldsLoading,
+    error: worldsError,
+    refetch: refetchWorlds,
+  } = useReadyEnvironments({ enabled: open });
   const nextAt = useRef(0);
   const backRef = useRef(null);
   const scrollBoxes = useRef(new Map());
@@ -259,12 +264,14 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
         <Box flex={1} minWidth={0}>
           <Typography sx={{ ...T14, fontWeight: 600 }}>
             Ready environments
-            <Box
-              component="span"
-              sx={{ color: "text.secondary", fontWeight: 500, ml: 0.75 }}
-            >
-              {worlds.length + 1}
-            </Box>
+            {!worldsLoading && !worldsError && (
+              <Box
+                component="span"
+                sx={{ color: "text.secondary", fontWeight: 500, ml: 0.75 }}
+              >
+                {worlds.length + 1}
+              </Box>
+            )}
           </Typography>
           <Typography noWrap sx={{ ...T12, color: "text.secondary" }}>
             Tables, tools, rules and scenarios, ready made. Use one with your
@@ -312,6 +319,9 @@ export default function BuildEnvironmentDrawer({ open, onClose }) {
     view === "worlds" ? (
       <WorldsBrowser
         worlds={worlds}
+        isLoading={worldsLoading}
+        error={worldsError}
+        onRetry={() => refetchWorlds()}
         onOpenWorld={(w, tab) => pick(worldItem(w, tab))}
         onOpenSandbox={() => pick(SANDBOX_ITEM)}
       />

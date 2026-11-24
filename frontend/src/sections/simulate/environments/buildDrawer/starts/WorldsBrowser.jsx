@@ -10,14 +10,13 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
+import ContentSkeleton from "src/components/content-skeleton";
 import EmptyContent from "src/components/empty-content";
+import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
+import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
 import { OUTLINED_BTN_SX, T13 } from "../drawerStyles";
-import {
-  WORLD_TYPES,
-  domainLabelOf,
-  filterWorlds,
-} from "../worlds";
+import { WORLD_TYPES, domainLabelOf, filterWorlds } from "../worlds";
 import { SANDBOX_APPS } from "./sandboxApps";
 import { QuietTag } from "./startBits";
 import { SaasSandboxCard } from "./worldCards";
@@ -58,11 +57,17 @@ const selectSx = {
 };
 
 /**
- * Every prebuilt world, filterable, with the SaaS sandbox pinned first. A
- * world opens its setup; a computer use world is listed but can't be built
- * for yet. The drawer's header names the view and carries the way back.
+ * Every ready environment, filterable, with the SaaS sandbox pinned first. One
+ * opens its panel. The drawer's header names the view and carries the way back.
  */
-export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
+export default function WorldsBrowser({
+  worlds,
+  isLoading = false,
+  error = null,
+  onRetry,
+  onOpenWorld,
+  onOpenSandbox,
+}) {
   const [query, setQuery] = useState("");
   const [type, setType] = useState("all");
   const [domain, setDomain] = useState("all");
@@ -187,11 +192,22 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
             flexShrink: 0,
           }}
         >
-          {`${listed.length + (withSandbox ? 1 : 0)} of ${total} environments`}
+          {isLoading || error
+            ? null
+            : `${listed.length + (withSandbox ? 1 : 0)} of ${total} environments`}
         </Typography>
       </Stack>
 
-      {listed.length || withSandbox ? (
+      {isLoading ? (
+        <ContentSkeleton variant="panel" label="Loading ready environments" />
+      ) : error ? (
+        <ErrorState
+          title="Couldn't load the ready environments"
+          detail={errorMessage(error)}
+          onRetry={onRetry}
+          sx={{ height: "auto", flexGrow: 0, py: 3 }}
+        />
+      ) : listed.length || withSandbox ? (
         <Box
           component="ul"
           aria-label="Ready environments"
@@ -230,6 +246,9 @@ export default function WorldsBrowser({ worlds, onOpenWorld, onOpenSandbox }) {
 }
 WorldsBrowser.propTypes = {
   worlds: PropTypes.array.isRequired,
+  isLoading: PropTypes.bool,
+  error: PropTypes.object,
+  onRetry: PropTypes.func,
   onOpenWorld: PropTypes.func.isRequired,
   onOpenSandbox: PropTypes.func.isRequired,
 };

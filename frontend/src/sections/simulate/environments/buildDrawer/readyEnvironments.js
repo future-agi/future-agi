@@ -82,5 +82,11 @@ export function useReadyEnvironments({ enabled = true } = {}) {
         ),
     [query.data],
   );
-  return { worlds, isLoading: query.isLoading, error: query.error };
+  return {
+    worlds,
+    isLoading: query.isLoading,
+    // Only when there is no list to show: one read before stays up.
+    error: query.data ? null : query.error,
+    refetch: query.refetch,
+  };
 }
