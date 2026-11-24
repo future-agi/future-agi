@@ -176,6 +176,32 @@ class TestEditedContract:
         assert edited["hard_constraints"] == ["Over 50"]
         assert CONTRACT == before
 
+    def test_what_the_review_took_out_is_recorded_for_the_build_to_read(self):
+        contract = {**CONTRACT, "amendments": ["modality chat -> voice: asked"]}
+        edits = [
+            {"op": "remove", "kind": "use_case", "id": "use-case-2"},
+            {"op": "remove", "kind": "rule", "id": "rule-1"},
+            {"op": "edit", "kind": "rule", "id": "rule-2", "text": "Over 50"},
+        ]
+
+        edited = apply_edits_to_contract(contract, edits)
+
+        assert edited["amendments"] == [
+            "modality chat -> voice: asked",
+            "use case removed - Cancel a booking: removed in the design review",
+            "rule removed - Run check_otp before any refund: removed in the design "
+            "review",
+            "rule reworded - Refunds over 25 need a manager: reworded in the design "
+            "review to: Over 50",
+        ]
+
+    def test_a_review_that_only_drops_a_tool_records_no_amendment(self):
+        edited = apply_edits_to_contract(
+            CONTRACT, [{"op": "remove", "kind": "tool", "id": "notify"}]
+        )
+
+        assert "amendments" not in edited
+
 
 @pytest.mark.django_db
 class TestReviewApi:

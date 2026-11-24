@@ -206,6 +206,32 @@ def _drop_tools_and_tables(
             }
 
 
+def _review_amendments(
+    rules: list[tuple[str, str]],
+    cases: list[tuple[str, str]],
+    removed: dict[str, set[str]],
+    rewording: dict[str, str],
+) -> list[str]:
+    return [
+        *(
+            f"use case removed - {text}: removed in the design review"
+            for item_id, text in cases
+            if item_id in removed["use_case"]
+        ),
+        *(
+            f"rule removed - {text}: removed in the design review"
+            for item_id, text in rules
+            if item_id in removed["rule"]
+        ),
+        *(
+            f"rule reworded - {text}: reworded in the design review to: "
+            f"{rewording[item_id]}"
+            for item_id, text in rules
+            if item_id in rewording and item_id not in removed["rule"]
+        ),
+    ]
+
+
 def apply_edits_to_contract(
     contract: dict[str, Any], edits: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -243,6 +269,10 @@ def apply_edits_to_contract(
         {},
     )
     _drop_tools_and_tables(edited, removed["tool"], removed["table"])
+    changes = _review_amendments(rules, cases, removed, rewording)
+    if changes:
+        held = edited.get("amendments")
+        edited["amendments"] = [*(held if isinstance(held, list) else []), *changes]
     for field in ("hard_constraint_details", "real_use_case_details"):
         if edited[field] is None and field not in contract:
             del edited[field]
