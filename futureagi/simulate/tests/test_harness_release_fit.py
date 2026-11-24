@@ -186,15 +186,25 @@ def fitted(monkeypatch):
             (
                 "verify-then-cancel",
                 "Verify, then cancel",
-                frozenset({"verify_order_owner", "cancel_order"}),
+                (frozenset({"verify_order_owner", "cancel_order"}),),
             ),
-            ("policy-question", "Policy question", frozenset({"get_return_policy"})),
+            (
+                "policy-question",
+                "Policy question",
+                (frozenset({"get_return_policy"}),),
+            ),
             (
                 "reply-by-email",
                 "Reply by email",
-                frozenset({"create_draft", "get_order"}),
+                (frozenset({"create_draft", "get_order"}),),
             ),
-            ("refuse-politely", "Refuse politely", frozenset()),
+            ("refuse-politely", "Refuse politely", (frozenset(),)),
+            # Its reference reads a document the agent can't; its other route asks the policy.
+            (
+                "fee-from-the-policy",
+                "Fee from the policy",
+                (frozenset({"search_files"}), frozenset({"get_return_policy"})),
+            ),
         ),
     )
 
@@ -211,7 +221,9 @@ class TestReleaseFit:
         assert rows["verify_order_owner"]["kind"] == "mapped"
         assert rows["create_draft"]["kind"] == "missing"
         assert fit["agent"] == {"name": "ShopMate", "version": "v1"}
-        assert fit["total"] == 4
+        assert fit["total"] == 5
+        # Measured by its other route, though its reference needs a tool the agent lacks.
+        assert "fee-from-the-policy" not in {case["key"] for case in fit["unmeasured"]}
         assert fit["unmeasured"] == [
             {"key": "reply-by-email", "title": "Reply by email"}
         ]
@@ -292,10 +304,12 @@ class TestReleaseFit:
         assert response.status_code == 200, response.content
         body = response.json()
         body = body.get("result", body)
-        assert body["total"] == 4
+        assert body["total"] == 5
+        # With the policy tool unpaired, neither of that case's routes is reached.
         assert {case["key"] for case in body["unmeasured"]} == {
             "policy-question",
             "reply-by-email",
+            "fee-from-the-policy",
         }
 
 
@@ -518,7 +532,7 @@ def test_review_the_design_reads_the_ready_world_and_the_pairing(
         "confirm_cancel",
     ]
     assert body["world"]["people"] == ["Gareth Hughes"]
-    assert len(body["scenarios"]) == 4
+    assert len(body["scenarios"]) == 5
     rows = {row["world"]: row["agent"] for row in body["fit"]["rows"]}
     assert rows["cancel_order"] is None
     assert body["check"] is None

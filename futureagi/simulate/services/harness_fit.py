@@ -134,15 +134,23 @@ def suggested_pairing(
 @lru_cache(maxsize=32)
 def _solution_tools(
     object_key: str, suite_json: str
-) -> tuple[tuple[str, str, frozenset], ...]:
-    """(key, name, tools its reference solution calls) per scenario; a sealed suite never
-    changes under its object key."""
+) -> tuple[tuple[str, str, tuple[frozenset, ...]], ...]:
+    """(key, name, the tools each of its routes calls) per scenario: the reference solution
+    first, then every alternative route the scenario allows. The binding proof scores a
+    scenario on any of them, so the fit counts it the same way. A sealed suite never changes
+    under its object key."""
     files = archive_files(_download(object_key))
     return tuple(
         (
             document["scenario_key"],
             str(document.get("name") or document["scenario_key"]),
-            frozenset(str(step.get("tool")) for step in document.get("solution") or []),
+            tuple(
+                frozenset(str(step.get("tool")) for step in route or [])
+                for route in (
+                    document.get("solution") or [],
+                    *(document.get("alternatives") or []),
+                )
+            ),
         )
         for document in scenario_documents(json.loads(suite_json), files.__getitem__)
     )
@@ -386,8 +394,8 @@ def release_fit(
         "total": len(scenarios),
         "unmeasured": [
             {"key": key, "title": name}
-            for key, name, tools in scenarios
-            if not tools <= reached
+            for key, name, routes in scenarios
+            if not any(route <= reached for route in routes)
         ],
     }
 
@@ -453,7 +461,7 @@ def adaptation_design(job) -> dict[str, Any]:
         "suite": suite.name,
         "scenarios": [
             {"key": key, "title": title}
-            for key, title, _tools in _solution_tools(
+            for key, title, _routes in _solution_tools(
                 suite.object_key, json.dumps(suite.manifest, sort_keys=True)
             )
         ],
