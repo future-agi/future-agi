@@ -3,8 +3,8 @@ where each change came from."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
-from pathlib import PurePosixPath
 from typing import Any
 
 from simulate.services.harness_versioning.references import ALL
@@ -109,6 +109,11 @@ def name_saved(activated: Mapping[str, tuple[Any, bool]], *, name: str) -> None:
 SOURCES_PER_CHANGE = 20
 
 
+def _file_name(file_id: str) -> str:
+    """The last part of a file's path or address, without a query or fragment; the id itself when it has none."""
+    return re.split(r"[\\/]", re.split(r"[?#]", file_id, maxsplit=1)[0])[-1] or file_id
+
+
 def record_sources(
     provenance: dict[str, list[ChangeSource]] | None,
     before: Mapping[str, bytes],
@@ -154,7 +159,7 @@ def record_sources(
                 kind="file",
                 id=str(one["file_id"]),
                 row=one.get("row"),
-                name=str(one.get("name") or PurePosixPath(str(one["file_id"])).name),
+                name=str(one.get("name") or _file_name(str(one["file_id"]))),
             )
             for one in used_files or []
             if one.get("file_id")
