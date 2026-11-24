@@ -9,6 +9,7 @@ underneath it.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from collections.abc import Mapping
@@ -543,15 +544,17 @@ def world_rows(
 
 
 def _tested(before: Any, patch: list[JsonPatchOp]) -> list[JsonPatchOp]:
-    """The patch with a `test` on each value it replaces or removes, so it applies only to what was read."""
-    tests: list[JsonPatchOp] = []
+    """The patch with a `test` on each value it replaces or removes, so it applies only to what was read. Each test sits
+    just before its op and reads the document as the earlier ops left it: an earlier add or remove shifts list indexes."""
+    doc = copy.deepcopy(before)
+    out: list[JsonPatchOp] = []
     for op in patch:
         if op["op"] in ("replace", "remove"):
-            pointer = jsonpatch.JsonPointer(op["path"])
-            tests.append(
-                {"op": "test", "path": op["path"], "value": pointer.resolve(before)}
-            )
-    return tests + patch
+            value = jsonpatch.JsonPointer(op["path"]).resolve(doc)
+            out.append({"op": "test", "path": op["path"], "value": copy.deepcopy(value)})
+        out.append(op)
+        doc = jsonpatch.apply_patch(doc, [op], in_place=True)
+    return out
 
 
 def _fields(before: Any, after: Any) -> list[str]:

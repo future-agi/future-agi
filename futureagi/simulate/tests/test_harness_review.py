@@ -61,6 +61,22 @@ def test_a_changed_tool_is_one_change_whose_patch_applies_only_to_what_was_read(
         jsonpatch.apply_patch({**TOOLS[1], "description": "Refund"}, change["patch"])
 
 
+def test_a_list_edit_that_shifts_indexes_tests_each_value_where_its_op_meets_it():
+    # An add before a replace moves the replaced value to a later index than the saved document has.
+    before = {**TOOLS[1], "examples": ["f", "a"]}
+    after = {**TOOLS[1], "examples": ["y", "f", "e"]}
+    default = _tree({"tools": [TOOLS[0], before]})
+    draft = _tree({"tools": [TOOLS[0], after]})
+
+    [change] = compute_changes(default, draft)
+
+    assert jsonpatch.apply_patch(before, change["patch"]) == after
+    assert any(op["op"] == "test" for op in change["patch"])
+    # Still refused when the scenario changed underneath.
+    with pytest.raises(jsonpatch.JsonPatchTestFailed):
+        jsonpatch.apply_patch({**before, "examples": ["f", "b"]}, change["patch"])
+
+
 def test_reordering_items_is_not_a_change_and_an_unchanged_draft_has_none():
     default = _tree({"tools": TOOLS, "hard_constraints": ["a", "b"]})
     assert (
