@@ -24,6 +24,7 @@ const STATE_ROLE = {
   ours: "warning",
   retry: "warning",
   unavailable: "warning",
+  alreadyChecked: "info",
 };
 
 function stateText(state, reason) {
@@ -115,11 +116,15 @@ export default function ReadyToRunSection({
   }
   // A re-check or retry the server turned down says so, in its words.
   const refusal = recheck.isError ? recheck.error : retryAgent.error;
-  const cantCheck = recheck.data?.validation?.state === "unavailable";
+  const answer = recheck.data?.validation;
+  const cantCheck = answer?.state === "unavailable";
+  // A pair already certified starts no check: ready, with no job.
+  const alreadyChecked = answer?.state === "ready" && !answer.job_id;
   let noteState = view.state;
   if (checking) noteState = "checking";
   else if (refusal) noteState = "refused";
   else if (cantCheck) noteState = "unavailable";
+  else if (alreadyChecked) noteState = "alreadyChecked";
   const note = stateText(
     noteState,
     refusal ? refusal.message || refusal.detail : view.stateReason,

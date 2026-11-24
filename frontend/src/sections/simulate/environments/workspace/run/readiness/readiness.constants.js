@@ -24,6 +24,7 @@ export const READY_TO_RUN_COPY = {
       `Check unavailable${reason ? `: ${reason}` : " on our side"} · runs aren't held`,
     retry: "The last check didn't finish · re-check",
     unavailable: "These versions can't be checked right now",
+    alreadyChecked: "Already checked with these versions, nothing to redo",
     refused: (reason) =>
       `The check couldn't start${reason ? `: ${reason}` : ""}`,
   },

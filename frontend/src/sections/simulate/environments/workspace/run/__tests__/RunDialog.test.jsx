@@ -86,7 +86,7 @@ vi.mock("src/api/simulate-environments/readiness", () => ({
 }));
 
 const { default: RunDialog } = await import("../RunDialog");
-const { useReadiness } = await import(
+const { useReadiness, useRecheck } = await import(
   "src/api/simulate-environments/readiness"
 );
 
@@ -1219,6 +1219,20 @@ describe("RunDialog", () => {
         section.getByRole("button", { name: "Open agent versions" }),
       );
       expect(onOpenAgentVersions).toHaveBeenCalledTimes(1);
+    });
+
+    it("says a re-check of versions already checked started nothing", () => {
+      state.report = report();
+      const answer = { data: { validation: { state: "ready", job_id: null } } };
+      const idle = useRecheck.getMockImplementation();
+      useRecheck.mockImplementation(() => ({ ...idle(), ...answer }));
+      renderDialog();
+      expect(
+        screen.getByText(
+          "Already checked with these versions, nothing to redo",
+        ),
+      ).toBeInTheDocument();
+      useRecheck.mockImplementation(idle);
     });
 
     it("holds the run while the pair is checked, as the server would refuse it", () => {
