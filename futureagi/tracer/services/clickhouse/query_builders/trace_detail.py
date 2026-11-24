@@ -80,9 +80,9 @@ def compute_trace_summary_and_graph(
     call this so the two interchangeable paths cannot drift in the totals or the
     graph shape. Works with both PG and CH span dicts.
     """
-    all_spans = []
-    graph_nodes = []
-    graph_edges = []
+    all_spans: list[dict[str, Any]] = []
+    graph_nodes: list[dict[str, Any]] = []
+    graph_edges: list[dict[str, Any]] = []
 
     # Iterative preorder walk preserves exact DFS order without hitting Python's
     # recursion limit on deep (>1,000-level) agent span trees.
