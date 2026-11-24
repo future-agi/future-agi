@@ -19,7 +19,6 @@ from simulate.models import (
 )
 from simulate.services.run_results_v3_scoring import (
     CANCELLED_CALL_STATUSES,
-    HARNESS_INCONCLUSIVE,
     SKIPPED_HARNESS_STATUSES,
 )
 
@@ -239,11 +238,11 @@ def receipt_outcome_counts(
                     & ~Q(status__in=SKIPPED_HARNESS_STATUSES),
                     then=Value("cancelled"),
                 ),
-                # A failed receipt its call reads inconclusive (only checks its proof never verified failed) is not
-                # the agent's failure: counted as skipped, as an inconclusive call is.
+                # A failed receipt its call has no score for (only checks its proof never verified failed) is not the
+                # agent's failure: counted with the no-score calls, outside the pass rate.
                 When(
-                    Q(status="failed") & Q(call_outcome__in=HARNESS_INCONCLUSIVE),
-                    then=Value("skipped"),
+                    Q(status="failed") & Q(call_outcome=NO_SCORE),
+                    then=Value(NO_SCORE),
                 ),
                 default=F("status"),
                 output_field=CharField(),

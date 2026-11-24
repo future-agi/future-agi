@@ -452,25 +452,30 @@ def test_the_runs_list_counts_a_call_stopped_before_its_receipt_as_cancelled(
 
 
 @pytest.mark.django_db
-def test_the_runs_list_counts_a_trial_failed_only_by_unverified_checks_as_skipped_not_failed(
+def test_the_runs_list_counts_a_trial_failed_only_by_unverified_checks_as_no_score_not_failed(
     finished_run,  # noqa: F811
     calls,  # noqa: F811
 ):
+    from simulate.models import TestExecution
     from simulate.services.harness_environment import receipt_outcome_counts
+    from simulate.services.run_outcome import receipt_counts, run_outcome
     from simulate.tests.test_run_resume import _result
 
     # Both receipts are sealed failed; only the second call's checks its proof never verified failed it.
     agent_failed, unverified = calls
-    for call, graded in ((agent_failed, "failed"), (unverified, "inconclusive")):
+    for call, graded in ((agent_failed, "failed"), (unverified, "no_score")):
         call.status = CallExecution.CallStatus.COMPLETED
         call.call_metadata = {**call.call_metadata, "harness_outcome_status": graded}
         call.save(update_fields=["status", "call_metadata"])
         _result(finished_run, call, status="failed")
 
-    assert receipt_outcome_counts([finished_run.id])[finished_run.id]["by_status"] == {
-        "failed": 1,
-        "skipped": 1,
-    }
+    tally = receipt_outcome_counts([finished_run.id])[finished_run.id]
+    assert tally["by_status"] == {"failed": 1, "no_score": 1}
+    # Outside the pass rate: the run is judged on the agent's own failure alone, 0 of 1.
+    counts = receipt_counts(tally)
+    assert (counts["failed"], counts["skipped"], counts["no_score"]) == (1, 0, 1)
+    outcome = run_outcome(status=TestExecution.ExecutionStatus.COMPLETED, counts=counts)
+    assert (outcome["outcome_status"], outcome["scored"]) == ("failed", 1)
 
 
 def test_a_worker_s_own_check_names_its_worker_and_the_task_s_does_not():
