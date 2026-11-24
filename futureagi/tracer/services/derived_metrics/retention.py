@@ -57,6 +57,7 @@ from tracer.services.derived_metrics.storage import (
     SOURCE_DEPENDENCIES,
     TABLES,
     UNIT_STATE,
+    MetricTable,
 )
 
 
@@ -472,7 +473,8 @@ def _classify_recovery(
     writer, recovery, fields, params, cutoff, *, spans=False, strict=True
 ):
     """Classify each owner, never infer conversation age from a member's start."""
-    result, blocked = {}, False
+    result: dict[str, list] = {}
+    blocked = False
     for part, entries in recovery.items():
         result[part] = []
         for offset in range(0, len(entries), 500):
@@ -977,7 +979,7 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures, scratch
         )
     )
     former = captures.former_span_quarters(span_definitions)
-    draft_ledger = {}
+    draft_ledger: dict[str, list] = {}
     if span_definitions and not logical_expiry and not current_cleanup:
         for chunk in draft.ledger_chunks.exclude(part="cleanup_intent"):
             draft_ledger.setdefault(chunk.part, []).extend(chunk.payload)
@@ -1030,7 +1032,7 @@ def _retirement_plan(writer, draft, head, definitions, cutoff, captures, scratch
         if span_definitions
         else f"SELECT * FROM ({fields}) WHERE {retain}"
     )
-    ledger = {}
+    ledger: dict[str, list] = {}
     for chunk in draft.ledger_chunks.exclude(part="cleanup_intent"):
         ledger.setdefault(chunk.part, []).extend(chunk.payload)
     ledger, blocked = _classify_recovery(
@@ -1155,7 +1157,8 @@ def _checkpoint_bucket_windows(store, affected):
 
     order = ", ".join(affected.columns)
     remaining = affected.digest[0]
-    after, bound = "1", {}
+    after = "1"
+    bound: dict[str, object] = {}
     while rows := store.execute(
         f"{affected.select} WHERE {after} ORDER BY {order} LIMIT {BUCKET_WINDOWS_PER_FOLD}",
         bound,
@@ -1186,7 +1189,7 @@ def _checkpoint_key_pages(store, keys, params):
     # checked capture reject even a singleton if its configured cap is smaller.
     limit = max(1, min(CAPTURE_ROWS, CAPTURE_BYTES // 24))
     after = lower = "1"
-    lo = {}
+    lo: dict[str, object] = {}
     while True:
         sql = (
             f"SELECT * FROM ({keys}) WHERE {after} "
@@ -1548,16 +1551,19 @@ def _freeze_retained_buckets(
         for key, d in recipes.items()
         if d.level != "user" and (not draft_versions or key in draft_versions)
     ]
-    dirty, span_starts = set(), set()
+    dirty_set, span_starts = set(), set()
     if computed:
         for entry in dirty_entries:
             at = utc(datetime.fromisoformat(str(entry["bucket_start"])))
             if at >= cutoff:
-                dirty.add(at)
+                dirty_set.add(at)
                 if entry.get("level") == "span":
                     span_starts.add(at)
-    dirty = sorted(dirty)
-    empty_retired = f"SELECT * FROM {RETIRED_PARTS.name} WHERE 0", {}
+    dirty = sorted(dirty_set)
+    empty_retired: tuple[str, dict] = (
+        f"SELECT * FROM {RETIRED_PARTS.name} WHERE 0",
+        {},
+    )
     # Partition by time only when ordinary dirty nominations exceed one bind
     # page. The first and last intervals also cover wholly untouched quarters.
     for i in range(0, max(1, len(dirty)), MAX_BATCH_ROWS):
@@ -1730,7 +1736,7 @@ def finish_pending_expiry(writer, *, expiry_id=None):
         head = MetricProjectRefresh.for_project(project_id).head_manifest
         if head is None or head.revoked_at:
             raise MetricStateConflict("retention cleanup requires a safe checkpoint")
-        keep = {a for _, a in head.allowed_attempts()}
+        kept: set[UUID] = {a for _, a in head.allowed_attempts()}
         # Publication-time revocation removed every affected old pin. Preserve
         # safe POST-expiry states that a later compaction superseded while a new
         # request/snapshot still holds them; scrubbing only against the head
@@ -1755,8 +1761,8 @@ def finish_pending_expiry(writer, *, expiry_id=None):
             .values_list("parent_manifest_id", flat=True)
         )
         for retained in MetricReadManifest.objects.filter(id__in=roots):
-            keep.update(a for _, a in retained.allowed_attempts())
-        keep = tuple(keep) or (UUID(int=0),)
+            kept.update(a for _, a in retained.allowed_attempts())
+        keep: tuple[UUID, ...] = tuple(kept) or (UUID(int=0),)
         obligations = list(pending.order_by("requested_at"))
     # Safe roots were frozen under serialization. New attempts have generations
     # above every obligation; new captures can only pin these roots or their
@@ -1799,7 +1805,7 @@ def finish_pending_expiry(writer, *, expiry_id=None):
             "org_id = toUUID(%(purge_org)s) AND project_id = toUUID(%(purge_project)s) "
             "AND generation <= %(purge_through)s AND attempt_id NOT IN %(purge_keep)s"
         )
-        tables = (
+        tables: tuple[MetricTable, ...] = (
             FIELD_VALUES,
             TABLES["metric_field_values_checkpoint"],
             SOURCE_DEPENDENCIES,
@@ -2194,7 +2200,7 @@ def _finish_unlimited_replan(writer, head, retention_days):
             return False
         attempts = []
         for _, key in selected:
-            if not key.startswith("retention-replan:"):
+            if key is None or not key.startswith("retention-replan:"):
                 raise MetricStateConflict("policy replan attempt is not proven")
             try:
                 attempts.append(UUID(key.split(":", 1)[1]))
@@ -2575,7 +2581,7 @@ def _erasure_handoff(store, handoff, request, erased_units):
             if entry.get("trace_id") and entry.get("span_id")
         }
     )
-    identities = {}
+    identities: dict[tuple, str] = {}
     for offset in range(0, len(keys), 500):
         # Use the native key encoding, including Unicode/slash escaping; a
         # Python JSON spelling is not necessarily the stored span identity.
@@ -2616,7 +2622,7 @@ def _erasure_handoff(store, handoff, request, erased_units):
                     erased_units.add(identity)
         if len(erased_units) == previous:
             break
-    retained = {}
+    retained: dict[str, list] = {}
     for part, values in handoff.items():
         retained[part] = []
         for entry in values:
@@ -2741,7 +2747,7 @@ def _purge_by_scope(store, request, *, writer=None):
         raise MetricStateConflict("version erasure lacks physical ordinal")
     if kind == "run":
         return {"live_rows": "not_applicable"}
-    params = {
+    params: dict[str, object] = {
         "erase_org": str(request.organization_key),
         "erase_project": str(request.project_key),
     }
@@ -2800,7 +2806,7 @@ def _purge_by_scope(store, request, *, writer=None):
                 recovery_pending = head.published_by.source_ceilings.get(
                     "recovery_pending", False
                 )
-                handoff = {}
+                handoff: dict[str, list] = {}
                 if recovery_pending:
                     for chunk in head.published_by.ledger_chunks.exclude(
                         part="cleanup_intent"

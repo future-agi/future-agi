@@ -122,6 +122,15 @@ def test_default_provider_is_hosted():
     assert isinstance(get_harness_provider(), HostedHarnessProvider)
 
 
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="hosted")
+def test_hosted_job_detail_returns_not_found_for_template_id(auth_client):
+    response = auth_client.get("/simulate/api/harness-jobs/env-voice-support/")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Hosted harness job not found"
+
+
 def test_e2b_health_exposes_relayed_public_ingress(settings):
     settings.HOSTED_SANDBOX_PROVIDER = "e2b"
     settings.E2B_API_KEY = "configured"

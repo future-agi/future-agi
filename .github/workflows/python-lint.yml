@@ -6,13 +6,19 @@ name: Python lint
 # scripts/check_python_lint_delta.py. S608 (SQL built from strings) only warns.
 #
 # The check to require is "Python Lint Pass". Every candidate runs both jobs,
-# including stacked PRs, retargets, merge groups and dev/main landings. A description-only
-# edit neither cancels the candidate run nor publishes a replacement required name.
+# including stacked PRs, merge groups and dev/main landings. A body, title or
+# label change starts no run, so it can neither cancel the candidate run nor
+# hide its required check.
 
 on:
   pull_request:
-    # edited: a stacked PR moved to another base branch gets a new baseline.
-    types: [opened, synchronize, reopened, edited]
+    # Only these three activity types. A run started by any other one (a body
+    # or title edit, a label) becomes this workflow's newest suite for the
+    # head commit, and GitHub then ignores the older suite's required check,
+    # so the PR cannot be enqueued (#4332, #4001). A retarget starts no run:
+    # the merge queue re-tests every dev merge, but a PR moved onto main is
+    # not re-tested until a push or reopen (see e2e/README.md).
+    types: [opened, synchronize, reopened]
   push:
     branches: [dev, main]
   merge_group:
@@ -22,7 +28,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: python-lint-${{ github.event_name == 'push' && github.sha || github.ref }}-${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && github.run_id || 'candidate' }}
+  group: python-lint-${{ github.event_name == 'push' && github.sha || github.ref }}-candidate
   cancel-in-progress: true
 
 env:
@@ -32,7 +38,6 @@ env:
 jobs:
   ruff-self-test:
     name: Ruff gate self-tests
-    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -74,7 +79,6 @@ jobs:
 
   ruff-delta:
     name: Ruff (new violations only)
-    if: ${{ !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -148,9 +152,9 @@ jobs:
           python3 -I "$gate" --base "$base" "${config_args[@]}" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"
 
   python-lint-pass:
-    name: ${{ github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title) && 'Python lint metadata edit' || 'Python Lint Pass' }}
+    name: Python Lint Pass
     needs: [ruff-delta, ruff-self-test]
-    if: ${{ always() && !(github.event.action == 'edited' && !github.event.changes.base && (github.event.changes.body || github.event.changes.title)) }}
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

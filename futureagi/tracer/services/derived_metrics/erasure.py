@@ -642,7 +642,9 @@ def _purge_snapshots(store, request):
             delete_rows(store, table, predicate, params)
 
 
-_held_erasure_mutexes = ContextVar("metric_erasure_mutexes", default=frozenset())
+_held_erasure_mutexes: ContextVar[frozenset] = ContextVar(
+    "metric_erasure_mutexes", default=frozenset()
+)
 
 
 @contextmanager

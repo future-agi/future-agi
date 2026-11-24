@@ -128,7 +128,7 @@ class SpanSamplingContext:
 
         if self.dirty is None:
             self.dirty = _dirty_buckets(self.attempt)
-        definitions = {}
+        definitions: dict[tuple, object] = {}
         for definition in self.definitions:
             if definition.level == "span" and _needs_context(definition):
                 definitions.setdefault(_population(definition), definition)
