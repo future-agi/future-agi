@@ -50,7 +50,8 @@ export default function ValidateScenariosButton({
     (!scoped ||
       !live.scenario_keys ||
       keys.every((key) => live.scenario_keys.includes(key)));
-  const elsewhere = Boolean(live?.job_id) && !covers && !validationJobId;
+  const elsewhere =
+    Boolean(live?.job_id) && !covers && live.job_id !== validationJobId;
 
   // The end is said once, as a toast, by the button that started or followed it.
   const told = useRef(null);
@@ -83,8 +84,10 @@ export default function ValidateScenariosButton({
     }
   }, [enqueueSnackbar, quiet, state, status.data, validationJobId]);
 
+  // The server's answer holds it too, as the tab's line and the row marks read it, so they can't disagree.
   const running =
     start.isPending ||
+    covers ||
     Boolean(validationJobId && (!state || state === "validating"));
   // Nothing a plain Validate would prove, said before the press. Re-prove all always has work.
   const nothing =

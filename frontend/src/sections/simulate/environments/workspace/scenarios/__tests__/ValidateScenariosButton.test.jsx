@@ -118,6 +118,37 @@ describe("ValidateScenariosButton", () => {
     await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalledTimes(2));
   });
 
+  it("stays held while the server says one is running, even if its own status has ended", async () => {
+    getRunningScenarioValidation.mockResolvedValue({
+      ...NOTHING_RUNNING,
+      job_id: "val-9",
+      to_prove: 0,
+    });
+    renderButton();
+    await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole("button", { name: "Validate cases not yet proved" }),
+    ).toBeDisabled();
+  });
+
+  it("holds a scenario's button while another validation runs, after its own ended", async () => {
+    getRunningScenarioValidation
+      .mockResolvedValueOnce(NOTHING_RUNNING)
+      .mockResolvedValue({
+        ...NOTHING_RUNNING,
+        job_id: "val-2",
+        scenario_keys: ["other"],
+      });
+    renderButton({ keys: ["mine"], label: "Validate" });
+    await pressWhenReady("Validate");
+    expect(
+      await screen.findByText(
+        "Another validation is running. Validate this one when it ends.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Validate" })).toBeDisabled();
+  });
+
   it("says why when there is nothing to prove, without a progress state", async () => {
     validateScenarios.mockResolvedValue({
       state: "ready",
