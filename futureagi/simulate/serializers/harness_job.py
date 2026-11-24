@@ -988,7 +988,7 @@ class HarnessRunHeldBackSerializer(serializers.Serializer):
         child=serializers.IntegerField(min_value=0),
         help_text=(
             "Held-back cases per row that held them: a readiness row, worker:<id>, worker_limits, scenario_dropped, "
-            "no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, scenario_archived, and "
+            "no_world_door, or a lifecycle row (not_validated, not_active, proof_failed, tool_not_on_agent, scenario_archived, and "
             "unreadable for a case whose cited seed records could not be read just now)."
         ),
     )
