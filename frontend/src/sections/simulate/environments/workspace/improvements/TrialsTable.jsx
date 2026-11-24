@@ -132,8 +132,9 @@ export default function TrialsTable({ fix }) {
                   }
                   enterDelay={400}
                 >
+                  {/* Wraps: the counts at its end are never the part cut. */}
                   <Typography
-                    noWrap
+                    data-testid="trial-changes"
                     sx={{ typography: "s3", color: "text.subtitle" }}
                   >
                     {c.wording?.changes || "—"}

@@ -194,8 +194,9 @@ export default function CandidatesTable({ fix }) {
                         }
                         enterDelay={400}
                       >
+                        {/* Wraps: the counts at its end are never the part cut. */}
                         <Typography
-                          noWrap
+                          data-testid="candidate-changes"
                           sx={{ typography: "s2", color: "text.secondary" }}
                         >
                           {row.changes || "—"}

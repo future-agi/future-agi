@@ -17,6 +17,7 @@ from simulate.selectors.agent_fix_wording import (
     FixNames,
     changed_files,
     changes_line,
+    display_name,
     headline,
     must_pass_check,
     must_pass_line,
@@ -61,8 +62,9 @@ _SCENARIOS = [
     InventoryScenario(
         key=_SLUG, name="Reschedule out of hours", tests="", use_case="", sub_goals=[]
     ),
+    # Stored as a slug, as some environments store it.
     InventoryScenario(
-        key="late-booking", name="Late booking", tests="", use_case="", sub_goals=[]
+        key="late-booking", name="late_booking", tests="", use_case="", sub_goals=[]
     ),
     InventoryScenario(key="refund", name="", tests="", use_case="", sub_goals=[]),
 ]
@@ -75,7 +77,14 @@ _CHECKS = {
     "polite": {"name": "polite", "what": ""},
 }
 # What must never reach a person: keys and sub-goal ids.
-_RAW = (_SLUG, "slot_unavailable_handled", "late-booking", "“refund”", "“asks”")
+_RAW = (
+    _SLUG,
+    "slot_unavailable_handled",
+    "late-booking",
+    "late_booking",
+    "“refund”",
+    "“asks”",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -352,7 +361,11 @@ class TestFlakyProtectedOnThePage:
     ):
         fix_run, candidate = _winner(source_run, storage)
         AgentFixRun.no_workspace_objects.filter(id=fix_run.id).update(
+            # A whole report, as the platform stores an ended fix's.
             report={
+                "ending": "ready",
+                "summary": "Found a fix.",
+                "winner_candidate_id": str(candidate.id),
                 "flaky_protected": [
                     {
                         "key": _SLUG,
@@ -361,7 +374,7 @@ class TestFlakyProtectedOnThePage:
                         "runs": 3,
                     },
                     {"key": "refund", "sub_goal": "asks", "passed": 1, "runs": 3},
-                ]
+                ],
             }
         )
         candidate.fix_run.refresh_from_db()
@@ -421,6 +434,17 @@ class TestMustPassWords:
         assert headline({**verdict, "target_pass_rate": [0, 0.625]}, self._FAILED) == (
             "Target pass rate 0% → 63%. 2 must-pass scenarios broke."
         )
+
+    def test_a_slug_name_reads_as_words_and_a_written_one_is_kept(self):
+        assert display_name("reschedule_appointment_out_of_hours_recovery") == (
+            "Reschedule appointment out of hours recovery"
+        )
+        assert display_name("late-booking") == "Late booking"
+        assert display_name("Book a ride to the airport") == (
+            "Book a ride to the airport"
+        )
+        assert display_name("Refunds") == "Refunds"
+        assert display_name("  ") == ""
 
     def test_a_check_is_named_or_not_shown(self):
         names = FixNames.__new__(FixNames)

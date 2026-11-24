@@ -2,6 +2,7 @@
 body both take them from here, so the two never say different things: plain sentences,
 which the pull request only escapes as Markdown."""
 
+import re
 from functools import cached_property
 from math import floor
 from typing import Any, NamedTuple
@@ -180,6 +181,17 @@ def headline(verdict: dict, tiers: list[VerdictTier]) -> str:
     return ""
 
 
+def display_name(name: str) -> str:
+    """A scenario's name as a person reads it. Some are stored as a slug
+    ("reschedule_appointment_out_of_hours_recovery"); such a name, with no space and an
+    underscore or a hyphen, reads as words in sentence case."""
+    name = name.strip()
+    if " " in name or not re.search(r"[_-]", name):
+        return name
+    words = " ".join(re.split(r"[_-]+", name)).strip().lower()
+    return words[:1].upper() + words[1:]
+
+
 class FixNames:
     """What a fix's scenarios and checks are called where a person reads them. Each is
     read once, when first needed; a key or a sub-goal's id is never one of them."""
@@ -192,9 +204,9 @@ class FixNames:
         """Each scenario's name by its key: the inventory the engine is briefed with,
         which names the flaky protected cases too."""
         return {
-            one.key: one.name.strip()
+            one.key: display_name(one.name)
             for one in inventory(self._fix_run)
-            if one.name.strip()
+            if display_name(one.name)
         }
 
     @cached_property
@@ -230,7 +242,7 @@ def flaky_protected(report: dict, names: FixNames) -> list[str]:
     for key, checks in rows.items():
         # The engine names a row from the same inventory, so its name is the fallback.
         name = names.scenarios.get(key) or next(
-            (str(row["name"]).strip() for row in checks if row.get("name")), ""
+            (display_name(str(row["name"])) for row in checks if row.get("name")), ""
         )
         if not name:
             unnamed += 1

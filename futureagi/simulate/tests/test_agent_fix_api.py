@@ -36,6 +36,7 @@ from simulate.selectors.agent_fix import (
     engine_brief,
     inventory,
 )
+from simulate.selectors.agent_fix_wording import display_name
 from simulate.serializers.agent_fix import AgentFixLaunchSerializer
 from simulate.services import agent_fix_engine as engine
 from simulate.services import agent_fix_github
@@ -1424,8 +1425,12 @@ class TestUserApi:
                 f"{BASE}/", {"environment_id": str(environment.id)}
             ).json()
             read = auth_client.get(f"{BASE}/{fix_run.id}/").json()
+            # What only one fix's read carries: its evals, and the words it reads.
             read.pop("eval_warnings")
             read.pop("eval_grading")
+            read.pop("flaky_protected_text")
+            for candidate in read["candidates"]:
+                candidate.pop("wording")
             assert listed["results"] == [read]
             return read["spent_credits"], read["committed_credits"]
 
@@ -2342,7 +2347,8 @@ class TestUserApi:
         assert pull["body"].startswith("**Known regression.**")
         # By the scenario's name in the environment, never by its key.
         key, _ = self.REGRESSED.split(": ")
-        name = next(one.name for one in inventory(fix_run) if one.key == key)
+        stored = next(one.name for one in inventory(fix_run) if one.key == key)
+        name = display_name(stored)
         assert f"- Must-pass scenario “{name}”" in pull["body"]
         assert f"“{key}”" not in pull["body"]
         assert f"> {self.REASON}" in pull["body"]

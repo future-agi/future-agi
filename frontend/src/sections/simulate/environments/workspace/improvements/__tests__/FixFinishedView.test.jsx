@@ -773,6 +773,27 @@ describe("FixFinishedView, candidates", () => {
     expect(row.getByText("Not run")).toBeInTheDocument();
   });
 
+  it("shows a candidate's whole change line, wrapped, never cut", () => {
+    const said =
+      "Changes agent.py, config.py, instructions.md and 3 more files: 108 lines added, 30 removed.";
+    const fix = fixOf("fix-ready-archive");
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.wording = { ...winner.wording, changes: said };
+    renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    const line = within(screen.getByTestId("candidate-3")).getByTestId(
+      "candidate-changes",
+    );
+    expect(line).toHaveTextContent(said);
+    expect(line).not.toHaveClass("MuiTypography-noWrap");
+  });
+
   it("opens each candidate's own check run, and keeps the pass-rate chart below", () => {
     view("fix-ready-archive");
     expect(

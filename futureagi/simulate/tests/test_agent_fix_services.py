@@ -3896,7 +3896,10 @@ class TestPullRequestDescription:
         assert title == "Epoch: fix 6 diagnosed causes in instructions.md"
         table, decided = body.split("<details><summary>How it was decided</summary>")
         # The headline and its row quote the verdict's one held-back rate.
-        assert "held-back pass rate 0% → 56%" in table
+        assert table.startswith(
+            "Held-back pass rate 0% → 56%. No must-pass scenario broke."
+        )
+        assert table.count("0% → 56%") == 2
         assert (
             "| Held-back scenarios | Passed | 0% → 56% on scenarios the epoch never saw,"
             " a clear gain. |" in table
