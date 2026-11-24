@@ -1,9 +1,11 @@
 """Free-text tags on an environment's scenarios: kept apart from the versioned suite."""
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 
-from simulate.models import HostedHarnessScenario
+from simulate.models import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.harness_scenario_tags import HarnessScenarioTags
 from simulate.services import harness_scenario_tags as tags_service
 from simulate.services.harness_scenarios import index_scenarios
@@ -89,6 +91,34 @@ class TestService:
         assert changed == {first: ["billing", "regression"], second: ["regression"]}
         assert tags_service.environment_tags(environment) == ["billing", "regression"]
 
+    @pytest.mark.parametrize("change", ["set", "change"])
+    def test_a_tag_change_holds_the_environment_before_it_reads_the_tags(
+        self, environment, change
+    ):
+        key = _keys(environment)[0]
+        job_table = HostedHarnessJob._meta.db_table
+        tags_table = HarnessScenarioTags._meta.db_table
+
+        with CaptureQueriesContext(connection) as queries:
+            if change == "set":
+                tags_service.set_tags(environment, key, ["billing"])
+            else:
+                tags_service.change_tags(environment, [key], add=["billing"])
+
+        statements = [query["sql"] for query in queries.captured_queries]
+        held = next(
+            index
+            for index, sql in enumerate(statements)
+            if f'FROM "{job_table}"' in sql and "FOR UPDATE" in sql
+        )
+        first_tags_read = next(
+            index
+            for index, sql in enumerate(statements)
+            if f'FROM "{tags_table}"' in sql
+        )
+        assert held < first_tags_read
+        assert tags_service.tags_by_key(environment, [key]) == {key: ["billing"]}
+
     def test_tagging_never_changes_the_versioned_suite(self, environment):
         before = list(
             HostedHarnessScenario.no_workspace_objects.filter(
@@ -148,10 +178,31 @@ class TestApi:
         only = client.get(scenarios, {"group_by": "", "tags": "billing"}).json()
         assert [row["scenario_key"] for row in only["results"]] == [first]
 
-        without = client.get(
-            scenarios, {"group_by": "", "tags_not": "billing"}
-        ).json()
+        without = client.get(scenarios, {"group_by": "", "tags_not": "billing"}).json()
         assert [row["scenario_key"] for row in without["results"]] == [second]
+
+    def test_the_coverage_grid_counts_only_the_scenarios_with_the_picked_tags(
+        self, user, environment
+    ):
+        client = _client(user, environment)
+        first, second = _keys(environment)
+        for key, task in ((first, "refund"), (second, "booking")):
+            HostedHarnessScenario.no_workspace_objects.filter(
+                job=environment, scenario_key=key
+            ).update(coverage={"task": task, "overlay": "none"})
+        tags_service.set_tags(environment, first, ["billing"])
+        coverage = f"/simulate/api/harness-jobs/{environment.id}/scenarios/coverage/"
+        axes = {"row_axis": "task", "col_axis": "overlay"}
+
+        everything = client.get(coverage, axes)
+        only = client.get(coverage, {**axes, "tags": "billing"})
+        without = client.get(coverage, {**axes, "tags_not": "billing"})
+
+        assert everything.status_code == 200, everything.content
+        assert everything.json()["rows"] == ["booking", "refund"]
+        assert only.json()["rows"] == ["refund"]
+        assert only.json()["cells"] == [{"row": "refund", "column": "none", "count": 1}]
+        assert without.json()["rows"] == ["booking"]
 
     def test_an_empty_change_is_refused(self, user, environment):
         response = _client(user, environment).post(

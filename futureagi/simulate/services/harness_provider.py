@@ -2601,6 +2601,9 @@ class HostedHarnessProvider:
             queryset = HostedHarnessScenario.no_workspace_objects.filter(job=job)
         queryset = apply_search(queryset, request.query_params.get("search", ""))
         queryset = apply_filters(queryset, request.query_params)
+        from simulate.services.harness_scenario_tags import filter_by_tags
+
+        queryset = filter_by_tags(job, queryset, request.query_params)
         from simulate.services.harness_environment import AGENT_TYPE_VOICE, agent_type
 
         return Response(

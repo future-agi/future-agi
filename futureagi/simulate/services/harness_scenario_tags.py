@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from django.db import transaction
+from django.db.models import QuerySet
+from django.http import QueryDict
 
 from simulate.models import HostedHarnessJob, HostedHarnessScenario
 from simulate.models.harness_scenario_tags import HarnessScenarioTags
 from simulate.services.hosted_harness import HostedHarnessError
+
+if TYPE_CHECKING:
+    from simulate.services.harness_scenarios import ScenarioRows
 
 MAX_TAGS_PER_SCENARIO = 20
 MAX_TAG_LENGTH = 64
@@ -42,9 +47,9 @@ def known_keys(environment: HostedHarnessJob) -> set[str]:
     from simulate.services.harness_versioning.drafts import draft_rows
 
     keys = set(
-        HostedHarnessScenario.no_workspace_objects.filter(
-            job=environment
-        ).values_list("scenario_key", flat=True)
+        HostedHarnessScenario.no_workspace_objects.filter(job=environment).values_list(
+            "scenario_key", flat=True
+        )
     )
     drafted = draft_rows(environment)
     if drafted is not None:
@@ -62,11 +67,13 @@ def _require_known(environment: HostedHarnessJob, keys: Iterable[str]) -> None:
         )
 
 
-def _rows(environment: HostedHarnessJob):
+def _rows(environment: HostedHarnessJob) -> QuerySet[HarnessScenarioTags]:
     return HarnessScenarioTags.no_workspace_objects.filter(environment=environment)
 
 
-def tags_by_key(environment: HostedHarnessJob, keys: Iterable[str]) -> dict[str, list[str]]:
+def tags_by_key(
+    environment: HostedHarnessJob, keys: Iterable[str]
+) -> dict[str, list[str]]:
     return dict(
         _rows(environment)
         .filter(scenario_key__in=list(keys))
@@ -80,6 +87,14 @@ def environment_tags(environment: HostedHarnessJob) -> list[str]:
     for tags in _rows(environment).values_list("tags", flat=True):
         seen.update(one for one in tags or [] if isinstance(one, str))
     return sorted(seen, key=str.casefold)
+
+
+def _hold(environment: HostedHarnessJob) -> None:
+    list(
+        HostedHarnessJob.no_workspace_objects.select_for_update()
+        .filter(id=environment.id)
+        .values_list("id", flat=True)
+    )
 
 
 def _store(environment: HostedHarnessJob, key: str, tags: list[str]) -> None:
@@ -97,6 +112,7 @@ def set_tags(environment: HostedHarnessJob, key: str, tags: Iterable[Any]) -> li
     cleaned = clean_tags(tags)
     _require_known(environment, [key])
     with transaction.atomic():
+        _hold(environment)
         _store(environment, key, cleaned)
     return cleaned
 
@@ -123,9 +139,9 @@ def change_tags(
     _require_known(environment, wanted)
     changed: dict[str, list[str]] = {}
     with transaction.atomic():
+        _hold(environment)
         held = dict(
             _rows(environment)
-            .select_for_update()
             .filter(scenario_key__in=wanted)
             .values_list("scenario_key", "tags")
         )
@@ -141,11 +157,15 @@ def change_tags(
     return changed
 
 
-def _wanted(params, name: str) -> list[str]:
+def _wanted(params: QueryDict, name: str) -> list[str]:
     return [one for one in params.getlist(name) if one not in (None, "")]
 
 
-def filter_by_tags(environment: HostedHarnessJob, rows, params):
+def filter_by_tags(
+    environment: HostedHarnessJob,
+    rows: QuerySet[HostedHarnessScenario] | ScenarioRows,
+    params: QueryDict,
+) -> QuerySet[HostedHarnessScenario] | ScenarioRows:
     """Keep the scenarios with any of the picked tags, then drop those with any `tags_not` tag."""
     from simulate.services.harness_scenarios import ScenarioRows
 
@@ -178,7 +198,9 @@ def filter_by_tags(environment: HostedHarnessJob, rows, params):
     return rows.exclude(scenario_key__in=drop) if drop else rows
 
 
-def tag_field(environment: HostedHarnessJob, rows) -> dict[str, Any] | None:
+def tag_field(
+    environment: HostedHarnessJob, rows: QuerySet[HostedHarnessScenario] | ScenarioRows
+) -> dict[str, Any] | None:
     """The filter panel's Tags entry, counted over the searched suite; none when nothing is tagged."""
     keys = {str(one) for one in rows.values_list("scenario_key", flat=True)}
     counts: dict[str, int] = {}
@@ -195,7 +217,8 @@ def tag_field(environment: HostedHarnessJob, rows) -> dict[str, Any] | None:
         "type": "enum",
         "category": "scenario",
         "choices": [
-            name for name, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
+            name
+            for name, _ in sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))
         ],
         "counts": counts,
     }
