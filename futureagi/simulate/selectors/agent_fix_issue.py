@@ -36,6 +36,7 @@ from simulate.pydantic_schemas.agent_fix_issue import (
 )
 from simulate.selectors.agent_fix import (
     DEFAULT_BUDGET_CREDITS,
+    environment_state_blocker,
     fix_lineage,
     fix_winner,
     fresh_draft_pieces,
@@ -45,7 +46,7 @@ from simulate.selectors.agent_fix import (
     unsaved_changes,
 )
 from simulate.selectors.evidence_import import import_bundle
-from simulate.services.agent_fix_agents import agent_kind
+from simulate.services.agent_fix_agents import agent_kind, fixable_environments
 from simulate.services.harness_environment import environment_name
 from simulate.services.harness_versioning import drafts
 from simulate.services.hosted_harness import HostedHarnessError
@@ -96,14 +97,10 @@ def live_issue(issue: TraceErrorGroup | None) -> TraceErrorGroup | None:
 
 def environment_blocker(environment: HostedHarnessJob) -> HostedHarnessError | None:
     """Why an epoch cannot be run from an issue on the environment now; None when it
-    can. Drafting needs the environment authored and idle, an agent Epoch can change,
+    can. Drafting needs the environment built and idle, an agent Epoch can change,
     and no unsaved changes for the builder to draft over."""
-    if environment.state != HostedHarnessJob.State.COMPLETED:
-        return HostedHarnessError(
-            "environment_busy",
-            "The environment isn't ready. Run Epoch once it finishes updating.",
-            status_code=409,
-        )
+    if blocked := environment_state_blocker(environment):
+        return blocked
     try:
         agent_kind(environment).require_available()
     except HostedHarnessError as exc:
@@ -123,6 +120,24 @@ def environment_blocker(environment: HostedHarnessJob) -> HostedHarnessError | N
             status_code=409,
         )
     return None
+
+
+def unpicked_blocker(environments: QuerySet[HostedHarnessJob]) -> HostedHarnessError:
+    """Why a plan names no environment: none of ``environments`` (the caller's) can run
+    an epoch, or one can and none is picked for the issue's project yet."""
+    if fixable_environments(environments.filter(deleted=False)).exists():
+        return HostedHarnessError(
+            "environment_not_picked",
+            "Pick the environment that tests this issue's agent. This project's next"
+            " epochs use it too.",
+            status_code=409,
+        )
+    return HostedHarnessError(
+        "environment_none",
+        "No environment can run an epoch yet. An epoch runs on an uploaded or GitHub"
+        " agent: build an environment for this issue's agent, then come back.",
+        status_code=409,
+    )
 
 
 def _groups_sessions(issue: TraceErrorGroup) -> bool:

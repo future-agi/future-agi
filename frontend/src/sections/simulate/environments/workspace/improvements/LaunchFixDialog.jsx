@@ -1,10 +1,11 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, Link, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
 import Iconify from "src/components/iconify";
+import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 import {
   fixErrorOf,
@@ -19,8 +20,7 @@ import {
   NO_MODELS_NOTE,
   UNMEASURED_NOTE,
   UNTRACED_NOTE,
-  blockedByDraft,
-  blockedReason as blockedReasonOf,
+  blockerOf,
   costLimitOf,
   countsLine,
   isTraced,
@@ -32,6 +32,13 @@ import {
   reviewSentence,
   variationsNote,
 } from "./launchFormView";
+import {
+  HELD_BACK_PENDING,
+  SHIP_PATH,
+  blockerAction,
+  blockerHint,
+  heldBackOf,
+} from "./epochBlockers";
 
 // Screen 1 of Fix my agent v0: one read (launch-options) prefills it, one
 // write (launch) starts it. The user decides the cases to fix and protect, the
@@ -118,9 +125,19 @@ export default function LaunchFixDialog({
     seenModels: seenModelsOf(options),
     costLimit,
   });
-  const blockedReason = blockedReasonOf(options, targets.length);
-  const draftBlocks = blockedByDraft(options, targets.length);
+  const blocker = blockerOf(options, targets.length);
+  const blockedReason = blocker
+    ? [blocker.message, blockerHint(blocker.code)].filter(Boolean).join(" ")
+    : null;
+  const next = blocker ? blockerAction(blocker.code, envId) : null;
   const variations = variationsNote(targets.length, limits, agent.kind);
+  const heldBack = heldBackOf(options, targets);
+  const nameOf = (key) =>
+    options.scenarios.find((one) => one.key === key)?.name || key;
+  const ship = options.ship;
+  const shipAction = ship?.blocked
+    ? blockerAction(ship.blocked.code, envId)
+    : null;
   const startDisabled = !!blockedReason || !!error || launch.isPending;
   const agentLine = [
     `${agent.name} · agent v${agent.version_number}`,
@@ -211,8 +228,29 @@ export default function LaunchFixDialog({
             </Row>
             <Row k="Scenarios">
               <Typography sx={{ typography: "s2" }}>
-                {countsLine(targets.length, protectedKeys.length, limits)}
+                {countsLine(
+                  targets.length,
+                  protectedKeys.length,
+                  limits,
+                  heldBack,
+                )}
               </Typography>
+              {heldBack.keys?.length ? (
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+                  data-testid="epoch-held-back"
+                >
+                  {`Held back to prove it: ${heldBack.keys.map(nameOf).join(", ")}.`}
+                </Typography>
+              ) : null}
+              {heldBack.pending && targets.length ? (
+                <Typography
+                  sx={{ typography: "s3", color: "text.secondary", mt: 0.5 }}
+                  data-testid="epoch-held-back"
+                >
+                  {HELD_BACK_PENDING[heldBack.pending]}
+                </Typography>
+              ) : null}
               {initialNote ? (
                 <Typography
                   sx={{ typography: "s2", color: "text.secondary" }}
@@ -261,6 +299,37 @@ export default function LaunchFixDialog({
               value={surfaces}
               onChange={setSurfaces}
             />
+            {ship ? (
+              <Row k="Ships as">
+                <Typography sx={{ typography: "s2" }}>
+                  {SHIP_PATH[ship.path]}
+                </Typography>
+                {ship.blocked ? (
+                  <Stack
+                    direction="row"
+                    alignItems="baseline"
+                    spacing={1}
+                    data-testid="epoch-ship-blocked"
+                  >
+                    <Typography
+                      sx={{ typography: "s3", color: "text.secondary" }}
+                    >
+                      {ship.blocked.message}
+                    </Typography>
+                    {shipAction ? (
+                      <Link
+                        component={RouterLink}
+                        href={shipAction.href}
+                        underline="hover"
+                        sx={{ typography: "s3", whiteSpace: "nowrap" }}
+                      >
+                        {shipAction.label}
+                      </Link>
+                    ) : null}
+                  </Stack>
+                ) : null}
+              </Row>
+            ) : null}
             <Row k="Locked files" center>
               <ChipsInput
                 values={locked}
@@ -321,19 +390,17 @@ export default function LaunchFixDialog({
               error ||
               "A winner comes back for you to review. Nothing changes until you ship it."}
           </Typography>
-          {draftBlocks && (
+          {next && (
             <Button
               size="small"
               variant="outlined"
               onClick={() => {
                 onClose();
-                // The Scenarios tab's draft bar saves or discards the changes.
-                navigate(
-                  `${paths.dashboard.simulate.environments.detail(envId)}?tab=scenarios`,
-                );
+                navigate(next.href);
               }}
+              data-testid="epoch-blocker-action"
             >
-              Review unsaved changes
+              {next.label}
             </Button>
           )}
           <Button

@@ -36,6 +36,11 @@ import LaunchLimits, {
   Row,
   SurfacesRow,
 } from "src/sections/simulate/environments/workspace/improvements/LaunchLimits";
+import {
+  SHIP_PATH,
+  blockerAction,
+  blockerHint,
+} from "src/sections/simulate/environments/workspace/improvements/epochBlockers";
 import { fixName } from "src/sections/simulate/environments/workspace/improvements/fixRunView";
 import { costLimitOf } from "src/sections/simulate/environments/workspace/improvements/launchFormView";
 
@@ -246,6 +251,72 @@ PickRow.propTypes = {
   onSwap: PropTypes.func,
 };
 
+// Why nothing can be drafted here now, and the way out: a page that fixes it, or
+// another environment when this one's agent can't be changed.
+function BlockedAlert({ blocked, environmentId, onChangeEnvironment }) {
+  const next = blockerAction(blocked.code, environmentId);
+  const hint = blockerHint(blocked.code);
+  let action = null;
+  if (next) {
+    action = (
+      <Button
+        color="inherit"
+        size="small"
+        component={RouterLink}
+        href={next.href}
+        data-testid="epoch-blocker-action"
+      >
+        {next.label}
+      </Button>
+    );
+  } else if (blocked.code === "fix_agent_not_editable") {
+    action = (
+      <Button color="inherit" size="small" onClick={onChangeEnvironment}>
+        Pick another environment
+      </Button>
+    );
+  }
+  return (
+    <Alert
+      severity="warning"
+      sx={{ mt: 1.5 }}
+      action={action}
+      data-testid="epoch-blocked"
+    >
+      {hint ? `${blocked.message} ${hint}` : blocked.message}
+    </Alert>
+  );
+}
+BlockedAlert.propTypes = {
+  blocked: PropTypes.object.isRequired,
+  environmentId: PropTypes.string.isRequired,
+  onChangeEnvironment: PropTypes.func.isRequired,
+};
+
+// How the winner would ship, and what a pull request still needs.
+function ShipsAsRow({ ship }) {
+  const next = ship.blocked ? blockerAction(ship.blocked.code) : null;
+  return (
+    <Row k="Ships as">
+      <Typography sx={{ typography: "s2" }}>{SHIP_PATH[ship.path]}</Typography>
+      {ship.blocked ? (
+        <Typography
+          sx={{ typography: "s3", color: "text.secondary" }}
+          data-testid="epoch-ship-blocked"
+        >
+          {ship.blocked.message}{" "}
+          {next ? (
+            <Link component={RouterLink} href={next.href} underline="hover">
+              {next.label}
+            </Link>
+          ) : null}
+        </Typography>
+      ) : null}
+    </Row>
+  );
+}
+ShipsAsRow.propTypes = { ship: PropTypes.object.isRequired };
+
 // The slim plan: no model call. The traces it samples and why, the one builder turn
 // that drafts them, and where the epoch's budget is set.
 function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
@@ -319,6 +390,7 @@ function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
             {`You set the epoch's budget and limits after the review, before anything runs. It stops at your budget, ${plan.defaults.budget_credits.toLocaleString("en-US")} credits by default.`}
           </Typography>
         </Row>
+        {plan.ship ? <ShipsAsRow ship={plan.ship} /> : null}
         {!blocked && !picks.length ? (
           <Alert
             severity="info"
@@ -338,24 +410,11 @@ function PlanForm({ plan, clusterId, projectId, onChangeEnvironment }) {
           </Alert>
         ) : null}
         {blocked ? (
-          <Alert
-            severity="warning"
-            sx={{ mt: 1.5 }}
-            action={
-              blocked.code === "fix_draft_open" ? (
-                <Button
-                  color="inherit"
-                  size="small"
-                  component={RouterLink}
-                  href={scenariosHref(environment.id)}
-                >
-                  Review unsaved changes
-                </Button>
-              ) : null
-            }
-          >
-            {blocked.message}
-          </Alert>
+          <BlockedAlert
+            blocked={blocked}
+            environmentId={environment.id}
+            onChangeEnvironment={onChangeEnvironment}
+          />
         ) : null}
         {failure ? (
           <Alert severity="error" sx={{ mt: 1.5 }}>
@@ -401,8 +460,12 @@ function NewPlan({ clusterId, projectId }) {
     { clusterId, projectId, environmentId },
     { enabled: true },
   );
-  const picking = choosing || (!!plan.data && !plan.data.environment);
+  const unpicked = !!plan.data && !plan.data.environment;
+  // The plan says whether any of the caller's environments can run an epoch.
+  const none = unpicked && plan.data.blocked?.code === "environment_none";
+  const picking = choosing || (unpicked && !none);
   const environments = useCodeAgentEnvironments({ enabled: picking });
+  if (none && !choosing) return <NoEnvironment />;
   if (picking) {
     if (environments.isLoading) {
       return <ContentSkeleton variant="rows" rows={3} sx={{ mx: 3 }} />;
@@ -567,8 +630,28 @@ function runFailure(error, environmentId) {
   if (!error) return null;
   const failure = fixErrorOf(error);
   if (failure.code !== "issue_scenarios_limit") {
+    const hint = blockerHint(failure.code);
+    const next = blockerAction(failure.code, environmentId);
     return (
-      <Alert severity="error">{failure.message || "Could not start."}</Alert>
+      <Alert
+        severity="error"
+        action={
+          next ? (
+            <Button
+              color="inherit"
+              size="small"
+              component={RouterLink}
+              href={next.href}
+            >
+              {next.label}
+            </Button>
+          ) : null
+        }
+      >
+        {[failure.message || "Could not start.", hint]
+          .filter(Boolean)
+          .join(" ")}
+      </Alert>
     );
   }
   const { held, limit } = refusalOf(error);

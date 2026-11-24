@@ -279,6 +279,80 @@ describe("RunEpochDrawer: the plan", () => {
     );
     expect(screen.getByTestId("epoch-draft-scenarios")).toBeDisabled();
   });
+
+  it("offers to build an environment when the plan says none can run an epoch, without listing them", async () => {
+    plans.none = {
+      ...plan(null),
+      blocked: { code: "environment_none", message: "No environment yet." },
+    };
+    renderDrawer();
+    expect(
+      await screen.findByText("No environment can run an epoch yet"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("epoch-build-environment")).toBeInTheDocument();
+    expect(
+      api.get.mock.calls.some(
+        ([url]) => url === "/simulate/api/harness-environments/",
+      ),
+    ).toBe(false);
+  });
+
+  it("lists an environment still building, so the plan can say what to do once it's picked", async () => {
+    const reads = answer;
+    api.get.mockImplementation((url, config) =>
+      url === "/simulate/api/harness-environments/"
+        ? Promise.resolve({
+            data: {
+              results: [{ ...envRow(ENV, "Support line", "github"), status: "queued" }],
+            },
+          })
+        : reads(url, config),
+    );
+    renderDrawer();
+    const list = await screen.findByTestId("epoch-environments");
+    expect(within(list).getByText("Support line")).toBeInTheDocument();
+  });
+
+  it("says the environment is still being built and links to it, and drafts nothing", async () => {
+    plans.none = {
+      ...plans[ENV],
+      blocked: {
+        code: "environment_not_built",
+        message: "This environment is still being built.",
+      },
+    };
+    renderDrawer();
+    expect(
+      await screen.findByText("This environment is still being built."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Open the environment" }),
+    ).toHaveAttribute("href", `/dashboard/simulate/environments/${ENV}`);
+    expect(screen.getByTestId("epoch-draft-scenarios")).toBeDisabled();
+  });
+
+  it("says how the winner ships, and where to connect GitHub for a pull request", async () => {
+    plans.none = {
+      ...plans[ENV],
+      ship: {
+        path: "pull_request",
+        blocked: {
+          code: "fix_github_not_connected",
+          message: "Connect the agent's repository to get a pull request.",
+        },
+      },
+    };
+    renderDrawer();
+    expect(
+      await screen.findByText("A pull request on the agent's repository"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Connect GitHub" })).toHaveAttribute(
+      "href",
+      "/dashboard/settings/integrations",
+    );
+    // A pull request it can't open yet does not stop drafting.
+    expect(screen.getByTestId("epoch-draft-scenarios")).toBeEnabled();
+  });
 });
 
 describe("RunEpochDrawer: the review", () => {

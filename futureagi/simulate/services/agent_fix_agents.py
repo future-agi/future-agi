@@ -8,6 +8,8 @@ kind is one more class in ``AGENT_KINDS``.
 import io
 from typing import Any, Protocol
 
+from django.db.models import QuerySet
+
 from simulate.models import (
     AgentFixCandidate,
     AgentFixRun,
@@ -35,6 +37,12 @@ class AgentKind(Protocol):
     surfaces: frozenset[Surface]
 
     def handles(self, environment: HostedHarnessJob) -> bool: ...
+
+    def handled(
+        self, environments: QuerySet[HostedHarnessJob]
+    ) -> QuerySet[HostedHarnessJob]:
+        """The environments among ``environments`` this kind handles, in one query."""
+        ...
 
     def require_available(self) -> None:
         """Refuse, with the reason, when this deployment cannot fix this kind of agent."""
@@ -87,6 +95,15 @@ class VersionedSourceAgent:
         return HarnessAgentVersionRuntime.no_workspace_objects.filter(
             agent_version_id=environment.agent_version_id, source_kind__in=self.EDITABLE
         ).exists()
+
+    def handled(
+        self, environments: QuerySet[HostedHarnessJob]
+    ) -> QuerySet[HostedHarnessJob]:
+        return environments.filter(
+            agent_version_id__in=HarnessAgentVersionRuntime.no_workspace_objects.filter(
+                source_kind__in=self.EDITABLE
+            ).values("agent_version_id")
+        )
 
     def require_available(self) -> None:
         if not versioning_enabled() or not certify_enabled():
@@ -170,6 +187,16 @@ class VersionedSourceAgent:
 
 
 AGENT_KINDS: list[AgentKind] = [VersionedSourceAgent()]
+
+
+def fixable_environments(
+    environments: QuerySet[HostedHarnessJob],
+) -> QuerySet[HostedHarnessJob]:
+    """The environments among ``environments`` whose agent some kind handles."""
+    found = environments.none()
+    for kind in AGENT_KINDS:
+        found = found | kind.handled(environments)
+    return found
 
 
 def agent_kind(environment: HostedHarnessJob) -> AgentKind:

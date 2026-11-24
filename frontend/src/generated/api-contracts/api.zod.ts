@@ -37740,6 +37740,17 @@ export const SimulateApiAgentFixIssuesPlanResponse = zod.object({
     reply_latency_margin_pct: zod.number(),
     cost_margin_pct: zod.number(),
   }),
+  ship: zod.object({
+    path: zod
+      .enum(["pull_request", "make_default"])
+      .describe(
+        "pull_request for a GitHub agent; make_default for an uploaded one.",
+      ),
+    blocked: zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
+  }),
 });
 
 /**
@@ -39192,6 +39203,22 @@ export const SimulateApiAgentFixRunsLaunchOptionsResponse = zod.object({
   variations_blocked: zod.object({
     code: zod.string().min(1),
     message: zod.string().min(1),
+  }),
+  held_back_scenario_keys: zod
+    .array(zod.string().min(1))
+    .describe(
+      "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
+    ),
+  ship: zod.object({
+    path: zod
+      .enum(["pull_request", "make_default"])
+      .describe(
+        "pull_request for a GitHub agent; make_default for an uploaded one.",
+      ),
+    blocked: zod.object({
+      code: zod.string().min(1),
+      message: zod.string().min(1),
+    }),
   }),
 });
 

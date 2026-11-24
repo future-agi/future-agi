@@ -497,6 +497,7 @@ const LAUNCH_SCENARIOS = [
 }));
 
 export function fixtureLaunchOptions(sourceRunId) {
+  const failing = LAUNCH_SCENARIOS.filter((s) => s.failing_sub_goals.length);
   return {
     source_run: {
       id: sourceRunId,
@@ -553,6 +554,12 @@ export function fixtureLaunchOptions(sourceRunId) {
     },
     blocked: null,
     variations_blocked: null,
+    // Below cases_min the epoch writes variations first and picks them after.
+    held_back_scenario_keys:
+      failing.length < 12
+        ? null
+        : failing.slice(0, Math.floor(failing.length / 3)).map((s) => s.key),
+    ship: { path: "pull_request", blocked: null },
   };
 }
 

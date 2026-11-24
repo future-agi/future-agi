@@ -9,6 +9,7 @@ from rest_framework.response import Response
 
 from simulate.models import AgentFixIssueJob, HostedHarnessJob
 from simulate.pydantic_schemas.agent_fix_issue import IssueLaunch
+from simulate.selectors.agent_fix import ship_readiness
 from simulate.selectors.agent_fix_issue import (
     OPEN_ELSEWHERE,
     can_open,
@@ -23,6 +24,7 @@ from simulate.selectors.agent_fix_issue import (
     launch_defaults,
     open_job,
     requested_issue,
+    unpicked_blocker,
 )
 from simulate.selectors.evidence_import import evidence_project
 from simulate.serializers.agent_fix_issue import (
@@ -143,7 +145,11 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
             environment = default_environment(
                 issue.project, self._environments(request)
             )
-        blocked = environment_blocker(environment) if environment else None
+        blocked = (
+            environment_blocker(environment)
+            if environment
+            else unpicked_blocker(self._environments(request))
+        )
         refusal = (
             {"code": blocked.code, "message": blocked.message} if blocked else None
         )
@@ -167,6 +173,13 @@ class AgentFixIssueJobViewSet(viewsets.ViewSet):
             if environment
             else None,
             "defaults": launch_defaults(environment),
+            # The baseline runs the environment's default version, from a run to come;
+            # an environment still building has none yet.
+            "ship": ship_readiness(environment.agent_version_id, None).model_dump(
+                mode="json"
+            )
+            if environment and environment.agent_version_id
+            else None,
         }
         return Response(AgentFixIssuePlanSerializer(plan).data)
 

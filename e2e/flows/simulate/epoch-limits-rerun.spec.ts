@@ -166,6 +166,8 @@ function launchOptions(sourceRunId: string): Json {
     limits: LIMITS,
     blocked: null,
     variations_blocked: null,
+    held_back_scenario_keys: FAILING.slice(0, 4),
+    ship: { path: 'make_default', blocked: null },
   };
 }
 

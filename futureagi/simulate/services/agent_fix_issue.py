@@ -35,6 +35,7 @@ from simulate.pydantic_schemas.agent_fix_issue import (
 from simulate.selectors.agent_fix import (
     FINISHED_RUN_STATES,
     default_max_minutes,
+    environment_state_blocker,
     environment_variations_blocker,
     fewest_failing_cases,
     scenario_results,
@@ -298,11 +299,8 @@ def _require_launchable(
             " ones.",
             status_code=422,
         )
-    if environment.state != HostedHarnessJob.State.COMPLETED:
-        raise _refused(
-            "environment_busy",
-            "The environment isn't ready. Run Epoch once it finishes updating.",
-        )
+    if blocked := environment_state_blocker(environment):
+        raise blocked
     kind = agent_kind(environment)
     kind.require_available()
     if refused := sorted(set(launch.surfaces) - kind.surfaces):

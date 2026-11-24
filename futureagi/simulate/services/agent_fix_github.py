@@ -17,7 +17,7 @@ import requests
 import structlog
 from django.conf import settings
 
-from simulate.models import AgentFixCandidate, HarnessAgentVersionRuntime
+from simulate.models import AgentFixCandidate
 from simulate.pydantic_schemas.agent_fix import (
     HELD_BACK_VERIFIED_MIN,
     EvalGrading,
@@ -26,6 +26,7 @@ from simulate.pydantic_schemas.agent_fix import (
 )
 from simulate.selectors.agent_fix import (
     eval_review,
+    github_ship_source,
     held_back_cases,
     overridable_regressions,
     too_few_held_back,
@@ -38,7 +39,7 @@ from simulate.services.agent_fix_runs import (
     record_override,
     require_shippable,
 )
-from simulate.services.harness_github import safe_repository, short_ref
+from simulate.services.harness_github import short_ref
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_gateway import (
     GitHubAppTokenProvider,
@@ -66,40 +67,11 @@ def open_pull_request(
     if candidate.pull_request_url:
         return candidate.pull_request_url
     fix_run = candidate.fix_run
-    runtime = HarnessAgentVersionRuntime.no_workspace_objects.filter(
-        agent_version_id=fix_run.base_agent_version_id,
-        source_kind=HarnessAgentVersionRuntime.SourceKind.GITHUB,
-    ).first()
-    installation_id = ""
-    if runtime is not None:
-        access = (runtime.agent_payload or {}).get("source_access") or {}
-        installation_id = str(access.get("installation_id") or "")
-    if runtime is None or not installation_id:
-        raise HostedHarnessError(
-            "fix_github_not_connected",
-            "A pull request needs the agent's repository connected through the Future AGI"
-            " GitHub App; download the patch instead",
-            status_code=422,
-        )
-    source = runtime.source or {}
-    repository = str(source.get("repository") or "")
-    if not safe_repository(repository):
-        raise HostedHarnessError(
-            "github_repository_invalid", "invalid GitHub repository", status_code=422
-        )
-    run = fix_run.source_run
-    run_source = ((run.payload if run else None) or {}).get("source") or {}
-    commit = str(run_source.get("commit_sha") or "")
-    if not commit:
-        # The patch was made on the commit the run checked out; a branch tip may differ.
-        raise HostedHarnessError(
-            "fix_github_commit_unknown",
-            "the commit the run checked out is not known; download the patch instead",
-            status_code=409,
-        )
+    installation_id, repository, ref, commit = github_ship_source(
+        fix_run.base_agent_version_id, fix_run.source_run
+    )
     patch = load_object(candidate.patch_object_key) or b""
     branch = f"futureagi/fix-{str(fix_run.id)[:8]}-{candidate.attempt}"
-    ref = str(source.get("ref") or "")
     with GitHubAppTokenProvider.from_settings().credential(installation_id) as token:
         base = _base_branch(repository, ref, token)
         head = _ref_head(repository, ref, base, token)

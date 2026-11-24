@@ -57,11 +57,18 @@ export function issuePlan(clusterId: string, withEnvironment: boolean): Json {
   return {
     issue: issueRef(clusterId),
     environment: withEnvironment ? { id: ENV_ID, name: ENV_NAME } : null,
-    blocked: null,
+    // With none picked yet, the plan says one of the caller's can run it.
+    blocked: withEnvironment
+      ? null
+      : {
+          code: 'environment_not_picked',
+          message: "Pick the environment that tests this issue's agent. This project's next epochs use it too.",
+        },
     sample: { unit: 'trace', picks: [pick(1, 'example'), pick(2, 'cited')], alternates: [pick(3, 'recent')] },
     open_job_id: null,
     issue_scenarios: { held: 4, limit: 36 },
     defaults: DEFAULTS,
+    ship: withEnvironment ? { path: 'pull_request', blocked: null } : null,
   };
 }
 

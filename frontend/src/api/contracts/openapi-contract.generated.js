@@ -54034,6 +54034,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "open_job_id",
         "issue_scenarios",
         "defaults",
+        "ship",
       ],
       type: "object",
       properties: {
@@ -54060,6 +54061,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         defaults: {
           $ref: "#/definitions/AgentFixIssueDefaults",
+        },
+        ship: {
+          $ref: "#/definitions/AgentFixShipReadiness",
         },
       },
     },
@@ -54250,6 +54254,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "limits",
         "blocked",
         "variations_blocked",
+        "held_back_scenario_keys",
+        "ship",
       ],
       type: "object",
       properties: {
@@ -54288,6 +54294,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         variations_blocked: {
           $ref: "#/definitions/AgentFixFailure",
+        },
+        held_back_scenario_keys: {
+          description:
+            "The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations.",
+          type: "array",
+          items: {
+            type: "string",
+            minLength: 1,
+          },
+          "x-nullable": true,
+        },
+        ship: {
+          $ref: "#/definitions/AgentFixShipReadiness",
         },
       },
     },
@@ -100978,6 +100997,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         limit: {
           title: "Limit",
           type: "integer",
+        },
+      },
+      "x-nullable": true,
+    },
+    AgentFixShipReadiness: {
+      required: ["path", "blocked"],
+      type: "object",
+      properties: {
+        path: {
+          title: "Path",
+          description:
+            "pull_request for a GitHub agent; make_default for an uploaded one.",
+          type: "string",
+          enum: ["pull_request", "make_default"],
+        },
+        blocked: {
+          $ref: "#/definitions/AgentFixFailure",
         },
       },
       "x-nullable": true,

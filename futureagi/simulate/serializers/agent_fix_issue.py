@@ -10,6 +10,7 @@ from simulate.serializers.agent_fix import (
     AgentFixFailureSerializer,
     AgentFixLaunchSerializer,
     AgentFixLaunchSurfaceSerializer,
+    AgentFixShipReadinessSerializer,
 )
 from simulate.serializers.evidence_import import EvidenceImportSerializer
 
@@ -129,13 +130,19 @@ class AgentFixIssuePlanSerializer(serializers.Serializer):
 
     issue = AgentFixIssueSerializer()
     environment = AgentFixIssueEnvironmentSerializer(allow_null=True)
-    # Why the environment cannot take an epoch from an issue now.
-    blocked = AgentFixFailureSerializer(allow_null=True)
+    blocked = AgentFixFailureSerializer(
+        allow_null=True,
+        help_text="Why no epoch can be drafted now, with what to do. With no environment,"
+        " environment_none (none of yours can run an Epoch) or environment_not_picked"
+        " (pick one for the project).",
+    )
     sample = AgentFixIssueSampleSerializer()
     # The issue's epoch in progress, to open instead of starting another.
     open_job_id = serializers.UUIDField(allow_null=True)
     issue_scenarios = AgentFixIssueScenariosSerializer(allow_null=True)
     defaults = AgentFixIssueDefaultsSerializer()
+    # How the epoch's winner would ship; null with no environment.
+    ship = AgentFixShipReadinessSerializer(allow_null=True)
 
 
 class AgentFixIssueBaselineSerializer(serializers.Serializer):

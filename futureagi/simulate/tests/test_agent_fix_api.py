@@ -1301,6 +1301,89 @@ class TestUserApi:
             "fix_run_active",
         )
 
+    def test_launch_options_hold_back_what_the_launch_holds_back(
+        self, auth_client, source_run
+    ):
+        # The split's answer names what it was given, so any other seed or target set
+        # reads differently on the form than on the epoch.
+        def split(seed, failing, parents=None):
+            return [f"{seed}|{','.join(sorted(failing))}"]
+
+        with (
+            patch("simulate.selectors.agent_fix.split_held_back", side_effect=split),
+            patch(
+                "simulate.services.agent_fix_runs.split_held_back", side_effect=split
+            ),
+        ):
+            options = auth_client.get(
+                f"{BASE}/launch-options/",
+                {"source_run_id": str(source_run.test_execution_id)},
+            ).json()
+            launched = auth_client.post(
+                f"{BASE}/",
+                _launch_body(
+                    source_run,
+                    target_scenario_keys=options["suggested"]["target_scenario_keys"],
+                ),
+                format="json",
+            )
+
+        assert launched.status_code == 201, launched.content
+        stored = AgentFixRun.no_workspace_objects.get(id=launched.json()["id"])
+        assert options["held_back_scenario_keys"] == [f"{source_run.id}|{KEYS[0]}"]
+        assert (
+            stored.request["held_back_scenario_keys"]
+            == (options["held_back_scenario_keys"])
+        )
+
+    def test_launch_options_leave_held_back_to_the_variations(
+        self, auth_client, source_run, settings
+    ):
+        settings.AGENT_FIX_MIN_FAILING_CASES = 12
+
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+
+        assert options["held_back_scenario_keys"] is None
+
+    @pytest.mark.parametrize(
+        ("source_kind", "installation", "commit", "ship"),
+        [
+            ("archive", None, None, ("make_default", None)),
+            ("github", None, "a" * 40, ("pull_request", "fix_github_not_connected")),
+            ("github", "42", None, ("pull_request", "fix_github_commit_unknown")),
+            ("github", "42", "a" * 40, ("pull_request", None)),
+        ],
+    )
+    def test_launch_options_say_how_the_winner_ships(
+        self, auth_client, source_run, source_kind, installation, commit, ship
+    ):
+        runtime = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=source_run.agent_version_id
+        )
+        access = {"installation_id": installation} if installation else {}
+        HarnessAgentVersionRuntime.no_workspace_objects.filter(id=runtime.id).update(
+            source_kind=source_kind,
+            source={"repository": "acme/agent", "ref": "refs/heads/main"},
+            agent_payload={**(runtime.agent_payload or {}), "source_access": access},
+        )
+        source = {"kind": source_kind, "commit_sha": commit} if commit else {}
+        HostedHarnessJob.no_workspace_objects.filter(id=source_run.id).update(
+            payload={**source_run.payload, "source": source}
+        )
+
+        options = auth_client.get(
+            f"{BASE}/launch-options/",
+            {"source_run_id": str(source_run.test_execution_id)},
+        ).json()
+
+        blocked = options["ship"]["blocked"]
+        assert (options["ship"]["path"], blocked and blocked["code"]) == ship
+        # Before launch there is no patch yet: the words don't offer it as the way out.
+        assert not blocked or "download the patch instead" not in blocked["message"]
+
     def test_launch_refuses_a_part_the_agent_does_not_offer(
         self, auth_client, source_run, monkeypatch
     ):

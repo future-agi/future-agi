@@ -2,10 +2,11 @@
 
 import json
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
+from hashlib import sha256
 from statistics import median
 from typing import Any
 
@@ -77,6 +78,8 @@ from simulate.pydantic_schemas.agent_fix import (
     LaunchSourceRun,
     LaunchSuggested,
     LaunchSurface,
+    ShipPath,
+    ShipReadiness,
     Surface,
     VerdictTier,
     VerdictTierPart,
@@ -89,7 +92,7 @@ from simulate.services.harness_evals import (
     runnable_eval_config_ids,
     runnable_eval_configs,
 )
-from simulate.services.harness_github import short_ref
+from simulate.services.harness_github import safe_repository, short_ref
 from simulate.services.harness_usage import check_harness_action
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -1450,6 +1453,177 @@ def launch_blocker(
     return None
 
 
+HELD_BACK_MIN_CASES = HELD_BACK_VERIFIED_MIN * HELD_BACK_SHARE
+
+
+def split_held_back(
+    seed: str,
+    failing: Mapping[str, list[str]],
+    parents: Mapping[str, str] | None = None,
+) -> list[str]:
+    """The failing cases the worker never sees, so the verdict can prove the fix holds beyond
+    the cases it was made on: one in three, picked by a stable hash of ``seed`` and the key,
+    and never the last cases left to search on for a failing sub-goal. None below twelve.
+
+    A variation (a key of ``parents``) goes with the case it varies: a case and its
+    variations are held back together or not at all."""
+    parents = parents or {}
+    cases = [key for key, names in failing.items() if names]
+    if len(cases) < HELD_BACK_MIN_CASES:
+        return []
+    families: dict[str, list[str]] = {}
+    for key in cases:
+        families.setdefault(parents.get(key, key), []).append(key)
+    quota = len(cases) // HELD_BACK_SHARE
+    searched = Counter(name for key in cases for name in failing[key])
+    held: list[str] = []
+    for parent in sorted(
+        families, key=lambda key: sha256(f"{seed}:{key}".encode()).hexdigest()
+    ):
+        if len(held) == quota:
+            break
+        family = families[parent]
+        names = Counter(name for key in family for name in failing[key])
+        if len(held) + len(family) <= quota and all(
+            searched[name] > count for name, count in names.items()
+        ):
+            held.extend(family)
+            searched.subtract(names)
+    return held
+
+
+def environment_state_blocker(
+    environment: HostedHarnessJob,
+) -> HostedHarnessError | None:
+    """Why the environment can't take an epoch's work now by its own state, in words that
+    say what to do; None when it can. An environment is built once its first build saved
+    its versions: before that its build is running or did not finish, and after it an
+    update (a rebuild, more scenarios, or a re-run of its calls) is. More scenarios run
+    the environment again, so its state says so; a settled environment's leftover
+    ``scenario_extend`` marker is not an update."""
+    from simulate.services.harness_versioning import drafts
+
+    built = environment.environment_version_id is not None
+    ended = environment.state in (
+        HostedHarnessJob.State.FAILED,
+        HostedHarnessJob.State.CANCELED,
+    )
+    if not built and ended:
+        return HostedHarnessError(
+            "environment_build_failed",
+            "This environment's build didn't finish. Open the environment to build it"
+            " again, then Run Epoch.",
+            status_code=409,
+        )
+    if not built and environment.state != HostedHarnessJob.State.COMPLETED:
+        return HostedHarnessError(
+            "environment_not_built",
+            "This environment is still being built. Run Epoch once its build finishes.",
+            status_code=409,
+        )
+    if built and ended:
+        return HostedHarnessError(
+            "environment_update_failed",
+            "This environment's last update didn't finish. Open the environment to run"
+            " it again, then Run Epoch.",
+            status_code=409,
+        )
+    if not built:
+        # Built before versions were saved: the checks after this one say why.
+        return None
+    updating = environment.state != HostedHarnessJob.State.COMPLETED
+    if not updating:
+        try:
+            drafts.require_no_rebuild(environment)
+        except HostedHarnessError:
+            updating = True
+    if updating:
+        return HostedHarnessError(
+            "environment_updating",
+            "This environment is updating. Run Epoch once the update finishes.",
+            status_code=409,
+        )
+    return None
+
+
+# What a pull request still needs, said before launch: the route's own refusal offers the
+# patch, which exists only once there is a winner.
+_SHIP_BEFORE_LAUNCH = {
+    "fix_github_not_connected": "This agent version isn't connected through the Future"
+    " AGI GitHub App, so the winner comes as a patch to download, not a pull request."
+    " To get pull requests, connect GitHub, update the agent from its repository, and"
+    " run Epoch on the new version.",
+    "fix_github_commit_unknown": "The commit this run checked out isn't known, so the"
+    " winner comes as a patch to download, not a pull request.",
+    "github_repository_invalid": "The agent's repository name can't be read, so the"
+    " winner comes as a patch to download, not a pull request.",
+}
+
+
+def github_ship_source(
+    agent_version_id: Any, run: HostedHarnessJob | None, *, before_run: bool = False
+) -> tuple[str, str, str, str]:
+    """The installation, repository, ref and commit a pull request for this GitHub agent
+    version opens from ``run``'s checkout, or the refusal. ``before_run``, before the run a
+    fix starts from exists, reads no commit and gives it back empty."""
+    runtime = HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id=agent_version_id,
+        source_kind=HarnessAgentVersionRuntime.SourceKind.GITHUB,
+    ).first()
+    installation_id = ""
+    if runtime is not None:
+        access = (runtime.agent_payload or {}).get("source_access") or {}
+        installation_id = str(access.get("installation_id") or "")
+    if runtime is None or not installation_id:
+        raise HostedHarnessError(
+            "fix_github_not_connected",
+            "A pull request needs the agent's repository connected through the Future AGI"
+            " GitHub App; download the patch instead",
+            status_code=422,
+        )
+    source = runtime.source or {}
+    repository = str(source.get("repository") or "")
+    if not safe_repository(repository):
+        raise HostedHarnessError(
+            "github_repository_invalid", "invalid GitHub repository", status_code=422
+        )
+    commit = ""
+    if not before_run:
+        run_source = ((run.payload if run else None) or {}).get("source") or {}
+        commit = str(run_source.get("commit_sha") or "")
+        if not commit:
+            # The patch was made on the commit the run checked out; a branch tip may differ.
+            raise HostedHarnessError(
+                "fix_github_commit_unknown",
+                "the commit the run checked out is not known; download the patch instead",
+                status_code=409,
+            )
+    return installation_id, repository, str(source.get("ref") or ""), commit
+
+
+def ship_readiness(
+    agent_version_id: Any, run: HostedHarnessJob | None
+) -> ShipReadiness:
+    """How a winner of an epoch on this agent version, from ``run`` or from a run still to
+    come (None), would ship: a GitHub agent's as a pull request, with why one couldn't open
+    now; any other's as the default."""
+    if not HarnessAgentVersionRuntime.no_workspace_objects.filter(
+        agent_version_id=agent_version_id,
+        source_kind=HarnessAgentVersionRuntime.SourceKind.GITHUB,
+    ).exists():
+        return ShipReadiness(path=ShipPath.MAKE_DEFAULT)
+    try:
+        github_ship_source(agent_version_id, run, before_run=run is None)
+    except HostedHarnessError as exc:
+        return ShipReadiness(
+            path=ShipPath.PULL_REQUEST,
+            blocked=LaunchBlocked(
+                code=exc.code, message=_SHIP_BEFORE_LAUNCH.get(exc.code, exc.message)
+            ),
+        )
+    return ShipReadiness(path=ShipPath.PULL_REQUEST)
+
+
 def fewest_failing_cases() -> int:
     """The fewest failing cases a fix starts from: below the floor it writes variations of
     each, and with every variation failing these just reach it."""
@@ -1506,12 +1680,8 @@ def variations_blocker(source_run: HostedHarnessJob) -> HostedHarnessError | Non
             " then run the epoch.",
             status_code=409,
         )
-    if environment.state != HostedHarnessJob.State.COMPLETED:
-        return HostedHarnessError(
-            "environment_busy",
-            "The environment isn't ready; variations can't be written now",
-            status_code=409,
-        )
+    if blocked := environment_state_blocker(environment):
+        return blocked
     moved = variations_source_moved(environment, source_run)
     if moved is not None:
         return moved
@@ -1620,7 +1790,10 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         one.model_copy(update={"evidence_import_id": imported.get(one.key)})
         for one in scenarios
     ]
-    failing = sum(1 for one in scenarios if one.failing_sub_goals)
+    targets = {
+        one.key: one.failing_sub_goals for one in scenarios if one.failing_sub_goals
+    }
+    failing = len(targets)
     # Below the floor a fix's suite also holds the variations it writes.
     variations = (
         VARIATIONS_PER_CASE * failing
@@ -1697,4 +1870,10 @@ def launch_options(source_run: HostedHarnessJob) -> LaunchOptions:
         )
         if variations_blocked
         else None,
+        # As launch picks them for the suggested targets. With variations to write first,
+        # they are picked after, with the variations.
+        held_back_scenario_keys=None
+        if variations
+        else split_held_back(str(source_run.id), targets),
+        ship=ship_readiness(version_id, source_run),
     )

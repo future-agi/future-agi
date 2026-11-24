@@ -12,13 +12,13 @@ from django.utils import timezone
 
 from simulate.authentication import CodingAgentNeedsSuiteVersion
 from simulate.models import HarnessSuiteMember, HostedHarnessJob, TestExecution
+from simulate.pydantic_schemas.agent_fix import HELD_BACK_SHARE
 from simulate.selectors.held_back import (
     HELD_BACK_METADATA_KEY,
     HeldBack,
     held_back,
     version_verify,
 )
-from simulate.services.agent_fix_runs import HELD_BACK_SHARE
 from simulate.services.harness_agent_versions import advisory_xact_lock
 from simulate.services.harness_usage import require_harness_call_usage
 from simulate.services.harness_versioning.read import version_not_found

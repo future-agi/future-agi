@@ -19410,6 +19410,23 @@ export interface AgentFixIssueScenariosApi {
   limit: number;
 }
 
+/**
+ * pull_request for a GitHub agent; make_default for an uploaded one.
+ */
+export type AgentFixShipReadinessApiPath =
+  (typeof AgentFixShipReadinessApiPath)[keyof typeof AgentFixShipReadinessApiPath];
+
+export const AgentFixShipReadinessApiPath = {
+  pull_request: "pull_request",
+  make_default: "make_default",
+} as const;
+
+export interface AgentFixShipReadinessApi {
+  /** pull_request for a GitHub agent; make_default for an uploaded one. */
+  path: AgentFixShipReadinessApiPath;
+  blocked: AgentFixFailureApi;
+}
+
 export interface AgentFixIssuePlanApi {
   issue: AgentFixIssueApi;
   environment: AgentFixIssueEnvironmentApi | null;
@@ -19418,6 +19435,7 @@ export interface AgentFixIssuePlanApi {
   open_job_id: string | null;
   issue_scenarios: AgentFixIssueScenariosApi | null;
   defaults: AgentFixIssueDefaultsApi;
+  ship: AgentFixShipReadinessApi;
 }
 
 export type AgentFixIssueRunApiSurfacesItem =
@@ -19752,6 +19770,9 @@ export interface AgentFixLaunchOptionsApi {
   limits: AgentFixLaunchLimitsApi;
   blocked: AgentFixFailureApi;
   variations_blocked: AgentFixFailureApi;
+  /** The suggested targets the Epoch holds back to prove its fix, picked as launch picks them: empty when too few fail to hold any back, null when the Epoch first writes variations, since they are picked with the variations. */
+  held_back_scenario_keys: string[];
+  ship: AgentFixShipReadinessApi;
 }
 
 export type AgentFixRunDetailApiState =

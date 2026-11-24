@@ -469,6 +469,22 @@ class LaunchBlocked(BaseModel):
     message: str
 
 
+class ShipPath(StrEnum):
+    # A GitHub agent's winner ships as a pull request on its repository.
+    PULL_REQUEST = "pull_request"
+    # An uploaded agent's winner ships by becoming the environment's default.
+    MAKE_DEFAULT = "make_default"
+
+
+class ShipReadiness(BaseModel):
+    """How an epoch's winner would ship, known before launch."""
+
+    path: ShipPath
+    # Set when a pull request could not open now, with what to do; the winner's patch
+    # can be downloaded either way.
+    blocked: LaunchBlocked | None = None
+
+
 class LaunchOptions(BaseModel):
     """Everything the launch form shows and prefills for one finished run."""
 
@@ -484,3 +500,8 @@ class LaunchOptions(BaseModel):
     blocked: LaunchBlocked | None = None
     # Set when a launch that writes variations would be refused, with the reason.
     variations_blocked: LaunchBlocked | None = None
+    # The targets' cases the epoch holds back to prove its fix, picked as launch picks
+    # them: empty below the fewest it holds any back from, None when the epoch first
+    # writes variations, since the held-back cases are picked with them.
+    held_back_scenario_keys: list[str] | None
+    ship: ShipReadiness

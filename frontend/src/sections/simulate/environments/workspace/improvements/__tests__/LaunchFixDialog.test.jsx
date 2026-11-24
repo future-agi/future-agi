@@ -359,6 +359,105 @@ describe("LaunchFixDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  // Two failing cases, the second held back by the server, with no variations.
+  const heldBackOptions = () => {
+    const base = fixtureLaunchOptions("te-run-6");
+    const [first, second] = base.scenarios;
+    return {
+      first,
+      second,
+      options: {
+        ...base,
+        suggested: {
+          ...base.suggested,
+          target_scenario_keys: [first.key, second.key],
+        },
+        held_back_scenario_keys: [second.key],
+        limits: { ...base.limits, cases_min: 1, scenarios_min: 1 },
+      },
+    };
+  };
+
+  it("names the cases the server holds back", async () => {
+    const { first, second, options } = heldBackOptions();
+    pinOptions(options);
+    renderDialog({ initialTargets: [first.key, second.key] });
+    expect(await screen.findByTestId("epoch-held-back")).toHaveTextContent(
+      `Held back to prove it: ${second.name}.`,
+    );
+    expect(
+      screen.getByText("2 failing: 1 to fix, 1 held back to prove it", {
+        exact: false,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("says the launch picks the held-back cases once the cases to fix change", async () => {
+    const { first, options } = heldBackOptions();
+    pinOptions(options);
+    renderDialog({ initialTargets: [first.key] });
+    expect(await screen.findByTestId("epoch-held-back")).toHaveTextContent(
+      "You changed the cases to fix, so the ones held back to prove the fix are chosen from them when the epoch starts.",
+    );
+  });
+
+  it("says held-back cases come with the variations when there are too few to fix", async () => {
+    const { first, options } = heldBackOptions();
+    pinOptions({
+      ...options,
+      suggested: { ...options.suggested, target_scenario_keys: [first.key] },
+      held_back_scenario_keys: null,
+      limits: { ...options.limits, cases_min: 12 },
+    });
+    renderDialog();
+    expect(await screen.findByTestId("epoch-held-back")).toHaveTextContent(
+      "The cases held back to prove the fix are chosen after the variations are written.",
+    );
+  });
+
+  it("says why the environment can't take an epoch now and opens it", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      blocked: {
+        code: "environment_updating",
+        message: "This environment is updating. Run Epoch once the update finishes.",
+      },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText(
+        "This environment is updating. Run Epoch once the update finishes.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeDisabled();
+    await userEvent.click(screen.getByTestId("epoch-blocker-action"));
+    expect(navigate).toHaveBeenCalledWith(
+      paths.dashboard.simulate.environments.detail("env-1"),
+    );
+  });
+
+  it("says how the winner ships and where to connect GitHub, without blocking Start", async () => {
+    pinOptions({
+      ...fixtureLaunchOptions("te-run-6"),
+      ship: {
+        path: "pull_request",
+        blocked: {
+          code: "fix_github_not_connected",
+          message: "Connect the agent's repository to get a pull request.",
+        },
+      },
+    });
+    renderDialog();
+    expect(
+      await screen.findByText("A pull request on the agent's repository"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Connect GitHub" })).toHaveAttribute(
+      "href",
+      paths.dashboard.settings.integrations,
+    );
+    expect(screen.getByRole("button", { name: "Run Epoch" })).toBeEnabled();
+  });
+
   it("disables a part the agent cannot change", async () => {
     const base = fixtureLaunchOptions("te-run-6");
     pinOptions({

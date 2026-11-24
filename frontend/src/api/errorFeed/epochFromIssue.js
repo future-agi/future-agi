@@ -116,7 +116,8 @@ export async function stopIssueEpoch(jobId) {
 
 // The plan makes no model call, but it reads the issue's traces to sample them: it is
 // read when the person opens a new plan, never on page load. A blocked plan is read
-// again when they come back to the tab, after fixing what blocked it.
+// again when they come back to the tab, after fixing what blocked it; one that only
+// waits for them to pick an environment is not.
 export function useIssueEpochPlan(
   { clusterId, projectId, environmentId },
   { enabled },
@@ -125,16 +126,19 @@ export function useIssueEpochPlan(
     queryKey: issueEpochPlanKey(projectId, clusterId, environmentId),
     queryFn: () => getIssueEpochPlan({ clusterId, projectId, environmentId }),
     enabled: enabled && !!clusterId && !!projectId,
-    refetchOnWindowFocus: (query) => !!query.state.data?.blocked,
+    refetchOnWindowFocus: (query) => {
+      const code = query.state.data?.blocked?.code;
+      return !!code && code !== "environment_not_picked";
+    },
     retry: false,
     meta: { errorHandled: true },
   });
 }
 
 // An epoch runs only on a code agent: one uploaded or from GitHub. The plan refuses
-// any other with its reason; the picker lists only these.
+// any other with its reason; the picker lists only these. One still building, or
+// whose build failed, is listed too: once picked, the plan says what to do.
 const CODE_SOURCES = new Set(["github", "archive"]);
-const READY_STATUSES = new Set(["completed", "running"]);
 const PICKER_PAGE = 100;
 
 export function useCodeAgentEnvironments({ enabled }) {
@@ -142,10 +146,7 @@ export function useCodeAgentEnvironments({ enabled }) {
     queryKey: ["agent-fix-issue-environments"],
     queryFn: () => listHarnessEnvironments({ page: 1, limit: PICKER_PAGE }),
     select: (data) =>
-      (data?.results ?? []).filter(
-        (env) =>
-          CODE_SOURCES.has(env.source_kind) && READY_STATUSES.has(env.status),
-      ),
+      (data?.results ?? []).filter((env) => CODE_SOURCES.has(env.source_kind)),
     enabled,
     meta: { errorHandled: true },
   });
