@@ -60541,7 +60541,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         required_evals_failed: {
           description:
-            "Names of the required evaluations this call failed; shown beside its verdict.",
+            "Names of the required evaluations this call failed; any one fails the call.",
           type: "array",
           items: {
             type: "string",
@@ -103854,7 +103854,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         required: {
           title: "Required",
           description:
-            "Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it.",
+            "Marked required on the environment: a failing score fails the call.",
           type: "boolean",
         },
       },
@@ -123800,7 +123800,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         required: {
           title: "Required",
           description:
-            "Marked required on the environment; reported beside the calls' verdicts.",
+            "Marked required on the environment; a failing score fails the call.",
           type: "boolean",
         },
       },
@@ -124412,7 +124412,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         required_evals_failed: {
           description:
-            "Names of the required evaluations this call failed; shown beside its verdict.",
+            "Names of the required evaluations this call failed; any one fails the call.",
           type: "array",
           items: {
             type: "string",

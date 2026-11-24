@@ -29225,7 +29225,7 @@ export interface SimulateRunV3EvaluationResultApi {
   passed: boolean;
   reason: string;
   status: SimulateRunV3EvaluationResultApiStatus;
-  /** Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it. */
+  /** Marked required on the environment: a failing score fails the call. */
   required: boolean;
 }
 
@@ -29883,7 +29883,7 @@ export interface CallExecutionV3DetailResponseApi {
   sub_goals: string[];
   sub_goal_results: SubGoalResultApi[];
   outcome: CallExecutionV3DetailResponseApiOutcome;
-  /** Names of the required evaluations this call failed; shown beside its verdict. */
+  /** Names of the required evaluations this call failed; any one fails the call. */
   required_evals_failed: string[];
   cost_breakdown_cents: CostBreakdownApi;
   evaluations: SimulateRunV3EvaluationResultApi[];
@@ -30329,7 +30329,7 @@ export interface EvaluationSummaryApi {
   missing: number;
   pass_rate: number;
   average_score: number;
-  /** Marked required on the environment; reported beside the calls' verdicts. */
+  /** Marked required on the environment; a failing score fails the call. */
   required: boolean;
 }
 
@@ -30577,7 +30577,7 @@ export interface RunCallApi {
   source_scenario_key: string;
   trial_index: number;
   outcome: RunCallApiOutcome;
-  /** Names of the required evaluations this call failed; shown beside its verdict. */
+  /** Names of the required evaluations this call failed; any one fails the call. */
   required_evals_failed: string[];
   /** @minLength 1 */
   outcome_reason?: string;

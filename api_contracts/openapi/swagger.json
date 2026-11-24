@@ -168820,7 +168820,7 @@
                 },
                 "required": {
                     "title": "Required",
-                    "description": "Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it.",
+                    "description": "Marked required on the environment: a failing score fails the call.",
                     "type": "boolean"
                 }
             }
@@ -170303,7 +170303,7 @@
                     ]
                 },
                 "required_evals_failed": {
-                    "description": "Names of the required evaluations this call failed; shown beside its verdict.",
+                    "description": "Names of the required evaluations this call failed; any one fails the call.",
                     "type": "array",
                     "items": {
                         "type": "string",
@@ -172009,7 +172009,7 @@
                 },
                 "required": {
                     "title": "Required",
-                    "description": "Marked required on the environment; reported beside the calls' verdicts.",
+                    "description": "Marked required on the environment; a failing score fails the call.",
                     "type": "boolean"
                 }
             }
@@ -172795,7 +172795,7 @@
                     ]
                 },
                 "required_evals_failed": {
-                    "description": "Names of the required evaluations this call failed; shown beside its verdict.",
+                    "description": "Names of the required evaluations this call failed; any one fails the call.",
                     "type": "array",
                     "items": {
                         "type": "string",

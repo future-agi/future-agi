@@ -65877,7 +65877,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
   required_evals_failed: zod
     .array(zod.string().min(1))
     .describe(
-      "Names of the required evaluations this call failed; shown beside its verdict.",
+      "Names of the required evaluations this call failed; any one fails the call.",
     ),
   cost_breakdown_cents: zod.object({
     stt: zod.number(),
@@ -65905,7 +65905,7 @@ export const SimulateV3CallExecutionDetailResponse = zod.object({
       required: zod
         .boolean()
         .describe(
-          "Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it.",
+          "Marked required on the environment: a failing score fails the call.",
         ),
     }),
   ),
@@ -66966,7 +66966,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       required: zod
         .boolean()
         .describe(
-          "Marked required on the environment; reported beside the calls' verdicts.",
+          "Marked required on the environment; a failing score fails the call.",
         ),
     }),
   ),
@@ -67554,7 +67554,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
       required_evals_failed: zod
         .array(zod.string().min(1))
         .describe(
-          "Names of the required evaluations this call failed; shown beside its verdict.",
+          "Names of the required evaluations this call failed; any one fails the call.",
         ),
       outcome_reason: zod.string().min(1).optional(),
       execution_status: zod.string().min(1),
@@ -67603,7 +67603,7 @@ export const SimulateV3TestExecutionCallsResponse = zod.object({
           required: zod
             .boolean()
             .describe(
-              "Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it.",
+              "Marked required on the environment: a failing score fails the call.",
             ),
         }),
       ),
