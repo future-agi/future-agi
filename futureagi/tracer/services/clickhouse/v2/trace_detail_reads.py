@@ -132,7 +132,6 @@ class TraceDetailReadBuilder:
             PREWHERE project_id IN %(detail_project_ids)s
               AND trace_id = %(detail_trace_id)s
             GROUP BY project_id, trace_id, id, start_time
-            HAVING latest_is_deleted = 0
             ORDER BY start_time ASC, span_id ASC
             LIMIT {_MAX_PHYSICAL_SPANS + 1}
             """,

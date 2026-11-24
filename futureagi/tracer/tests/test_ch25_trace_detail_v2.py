@@ -334,8 +334,6 @@ class TestV2TenantGate:
 
         assert len(analytics.queries) == 1
         assert "LIMIT 1001" in analytics.queries[0]
-        # Deleted identities no longer count toward the span cap.
-        assert "HAVING latest_is_deleted = 0" in analytics.queries[0]
 
     def test_cross_project_trace_collision_serves_newest_copy(self):
         started = datetime(2026, 1, 1, tzinfo=UTC)
