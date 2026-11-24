@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
@@ -519,23 +520,94 @@ def malformed_inventory(inventory):
     )
 
 
+# A GitHub API read can fail for a moment or come back cut short: gh then says
+# "unexpected end of JSON input" (run 45334240608). Such a read is retried from
+# scratch, a few times with backoff, then fails closed with the exact error. A
+# partial response is never used.
+API_TRIES = 4
+TRANSIENT = re.compile(
+    r"unexpected end of JSON input|HTTP 5\d\d|HTTP 429|rate limit|timed? ?out"
+    r"|connection (?:reset|refused)|\bEOF\b|TLS handshake|temporarily unavailable"
+    r"|Bad Gateway|Service Unavailable|Gateway Timeout",
+    re.IGNORECASE,
+)
+
+
+class GhApiError(subprocess.CalledProcessError):
+    """A gh api read that failed: names the read, its tries and gh's own error."""
+
+    def __init__(self, returncode, cmd, stderr, tries):
+        super().__init__(returncode, cmd, stderr=stderr)
+        self.tries = tries
+
+    def __str__(self):
+        error = (self.stderr or b"").decode("utf-8", "replace").strip()
+        return f"{' '.join(self.cmd)} failed after {self.tries} tries: {error}"
+
+
+def gh_api(args, *, parse_json=True, run=None, pause=None):
+    """`gh api ARGS`: its parsed JSON, or its bytes when parse_json is false."""
+    cmd = ["gh", "api", *args]
+    for attempt in range(1, API_TRIES + 1):
+        result = (run or subprocess.run)(cmd, capture_output=True)
+        if result.returncode == 0:
+            if not parse_json:
+                return result.stdout
+            try:
+                return json.loads(result.stdout)
+            except ValueError as exc:
+                error = ValueError(
+                    f"{' '.join(cmd)} returned cut-short JSON after {attempt} tries: {exc}"
+                )
+                transient = True
+        else:
+            error = GhApiError(result.returncode, cmd, result.stderr, attempt)
+            transient = bool(
+                TRANSIENT.search((result.stderr or b"").decode("utf-8", "replace"))
+            )
+        if not transient or attempt == API_TRIES:
+            raise error
+        (pause or time.sleep)(2**attempt)
+    raise AssertionError("unreachable")
+
+
 def run_date(root):
     """The run's creation date (UTC), which every attempt of the run shares."""
-    created = json.loads(subprocess.check_output(["gh", "api", root]))["created_at"]
+    created = gh_api([root])["created_at"]
     return datetime.date.fromisoformat(created[:10])
 
 
 def pages(endpoint, field):
-    raw = subprocess.check_output(["gh", "api", "--paginate", "--slurp", endpoint])
-    return [row for page in json.loads(raw) for row in page[field]]
+    # Every page again on each try: a cut-short listing is never completed.
+    return [
+        row
+        for page in gh_api(["--paginate", "--slurp", endpoint])
+        for row in page[field]
+    ]
+
+
+def download_artifact(artifact, repo, *, fetch=None, pause=None):
+    """The artifact's bytes, matching its digest. A download cut short does not
+    match it, so it is fetched again from scratch, then fails closed."""
+    fetch = fetch or (
+        lambda: gh_api(
+            [f"repos/{repo}/actions/artifacts/{int(artifact['id'])}/zip"],
+            parse_json=False,
+        )
+    )
+    for attempt in range(1, API_TRIES + 1):
+        raw = fetch()
+        if artifact["digest"] == "sha256:" + hashlib.sha256(raw).hexdigest():
+            return raw
+        if attempt < API_TRIES:
+            (pause or time.sleep)(2**attempt)
+    raise ValueError(
+        f"digest mismatch for artifact {artifact['id']} after {API_TRIES} downloads"
+    )
 
 
 def verify_artifact(artifact, repo):
-    raw = subprocess.check_output(
-        ["gh", "api", f"repos/{repo}/actions/artifacts/{int(artifact['id'])}/zip"]
-    )
-    if artifact["digest"] != "sha256:" + hashlib.sha256(raw).hexdigest():
-        raise ValueError(f"digest mismatch for artifact {artifact['id']}")
+    raw = download_artifact(artifact, repo)
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         receipt = json.loads(archive.read("receipt.json"))
         records = [

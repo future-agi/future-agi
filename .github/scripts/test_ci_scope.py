@@ -749,5 +749,55 @@ class CandidateScope(unittest.TestCase):
         self.assertEqual(json.loads(result["scope"])["policy_base"], published)
 
 
+    def test_pull_request_plans_from_the_merge_base_tip_not_a_stale_event_base(self):
+        # GitHub keeps base.sha at the base tip of the PR's last base sync, while
+        # refs/pull/N/merge is built on the current tip. Plan from that tip.
+        driver = bootstrap("backend-ci.yml")
+        self.write(".github/scripts/ci_scope.py", (SCRIPTS / "ci_scope.py").read_text())
+        stale = self.commit()
+        self.git("checkout", "-q", "-b", "feature")
+        self.write("feature-file")
+        head = self.commit()
+        self.git("checkout", "-q", "dev")
+        self.write("later-dev-file")
+        tip = self.commit()
+        self.git("merge", "-q", "--no-ff", "--no-edit", "feature")
+        merge = self.git("rev-parse", "HEAD")
+
+        def run(base, head_sha):
+            with tempfile.TemporaryDirectory() as temp:
+                output = Path(temp) / "outputs"
+                env = dict(
+                    os.environ,
+                    BASE_SHA=base,
+                    HEAD_SHA=head_sha,
+                    CI_SCOPE_MODE="qualified",
+                    GITHUB_SHA=merge,
+                    GITHUB_EVENT_NAME="pull_request",
+                    GITHUB_OUTPUT=str(output),
+                    RUNNER_TEMP=temp,
+                )
+                done = subprocess.run(["bash", "-ec", driver], env=env, capture_output=True)
+                if done.returncode:
+                    return None
+                return dict(line.split("=", 1) for line in output.read_text().splitlines())
+
+        for base in (stale, tip):
+            result = run(base, head)
+            self.assertIsNotNone(result, base)
+            planned = json.loads(result["scope"])
+            self.assertEqual(planned["policy_base"], tip)
+            # Only the PR's own change, not what dev gained since the stale base.
+            self.assertEqual(planned["path_count"], 1)
+        # The head must be the merge's second parent, and the event base an
+        # ancestor of its first parent.
+        self.assertIsNone(run(stale, tip))
+        self.git("checkout", "-q", "--orphan", "unrelated")
+        self.write("unrelated-file")
+        unrelated = self.commit()
+        self.git("checkout", "-q", "--detach", merge)
+        self.assertIsNone(run(unrelated, head))
+
+
 if __name__ == "__main__":
     unittest.main()
