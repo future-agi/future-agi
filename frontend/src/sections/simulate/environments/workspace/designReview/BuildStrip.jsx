@@ -1,114 +1,99 @@
 import PropTypes from "prop-types";
 import { useEffect, useState } from "react";
-import { Box, CircularProgress, Stack, Typography } from "@mui/material";
-import Iconify from "src/components/iconify";
-import { useDesignReview } from "src/api/simulate-environments/designReview";
-import { BUILD_COPY, elapsedWords } from "./designReview.constants";
+import { Box, Stack, Typography } from "@mui/material";
+import BuildPhaseTable from "../BuildPhaseTable";
 import {
-  approvedBuildSteps,
-  kept,
-  plannedScenarios,
-} from "./designReview.utils";
+  BUILD_STEP_TOTAL,
+  phaseOfStep,
+  phaseRows,
+  stepOfStage,
+} from "../buildSteps";
+import { BUILD_COPY, elapsedWords } from "./designReview.constants";
 
-function StepIcon({ state }) {
-  if (state === "done")
-    return (
-      <Iconify
-        icon="solar:check-circle-bold"
-        width={14}
-        sx={{ color: "status.success.fg", flexShrink: 0 }}
-      />
-    );
-  if (state === "running")
-    return <CircularProgress size={12} thickness={5} sx={{ flexShrink: 0 }} />;
+function Spinner() {
   return (
     <Box
       sx={{
-        width: 12,
-        height: 12,
+        width: 10,
+        height: 10,
         borderRadius: "50%",
-        border: "1px solid",
-        borderColor: "divider",
         flexShrink: 0,
+        border: "1.5px solid",
+        borderColor: "primary.main",
+        borderTopColor: "transparent",
+        animation: "build-strip-spin 0.7s linear infinite",
+        "@keyframes build-strip-spin": { to: { transform: "rotate(360deg)" } },
       }}
     />
   );
 }
 
-StepIcon.propTypes = { state: PropTypes.string.isRequired };
-
-export default function BuildStrip({ envId, stage }) {
-  const { data: review } = useDesignReview(envId);
-  const counts = {
-    tables: kept(review?.tables).length,
-    tools: kept(review?.tools).length,
-    rules: kept(review?.rules).length,
-    scenarios: review ? plannedScenarios(kept(review.use_cases)) : 0,
-  };
-  const steps = approvedBuildSteps(stage);
-  const finished = steps.every((step) => step.state === "done");
+export default function BuildStrip({ name, stage, startedAt, readsAgent }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (finished) return undefined;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [finished]);
-  const startedAt = review?.approved_at ? Date.parse(review.approved_at) : null;
-  const stageLabel = BUILD_COPY.stage[stage];
+  }, []);
+  const step = stepOfStage(stage);
+  const phase = phaseOfStep(step);
+  const started = startedAt ? Date.parse(startedAt) : NaN;
   return (
-    <Box
-      role="status"
-      aria-live="polite"
-      sx={{
-        mx: 2,
-        mt: 1.5,
-        px: 1.5,
-        py: 1,
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
-        bgcolor: "background.paper",
-      }}
-    >
-      <Typography sx={{ typography: "s1", fontWeight: 500, mb: 0.75 }}>
-        {finished ? BUILD_COPY.done : BUILD_COPY.title}
-      </Typography>
-      <Stack
-        direction="row"
-        flexWrap="wrap"
-        sx={{ columnGap: 2.5, rowGap: 0.5 }}
+    <Box sx={{ px: 2, pt: 1.5, flexShrink: 0 }}>
+      <Box
+        role="status"
+        aria-live="polite"
+        data-testid="build-strip"
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+          bgcolor: "background.paper",
+          overflow: "hidden",
+        }}
       >
-        {steps.map((step) => (
-          <Stack
-            key={step.kind}
-            direction="row"
-            alignItems="center"
-            spacing={0.75}
-            aria-label={`${BUILD_COPY.step[step.kind](counts)}: ${BUILD_COPY.stateLabel[step.state]}`}
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ px: 2, py: 1.25 }}
+        >
+          <Spinner />
+          <Typography
+            sx={{
+              typography: "s2",
+              fontWeight: 600,
+              flex: 1,
+              minWidth: 0,
+              fontVariantNumeric: "tabular-nums",
+            }}
           >
-            <StepIcon state={step.state} />
-            <Typography
-              sx={{
-                typography: "s1",
-                color:
-                  step.state === "pending" ? "text.tertiary" : "text.primary",
-              }}
-            >
-              {BUILD_COPY.step[step.kind](counts)}
-            </Typography>
-          </Stack>
-        ))}
-      </Stack>
-      {!finished && stageLabel && startedAt && (
-        <Typography sx={{ typography: "s3", color: "text.tertiary", mt: 0.75 }}>
-          {BUILD_COPY.now(stageLabel, elapsedWords(now - startedAt))}
-        </Typography>
-      )}
+            {BUILD_COPY.line(name, phase?.label, step?.label)}
+            {step && (
+              <Box
+                component="span"
+                sx={{ color: "text.tertiary", fontWeight: 500 }}
+              >
+                {BUILD_COPY.count(step.no, BUILD_STEP_TOTAL)}
+              </Box>
+            )}
+          </Typography>
+          <Typography
+            sx={{ typography: "s3", color: "text.tertiary", flexShrink: 0 }}
+          >
+            {Number.isFinite(started)
+              ? BUILD_COPY.after(elapsedWords(now - started))
+              : BUILD_COPY.afterNoClock}
+          </Typography>
+        </Stack>
+        {step && <BuildPhaseTable rows={phaseRows(step, { readsAgent })} />}
+      </Box>
     </Box>
   );
 }
 
 BuildStrip.propTypes = {
-  envId: PropTypes.string.isRequired,
+  name: PropTypes.string,
   stage: PropTypes.string,
+  startedAt: PropTypes.string,
+  readsAgent: PropTypes.bool,
 };

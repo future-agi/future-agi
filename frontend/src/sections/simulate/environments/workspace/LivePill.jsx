@@ -82,7 +82,7 @@ export default function LivePill({ env, building }) {
       <Box component="span" sx={{ display: "inline-flex", cursor: "default" }}>
         <StatusBadge
           status={pulsing ? "building" : key}
-          role={STATUS_META[key].role}
+          role={isFailed || isCancelled ? "neutral" : STATUS_META[key].role}
           label={label}
           variant="badge"
         />

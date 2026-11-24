@@ -69,6 +69,10 @@ export const GAP_AREA_TO_TAB = {
 
 // Header, overflow-menu and empty-state copy for the workspace shell.
 export const WORKSPACE_COPY = {
+  buildLock: {
+    building: "Available once the build finishes.",
+    stopped: "Finish the build first: try again from the strip at the top.",
+  },
   back: "All environments",
   live: "Ready",
   awaitingApprovalLabel: "Awaiting approval",
@@ -76,18 +80,19 @@ export const WORKSPACE_COPY = {
     "The design is waiting for your approval. Nothing is built until you approve it.",
   buildingLabel: "Building",
   finalizingLabel: "Finalizing",
-  failedLabel: "Failed",
+  failedLabel: "Build stopped",
   liveTooltip:
     "Environment is ready to run. You can edit via the builder or inline.",
   buildingTooltip: "Environment is still being built…",
   finalizingTooltip: "Wrapping up the build…",
   cancellingLabel: "Cancelling",
   cancellingTooltip: "Stopping the build and cleaning up its sandbox.",
-  cancelledLabel: "Cancelled",
-  cancelledTooltip: "You cancelled this build.",
+  cancelledLabel: "Build stopped",
+  cancelledTooltip: "You stopped this build before it finished.",
   runningTooltip:
     "A simulation is running. Results land under Runs when it finishes.",
-  failedTooltip: "This environment failed to build.",
+  failedTooltip:
+    "The build stopped before it finished. Try again to finish it before running.",
   run: "Run simulation",
   moreActions: "More actions",
   fork: "Fork environment",
@@ -640,16 +645,99 @@ export const agentDiffersTag = (agentLabel, envLabel) => {
 
 export const BUILD_STOPPED_COPY = {
   badge: "Build stopped",
-  agent: "Couldn't reach your agent.",
-  ours: "An issue occurred while building. Nothing you set up was lost.",
-  other: "The build stopped before it finished.",
-  retry: { start: "Try again", checks: "Try again from the checks" },
+  sentence: {
+    worldCheck:
+      "A tool didn't answer truthfully, so the world wasn't finished.",
+    toolUntruthful: (tool) =>
+      `${tool} didn't answer truthfully, so the world wasn't finished.`,
+    world: "The world couldn't be written for every use case.",
+    scenarios: "Some use cases got no scenario that passed all three checks.",
+    checks: "Couldn't reach your agent.",
+    ours: "An issue occurred while building. Nothing you set up was lost.",
+    canceled: "You stopped the build before it finished.",
+  },
+  fix: "Fix with the builder",
+  fixDraft: {
+    world:
+      "Make every tool answer only from the world, and refuse when there's no match",
+    scenarios: "Rewrite the use cases that got no scenario",
+  },
+  checkConnection: "Check the connection",
+  retry: {
+    start: (readsAgent) =>
+      readsAgent ? "Try again from the start" : "Try again from the world",
+    checks: "Try again from the checks",
+  },
   retryTip: {
-    start: "Builds again from your approved design.",
+    start: (readsAgent) =>
+      readsAgent
+        ? "Reads the agent and builds again."
+        : "Builds again from your approved design.",
     checks:
       "The world and scenarios are kept; the build starts again at the release checks.",
   },
+  logTitle: (step, no, total) => `Build log · ${step} (step ${no} of ${total})`,
+  canceledLog: "Stopped by you.",
   showDetails: "Show details",
   hideDetails: "Hide details",
   retryFailed: "Couldn't start the build again. Try again.",
+};
+
+export const TAB_WAITING_COPY = {
+  tabTip: (wait) =>
+    wait.stopped
+      ? `Not written. The build stopped at ${wait.step}.`
+      : wait.now
+        ? `Being written now: ${wait.phase.toLowerCase()}.`
+        : `Opens after ${wait.phase.toLowerCase()}.`,
+  now: (phase, tab) => `${phase}… ${tab} opens once it's written.`,
+  next: (tab, phase) => `${tab} opens after ${phase.toLowerCase()}.`,
+};
+
+export const STOPPED_NOTE_COPY = {
+  text: (step) => `Not written. The build stopped at ${step}.`,
+  tip: (reason) => `${reason} Try again from the strip at the top.`,
+  why: "Why it stopped",
+};
+
+export const TAB_SKELETON_COPY = {
+  world: {
+    graph: "Capability graph",
+    graphSub: "Tools, flows, personas and guardrails as one picture",
+    tools: "Tools",
+  },
+  contract: {
+    rules: "Rules",
+    addRule: "Add rule",
+    useCases: "Use cases",
+    addUseCase: "Add use case",
+  },
+  actors: {
+    add: "Add actor",
+    title: "Actors",
+    everyRun: "In every run",
+    callerSide: "On the caller's side",
+    inWorld: "In the world",
+    connect: "How they connect",
+    connectSub: "Who can reach whom in a run",
+  },
+  scenarios: {
+    search: "Search scenarios by name, task or use case…",
+    filter: "Filter",
+    display: "Display",
+    add: "Add",
+    columns: {
+      pick: "",
+      no: "#",
+      scenario: "Scenario",
+      persona: "Persona",
+      situation: "Situation",
+    },
+  },
+  evals: {
+    suggested: "Suggested for this environment",
+    addAll: "Add all",
+    add: "Add",
+    added: "Added evaluations",
+  },
 };

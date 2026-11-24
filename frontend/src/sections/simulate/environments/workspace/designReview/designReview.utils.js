@@ -41,49 +41,4 @@ export function isParked(createdAt, now, continuedAt, parkAfter) {
   return since > 0 && now - since >= parkAfter;
 }
 
-const STEP_STAGES = {
-  world: [
-    "queued",
-    "acquiring_source",
-    "understanding_agent",
-    "generating_environment",
-    "building_environment",
-    "generating_data",
-  ],
-  scenarios: [
-    "generating_scenarios",
-    "validating_environment",
-    "validating_scenarios",
-  ],
-  release: [
-    "connecting_agent",
-    "running",
-    "grading",
-    "uploading_artifacts",
-    "finalizing",
-    "cleaning_up",
-  ],
-};
-
-export const BUILD_STEP_TAB = {
-  world: "world",
-  scenarios: "scenarios",
-  release: "overview",
-};
-
-export function approvedBuildSteps(stage) {
-  const order = ["start", "world", "scenarios", "release"];
-  const at =
-    stage === "completed"
-      ? order.length
-      : Math.max(
-          1,
-          order.findIndex((kind) => (STEP_STAGES[kind] || []).includes(stage)),
-        );
-  return order.map((kind, index) => ({
-    kind,
-    state: index < at ? "done" : index === at ? "running" : "pending",
-  }));
-}
-
 export const kept = (items) => (items || []).filter((item) => !item.removed);

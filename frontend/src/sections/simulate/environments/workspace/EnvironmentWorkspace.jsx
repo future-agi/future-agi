@@ -40,12 +40,7 @@ import BuildingStage from "../buildEnvironment/building/BuildingStage";
 import WorkspaceHeader from "./WorkspaceHeader";
 import DesignReviewStage from "./designReview/DesignReviewStage";
 import BuildStrip from "./designReview/BuildStrip";
-import {
-  BUILD_STEP_TAB,
-  approvedBuildSteps,
-} from "./designReview/designReview.utils";
 import { REVIEW_COPY } from "./designReview/designReview.constants";
-import SystemBanners from "./SystemBanners";
 import VersionBar from "./VersionBar";
 import DraftBar from "./drafts/DraftBar";
 import TemplateLockBanner from "./TemplateLockBanner";
@@ -59,6 +54,7 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 import BuildStoppedStrip from "./BuildStoppedStrip";
+import { stepOfStage, stopSentence, stoppedStep, tabWaits } from "./buildSteps";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -261,25 +257,34 @@ export default function EnvironmentWorkspace() {
 
   const jobQuery = useQuery(harnessJobQuery(envId, { enabled: backed }));
   const buildStage = jobQuery.data?.status?.stage;
-  const approvedBuild = building && Boolean(env?.designApproved);
-  const lastFollowed = useRef(null);
-  const followTab = approvedBuild
-    ? BUILD_STEP_TAB[
-        approvedBuildSteps(buildStage).find((step) => step.state === "running")
-          ?.kind
-      ]
+  const jobStatus = jobQuery.data?.status;
+  const jobEvents = jobQuery.data?.events;
+  const readsAgent = !env?.designApproved;
+  const liveStep = building ? stepOfStage(buildStage) : null;
+  const stopStep = buildFailed
+    ? stoppedStep(jobStatus, {
+        events: jobEvents,
+        outputs: jobQuery.data?.stage_outputs,
+        designApproved: Boolean(env?.designApproved),
+      })
     : null;
+  const waitsByTab = liveStep
+    ? tabWaits(liveStep)
+    : stopStep
+      ? tabWaits(stopStep, {
+          stopped: true,
+          reason: stopSentence(jobStatus, stopStep),
+        })
+      : {};
+  const buildStartedAt = env?.designApproved
+    ? jobQuery.data?.job?.metadata?.design_review?.approved_at
+    : jobEvents?.[0]?.emitted_at;
   useEffect(() => {
-    if (!followTab || followTab === lastFollowed.current) return;
-    lastFollowed.current = followTab;
-    if (followTab !== tab) setTab(followTab);
-  }, [followTab, tab, setTab]);
-  useEffect(() => {
-    if (approvedBuild && buildStage)
+    if (building && buildStage)
       queryClient.invalidateQueries({
         queryKey: harnessEnvironmentKey(envId),
       });
-  }, [approvedBuild, buildStage, envId, queryClient]);
+  }, [building, buildStage, envId, queryClient]);
   const usageLimit = jobQuery.data?.usage_limit;
   const hadRemoteUsageLimit = useRef(false);
   useEffect(() => {
@@ -423,13 +428,8 @@ export default function EnvironmentWorkspace() {
     );
   }
 
-  // Still deriving OR terminally failed: the workspace header over the two-pane
-  // build stage (console + hero/pipeline). A failed build keeps this layout —
-  // the chat stays usable and the pipeline shows which stage failed — but the
-  // hero animation freezes and the header reads "Failed" (LivePill), rather than
-  // a dead-end error page. Run is gated off and Fork is hidden (locked) until it
-  // goes Live, at which point buildStatus flips and the branch below takes over.
-  if ((building && !approvedBuild) || buildFailed) {
+  // A sample environment with no job behind it keeps the old build stage.
+  if (!backed && (building || buildFailed)) {
     return (
       <Box
         sx={{
@@ -452,13 +452,6 @@ export default function EnvironmentWorkspace() {
         />
         {creditBanner}
         {refusalLine}
-        {buildFailed && (
-          <BuildStoppedStrip
-            envId={envId}
-            failure={jobQuery.data?.status?.failure}
-            retryFrom={jobQuery.data?.status?.retry_from || undefined}
-          />
-        )}
         <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
           <BuildingStage
             progress={progress}
@@ -564,7 +557,7 @@ export default function EnvironmentWorkspace() {
   const selectionActive = (selection.count ?? selection.ids.length) > 0;
 
   // While the environment is still deriving, the builder can't accept edits —
-  // the console freezes until it goes Live. SystemBanners reads the same value.
+  // the console freezes until it goes Live.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
 
   // The tab count, the "no evals" gap and the Runs summary read the
@@ -677,10 +670,15 @@ export default function EnvironmentWorkspace() {
         env={displayEnv}
         envState={envState}
         canRun={
-          !approvedBuild && runnable && !runMutation.isPending && !detailBlock
+          !building &&
+          !buildFailed &&
+          runnable &&
+          !runMutation.isPending &&
+          !detailBlock
         }
         runBlockedReason={runReason(
-          (approvedBuild && WORKSPACE_COPY.buildingTooltip) ||
+          (building && WORKSPACE_COPY.buildingTooltip) ||
+            (buildFailed && WORKSPACE_COPY.failedTooltip) ||
             detailBlock ||
             blockedReason(
               envState,
@@ -699,9 +697,31 @@ export default function EnvironmentWorkspace() {
       />
       {creditBanner}
       {refusalLine}
-      {approvedBuild && <BuildStrip envId={env.id} stage={buildStage} />}
+      {building && (
+        <BuildStrip
+          name={displayEnv.name}
+          stage={buildStage}
+          startedAt={buildStartedAt}
+          readsAgent={readsAgent}
+        />
+      )}
+      {stopStep && (
+        <BuildStoppedStrip
+          envId={envId}
+          status={jobStatus}
+          step={stopStep}
+          counts={{
+            tools: backedDetail?.contract?.tools?.length || 0,
+            tables: backedDetail?.world?.stores?.length || 0,
+            scenarios: backedDetail?.overview?.scenario_count || 0,
+          }}
+          credits={jobQuery.data?.consumption?.ai_credits ?? undefined}
+          readsAgent={readsAgent}
+          designApproved={Boolean(env.designApproved)}
+          agentId={displayEnv.testSubject?.id}
+        />
+      )}
 
-      <SystemBanners env={env} />
       {!detailLoading && !detailFailed && (
         <VersionBar env={env} envState={envState} />
       )}
@@ -777,6 +797,7 @@ export default function EnvironmentWorkspace() {
               overviewWorld={overviewWorld}
               graphData={graphData}
               contractChat={contractChat}
+              tabWaits={waitsByTab}
               onStartRun={startRun}
               runDialogOpen={Boolean(runDialog)}
               canRun={runnable && !runMutation.isPending}

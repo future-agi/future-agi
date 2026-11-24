@@ -129,35 +129,13 @@ export const REVIEW_COPY = {
 };
 
 export const BUILD_COPY = {
-  title: "Building v1 from the approved design",
-  done: "Built from the approved design",
-  step: {
-    start: () => "Starting from the approved design",
-    world: ({ tables, tools, rules }) =>
-      `Writing the world · ${plural(tables, "table")}, ${plural(tools, "tool")}, ${plural(rules, "rule")}`,
-    scenarios: ({ scenarios }) =>
-      `Writing and checking ${plural(scenarios, "scenario")}`,
-    release: () => "Running the release checks",
-  },
-  stateLabel: { done: "Done", running: "In progress", pending: "Not started" },
-  now: (label, elapsed) => `Now: ${label} · ${elapsed} so far`,
-  stage: {
-    queued: "Waiting for a sandbox",
-    acquiring_source: "Getting the agent's code",
-    understanding_agent: "Reading the agent",
-    generating_environment: "Writing the world from the design",
-    building_environment: "Building the tools",
-    validating_environment: "Checking every tool answers truthfully",
-    generating_data: "Seeding the data",
-    generating_scenarios: "Writing the scenarios",
-    validating_scenarios: "Checking the scenarios",
-    connecting_agent: "Connecting your agent",
-    running: "Running the release checks",
-    grading: "Grading the checks",
-    uploading_artifacts: "Saving the results",
-    finalizing: "Finishing up",
-    cleaning_up: "Cleaning up",
-  },
+  line: (name, phase, step) =>
+    [name ? `Building environment ${name}` : "Building environment", phase, step]
+      .filter(Boolean)
+      .join(" · "),
+  count: (no, total) => ` · ${no} of ${total}`,
+  after: (elapsed) => `Runs start once it's ready · ${elapsed} so far`,
+  afterNoClock: "Runs start once it's ready",
 };
 
 export const elapsedWords = (ms) => {
