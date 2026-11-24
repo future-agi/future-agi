@@ -12,9 +12,13 @@ on:
       - ".github/workflows/e2e-ci.yml"
       - ".github/workflows/e2e-cache.yml"
       - ".github/workflows/e2e-harness-selftest.yml"
-      # Inputs read outside e2e/ by the coverage and host-update self-tests.
+      # Inputs read outside e2e/ by the coverage, host-update and CI-guidance self-tests.
       - ".github/PULL_REQUEST_TEMPLATE.md"
       - "api_contracts/host-update/**"
+      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/python-lint.yml"
+      - ".github/workflows/retarget-proof.yml"
+      - ".github/scripts/ci_base_gate.py"
   push:
     branches: [dev, main]
     paths:
@@ -28,6 +32,10 @@ on:
       - ".github/workflows/e2e-harness-selftest.yml"
       - ".github/PULL_REQUEST_TEMPLATE.md"
       - "api_contracts/host-update/**"
+      - ".github/workflows/backend-ci.yml"
+      - ".github/workflows/python-lint.yml"
+      - ".github/workflows/retarget-proof.yml"
+      - ".github/scripts/ci_base_gate.py"
   workflow_dispatch:
 
 permissions:
