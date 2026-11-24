@@ -40,6 +40,32 @@ class RecorderTest(unittest.TestCase):
     def test_paths_are_repo_relative_with_sources_for_bytecode(self):
         self.opened("tracer/fixtures/seed.json")
         self.opened("tracer/__pycache__/fields.cpython-312.pyc")
+        # The temp file Python writes bytecode to, and pytest's rewritten copy.
+        self.recorder.hook(
+            "open",
+            (
+                str(
+                    self.root
+                    / "tracer/__pycache__/fields.cpython-312.pyc.140264605312480"
+                ),
+                "wb",
+                0,
+            ),
+        )
+        self.recorder.hook(
+            "open",
+            (
+                str(
+                    self.root
+                    / "tracer/__pycache__/conftest.cpython-312-pytest-9.0.2.pyc.6888"
+                ),
+                "wb",
+                0,
+            ),
+        )
+        self.recorder.hook(
+            "open", (str(self.root / ".pytest_cache/v/cache/nodeids"), "r", 0)
+        )
         self.recorder.hook(
             "open",
             (os.fsencode(self.root / "tracer/migrations/0001_initial.py"), "r", 0),
@@ -50,6 +76,7 @@ class RecorderTest(unittest.TestCase):
         self.assertEqual(
             setup["opened"],
             [
+                "tracer/conftest.py",
                 "tracer/fields.py",
                 "tracer/fixtures/seed.json",
                 "tracer/migrations/0001_initial.py",

@@ -32,7 +32,7 @@ import time
 
 ROOT = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 PRIVATE = "ee/cloud/"
-SKIPPED = (".venv/", ".git/")
+SKIPPED = (".venv/", ".git/", ".pytest_cache/")
 TITLE = "Migrate inputs"
 
 
@@ -61,8 +61,10 @@ class Recorder:
         if not full.startswith(self.root):
             return None
         rel = full[len(self.root) :].replace(os.sep, "/")
-        head, _, name = rel.rpartition("__pycache__/")
-        if name.endswith(".pyc"):
+        head, cache, name = rel.rpartition("__pycache__/")
+        # x.cpython-312.pyc, pytest's x.cpython-312-pytest-9.0.2.pyc, and the
+        # x.cpython-312.pyc.<n> temp file Python writes and renames over it.
+        if cache and ".pyc" in name:
             rel = head + name.split(".", 1)[0] + ".py"
         if rel.startswith(SKIPPED):
             return None
