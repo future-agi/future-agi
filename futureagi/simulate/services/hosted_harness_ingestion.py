@@ -29,6 +29,7 @@ from simulate.models import (
     HostedHarnessScenario,
 )
 from simulate.models.chat_message import ChatMessageModel
+from simulate.services.call_provider import record_harness_target
 from simulate.services.call_transcripts import SpokenTurn, store_transcript
 from simulate.services.hosted_harness import (
     HostedHarnessError,
@@ -958,6 +959,7 @@ def _apply_receipt_to_call(
         # Every receipt ends its trial: one with no call data still gets its end, so its worker read is due.
         call.completed_at = timezone.now()
     metadata = dict(call.call_metadata or {})
+    record_harness_target(metadata, call)
     previous_receipt = metadata.get("hosted_harness_receipt") or {}
     if previous_receipt.get("digest") != body.get("digest"):
         metadata.pop("hosted_harness_recovered_artifact_ids", None)
