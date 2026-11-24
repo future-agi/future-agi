@@ -972,15 +972,7 @@ def _apply_receipt_to_call(
     # Checks the case's proof never verified on these versions are graded unmeasured; the receipt stays as sealed.
     # The case this call ran, stored once for every reader (a receipt's `scenario_key` names the execution).
     metadata[SCENARIO_KEY] = metadata.get(SCENARIO_KEY) or case_key(allocation)
-    unverified = unverified_checks(
-        job,
-        metadata[SCENARIO_KEY],
-        [
-            str(one["name"])
-            for one in body.get("sub_goals") or []
-            if isinstance(one, dict) and one.get("name")
-        ],
-    )
+    unverified = unverified_checks(job, metadata[SCENARIO_KEY])
     if unverified:
         metadata[UNVERIFIED_KEY] = unverified
     else:
@@ -1342,12 +1334,11 @@ def case_key(allocation: Any) -> str:
     return str(source.scenario_key if source is not None else allocation.scenario_key)
 
 
-def unverified_checks(
-    job: HostedHarnessJob, scenario_key: str, checks: list[str] | None = None
-) -> list[str]:
+def unverified_checks(job: HostedHarnessJob, scenario_key: str) -> list[str]:
     """The checks the case's proof on the run's suite and environment versions could not verify (its `excused`, which a
-    step it could only assume would have decided), for the run's agent version; none without a proof. A proof made only
-    with another agent version vouches for none of this agent's `checks`."""
+    step it could only assume would have decided): the run's agent version's own entry when it has one, else the
+    case's entry; none without a proof. A proof plays the reference, not the agent, so another version's still says
+    which checks it could verify (a tool that version lacks is held back before any run)."""
     from simulate.services.harness_starting_records import scenario_token
     from simulate.services.harness_versioning.versions import OTHER_AGENTS
 
@@ -1368,12 +1359,7 @@ def unverified_checks(
     if not isinstance(entry, dict):
         return []
     own = (entry.get(OTHER_AGENTS) or {}).get(str(job.agent_version_id))
-    if isinstance(own, dict):
-        entry = own
-    elif entry.get("agent_version_id") and str(entry["agent_version_id"]) != str(
-        job.agent_version_id
-    ):
-        return sorted(str(one) for one in checks or [])
+    entry = own if isinstance(own, dict) else entry
     return sorted(str(one) for one in entry.get("excused") or [])
 
 
