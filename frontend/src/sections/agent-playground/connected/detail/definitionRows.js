@@ -171,9 +171,42 @@ export const hostedConfigurationRows = (facts) =>
     { label: "Prompt", value: facts.description, multiline: true },
   ]);
 
+/**
+ * The Model row. When the code reads its model from a setting, the customer
+ * sets that setting, so the name in the code is only its default: the row
+ * says where the model is set and never shows the default as the model in
+ * use. An agent read from its code without a setting shows the name the code
+ * names; an imported agent's row shows its model as the provider gives it.
+ */
+const modelRow = ({ kind, model, extension }) => {
+  const tuning = model
+    ? [
+        model.temperature != null ? `temperature ${model.temperature}` : null,
+        model.max_tokens != null ? `max ${model.max_tokens} tokens` : null,
+      ]
+    : [];
+  const fromCode = kind === "source";
+  const setting = fromCode ? extension?.model_source?.setting : null;
+  if (setting) {
+    return {
+      label: "Model",
+      value: join([
+        model?.name
+          ? `Set by ${setting} (default ${model.name})`
+          : `Set by ${setting}`,
+        ...tuning,
+      ]),
+    };
+  }
+  return {
+    label: fromCode ? "Model named in the code" : "Model",
+    value: model ? join([model.name, ...tuning]) : null,
+  };
+};
+
 /** What the SDK stored for a code agent version (the stored Agent). A part the code doesn't describe is left out. */
 export const storedAgentRows = ({ agent }) => {
-  const { model, voice, provider_ref: ref } = agent;
+  const { voice, provider_ref: ref } = agent;
   const rows = [
     { label: "Kind", value: humanize(agent.kind) },
     { label: "Type", value: humanize(agent.type) },
@@ -191,18 +224,7 @@ export const storedAgentRows = ({ agent }) => {
     });
   }
   rows.push(
-    {
-      label: "Model",
-      value: model
-        ? join([
-            model.name,
-            model.temperature != null
-              ? `temperature ${model.temperature}`
-              : null,
-            model.max_tokens != null ? `max ${model.max_tokens} tokens` : null,
-          ])
-        : null,
-    },
+    modelRow(agent),
     {
       label: "Voice",
       value: voice

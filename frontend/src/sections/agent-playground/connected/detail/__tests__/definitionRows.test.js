@@ -320,7 +320,8 @@ describe("storedAgentRows", () => {
     const rows = byLabel(storedAgentRows(details));
     expect(rows.Kind.value).toBe("Source");
     expect(rows.Type.value).toBe("Voice");
-    expect(rows.Model.value).toBe(
+    expect(rows.Model).toBeUndefined();
+    expect(rows["Model named in the code"].value).toBe(
       "gpt-4.1 · temperature 0.3 · max 1024 tokens",
     );
     expect(rows.Voice.value).toBe("sonic-en · cartesia · en · speed 1");
@@ -386,10 +387,84 @@ describe("storedAgentRows", () => {
       }),
     );
     expect(rows.Model).toBeUndefined();
+    expect(rows["Model named in the code"]).toBeUndefined();
     expect(rows.Voice).toBeUndefined();
     expect(rows.Telephony).toBeUndefined();
     expect(rows.Gaps.value).toBe("None");
     expect(rows["Tracing library"].value).toBe("traceAI");
+  });
+
+  const modelRows = (agent) =>
+    byLabel(
+      storedAgentRows({ ...details, agent: { ...details.agent, ...agent } }),
+    );
+  const fromSetting = (setting, model) =>
+    modelRows({
+      model,
+      extension: {
+        model_source: setting ? { setting, path: "agent.py", line: 19 } : null,
+      },
+    });
+  const named = (name) => ({
+    provider: null,
+    name,
+    temperature: null,
+    max_tokens: null,
+  });
+
+  it("says which setting sets the model, with the code's default", () => {
+    const rows = fromSetting(
+      "ANTHROPIC_MODEL",
+      named("vertex_ai/gemini-3.7-flash"),
+    );
+    expect(rows.Model.value).toBe(
+      "Set by ANTHROPIC_MODEL (default vertex_ai/gemini-3.7-flash)",
+    );
+    expect(rows["Model named in the code"]).toBeUndefined();
+  });
+
+  it("names the setting alone when the code gives no default", () => {
+    const rows = fromSetting("OPENAI_MODEL", null);
+    expect(rows.Model.value).toBe("Set by OPENAI_MODEL");
+  });
+
+  it("never shows the default as the model in use when a setting is known", () => {
+    const rows = fromSetting("ANTHROPIC_MODEL", {
+      ...named("claude-x"),
+      temperature: 0.2,
+    });
+    expect(rows.Model.value).toBe(
+      "Set by ANTHROPIC_MODEL (default claude-x) · temperature 0.2",
+    );
+    expect(Object.values(rows).map((r) => r.value)).not.toContain("claude-x");
+  });
+
+  it("labels a name the code writes out as named in the code", () => {
+    const rows = fromSetting(null, named("gpt-4.1"));
+    expect(rows["Model named in the code"].value).toBe("gpt-4.1");
+    expect(rows.Model).toBeUndefined();
+  });
+
+  it("reads an older stored reading, with no model_source, the same way", () => {
+    const rows = modelRows({ model: named("gpt-4.1"), extension: undefined });
+    expect(rows["Model named in the code"].value).toBe("gpt-4.1");
+  });
+
+  it("has no model row when the code names neither a model nor a setting", () => {
+    const rows = fromSetting(null, null);
+    expect(rows.Model).toBeUndefined();
+    expect(rows["Model named in the code"]).toBeUndefined();
+  });
+
+  it("leaves an imported agent's model row as it was", () => {
+    const rows = modelRows({
+      kind: "hosted",
+      provider_ref: { provider: "vapi", id: "asst_1", version: null },
+      model: { ...named("gpt-4o"), temperature: 0.3 },
+      extension: { model_source: { setting: "ANTHROPIC_MODEL" } },
+    });
+    expect(rows.Model.value).toBe("gpt-4o · temperature 0.3");
+    expect(rows["Model named in the code"]).toBeUndefined();
   });
 
   const withFramework = (framework) =>

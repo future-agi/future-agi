@@ -264,6 +264,7 @@ def test_the_page_sees_the_framework_and_folder_but_not_the_contract(version):
     assert shown["agent"]["extension"] == {
         "framework": {"name": "other", "version": None, "label": "Haystack"},
         "source": {"subfolder": "agents/harbor"},
+        "model_source": None,
     }
     assert "contract" not in str(shown)
     assert "[redacted]" not in str(shown)
@@ -277,7 +278,154 @@ def test_a_document_read_before_frameworks_shows_neither(version):
 
     shown = StoredAgentResponseSerializer(stored_agent_answer(version)).data
 
-    assert shown["agent"]["extension"] == {"framework": None, "source": None}
+    assert shown["agent"]["extension"] == {
+        "framework": None,
+        "source": None,
+        "model_source": None,
+    }
+
+
+def _shown_model_source(version, part, **overrides):
+    from simulate.serializers.response.agent_setup import StoredAgentResponseSerializer
+
+    extension = {"contract": {"agent": "harbor_hotels"}}
+    if part is not None:
+        extension["model_source"] = part
+    store_agent(
+        agent_version_id=version.id,
+        agent=source_agent(extension=extension, **overrides),
+        sdk_version="0.4.0",
+    )
+    shown = StoredAgentResponseSerializer(stored_agent_answer(version)).data
+    return shown["agent"]
+
+
+@pytest.mark.django_db
+def test_the_page_sees_the_setting_the_model_is_read_from(version):
+    agent = _shown_model_source(
+        version,
+        {"setting": "ANTHROPIC_MODEL", "path": "agent.py", "line": 19},
+        model={
+            "name": "vertex_ai/gemini-3.7-flash",
+            "provider": None,
+            "temperature": None,
+            "max_tokens": None,
+        },
+    )
+
+    assert agent["extension"]["model_source"] == {
+        "setting": "ANTHROPIC_MODEL",
+        "path": "agent.py",
+        "line": 19,
+    }
+    assert agent["model"]["name"] == "vertex_ai/gemini-3.7-flash"
+
+
+@pytest.mark.django_db
+def test_the_page_sees_a_setting_with_no_default_and_no_model(version):
+    agent = _shown_model_source(version, {"setting": "OPENAI_MODEL"})
+
+    assert agent["model"] is None
+    assert agent["extension"]["model_source"] == {
+        "setting": "OPENAI_MODEL",
+        "path": None,
+        "line": None,
+    }
+
+
+@pytest.mark.django_db
+def test_the_page_sees_nothing_of_model_source_when_the_document_has_none(version):
+    agent = _shown_model_source(version, None)
+
+    assert agent["extension"]["model_source"] is None
+
+
+@pytest.mark.parametrize(
+    "part",
+    [
+        "ANTHROPIC_MODEL",
+        ["ANTHROPIC_MODEL"],
+        {},
+        {"path": "agent.py", "line": 19},
+        {"setting": None},
+        {"setting": 7},
+        {"setting": ""},
+        {"setting": "1MODEL"},
+        {"setting": "ANTHROPIC-MODEL"},
+        {"setting": "ANTHROPIC MODEL"},
+        {"setting": "MODEL\n"},
+        {"setting": "MODÈLE"},
+        {"setting": "$(id)"},
+        {"setting": "A" * 256},
+    ],
+    ids=[
+        "text",
+        "list",
+        "empty",
+        "no_setting",
+        "null_setting",
+        "number_setting",
+        "blank_setting",
+        "starts_with_a_digit",
+        "dash",
+        "space",
+        "newline",
+        "not_ascii",
+        "shell",
+        "too_long",
+    ],
+)
+@pytest.mark.django_db
+def test_a_malformed_model_source_is_not_shown(version, part):
+    agent = _shown_model_source(version, part)
+
+    assert agent["extension"]["model_source"] is None
+
+
+@pytest.mark.parametrize(
+    "path, line",
+    [
+        (7, "19"),
+        (["agent.py"], 19.0),
+        ({"p": 1}, True),
+        ("", -1),
+        (None, None),
+    ],
+)
+@pytest.mark.django_db
+def test_a_malformed_path_or_line_is_dropped_and_the_setting_kept(
+    version, path, line
+):
+    agent = _shown_model_source(
+        version, {"setting": "_MODEL_2", "path": path, "line": line}
+    )
+
+    assert agent["extension"]["model_source"] == {
+        "setting": "_MODEL_2",
+        "path": None,
+        "line": None,
+    }
+
+
+@pytest.mark.django_db
+def test_only_the_three_model_source_fields_are_shown(version):
+    agent = _shown_model_source(
+        version,
+        {
+            "setting": "A" * 255,
+            "path": "src/agent.py",
+            "line": 0,
+            "value": "claude-opus",
+            "default": "secret",
+        },
+    )
+
+    assert agent["extension"]["model_source"] == {
+        "setting": "A" * 255,
+        "path": "src/agent.py",
+        "line": 0,
+    }
+    assert "claude-opus" not in str(agent)
 
 
 @pytest.mark.django_db
@@ -293,6 +441,20 @@ def test_hosted_agent_with_every_column_round_trips(hosted_version, provider_lis
 
     assert stored_agent(hosted_version.id, with_raw_setup=True) == agent
     assert _rows() == (1, 2, 2, 2)
+
+
+@pytest.mark.django_db
+def test_an_imported_agent_shows_its_model_as_before(hosted_version, provider_list):
+    from simulate.serializers.response.agent_setup import StoredAgentResponseSerializer
+
+    store_agent(
+        agent_version_id=hosted_version.id, agent=hosted_agent(), sdk_version="0.2.3"
+    )
+
+    shown = StoredAgentResponseSerializer(stored_agent_answer(hosted_version)).data
+
+    assert shown["agent"]["model"] == hosted_agent()["model"]
+    assert shown["agent"]["extension"]["model_source"] is None
 
 
 @pytest.mark.django_db
