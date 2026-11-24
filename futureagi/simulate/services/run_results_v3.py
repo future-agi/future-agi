@@ -780,11 +780,16 @@ def _reader_failure_reason(receipt: Mapping[str, Any]) -> str | None:
     return message or None
 
 
+_ERROR_CODE_PREFIX = re.compile(r"^(?:[a-z][a-z0-9_]*:(?:\s+|$))+")
+
+
 def _errored_reason(outcome: str, error_message: str | None) -> str | None:
-    """Why a call ended in error, from the message it recorded; None for any other outcome."""
+    """Why a call ended in error, from the message it recorded without its leading
+    codes; None for any other outcome."""
     if outcome != "error":
         return None
-    return (error_message or "").strip() or None
+    reason = _ERROR_CODE_PREFIX.sub("", (error_message or "").strip()).strip()
+    return reason[:1].upper() + reason[1:] or None
 
 
 def build_call_rows(

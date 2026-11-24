@@ -1,5 +1,5 @@
-"""The builder chat waits out the agent's reading, and a reading whose design was not
-kept says so."""
+"""The builder chat waits out the agent's reading, a reading whose design was not kept
+says so, and an errored call explains itself without its internal codes."""
 
 from unittest.mock import patch
 
@@ -9,6 +9,7 @@ from simulate.models import HostedHarnessConversationMessage
 from simulate.services.harness_design_review import READING, REVIEW_KEY
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.services.hosted_harness_conversation import enqueue_message
+from simulate.services.run_results_v3 import _errored_reason
 from simulate.tests.test_code_archives import storage as storage  # noqa: F401
 from simulate.tests.test_harness_connected_versions import _connect
 from simulate.tests.test_harness_scenario_amend import SUITE, _job
@@ -98,3 +99,25 @@ class TestReadingContract:
             outcome = _store(version, agent, _contract(*BOTH))
 
         assert outcome.status == "stored"
+
+
+class TestErroredReason:
+    @pytest.mark.parametrize(
+        ("message", "reason"),
+        [
+            (
+                "voice_call_not_completed: failed: Failed to start the provider web bridge",
+                "Failed to start the provider web bridge",
+            ),
+            (
+                "sandbox_lost: the sandbox stopped answering",
+                "The sandbox stopped answering",
+            ),
+            ("Failed to dial: busy line", "Failed to dial: busy line"),
+        ],
+    )
+    def test_an_errored_call_reads_without_its_codes(self, message, reason):
+        assert _errored_reason("error", message) == reason
+
+    def test_a_message_of_codes_alone_says_nothing(self):
+        assert _errored_reason("error", "voice_call_not_completed: failed:") is None
