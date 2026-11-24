@@ -20,7 +20,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -392,6 +392,99 @@ export function checkStackImages(records, attempts) {
     );
 }
 
+// A GitHub API read can fail for a moment or come back cut short: gh then says
+// "unexpected end of JSON input" (run 45334240608). Such a read is retried from
+// scratch, a few times with backoff, then fails closed with the exact error. A
+// partial response is never used.
+export const API_TRIES = 4;
+const TRANSIENT =
+  /unexpected end of JSON input|HTTP 5\d\d|HTTP 429|rate limit|timed? ?out|connection (?:reset|refused)|\bEOF\b|TLS handshake|temporarily unavailable|Bad Gateway|Service Unavailable|Gateway Timeout/i;
+
+const sleepSync = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+const failure = (result) => {
+  const stderr = String(result.stderr || result.error?.message || "").trim();
+  return {
+    error: `failed (exit ${result.status}): ${stderr}`,
+    transient: Boolean(result.error) || TRANSIENT.test(stderr),
+  };
+};
+
+/** `gh api ARGS` parsed as JSON, read again from scratch on a transient failure. */
+export function ghJson(args, { run = spawnSync, sleep = sleepSync } = {}) {
+  const command = ["api", ...args];
+  for (let attempt = 1; attempt <= API_TRIES; attempt++) {
+    const result = run("gh", command, {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    let outcome;
+    if (result.status === 0) {
+      try {
+        return JSON.parse(result.stdout);
+      } catch (cause) {
+        outcome = {
+          error: `returned cut-short JSON (${cause.message})`,
+          transient: true,
+        };
+      }
+    } else {
+      outcome = failure(result);
+    }
+    if (!outcome.transient || attempt === API_TRIES)
+      throw new Error(
+        `gh ${command.join(" ")} ${outcome.error}, after ${attempt} tries`,
+      );
+    sleep(2 ** attempt * 1000);
+  }
+  throw new Error("unreachable");
+}
+
+function sha256File(file) {
+  return execFileSync("sha256sum", [file], { encoding: "utf8" }).split(" ")[0];
+}
+
+/**
+ * Downloads `gh api ARGS` into `file` until its sha256 equals `digest`
+ * ("sha256:<hex>"). A transient failure, or a download cut short (which cannot
+ * match the digest), is fetched again from scratch; then it fails closed and
+ * leaves no file behind.
+ */
+export function ghDownload(
+  args,
+  file,
+  digest,
+  { run = spawnSync, sleep = sleepSync, hash = sha256File } = {},
+) {
+  const command = ["api", ...args];
+  for (let attempt = 1; attempt <= API_TRIES; attempt++) {
+    rmSync(file, { force: true });
+    const fd = openSync(file, "wx");
+    let result;
+    try {
+      result = run("gh", command, {
+        stdio: ["ignore", fd, "pipe"],
+        encoding: "utf8",
+      });
+    } finally {
+      closeSync(fd);
+    }
+    let outcome;
+    if (result.status !== 0) outcome = failure(result);
+    else if (`sha256:${hash(file)}` === digest) return;
+    else outcome = { error: `does not match ${digest}`, transient: true };
+    if (!outcome.transient || attempt === API_TRIES) {
+      rmSync(file, { force: true });
+      throw new Error(
+        `gh ${command.join(" ")} ${outcome.error}, after ${attempt} tries`,
+      );
+    }
+    sleep(2 ** attempt * 1000);
+  }
+  throw new Error("unreachable");
+}
+
 /** The one unexpired artifact with this name, or an error. */
 export function receiptArtifact(artifacts, name) {
   const matches = artifacts.filter((row) => row.name === name && !row.expired);
@@ -403,13 +496,9 @@ export function receiptArtifact(artifacts, name) {
 function downloadReceipts(stack, total) {
   const repo = `repos/${process.env.GITHUB_REPOSITORY}/actions`;
   const run = `${repo}/runs/${process.env.GITHUB_RUN_ID}`;
+  // Every page again on each try: a cut-short listing is never completed.
   const pages = (url, key) =>
-    JSON.parse(
-      execFileSync("gh", ["api", "--paginate", "--slurp", url], {
-        encoding: "utf8",
-        maxBuffer: 64 * 1024 * 1024,
-      }),
-    ).flatMap((page) => page[key]);
+    ghJson(["--paginate", "--slurp", url]).flatMap((page) => page[key]);
   const attempts = shardAttempts(
     stack,
     total,
@@ -430,12 +519,7 @@ function downloadReceipts(stack, total) {
   const unpack = (name, member, target, attempt) => {
     const { id, digest } = receiptArtifact(artifacts, name);
     const archive = path.join(temp, String(id));
-    stream("gh", ["api", `${repo}/artifacts/${id}/zip`], archive);
-    const hash = execFileSync("sha256sum", [archive], {
-      encoding: "utf8",
-    }).split(" ")[0];
-    if (digest !== `sha256:${hash}`)
-      throw new Error(`artifact ${id} digest mismatch`);
+    ghDownload([`${repo}/artifacts/${id}/zip`], archive, digest);
     if (
       execFileSync("unzip", ["-Z1", archive], {
         encoding: "utf8",
