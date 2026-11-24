@@ -13,6 +13,7 @@ vi.mock("src/api/simulate-environments/scenarios", async () => {
     amendScenarios: vi.fn(),
     scenarioCoverage: vi.fn(),
     getRunningScenarioValidation: vi.fn(),
+    restoreScenario: vi.fn(),
   };
 });
 
@@ -21,6 +22,7 @@ const {
   amendScenarios,
   scenarioCoverage,
   getRunningScenarioValidation,
+  restoreScenario,
 } = await import("src/api/simulate-environments/scenarios");
 const { queryScenarioFixture } = await import(
   "src/api/simulate-environments/_fixtures/scenariosFixtures"
@@ -32,7 +34,9 @@ const {
   useScenarioCoverage,
   harnessScenarioCoverageKey,
   useRunningScenarioValidation,
+  useArchiveScenario,
 } = await import("../scenariosHooks");
+const { draftsKey } = await import("../versions");
 
 const wrapper = ({ children }) => {
   const client = new QueryClient({
@@ -274,4 +278,32 @@ describe("useRunningScenarioValidation", () => {
       }),
     );
   });
+});
+
+describe("useArchiveScenario", () => {
+  it.each([
+    [false, true],
+    [true, false],
+  ])(
+    "reads the unsaved changes again only when a restore lands there (live %s)",
+    async (live, refreshed) => {
+      const client = new QueryClient();
+      const invalidate = vi.spyOn(client, "invalidateQueries");
+      const own = ({ children }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      );
+      own.propTypes = { children: PropTypes.node };
+      restoreScenario.mockResolvedValue({ live, lifecycle: {} });
+      const { result } = renderHook(() => useArchiveScenario("env-1"), {
+        wrapper: own,
+      });
+      await result.current.mutateAsync({ key: "k1", restore: true });
+      const keys = invalidate.mock.calls.map(([one]) => one.queryKey);
+      expect(
+        keys.some(
+          (key) => JSON.stringify(key) === JSON.stringify(draftsKey("env-1")),
+        ),
+      ).toBe(refreshed);
+    },
+  );
 });

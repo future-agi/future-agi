@@ -66,9 +66,10 @@ export default function ValidateScenariosButton({
     }
   }, [covers, live?.job_id, validationJobId]);
   useEffect(() => {
-    if (quiet || !validationJobId || !state || state === "validating") return;
+    if (!validationJobId || !state || state === "validating") return;
     if (told.current === validationJobId) return;
     told.current = validationJobId;
+    if (quiet) return;
     if (state === "finished" && status.data?.proofs_recorded !== false) {
       enqueueSnackbar(COPY.done(status.data?.proved, status.data?.total), {
         variant: "success",
@@ -99,7 +100,6 @@ export default function ValidateScenariosButton({
         setMessage(result.message || COPY.nothing);
         return;
       }
-      told.current = null;
       setValidationJobId(result.job_id ?? null);
     } catch (error) {
       setMessage(error?.message ?? null);
