@@ -132,6 +132,37 @@ def test_save_drops_an_archived_member(user, workspace, storage, auth_client):
     assert key not in saved and "brand-new" in saved
 
 
+def test_validate_builds_the_suite_without_an_archived_case(
+    user, workspace, storage, auth_client
+):
+    """Saving after Validate saves the candidates Validate built, so they leave an archived case out as a plain Save
+    does; the draft itself is not written."""
+    from simulate.services.harness_versioning import candidates, review
+    from simulate.services.harness_versioning.draft_pieces import piece_files
+
+    environment = _built(user, workspace, "ar-validate-drops")
+    key = _key(NAMES[1])
+    _archive(auth_client, environment, key)
+    _draft_with_a_new_case(environment, user)
+    environment.refresh_from_db()
+
+    built = candidates.create_candidates(
+        environment,
+        drafts.open_drafts(environment),
+        review.draft_review(environment),
+        user=user,
+    )
+
+    validated = {
+        one["scenario_key"]
+        for one in drafts.suite_documents(
+            piece_files(environment, "suite", built["suite"])
+        )
+    }
+    assert key not in validated and "brand-new" in validated
+    assert key in _draft_keys(environment)
+
+
 def test_restore_of_a_live_member_reads_its_lifecycle(
     user, workspace, storage, auth_client
 ):

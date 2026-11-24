@@ -1481,16 +1481,48 @@ def remember_save(
     locked.save(update_fields=["payload", "updated_at"])
 
 
+def _archived_tokens(locked: HostedHarnessJob, scenarios: list[dict[str, Any]]) -> set[str]:
+    from simulate.services.harness_starting_records import scenario_token
+    from simulate.services.harness_versioning.versions import archived_keys
+
+    return {scenario_token(key) for key in archived_keys(locked, scenarios)}
+
+
+def _archive_kept_refused() -> HostedHarnessError:
+    return version_error(
+        "scenario_files_missing",
+        "Saving would leave a scenario without its files; ask the builder chat to remove the archived case.",
+        409,
+        piece="suite",
+    )
+
+
+def without_archived(locked: HostedHarnessJob, files: dict[str, bytes]) -> dict[str, bytes]:
+    """A drafted suite's files without its archived scenarios, for Validate to build from: Save leaves an archived
+    case out of the suite whichever way it saves. The draft itself is not written."""
+    from simulate.services.harness_starting_records import scenario_token
+    from simulate.services.hosted_harness_gateway import _rewritten_authoring_archive
+
+    scenarios = suite_documents(files)
+    archived = _archived_tokens(locked, scenarios)
+    if not archived:
+        return files
+    kept = [one for one in scenarios if scenario_token(one.get("scenario_key")) not in archived]
+    rewritten = _rewritten_authoring_archive(archives.pack_archive(files), kept)
+    if rewritten is None:
+        raise _archive_kept_refused()
+    return archives.read_archive(rewritten)
+
+
 def drop_archived(locked: HostedHarnessJob, draft: Any, *, user: Any) -> Any:
     """The suite draft without the scenarios archived since it was opened, rewritten when it held any.
 
     Archiving changes no draft, so Save is where an archived case leaves the suite."""
     from simulate.services.harness_starting_records import scenario_token
-    from simulate.services.harness_versioning.versions import archived_keys
     from simulate.services.hosted_harness_gateway import AuthoringArchiveKept
 
     scenarios = (draft.documents or {}).get("scenarios") or []
-    archived = {scenario_token(key) for key in archived_keys(locked, scenarios)}
+    archived = _archived_tokens(locked, scenarios)
     if not archived:
         return draft
     kept = [
@@ -1501,12 +1533,7 @@ def drop_archived(locked: HostedHarnessJob, draft: Any, *, user: Any) -> Any:
     try:
         write_suite_edit(locked, kept, user=user)
     except AuthoringArchiveKept as exc:
-        raise version_error(
-            "scenario_files_missing",
-            "Saving would leave a scenario without its files; ask the builder chat to remove the archived case.",
-            409,
-            piece="suite",
-        ) from exc
+        raise _archive_kept_refused() from exc
     return open_draft(locked, "suite", lock=True)
 
 
