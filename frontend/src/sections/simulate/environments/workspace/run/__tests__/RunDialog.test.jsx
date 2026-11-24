@@ -1142,6 +1142,14 @@ describe("RunDialog", () => {
       expect(readinessAsked()).toBe(true);
     });
 
+    // The server caps a named list, and reads the picked version whole without one.
+    it("names no scenarios to readiness for a run of them all", () => {
+      renderDialog({ scenarioIds: undefined });
+      expect(useReadiness.mock.lastCall[2].keys).toBeNull();
+      renderDialog({ scenarioIds: ["k1"] });
+      expect(useReadiness.mock.lastCall[2].keys).toEqual(["k1"]);
+    });
+
     it("holds the run when every picked scenario is held back", () => {
       state.selection = selection({
         running: 0,
