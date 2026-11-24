@@ -2,6 +2,7 @@
 body both take them from here, so the two never say different things: plain sentences,
 which the pull request only escapes as Markdown."""
 
+from functools import cached_property
 from math import floor
 from typing import Any, NamedTuple
 
@@ -11,9 +12,11 @@ from minio.error import S3Error
 from pydantic import BaseModel, Field
 from urllib3.exceptions import HTTPError
 
-from simulate.models import AgentFixCandidate
+from simulate.models import AgentFixCandidate, AgentFixRun
 from simulate.pydantic_schemas.agent_fix import EvalGrading, EvalReview, VerdictTier
+from simulate.selectors.agent_fix import inventory
 from simulate.services.agent_fix_engine import load_object
+from simulate.services.harness_environment import environment_sub_goals
 
 logger = structlog.get_logger(__name__)
 
@@ -177,22 +180,74 @@ def headline(verdict: dict, tiers: list[VerdictTier]) -> str:
     return ""
 
 
-def must_pass_check(check: str) -> str:
-    """A must-pass check, sent as "scenario key: sub-goal", as its scenario and its check."""
-    scenario, _, sub_goal = str(check).partition(": ")
+class FixNames:
+    """What a fix's scenarios and checks are called where a person reads them. Each is
+    read once, when first needed; a key or a sub-goal's id is never one of them."""
+
+    def __init__(self, fix_run: AgentFixRun) -> None:
+        self._fix_run = fix_run
+
+    @cached_property
+    def scenarios(self) -> dict[str, str]:
+        """Each scenario's name by its key: the inventory the engine is briefed with,
+        which names the flaky protected cases too."""
+        return {
+            one.key: one.name.strip()
+            for one in inventory(self._fix_run)
+            if one.name.strip()
+        }
+
+    @cached_property
+    def checks(self) -> dict[str, str]:
+        """What each sub-goal checks, by its id, from the environment's catalogue."""
+        return {
+            name: str(entry.get("what") or "").strip().rstrip(".")
+            for name, entry in environment_sub_goals(self._fix_run.environment).items()
+            if str(entry.get("what") or "").strip()
+        }
+
+
+def must_pass_check(check: str, names: FixNames) -> str | None:
+    """A must-pass check, sent as "scenario key: sub-goal", by its scenario's name and
+    what it checks. None when the scenario has no name: its key is never shown."""
+    key, _, sub_goal = str(check).partition(": ")
+    scenario = names.scenarios.get(key)
+    if scenario is None:
+        return None
+    what = names.checks.get(sub_goal)
     named = f"Must-pass scenario “{scenario}”"
-    return f"{named}: its “{sub_goal}” check" if sub_goal else named
+    return f"{named}: its check “{what}”" if what else named
 
 
-def caveats(candidate: AgentFixCandidate, review: EvalReview | None) -> list[str]:
+def caveats(
+    candidate: AgentFixCandidate, review: EvalReview | None, names: FixNames
+) -> list[str]:
     """What the checks could not hold the candidate to: the must-pass checks that dropped
     within normal noise, and for a winner, platform evals that did not finish."""
     verdict = candidate.verdict or {}
-    said = [
-        f"{must_pass_check(check)} passed less often, within normal noise, so it was"
-        " not counted."
+    named = [
+        must_pass_check(check, names)
         for check in verdict.get("must_pass_within_noise") or []
     ]
+    # Two checks of one scenario with no words for either read the same: said once.
+    said = list(
+        dict.fromkeys(
+            f"{one} passed less often, within normal noise, so it was not counted."
+            for one in named
+            if one
+        )
+    )
+    unnamed = named.count(None)
+    if unnamed == 1:
+        said.append(
+            "A must-pass scenario passed less often, within normal noise, so it was"
+            " not counted."
+        )
+    elif unnamed:
+        said.append(
+            f"{unnamed} must-pass checks passed less often, within normal noise, so"
+            " they were not counted."
+        )
     graded = (
         review is not None
         and candidate.outcome == AgentFixCandidate.Outcome.WINNER
@@ -207,13 +262,14 @@ def candidate_wording(
     *,
     review: EvalReview | None,
     files: list[ChangedFile] | None,
+    names: FixNames,
 ) -> CandidateWording:
     """Everything the page and the pull request say about the candidate, from its verdict,
-    its fix's plan, the patch that ships and the fix's eval review."""
+    its fix's plan, the patch that ships, the fix's eval review and its names."""
     verdict: dict[str, Any] = candidate.verdict or {}
     return CandidateWording(
         headline=headline(verdict, tiers),
         must_pass=must_pass_line(verdict, candidate.fix_run.plan or {}, tiers),
         changes=None if files is None else changes_line(files),
-        caveats=caveats(candidate, review),
+        caveats=caveats(candidate, review, names),
     )

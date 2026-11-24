@@ -35,6 +35,7 @@ from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
 from simulate.selectors.agent_fix_wording import (
     CandidateWording,
     ChangedFile,
+    FixNames,
     candidate_wording,
     changed_files,
     must_pass_check,
@@ -185,10 +186,10 @@ def _limited_note(candidate: AgentFixCandidate) -> str:
     )
 
 
-def _override_note(candidate: AgentFixCandidate) -> str:
+def _override_note(candidate: AgentFixCandidate, names: FixNames) -> str:
     """What a candidate the must-pass check refused is opened with, and the user's reason."""
     checks = "\n".join(
-        f"- {_text(must_pass_check(check))}"
+        f"- {_text(must_pass_check(check, names) or 'A must-pass scenario')}"
         for check in overridable_regressions(candidate)
     )
     reason = "\n".join(
@@ -622,8 +623,11 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     winner = candidate.outcome == AgentFixCandidate.Outcome.WINNER
     review = eval_review(candidate.fix_run) if winner else None
     files = changed_files(patch)
+    names = FixNames(candidate.fix_run)
     # The epoch page's words: the read takes them from the same place.
-    wording = candidate_wording(candidate, tiers, review=review, files=files)
+    wording = candidate_wording(
+        candidate, tiers, review=review, files=files, names=names
+    )
     held = held_back_cases(candidate.fix_run)
     limited = too_few_held_back(candidate.fix_run)
     overridden = bool(candidate.override_reason)
@@ -632,7 +636,7 @@ def _description(candidate: AgentFixCandidate, patch: bytes) -> tuple[str, str]:
     head = "\n\n".join(
         part
         for part in (
-            _override_note(candidate) if overridden else "",
+            _override_note(candidate, names) if overridden else "",
             _limited_note(candidate) if limited else "",
             # Not the engine's own reason: the checks below say the same in words.
             _text(wording.headline),

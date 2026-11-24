@@ -34,6 +34,7 @@ from simulate.selectors.agent_fix import (
     LOST_MODELS_SKIPPED_FOR,
     default_max_minutes,
     engine_brief,
+    inventory,
 )
 from simulate.serializers.agent_fix import AgentFixLaunchSerializer
 from simulate.services import agent_fix_engine as engine
@@ -2339,8 +2340,11 @@ class TestUserApi:
         assert pull["draft"] is True
         assert pull["title"].startswith("Epoch (known regression): ")
         assert pull["body"].startswith("**Known regression.**")
-        key, check = self.REGRESSED.split(": ")
-        assert f"- Must-pass scenario “{key}”: its “{check}” check" in pull["body"]
+        # By the scenario's name in the environment, never by its key.
+        key, _ = self.REGRESSED.split(": ")
+        name = next(one.name for one in inventory(fix_run) if one.key == key)
+        assert f"- Must-pass scenario “{name}”" in pull["body"]
+        assert f"“{key}”" not in pull["body"]
         assert f"> {self.REASON}" in pull["body"]
         assert "Verified by" not in pull["body"]
         after = self._override(auth_client, fix_run)

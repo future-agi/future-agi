@@ -29,7 +29,11 @@ from simulate.selectors.agent_fix import (
     verdict_tiers,
 )
 from simulate.selectors.agent_fix_issue import jobs_of_epochs, live_issue
-from simulate.selectors.agent_fix_wording import candidate_files, candidate_wording
+from simulate.selectors.agent_fix_wording import (
+    FixNames,
+    candidate_files,
+    candidate_wording,
+)
 from simulate.serializers.harness_environment import HarnessVersionPersonSerializer
 from simulate.services.harness_environment import environment_name
 
@@ -355,6 +359,7 @@ class AgentFixCandidateDetailSerializer(AgentFixCandidateSerializer):
             verdict_tiers(candidate),
             review=self.context.get("eval_review"),
             files=candidate_files(candidate),
+            names=self.context["fix_names"],
         )
         return AgentFixCandidateWordingSerializer(wording.model_dump()).data
 
@@ -539,8 +544,10 @@ class AgentFixRunDetailSerializer(AgentFixRunSerializer):
 
     def to_representation(self, instance: AgentFixRun) -> dict:
         self._review = eval_review(instance)
-        # Its candidates' caveats say when the winner's evals did not finish.
+        # Its candidates' caveats say when the winner's evals did not finish. They name
+        # scenarios and checks from one lookup for all candidates.
         self.context["eval_review"] = self._review
+        self.context["fix_names"] = FixNames(instance)
         return super().to_representation(instance)
 
     @swagger_serializer_method(

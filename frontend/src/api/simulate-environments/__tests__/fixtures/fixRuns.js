@@ -175,7 +175,7 @@ const finishedCandidates = (id) => [
       must_pass:
         "None of the 9 must-pass scenarios broke (1 moved within normal noise).",
       caveats: [
-        "Must-pass scenario “refund-window” passed less often, within normal noise, so it was not counted.",
+        "Must-pass scenario “Refund window” passed less often, within normal noise, so it was not counted.",
       ],
     },
   }),

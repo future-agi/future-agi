@@ -4108,8 +4108,9 @@ class TestPullRequestDescription:
 
         assert title == "Epoch (known regression): fix 1 diagnosed cause in 3 files"
         assert body.startswith("**Known regression.**")
-        # The case and its check apart, and who chose to open it anyway.
-        assert "- Must-pass scenario “case-1”: its “refunded” check" in body
+        # Who chose to open it anyway, and the check it broke, never by a key the
+        # environment has no scenario for.
+        assert "- A must-pass scenario\n" in body and "case-1" not in body
         assert "It was opened anyway, for this reason:" in body
         assert "> The regression is a test we are retiring." in body
         assert "Target pass rate 0% → 63%. 1 must-pass scenario broke." in body
@@ -4117,9 +4118,10 @@ class TestPullRequestDescription:
         assert "| Must-pass scenarios | Failed | 1 must-pass scenario broke. |" in body
         assert "- Must-pass scenarios: 1 of 6 regressed." in body
         assert (
-            "- Must-pass scenario “case-3”: its “polite” check passed less often, within"
-            " normal noise, so it was not counted." in body
+            "- A must-pass scenario passed less often, within normal noise, so it was"
+            " not counted." in body
         )
+        assert "case-3" not in body
 
     def test_a_fix_from_evidence_counts_each_imports_sources_and_never_names_them(
         self, source_run
