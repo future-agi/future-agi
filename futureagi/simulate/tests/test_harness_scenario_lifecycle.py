@@ -1840,3 +1840,32 @@ def test_a_refused_case_names_the_tools_the_agent_lacks(
     assert view["reason_text"] == (
         f"Needs {named}, which agent version {_label(environment)} doesn't have."
     )
+
+
+def test_a_case_its_validation_did_not_finish_is_held_back_in_words_true_of_any_cause(
+    user, workspace, storage
+):
+    """ALK records a case its live check could not run as not reached, as it records one the time budget missed:
+    Draft, held out of runs, with words that claim neither a cause nor the internal error."""
+    environment = _environment(user, workspace, storage, "lc-unfinished")
+    _suite(environment, _ten(), proved=False)
+    _proofs(
+        environment,
+        {
+            REFUND_KEYS[0]: {
+                "format": 2,
+                "holds": False,
+                "proved": False,
+                "kept_as_written": False,
+                "ready": False,
+                "blocked_reason": "validation_incomplete",
+                "why": "not proved: the live check could not run its expected handling here "
+                "(ProcessRuntimeError: seed/seed_failed (world-db))",
+            }
+        },
+    )
+
+    view = _views(environment)[REFUND_KEYS[0]]
+
+    assert (view["state"], view["reason"]) == ("draft", "validation_incomplete")
+    assert view["reason_text"] == "Validation did not finish this case; validate again."
