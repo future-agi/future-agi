@@ -69,11 +69,15 @@ Mark.propTypes = {
 export function LifecycleMark({ lifecycle, validating = false }) {
   if (validating) {
     return (
-      <Typography
-        sx={{ typography: "s3", color: "text.secondary", flexShrink: 0 }}
-      >
-        {LIFECYCLE_COPY.validate.rowValidating}
-      </Typography>
+      <Tooltip arrow describeChild title={LIFECYCLE_COPY.validate.rowHint}>
+        <Box component="span" sx={{ display: "flex", flexShrink: 0 }}>
+          <StatusBadge
+            status="running"
+            label={LIFECYCLE_COPY.validate.rowValidating}
+            size="sm"
+          />
+        </Box>
+      </Tooltip>
     );
   }
   const chip = lifecycleChip(lifecycle);
