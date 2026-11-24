@@ -600,6 +600,7 @@ class EvaluationSummarySerializer(serializers.Serializer):
     failed = serializers.IntegerField()
     measured = serializers.IntegerField()
     errored = serializers.IntegerField()
+    input_missing = serializers.IntegerField()
     missing = serializers.IntegerField()
     pass_rate = serializers.FloatField(allow_null=True)
     average_score = serializers.FloatField(allow_null=True)

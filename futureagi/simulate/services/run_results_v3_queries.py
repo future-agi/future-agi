@@ -115,6 +115,7 @@ from simulate.types import (
     CallActorDelivery,
     CallActorFacetValue,
 )
+from simulate.utils.processing_outcomes import REASON_INPUT_MISSING
 
 OUTCOMES = tuple(OUTCOME_LABELS)
 # Outcomes that judge the agent. Errored and inconclusive calls never ran to a verdict,
@@ -391,6 +392,12 @@ def _eval_errored_q(eval_id: str) -> Q:
     )
     return Q(eval_outputs__has_key=eval_id) & Q(
         In(Lower(Trim(status)), list(ERRORED_EVAL_STATUSES))
+    )
+
+
+def _eval_input_missing_q(eval_id: str) -> Q:
+    return Q(eval_outputs__has_key=eval_id) & Q(
+        Exact(_json_text("eval_outputs", eval_id, "reason_code"), REASON_INPUT_MISSING)
     )
 
 
@@ -1716,6 +1723,9 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
         evaluation_expressions[f"errored_{eval_id}"] = Count(
             "id", filter=_eval_errored_q(eval_id)
         )
+        evaluation_expressions[f"input_missing_{eval_id}"] = Count(
+            "id", filter=_eval_input_missing_q(eval_id)
+        )
         evaluation_expressions[f"score_{eval_id}"] = Avg(score)
     cost_fields = {
         "stt": "stt_cost_cents",
@@ -1748,6 +1758,8 @@ def build_run_analytics(execution: TestExecution) -> dict[str, Any]:
                 "measured": measured,
                 # The evaluator ran but could not produce a verdict; not a fail.
                 "errored": evaluation_values.get(f"errored_{eval_id}") or 0,
+                # Stored, but not graded: an input was empty on the call.
+                "input_missing": evaluation_values.get(f"input_missing_{eval_id}") or 0,
                 "missing": summary["total"] - present,
                 "pass_rate": round(passed / measured * 100, 2) if measured else None,
                 "average_score": evaluation_values.get(f"score_{eval_id}"),

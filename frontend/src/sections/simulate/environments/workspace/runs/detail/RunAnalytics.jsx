@@ -448,6 +448,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                 <TableCell align="right">%</TableCell>
                 <TableCell align="right">Passed / evaluated</TableCell>
                 <TableCell align="right">Could not run</TableCell>
+                <TableCell align="right">Input missing</TableCell>
                 <TableCell align="right">Not applicable</TableCell>
               </TableRow>
             </TableHead>
@@ -483,6 +484,7 @@ function AnalyticsDashboard({ executionId, onOpenCall, onOpenCalls }) {
                     {row.passed} / {row.measured}
                   </TableCell>
                   <TableCell align="right">{row.errored}</TableCell>
+                  <TableCell align="right">{row.input_missing ?? 0}</TableCell>
                   <TableCell align="right">{row.missing}</TableCell>
                 </TableRow>
               ))}

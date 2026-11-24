@@ -32,6 +32,7 @@ from django.db import close_old_connections, transaction
 from django.utils import timezone
 from temporalio import activity
 
+from model_hub.utils.eval_input_validation import MissingEvalInputError
 from simulate.models.test_execution import CallExecution, CallTranscript
 from simulate.selectors.call_transcripts import with_speakers
 from simulate.services.agent_definition import resolve_api_key_for_version
@@ -44,7 +45,10 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationOutput,
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
-from simulate.utils.processing_outcomes import build_skipped_eval_output_payload
+from simulate.utils.processing_outcomes import (
+    build_skipped_eval_output_payload,
+    record_missing_eval_input,
+)
 from simulate.utils.stored_transcript_roles import call_actor_label
 from simulate.utils.test_execution_utils import (
     accrue_check_run_eval_cost,
@@ -1116,6 +1120,15 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
     except EvaluationDenied as denial:
         record_evaluation_denial(call_execution, eval_config, denial)
         raise
+    except MissingEvalInputError as missing:
+        # An empty input on this call: not graded, and not an error.
+        record_missing_eval_input(call_execution, eval_config, missing)
+        logger.info(
+            "simulate_eval_input_missing",
+            call_execution_id=str(call_execution.id),
+            eval_config_id=str(eval_config.id),
+            fields=list(missing.fields),
+        )
     except Exception as e:
         logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 

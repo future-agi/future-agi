@@ -65906,6 +65906,7 @@ export const SimulateV3TestExecutionAnalyticsResponse = zod.object({
       failed: zod.number(),
       measured: zod.number(),
       errored: zod.number(),
+      input_missing: zod.number(),
       missing: zod.number(),
       pass_rate: zod.number(),
       average_score: zod.number(),

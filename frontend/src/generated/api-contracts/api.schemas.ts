@@ -30270,6 +30270,7 @@ export interface EvaluationSummaryApi {
   failed: number;
   measured: number;
   errored: number;
+  input_missing: number;
   missing: number;
   pass_rate: number;
   average_score: number;

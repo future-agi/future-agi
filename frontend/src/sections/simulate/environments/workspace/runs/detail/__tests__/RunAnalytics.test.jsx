@@ -239,6 +239,7 @@ const analytics = {
       failed: 1,
       measured: 3,
       errored: 1,
+      input_missing: 2,
       missing: 0,
       pass_rate: 66.67,
     },
@@ -572,6 +573,42 @@ describe("RunAnalytics", () => {
     expect(
       screen.queryByRole("region", { name: "Provider's own success flag" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("counts an eval whose input was empty in its own column", () => {
+    render(<RunAnalytics executionId="execution-1" />);
+
+    const table = screen.getByText("Policy adherence").closest("table");
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((cell) => cell.textContent);
+    const row = screen.getByText("Policy adherence").closest("tr");
+    const cells = within(row)
+      .getAllByRole("cell")
+      .map((cell) => cell.textContent);
+    expect(cells[headers.indexOf("Could not run")]).toBe("1");
+    expect(cells[headers.indexOf("Input missing")]).toBe("2");
+    expect(cells[headers.indexOf("Not applicable")]).toBe("0");
+  });
+
+  it("reads an older answer with no input-missing count as zero", () => {
+    const { input_missing: _ignored, ...older } = analytics.evaluations[0];
+    useRunAnalytics.mockReturnValue({
+      data: { ...analytics, evaluations: [older] },
+      isPending: false,
+      isError: false,
+    });
+    render(<RunAnalytics executionId="execution-1" />);
+
+    const table = screen.getByText("Policy adherence").closest("table");
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((cell) => cell.textContent);
+    const row = screen.getByText("Policy adherence").closest("tr");
+    const cells = within(row)
+      .getAllByRole("cell")
+      .map((cell) => cell.textContent);
+    expect(cells[headers.indexOf("Input missing")]).toBe("0");
   });
 
   it("shows an honest empty state", () => {

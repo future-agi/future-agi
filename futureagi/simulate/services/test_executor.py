@@ -97,6 +97,7 @@ except ImportError:
 from model_hub.models.choices import StatusType
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
+from model_hub.utils.eval_input_validation import MissingEvalInputError
 from model_hub.views.utils.evals import run_eval_func
 from sdk.utils.helpers import _get_api_call_type
 from simulate.constants.persona_prompt_guides import (
@@ -163,6 +164,7 @@ from simulate.temporal.activities.xl import (
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
+    record_missing_eval_input,
     set_processing_skip_metadata,
 )
 from simulate.utils.test_execution_utils import (
@@ -5410,6 +5412,15 @@ class TestExecutor:
         except EvaluationDenied as denial:
             record_evaluation_denial(call_execution, eval_config, denial)
             raise
+        except MissingEvalInputError as missing:
+            # An empty input on this call: not graded, and not an error.
+            record_missing_eval_input(call_execution, eval_config, missing)
+            logger.info(
+                "simulate_eval_input_missing",
+                call_execution_id=str(call_execution.id),
+                eval_config_id=str(eval_config.id),
+                fields=list(missing.fields),
+            )
         except Exception as e:
             logger.error(f"Error running evaluation {eval_config.id}: {str(e)}")
 
