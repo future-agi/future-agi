@@ -26,6 +26,9 @@ import {
   useExportErrorFeedTraces,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
+import IssueEpochAction from "./epoch/IssueEpochAction";
+import IssueEpochStrip from "./epoch/IssueEpochStrip";
+import RunEpochDrawer from "./epoch/RunEpochDrawer";
 import ErrorStatusChip from "./components/ErrorStatusChip";
 import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
 import ErrorMetadataPanel, {
@@ -119,6 +122,9 @@ export default function ErrorFeedDetailView() {
     retry: false,
   });
   const detail = shared ? shared.issue : fetchedDetail;
+  // Epoch on this issue: never on a shared page. Each part checks the org has Epoch
+  // and reads the issue's epoch itself; the reads are shared.
+  const [epochOpen, setEpochOpen] = useState(false);
   const updateIssue = useUpdateErrorFeedIssue();
   const exportTraces = useExportErrorFeedTraces();
   const { enqueueSnackbar } = useSnackbar();
@@ -501,11 +507,24 @@ export default function ErrorFeedDetailView() {
                   >
                     Ignore issue
                   </Button>
+                  <IssueEpochAction
+                    clusterId={currentError.cluster_id}
+                    projectId={currentError.project_id}
+                    onOpenDrawer={() => setEpochOpen(true)}
+                  />
                 </>
               )}
             </Stack>
           </Stack>
         </Box>
+
+        {!shared && (
+          <IssueEpochStrip
+            clusterId={currentError.cluster_id}
+            projectId={currentError.project_id}
+            onRunAgain={() => setEpochOpen(true)}
+          />
+        )}
 
         {/* ── Tab bar ── */}
         <Box
@@ -610,6 +629,13 @@ export default function ErrorFeedDetailView() {
             onClose={() => setShareDialogOpen(false)}
             resourceType="error_feed_issue"
             resourceId={currentError.cluster_id}
+          />
+          <RunEpochDrawer
+            open={epochOpen}
+            onClose={() => setEpochOpen(false)}
+            clusterId={currentError.cluster_id}
+            projectId={currentError.project_id}
+            issueTitle={currentError.error?.name}
           />
         </>
       )}

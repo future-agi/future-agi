@@ -12,6 +12,7 @@ from simulate.serializers.hosted_harness_conversation import (
     HarnessConversationReadSerializer,
 )
 from simulate.services.harness_credentials import agent_version_secret_ref
+from tfc.utils.api_serializers import StrictInputSerializer
 from tfc.utils.serializer_fields import JsonValueField
 
 # Port-generic loopback pattern for the C4 §7 Channel-1 literal-endpoint scan.
@@ -19,6 +20,10 @@ from tfc.utils.serializer_fields import JsonValueField
 # in-sandbox), so the match is any port on localhost / 127.0.0.1 / [::1].
 
 _LOOPBACK_ENDPOINT_RE = re.compile(r"(?:localhost|127\.0\.0\.1|\[::1\]):\d+")
+
+# A folder inside the repository, relative to its root: no leading slash, no "." or
+# ".." segment, no empty segment, no trailing slash. Empty means the root.
+SUBFOLDER_PATTERN = r"^(?!/)(?!.*(^|/)\.{1,2}(/|$))[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
 
 RUNNER_RESERVED_ENVIRONMENT = {
     "DOCKER_HOST",
@@ -61,7 +66,7 @@ def _check_variable_values(values: Mapping[str, Any]) -> list[str]:
     return []
 
 
-def _check_credential_values(values: Mapping[str, Any]) -> list[str]:
+def check_credential_values(values: Mapping[str, Any]) -> list[str]:
     problems = _check_variable_values(values)
     reserved = sorted(name for name in values if str(name).startswith("SIMULATOR_"))
     if reserved:
@@ -75,6 +80,23 @@ def _check_credential_values(values: Mapping[str, Any]) -> list[str]:
     if not_text:
         problems.append(f"values must be strings: {', '.join(not_text)}")
     return problems
+
+
+# An agent's own chat reply deadline in the harness job's agent config, as `voice_call_timeout_seconds` is for voice.
+CHAT_CALL_TIMEOUT_KEY = "chat_call_timeout_seconds"
+# The harness never waits past a build's own budget.
+MAX_CHAT_CALL_TIMEOUT_SECONDS = 3300
+
+
+def _chat_call_timeout(raw: object) -> bool:
+    """Whether a chat reply deadline is a number of seconds, or a number written as text, the harness can use."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        return False
+    try:
+        seconds = float(raw)
+    except ValueError:
+        return False
+    return 0 < seconds <= MAX_CHAT_CALL_TIMEOUT_SECONDS
 
 
 class RunVersionLabelSerializer(serializers.Serializer):
@@ -105,6 +127,13 @@ class HarnessSourceSerializer(serializers.Serializer):
     installation_id = serializers.CharField(
         max_length=255, required=False, allow_null=True
     )
+    subfolder = serializers.RegexField(
+        SUBFOLDER_PATTERN,
+        max_length=512,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
     archive_artifact_id = serializers.UUIDField(required=False, allow_null=True)
     endpoint = serializers.URLField(required=False, allow_null=True)
     visibility = serializers.ChoiceField(
@@ -120,6 +149,16 @@ class HarnessSourceSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         kind = attrs["kind"]
+        if attrs.get("subfolder") and kind != "github":
+            raise serializers.ValidationError(
+                {"subfolder": "only a github source names a folder"}
+            )
+        if attrs.get("subfolder") and not getattr(
+            settings, "HARNESS_SOURCE_SUBFOLDER_ENABLED", False
+        ):
+            raise serializers.ValidationError(
+                {"subfolder": "not supported yet; builds use the repository root"}
+            )
         if kind == "github":
             if not attrs.get("repository"):
                 raise serializers.ValidationError(
@@ -172,6 +211,18 @@ def phone_number_error(value: str) -> str | None:
 TARGET_SYSTEM_PROMPT_MAX_CHARS = 65_536
 
 
+class HarnessAgentConfigChangeSerializer(StrictInputSerializer):
+    phone_number = serializers.CharField(max_length=512, required=False)
+    agent_name = serializers.CharField(max_length=512, required=False)
+    target_speaks_first = serializers.BooleanField(required=False)
+
+    def validate_phone_number(self, value):
+        error = phone_number_error(value)
+        if error:
+            raise serializers.ValidationError(error)
+        return value.strip()
+
+
 class HarnessAgentSerializer(serializers.Serializer):
     connector = serializers.ChoiceField(
         choices=("livekit", "vapi", "retell", "retell_chat", "phone", "auto")
@@ -210,6 +261,14 @@ class HarnessAgentSerializer(serializers.Serializer):
         for name in ("inbound", "target_speaks_first"):
             if name in value and not isinstance(value[name], bool):
                 raise serializers.ValidationError(f"{name} must be a boolean")
+        # How long one chat reply may take; absent, the harness keeps its 300 s default. Capped at the build's budget.
+        if CHAT_CALL_TIMEOUT_KEY in value and not _chat_call_timeout(
+            value[CHAT_CALL_TIMEOUT_KEY]
+        ):
+            raise serializers.ValidationError(
+                f"{CHAT_CALL_TIMEOUT_KEY} must be a number of seconds above 0 and at most "
+                f"{MAX_CHAT_CALL_TIMEOUT_SECONDS}"
+            )
         secret_names = ("token", "secret", "password", "api_key", "private_key")
         invalid = []
         for key, item in value.items():
@@ -526,7 +585,7 @@ class HarnessJobCreateSerializer(serializers.Serializer):
             data.get("credential_values"), Mapping
         ):
             secret_values = data["credential_values"]
-            problems = _check_credential_values(secret_values)
+            problems = check_credential_values(secret_values)
             if problems:
                 raise serializers.ValidationError({"credential_values": problems})
             agent = data.get("agent")

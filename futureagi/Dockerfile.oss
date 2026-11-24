@@ -82,7 +82,7 @@ FROM ${PYTHON_IMAGE} AS ffmpeg-minimal
 ARG FFMPEG_VERSION=7.1.5
 ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential pkg-config nasm libmp3lame-dev zlib1g-dev \
+        build-essential pkg-config nasm libaom-dev=3.6.0-1+deb12u3 libmp3lame-dev zlib1g-dev \
         curl ca-certificates xz-utils \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src/ffmpeg
@@ -108,6 +108,7 @@ RUN sh /src/ffmpeg-tools/configure-minimal.sh /opt/ffmpeg \
         echo "Source: https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"; \
         echo "SHA-256: ${FFMPEG_SHA256}"; \
         echo "Build script: futureagi/docker/ffmpeg/configure-minimal.sh"; \
+        echo "Links Debian libaom3 dynamically; its license and notices are in /usr/share/doc/libaom3/copyright."; \
         echo "Links libmp3lame dynamically (Debian libmp3lame0, LGPL; /usr/share/doc/libmp3lame0/copyright)."; \
         echo; \
         /opt/ffmpeg/bin/ffmpeg -hide_banner -buildconf; \
@@ -245,8 +246,9 @@ ARG WITH_GIT=""
 RUN set -eux; \
     . /usr/local/lib/futureagi/image-variant.sh; \
     pkgs="libxml2 libxmlsec1 libxmlsec1-openssl xmlsec1 libcom-err2 libkrb5-3 libgssapi-krb5-2"; \
+    printf '%s\n' "$FFMPEG_FLAVOR" > /usr/local/lib/futureagi/ffmpeg-flavor; \
     case "$FFMPEG_FLAVOR" in \
-        minimal) pkgs="$pkgs libmp3lame0" ;; \
+        minimal) pkgs="$pkgs libaom3=3.6.0-1+deb12u3 libmp3lame0" ;; \
         debian)  pkgs="$pkgs ffmpeg" ;; \
         none)    ;; \
     esac; \

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import structlog
@@ -44,13 +45,17 @@ from simulate.constants.harness_environment import (
     STATUS_RUNNING,
     ActorsTab,
 )
+from simulate.constants.hosted_harness import WORKER_ENFORCEMENT_LABELS
 from simulate.models import (
     AgentVersion,
+    HarnessEnvironmentVersion,
     HostedHarnessJob,
     HostedHarnessReceipt,
+    HostedHarnessScenario,
     HostedHarnessStageOutput,
     TestExecution,
 )
+from simulate.models.harness_versioning import VersionStatus
 from simulate.selectors.environment_documents import (
     RUN_CONTRACT_VERSION,
     contract_data,
@@ -66,7 +71,7 @@ from simulate.services.harness_scenarios import (
 )
 from simulate.services.run_outcome import outcome_fields, receipt_outcome_counts
 from simulate.services.run_reliability_v3 import trial_passes
-from simulate.types import ContractCallActor
+from simulate.types import ContractCallActor, ContractWorker, worker_enforcement
 
 if TYPE_CHECKING:
     from simulate.services.harness_actor_rules import ActorRecord, ActorRules
@@ -143,6 +148,8 @@ def annotate_for_list(
                 .values("id")[:1]
             ),
         )
+        .select_related("agent_version")
+        .defer("agent_version__configuration_snapshot")
         .prefetch_related(
             Prefetch(
                 "normalized_stage_outputs",
@@ -183,6 +190,8 @@ def environment_row(
 ) -> dict[str, Any]:
     """One list row. Safe to call on a job that has never finished building. ``contract``: the one the default
     version runs with, when the caller has it; a listed row reads the one its version records."""
+    from simulate.services.harness_agent_versions import environment_policy
+
     if contract is None:
         listed = getattr(job, "version_contract", None)
         contract = listed if isinstance(listed, dict) and listed else contract_data(job)
@@ -202,6 +211,8 @@ def environment_row(
         "sub_goals_count": _sub_goals_count(row_stage_output(job, "sub_goals")),
         "tools_count": _tools_count(contract),
         "runs_count": runs_count,
+        "agent_version": version_ref(job.agent_version),
+        "agent_policy": environment_policy(job),
         "last_updated": _isoformat(job.content_updated_at or job.created_at),
         "created_at": _isoformat(job.created_at),
     }
@@ -218,10 +229,58 @@ def environment_rows(jobs: list[HostedHarnessJob]) -> list[dict[str, Any]]:
     ]
 
 
-def version_ref(version: AgentVersion | None) -> dict[str, Any] | None:
+def version_ref(
+    version: AgentVersion | HarnessEnvironmentVersion | None,
+) -> dict[str, Any] | None:
     if version is None:
         return None
     return {"id": str(version.id), "version_number": version.version_number}
+
+
+def _scenario_history(
+    environment_ids: Iterable[uuid.UUID],
+) -> dict[Any, list[tuple[str, Any, Any]]]:
+    """Each environment's scenario registrations, deleted ones included, in one read."""
+    history: dict[Any, list[tuple[str, Any, Any]]] = {}
+    # The base manager: the soft-delete and workspace managers would hide the
+    # registrations removed after a run, which the run still had.
+    rows = HostedHarnessScenario._base_manager.filter(
+        job_id__in=list(environment_ids)
+    ).values_list("job_id", "scenario_key", "created_at", "deleted", "deleted_at")
+    for job_id, key, created_at, deleted, deleted_at in rows:
+        if deleted and deleted_at is None:
+            # Removed with no time recorded: there's no telling which runs had it.
+            continue
+        history.setdefault(job_id, []).append((key, created_at, deleted_at))
+    return history
+
+
+def _partial(
+    job: HostedHarnessJob | None,
+    execution: TestExecution,
+    history: dict[Any, list[tuple[str, Any, Any]]],
+) -> bool | None:
+    """Whether a run picked only some of the scenarios its environment had then.
+
+    Scenarios are counted by key, so trials of one scenario count once, and
+    against the registrations that existed when the run was created, so a suite
+    extended later doesn't turn an old full run partial.
+    """
+    if job is None or job.environment_id is None:
+        return None
+    metadata = (job.payload or {}).get("metadata") or {}
+    selected = len(set(metadata.get("selected_scenario_keys") or [])) or int(
+        execution.total_scenarios or 0
+    )
+    started = execution.created_at
+    available = {
+        key
+        for key, created_at, deleted_at in history.get(job.environment_id, [])
+        if created_at <= started and (deleted_at is None or deleted_at > started)
+    }
+    if not selected or not available:
+        return None
+    return selected < len(available)
 
 
 def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
@@ -232,9 +291,12 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
         job.test_execution_id: job
         for job in HostedHarnessJob.no_workspace_objects.filter(
             test_execution_id__in=ids, deleted=False
-        ).select_related("environment")
+        ).select_related("environment", "environment_version")
     }
     counts = receipt_outcome_counts(job.id for job in jobs.values())
+    history = _scenario_history(
+        {job.environment_id for job in jobs.values() if job.environment_id}
+    )
     trials = trial_passes(executions)
     run_numbers = dict(
         TestExecution.no_workspace_objects.filter(id__in=ids)
@@ -274,6 +336,10 @@ def run_summaries(executions: list[TestExecution]) -> dict[Any, dict[str, Any]]:
                 else None
             ),
             "agent_version": version_ref(execution.agent_version),
+            "environment_version": (
+                version_ref(job.environment_version) if job else None
+            ),
+            "partial": _partial(job, execution, history),
             **outcome_fields(
                 status=execution.status,
                 receipts=outcomes,
@@ -427,6 +493,8 @@ _CONTRACT_FIELDS = (
     "runtime_dependencies",
     "implementation",
     "tool_entrypoints",
+    # The workers the app's source declares (id, name, tools, allowed tools, binding, address variable, process).
+    "workers",
     "data_store",
     "open_questions",
     "amendments",
@@ -935,6 +1003,12 @@ def _contract_section(
     if not contract:
         return None
     section = {field: contract.get(field) for field in _CONTRACT_FIELDS}
+    declared = contract.get("workers")
+    section["workers"] = [
+        _contract_worker(one)
+        for one in (declared if isinstance(declared, list) else [])
+        if isinstance(one, dict) and one.get("id")
+    ]
     section["amendments"] = _amendments(contract.get("amendments"))
     section["sub_goals"] = _catalogue_entries(catalogue)
     section["call_actors"] = _call_actor_list(call_actors, scenario_docs)
@@ -1063,6 +1137,57 @@ def _max_turns(docs: Any) -> int | None:
         if isinstance(doc, dict) and isinstance(doc.get("max_turns"), int)
     ]
     return max(budgets) if budgets else None
+
+
+def _contract_worker(worker: dict[str, Any]) -> ContractWorker:
+    """A declared worker, its allowed tools kept only when narrower than the tools its code holds."""
+    tools = [str(one) for one in worker.get("tools") or [] if isinstance(one, str)]
+    allowed = worker.get("allowed_tools")
+    allowed = [str(one) for one in allowed] if isinstance(allowed, list) else []
+    narrower = bool(allowed) and any(tool not in allowed for tool in tools)
+    binding = worker.get("binding")
+    raw_name = worker.get("name")
+    name = raw_name if isinstance(raw_name, str) else ""
+    out: ContractWorker = {
+        "id": str(worker["id"]),
+        "display_name": name.strip() or str(worker["id"]),
+        "tools": tools,
+        "allowed_tools": allowed if narrower else [],
+        "tools_shown": allowed if narrower else tools,
+        "binding": binding if binding in ("separate", "shared") else "not_declared",
+        # No trial here: a separate worker's hold is not known until one shows it.
+        "enforcement": (enforcement := worker_enforcement(binding)),
+        "enforcement_label": WORKER_ENFORCEMENT_LABELS[enforcement],
+    }
+    if isinstance(worker.get("name"), str):
+        out["name"] = worker["name"]
+    if isinstance(worker.get("address_env"), str):
+        out["address_env"] = worker["address_env"]
+    if isinstance(worker.get("process"), str):
+        out["process"] = worker["process"]
+    return out
+
+
+def version_participants(version: AgentVersion) -> list[ContractWorker]:
+    """The workers the newest environment built for this agent version declares, as its Workers card shows them;
+    empty when no environment was built for it or its app declares none."""
+    built = (
+        HarnessEnvironmentVersion.no_workspace_objects.filter(
+            agent_version=version,
+            organization_id=version.organization_id,
+            status=VersionStatus.ACTIVE,
+        )
+        .order_by("-created_at")
+        .only("documents")
+        .first()
+    )
+    contract = (built.documents or {}).get("contract") if built is not None else None
+    declared = contract.get("workers") if isinstance(contract, dict) else None
+    return [
+        _contract_worker(one)
+        for one in (declared if isinstance(declared, list) else [])
+        if isinstance(one, dict) and one.get("id")
+    ]
 
 
 def _amendments(value: Any) -> list[dict[str, str]]:
@@ -1208,13 +1333,16 @@ def _agent(job: HostedHarnessJob) -> dict[str, Any] | None:
     definition = getattr(run_test, "agent_definition", None)
     if definition is None:
         return None
-    latest = definition.latest_version
+    # The environment's own pin; an unpinned environment runs the agent's active version.
+    version = job.agent_version or definition.active_version
+    if version is not None and version.agent_definition_id != definition.id:
+        version = definition.active_version
     return {
         "id": str(definition.id),
         "name": definition.agent_name or None,
         "provider": definition.provider or None,
         "versions_count": definition.version_count,
-        "active_version": f"v{latest.version_number}" if latest else None,
+        "active_version": f"v{version.version_number}" if version else None,
     }
 
 

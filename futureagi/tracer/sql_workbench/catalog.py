@@ -178,6 +178,15 @@ COLUMNS["derived_metrics"] = {
     "source_run_id": "String",
     "definition_hash": "String",
     "sampling_scope": "String",
+    "std_error": "Nullable(Float64)",
+    "ci_low": "Nullable(Float64)",
+    "ci_high": "Nullable(Float64)",
+    "effective_n": "Nullable(Float64)",
+    "ci_df": "Nullable(UInt64)",
+    "ci_method": "String",
+    "ci_status": "String",
+    "ci_reason": "String",
+    "ci_interval": "String",
 }
 
 DESCRIPTIONS = {
@@ -186,7 +195,7 @@ DESCRIPTIONS = {
     "sessions": "Sessions first seen in the window; locale is the latest present span locale in that window. Identity history is not time-ordered, so a narrow window can still reach the 10M-row read limit.",
     "users": "Users first seen in the window (not active-user counts). Identity history is not time-ordered, so a narrow window can still reach the 10M-row read limit.",
     "eval_results": "Live scores created in the window with project-owned config and target; run_id is null until real execution provenance exists; eval_task_id is the task key. Sampling metadata is nullable for legacy results. Results of configurations deleted later are kept with config_deleted = 1 (Observe hides them); projects with more than 1,000 configurations cannot use this dataset. Target ownership may scan retained history, including old targets of recent backfills: shortening the eval window may not avoid the fixed 10M-row read ceiling. Over-budget queries fail; no partial aggregates are returned.",
-    "derived_metrics": "Committed derived-metric attempts; windows fully contained in the selected window. Requires the derived metrics schema and reader grants.",
+    "derived_metrics": "Committed derived-metric attempts; windows fully contained in the selected window. std_error and the 95% interval ci_low..ci_high are set only when ci_status = 'ok'; otherwise ci_reason says why no interval exists. Requires the derived metrics schema and reader grants.",
     "annotations": "Unified scores with explicit organization, workspace and tracer-project ownership; legacy null ownership is excluded.",
 }
 
@@ -343,7 +352,6 @@ def additional_table_filters(scope: Scope) -> str:
 
 def sources(scope: Scope, *, session_locale: bool = True) -> dict[str, str]:
     """Only canonical UUIDs and datetimes enter these server-authored templates."""
-
     project = f"toUUID('{scope.project_id}')"
     org = f"toUUID('{scope.organization_id}')"
     workspace = f"toUUID('{scope.workspace_id}')"

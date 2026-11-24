@@ -254,6 +254,31 @@
 - unassigned and deleted item navigation returns real 403 and 404 while the UI offers persistent queue recovery
 - score corrections resolve disagreements; label removal retains historical agreement until all 54 synthetic label scores are deleted, then refetch closes the already-open popup
 
+### ANNOT-E2E-007 — queue managers widen item data columns while selection and actions stay fixed
+
+**Goal:** A queue manager widens the data columns of a queue's item list to read them, while the selection and row-action columns stay fixed and selecting an item or backing out of removal leaves the queue item and its source row untouched
+
+**Spec:** `flows/annotations/queue-items-column-resize.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a numeric label, a one-row synthetic dataset with a minted cell, an active manual queue and one dataset-row item through public APIs
+2. open the queue item list at 1440x900 and wait for the seeded row
+3. see resize handles on Preview and Source but not on selection or Actions, which measure 44 and 60 px
+4. drag the Preview and Source header edges wider; column order and the fixed columns stay unchanged
+5. tick and untick the seeded row and see Remove Selected (1) appear and go
+6. open Remove item on the row, cancel the dialog and still see the row with 1 of 1 items
+7. reload and see the seeded row still listed
+
+**Backend state verified:**
+
+- PG model_hub_queueitem row is unchanged after select, remove-cancel and reload: not deleted, same queue, dataset row, status and updated_at
+- PG model_hub_row and model_hub_cell keep the seeded order, minted value, deleted=false and updated_at
+- items API the grid calls returns exactly the seeded item with its dataset_row preview, and the grid Preview cell reads that exact text
+- the browser sends no DELETE for the item and no POST to items/bulk-remove/
+
 ## auth
 
 ### AUTH-E2E-001 — user signs in with email and password
@@ -903,6 +928,58 @@
 - the widget query returns exactly the seeded per-bucket maxima (190, 250, 210) for latency/max
 - chart_config.chart_type round-trips as column and then as line through the widget detail endpoint
 
+### DASH-E2E-017 — a saved custom-formula metric persists a correct value, renders on a dashboard and records an alert
+
+**Goal:** Save a custom-formula conversation metric, read its settled value on the Overview, freeze it as a snapshot, and see that snapshot render on a dashboard and record a threshold alert. The Add to dashboard and Create alert menu items are disabled in the product, so the widget and monitor are created through the API the product used.
+
+**Spec:** `flows/dashboards/derived-metric.spec.ts:99`
+
+**Tags:** —
+
+**User steps:**
+
+1. ingest two minted conversations, each a root and a child span with numeric resolved/escalated outcomes, aged an hour so their 15-minute bucket is closed
+2. create the metric through New metric: name, project, Custom formula over conversations, two span-attribute inputs and the formula; Save metric validates, creates and queues the first calculation
+3. give this project a 5-minute settle and a 60-second cadence (the defaults are 30 minutes and 900 seconds, and no API sets them), see a publication report the window as not final while the conversations are open, then wait for them to settle (5 minutes after their last arrival) and the next refresh to publish them
+4. reload the metric page and read the Overview value on the default 7-day window and on a Custom window around the seeded bucket
+5. create a static below-threshold monitor through POST /tracer/user-alerts/, then Save snapshot on the Custom window
+6. create a dashboard with a metric widget pinned to the snapshot through the dashboard and widget APIs, then open it in the browser
+7. wait for the 60-second alert check to record the monitor alert for the snapshot window
+
+**Backend state verified:**
+
+- The exact four seeded spans, their typed outcomes and two distinct conversations belong to the minted project in the actor organization/default workspace.
+- Validate accepts the formula, and the saved metric is version 1 of a custom conversation recipe in PG and in the metric API, with the same definition hash.
+- While the conversations are open the KPI API reports the Custom window as partial; the test first observes a final value no earlier than the last arrival plus the settle time, less 5 seconds of clock tolerance: 0.5 over exactly two evaluated conversations, not partial, and the Overview shows 0.5 on both windows.
+- The snapshot run completes; it froze exactly the two seeded conversations, its committed overall result is numerator 1, denominator 2, value 0.5, and its commit row names that result.
+- The persisted widget binds only the snapshot run, and the dashboard query the browser sends returns 0.5, which the widget renders.
+- The actor-scoped monitor records exactly one critical alert log for the snapshot window, one critical delivery for that run, marks it consumed, and the monitor details API lists that log.
+
+### DASH-E2E-018 — rapid date presets query only the final range, custom Done and Refresh apply at once
+
+**Goal:** A user flicking through date presets sees each chip highlight as they click, while the widgets load only the range they land on; a custom range applies as soon as they press Done, and Refresh still brings the widgets to a completed result.
+
+**Spec:** `flows/dashboards/preset-burst-requests.spec.ts:51`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed 3 traces into a minted project and a dashboard with trace_count and span_count widgets stored at 7D
+2. open the dashboard on the Default chip and wait for both widgets to load
+3. click Today, 7D and 30D back to back
+4. see the 30D chip highlighted, then both widgets load the 30-day range with the seeded totals
+5. open Custom, type today's date as Start Date and End Date and press Done
+6. click Refresh with the custom range applied and wait for it to finish
+
+**Backend state verified:**
+
+- the preset burst sends exactly one time range per widget on POST /tracer/dashboard/query/, the 30-day one; no Today or 7D range is ever sent, the 30D chip is primary before the first 30D query, and that query starts at least 450 ms after the 30D click
+- each completed, exact 30D response spans the expected start and end and contains 3 traces or 6 spans
+- custom Done sends exactly one range per widget, [local midnight today, local midnight tomorrow), dispatched under 450 ms after Done
+- the custom-range responses are complete and exact with the seeded totals
+- Refresh sends exactly one POST ?refresh=true per widget with the custom range, and a later response completes exactly with query_completed_at after the click and the seeded totals; Refreshing returns to Refresh and Last updated shows that completion
+
 ## datasets
 
 ### DATA-E2E-001 — uploaded dataset values can be discovered and filtered
@@ -1124,6 +1201,39 @@
 - Root cause shows the saved analysis and the eval issue's explanation from the share
 - a restricted link shows Sign in required, with no error toast, and stays on the shared URL
 
+### ERR-E2E-006 — a developer runs an Epoch from an Error Feed issue and follows it from the issue
+
+**Goal:** A developer runs an Epoch from an Error Feed issue: picks its environment once, reviews the slim plan and the drafted scenarios, starts it, and the issue page, the epoch page and the issue list show that epoch and its next action
+
+**Spec:** `flows/error-feed/run-epoch-from-issue.spec.ts:130`
+
+**Tags:** —
+
+**User steps:**
+
+1. open the issue
+2. press Run Epoch
+3. pick the environment
+4. read the plan and swap one trace
+5. press Draft scenarios
+6. untick one drafted scenario
+7. press Run Epoch in the review
+8. read the status strip
+9. reload once the epoch is ready
+10. read the header action
+11. press View Epoch 3
+12. reload the epoch page
+13. open the issue list and hover the epoch icon
+
+**Browser observations:**
+
+- the plan is read only after Run Epoch, first with the issue and project, then with the picked environment, and the picker lists only the code agent's environment
+- the create POST body is exactly the issue, project, environment and the picks after the swap
+- the run POST body is exactly the kept scenario and the review's launch rows at their defaults
+- the strip reads Measuring with its sentence, then Ready for review with Open pull request as the header action after a reload
+- the epoch page's breadcrumb is the issue's cluster id linking to the issue, and it survives a reload
+- the list reads the page's cluster ids in one batch and the issue's icon reads "Epoch 3 · Ready for review"
+
 ### FEED-E2E-001 — an old issue URL opens the surviving issue
 
 **Goal:** A saved link to a retired issue opens its surviving issue
@@ -1196,7 +1306,7 @@
 
 **Goal:** Read typed evaluations on real spans, find exactly their matching traces and reject invalid judge output visibly
 
-**Spec:** `flows/evals/catalog-result-types.spec.ts:137`
+**Spec:** `flows/evals/catalog-result-types.spec.ts:139`
 
 **Tags:** —
 
@@ -1746,6 +1856,55 @@
 
 - the gateway config API returns each named provider with its native api_format and the unique model entered in the UI
 
+### GW-E2E-023 — request logs tell an unpriced request apart from a free and a priced one
+
+**Goal:** Someone reading the gateway Request Logs can tell a request whose model has no price apart from a request that really cost $0 and from a priced one, in the table and in the request drawer
+
+**Spec:** `flows/gateway/unpriced-request-cost.spec.ts:49`
+
+**Tags:** —
+
+**User steps:**
+
+1. provision an organization of the test's own, an org provider on the managed mock listing an unpriced, a zero-priced and gpt-4o-mini model, an org config pricing only the zero model at 0, and an org API key
+2. wait for the gateway to hold the pushed org config
+3. send one real chat completion per model with the org key
+4. open Request Logs and read the Cost cell of each of the three rows
+5. hover the Unpriced chip and read its tooltip
+6. open each request's drawer and read its Cost
+
+**Backend state verified:**
+
+- the gateway answers all three completions with HTTP 200, a request id and the requested model
+- PG agentcc_request_log holds exactly the three request ids: unpriced cost 0 with cost_source unpriced, free cost 0 with no cost_source, gpt-4o-mini cost above 0 with cost_source catalogue, all status 200
+- the request-logs list and detail endpoints return the same three request IDs, costs and cost sources as the stored rows
+- the table shows Unpriced with the explanatory tooltip only for the unpriced row, $0.00 for the free row and the formatted API cost for gpt-4o-mini
+- each request drawer shows the same Cost as its table row
+
+### GW-E2E-024 — Add/Edit Provider saves only the models the user picked or typed
+
+**Goal:** A platform engineer adds and then edits a provider, and only the models they deliberately picked or typed are saved: hovering a listed model and clicking away neither selects it nor drops a selected one, and a typed model ID is kept, trimmed and once, whether they click away or press Save directly
+
+**Spec:** `flows/gateway/provider-model-selection.spec.ts:28`
+
+**Tags:** —
+
+**User steps:**
+
+1. open Gateway providers and start adding a custom provider with a base URL and API key
+2. pick one listed model, hover another listed model and click away
+3. type a model ID with surrounding spaces and click away
+4. add the provider
+5. edit the provider, hover a selected and an unselected listed model and click away
+6. type another model ID and press Save Changes directly
+7. reopen the provider and see exactly the picked and typed models
+
+**Backend state verified:**
+
+- the Add save posts config.models exactly [listedA, typedOne] to update-provider (typed ID trimmed, hovered listedB absent) and gets 200
+- the gateway config API returns the added provider with models exactly [listedA, typedOne]
+- the Edit direct save posts and persists models exactly [listedA, typedOne, typedTwo]: update-provider body and gateway config API agree
+
 ## knowledge-base
 
 ### KB-E2E-001 — a workspace reader downloads an owned knowledge-base file
@@ -2083,7 +2242,7 @@
 
 **Goal:** A developer paging through a large trace list always knows where they are and when they have reached the end
 
-**Spec:** `flows/observe/list-pagination.spec.ts:220`
+**Spec:** `flows/observe/list-pagination.spec.ts:193`
 
 **Tags:** —
 
@@ -2106,7 +2265,7 @@
 
 **Goal:** A developer bouncing back and forth near the end of a trace list never loses forward navigation
 
-**Spec:** `flows/observe/list-pagination.spec.ts:446`
+**Spec:** `flows/observe/list-pagination.spec.ts:419`
 
 **Tags:** —
 
@@ -2126,7 +2285,7 @@
 
 **Goal:** A developer whose trace count divides evenly by the page size sees a real last page, not an empty page N+1
 
-**Spec:** `flows/observe/list-pagination.spec.ts:538`
+**Spec:** `flows/observe/list-pagination.spec.ts:511`
 
 **Tags:** —
 
@@ -2145,7 +2304,7 @@
 
 **Goal:** A developer searching a sparse cursor window is never shown a page number the transport cannot prove exists
 
-**Spec:** `flows/observe/list-pagination.spec.ts:592`
+**Spec:** `flows/observe/list-pagination.spec.ts:565`
 
 **Tags:** —
 
@@ -2165,7 +2324,7 @@
 
 **Goal:** A developer's pointer never lands on a button whose label React just tore down and rebuilt underneath it
 
-**Spec:** `flows/observe/list-pagination.spec.ts:671`
+**Spec:** `flows/observe/list-pagination.spec.ts:644`
 
 **Tags:** —
 
@@ -2173,8 +2332,8 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10 (Next enabled)
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. capture the Next label's DOM node and watch the pager subtree for ~1.5s
+3. capture the Next label's DOM node and observe it while alternating row heights for ~1.5s
+4. verify each row-height change re-renders the pager ancestor (INT-06)
 5. confirm the node is never removed from the DOM and stays connected
 
 **Backend state verified:**
@@ -2185,7 +2344,7 @@
 
 **Goal:** A developer's mouse press on Back/Next always produces a click, even while the ancestor is mid-re-render
 
-**Spec:** `flows/observe/list-pagination.spec.ts:737`
+**Spec:** `flows/observe/list-pagination.spec.ts:698`
 
 **Tags:** —
 
@@ -2193,10 +2352,10 @@
 
 1. seed 15 traces into one project over OTLP
 2. open the project's trace list at page size 10
-3. confirm the pager's ancestor is actually re-rendering rapidly (INT-06 guard)
-4. install capture-phase pointer/click counters on the pager root
-5. press-dwell-release on Next and confirm the page advanced with pointerdown === click === 1
-6. repeat the same dwell-click on Back
+3. install capture-phase pointer/click counters on the pager root
+4. hold Next down while changing row heights and verifying the ancestor re-renders, then release
+5. confirm the page advanced with one press, release and click
+6. repeat the same dwell-click on Back and confirm the pager returns to page 1
 
 **Backend state verified:**
 
@@ -2206,7 +2365,7 @@
 
 **Goal:** A developer who changes results-per-page gets exactly that many rows and starts back at page 1, not a stale mid-list position
 
-**Spec:** `flows/observe/list-pagination.spec.ts:806`
+**Spec:** `flows/observe/list-pagination.spec.ts:761`
 
 **Tags:** —
 
@@ -2246,7 +2405,7 @@
 
 **Goal:** A developer who narrows the date range never sees stale rows or a stale page position from the filter they just replaced
 
-**Spec:** `flows/observe/list-pagination.spec.ts:846`
+**Spec:** `flows/observe/list-pagination.spec.ts:801`
 
 **Tags:** —
 
@@ -2266,7 +2425,7 @@
 
 **Goal:** A developer who has already paged deep into a trace list and jumps back to page 1 can still return straight to the page they left off on
 
-**Spec:** `flows/observe/list-pagination.spec.ts:933`
+**Spec:** `flows/observe/list-pagination.spec.ts:888`
 
 **Tags:** —
 
@@ -2862,6 +3021,83 @@
 - the example API encodes the exact project name into one quoted Python literal
 - the visible Users setup code equals the exact example API result
 
+### OBS-E2E-063 — choose Sessions for a new Insights report while the session check is still loading
+
+**Goal:** Start a new Insights report on Sessions, even when I pick Sessions before the page has finished checking that the project has sessions (the report is started, its contents are not claimed: a run cannot finish in the E2E stack)
+
+**Spec:** `flows/observe/insights-new-report.spec.ts:47`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed three traces with session.id in two sessions in a minted project
+2. open the project's Traces view and choose Find patterns (a New report on Traces), then the rail's New report (a fresh form)
+3. hold the form's sessions check (the real request is delayed, then continued; nothing is stubbed)
+4. click the already-selected Sessions unit
+5. see the estimate go out for sessions and Run report become enabled while the check is still held
+6. release the check and click Run report
+
+**Backend state verified:**
+
+- ClickHouse spans FINAL holds every seeded span with its trace_session_id: one session per label, two in all
+- POST /tracer/insights/estimate/ was sent with unit sessions before the held sessions check was released, and counted the two sessions
+- POST /tracer/insights/runs/ returns a run_id and config_id, and PG holds exactly one insights config (unit sessions) and one run for the actor org and project
+
+### OBS-E2E-064 — Ask Jev stays in reach as example questions are added, and the cost confirm has one primary action
+
+**Goal:** Write a question for Jev, add example questions without losing the Ask button, confirm the read, and start the run
+
+**Spec:** `flows/observe/ask-jev-composer.spec.ts:82`
+
+**Tags:** —
+
+**User steps:**
+
+1. send 4 traces to a new Observe project
+2. save the org TypeSafe key through the endpoint AI Providers uses
+3. open the project's Traces view, its Evaluate menu, and choose Ask a question
+4. type a question and add two example questions from Try one
+5. click Ask Jev and read the confirm for 4 traces
+6. click Start
+
+**Backend state verified:**
+
+- POST /tracer/instant-eval/estimate/ answers rows_to_read 4 and needs_confirm true for the project's traces
+- POST /tracer/instant-eval/start/ is sent confirmed for 4 rows and returns a task_id, and PG holds its tracer_eval_task and tracer_instant_eval_run for the actor org with rows_requested 4
+
+**Browser observations:**
+
+- the Ask Jev row lies inside the 1280x720 viewport after each example is added, at the bottom of its scrolling pane with nothing after it
+- Ask Jev opens a confirm reading 4 traces for 3 questions, Start is the only contained primary button and has focus
+
+### OBS-E2E-065 — Ask Jev reads every trace and shows each answer
+
+**Goal:** Ask Jev a yes/no question about my traces and see every trace answered, with the counts adding up
+
+**Spec:** `flows/observe/ask-jev-run.spec.ts:57`
+
+**Tags:** —
+
+**User steps:**
+
+1. send 3 traces to a new Observe project, one whose output the mock answers No
+2. save the org TypeSafe key through the endpoint AI Providers uses
+3. open the project's Traces view, its Evaluate menu, and choose Ask a question
+4. type a yes/no question and click Ask Jev, which starts at once under the confirm size
+5. watch the run finish: its status line says every trace was answered
+6. read the run's traces table
+
+**Backend state verified:**
+
+- GET /tracer/instant-eval/summary/ reaches status completed with answered 3, failed 0 and counts Yes 2, No 1
+- GET /tracer/instant-eval/rows/ returns exactly the three seeded trace ids, each with its expected answer
+
+**Browser observations:**
+
+- the status line says 3 traces answered and the counts read 2 Yes · 1 No
+- the traces table shows exactly the three seeded traces, each with the same answer as the rows API
+
 ## prompts
 
 ### PROMPT-E2E-001 — a mock-run prompt exposes its current evaluation configuration lifecycle
@@ -2984,6 +3220,51 @@
 - Non-expiring and future keys authenticate using headers and Basic auth; expired keys consistently return api_key_expired, distinct from manually disabled keys.
 - The Keys list reports the exact minted expiry/status set and matches Never, future date, Expired and Disabled in the browser.
 - Admin-saved expiry persists exactly and invalidates previously warmed collector credentials; a newly cached near-future expiry also fails after its boundary, while the no-expiry control works.
+
+### SET-E2E-004 — a link to the TypeSafe key opens AI Providers on that provider and survives navigation
+
+**Goal:** Follow a link to add a TypeSafe key, save it, and land on the TypeSafe card again after moving around AI Providers and going Back
+
+**Spec:** `flows/settings/ai-providers-deep-link.spec.ts:46`
+
+**Tags:** —
+
+**User steps:**
+
+1. open AI Providers from a link that names the TypeSafe provider
+2. see the search filled with typesafe and only the TypeSafe card
+3. enter the TypeSafe API key and add it
+4. click AI Providers in the sidebar and see every provider
+5. choose the Custom model category
+6. go Back and see the All category with only the TypeSafe card again
+
+**Backend state verified:**
+
+- POST /model-hub/api-keys/ saves the key and GET /model-hub/develops/provider-status/ then lists typesafe with has_key true
+- PG model_hub_apikey holds exactly one live typesafe row for the actor org
+- the All count after the plain sidebar link equals the providers provider-status lists plus the org custom models
+
+### SET-E2E-005 — a provider search that matches nothing says so and clears back to every provider
+
+**Goal:** Search AI Providers for a name that does not exist, be told nothing matched in the category I am in, and get the full list back in one click
+
+**Spec:** `flows/settings/ai-providers-no-match.spec.ts:32`
+
+**Tags:** —
+
+**User steps:**
+
+1. open AI Providers
+2. search for a provider name that does not exist
+3. see that no AI providers match it
+4. choose the Custom model category and see that no custom models match it
+5. click Clear filters
+6. see the All category with an empty search and every provider
+
+**Backend state verified:**
+
+- GET /model-hub/develops/provider-status/ has no provider whose name contains the searched text
+- after Clear filters the All count equals the providers provider-status lists plus the org custom models
 
 ## simulate
 
@@ -3192,6 +3473,38 @@
 - the launch POST body is exactly that run, its 12 failing and 3 passing cases, Instructions only, no locked files, 1,500 credits, 150 minutes, gpt-4o-mini, 25% margins and a $0.01 cost limit
 - the browser lands on the environment's improvements/<id> URL of the epoch the POST returned
 
+### SIM-E2E-009 — a multi-agent call shows its participants step by step, an unplaced hand-off as not tied to a participant, and a refused worker action
+
+**Goal:** A developer opens a multi-agent call and sees which participant did what, step by step, which step the record could not tie to a participant, and what the world refused a participant
+
+**Spec:** `flows/simulate/participants-table.spec.ts:30`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed one completed chat call with a stored Participants record and trial world changes
+2. open the call from its run
+3. open the Participants tab
+4. pick the first hand-off step and Open in trace, then close the trace
+5. go back to Participants and pick the hand-off the record could not place
+6. open the World state tab
+7. open the call the user stopped and its Participants tab
+
+**Backend state verified:**
+
+- the workers API serves two turns, each step with its turn and order, and the second hand-off as relationship unknown
+
+**Browser observations:**
+
+- one lane per participant, in the order they first act, plus one for the step the record could not tie
+- the order-lookup hand-off is numbered before the refund hand-off
+- a step read from a trace opens that trace, and closing it leaves the call on its Traces tab
+- the unplaced hand-off comes from the lane not tied to a participant
+- World changes lists the worker's refused attempt with its reason
+- World changes lists the order two workers named, with its committed writes
+- the stopped call says it was stopped by the user, and its cancelled worker was stopped with the run sandbox
+
 ### SIM-E2E-010 — an actor with no channel is named on Scenarios, and World state reads a read apart from a write
 
 **Goal:** A developer sees every actor of the cast on the scenarios that include it, speaking or not, and a trial's World state says what the agent only read apart from what it committed
@@ -3223,6 +3536,30 @@
 - Add actor offers the caller's side and the world, and opens Add actor on the side picked
 - the Scenarios table names the actor, never its raw id
 - World state reads "1 read" and "Committed: issue_refund"
+
+### SIM-E2E-011 — the Contract tab lists the declared workers, and a worker the harness stopped at its deadline says so
+
+**Goal:** A developer reviews which workers the app declares before a run, and after a run sees that a worker past its deadline was stopped, not only refused
+
+**Spec:** `flows/simulate/worker-stop-and-declared-workers.spec.ts:17`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed an Environment whose contract declares two workers, with a call whose refund worker the harness stopped at its deadline
+2. open its Contract tab
+3. open that call and its Participants tab
+
+**Backend state verified:**
+
+- the environment detail serves both declared workers with their binding and the tools each may use
+- the workers API serves the stopped worker as past its deadline with cleanup stopped
+
+**Browser observations:**
+
+- the Participants card lists each declared participant with its connection and only the tools it may use
+- the stopped call says the refund worker was stopped when its deadline passed
 
 ### SIM-E2E-017 — the Tools card shows each tool's inputs with units, what it returns, and a production-only tool as Unsupported
 
@@ -3345,6 +3682,33 @@
 - a line says the agent committed the change after Dana Brooks refused it
 - the approval names the refund the agent wrote after the decision
 
+### SIM-E2E-035 — a user stops a running Run, and its call reads Cancelled in the calls list, the chips and analytics while a skipped case stays Error
+
+**Goal:** A developer stops a Run mid-call and sees the stopped call counted as Cancelled, never as an error, while a case the harness skipped still reads Error
+
+**Spec:** `flows/simulate/stop-run-reads-cancelled.spec.ts:26`
+
+**Tags:** —
+
+**User steps:**
+
+1. seed a running hosted Run with one call under way and one case the harness skipped
+2. open the Run and click Stop simulation, then Stop run
+3. reload the Run once it has stopped
+4. read the status chips
+5. open Analytics and click the donut legend entry for Cancelled calls
+
+**Backend state verified:**
+
+- the calls API serves the stopped call as cancelled and the skipped case as error, with status counts Cancelled 1 and Error 1
+- the runs list serves the Run as Cancelled with one cancelled outcome, no errored one and the skipped case as skipped
+
+**Browser observations:**
+
+- after the stop the Run offers no Stop control
+- the Cancelled chip counts 1 and the Error chip counts 1
+- the donut legend entry for Cancelled calls opens the calls list on the stopped call alone
+
 ### SIM-E2E-036 — an environment-only org imports Observe sessions only into its own workspace's environments, and no other org or workspace reaches them
 
 **Goal:** A person in an environment-only organisation creates an environment test from Observe and reaches only their own workspace's environments and projects, while another organisation or workspace can neither import into them nor read the import
@@ -3370,4 +3734,4 @@
 - the import answers 201 and lands on the review; simulate_evidence_import has one row for A's organisation, A's environment and A's project, with one pending case for the seeded session
 - the import route answers 404 with its reason, and makes no simulate_evidence_import row, for A naming B's environment, A naming B's project, A in the sibling workspace naming A's environment, and A in the sibling workspace naming the sibling's environment with A's project
 - B reading A's import answers 404, through A's environment and through B's own
-- a viewer of A's workspace is refused the import and the draft with 403 (Write access denied to this workspace): A's organisation keeps its one import, still undrafted, with its case pending
+- a viewer of A's workspace is refused the import and the draft with 403 (Viewers can't make changes in this workspace): A's organisation keeps its one import, still undrafted, with its case pending

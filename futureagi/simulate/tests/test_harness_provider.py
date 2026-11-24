@@ -122,6 +122,15 @@ def test_default_provider_is_hosted():
     assert isinstance(get_harness_provider(), HostedHarnessProvider)
 
 
+@pytest.mark.django_db
+@override_settings(HARNESS_PROVIDER="hosted")
+def test_hosted_job_detail_returns_not_found_for_template_id(auth_client):
+    response = auth_client.get("/simulate/api/harness-jobs/env-voice-support/")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Hosted harness job not found"
+
+
 def test_e2b_health_exposes_relayed_public_ingress(settings):
     settings.HOSTED_SANDBOX_PROVIDER = "e2b"
     settings.E2B_API_KEY = "configured"
@@ -675,6 +684,7 @@ def test_daytona_preflight_rejects_known_egress_overflow(settings):
     settings.ALK_HOSTED_SIMULATOR_SECRET_ENV = {}
     request = SimpleNamespace(
         validated_data=_v1_payload(),
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -691,6 +701,7 @@ def test_daytona_preflight_requires_only_the_provider_the_source_uses(settings):
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -736,6 +747,7 @@ def test_daytona_preflight_leaves_credentials_optional_when_source_is_unclassifi
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -772,6 +784,7 @@ def test_daytona_preflight_requires_detected_vertex_credential_file(settings):
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 
@@ -926,6 +939,7 @@ def test_preflight_rejects_unknown_provider_target_before_run(settings):
     payload["credential_values"] = {"RETELL_API_KEY": "valid-key"}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
     failed_target = SimpleNamespace(
@@ -1075,6 +1089,7 @@ def test_sandbox_flatten_maps_github_source():
                 "repository": "acme/agent",
                 "ref": "main",
                 "commit_sha": "a" * 40,
+                "subfolder": "agents/support",
                 "visibility": "public",
             },
             "agent": {
@@ -1090,12 +1105,26 @@ def test_sandbox_flatten_maps_github_source():
     assert flat["github_repository"] == "acme/agent"
     assert flat["github_ref"] == "main"
     assert flat["github_commit_sha"] == "a" * 40
+    assert flat["github_subfolder"] == "agents/support"
+    assert flat["metadata"] == {"k": "v", "generic_harness_v1": True}
     assert flat["github_visibility"] == "public"
     assert flat["connector"] == "livekit"
     assert flat["connector_config"] == {"room": "r1"}
     assert flat["scenario_count"] == 7
     assert flat["seed"] == 42
     assert "source_path" not in flat and "source_id" not in flat
+
+
+def test_sandbox_flatten_asks_for_the_generic_harness_only_with_a_subfolder():
+    flat = SandboxHarnessProvider._flatten_source(
+        {
+            "source": {"kind": "github", "repository": "acme/agent"},
+            "agent": {"connector": "auto"},
+            "metadata": {"k": "v"},
+        }
+    )
+    assert "github_subfolder" not in flat
+    assert flat["metadata"] == {"k": "v"}
 
 
 def test_sandbox_flatten_maps_archive_source():
@@ -1507,6 +1536,7 @@ def test_daytona_preflight_source_failure_keeps_status_and_reports_check(setting
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
     clone_failed = HostedHarnessError(
@@ -1539,6 +1569,7 @@ def test_daytona_preflight_lists_six_checks_in_order(settings):
     payload["agent"] = {"connector": "auto", "config": {}, "secret_refs": {}}
     request = SimpleNamespace(
         validated_data=payload,
+        headers={},
         build_absolute_uri=lambda _path: "https://harness.example.test/",
     )
 

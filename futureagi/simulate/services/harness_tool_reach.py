@@ -127,6 +127,11 @@ def production_only(contract: Any) -> list[str]:
 PRODUCTION_ONLY_FIX = "serve it from the agent's tools service or remove it"
 
 
+def production_only_reason(tool: str) -> str:
+    """Why a production-only tool is blocked, as the run's refusal says it."""
+    return f"{tool} reaches production and is blocked in this controlled test: {PRODUCTION_ONLY_FIX}."
+
+
 def needed_production_tools(scenario: Any, blocked: list[str]) -> list[str]:
     """The production-only tools a scenario cannot pass without: those its solution calls, unless one of its
     alternative paths calls none of them."""
@@ -341,6 +346,8 @@ class ToolStatus(TypedDict):
     # reaches a system the test world has no copy of; unknown: the build read nothing about where it runs.
     status: ToolState
     status_label: str
+    # Why a test cannot run it, in the words the run's own refusal uses; None for a tool a test can run.
+    status_reason: str | None
     # Whether the world restores what it changes before each trial; None when where it runs is not known.
     reset_between_trials: bool | None
     # Where it runs: the agent's callable, or the tools service route; None when the contract names neither.
@@ -509,6 +516,9 @@ def tool_status(contract: object) -> list[ToolStatus]:
                 "tool": name,
                 "status": status,
                 "status_label": STATUS_LABELS[status],
+                "status_reason": production_only_reason(name)
+                if status == "unsupported"
+                else None,
                 "reset_between_trials": reach[name] if known else None,
                 "runs_at": _runs_at(entries.get(name)),
                 "writes": _writes(entries.get(name)),
