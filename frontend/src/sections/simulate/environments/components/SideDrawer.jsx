@@ -1,5 +1,5 @@
 import PropTypes from "prop-types";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Box, Drawer, IconButton, Portal } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
@@ -25,6 +25,17 @@ import { coveredDrawerSx, useDrawerCovered } from "src/hooks/use-drawer-stack";
 export default function SideDrawer({ open, onClose, width = 480, keepMounted = false, beside = false, children }) {
   const [host, setHost] = useState(null);
   const covered = useDrawerCovered(open);
+  // Nothing keeps focus in a drawer beside the page: a button that disables itself when pressed drops it to the body,
+  // where the drawer's own Escape never fires.
+  useEffect(() => {
+    if (!beside || !open || covered) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key !== "Escape" || document.activeElement !== document.body) return;
+      onClose?.(event);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [beside, open, covered, onClose]);
   const drawer = (
     <Drawer
       anchor="right"
