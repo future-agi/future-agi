@@ -1055,16 +1055,25 @@ def test_source_scan_lists_the_api_keys_the_code_reads():
         _source_tarball(
             {
                 "agent.py": (
+                    '"""Swap to Claude: os.getenv("ANTHROPIC_API_KEY")."""\n'
                     "import os\n"
                     "# To use Claude instead, set ANTHROPIC_API_KEY.\n"
-                    "client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])\n"
+                    "# c = Anthropic(api_key=os.environ['ANTHROPIC_API_KEY'])\n"
+                    "client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])  # not os.getenv('XAI_API_KEY')\n"
                     "register(api_key=os.getenv('FI_API_KEY'))\n"
                     "port = os.environ['PORT']\n"
+                    "\n"
+                    "def build():\n"
+                    '    """Or os.environ.get(\'MISTRAL_API_KEY\')."""\n'
+                    "    return os.environ.get('TOGETHER_API_KEY')\n"
                 ),
                 "settings.py": (
                     'from os import environ\ngroq = environ.get("GROQ_API_KEY", "")\n'
                 ),
                 "server.ts": (
+                    "// const claude = process.env.ANTHROPIC_API_KEY;\n"
+                    "/* const mistral = process.env['MISTRAL_API_KEY']; */\n"
+                    'const url = "https://api.example.com/v1";\n'
                     "const tts = process.env.CARTESIA_API_KEY;\n"
                     'const stt = process.env["DEEPGRAM_API_KEY"];\n'
                 ),
@@ -1081,6 +1090,7 @@ def test_source_scan_lists_the_api_keys_the_code_reads():
         "FI_API_KEY",
         "GROQ_API_KEY",
         "OPENAI_API_KEY",
+        "TOGETHER_API_KEY",
     ]
     assert detect_source_api_keys(b"not a tarball") == []
 
