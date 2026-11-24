@@ -274,7 +274,7 @@ export const REQUIRED_EVAL_COPY = {
     names.length === 1
       ? `Required eval failed: ${names[0]}`
       : `${names.length} required evals failed`,
-  tip: "Flagged beside the task result; it doesn't change the sub-goals' verdict.",
+  tip: "A failing required eval fails the call, even when its sub-goals pass.",
   label: "Required eval failed",
   required: "Required",
 };

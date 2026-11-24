@@ -8,9 +8,9 @@ import PropTypes from "prop-types";
 export const EVALS_COPY = {
   required: "Required",
   requiredTip:
-    "A failing score is flagged on the conversation beside its task result; it doesn't change the sub-goals' verdict.",
+    "A failing score fails the conversation, even when its sub-goals pass.",
   requiredHint:
-    "Required. A failing score is flagged on the conversation beside its task result; it doesn't change the sub-goals' verdict.",
+    "Required. A failing score fails the conversation, even when its sub-goals pass. Without it, the score is shown but never fails it.",
   passAtLeast: "pass ≥",
   passAt: (n) => `pass ≥ ${n}%`,
   thresholdTip: "The score this evaluation needs to pass. Click to change it.",
