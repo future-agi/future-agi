@@ -57511,7 +57511,17 @@ export const SimulateApiHarnessJobsConversationConversationHistoryQueryParams =
     before: zod
       .number()
       .min(1)
-      .describe("Read the items just before this sequence."),
+      .optional()
+      .describe(
+        "Read the items just before this sequence. Give this or `around`.",
+      ),
+    around: zod
+      .string()
+      .uuid()
+      .optional()
+      .describe(
+        "Read the page of messages that holds this message (a change's `used` message id). Give this or `before`; only with `kind` messages.",
+      ),
   });
 
 export const SimulateApiHarnessJobsConversationConversationHistoryResponse =
@@ -57557,7 +57567,13 @@ export const SimulateApiHarnessJobsConversationConversationHistoryResponse =
       )
       .describe("Oldest first; empty for `kind` messages."),
     oldest_sequence: zod.number(),
-    has_older: zod.boolean(),
+    newest_sequence: zod.number(),
+    has_older: zod
+      .boolean()
+      .describe("Items before `oldest_sequence` this page leaves out."),
+    has_newer: zod
+      .boolean()
+      .describe("Items after `newest_sequence` this page leaves out."),
   });
 
 /**

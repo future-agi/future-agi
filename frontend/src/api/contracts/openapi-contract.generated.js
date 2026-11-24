@@ -31214,10 +31214,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
             },
           },
           before: {
-            required: true,
+            required: false,
             schema: {
               type: "integer",
               minimum: 1,
+            },
+          },
+          around: {
+            required: false,
+            schema: {
+              type: "string",
+              format: "uuid",
             },
           },
         },
@@ -72543,7 +72550,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     HarnessConversationHistoryPage: {
-      required: ["kind", "messages", "events", "oldest_sequence", "has_older"],
+      required: [
+        "kind",
+        "messages",
+        "events",
+        "oldest_sequence",
+        "newest_sequence",
+        "has_older",
+        "has_newer",
+      ],
       type: "object",
       properties: {
         kind: {
@@ -72570,8 +72585,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
           type: "integer",
           "x-nullable": true,
         },
+        newest_sequence: {
+          title: "Newest sequence",
+          type: "integer",
+          "x-nullable": true,
+        },
         has_older: {
           title: "Has older",
+          description: "Items before `oldest_sequence` this page leaves out.",
+          type: "boolean",
+        },
+        has_newer: {
+          title: "Has newer",
+          description: "Items after `newest_sequence` this page leaves out.",
           type: "boolean",
         },
       },

@@ -25566,7 +25566,11 @@ export interface HarnessConversationHistoryPageApi {
   /** Oldest first; empty for `kind` messages. */
   events: HarnessConversationEventReadApi[];
   oldest_sequence: number;
+  newest_sequence: number;
+  /** Items before `oldest_sequence` this page leaves out. */
   has_older: boolean;
+  /** Items after `newest_sequence` this page leaves out. */
+  has_newer: boolean;
 }
 
 export type HarnessConversationMessageCreateApiKind =
@@ -49021,10 +49025,14 @@ export type SimulateApiHarnessJobsReadParams = {
 export type SimulateApiHarnessJobsConversationConversationHistoryParams = {
   kind: SimulateApiHarnessJobsConversationConversationHistoryKind;
   /**
-   * Read the items just before this sequence.
+   * Read the items just before this sequence. Give this or `around`.
    * @minimum 1
    */
-  before: number;
+  before?: number;
+  /**
+   * Read the page of messages that holds this message (a change's `used` message id). Give this or `before`; only with `kind` messages.
+   */
+  around?: string;
 };
 
 export type SimulateApiHarnessJobsConversationConversationHistoryKind =

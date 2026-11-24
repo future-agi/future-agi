@@ -56693,10 +56693,18 @@
                     {
                         "name": "before",
                         "in": "query",
-                        "description": "Read the items just before this sequence.",
-                        "required": true,
+                        "description": "Read the items just before this sequence. Give this or `around`.",
+                        "required": false,
                         "type": "integer",
                         "minimum": 1
+                    },
+                    {
+                        "name": "around",
+                        "in": "query",
+                        "description": "Read the page of messages that holds this message (a change's `used` message id). Give this or `before`; only with `kind` messages.",
+                        "required": false,
+                        "type": "string",
+                        "format": "uuid"
                     }
                 ],
                 "responses": {
@@ -160596,7 +160604,9 @@
                 "messages",
                 "events",
                 "oldest_sequence",
-                "has_older"
+                "newest_sequence",
+                "has_older",
+                "has_newer"
             ],
             "type": "object",
             "properties": {
@@ -160627,8 +160637,19 @@
                     "type": "integer",
                     "x-nullable": true
                 },
+                "newest_sequence": {
+                    "title": "Newest sequence",
+                    "type": "integer",
+                    "x-nullable": true
+                },
                 "has_older": {
                     "title": "Has older",
+                    "description": "Items before `oldest_sequence` this page leaves out.",
+                    "type": "boolean"
+                },
+                "has_newer": {
+                    "title": "Has newer",
+                    "description": "Items after `newest_sequence` this page leaves out.",
                     "type": "boolean"
                 }
             }
