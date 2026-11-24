@@ -1073,6 +1073,9 @@ ALK_HOSTED_WEBRTC_EGRESS_CIDRS = [
 # provisioner to drop privileges to the bundle's declared svc-agent/svc-tools/svc-data users
 # (Popen(user=) needs CAP_SETUID); "svc-control" runs every process uniformly instead.
 ALK_HOSTED_SANDBOX_OS_USER = os.getenv("ALK_HOSTED_SANDBOX_OS_USER", "svc-control")
+# After a user stop, how long cancel waits for the guest to seal the call in flight before deleting the sandbox: above
+# the guest's own bound (ALK_CANCEL_SEAL_SECONDS, 15 s) plus the time its runner takes to post the receipt.
+HARNESS_CANCEL_SEAL_SECONDS = float(os.getenv("HARNESS_CANCEL_SEAL_SECONDS") or 45)
 # Optional per-source pre-authored environment bundle store: <dir>/<owner>__<repo>/manifest.json.
 # A stopgap delivery path until in-sandbox bundle authoring lands; empty disables it.
 ALK_HOSTED_BUNDLE_DIR = os.getenv("ALK_HOSTED_BUNDLE_DIR", "")
@@ -1280,6 +1283,17 @@ HARNESS_SEED_CONTRACT_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes")
 # How long one reading of an agent, or one scan for the agents in a source, may run.
 ALK_HOSTED_READING_TIMEOUT = int(os.getenv("ALK_HOSTED_READING_TIMEOUT", "2400"))
+
+
+def _reading_call_limit() -> int:
+    """Most model calls one reading of an agent may make, its readers' calls included.
+    Empty, zero, a negative number or anything but a whole number means 60, so a bad
+    value never stops settings import."""
+    limit = _admission_env_int("ALK_HOSTED_READING_MAX_MODEL_CALLS", 60)
+    return limit if limit > 0 else 60
+
+
+ALK_HOSTED_READING_MAX_MODEL_CALLS = _reading_call_limit()
 # Most scenarios × trials one simulation Run may submit.
 HARNESS_MAX_EXECUTIONS_PER_RUN = int(os.getenv("HARNESS_MAX_EXECUTIONS_PER_RUN", "200"))
 # Each profile is an operator-certified size/connector/snapshot combination.

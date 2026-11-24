@@ -165,7 +165,7 @@ def _trace_to_row(t, *, version_from_updated_at: bool = False) -> list[Any]:
     ]
 
 
-def _freeze_intent_trace_rows(rows):
+def _freeze_intent_trace_rows(rows) -> tuple[tuple[tuple[Any, ...], ...], str]:
     from datetime import datetime
 
     from tracer.services.derived_metrics.base_list_current_source import (
@@ -303,7 +303,7 @@ def insert_trace_rows(rows, *, source_intent=None, selected_store=None):
     from tracer.models.metric_source_intent import MetricSourceIntent
 
     intent = MetricSourceIntent.objects.using("default").get(id=source_intent.intent_id)
-    images = []
+    images: list[dict[str, Any]] = []
     for ordinal in range(intent.page_count):
         images.extend(
             c["new"]

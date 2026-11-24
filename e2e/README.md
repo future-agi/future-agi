@@ -599,10 +599,11 @@ minute; they are skipped only when the stack never booted.
 
 The same job runs the suite against the Standalone stack as a nightly schedule and on demand (run
 the workflow by hand with `stack: standalone`). A pull request that carries the `e2e-standalone`
-label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. Adding the label
-starts a new run with both legs; any other label starts a run with no jobs and no `E2E Tests Pass`
-check, like a title or body edit. A re-run keeps the labels of the run it repeats. The Standalone leg builds the four component images with the layer cache,
-assembles the app image with `bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
+label runs it next to the Distributed leg, and `E2E Tests Pass` waits for both. The label counts
+only if the PR has it when a run starts, so add it, then push or close and reopen the PR: a re-run
+keeps the labels of the run it repeats. Adding a label starts no run, on purpose (see below). The
+Standalone leg builds the four component images with the layer cache, assembles the app image with
+`bin/e2e build standalone-app`, and boots with `E2E_STACK=standalone`.
 The `upgrade` job in `.github/workflows/standalone-ci.yml` runs weekly, on demand, and on a pull
 request labelled `upgrade-check` (the same rule: add the label, then push). It installs v1.41.1
 with its own `./bin/install` and sends a trace. Then it re-runs `./bin/install` at the head commit
@@ -657,9 +658,9 @@ the gate when the repository variable `E2E_ENFORCE_RUNTIME_SKIPS` is `true`, unl
 enough. An entry that is not by design names the ticket that removes it, an owner, and an expiry
 at most 45 days ahead; after that date it no longer allows the skip. Each listed skip gets a
 warning on the run, and an entry whose test ran and passed is reported as out of date. Expiry is
-judged on the run's date, so re-running only the report job cannot change its verdict. Today it
-lists OBS-E2E-031 and OBS-E2E-032 on both stacks (TH-10597, expiring 2027-01-06): their churn
-guard measures no DOM mutations in CI, so they skip themselves and their bodies never run.
+judged on the run's date, so re-running only the report job cannot change its verdict. Today the
+list is empty: OBS-E2E-031 and OBS-E2E-032 (TH-10597), whose churn guard once measured no DOM
+mutations in CI, now run and pass on both stacks.
 
 The backend has a stricter rule for its own skips in `futureagi/.ci/runtime-skips.json`
 (`BACKEND_ENFORCE_RUNTIME_SKIPS`). Each rule names the exact test files it covers, each with the
@@ -676,9 +677,9 @@ without the private package) or internal runs (`"runs": "internal"`).
 A skip that depends on data other tests leave behind cannot have an exact count. Its rule says why
 in `"varies"`, and each of its files maps to the number of tests the inventory collects there: an
 upper bound, checked against the inventory on every complete run, and matching nothing is no
-problem. Exact counts stay the default. Today one rule varies: `tracer/tests/test_hourly_aggregate_state_route_live_ch.py`
-(TH-10618, up to its 8 tests) skips when its shard's earlier tests left no spans in the shared
-ClickHouse table; 1 or 2 of its tests skipped in six runs on 22 Nov.
+problem. Exact counts stay the default, and no rule varies today. The last one, for
+`tracer/tests/test_hourly_aggregate_state_route_live_ch.py`, went once its tests ran against the
+CI ClickHouse sidecar, which they seed themselves.
 
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
 SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
@@ -688,6 +689,19 @@ all of them passed, so they cannot be skipped on every shard unseen. A manual ru
 
 `E2E Tests Pass` passes in two cases only: every shard and the `report` job succeeded, or the
 `changes` job found nothing that needs the suite. A skipped `report` job does not pass.
+
+**Why edits and labels start no run.** Backend CI, Python lint and E2E CI start only on `opened`,
+`synchronize` and `reopened`. A run for any other activity type becomes the workflow's newest
+suite for the head commit. GitHub then ignores the required check of the older, real suite, so the
+merge queue refuses the PR, although the real run is green. Blacksmith edits every new PR's body
+about 4 s after it opens, which is how #4332 (green run 45070958943, then skipped run 45070969031)
+and #4001 were refused. This is not documented by GitHub, and `gh pr checks --required` cannot
+show it, because it still lists the older green runs. A retarget therefore starts no run of these
+workflows either. The merge queue re-tests every merge into dev, but main has no queue: a pull
+request moved onto main keeps checks from its old base until a push or reopen runs CI against main.
+Until a check that proves the tested merge candidate lands, do that after every retarget into main.
+Update CI is not required and still starts on edits and labels (`update-rehearsal` starts the Real
+rehearsals).
 
 To rebalance after flows were added or got slower, download the `e2e-merged-results-distributed`
 artifact of a green run and regenerate the recorded times:
