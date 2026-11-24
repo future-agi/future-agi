@@ -41,6 +41,7 @@ export default function ReadyToRunSection({
   envId,
   picks,
   keys = null,
+  trials = 1,
   readiness,
   view,
   onSendingChange,
@@ -57,12 +58,16 @@ export default function ReadyToRunSection({
     onSendingChange?.(sending);
   }, [sending, onSendingChange]);
   useEffect(() => () => onSendingChange?.(false), [onSendingChange]);
-  // Other picks start with nothing open and nothing running.
+  // Other picks start with nothing open, nothing running and no answer from the last picks' re-check.
   const picksKey = JSON.stringify(picks || {});
+  const { reset: resetRecheck } = recheck;
+  const { reset: resetRetry } = retryAgent;
   useEffect(() => {
     setPressed(null);
     setOpenArea(null);
-  }, [picksKey]);
+    resetRecheck();
+    resetRetry();
+  }, [picksKey, resetRecheck, resetRetry]);
 
   if (readiness.isLoading) {
     return (
@@ -94,10 +99,12 @@ export default function ReadyToRunSection({
   const agentId = readiness.data?.pairing?.agent_version?.id;
   const runRecheck = (from = null) => {
     setPressed(from);
+    retryAgent.reset();
     recheck.mutate(picks);
   };
   const runRetryAgent = (from = null) => {
     setPressed(from);
+    recheck.reset();
     retryAgent.mutate({ versionId: agentId });
   };
   const blockers = view.open.filter((line) => line.status === "blocked").length;
@@ -169,6 +176,7 @@ export default function ReadyToRunSection({
           envId={envId}
           picks={picks}
           keys={keys}
+          trials={trials}
           report={view.computedAt}
           open={openArea === line.area}
           onToggle={() =>
@@ -246,6 +254,8 @@ ReadyToRunSection.propTypes = {
   envId: PropTypes.string,
   picks: PropTypes.object,
   keys: PropTypes.arrayOf(PropTypes.string),
+  // Repeats per scenario; more than one needs World resets.
+  trials: PropTypes.number,
   // The readiness query for these picks and scenarios.
   readiness: PropTypes.shape({
     data: PropTypes.object,

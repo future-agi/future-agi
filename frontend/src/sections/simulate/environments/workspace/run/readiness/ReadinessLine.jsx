@@ -39,10 +39,11 @@ GridRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
 const WAITS_NAMES = 3;
 
 // The scenarios this line's row holds back, by name; nothing until some load.
-function WaitsOn({ envId, picks, keys, line, report }) {
+function WaitsOn({ envId, picks, keys, trials, line, report }) {
   const cases = useReadinessCases(envId, {
     picks,
     keys,
+    trials,
     row: line.rowId,
     report,
     enabled: Boolean(line.rowId) && line.affected > 0,
@@ -63,6 +64,7 @@ WaitsOn.propTypes = {
   envId: PropTypes.string,
   picks: PropTypes.object,
   keys: PropTypes.arrayOf(PropTypes.string),
+  trials: PropTypes.number,
   line: PropTypes.object.isRequired,
   report: PropTypes.string,
 };
@@ -73,6 +75,7 @@ export default function ReadinessLine({
   envId,
   picks,
   keys,
+  trials,
   report,
   open,
   onToggle,
@@ -195,6 +198,7 @@ export default function ReadinessLine({
                   envId={envId}
                   picks={picks}
                   keys={keys}
+                  trials={trials}
                   line={line}
                   report={report}
                 />
@@ -243,6 +247,7 @@ ReadinessLine.propTypes = {
   // What the opened line's scenario names are read for.
   picks: PropTypes.object,
   keys: PropTypes.arrayOf(PropTypes.string),
+  trials: PropTypes.number,
   report: PropTypes.string,
   open: PropTypes.bool,
   onToggle: PropTypes.func.isRequired,

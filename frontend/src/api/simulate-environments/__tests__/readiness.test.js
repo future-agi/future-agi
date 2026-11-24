@@ -15,10 +15,10 @@ describe("readiness requests", () => {
     axios.post.mockReset().mockResolvedValue({ data: {} });
   });
 
-  it("reads the whole suite with a GET and a named selection with a POST that carries the trials", async () => {
-    await getReadiness("env-1", { agent: "a2" });
+  it("sends the trials with the whole suite's GET and a named selection's POST", async () => {
+    await getReadiness("env-1", { agent: "a2" }, null, 3);
     expect(axios.get).toHaveBeenCalledWith(PATH, {
-      params: { agent_version_id: "a2" },
+      params: { agent_version_id: "a2", trials: 3 },
     });
     await getReadiness("env-1", { agent: "a2" }, ["k1"], 3);
     expect(axios.post).toHaveBeenCalledWith(PATH, {
@@ -32,10 +32,10 @@ describe("readiness requests", () => {
     await getReadinessCases(
       "env-1",
       {},
-      { keys: ["k1", "k2"], row: "tool_routing" },
+      { keys: ["k1", "k2"], row: "tool_routing", trials: 2 },
     );
     expect(axios.get).toHaveBeenCalledWith(`${PATH}cases/`, {
-      params: { keys: ["k1", "k2"], row: "tool_routing" },
+      params: { trials: 2, keys: ["k1", "k2"], row: "tool_routing" },
       paramsSerializer: { indexes: null },
     });
   });

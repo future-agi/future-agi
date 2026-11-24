@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import {
   useQuery,
   useMutation,
@@ -178,14 +179,31 @@ export const runningValidationKey = (envId) => [
   "running-validation",
 ];
 
-// The default pair's validation still running, so a reload or another page follows it.
+// The default pair's validation still running, so a reload or another page follows it. Read again while it runs;
+// when it ends, the scenarios and the run plan are read again, since what can run changed.
 export function useRunningScenarioValidation(envId) {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: runningValidationKey(envId),
     queryFn: () => getRunningScenarioValidation(envId),
     enabled: Boolean(envId),
+    refetchInterval: (q) => (q.state.data?.job_id ? VALIDATION_POLL_MS : false),
     meta: { errorHandled: true },
   });
+  const jobId = query.data?.job_id ?? null;
+  const was = useRef(jobId);
+  useEffect(() => {
+    if (was.current && !jobId) {
+      queryClient.invalidateQueries({
+        queryKey: harnessScenariosListKey(envId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: [...environmentVersionsKey(envId), "run-plan"],
+      });
+    }
+    was.current = jobId;
+  }, [jobId, envId, queryClient]);
+  return query;
 }
 
 export function useValidateScenarios(envId) {

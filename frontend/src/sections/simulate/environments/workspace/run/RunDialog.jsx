@@ -119,8 +119,9 @@ export default function RunDialog({
   const needsMembers =
     runAll &&
     Boolean(picks.suite || (env?.versioning?.enabled && selected.suite));
+  const membersWanted = Boolean(selected.suite) && (!runAll || needsMembers);
   const members = useSuiteMembers(env?.id, selected.suite, {
-    enabled: open && Boolean(selected.suite) && (!runAll || needsMembers),
+    enabled: open && membersWanted,
   });
   const memberKeys = members.data?.map((member) => member.scenario_key);
   const missing =
@@ -147,11 +148,17 @@ export default function RunDialog({
   const versioned = Boolean(env?.versioning?.enabled);
   // What readiness holds back for these picks and scenarios, and how many run.
   const selectionKeys = runAll && !needsMembers ? null : runIds;
+  // Asked only for a settled selection: the suite's scenarios loaded and at least one picked, else the server
+  // refuses the keys.
   const readiness = useReadiness(env?.id, picks, {
     keys: selectionKeys,
     trials,
     enabled:
-      open && versioned && Boolean(data) && !(needsMembers && !memberKeys),
+      open &&
+      versioned &&
+      Boolean(data) &&
+      !(membersWanted && !memberKeys) &&
+      (selectionKeys === null || selectionKeys.length > 0),
   });
   const selection = readiness.data?.selection;
   const readyView = useMemo(
@@ -380,6 +387,7 @@ export default function RunDialog({
             envId={env?.id}
             picks={picks}
             keys={selectionKeys}
+            trials={trials}
             readiness={readiness}
             view={readyView}
             onSendingChange={setSendingCheck}

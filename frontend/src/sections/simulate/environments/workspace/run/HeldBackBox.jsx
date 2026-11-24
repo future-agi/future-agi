@@ -32,11 +32,17 @@ export default function HeldBackBox({ shownRows = [], selection }) {
   const rowName = Object.fromEntries(
     (selection.held_by ?? []).map((one) => [one.id, one.name]),
   );
+  // The server's words for a row, else ours for a code it sends none for, never the bare code where we have words.
+  const reasonText = (row) =>
+    selection.reasons?.[row] || COPY.heldCodes[row] || row;
   // Each held scenario by name, with the row it is held under (`by_key`) when the report says.
   const items = held.keys.map((key) => {
     const name = held.names?.[key] || key;
     const row = held.by_key?.[key];
-    return { key, text: row ? `${name} · ${rowName[row] || row}` : name };
+    return {
+      key,
+      text: row ? `${name} · ${rowName[row] || reasonText(row)}` : name,
+    };
   });
   return (
     <Box sx={boxSx} data-testid="run-held-back">
@@ -51,7 +57,7 @@ export default function HeldBackBox({ shownRows = [], selection }) {
             key={reason}
             sx={{ typography: "s1", color: "text.secondary" }}
           >
-            {COPY.heldReason(selection.reasons?.[reason] || reason, n)}
+            {COPY.heldReason(reasonText(reason), n)}
           </Typography>
         ))}
       </Stack>

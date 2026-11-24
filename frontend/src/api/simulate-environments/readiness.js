@@ -50,7 +50,9 @@ export const getReadiness = async (envId, picks, keys = null, trials = 1) => {
         scenario_ids: keys,
         trials,
       })
-    : await axios.get(capabilitiesPath(envId), { params: fields });
+    : await axios.get(capabilitiesPath(envId), {
+        params: { ...fields, trials },
+      });
   return data;
 };
 
@@ -86,9 +88,14 @@ export const useRecheck = (envId) => {
 };
 
 // The first page (50) of the selected scenarios, each with the rows that hold it back (`by`), narrowed to one row
-// when given. `keys` is the selection a run would send; none means the whole suite.
-export const getReadinessCases = async (envId, picks, { keys, row }) => {
-  const params = { ...versionPickFields(picks) };
+// when given. `keys` is the selection a run would send; none means the whole suite. `trials` changes what holds
+// a case (repeats need World resets), so it goes too.
+export const getReadinessCases = async (
+  envId,
+  picks,
+  { keys, row, trials = 1 },
+) => {
+  const params = { ...versionPickFields(picks), trials };
   if (row) params.row = row;
   if (keys) params.keys = keys;
   const page = (
@@ -103,12 +110,19 @@ export const getReadinessCases = async (envId, picks, { keys, row }) => {
 
 export function useReadinessCases(
   envId,
-  { picks = {}, keys = null, row = null, report = null, enabled = true } = {},
+  {
+    picks = {},
+    keys = null,
+    row = null,
+    trials = 1,
+    report = null,
+    enabled = true,
+  } = {},
 ) {
   return useQuery({
     // `report` (when the report was worked out) ties the names to the counts beside them.
-    queryKey: [...runPlanKey(envId, picks), "cases", keys, row, report],
-    queryFn: () => getReadinessCases(envId, picks, { keys, row }),
+    queryKey: [...runPlanKey(envId, picks), "cases", keys, row, trials, report],
+    queryFn: () => getReadinessCases(envId, picks, { keys, row, trials }),
     enabled: Boolean(envId) && enabled && (keys?.length ?? 0) <= MAX_CASE_KEYS,
     retry: retryServerFailures,
     meta: { errorHandled: true },

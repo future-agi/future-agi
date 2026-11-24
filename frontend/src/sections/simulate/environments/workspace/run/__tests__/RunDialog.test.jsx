@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "src/utils/test-utils";
 import userEvent from "@testing-library/user-event";
 
+// Mutations keep one reset across renders, as React Query's do.
+const { reset } = vi.hoisted(() => ({ reset: () => {} }));
+
 // Each hook is stubbed; tests set what the server answered.
 const state = {
   versions: undefined,
@@ -55,7 +58,11 @@ vi.mock("src/api/simulate-environments/versions", async () => {
     useDrafts: vi.fn((envId, { enabled } = {}) => ({
       data: enabled && state.drafts ? actual.toDrafts(state.drafts) : undefined,
     })),
-    useRetryAgentVersion: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+    useRetryAgentVersion: vi.fn(() => ({
+      mutate: vi.fn(),
+      reset,
+      isPending: false,
+    })),
     useSuiteMembers: vi.fn((envId, id) => ({
       data: state.members[id],
       isLoading: !state.members[id],
@@ -76,7 +83,7 @@ vi.mock("src/api/simulate-environments/readiness", () => ({
   useReadinessCases: vi.fn((envId, { enabled } = {}) => ({
     data: enabled ? state.cases : undefined,
   })),
-  useRecheck: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
+  useRecheck: vi.fn(() => ({ mutate: vi.fn(), reset, isPending: false })),
 }));
 
 vi.mock(
@@ -88,6 +95,9 @@ vi.mock(
 );
 
 const { default: RunDialog } = await import("../RunDialog");
+const { useReadiness } = await import(
+  "src/api/simulate-environments/readiness"
+);
 
 const ENV = { id: "env-1", versioning: { enabled: true } };
 const item = (overrides) => ({
@@ -1015,12 +1025,13 @@ describe("RunDialog", () => {
         count: 1,
         keys: ["k2"],
         names: { k2: "Refund twice" },
-        by: { not_proved: 1 },
-        by_key: { k2: "not_proved" },
+        by: { not_validated: 1 },
+        by_key: { k2: "not_validated" },
         truncated: false,
       },
-      reasons: { not_proved: "Not proved on these versions yet" },
-      held_by: [{ id: "not_proved", name: "Not proved here" }],
+      // A case's own lifecycle row has words in `reasons` but no `held_by` entry: that lists report rows only.
+      reasons: { not_validated: "Not proved on these versions yet" },
+      held_by: [],
       ...overrides,
     });
     beforeEach(() => {
@@ -1044,9 +1055,33 @@ describe("RunDialog", () => {
       ).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Show which" }));
       expect(
-        screen.getByText("Refund twice · Not proved here"),
+        screen.getByText("Refund twice · Not proved on these versions yet"),
       ).toBeInTheDocument();
       expect(runButton()).toHaveTextContent("Run 1 scenario");
+    });
+
+    it("words a held-back code the report sends no text for", async () => {
+      const user = userEvent.setup();
+      state.selection = selection({
+        held_back: {
+          count: 1,
+          keys: ["k2"],
+          names: { k2: "Refund twice" },
+          by: { pair_failed: 1 },
+          by_key: { k2: "pair_failed" },
+        },
+        reasons: {},
+      });
+      renderDialog();
+      expect(
+        screen.getByText("These versions failed their check together · 1"),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Show which" }));
+      expect(
+        screen.getByText(
+          "Refund twice · These versions failed their check together",
+        ),
+      ).toBeInTheDocument();
     });
 
     it("puts the changed-since-proved warning in its own box with every key one click away", async () => {
@@ -1071,6 +1106,18 @@ describe("RunDialog", () => {
       expect(within(box).getByText("case-6")).toBeInTheDocument();
     });
 
+    it("asks for readiness only once the selection has settled", () => {
+      const readinessAsked = () => useReadiness.mock.lastCall[2].enabled;
+      state.members = {};
+      renderDialog();
+      expect(readinessAsked()).toBe(false);
+      state.members = { s3: members("k1", "k2", "k3") };
+      renderDialog({ scenarioIds: [] });
+      expect(readinessAsked()).toBe(false);
+      renderDialog();
+      expect(readinessAsked()).toBe(true);
+    });
+
     it("holds the run while a scenario validation runs", () => {
       state.running = { job_id: "val-1" };
       renderDialog();
@@ -1089,7 +1136,7 @@ describe("RunDialog", () => {
           count: 2,
           keys: ["k1", "k2"],
           names: {},
-          by: { not_proved: 2 },
+          by: { not_validated: 2 },
         },
       });
       renderDialog();
