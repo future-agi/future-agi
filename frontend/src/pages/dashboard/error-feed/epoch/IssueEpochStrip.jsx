@@ -2,7 +2,6 @@ import PropTypes from "prop-types";
 import { Button, Stack, Typography } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 
-import Iconify from "src/components/iconify";
 import StatusBadge from "src/components/status-badge";
 import { RouterLink } from "src/routes/components";
 import {
@@ -12,7 +11,7 @@ import {
 import { fixErrorOf } from "src/api/simulate-environments/fixRuns";
 import { useCodingAgentAttemptsEnabled } from "src/api/simulate-environments/codingAgent";
 import { CAPABILITY, useFeatureAllowed } from "src/hooks/useCapabilities";
-import useCopyForCodingAgent from "src/sections/simulate/environments/workspace/improvements/useCopyForCodingAgent";
+import CopyForCodingAgentButton from "src/sections/simulate/environments/workspace/improvements/CopyForCodingAgentButton";
 
 import {
   epochHref,
@@ -48,34 +47,6 @@ function StopJob({ jobId }) {
   );
 }
 StopJob.propTypes = { jobId: PropTypes.string.isRequired };
-
-// The epoch's run as a prompt for the person's own coding agent. The brief is read
-// when the pointer reaches the button, so the click copies at once.
-function CopyForCodingAgent({ sourceRunId }) {
-  const { copy, prefetch, copied, busy } = useCopyForCodingAgent(sourceRunId);
-  return (
-    <Button
-      size="small"
-      variant="outlined"
-      disabled={busy}
-      onMouseEnter={prefetch}
-      onFocus={prefetch}
-      onClick={copy}
-      data-testid="issue-copy-for-coding-agent"
-      startIcon={
-        <Iconify
-          icon={
-            copied ? "solar:check-circle-linear" : "solar:clipboard-text-linear"
-          }
-          width={14}
-        />
-      }
-    >
-      {copied ? "Copied" : "Copy for coding agent"}
-    </Button>
-  );
-}
-CopyForCodingAgent.propTypes = { sourceRunId: PropTypes.string.isRequired };
 
 // The issue's epoch in one line under the header: its state, what it means, and the
 // other ways on. The header holds the main action.
@@ -114,7 +85,12 @@ export default function IssueEpochStrip({ clusterId, projectId, onRunAgain }) {
       >
         {epochSentence(status)}
       </Typography>
-      {sourceRunId && <CopyForCodingAgent sourceRunId={sourceRunId} />}
+      {sourceRunId && (
+        <CopyForCodingAgentButton
+          sourceRunId={sourceRunId}
+          data-testid="issue-copy-for-coding-agent"
+        />
+      )}
       {secondaryActions(status).map((action) => {
         if (action.kind === "view") {
           return (

@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SnackbarProvider } from "notistack";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 
 import {
   ATTEMPT_ID,
@@ -35,13 +37,22 @@ vi.mock("src/hooks/useCapabilities", async (importOriginal) => {
 });
 
 // The two coding-agent routes, answered from the fixtures; anything else is a bug.
-const api = vi.hoisted(() => ({ brief: null, verdict: null, get: null }));
+const api = vi.hoisted(() => ({
+  brief: null,
+  briefStatus: 200,
+  verdict: null,
+  get: null,
+}));
 vi.mock("src/utils/axios", async (importOriginal) => {
   const actual = await importOriginal();
   const routes = actual.endpoints.agentFixRuns;
   api.get = vi.fn((url, config = {}) => {
     if (url === routes.codingAgentBrief()) {
       expect(config.params).toEqual({ source_run_id: SOURCE_RUN_ID });
+      // The app's axios rejects with the body spread plus statusCode.
+      if (api.briefStatus === 404) {
+        return Promise.reject({ detail: "Not found", statusCode: 404 });
+      }
       return Promise.resolve({ data: api.brief });
     }
     if (url === routes.verdict(ATTEMPT_ID)) {
@@ -57,7 +68,15 @@ vi.mock("src/utils/copyToClipboard", () => ({
   copyToClipboard: clipboard.copy,
 }));
 
+// The launch form is the engine's; an attempt never opens it.
+vi.mock("../LaunchFixDialog", () => ({ default: () => null }));
+
 const { default: EpochMoreMenu } = await import("../EpochMoreMenu");
+const { default: CopyForCodingAgentButton } = await import(
+  "../CopyForCodingAgentButton"
+);
+const { default: FixFinishedView } = await import("../FixFinishedView");
+const { headline, stageLabel, stepRows } = await import("../fixRunView");
 const { default: OutsideAttemptVerdict } = await import(
   "../OutsideAttemptVerdict"
 );
@@ -70,16 +89,21 @@ const SETUP_URL = `${window.location.origin}/dashboard/settings/mcp-server`;
 const attemptFix = () =>
   outsideAttemptFix(structuredClone(fixtureFixRun("fix-ready-archive")));
 
+// The candidates' chart reads theme.palette.data, so render with the app theme.
+const appTheme = createTheme({ palette: palette("light") });
+
 function renderUi(ui) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>
-      <SnackbarProvider>
-        <MemoryRouter>{ui}</MemoryRouter>
-      </SnackbarProvider>
-    </QueryClientProvider>,
+    <ThemeProvider theme={appTheme}>
+      <QueryClientProvider client={client}>
+        <SnackbarProvider>
+          <MemoryRouter>{ui}</MemoryRouter>
+        </SnackbarProvider>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
 }
 
@@ -89,6 +113,7 @@ const briefCalls = () =>
 beforeEach(() => {
   caps.codingAgent = true;
   api.brief = fixtureBrief();
+  api.briefStatus = 200;
   api.verdict = fixtureVerdict();
   api.get.mockClear();
   clipboard.copy.mockClear();
@@ -263,14 +288,20 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
     );
   });
 
-  it("says an attempt that failed before any check does not use one of the run's attempts", async () => {
+  // The verdict's summary of a failed attempt is the platform's words for its failure
+  // (selectors/agent_fix_outside.shown_summary), never a static refusal.
+  it("says an attempt that failed before any check does not use one of the run's attempts, and never calls it refused", async () => {
+    const failure = {
+      code: "fix_engine_failed",
+      message: "The Epoch stopped because of a problem on our side.",
+    };
     api.verdict = fixtureVerdict({
       state: "failed",
       step: "done",
-      ending: null,
-      failure: { code: "fix_engine_failed", message: "The Epoch stopped." },
+      ending: "failed",
+      failure,
       tiers: [],
-      summary: "",
+      summary: failure.message,
       patch_available: false,
     });
     renderUi(
@@ -281,9 +312,134 @@ describe("An attempt from a person's coding agent on its Epoch page", () => {
         "This attempt stopped before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("outside-attempt")).not.toHaveTextContent(
-      "fix_engine_failed",
+    const panel = screen.getByTestId("outside-attempt");
+    expect(panel).not.toHaveTextContent("fix_engine_failed");
+    expect(panel).not.toHaveTextContent("did not apply");
+    expect(
+      screen.queryByTestId("outside-attempt-checks"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("Copy for coding agent reads the brief fresh", () => {
+  it("reads the brief again on each copy, so attempts submitted meanwhile show", async () => {
+    const user = userEvent.setup();
+    renderUi(<CopyForCodingAgentButton sourceRunId={SOURCE_RUN_ID} />);
+    const button = screen.getByRole("button", {
+      name: /Copy for coding agent/,
+    });
+    await user.click(button);
+    await waitFor(() => expect(clipboard.copy).toHaveBeenCalledTimes(1));
+    api.brief = fixtureBrief({
+      attempts: { used: 2, max: 4 },
+      instructions: `${fixtureBrief().instructions}\nThis run has 2 left.`,
+    });
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Copied|Copy for coding agent/,
+      }),
     );
+    await waitFor(() => expect(clipboard.copy).toHaveBeenCalledTimes(2));
+    expect(briefCalls()).toHaveLength(2);
+    expect(clipboard.copy.mock.calls[1][0]).toContain("This run has 2 left.");
+  });
+
+  it("says plainly that a run has no brief when the route answers 404", async () => {
+    api.briefStatus = 404;
+    const user = userEvent.setup();
+    renderUi(<CopyForCodingAgentButton sourceRunId={SOURCE_RUN_ID} />);
+    await user.click(
+      screen.getByRole("button", { name: /Copy for coding agent/ }),
+    );
+    expect(
+      await screen.findByText(
+        "Future AGI has no brief for this run. The run may have been deleted. Reload the page and try again.",
+      ),
+    ).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("Not found");
+    expect(clipboard.copy).not.toHaveBeenCalled();
+  });
+});
+
+describe("An attempt's running stages and ending", () => {
+  it("runs through its own stages, never diagnosing or proposing", () => {
+    const fix = {
+      ...attemptFix(),
+      state: "running",
+      step: "search",
+      diagnosis: null,
+      candidates: [],
+    };
+    expect(stepRows(fix).map((row) => row.label)).toEqual([
+      "Measuring",
+      "Checking the change",
+      "Checking held-back",
+    ]);
+    expect(stageLabel(fix)).toBe("Checking the change");
+    const text = stepRows(fix)
+      .flatMap((row) => row.lines)
+      .join(" ");
+    expect(text).not.toMatch(
+      /diagnos|propos|Tries changes|Reads the failures/i,
+    );
+  });
+
+  it.each([
+    ["failed", { code: "fix_engine_failed", message: "x" }, true],
+    ["failed", { code: "fix_deadline", message: "x" }, false],
+    ["no_improvement", null, false],
+    ["out_of_budget", null, false],
+  ])(
+    "ends %s in attempt words, with the coding agent's next step",
+    (state, failure, retryable) => {
+      const fix = {
+        ...attemptFix(),
+        state,
+        failure,
+        retryable,
+        retried_from_id: null,
+      };
+      const text = headline(fix);
+      expect(text).toMatch(/attempt|coding agent/i);
+      expect(text).not.toMatch(
+        /retried|Run a new epoch|Run Epoch|Debug failures/i,
+      );
+    },
+  );
+
+  it("offers Copy for coding agent as the failed attempt's one way on, never Retry or Run Epoch", () => {
+    const fix = {
+      ...attemptFix(),
+      state: "failed",
+      retryable: true,
+      failure: { code: "fix_engine_failed", message: "x" },
+      candidates: [],
+    };
+    renderUi(<FixFinishedView fix={fix} tab="trials" onTab={() => {}} />);
+    expect(
+      screen.getByTestId("attempt-copy-for-coding-agent"),
+    ).toHaveTextContent("Copy for coding agent");
+    expect(
+      screen.queryByRole("button", { name: /Retry/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Run Epoch again|Run a new epoch/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("fix-finished-view")).toHaveTextContent(
+      "Submit it again with fagi epoch submit.",
+    );
+  });
+
+  it("gives a no-improvement attempt the same way on, not the engine's what-to-try-next", () => {
+    const fix = { ...attemptFix(), state: "no_improvement" };
+    renderUi(<FixFinishedView fix={fix} tab="trials" onTab={() => {}} />);
+    expect(
+      screen.getByTestId("attempt-copy-for-coding-agent"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("what-to-try-next")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Run Epoch again|Run a new epoch/),
+    ).not.toBeInTheDocument();
   });
 });
 

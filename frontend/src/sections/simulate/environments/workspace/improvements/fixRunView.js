@@ -1,4 +1,5 @@
 import { FIX_LIVE_STATES } from "src/api/simulate-environments/fixRuns";
+import { isOutsideAttempt } from "src/api/simulate-environments/codingAgent";
 
 // What the fix page says about a fix, derived from one contract read
 // (GET /simulate/api/agent-fix-runs/{id}/). Only simple differences are
@@ -56,17 +57,33 @@ const stage = (id) => ({ id, label: STAGE_LABEL[id] });
 const VARIATIONS_STAGE = stage("variations");
 const STAGES = ["reproduce", "diagnose", "search", "verify"].map(stage);
 
+// An attempt from a person's own coding agent only checks the change it was given:
+// it never diagnoses or proposes. Its stages come from the same step, in its words.
+export const ATTEMPT_STAGE_LABEL = {
+  reproduce: "Measuring",
+  search: "Checking the change",
+  verify: "Checking held-back",
+};
+const ATTEMPT_STAGES = ["reproduce", "search", "verify"].map((id) => ({
+  id,
+  label: ATTEMPT_STAGE_LABEL[id],
+}));
+
 // The engine has no diagnose step: it diagnoses as its search starts. A search
 // with no diagnosis and no candidate yet is still diagnosing; the report's
 // diagnosis is optional, so a candidate means it has moved on. The issue job's
-// summary of an epoch carries neither, so it reads as the search.
+// summary of an epoch carries neither, so it reads as the search. An attempt
+// never diagnoses.
 export function stageOf(fix) {
-  if (fix.step !== "search" || fix.summary) return fix.step;
+  if (fix.step !== "search" || fix.summary || isOutsideAttempt(fix))
+    return fix.step;
   return fix.diagnosis || (fix.candidates || []).length ? "search" : "diagnose";
 }
 
 // The stage a running epoch is in, beside its status.
-export const stageLabel = (fix) => STAGE_LABEL[stageOf(fix)] || null;
+export const stageLabel = (fix) =>
+  (isOutsideAttempt(fix) ? ATTEMPT_STAGE_LABEL : STAGE_LABEL)[stageOf(fix)] ||
+  null;
 
 export const pct = (x) => Math.round(x * 100);
 export const pts = (rate) => Math.round((rate[1] - rate[0]) * 100);
@@ -171,8 +188,35 @@ const sentence = (text) =>
     ? `${text.charAt(0).toUpperCase()}${text.slice(1).replace(/\.?$/, ".")}`
     : "";
 
+const SUBMIT_AGAIN = "Submit it again with fagi epoch submit.";
+
+// How an attempt from a person's own coding agent ended, in attempt words: the next
+// step is always the coding agent's, never Run Epoch or a retry.
+function attemptEndingText(fix) {
+  const code = fix.failure?.code;
+  switch (fix.state) {
+    case "no_improvement":
+      return "Your coding agent's change did not pass every check, so nothing changed. The checks above say which. Fix the change, then submit it again with fagi epoch submit.";
+    case "not_reproduced":
+      return "The run's failing cases did not fail often enough on the current version to check a fix. Nothing changed.";
+    case "out_of_budget":
+      return "This attempt reached its budget. Nothing changed. Submit it again with a larger budget: fagi epoch submit --budget-credits.";
+    case "stopped":
+      return "You stopped this attempt. Nothing changed.";
+    case "failed":
+      if (code === "fix_deadline")
+        return `This attempt ran out of its time limit. Nothing changed. ${SUBMIT_AGAIN}`;
+      if (!code || code === "fix_queue_timeout" || OUR_FAILURES.has(code))
+        return `This attempt stopped because of a problem on our side, not your change. Nothing changed. ${SUBMIT_AGAIN}`;
+      return `This attempt stopped on something only you can change: ${sentence(fix.failure.message)}`;
+    default:
+      return null;
+  }
+}
+
 // Why a fix that shipped nothing ended, and what the user can do next.
 export function endingText(fix) {
+  if (isOutsideAttempt(fix)) return attemptEndingText(fix);
   const code = fix.failure?.code;
   if (fix.state === "not_reproduced")
     return "The chosen scenarios did not fail often enough on the current version to fix. Check that they still show the failure, then run a new epoch.";
@@ -202,6 +246,9 @@ export function endingText(fix) {
 
 export function headline(fix) {
   const winner = winnerOf(fix);
+  if (fix.state === "no_improvement" && isOutsideAttempt(fix)) {
+    return endingText(fix);
+  }
   if (fix.state === "no_improvement") {
     return (
       noSafeHeadline(fix) ||
@@ -862,9 +909,31 @@ function diagnoseLines(fix, state) {
   return [`Starts from its diagnosis: ${first}`, ...rest];
 }
 
+// An attempt's stages: the current version measured, the coding agent's change
+// checked on the cases it was given, then on the cases it was not.
+function attemptLines(id, fix, state) {
+  const done = state === "done";
+  if (id === "reproduce") {
+    return [
+      fix.source_run_number != null
+        ? `${done ? "Measured" : "Measures"} the current version on Run ${fix.source_run_number}'s cases`
+        : `${done ? "Measured" : "Measures"} the current version on the run's cases`,
+    ];
+  }
+  if (id === "search") {
+    return [
+      `${done ? "Checked" : "Checks"} that your coding agent's change applies, then runs it on the failing cases it was given`,
+    ];
+  }
+  return [
+    `${done ? "Ran" : "Runs"} it on cases your agent wasn't given and on the must-pass cases`,
+  ];
+}
+
 function stepLines(id, fix, state) {
   const { plan } = fix;
   const candidates = fix.candidates || [];
+  if (isOutsideAttempt(fix)) return attemptLines(id, fix, state);
   if (id === "variations") return variationLines(fix);
   if (id === "reproduce") {
     return [
@@ -907,7 +976,8 @@ function stepLines(id, fix, state) {
 // the first stage's place, and a stop in progress reads Stopping on the stage
 // it interrupts.
 export function stepRows(fix) {
-  const stages = hasVariations(fix) ? [VARIATIONS_STAGE, ...STAGES] : STAGES;
+  let stages = hasVariations(fix) ? [VARIATIONS_STAGE, ...STAGES] : STAGES;
+  if (isOutsideAttempt(fix)) stages = ATTEMPT_STAGES;
   const current = stages.findIndex((s) => s.id === stageOf(fix));
   const finished = fix.step === "done";
   return stages.map((s, i) => {

@@ -6,8 +6,13 @@ import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
+import {
+  isOutsideAttempt,
+  useCodingAgentAttemptsEnabled,
+} from "src/api/simulate-environments/codingAgent";
 
 import CandidatesTable from "./CandidatesTable";
+import CopyForCodingAgentButton from "./CopyForCodingAgentButton";
 import EpochEnding from "./EpochEnding";
 import FinishedDiagnosis from "./FinishedDiagnosis";
 import FixVerdict from "./FixVerdict";
@@ -170,7 +175,23 @@ WhatToTryNext.propTypes = {
 // An ending's one way on: retry a failed epoch the platform lets you retry,
 // else run a new one where Run Epoch lives, on the issue it came from or the
 // run it started from. With neither left, the sentence says what to do.
+// An attempt from a person's own coding agent goes on in that agent: its one way on
+// is the brief to paste there, never a retry or Run Epoch.
+function AttemptPrimary({ fix }) {
+  const enabled = useCodingAgentAttemptsEnabled();
+  if (!enabled || !fix.source_run_id) return null;
+  return (
+    <CopyForCodingAgentButton
+      sourceRunId={fix.source_run_id}
+      variant="contained"
+      data-testid="attempt-copy-for-coding-agent"
+    />
+  );
+}
+AttemptPrimary.propTypes = { fix: PropTypes.object.isRequired };
+
 function endingPrimary(fix, onLaunch) {
+  if (isOutsideAttempt(fix)) return <AttemptPrimary fix={fix} />;
   // Retry lives here, never in the header: the ending's one primary.
   if (fix.state === "failed" && fix.retryable) return <RetryButton fix={fix} />;
   const again = {
@@ -204,7 +225,9 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
   const [launching, setLaunching] = useState(false);
   const ready = fix.state === "ready" && !!winnerOf(fix);
   const trials = fix.candidates || [];
-  const noSafe = fix.state === "no_improvement";
+  // An attempt's no-safe ending names its next step itself: it has no engine search
+  // to show numbers for, or other cases to try.
+  const noSafe = fix.state === "no_improvement" && !isOutsideAttempt(fix);
   const ending = !ready && headline(fix);
   const tabs = ready
     ? TABS

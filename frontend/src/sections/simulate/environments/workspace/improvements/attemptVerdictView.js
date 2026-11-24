@@ -80,14 +80,12 @@ export function attemptChecks(verdict, request) {
   });
 }
 
-// An attempt the platform refused before any check ran: the engine served its
-// static refusal as the summary and uploaded no candidate. Its words stay off the
-// page; the check it failed reads in plain words.
+// An attempt the static check refused: it ended with no improvement and no candidate,
+// so no tier ran. The summary is not the sign: a failed attempt's summary is the
+// platform's words for its failure. The engine's words stay off the page; the check
+// it failed reads in plain words.
 export const refusedBeforeChecks = (verdict) =>
-  !!verdict &&
-  !FIX_LIVE_STATES.has(verdict.state) &&
-  !verdict.tiers.length &&
-  !!verdict.summary;
+  !!verdict && verdict.ending === "no_improvement" && !verdict.tiers.length;
 
 export const refusedCheck = (request) => ({
   name: "static",
@@ -105,23 +103,13 @@ export function attemptNote(verdict) {
       ? "Future AGI is still checking this attempt."
       : "Future AGI is checking this attempt. Its checks show here when they have run.";
   }
+  if (refusedBeforeChecks(verdict)) {
+    return "Future AGI checked nothing else. Fix the change, then submit it again with fagi epoch submit.";
+  }
   // An attempt that failed with no verdict on its change told its coding agent
   // nothing, so the platform does not count it against the run's attempts.
-  const uncounted = verdict.state === "failed" && !verdict.tiers.length;
-  const notCounted = uncounted
-    ? "It does not use one of the run's attempts."
-    : null;
-  if (refusedBeforeChecks(verdict)) {
-    return [
-      "Future AGI checked nothing else.",
-      notCounted,
-      "Fix the change, then submit it again with fagi epoch submit.",
-    ]
-      .filter(Boolean)
-      .join(" ");
-  }
-  if (uncounted) {
-    return `This attempt stopped before Future AGI checked the change. ${notCounted} Submit it again with fagi epoch submit.`;
+  if (verdict.state === "failed" && !verdict.tiers.length) {
+    return "This attempt stopped before Future AGI checked the change. It does not use one of the run's attempts. Submit it again with fagi epoch submit.";
   }
   return verdict.tiers.length ? null : "No check ran on this attempt.";
 }

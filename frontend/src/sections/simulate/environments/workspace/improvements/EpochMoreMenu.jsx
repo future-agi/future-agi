@@ -111,10 +111,7 @@ export default function EpochMoreMenu({ fix }) {
       <IconButton
         size="small"
         aria-label="More actions"
-        onClick={(e) => {
-          setAnchor(e.currentTarget);
-          if (codingAgent) brief.prefetch();
-        }}
+        onClick={(e) => setAnchor(e.currentTarget)}
       >
         <Iconify icon="solar:menu-dots-bold" width={16} />
       </IconButton>

@@ -29,11 +29,6 @@ export function useCodingAgentAttemptsEnabled() {
 export const isOutsideAttempt = (fix) =>
   fix?.request?.outside_candidate?.number != null;
 
-export const codingAgentBriefKey = (sourceRunId) => [
-  "agent-fix-coding-agent-brief",
-  sourceRunId,
-];
-
 export async function getCodingAgentBrief(sourceRunId) {
   const res = await axios.get(endpoints.agentFixRuns.codingAgentBrief(), {
     params: { source_run_id: sourceRunId },
