@@ -216,7 +216,9 @@ class State:
             if not self.paged or len(items) < 2:
                 return {"artifacts": items}, ""
             # One artifact per page, linked the way GitHub links pages.
-            page = int(re.search(r"page=(\d+)", query)[1]) if "page=" in query else 1
+            # The page parameter itself, not the tail of per_page.
+            found = re.search(r"(?:^|&)page=(\d+)", query)
+            page = int(found[1]) if found else 1
             link = (
                 f"<https://api.github.com{root}/actions/runs/{run_id}/artifacts"
                 f'?per_page=100&page={page + 1}>; rel="next"'

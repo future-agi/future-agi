@@ -974,6 +974,48 @@ jobs:
           # An early qualification error (e.g. listing artifacts failed) has no report.
           if-no-files-found: ${{ steps.qualification.outcome == 'success' && 'error' || 'ignore' }}
 
+  candidate-receipt:
+    # Not part of the required check: records which merge candidate this run
+    # tested, for the "CI ran on this base" check (.github/scripts/ci_base_gate.py).
+    # Only on pull requests whose suite was selected, ran and passed; its own
+    # failure never changes the required verdict. Default permissions (read).
+    # It sits above backend-tests, which stays the last job: policy tests read
+    # that job's script through to the end of this file.
+    name: Record the tested merge candidate
+    needs: [changes, backend-tests]
+    if: ${{ github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read the merge candidate this run tested
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KIND: backend
+          # Whether the suite ran with the private package ("internal") or
+          # without it ("oss", as merge groups and Retarget proof do).
+          SCOPE: ${{ needs.changes.outputs.internal == 'true' && 'internal' || 'oss' }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA")
+          # GITHUB_SHA is the merge of the head onto the base tip this run used.
+          jq -e --arg head "$HEAD_SHA" '(.parents | length) == 2 and .parents[1].sha == $head' <<<"$commit" > /dev/null
+          mkdir -p "$RUNNER_TEMP/ci-candidate"
+          jq -n --arg kind "$KIND" --argjson pr "$PR" --arg head "$HEAD_SHA" --arg base_ref "$BASE_REF" \
+            --arg base_sha "$(jq -r '.parents[0].sha' <<<"$commit")" --arg merge_sha "$GITHUB_SHA" \
+            --arg merge_tree "$(jq -r '.commit.tree.sha' <<<"$commit")" \
+            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --arg scope "$SCOPE" \
+            '{schema: 1, kind: $kind, scope: $scope, pr: $pr, head_sha: $head, base_ref: $base_ref, base_sha: $base_sha,
+              merge_sha: $merge_sha, merge_tree: $merge_tree, run_id: $run_id, run_attempt: $run_attempt}' \
+            | tee "$RUNNER_TEMP/ci-candidate/receipt.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-candidate-backend-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-candidate/receipt.json
+          if-no-files-found: error
+
   backend-tests:
     name: Backend Tests Pass # the ONLY required status check
     needs:
@@ -1013,43 +1055,3 @@ jobs:
             ([.plan, .test, .collection, .["terminal-parity"], .["saml-multiworker"], .["migrated-database"],
               .["agentic-eval"], .["slim-smoke"]] | all(.result == ($b|status)))
           ' <<<"$NEEDS"
-
-  candidate-receipt:
-    # Not part of the required check: records which merge candidate this run
-    # tested, for the "CI ran on this base" check (.github/scripts/ci_base_gate.py).
-    # Only on pull requests whose suite was selected, ran and passed; its own
-    # failure never changes the required verdict. Default permissions (read).
-    name: Record the tested merge candidate
-    needs: [changes, backend-tests]
-    if: ${{ github.event_name == 'pull_request' && needs.backend-tests.result == 'success' && needs.changes.outputs.backend == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Read the merge candidate this run tested
-        env:
-          GH_TOKEN: ${{ github.token }}
-          KIND: backend
-          # Whether the suite ran with the private package ("internal") or
-          # without it ("oss", as merge groups and Retarget proof do).
-          SCOPE: ${{ needs.changes.outputs.internal == 'true' && 'internal' || 'oss' }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: |
-          set -euo pipefail
-          commit=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA")
-          # GITHUB_SHA is the merge of the head onto the base tip this run used.
-          jq -e --arg head "$HEAD_SHA" '(.parents | length) == 2 and .parents[1].sha == $head' <<<"$commit" > /dev/null
-          mkdir -p "$RUNNER_TEMP/ci-candidate"
-          jq -n --arg kind "$KIND" --argjson pr "$PR" --arg head "$HEAD_SHA" --arg base_ref "$BASE_REF" \
-            --arg base_sha "$(jq -r '.parents[0].sha' <<<"$commit")" --arg merge_sha "$GITHUB_SHA" \
-            --arg merge_tree "$(jq -r '.commit.tree.sha' <<<"$commit")" \
-            --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT" --arg scope "$SCOPE" \
-            '{schema: 1, kind: $kind, scope: $scope, pr: $pr, head_sha: $head, base_ref: $base_ref, base_sha: $base_sha,
-              merge_sha: $merge_sha, merge_tree: $merge_tree, run_id: $run_id, run_attempt: $run_attempt}' \
-            | tee "$RUNNER_TEMP/ci-candidate/receipt.json"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ci-candidate-backend-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/ci-candidate/receipt.json
-          if-no-files-found: error
