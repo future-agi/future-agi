@@ -664,6 +664,10 @@ export default function ScenariosStep({
                         onClose={() => setTagAnchor(null)}
                         count={sel.count}
                         resolveKeys={() => resolveSelection(runnableScenarioKey)}
+                        onDone={() => {
+                          setTagAnchor(null);
+                          sel.clear();
+                        }}
                       />
                     )}
                   </Box>

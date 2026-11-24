@@ -24,6 +24,7 @@ export default function BulkTagMenu({
   onClose,
   count,
   resolveKeys,
+  onDone,
 }) {
   const open = Boolean(anchorEl);
   const [search, setSearch] = useState("");
@@ -50,13 +51,17 @@ export default function BulkTagMenu({
     change.mutate(
       { scenarioKeys, add, remove },
       {
-        onSuccess: () =>
+        onSuccess: () => {
           enqueueSnackbar(
             add.length
               ? C.added(add[0], scenarioKeys.length)
               : C.removed(remove[0], scenarioKeys.length),
             { variant: "success" },
-          ),
+          );
+          setSearch("");
+          setNewTag("");
+          onDone?.();
+        },
         onError: () => enqueueSnackbar(C.failed, { variant: "error" }),
       },
     );
@@ -178,4 +183,5 @@ BulkTagMenu.propTypes = {
   onClose: PropTypes.func.isRequired,
   count: PropTypes.number.isRequired,
   resolveKeys: PropTypes.func.isRequired,
+  onDone: PropTypes.func,
 };

@@ -91,7 +91,7 @@ describe("ScenarioTagCell", () => {
 
 describe("BulkTagMenu", () => {
   const anchor = document.createElement("div");
-  const renderMenu = (resolveKeys) =>
+  const renderMenu = (resolveKeys, onDone) =>
     render(
       <BulkTagMenu
         envId="e1"
@@ -99,8 +99,25 @@ describe("BulkTagMenu", () => {
         onClose={vi.fn()}
         count={2}
         resolveKeys={resolveKeys}
+        onDone={onDone}
       />,
     );
+
+  it("calls onDone after a change succeeds, and not after one fails", async () => {
+    known = { data: ["vip"], isLoading: false, isError: false };
+    const onDone = vi.fn();
+    changeTags.mutate.mockImplementationOnce((_body, { onError }) => onError());
+    renderMenu(() => Promise.resolve(["s1"]), onDone);
+    await userEvent.click(screen.getByRole("button", { name: C.add }));
+    await waitFor(() => expect(changeTags.mutate).toHaveBeenCalledTimes(1));
+    expect(onDone).not.toHaveBeenCalled();
+
+    changeTags.mutate.mockImplementationOnce((_body, { onSuccess }) =>
+      onSuccess(),
+    );
+    await userEvent.click(screen.getByRole("button", { name: C.add }));
+    await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+  });
 
   it("adds a known tag to every selected scenario that has a key", async () => {
     known = { data: ["vip", "refunds"], isLoading: false, isError: false };
