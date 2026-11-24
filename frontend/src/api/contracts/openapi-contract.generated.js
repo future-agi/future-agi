@@ -145047,7 +145047,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
     },
     StoredExtension: {
-      required: ["framework", "source"],
+      required: ["framework", "source", "model_source"],
       type: "object",
       properties: {
         framework: {
@@ -145055,6 +145055,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         source: {
           $ref: "#/definitions/StoredSourceEcho",
+        },
+        model_source: {
+          $ref: "#/definitions/StoredModelSource",
         },
       },
     },
@@ -149706,6 +149709,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
           title: "Label",
           type: "string",
           minLength: 1,
+          "x-nullable": true,
+        },
+      },
+      "x-nullable": true,
+    },
+    StoredModelSource: {
+      required: ["setting", "path", "line"],
+      type: "object",
+      properties: {
+        setting: {
+          title: "Setting",
+          type: "string",
+          minLength: 1,
+        },
+        path: {
+          title: "Path",
+          type: "string",
+          minLength: 1,
+          "x-nullable": true,
+        },
+        line: {
+          title: "Line",
+          type: "integer",
           "x-nullable": true,
         },
       },

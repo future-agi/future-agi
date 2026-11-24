@@ -189,6 +189,9 @@ function normalizeHostStatusSpec(spec) {
           name === "MetricCalculationPaused" ||
           name.startsWith("AgentVersion") ||
           name.startsWith("StoredAgent") ||
+          // Only an agent whose model is set by a setting has one, so most send null;
+          // a setting found with no line sends null path and line.
+          name === "StoredModelSource" ||
           // Every non-ready source state sends kind and the ids as explicit null.
           name === "EvalLogSourceNavigation" ||
           // A log row sends explicit null for ids its source does not have.

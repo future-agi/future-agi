@@ -141464,10 +141464,38 @@
             },
             "x-nullable": true
         },
+        "StoredModelSource": {
+            "required": [
+                "setting",
+                "path",
+                "line"
+            ],
+            "type": "object",
+            "properties": {
+                "setting": {
+                    "title": "Setting",
+                    "type": "string",
+                    "minLength": 1
+                },
+                "path": {
+                    "title": "Path",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "line": {
+                    "title": "Line",
+                    "type": "integer",
+                    "x-nullable": true
+                }
+            },
+            "x-nullable": true
+        },
         "StoredExtension": {
             "required": [
                 "framework",
-                "source"
+                "source",
+                "model_source"
             ],
             "type": "object",
             "properties": {
@@ -141476,6 +141504,9 @@
                 },
                 "source": {
                     "$ref": "#/definitions/StoredSourceEcho"
+                },
+                "model_source": {
+                    "$ref": "#/definitions/StoredModelSource"
                 }
             }
         },

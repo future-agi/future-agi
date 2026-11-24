@@ -34917,6 +34917,14 @@ export const SimulateAgentDefinitionsVersionsAgentListResponse = zod.object({
       source: zod.object({
         subfolder: zod.string().optional(),
       }),
+      model_source: zod.union([
+        zod.object({
+          setting: zod.string().min(1),
+          path: zod.union([zod.string().min(1), zod.null()]),
+          line: zod.union([zod.number(), zod.null()]),
+        }),
+        zod.null(),
+      ]),
     }),
   }),
   sdk_version: zod.string().min(1),
