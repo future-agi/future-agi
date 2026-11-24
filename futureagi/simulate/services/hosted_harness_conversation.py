@@ -494,15 +494,23 @@ def send_to_harness(
     schedule_conversation_runtime(str(conversation.id), endpoint_base_url)
 
 
-def _refuse_while_awaiting_approval(job: HostedHarnessJob) -> None:
-    from simulate.services.harness_design_review import awaiting_design_approval
+def _refuse_while_design_review_pending(job: HostedHarnessJob) -> None:
+    from simulate.services.harness_design_review import (
+        awaiting_design_approval,
+        design_review_pending,
+    )
 
-    if awaiting_design_approval(job):
-        raise HostedHarnessError(
-            "design_review_pending",
-            "Approve or discard the design before changing it in the builder chat",
-            status_code=409,
-        )
+    if not design_review_pending(job):
+        return
+    raise HostedHarnessError(
+        "design_review_pending",
+        (
+            "Approve or discard the design before changing it in the builder chat"
+            if awaiting_design_approval(job)
+            else "The agent is still being read; change the design once it is ready"
+        ),
+        status_code=409,
+    )
 
 
 def enqueue_message(
@@ -518,7 +526,7 @@ def enqueue_message(
 ) -> tuple[HostedHarnessConversation, HostedHarnessConversationMessage, bool]:
     """Queue a user command. ``server_payload`` holds the ``_`` keys only the platform
     sets; ``expected_revision`` is the environment revision when the caller read it."""
-    _refuse_while_awaiting_approval(job)
+    _refuse_while_design_review_pending(job)
     revision = (
         environment_authoring_revision(job)
         if expected_revision is None
