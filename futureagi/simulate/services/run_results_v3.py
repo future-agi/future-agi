@@ -187,6 +187,21 @@ def _eval_outcome(
     return judge_stored_eval(eval_data, _scoring_spec(config, specs)).outcome
 
 
+def _required_eval_failed(
+    call: CallExecution,
+    live_eval_configs: dict[str, SimulateEvalConfig],
+    specs: dict[str, EvalScoringSpec] | None,
+) -> bool:
+    return any(
+        _eval_outcome(data, config, specs) == "failed"
+        for eval_id, data in iter_live_eval_outputs(
+            call.eval_outputs, set(live_eval_configs)
+        )
+        if (config := live_eval_configs.get(str(eval_id))) is not None
+        and is_required(config)
+    )
+
+
 def call_outcome(
     call: CallExecution,
     live_eval_configs: dict[str, SimulateEvalConfig],
@@ -216,6 +231,12 @@ def call_outcome(
         return "inconclusive"
 
     if harness_outcome in HARNESS_FAILED:
+        return "failed"
+    if harness_outcome in (
+        *HARNESS_NO_SCORE,
+        *HARNESS_INCONCLUSIVE,
+        *HARNESS_PASSED,
+    ) and _required_eval_failed(call, live_eval_configs, specs):
         return "failed"
     if harness_outcome in HARNESS_NO_SCORE:
         return "no_score"

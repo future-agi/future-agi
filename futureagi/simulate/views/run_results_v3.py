@@ -335,7 +335,7 @@ class EvaluationResultSerializer(serializers.Serializer):
     reason = serializers.CharField(allow_blank=True)
     status = serializers.ChoiceField(choices=EVAL_STATUSES)
     required = serializers.BooleanField(  # type: ignore[assignment]  # the API field is named required, as Field's own
-        help_text="Marked required on the environment: a failing score is flagged beside the call's verdict and never changes it."
+        help_text="Marked required on the environment: a failing score fails the call."
     )
 
     class Meta:
@@ -381,7 +381,7 @@ class RunCallSerializer(serializers.Serializer):
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
     required_evals_failed = serializers.ListField(
         child=serializers.CharField(),
-        help_text="Names of the required evaluations this call failed; shown beside its verdict.",
+        help_text="Names of the required evaluations this call failed; any one fails the call.",
     )
     outcome_reason = serializers.CharField(required=False, allow_null=True)
     execution_status = serializers.CharField()
@@ -586,7 +586,7 @@ class EvaluationSummarySerializer(serializers.Serializer):
     pass_rate = serializers.FloatField(allow_null=True)
     average_score = serializers.FloatField(allow_null=True)
     required = serializers.BooleanField(  # type: ignore[assignment]  # the API field is named required, as Field's own
-        help_text="Marked required on the environment; reported beside the calls' verdicts."
+        help_text="Marked required on the environment; a failing score fails the call."
     )
 
 
@@ -659,7 +659,7 @@ class CallExecutionV3DetailResponseSerializer(CallExecutionDetailSerializer):
     outcome = serializers.ChoiceField(choices=list(OUTCOME_LABELS))
     required_evals_failed = serializers.ListField(
         child=serializers.CharField(),
-        help_text="Names of the required evaluations this call failed; shown beside its verdict.",
+        help_text="Names of the required evaluations this call failed; any one fails the call.",
     )
     cost_breakdown_cents = CostBreakdownSerializer()
     evaluations = EvaluationResultSerializer(many=True)

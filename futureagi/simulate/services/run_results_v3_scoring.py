@@ -132,6 +132,13 @@ class LiveEvals(dict[str, LiveEval]):
 
     warned = False
 
+    def required_ids(self) -> frozenset[str]:
+        from simulate.services.harness_eval_suggestions import is_required
+
+        return frozenset(
+            eval_id for eval_id, live in self.items() if is_required(live.config)
+        )
+
     def warn_invalid_thresholds(self) -> None:
         """Log each invalid threshold once per load, by the first read that scores."""
         if not self.warned:

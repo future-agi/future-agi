@@ -750,11 +750,15 @@ def run_calls_queryset(
     failed_eval = Q(pk__in=[])
     passed_eval = Q(pk__in=[])
     errored_eval = Q(pk__in=[])
+    failed_required_eval = Q(pk__in=[])
+    required_ids = live_evals.required_ids()
     for eval_id, live in live_evals.items():
         _, passed_q, failed_q = _configured_eval_verdict(
             eval_id, live.config, live.spec
         )
         failed_eval |= failed_q
+        if eval_id in required_ids:
+            failed_required_eval |= failed_q
         passed_eval |= passed_q
         errored_eval |= _eval_errored_q(eval_id)
 
@@ -921,6 +925,17 @@ def run_calls_queryset(
             When(~Q(status="completed"), then=Value("inconclusive")),
             When(
                 call_metadata__harness_outcome_status__in=list(HARNESS_FAILED),
+                then=Value("failed"),
+            ),
+            When(
+                Q(
+                    call_metadata__harness_outcome_status__in=[
+                        *HARNESS_NO_SCORE,
+                        *HARNESS_INCONCLUSIVE,
+                        *HARNESS_PASSED,
+                    ]
+                )
+                & failed_required_eval,
                 then=Value("failed"),
             ),
             When(

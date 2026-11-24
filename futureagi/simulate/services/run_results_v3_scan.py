@@ -460,6 +460,7 @@ def _outcome(
     failed: Truth,
     errored: Truth,
     passed: Truth,
+    failed_required: Truth = False,
 ) -> str:
     """The ``result_outcome`` CASE, in its order."""
     if status in QUEUED_CALL_STATUSES:
@@ -471,6 +472,12 @@ def _outcome(
     if status != "completed":
         return "inconclusive"
     if harness_status in _HARNESS_FAILED:
+        return "failed"
+    if failed_required is True and (
+        harness_status in _HARNESS_NO_SCORE
+        or harness_status in _HARNESS_INCONCLUSIVE
+        or harness_status in _HARNESS_PASSED
+    ):
         return "failed"
     if harness_status in _HARNESS_NO_SCORE:
         return "no_score"
@@ -516,7 +523,13 @@ class _Judge:
     judged once.
     """
 
-    def __init__(self, specs: dict[str, EvalScoringSpec], column_ids: list[str]):
+    def __init__(
+        self,
+        specs: dict[str, EvalScoringSpec],
+        column_ids: list[str],
+        required: frozenset[str] = frozenset(),
+    ):
+        self.required = required
         self.verdicts = {
             eval_id: _ConfiguredVerdict(eval_id, spec)
             for eval_id, spec in specs.items()
@@ -571,8 +584,8 @@ class _Judge:
 
     def judge_entries(
         self, entries: dict[str, str]
-    ) -> tuple[dict[str, float | None], Truth, Truth, Truth]:
-        """Judge an object of entries: (scores, failed, errored, passed)."""
+    ) -> tuple[dict[str, float | None], Truth, Truth, Truth, Truth]:
+        """Judge an object of entries: (scores, failed, errored, passed, failed_required)."""
         judged = {
             eval_id: self._verdict(eval_id, entries.get(eval_id))
             for eval_id in self.verdicts
@@ -603,11 +616,19 @@ class _Judge:
                 *(verdict[1] for verdict, _ in judged.values()),
                 any(n[2] for n in natives),
             ),
+            _or(
+                *(
+                    verdict[2]
+                    for eval_id, (verdict, _) in judged.items()
+                    if eval_id in self.required
+                ),
+                False,
+            ),
         )
 
     def judge_value(
         self, evals: Any
-    ) -> tuple[dict[str, float | None], Truth, Truth, Truth]:
+    ) -> tuple[dict[str, float | None], Truth, Truth, Truth, Truth]:
         """Judge eval outputs that are not an object, or SQL NULL as ``MISSING``."""
         judged = {eval_id: verdict(evals) for eval_id, verdict in self.verdicts.items()}
         scores = {
@@ -622,6 +643,14 @@ class _Judge:
             _or(*(verdict[2] for verdict in judged.values()), False),
             _or(*(_errored(evals, eval_id) for eval_id in self.verdicts), False),
             _or(*(verdict[1] for verdict in judged.values()), False),
+            _or(
+                *(
+                    verdict[2]
+                    for eval_id, verdict in judged.items()
+                    if eval_id in self.required
+                ),
+                False,
+            ),
         )
 
 
@@ -762,6 +791,7 @@ def scan_call_values(
     judge = _Judge(
         {eval_id: live.spec for eval_id, live in live_evals.items()},
         [str(column["id"]) for column in columns],
+        live_evals.required_ids(),
     )
     jobs = list(
         HostedHarnessJob.all_objects.filter(test_execution_id=execution.id)
@@ -817,7 +847,7 @@ def scan_call_values(
                 scenario_goal,
                 scenario_name,
             ) in calls:
-                scores, failed, errored, passed = (
+                scores, failed, errored, passed, failed_required = (
                     judge.judge_entries(_entries(eval_text, keys))
                     if eval_text is not None and eval_text.startswith(_ENTRIES_START)
                     else judge.judge_value(
@@ -850,7 +880,12 @@ def scan_call_values(
                     "result_attack": UNGROUPED,
                     "result_task": UNGROUPED,
                     "result_outcome": _outcome(
-                        status, harness_status, failed, errored, passed
+                        status,
+                        harness_status,
+                        failed,
+                        errored,
+                        passed,
+                        failed_required,
                     ),
                     "scores": scores,
                 }
