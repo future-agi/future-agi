@@ -263,6 +263,11 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     )
     # The files whose rule entries #4296 retired: their suites now run.
     RETIRED = json.loads((CI / "fixtures/runtime-skips-retired.json").read_text())
+    # Since #4296 this file's tests run against the CI ClickHouse sidecar,
+    # which they seed themselves, so "no spans to plan against" cannot happen
+    # on CI: it skipped 0 times in #4296's own run and its landing merge group
+    # (artifact backend-runtime-skips 14893650282). Its rule is gone as well.
+    HOURLY = "tracer/tests/test_hourly_aggregate_state_route_live_ch.py"
     # The measurement date; rules are read as of it so these tests do not age.
     DAY = datetime.date(2026, 11, 22)
 
@@ -376,11 +381,15 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         # skips the tests that import the private package, under its own names.
         # It was measured before #4296 made the retired suites run; their skips
         # there had the same reasons and counts as on the internal run, and
-        # none of those files imports the private package. They are left out
-        # until a merge group after #4296 is measured.
+        # none of those files imports the private package. They are left out,
+        # and so are the hourly-state file's 2 skips (see HOURLY). What is
+        # kept is exactly what #4296's landing merge group measured, file by
+        # file: 274 skips (artifact backend-runtime-skips 14893650282).
         self.assertEqual(self.MEASURED_OSS["total"], 1818)
         retired = set(self.RETIRED["files"])
         self.assertEqual(len(retired), 46)
+        self.assertNotIn(self.HOURLY, retired)
+        retired.add(self.HOURLY)
         kept = {
             **self.MEASURED_OSS,
             "pairs": [
@@ -388,7 +397,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             ],
         }
         dropped = self.MEASURED_OSS["total"] - sum(p["tests"] for p in kept["pairs"])
-        self.assertEqual(dropped, 1542)
+        self.assertEqual(dropped, 1542 + 2)
         error, report, _ = self.report(
             self.measured_rows(kept, runs="oss"),
             files={pair["file"] for pair in kept["pairs"]},
@@ -402,7 +411,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
     def test_retired_suites_have_no_rule(self):
         # A skip in a file whose suite now runs is unexpected again.
         rules = self.rules()
-        for path in self.RETIRED["files"]:
+        for path in [*self.RETIRED["files"], self.HOURLY]:
             with self.subTest(path=path):
                 self.assertFalse(any(path in rule["files"] for rule in rules))
 
@@ -661,11 +670,30 @@ class RuntimeSkipRulesTest(unittest.TestCase):
         self.assertIn("(internal runs) matched nothing", report["rule_problems"][0])
 
     def test_a_varying_rule_is_an_upper_bound_from_the_inventory(self):
-        rules = self.rules()
-        (rule,) = [r for r in rules if "varies" in r]
-        ((path, bound),) = rule["files"].items()
-        self.assertEqual(bound, 8)  # the file's collected tests on 22 Nov
+        # No committed rule varies today: the last one (the hourly-state file)
+        # went once its tests ran on the CI sidecar. The mechanism stays, so
+        # it is exercised with a rule of the same shape.
+        self.assertFalse(any("varies" in rule for rule in self.rules()))
+        path = "tracer/tests/test_shared_table_example.py"
         reason = "Skipped: test ClickHouse has no spans to plan against"
+        rules = self.rules(
+            self.rule_file(
+                [
+                    {
+                        "files": {path: 8},
+                        "varies": "The skip depends on spans other tests leave.",
+                        "reason": f"^{re.escape(reason)}$",
+                        "why": "Earlier tests on the shard decide it.",
+                        "issue": "TH-1",
+                        "owner": "tracer",
+                        "expires": "2027-01-06",
+                    }
+                ]
+            )
+        )
+        (rule,) = rules
+        ((path, bound),) = rule["files"].items()
+        self.assertEqual(bound, 8)
         collected = {path: bound}
         for skipped, unexpected, problems in (
             (0, 0, 0),
@@ -677,6 +705,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             with self.subTest(skipped=skipped):
                 error, report, out = self.report(
                     self.rows([(path, reason)] * skipped),
+                    rules,
                     files={path},
                     collected=collected,
                 )
@@ -687,7 +716,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
                     self.assertIn("above its bound 8", report["rule_problems"][0])
         self.assertIn("(of up to 8 collected)", out)
         # The bound is what the inventory collects there, checked on each run.
-        _, report, _ = self.report([], files={path}, collected={path: 9})
+        _, report, _ = self.report([], rules, files={path}, collected={path: 9})
         self.assertEqual(
             report["rule_problems"],
             [
@@ -695,7 +724,7 @@ class RuntimeSkipRulesTest(unittest.TestCase):
             ],
         )
         # A run that did not schedule the file says nothing about it.
-        _, report, _ = self.report([], files=set(), collected={})
+        _, report, _ = self.report([], rules, files=set(), collected={})
         self.assertEqual(report["rule_problems"], [])
 
     def test_counts_are_judged_only_on_a_complete_run(self):
