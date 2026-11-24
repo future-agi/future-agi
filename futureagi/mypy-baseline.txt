@@ -3467,7 +3467,6 @@ simulate/serializers/test_execution.py:0: error: Item "None" of "Any | None" has
 simulate/serializers/test_execution.py:0: error: Item "None" of "Any | None" has no attribute "get"  [union-attr]
 simulate/serializers/test_execution.py:0: error: Need type annotation for "metrics" (hint: "metrics: dict[<type>, <type>] = ...")  [var-annotated]
 simulate/serializers/test_execution.py:0: error: Need type annotation for "structured_outputs" (hint: "structured_outputs: dict[<type>, <type>] = ...")  [var-annotated]
-simulate/services/agent_fix_agents.py:0: error: Argument 1 to "acquire" of "HostedSourceAcquirer" has incompatible type "HostedHarnessJob | None"; expected "HostedHarnessJob"  [arg-type]
 simulate/services/agent_fix_agents.py:0: error: Item "None" of "HostedHarnessJob | None" has no attribute "agent_version_id"  [union-attr]
 simulate/services/agent_fix_agents.py:0: error: Item "None" of "HostedHarnessJob | None" has no attribute "environment_version_id"  [union-attr]
 simulate/services/agent_fix_agents.py:0: error: Item "None" of "HostedHarnessJob | None" has no attribute "suite_version_id"  [union-attr]

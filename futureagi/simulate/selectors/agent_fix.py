@@ -833,8 +833,14 @@ def outside_attempt_hold_usd(
     runs every scenario OUTSIDE_REPEATS times, graded, except for a repeat an earlier
     attempt on the run finished: read again, it still holds its evals, which a winner's
     grading runs."""
-    evals = len(runnable_eval_config_ids(source_run.environment.run_test_id))
-    ungraded, graded = _worst_case(0), _worst_case(evals)
+    environment = source_run.environment
+    if environment is None:
+        raise HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
+    evals = len(runnable_eval_config_ids(environment.run_test_id))
+    ungraded: Decimal = _worst_case(0)
+    graded: Decimal = _worst_case(evals)
     every = inventory_size(source_run)
     held_back = set(request.held_back_scenario_keys)
     searched = len(set(request.target_scenario_keys) - held_back)

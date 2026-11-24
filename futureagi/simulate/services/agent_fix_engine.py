@@ -102,20 +102,26 @@ def source_archive(fix_run: AgentFixRun) -> bytes:
     key = _object_key(fix_run, BASE_SOURCE)
     body = _load_if_stored(key)
     if body is None:
-        if fix_run.source_run_id is None:
+        source_run = fix_run.source_run
+        if source_run is None:
             raise HostedHarnessError(
                 "fix_source_deleted",
                 "the run this epoch started from was deleted",
                 status_code=409,
             )
-        body = run_source_archive(fix_run.source_run)
+        body = run_source_archive(source_run)
         _put(key, body, "application/gzip")
     return body
 
 
 def run_source_archive(source_run: HostedHarnessJob) -> bytes:
     """The agent's editable files as the run ran them, read again from its source."""
-    return agent_kind(source_run.environment).source_archive(source_run)
+    environment = source_run.environment
+    if environment is None:
+        raise HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
+    return agent_kind(environment).source_archive(source_run)
 
 
 def submitted_archive(fix_run: AgentFixRun) -> bytes | None:

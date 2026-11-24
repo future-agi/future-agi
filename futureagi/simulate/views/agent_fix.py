@@ -366,7 +366,7 @@ class AgentFixRunViewSet(viewsets.ViewSet):
     def _override_reason(request) -> str:
         """The reason to ship a candidate its checks refused. Only a person decides that,
         in Future AGI: an API key, the CLI or MCP is refused."""
-        reason = request.validated_data["override_reason"]
+        reason: str = request.validated_data["override_reason"]
         if reason and not is_browser_session(request):
             raise HostedHarnessError(
                 "fix_override_needs_person",

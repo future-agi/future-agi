@@ -27,6 +27,7 @@ from simulate.pydantic_schemas.agent_fix import (
     CodingAgentTarget,
     Ending,
     FixRequest,
+    FixStep,
     LaunchBlocked,
     OutsideAttempts,
     OutsideCandidate,
@@ -109,6 +110,11 @@ def _attempt_scope(
     outside_attempt_request."""
     if previous is not None:
         return FixRequest.model_validate(previous.request)
+    environment = source_run.environment
+    if environment is None:
+        raise HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
     seed = str(source_run.id)
     ran = scenario_results(source_run)
     failing = set(_capped([one.key for one in ran if one.failing_sub_goals], seed))
@@ -134,10 +140,10 @@ def _attempt_scope(
                 dict.fromkeys(name for names in by_scenario.values() for name in names)
             ),
             # The coding agent edits the agent's own files, so every part is open to it.
-            surfaces=sorted(agent_kind(source_run.environment).surfaces),
+            surfaces=sorted(agent_kind(environment).surfaces),
             budget_usd=BUDGET_CREDITS_MAX / 100,
             max_minutes=default_max_minutes(len(ran)),
-            evidence=evidence_origins(source_run.environment, targets),
+            evidence=evidence_origins(environment, targets),
             allowed_models=seen,
             observes_models=bool(seen),
             meters_agent_cost=bool(usage),
@@ -386,11 +392,12 @@ def attempt_verdict(fix_run: AgentFixRun) -> AttemptVerdict:
     candidate = next(iter(fix_run.candidates.all()), None)
     verdict = (candidate.verdict if candidate else None) or {}
     report = fix_run.report or {}
+    step = fix_step(fix_run)
     return AttemptVerdict(
         id=str(fix_run.id),
         number=request.outside_candidate.number,
         state=fix_run.state,
-        step=fix_step(fix_run),
+        step=FixStep(step) if step else None,
         ending=report.get("ending"),
         failure=LaunchBlocked.model_validate(fix_run.failure)
         if fix_run.failure
