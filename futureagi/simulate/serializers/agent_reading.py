@@ -1,3 +1,5 @@
+from typing import Any
+
 from rest_framework import serializers
 
 from simulate.serializers.harness_job import SUBFOLDER_PATTERN
@@ -24,7 +26,7 @@ FRAMEWORK_NAMES = (
 class FrameworkSerializer(serializers.Serializer):
     name = serializers.ChoiceField(choices=FRAMEWORK_NAMES)
     version = serializers.CharField(max_length=64, allow_null=True)
-    label = serializers.CharField(max_length=128, allow_null=True)
+    label = serializers.CharField(max_length=128, allow_null=True)  # type: ignore[assignment]  # the API field is named label, as Field's own
 
     def validate(self, attrs):
         if (attrs["name"] == "other") != bool(attrs["label"]):
@@ -66,7 +68,9 @@ class AgentScanSerializer(serializers.Serializer):
     schema_version = serializers.ChoiceField(choices=(AGENT_SCAN_SCHEMA,))
     status = serializers.ChoiceField(choices=("found", "none", "error"))
     commit_sha = serializers.RegexField(r"^[0-9a-f]{40}$", allow_null=True)
-    agents = FoundAgentSerializer(many=True, max_length=MAX_AGENTS)
+    agents: serializers.ListSerializer[Any] = serializers.ListSerializer(
+        child=FoundAgentSerializer(), max_length=MAX_AGENTS
+    )
     truncated = serializers.BooleanField()
     error = ScanErrorSerializer(allow_null=True)
 

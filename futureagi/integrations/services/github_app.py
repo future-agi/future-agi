@@ -351,14 +351,15 @@ def _installation_account(installation_id: str) -> tuple[str, bool]:
         code="github_installation_unreadable",
         message=f"GitHub did not return installation {installation_id}",
     )
-    account = body.get("account") if isinstance(body, dict) else None
+    payload = body if isinstance(body, dict) else {}
+    account = payload.get("account")
     login = account.get("login") if isinstance(account, dict) else None
     if not login:
         raise GitHubAppError(
             "github_installation_unreadable",
             f"GitHub did not return installation {installation_id}",
         )
-    return str(login), bool(body.get("suspended_at"))
+    return str(login), bool(payload.get("suspended_at"))
 
 
 def _save_connection(
@@ -384,6 +385,7 @@ def _save_connection(
         )
         if existing is not None and existing.external_project_name != installation_id:
             return InstallResult(outcome="already_connected", connection_id=existing.id)
+        connection: IntegrationConnection | None
         if existing is not None:
             existing.display_name = account
             existing.status = status
@@ -460,11 +462,16 @@ def complete_github_install(
             status_code=403,
         )
     user_model = get_user_model()
+    user_id = context["user_id"]
+    organization_id = context["organization_id"]
+    workspace_id = context["workspace_id"]
+    if user_id is None or organization_id is None or workspace_id is None:
+        raise ValueError("The GitHub installation no longer matches a workspace.")
     try:
-        user = user_model.objects.get(pk=context["user_id"])
-        organization = Organization.objects.get(pk=context["organization_id"])
+        user = user_model.objects.get(pk=user_id)
+        organization = Organization.objects.get(pk=organization_id)
         workspace = Workspace.objects.get(
-            pk=context["workspace_id"], organization=organization, is_active=True
+            pk=workspace_id, organization=organization, is_active=True
         )
     except (
         user_model.DoesNotExist,
@@ -497,13 +504,15 @@ def complete_github_install(
 def installation_connected(
     *, organization_id: UUID, workspace_id: UUID | None, installation_id: str
 ) -> bool:
-    return IntegrationConnection.no_workspace_objects.filter(
+    connections = IntegrationConnection.no_workspace_objects.filter(
         organization_id=organization_id,
-        workspace_id=workspace_id,
         platform=IntegrationPlatform.GITHUB,
         external_project_name=installation_id,
         status=ConnectionStatus.ACTIVE,
-    ).exists()
+    )
+    if workspace_id is None:
+        return connections.filter(workspace__isnull=True).exists()
+    return connections.filter(workspace_id=workspace_id).exists()
 
 
 def _repositories_key(installation_id: str) -> str:
@@ -558,7 +567,7 @@ def apply_installation_event(*, installation_id: str, action: str) -> None:
 
 def _installation_repositories(installation_id: str) -> list[Repository]:
     key = _repositories_key(installation_id)
-    cached = cache.get(key)
+    cached: list[Repository] | None = cache.get(key)
     if cached is not None:
         return cached
     with installation_credential(installation_id) as token:
@@ -608,7 +617,7 @@ def list_branches(installation_id: str, *, repository_id: int) -> list[Branch] |
     if repository is None:
         return None
     key = f"github-repository-branches:{installation_id}:{repository_id}"
-    cached = cache.get(key)
+    cached: list[Branch] | None = cache.get(key)
     if cached is not None:
         return cached
     with installation_credential(installation_id) as token:

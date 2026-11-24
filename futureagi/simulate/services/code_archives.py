@@ -26,7 +26,7 @@ def stored_commit_archive(
 ) -> bytes | None:
     archive = CodeArchive.no_workspace_objects.filter(
         organization_id=organization_id,
-        workspace_id=workspace_id,
+        workspace=workspace_id,
         repository=repository.lower(),
         commit_sha=commit_sha.lower(),
     ).first()

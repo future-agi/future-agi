@@ -270,26 +270,6 @@ class PureFunctionTests(unittest.TestCase):
 
 WORKFLOW = ROOT / ".github" / "workflows" / "python-lint.yml"
 
-# The paths whose change makes Ruff run: Python under futureagi/, its ruff
-# config, and the gate, its tests, the pre-commit hook and this workflow.
-LINT_PATHS = (
-    "futureagi/**/*.py",
-    "futureagi/pyproject.toml",
-    "futureagi/**/pyproject.toml",
-    "futureagi/**/ruff.toml",
-    "futureagi/**/.ruff.toml",
-    "pyproject.toml",
-    "ruff.toml",
-    ".ruff.toml",
-    "scripts/check_python_lint_delta.py",
-    "scripts/test_check_python_lint_delta.py",
-    "scripts/lint-staged-python.sh",
-    ".github/workflows/python-lint.yml",
-    # RuffPinTests checks these two match the CI ruff pin.
-    "futureagi/Makefile",
-    "futureagi/.pre-commit-config.yaml",
-)
-
 
 def top_level_block(text, key):
     """The lines under a column-0 key, up to the next column-0 key."""
@@ -321,79 +301,61 @@ class WorkflowTests(unittest.TestCase):
     def setUpClass(cls):
         cls.text = WORKFLOW.read_text()
 
-    def test_the_workflow_has_no_paths_or_branches_filter(self):
+    def test_prs_have_no_paths_or_branches_filter(self):
         on = top_level_block(self.text, "on")
         self.assertRegex(on, r"(?m)^  pull_request:\s*$")
-        self.assertRegex(
-            on, r"(?m)^    types: \[opened, synchronize, reopened, edited\]\s*$"
-        )
+        self.assertRegex(on, r"(?m)^    types: \[opened, synchronize, reopened\]\s*$")
         # A workflow-level paths filter means no check at all on a PR without
         # Python changes, and a required check that never starts never passes.
         self.assertNotRegex(on, r"(?m)^\s*(paths|paths-ignore)\s*:")
         # Stacked PRs into feature branches get the check too.
-        self.assertNotRegex(on, r"(?m)^\s*(branches|branches-ignore)\s*:")
+        pull_request = re.search(r"(?ms)^  pull_request:\n(.*?)(?=^  \S|\Z)", on)[1]
+        self.assertNotRegex(pull_request, r"(?m)^\s*(branches|branches-ignore)\s*:")
+        self.assertIn("  push:\n    branches: [dev, main]", on)
+        head = "${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || (github.event_name == 'push' && github.event.after) }}"
+        self.assertEqual(self.text.count("ref: " + head), 2)
+        self.assertIn("EXPECTED: " + head, self.text)
+        self.assertIn("HEAD_SHA: " + head, self.text)
+
+    def test_the_workflow_reports_on_a_merge_group(self):
+        # A merge queue waits for every required check on the merge-group
+        # commit; without this trigger "Python Lint Pass" never reports there.
+        on = top_level_block(self.text, "on")
+        self.assertRegex(on, r"(?m)^  merge_group:\s*$")
+        self.assertIn("    types: [checks_requested]", on)
+        # One candidate group per ref: no event gets a group of its own.
+        self.assertRegex(self.text, r"(?m)^  group: python-lint-.*-candidate$")
 
     def test_the_header_names_the_check_to_require(self):
         header = self.text.split("\non:", 1)[0]
         self.assertIn('The check to require is "Python Lint Pass"', header)
         self.assertNotIn("Advisory", header)
 
-    def test_a_changes_job_decides_from_the_lint_paths(self):
-        changes = job_block(self.text, "changes")
-        self.assertIn("uses: dorny/paths-filter@v3", changes)
-        self.assertRegex(changes, r"(?m)^      pull-requests: read\b")
-        self.assertRegex(
-            changes,
-            r"(?m)^      python: \$\{\{ steps\.filter\.outputs\.python \}\}\s*$",
-        )
-        self.assertNotRegex(changes, r"(?m)^    if:", "the changes job must always run")
-        filters = changes.split("            python:\n", 1)[1]
-        listed = re.findall(r"(?m)^              - '([^']+)'\s*$", filters)
-        self.assertEqual(sorted(listed), sorted(LINT_PATHS))
-
-    def test_ruff_runs_only_when_changes_says_so(self):
-        ruff = job_block(self.text, "ruff-delta")
-        self.assertRegex(ruff, r"(?m)^    name: Ruff \(new violations only\)\s*$")
-        self.assertRegex(ruff, r"(?m)^    needs: changes\s*$")
-        self.assertRegex(
-            ruff, r"(?m)^    if: needs\.changes\.outputs\.python == 'true'\s*$"
-        )
-
-    def test_the_summary_job_always_runs_after_both_jobs(self):
-        names = re.findall(
-            r"(?m)^    name: Python Lint Pass\s*$", top_level_block(self.text, "jobs")
-        )
-        self.assertEqual(
-            len(names), 1, "exactly one job may carry the required check's name"
-        )
+    def test_both_jobs_run_on_every_candidate(self):
+        # Edits and labels start no run of this workflow: such a run would
+        # become its newest suite and hide the required check (#4332).
+        for name in ("ruff-delta", "ruff-self-test"):
+            job = job_block(self.text, name)
+            self.assertNotRegex(job, r"(?m)^    if:")
+            self.assertIn("fetch-depth: 1", job)
         summary = job_block(self.text, "python-lint-pass")
-        self.assertRegex(summary, r"(?m)^    name: Python Lint Pass\s*$")
-        self.assertRegex(
-            summary, r"(?m)^    needs: \[changes, ruff-delta, ruff-self-test\]\s*$"
-        )
-        self.assertRegex(
-            summary,
-            r"(?m)^          SELF_TEST: \$\{\{ needs\.ruff-self-test\.result \}\}\s*$",
-        )
-        # always(), not !cancelled(): a cancelled run must fail the check, not skip it.
-        self.assertRegex(summary, r"(?m)^    if: always\(\)\s*$")
-        # The script below reads these; wired to anything else, its test proves nothing.
-        self.assertRegex(
-            summary, r"(?m)^          CHANGES: \$\{\{ needs\.changes\.result \}\}\s*$"
-        )
-        self.assertRegex(
-            summary,
-            r"(?m)^          PYTHON_CHANGED: \$\{\{ needs\.changes\.outputs\.python \}\}\s*$",
-        )
-        self.assertRegex(
-            summary, r"(?m)^          RUFF: \$\{\{ needs\.ruff-delta\.result \}\}\s*$"
-        )
+        self.assertIn("    name: Python Lint Pass\n", summary)
+        self.assertIn("    if: ${{ always() }}\n", summary)
+        self.assertEqual(self.text.count("name: Python Lint Pass"), 1)
+        self.assertNotIn("github.event.action", self.text)
+        self.assertIn("needs: [ruff-delta, ruff-self-test]", summary)
+        self.assertIn("RUFF: ${{ needs.ruff-delta.result }}", summary)
+        self.assertIn("SELF_TEST: ${{ needs.ruff-self-test.result }}", summary)
 
     def test_the_gate_runs_from_the_base_branch(self):
         # A PR branched before the gate has no scripts/check_python_lint_delta.py,
         # and a PR that edits the gate must not be judged by its own edit.
         ruff = job_block(self.text, "ruff-delta")
-        self.assertIn('trusted_ref="$(git rev-parse "origin/${BASE_REF}")"', ruff)
+        self.assertIn(
+            "BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || (github.event_name == 'push' && github.event.before) }}",
+            ruff,
+        )
+        self.assertNotIn("origin/${", ruff)
         self.assertIn(
             'git show "${trusted_ref}:scripts/check_python_lint_delta.py" > "$gate"',
             ruff,
@@ -402,10 +364,9 @@ class WorkflowTests(unittest.TestCase):
             'git show "${trusted_ref}:.github/workflows/python-lint.yml"', ruff
         )
         self.assertIn(
-            'python3 -I "$gate" --base "$base" "${config_ref_args[@]}" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"',
+            'python3 -I "$gate" --base "$base" "${config_args[@]}" --ruff "$venv/bin/ruff" --expect-ruff-version "$RUFF_VERSION"',
             ruff,
         )
-        self.assertIn('if grep -q -- "--config-ref" "$gate"; then', ruff)
         self.assertNotRegex(ruff, r"python3 -I scripts/check_python_lint_delta\.py")
         # No head-provided executable runs before the reporting step in this job.
         self.assertNotIn("scripts/test_check_python_lint_delta.py", ruff)
@@ -436,52 +397,15 @@ class WorkflowTests(unittest.TestCase):
 
     def test_the_summary_fails_closed(self):
         script = run_script(job_block(self.text, "python-lint-pass"))
-        cases = [
-            # (changes result, python output, gate result, test result, passes)
-            ("success", "true", "success", "success", True),
-            ("success", "false", "skipped", "skipped", True),
-            ("success", "true", "failure", "success", False),
-            ("success", "true", "success", "failure", False),
-            ("success", "true", "success", "cancelled", False),
-            ("success", "true", "cancelled", "success", False),
-            ("success", "true", "skipped", "success", False),
-            ("success", "true", "success", "skipped", False),
-            ("success", "", "skipped", "skipped", False),
-            ("success", "false", "failure", "skipped", False),
-            ("success", "false", "skipped", "failure", False),
-            ("success", "false", "success", "success", False),
-            ("failure", "", "skipped", "skipped", False),
-            ("cancelled", "", "skipped", "skipped", False),
-            ("skipped", "", "skipped", "skipped", False),
-            ("failure", "true", "success", "success", False),
-            ("failure", "false", "skipped", "skipped", False),
-        ]
-        with tempfile.TemporaryDirectory(prefix="lint-summary-test-") as tmp:
-            path = Path(tmp) / "summary.sh"
-            path.write_text(script)
-            for changes, python, ruff, self_test, passes in cases:
-                # The shell GitHub runs a step's script with.
-                proc = subprocess.run(
-                    ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(path)],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    env={
-                        "PATH": os.environ["PATH"],
-                        "CHANGES": changes,
-                        "PYTHON_CHANGED": python,
-                        "RUFF": ruff,
-                        "SELF_TEST": self_test,
-                    },
-                )
-                with self.subTest(
-                    changes=changes, python=python, ruff=ruff, self_test=self_test
-                ):
-                    self.assertEqual(
-                        proc.returncode, 0 if passes else 1, proc.stdout + proc.stderr
+        for ruff in ("success", "failure", "cancelled", "skipped", ""):
+            for head in ("success", "failure", "cancelled", "skipped", ""):
+                with self.subTest(ruff=ruff, head=head):
+                    proc = subprocess.run(
+                        ["bash", "-ec", script],
+                        capture_output=True,
+                        env={**os.environ, "RUFF": ruff, "SELF_TEST": head},
                     )
-                    if not passes:
-                        self.assertIn("::error::", proc.stdout)
+                    self.assertEqual(proc.returncode == 0, ruff == head == "success")
 
 
 BASE_MOD = textwrap.dedent(
@@ -1772,7 +1696,9 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
         self.bin.mkdir()
         self.installs = Path(self.tmp.name) / "installs"
         self.git("init", "-q", "-b", "main")
-        self.write("futureagi/pyproject.toml", CONFIG)
+        self.write(
+            "futureagi/pyproject.toml", (ROOT / "futureagi/pyproject.toml").read_text()
+        )
         self.write("futureagi/app/mod.py", "value = 1\n")
         self.write("scripts/check_python_lint_delta.py", SCRIPT.read_text())
         self.write(".github/workflows/python-lint.yml", WORKFLOW.read_text())
@@ -1812,7 +1738,8 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
         head_ruff.chmod(0o755)
 
     def base(self):
-        self.git("update-ref", "refs/remotes/origin/main", self.commit())
+        self.base_sha = self.commit()
+        self.git("update-ref", "refs/remotes/origin/dev", self.base_sha)
 
     def report(self, head_version="99.99.99"):
         text = WORKFLOW.read_text()
@@ -1826,7 +1753,14 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
         self.commit()
         return self.run_step("Report new violations", head_version)
 
-    def run_step(self, name, workflow_version="99.99.99"):
+    def run_step(
+        self,
+        name,
+        workflow_version="99.99.99",
+        event="pull_request",
+        base_sha=None,
+        head_sha=None,
+    ):
         step = (
             job_block(
                 WORKFLOW.read_text(),
@@ -1856,7 +1790,19 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
                 "PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
                 "RUNNER_TEMP": str(self.runner),
                 "GITHUB_STEP_SUMMARY": "",
-                "BASE_REF": "main",
+                "BASE_SHA": base_sha
+                if base_sha is not None
+                else getattr(self, "base_sha", ""),
+                "HEAD_SHA": head_sha
+                or (
+                    self.git("rev-parse", "HEAD")
+                    if name == "Report new violations"
+                    else ""
+                ),
+                "GITHUB_EVENT_NAME": event,
+                "GITHUB_SHA": self.git("rev-parse", "HEAD")
+                if name == "Report new violations"
+                else "",
                 "RUFF_VERSION": workflow_version,
                 "HEAD_RUFF_VERSION": workflow_version,
                 "REAL_RUFF": RUFF,
@@ -1864,6 +1810,124 @@ class WorkflowExecutionTests(RepositoryFixture, unittest.TestCase):
                 "INSTALL_LOG": str(self.installs),
             },
         )
+
+    def test_legacy_cli_lints_unless_trusted_settings_have_diverged(self):
+        # Keep the real lint implementation, expose only the old parser API,
+        # and use --base for both the delta and its settings as that API did.
+        source = SCRIPT.read_text()
+        start = source.index('    parser.add_argument(\n        "--config-ref",')
+        end = source.index('    parser.add_argument("--ruff"', start)
+        legacy = (source[:start] + source[end:]).replace("args.config_ref", "args.base")
+        self.write("scripts/check_python_lint_delta.py", legacy)
+        self.base()
+        self.git("checkout", "-qb", "work")
+        self.write("futureagi/app/mod.py", 'value = 1\nprint("new")\n')
+        self.write("scripts/check_python_lint_delta.py", "raise SystemExit(0)\n")
+        self.commit()
+        self.git("checkout", "-q", "main")
+        self.write("base-notes", "base moved without changing policy")
+        compatible = self.commit()
+        self.write("futureagi/app/.ruff.toml", "line-length = 99\n")
+        incompatible = self.commit()
+        self.git("checkout", "-q", "work")
+        result = self.run_step("Report new violations", base_sha=compatible)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("title=ruff T201", result.stdout)
+        # A second workflow run receives a fresh runner temp directory.
+        self.runner = Path(self.tmp.name) / "second-run"
+        self.runner.mkdir()
+        result = self.run_step("Report new violations", base_sha=incompatible)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Upgrade the target branch lint gate", result.stdout)
+
+    def test_protected_push_delta_drives_required_verdict(self):
+        self.base()
+        self.write("futureagi/app/mod.py", 'value = 1\nprint("new")\n')
+        bad_landing = self.commit()
+        self.write("notes", "no new lint since the last landing\n")
+        self.commit()
+        summary = run_script(job_block(WORKFLOW.read_text(), "python-lint-pass"))
+        for baseline, reason in (
+            (self.base_sha, "title=ruff T201"),
+            ("0" * 40, "no before SHA"),
+            ("", "no before SHA"),
+            (bad_landing, "No new violations"),
+        ):
+            with self.subTest(baseline=baseline):
+                # A rerun gets a fresh provisioning directory.
+                with tempfile.TemporaryDirectory(dir=self.tmp.name) as runner:
+                    self.runner = Path(runner)
+                    delta = self.run_step(
+                        "Report new violations", event="push", base_sha=baseline
+                    )
+                self.assertIn(reason, delta.stdout, delta.stderr)
+                verdict = subprocess.run(
+                    ["bash", "-ec", summary],
+                    env={
+                        **os.environ,
+                        "SELF_TEST": "success",
+                        "RUFF": "success" if delta.returncode == 0 else "failure",
+                    },
+                    capture_output=True,
+                )
+                self.assertEqual(verdict.returncode == 0, reason == "No new violations")
+
+    def test_advanced_remote_cannot_change_the_event_base(self):
+        self.base()
+        self.write("futureagi/app/mod.py", 'value = 1\nprint("new")\n')
+        self.commit()
+        self.git("update-ref", "refs/remotes/origin/dev", self.git("rev-parse", "HEAD"))
+        proc = self.run_step("Report new violations", event="merge_group")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("title=ruff T201", proc.stdout)
+
+    def test_shallow_stacked_candidate_deepens_to_the_real_fork_point(self):
+        self.base()
+        fork_point = self.base_sha
+        self.git("checkout", "-qb", "stacked")
+        for number in range(35):
+            self.write("stack-history", f"{number}\n")
+            self.commit()
+        self.write("futureagi/app/mod.py", 'value = 1\nprint("new")\n')
+        self.commit()
+        self.git("checkout", "-q", "main")
+        self.write("upstream", "retargeted\n")
+        self.base_sha = self.commit()
+        clone = Path(self.tmp.name) / "shallow"
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "-q",
+                "--depth=1",
+                "--branch",
+                "stacked",
+                self.repo.as_uri(),
+                str(clone),
+            ],
+            check=True,
+        )
+        self.repo = clone
+        self.assertEqual(self.git("rev-parse", "--is-shallow-repository"), "true")
+        proc = self.run_step("Report new violations")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("title=ruff T201", proc.stdout)
+        self.assertIn(f"Compared with {fork_point[:12]}", proc.stdout)
+
+    def test_missing_group_base_and_wrong_checkout_fail_closed(self):
+        self.base()
+        for override in (
+            {"base_sha": ""},
+            {"base_sha": "0" * 40},
+            {"head_sha": "1" * 40},
+        ):
+            self.assertNotEqual(
+                self.run_step(
+                    "Report new violations", event="merge_group", **override
+                ).returncode,
+                0,
+            )
+            self.assertFalse(self.installs.exists())
 
     def test_head_self_tests_use_head_pin_not_merge_workflow_pin(self):
         self.write("scripts/test_check_python_lint_delta.py", "# Fixture self-test.\n")

@@ -965,17 +965,13 @@ def test_a_run_manifest_freezes_the_digest_of_the_proof_the_platform_holds():
     assert _frozen_proof({"binding": {**binding, "mode": "canonical"}}) == {}
 
 
-def test_a_proof_file_that_is_not_the_one_the_result_names_is_refused(
-    tmp_path, monkeypatch
-):
-    """The adaptation's control process records the digest of the proof it made. A proof file
-    with a status edited after that, its references intact, is not that proof."""
+def _left_in_the_output(tmp_path, binding, proof, monkeypatch):
+    """An adaptation's downloaded output, whose result names the proof beside it: the two files
+    agree with each other, as any pair a session wrote would."""
     import json
 
     from simulate.services import harness_releases
 
-    binding = _routed_binding()
-    proof = _proof(binding, a="proved", b="unscorable")
     result = {
         "schema_version": harness_releases.ADAPTATION_RESULT_SCHEMA,
         "status": "completed",
@@ -983,11 +979,10 @@ def test_a_proof_file_that_is_not_the_one_the_result_names_is_refused(
         "binding_proof": {"digest": harness_releases.proof_digest(proof)},
         "alignment": {},
     }
-    edited = _proof(binding, a="proved", b="proved")
     for name, body in (
         ("result.json", result),
         ("binding.json", binding),
-        ("binding-proof.json", edited),
+        ("binding-proof.json", proof),
     ):
         (tmp_path / name).write_text(json.dumps(body))
     suite = type("Suite", (), {"digest": "sha256:" + "s" * 64, "name": "retail"})()
@@ -995,14 +990,17 @@ def test_a_proof_file_that_is_not_the_one_the_result_names_is_refused(
         "Job",
         (),
         {
+            "id": "job-1",
+            "workspace": None,
             "organization": object(),
             "payload": {
+                "agent": {},
                 "metadata": {
                     "adaptation": {
                         "suite": {"digest": suite.digest},
                         "agent_version_id": "v1",
                     }
-                }
+                },
             },
         },
     )()
@@ -1012,14 +1010,157 @@ def test_a_proof_file_that_is_not_the_one_the_result_names_is_refused(
         "filter",
         lambda **kwargs: type("Found", (), {"first": lambda self: object()})(),
     )
+    composed = {}
 
-    def never(*args, **kwargs):
-        raise AssertionError("an unanchored proof must not become a composition")
+    def compose(*args, **kwargs):
+        composed.update(kwargs)
+        return type("Composition", (), {"id": "composition-1"})()
 
-    monkeypatch.setattr(harness_releases, "create_composition", never)
+    monkeypatch.setattr(harness_releases, "create_composition", compose)
+    return job, composed
+
+
+def _verified(binding, proof):
+    from simulate.services import harness_releases
+
+    return {
+        "schema_version": harness_releases.ADAPTATION_VERIFIED_SCHEMA,
+        "binding": {"digest": binding["digest"], "mode": "tool_routed"},
+        "binding_proof": {"digest": harness_releases.proof_digest(proof)},
+    }
+
+
+def test_the_proof_the_control_process_verified_is_accepted(tmp_path, monkeypatch):
+    from simulate.services import harness_releases
+
+    binding = _routed_binding()
+    proof = _proof(binding, a="proved", b="unscorable")
+    job, composed = _left_in_the_output(tmp_path, binding, proof, monkeypatch)
+
+    result, failure = harness_releases._adapt(job, tmp_path, _verified(binding, proof))
+
+    assert failure is None and result["composition_id"] == "composition-1"
+    assert composed["binding_proof"] == proof
+
+
+def test_a_matching_pair_the_control_process_did_not_verify_is_refused(
+    tmp_path, monkeypatch
+):
+    """The reviewer's case: after the control process proved the binding, the output's proof and
+    the digest in its result are both replaced, so they agree. The record read apart from the
+    output still names the proof that was verified."""
+    from simulate.services import harness_releases
+
+    binding = _routed_binding()
+    verified = _verified(binding, _proof(binding, a="proved", b="unscorable"))
+    forged = _proof(binding, a="proved", b="proved")
+    job, composed = _left_in_the_output(tmp_path, binding, forged, monkeypatch)
 
     with pytest.raises(HostedHarnessError) as refused:
-        harness_releases._adapt(job, tmp_path)
+        harness_releases._adapt(job, tmp_path, verified)
 
     assert refused.value.code == "binding_unproved"
-    assert "not the proof the adaptation's result names" in str(refused.value)
+    assert "not the proof the control process verified" in str(refused.value)
+    assert composed == {}
+
+
+@pytest.mark.parametrize(
+    "verified",
+    [
+        None,
+        {"schema_version": "something-else", "binding_proof": {"digest": "x"}},
+        {"schema_version": "futureagi.adaptation-verified.v1", "binding": None},
+    ],
+    ids=["no-record", "another-schema", "nothing-recorded"],
+)
+def test_a_routed_binding_with_no_verified_record_is_refused(
+    tmp_path, monkeypatch, verified
+):
+    from simulate.services import harness_releases
+
+    binding = _routed_binding()
+    proof = _proof(binding, a="proved", b="unscorable")
+    job, composed = _left_in_the_output(tmp_path, binding, proof, monkeypatch)
+
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_releases._adapt(job, tmp_path, verified)
+
+    assert refused.value.code == "binding_unproved"
+    assert "recorded no verified proof" in str(refused.value)
+    assert composed == {}
+
+
+def test_another_binding_than_the_one_verified_is_refused(tmp_path, monkeypatch):
+    from simulate.services import harness_releases
+
+    binding = _routed_binding()
+    proof = _proof(binding, a="proved", b="unscorable")
+    job, composed = _left_in_the_output(tmp_path, binding, proof, monkeypatch)
+    verified = _verified(binding, proof)
+    verified["binding"]["digest"] = "sha256:" + "0" * 64
+
+    with pytest.raises(HostedHarnessError) as refused:
+        harness_releases._adapt(job, tmp_path, verified)
+
+    assert "not the binding the control process verified" in str(refused.value)
+    assert composed == {}
+
+
+def test_the_verified_record_is_read_from_its_own_path_never_the_output():
+    import json
+
+    from simulate.services import hosted_harness_gateway
+    from simulate.services.harness_releases import (
+        ADAPTATION_OUTPUT,
+        ADAPTATION_VERIFIED,
+    )
+
+    record = {"schema_version": "futureagi.adaptation-verified.v1"}
+    asked = []
+
+    class Files:
+        def download_file(self, path, timeout):
+            asked.append(path)
+            if path != ADAPTATION_VERIFIED:
+                raise FileNotFoundError(path)
+            return json.dumps(record).encode()
+
+    sandbox = type("Sandbox", (), {"fs": Files()})()
+
+    assert hosted_harness_gateway._read_verified(sandbox, ADAPTATION_VERIFIED) == record
+    assert asked == [ADAPTATION_VERIFIED]
+    assert not ADAPTATION_VERIFIED.startswith(ADAPTATION_OUTPUT.rsplit("/", 1)[0] + "/")
+    # A sandbox that left none, or something unreadable, verified nothing.
+    assert hosted_harness_gateway._read_verified(sandbox, "/work/missing.json") is None
+
+
+def test_the_fit_waits_one_short_budget_for_the_model_retry_included(monkeypatch):
+    """Two tries never add up to more than the budget: the second gets what the first left, and
+    with nothing left the model is not asked again."""
+    import httpx
+
+    clock = iter([100.0, 100.0, 109.0, 111.5])
+    monkeypatch.setattr(harness_fit.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(
+        harness_fit, "platform_model_gateway", lambda: ("https://gw", "k")
+    )
+    timeouts = []
+
+    def post(url, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        raise httpx.ConnectError("dropped")
+
+    monkeypatch.setattr(harness_fit.httpx, "post", post)
+
+    with pytest.raises(httpx.TransportError):
+        harness_fit._ask_model("task", {})
+
+    assert timeouts == [12.0, 3.0]
+    assert sum(timeouts) <= harness_fit._MODEL_BUDGET_SECONDS + 3
+
+    spent = iter([100.0, 100.0, 111.5])
+    monkeypatch.setattr(harness_fit.time, "monotonic", lambda: next(spent))
+    timeouts.clear()
+    with pytest.raises(httpx.TimeoutException):
+        harness_fit._ask_model("task", {})
+    assert timeouts == [12.0]

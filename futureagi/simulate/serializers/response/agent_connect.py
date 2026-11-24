@@ -9,7 +9,7 @@ class AgentScanStartedResponseSerializer(serializers.Serializer):
 class FoundAgentFrameworkSerializer(serializers.Serializer):
     name = serializers.CharField(read_only=True)
     version = serializers.CharField(read_only=True, allow_null=True)
-    label = serializers.CharField(read_only=True, allow_null=True)
+    label = serializers.CharField(read_only=True, allow_null=True)  # type: ignore[assignment]  # the API field is named label, as Field's own
 
 
 class FoundAgentEstimatesSerializer(serializers.Serializer):

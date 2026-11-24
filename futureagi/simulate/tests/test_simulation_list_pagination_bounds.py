@@ -1,6 +1,6 @@
 from inspect import getsource, unwrap
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID
 
 import pytest
 from rest_framework import status
@@ -12,6 +12,11 @@ from simulate.serializers.requests.run_test import (
 )
 from simulate.views.prompt_simulation import PromptSimulationListCreateView
 from simulate.views.run_test import RunTestAPIView, RunTestListView
+
+# Fixed, not uuid4(): this value is part of the pytest ids. Every CI shard
+# collects the tests in its own process, and pytest-split runs each case
+# exactly once only when all shards see the same ids.
+PROMPT_TEMPLATE_ID = UUID("00000000-0000-4000-8000-000000000001")
 
 
 @pytest.mark.parametrize(
@@ -64,8 +69,8 @@ def test_prompt_simulation_list_uses_validated_query_values():
         (RunTestAPIView, "/simulate/api/run-tests/", {}),
         (
             PromptSimulationListCreateView,
-            f"/simulate/prompt-templates/{uuid4()}/simulations/",
-            {"prompt_template_id": uuid4()},
+            f"/simulate/prompt-templates/{PROMPT_TEMPLATE_ID}/simulations/",
+            {"prompt_template_id": PROMPT_TEMPLATE_ID},
         ),
     ],
 )

@@ -21,12 +21,14 @@ type secretDetector struct {
 type SecretsGuardrail struct {
 	detectors  []secretDetector
 	maxSecrets int
+	configErr  error
 }
 
 // New creates a SecretsGuardrail from rule config.
 func New(cfg map[string]interface{}) *SecretsGuardrail {
 	g := &SecretsGuardrail{
 		maxSecrets: 1,
+		configErr:  validateConfig(cfg),
 	}
 
 	if cfg != nil {
@@ -62,7 +64,34 @@ func New(cfg map[string]interface{}) *SecretsGuardrail {
 	return g
 }
 
-func (g *SecretsGuardrail) Name() string           { return "secret-detection" }
+// ValidateConfig reports constructor-time selector errors for selected policies,
+// without changing legacy Check behavior or retaining mutable caller config.
+func (g *SecretsGuardrail) ValidateConfig() error { return g.configErr }
+
+func validateConfig(cfg map[string]interface{}) error {
+	value, present := cfg["types"]
+	if !present {
+		return nil
+	}
+	list, ok := value.([]interface{})
+	if !ok {
+		return fmt.Errorf("secret-detection types must be an array of supported detector names")
+	}
+	catalog := defaultPatterns()
+	for _, item := range list {
+		name, ok := item.(string)
+		if !ok {
+			return fmt.Errorf("secret-detection types must contain only supported detector names")
+		}
+		if _, supported := catalog[name]; !supported {
+			return fmt.Errorf("secret-detection types contains an unsupported detector name")
+		}
+	}
+	// An empty list intentionally keeps the constructor's default detector set.
+	return nil
+}
+
+func (g *SecretsGuardrail) Name() string            { return "secret-detection" }
 func (g *SecretsGuardrail) Stage() guardrails.Stage { return guardrails.StagePre }
 
 // Check scans messages for secrets.
@@ -167,11 +196,11 @@ func defaultPatterns() map[string]string {
 		"stripe_key":     `\b[sp]k_(?:live|test)_[A-Za-z0-9]{20,}\b`,
 		// Modern keys use a URL-safe alphabet; a trailing word boundary would
 		// truncate a valid '-' suffix and leave part of the credential unmatched.
-		"openai_key":     `\bsk-(?:(?:proj-|svcacct-)[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{20,}\b)`,
-		"private_key":    `-----BEGIN\s+(?:RSA|EC|DSA|OPENSSH|PGP)?\s*PRIVATE\s+KEY-----`,
+		"openai_key":        `\bsk-(?:(?:proj-|svcacct-)[A-Za-z0-9_-]{20,}|[A-Za-z0-9]{20,}\b)`,
+		"private_key":       `-----BEGIN\s+(?:RSA|EC|DSA|OPENSSH|PGP)?\s*PRIVATE\s+KEY-----`,
 		"connection_string": `(?:mongodb|postgres|postgresql|mysql|redis|amqp)://[^\s]+:[^\s@]+@[^\s]+`,
-		"jwt":            `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`,
-		"password_assign": `(?i)(?:password|passwd|pwd|secret)\s*[=:]\s*[^\s,;]{8,}`,
+		"jwt":               `\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b`,
+		"password_assign":   `(?i)(?:password|passwd|pwd|secret)\s*[=:]\s*[^\s,;]{8,}`,
 	}
 }
 

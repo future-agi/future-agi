@@ -30,7 +30,7 @@ from simulate.services.harness_agent_changes import (
     observe_repository_head,
     poll_repository_heads,
     receive_push,
-    validate_public_github_source,
+    validate_github_source,
     watched_sources,
 )
 from simulate.services.harness_agent_versions import (
@@ -289,8 +289,13 @@ class TestWatchedSources:
             payload.clear()
             payload.update(copy.deepcopy(original))
 
-        refused = [
+        _edit_payload(
+            environment,
             lambda p: p["source"].update(visibility="private", installation_id="1"),
+        )
+        assert [one.installation_id for one in watched_sources()] == ["1"]
+
+        refused = [
             lambda p: p["source"].update(ref="b" * 40),
             lambda p: p.update(
                 source={"kind": "archive", "archive_artifact_id": str(uuid.uuid4())}
@@ -411,6 +416,43 @@ class TestPush:
         assert _observe(environment) == {str(environment.id): "created"}
 
         [row] = _push_rows(environment)
+        assert row.agent_payload["source_access"]["installation_id"] == "42"
+
+    def test_a_version_from_a_push_on_a_private_source_stays_private(
+        self, user, workspace, storage, gh, scheduled
+    ):
+        environment = _environment(user, workspace, "push-private", storage)
+        _edit_payload(
+            environment,
+            lambda p: p["source"].update(visibility="private", installation_id="42"),
+        )
+        a1 = HarnessAgentVersionRuntime.no_workspace_objects.get(
+            agent_version_id=_a1(environment).id
+        )
+        a1.agent_payload = {
+            **a1.agent_payload,
+            "source_access": {
+                **a1.agent_payload["source_access"],
+                "visibility": "private",
+                "installation_id": "42",
+            },
+        }
+        a1.save(update_fields=["agent_payload"])
+
+        with (
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=True,
+            ),
+            patch(
+                "integrations.services.github_app.branch_head", return_value=HEAD_Y
+            ) as head,
+        ):
+            assert _observe(environment) == {str(environment.id): "created"}
+
+        assert head.call_args.args == ("42",)
+        [row] = _push_rows(environment)
+        assert row.agent_payload["source_access"]["visibility"] == "private"
         assert row.agent_payload["source_access"]["installation_id"] == "42"
 
     def test_one_version_for_environments_with_the_same_facts(
@@ -1334,17 +1376,17 @@ class TestCreationCheck:
     def test_private_or_unknown_repositories_are_refused(self, response, code):
         with patch.object(changes, "github_get", return_value=response) as get:
             with pytest.raises(HostedHarnessError) as refused:
-                validate_public_github_source(
+                validate_github_source(
                     {"source": {"kind": "github", "repository": "acme/agent"}}
                 )
         assert refused.value.code == code
         assert refused.value.status_code == 422
         assert get.call_args.args == ("/repos/acme/agent",)
 
-    def test_a_private_source_is_refused_without_asking_github(self):
+    def test_a_private_source_without_its_installation_is_refused(self):
         with patch.object(changes, "github_get") as get:
             with pytest.raises(HostedHarnessError) as refused:
-                validate_public_github_source(
+                validate_github_source(
                     {
                         "source": {
                             "kind": "github",
@@ -1353,7 +1395,27 @@ class TestCreationCheck:
                         }
                     }
                 )
-        assert refused.value.code == "github_private_unsupported"
+        assert refused.value.code == "github_installation_not_connected"
+        assert refused.value.status_code == 422
+        get.assert_not_called()
+
+    def test_a_private_source_is_identified_through_its_installation(self):
+        source = {
+            "kind": "github",
+            "repository": "acme/agent",
+            "visibility": "private",
+            "installation_id": "42",
+        }
+        with (
+            patch.object(changes, "github_get") as get,
+            patch(
+                "simulate.services.agent_connect.installation_repository_id",
+                return_value=77,
+            ) as by_installation,
+        ):
+            assert validate_github_source({"source": source}) == 77
+            assert validate_github_source({"source": source}, lookup=False) is None
+        by_installation.assert_called_once_with("42", "acme/agent")
         get.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -1361,7 +1423,7 @@ class TestCreationCheck:
     )
     def test_github_out_of_reach_never_blocks_a_creation(self, status, caplog):
         with patch.object(changes, "github_get", return_value=GitHubResponse(status)):
-            validate_public_github_source(
+            validate_github_source(
                 {"source": {"kind": "github", "repository": "acme/agent"}}
             )
         assert f"harness_github_check_skipped reason={status}" in caplog.text
@@ -1381,7 +1443,7 @@ class TestCreationCheck:
         response = GitHubResponse(status, reset_at=time.time() + 300)
         with patch.object(changes, "github_get", return_value=response):
             with pytest.raises(HostedHarnessError) as refused:
-                validate_public_github_source(
+                validate_github_source(
                     {"source": {"kind": "github", "repository": "acme/agent"}},
                     required=True,
                 )
@@ -1391,7 +1453,7 @@ class TestCreationCheck:
         with patch.object(
             changes, "github_get", return_value=GitHubResponse("ok", {})
         ) as get:
-            validate_public_github_source(
+            validate_github_source(
                 {"source": {"kind": "github", "repository": "acme/agent"}},
                 organization_id=workspace.organization_id,
                 workspace_id=workspace.id,
@@ -1400,7 +1462,7 @@ class TestCreationCheck:
 
     def test_other_sources_are_not_checked(self):
         with patch.object(changes, "github_get") as get:
-            validate_public_github_source({"source": {"kind": "archive"}})
+            validate_github_source({"source": {"kind": "archive"}})
         get.assert_not_called()
 
     @pytest.mark.parametrize("versioning", [True, False])
@@ -1415,8 +1477,8 @@ class TestCreationCheck:
         with (
             patch.object(
                 changes,
-                "validate_public_github_source",
-                validate_public_github_source,
+                "validate_github_source",
+                validate_github_source,
             ),
             patch.object(
                 changes, "github_get", return_value=GitHubResponse("not_found")
@@ -1432,7 +1494,7 @@ class TestCreationCheck:
             assert response.status_code == 202, response.content
             get.assert_not_called()
 
-    def test_a_private_source_is_refused_before_it_is_cloned(
+    def test_a_private_source_without_its_installation_is_refused_before_it_is_cloned(
         self, settings, user, workspace, gates
     ):
         settings.HARNESS_PROVIDER = "hosted"
@@ -1441,8 +1503,10 @@ class TestCreationCheck:
         body = _body(values=VALUES)
         body["source"].update(visibility="private", installation_id="1")
         with (
-            patch.object(
-                changes, "validate_public_github_source", validate_public_github_source
+            patch.object(changes, "validate_github_source", validate_github_source),
+            patch(
+                "integrations.services.github_app.installation_connected",
+                return_value=False,
             ),
             patch.object(
                 harness_provider,
@@ -1458,7 +1522,7 @@ class TestCreationCheck:
             response = _post(api, workspace, body)
 
         assert response.status_code == 422, response.content
-        assert response.json()["error"] == "github_private_unsupported"
+        assert response.json()["error"] == "github_installation_not_connected"
         acquire.assert_not_called()
         get.assert_not_called()
 
@@ -1469,9 +1533,7 @@ class TestCreationCheck:
         api = APIClient()
         api.force_authenticate(user=user)
         body, key = _body(values=VALUES), uuid.uuid4().hex
-        with patch.object(
-            changes, "validate_public_github_source", validate_public_github_source
-        ):
+        with patch.object(changes, "validate_github_source", validate_github_source):
             with patch.object(
                 changes, "github_get", return_value=GitHubResponse("ok", {})
             ):
@@ -1493,9 +1555,7 @@ class TestCreationCheck:
         body, key = _body(values=VALUES), uuid.uuid4().hex
         body["source"].update(visibility="private", installation_id="1")
         with (
-            patch.object(
-                changes, "validate_public_github_source", validate_public_github_source
-            ),
+            patch.object(changes, "validate_github_source", validate_github_source),
             patch(
                 "integrations.services.github_app.installation_connected",
                 return_value=True,
@@ -1816,9 +1876,7 @@ class TestRepositoryId:
         api = APIClient()
         api.force_authenticate(user=user)
         with (
-            patch.object(
-                changes, "validate_public_github_source", validate_public_github_source
-            ),
+            patch.object(changes, "validate_github_source", validate_github_source),
             patch.object(
                 changes,
                 "github_get",

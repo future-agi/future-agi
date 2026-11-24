@@ -1,0 +1,166 @@
+{
+  "source": "Backend CI run 45072697969 (#4296 at 0c1420c1), artifact backend-runtime-skips 14775911291, 22 Nov 2026",
+  "total": 268,
+  "pairs": [
+    {
+      "file": "model_hub/tests/test_annotation_e2e_gaps.py",
+      "reason": "Skipped: NLTK punkt_tab tokenizer not available in this env",
+      "tests": 1
+    },
+    {
+      "file": "model_hub/tests/test_ch25_annotation_queue_session_validation_sliceE.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 5
+    },
+    {
+      "file": "model_hub/tests/test_dataset_huggingface_api.py",
+      "reason": "Skipped: API returned 400: {'status': False, 'type': 'validation_error', 'code': 'invalid', 'detail': '(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid', 'message': '(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid', 'error': '(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid', 'result': '(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid', 'details': {'non_field_errors': ['(\\'model_type\\', [ErrorDetail(string=\\'\"\" is not a valid choice.\\', code=\\'invalid_choice\\')]) is invalid']}}",
+      "tests": 1
+    },
+    {
+      "file": "simulate/tests/test_scenario_fault_rules.py",
+      "reason": "Skipped: could not import 'fi.alk.harness.actors': No module named 'fi'",
+      "tests": 1
+    },
+    {
+      "file": "tfc/tests/test_licensing_migration_boot.py",
+      "reason": "Skipped: Cloud control-plane not installed in this configuration",
+      "tests": 1
+    },
+    {
+      "file": "tfc/tests/test_temporal_billing_imports.py",
+      "reason": "Skipped: could not import 'ee.cloud.billing.dunning': No module named 'ee.cloud.billing.dunning'",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_ch25_session_bulkselect_and_scorecol_sliceF.py",
+      "reason": "Skipped: no Organization in pg-test for the Site-2 fixture",
+      "tests": 3
+    },
+    {
+      "file": "tracer/tests/test_ch25_session_bulkselect_and_scorecol_sliceF.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 8
+    },
+    {
+      "file": "tracer/tests/test_ch25_session_eval_candidate_and_target_sliceC.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 9
+    },
+    {
+      "file": "tracer/tests/test_ch25_session_trace_ids_sliceD.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 13
+    },
+    {
+      "file": "tracer/tests/test_ch25_trace_session_fields_reader.py",
+      "reason": "Skipped: refusing to run outside the ch_rehearsal harness (CH25_DATABASE='test_tfc'); set CH25_DATABASE=ch_rehearsal",
+      "tests": 7
+    },
+    {
+      "file": "tracer/tests/test_clickhouse_integration.py",
+      "reason": "Skipped: Dataset tables not in test schema: Received ClickHouse exception, code: 60, server response: Code: 60. DB::Exception: Unknown table expression identifier 'model_hub_cell' in scope SELECT toStartOfDay(c.created_at) AS time_bucket, count() AS value FROM model_hub_cell AS c FINAL WHERE (c._peerdb_is_deleted = 0) AND (c.created_at >= '2026-10-23 22:00:39') AND (c.created_at < '2026-11-22 22:00:39') AND (c.dataset_id IN (SELECT id FROM model_hub_dataset FINAL WHERE (_peerdb_is_deleted = 0) AND (deleted = 0) AND (workspace_id = toUUID('edeb0a21-7086-4526-8894-7e4a7305e337')))) GROUP BY time_bucket ORDER BY time_bucket ASC. (UNKNOWN_TABLE) (version 25.3.14.14 (official build)) (for url http://localhost:18123)",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_clickhouse_integration.py",
+      "reason": "Skipped: Simulation tables not in test schema: Received ClickHouse exception, code: 60, server response: Code: 60. DB::Exception: Unknown table expression identifier 'simulate_call_execution' in scope SELECT toStartOfDay(c.created_at) AS time_bucket, avg(duration_seconds) AS value FROM simulate_call_execution AS c FINAL WHERE (c._peerdb_is_deleted = 0) AND (c.deleted = 0) AND (c.created_at >= '2026-10-23 21:53:19') AND (c.created_at < '2026-11-22 21:53:19') AND (dictGetOrDefault('simulate_scenario_dict', 'workspace_id', c.scenario_id, NULL) = toUUID('99c794f2-6117-41a4-9f62-cc45f9e4d4cd')) AND (c.simulation_call_type = 'voice') GROUP BY time_bucket ORDER BY time_bucket ASC. (UNKNOWN_TABLE) (version 25.3.14.14 (official build)) (for url http://localhost:18123)",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_clickhouse_integration.py",
+      "reason": "Skipped: Simulation tables not in test schema: Received ClickHouse exception, code: 60, server response: Code: 60. DB::Exception: Unknown table expression identifier 'simulate_call_execution' in scope SELECT toStartOfDay(c.created_at) AS time_bucket, avg(duration_seconds) AS value FROM simulate_call_execution AS c FINAL WHERE (c._peerdb_is_deleted = 0) AND (c.deleted = 0) AND (c.created_at >= '2026-10-23 21:55:51') AND (c.created_at < '2026-11-22 21:55:51') AND (dictGetOrDefault('simulate_scenario_dict', 'workspace_id', c.scenario_id, NULL) = toUUID('16e2bc8c-d5e1-4347-86ee-8877a99a27d3')) GROUP BY time_bucket ORDER BY time_bucket ASC. (UNKNOWN_TABLE) (version 25.3.14.14 (official build)) (for url http://localhost:18123)",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_dashboard_narrow_replay_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 6
+    },
+    {
+      "file": "tracer/tests/test_dashboard_replay_read_settings_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 3
+    },
+    {
+      "file": "tracer/tests/test_derived_metric_changes_clickhouse.py",
+      "reason": "Skipped: owned ClickHouse change-discovery sidecar not requested",
+      "tests": 24
+    },
+    {
+      "file": "tracer/tests/test_derived_metric_forward_history_clickhouse.py",
+      "reason": "Skipped: owned ClickHouse change-discovery sidecar not requested",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_derived_metric_user_rules_clickhouse.py",
+      "reason": "Skipped: requires explicit owned B20 native ClickHouse runtime",
+      "tests": 47
+    },
+    {
+      "file": "tracer/tests/test_end_user_uuid_equality_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 11
+    },
+    {
+      "file": "tracer/tests/test_exact_attribute_detail.py",
+      "reason": "Skipped: local ClickHouse is unavailable: NetworkError('Connection refused (127.0.0.1:9000)')",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_grouping_node_contract.py",
+      "reason": "Skipped: set OMEGA_GROUPING_WORKER_ROOT to the worker checkout",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_long_text_anchor_equality_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 4
+    },
+    {
+      "file": "tracer/tests/test_metric_burst_owner_repair_clickhouse.py",
+      "reason": "Skipped: owned ClickHouse change-discovery sidecar not requested",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_metric_filter_family.py",
+      "reason": "Skipped: owned ClickHouse sidecar not requested",
+      "tests": 18
+    },
+    {
+      "file": "tracer/tests/test_metric_progress_closeout_clickhouse.py",
+      "reason": "Skipped: owned ClickHouse change-discovery sidecar not requested",
+      "tests": 3
+    },
+    {
+      "file": "tracer/tests/test_metric_schema_contract.py",
+      "reason": "Skipped: owned ClickHouse sidecar not requested",
+      "tests": 21
+    },
+    {
+      "file": "tracer/tests/test_session_annotation_graph_ch25.py",
+      "reason": "Skipped: requires the owned isolated session-annotation ClickHouse fixture",
+      "tests": 15
+    },
+    {
+      "file": "tracer/tests/test_session_annotation_membership_ch25.py",
+      "reason": "Skipped: requires the owned isolated session-annotation ClickHouse fixture",
+      "tests": 28
+    },
+    {
+      "file": "tracer/tests/test_session_rollup_projection_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 22
+    },
+    {
+      "file": "tracer/tests/test_span_attribute_null_target_grain.py",
+      "reason": "Skipped: local ClickHouse is unavailable: NetworkError('Connection refused (127.0.0.1:29010)')",
+      "tests": 1
+    },
+    {
+      "file": "tracer/tests/test_span_long_text_population_equality_ch25.py",
+      "reason": "Skipped: live ClickHouse tests are opt-in: set FI_LIVE_CH_TESTS=1",
+      "tests": 2
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import get_args
+
 from rest_framework import serializers
 
 from model_hub.serializers.contracts import JsonObjectRequestField
@@ -29,6 +31,7 @@ from simulate.serializers.requests.run_test_evals import (
 )
 from simulate.serializers.response.run_test import RunVersionLabelSerializer
 from simulate.serializers.trial_pass import TrialPassFieldsSerializer
+from simulate.types import WorkerBinding, WorkerEnforcement
 from tfc.utils.api_serializers import StrictInputSerializer
 
 
@@ -151,7 +154,7 @@ class HarnessRunSummarySerializer(TrialPassFieldsSerializer):
     environment_version = EnvironmentVersionRefSerializer(allow_null=True)
     # True when the run covered only some of the environment's scenarios;
     # null for a Simulate run, which has no environment to compare with.
-    partial = serializers.BooleanField(allow_null=True)
+    partial = serializers.BooleanField(allow_null=True)  # type: ignore[assignment]  # the API field is named partial, as BaseSerializer's own
     outcome_passed = serializers.IntegerField(
         allow_null=True, help_text="Passed receipts; null for a run without receipts."
     )
@@ -162,6 +165,9 @@ class HarnessRunSummarySerializer(TrialPassFieldsSerializer):
         allow_null=True, help_text="Errored receipts, also counted in outcome_failed."
     )
     outcome_skipped = serializers.IntegerField(allow_null=True)
+    outcome_cancelled = serializers.IntegerField(
+        allow_null=True, help_text="Calls the user stopped; neither errored nor failed."
+    )
     outcome_no_score = serializers.IntegerField(
         allow_null=True, help_text="Calls that ran with no pass or fail."
     )
@@ -541,6 +547,10 @@ class HarnessEnvironmentToolStatusSerializer(serializers.Serializer):
     status_label = serializers.CharField(
         help_text="What a test does with it, in words."
     )
+    status_reason = serializers.CharField(
+        allow_null=True,
+        help_text="Why a test cannot run an unsupported tool, as the run's own refusal says it; null otherwise.",
+    )
     reset_between_trials = serializers.BooleanField(
         allow_null=True,
         help_text="Restored to the seeded records before each trial; null when not known.",
@@ -687,6 +697,28 @@ class HarnessEnvironmentEndConditionsSerializer(serializers.Serializer):
     ended_reasons = serializers.ListField(child=serializers.CharField())
 
 
+class HarnessEnvironmentWorkerSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField(required=False, allow_blank=True)
+    display_name = serializers.CharField(
+        help_text="What the cards call it: its name, else its id."
+    )
+    tools = serializers.ListField(child=serializers.CharField())
+    # The tools it may use when narrower than what its code holds; empty means all of `tools`.
+    allowed_tools = serializers.ListField(child=serializers.CharField())
+    # The tools the cards list: its allowed tools when narrower, else every tool its code holds.
+    tools_shown = serializers.ListField(child=serializers.CharField())
+    # `not_declared` when its contract entry does not say how it reaches the world.
+    binding = serializers.ChoiceField(choices=get_args(WorkerBinding))
+    # How the world holds it to its limits, and the words the cards show: with no trial, a separate worker's is not
+    # known and a shared one's is not enforced.
+    enforcement = serializers.ChoiceField(choices=get_args(WorkerEnforcement))
+    enforcement_label = serializers.CharField()
+    address_env = serializers.CharField(required=False, allow_blank=True)
+    # The process that runs it alone, when the app serves it as its own service.
+    process = serializers.CharField(required=False, allow_blank=True)
+
+
 class HarnessEnvironmentContractSerializer(serializers.Serializer):
     """The agent contract as ALK wrote it, passed through, plus how it was built.
 
@@ -725,6 +757,12 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
     tool_entrypoints = serializers.ListField(
         child=serializers.JSONField(), required=False, allow_null=True
     )
+    workers = HarnessEnvironmentWorkerSerializer(
+        many=True,
+        required=False,
+        allow_null=True,
+        help_text="The workers the app's source declares; a run shows which of them took part.",
+    )
     data_store = serializers.JSONField(required=False, allow_null=True)
     open_questions = serializers.ListField(
         child=serializers.CharField(), required=False, allow_null=True
@@ -743,6 +781,10 @@ class HarnessEnvironmentContractSerializer(serializers.Serializer):
         help_text="Tools that reach a system the environment has no copy of: Unsupported for this controlled test.",
     )
     tool_status = HarnessEnvironmentToolStatusSerializer(many=True)
+    from_draft = serializers.BooleanField(
+        required=False,
+        help_text="Whether this is an open draft's contract, which no run uses until the draft is saved.",
+    )
     fault_targets = HarnessEnvironmentFaultTargetSerializer(many=True)
     end_conditions = HarnessEnvironmentEndConditionsSerializer()
     notes = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -1582,6 +1624,10 @@ class HarnessSuiteMemberSerializer(serializers.Serializer):
     number = serializers.IntegerField()
     name = serializers.CharField(allow_blank=True)
     use_case = serializers.CharField(allow_blank=True)
+    # The Error Feed issue whose traces Run Epoch drafted this scenario from; null for
+    # any other scenario.
+    issue_cluster_id = serializers.CharField(allow_null=True)
+    issue_project_id = serializers.UUIDField(allow_null=True)
 
 
 class HarnessVerifyCreateSerializer(serializers.Serializer):

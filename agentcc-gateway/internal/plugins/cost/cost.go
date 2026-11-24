@@ -175,6 +175,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	}
 
 	// After org pricing, which is keyed by the name the org configured.
+	served := model
 	table := p.tableName(rc)
 	model = db.PriceKey(model, rc.Provider, table)
 
@@ -194,10 +195,12 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 	// by: tokens, seconds of audio, or characters of text. A positive amount
 	// with no price is what goes unpriced.
 	var billed float64
+	consultFree, consultRequested := false, false
 	priceHint := tokenPriceHint
 
 	switch rc.EndpointType {
 	case "embedding":
+		consultFree = true
 		if rc.EmbeddingResponse != nil && rc.EmbeddingResponse.Usage != nil {
 			billed = float64(rc.EmbeddingResponse.Usage.PromptTokens)
 			cost, ok = db.CalculateCost(model, rc.EmbeddingResponse.Usage.PromptTokens, 0, opts)
@@ -262,6 +265,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		// override on any name the call goes by is never shadowed.
 		cost, ok = db.CalculateDecisionCostAny(decisionModelNames(rc), usage.PromptTokens, usage.CompletionTokens)
 	default: // "chat" or empty
+		consultFree = true
 		if rc.Response == nil || rc.Response.Usage == nil {
 			return pipeline.ResultContinue()
 		}
@@ -269,6 +273,7 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		billed = float64(usage.PromptTokens + usage.CompletionTokens)
 		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && rc.ResolvedModel != "" && rc.Model != "" {
+			consultRequested = true
 			cost, ok = db.CalculateCost(db.PriceKey(rc.Model, rc.Provider, table), usage.PromptTokens, usage.CompletionTokens, opts)
 		}
 		// A trusted vendor's own statement of the cost wins over the
@@ -315,6 +320,10 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		if catalogueOK {
 			rc.Metadata[MetadataCatalogue] = fmt.Sprintf("%.6f", catalogue*factor)
 		}
+	} else if billed > 0 && consultFree && (db.StatedFree(served, rc.Provider, table) || (consultRequested && db.StatedFree(rc.Model, rc.Provider, table))) {
+		// A stated zero corrects provenance only. Setting cost here would
+		// change budget and header behavior for previously unpriced requests.
+		rc.Metadata["cost_source"] = CostSourceCatalogue
 	} else if billed > 0 {
 		// The request used something billable but there is no price for this
 		// model. Leaving this silent made the request look free in the request

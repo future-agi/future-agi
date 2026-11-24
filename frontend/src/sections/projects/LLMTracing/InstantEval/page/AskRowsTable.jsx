@@ -16,6 +16,8 @@ import {
   Typography,
 } from "@mui/material";
 import { keyframes, useTheme } from "@mui/material/styles";
+import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
 import Iconify from "src/components/iconify";
 import { answerText, isFailure } from "../instantEvalAnswers";
 import { formatWhen, unitMeta } from "../instantEvalUnits";
@@ -139,9 +141,9 @@ function AnswerCell({ record, question, isUser }) {
         >
           <Box component="span" sx={{ display: "inline-flex" }}>
             <Iconify
-              icon="mdi:help-circle-outline"
+              icon="solar:question-circle-linear"
               width={14}
-              sx={{ color: "warning.main" }}
+              sx={{ color: "status.warning.solid" }}
               aria-label="Jev was unsure"
             />
           </Box>
@@ -175,6 +177,8 @@ export default function AskRowsTable({
   total,
   runTotal,
   loading,
+  waiting = false,
+  paused = false,
   error,
   onRetry,
   hasMore,
@@ -193,23 +197,11 @@ export default function AskRowsTable({
   const full = records.length >= TABLE_MAX_ROWS;
 
   return (
-    <Box
-      component="section"
-      aria-label={`${meta.title} asked about`}
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: 1,
-        bgcolor: "background.paper",
-      }}
-    >
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={1}
-        sx={{ px: 2, pt: 1.75, pb: 1.25 }}
-      >
-        <Typography variant="subtitle2" component="h2" sx={{ fontSize: 15 }}>
+    // On the page with hairline rows, no card around it (design system ·
+    // table container).
+    <Box component="section" aria-label={`${meta.title} asked about`}>
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1.25 }}>
+        <Typography variant="m3" component="h2" fontWeight={500}>
           {meta.title}
         </Typography>
         <Typography
@@ -233,7 +225,7 @@ export default function AskRowsTable({
           <Button
             size="small"
             color="inherit"
-            startIcon={<Iconify icon="mdi:download-outline" width={16} />}
+            startIcon={<Iconify icon="solar:download-linear" width={16} />}
             onClick={() => onExport()}
             disabled={!count}
             title={isUser ? "A line per user" : undefined}
@@ -245,7 +237,7 @@ export default function AskRowsTable({
           <Button
             size="small"
             color="inherit"
-            startIcon={<Iconify icon="mdi:download-outline" width={16} />}
+            startIcon={<Iconify icon="solar:download-linear" width={16} />}
             onClick={() => onExport({ sessions: true })}
             disabled={!count}
             title="A line per session read, for these users"
@@ -357,31 +349,34 @@ export default function AskRowsTable({
         </Table>
       </Box>
       {!records.length && !loading && error && (
-        <Box
+        <ErrorState
           role="alert"
-          sx={{ px: 2, py: 2.5, display: "flex", alignItems: "center", gap: 1 }}
-        >
-          <Typography variant="body2" color="error.main">
-            These {meta.plural} couldn&apos;t be loaded.
-          </Typography>
-          {onRetry && (
-            <Button size="small" onClick={() => onRetry()}>
-              Retry
-            </Button>
-          )}
-        </Box>
+          title={`These ${meta.plural} couldn't be loaded.`}
+          onRetry={onRetry ? () => onRetry() : undefined}
+        />
       )}
-      {!records.length && !loading && !error && (
+      {!records.length && !loading && !error && waiting && (
         <Typography
           variant="body2"
           color="text.secondary"
-          sx={{ px: 2, py: 2.5 }}
+          role="status"
+          sx={{ px: 1.5, py: 2.5 }}
         >
-          No {meta.plural} match.
+          {paused
+            ? `Resume the run to start reading ${meta.plural}.`
+            : `Answers will appear here as Jev reads each ${meta.noun}.`}
         </Typography>
       )}
+      {!records.length && !loading && !error && !waiting && (
+        <EmptyState
+          variant="no-results"
+          icon="solar:magnifer-linear"
+          title={`No ${meta.plural} match.`}
+          onClearFilters={filterLabel ? onClearFilter : undefined}
+        />
+      )}
       {hasMore && !full && (
-        <Box sx={{ px: 2, py: 1 }}>
+        <Box sx={{ px: 0.5, py: 1 }}>
           <Button
             size="small"
             disabled={loadingMore}
@@ -403,7 +398,7 @@ export default function AskRowsTable({
           variant="caption"
           color="text.secondary"
           component="p"
-          sx={{ px: 2, py: 1.25 }}
+          sx={{ px: 1.5, py: 1.25 }}
         >
           Showing the first {TABLE_MAX_ROWS.toLocaleString()}. Export CSV for
           all {count.toLocaleString()}, or narrow them on the charts.
@@ -423,6 +418,11 @@ AskRowsTable.propTypes = {
   total: PropTypes.number,
   runTotal: PropTypes.number,
   loading: PropTypes.bool,
+  // The run hasn't finished: no rows yet means none read so far.
+  waiting: PropTypes.bool,
+  // With `waiting`: the run is paused or stalled, so nothing more is read
+  // until it is resumed.
+  paused: PropTypes.bool,
   error: PropTypes.bool,
   onRetry: PropTypes.func,
   hasMore: PropTypes.bool,

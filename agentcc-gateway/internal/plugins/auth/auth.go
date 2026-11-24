@@ -113,6 +113,24 @@ func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) 
 		}
 	}
 
+	// Inspection authority comes from this authenticated key, not request or
+	// stored creator metadata. Direct/internal handlers also pass this seam;
+	// router dispatch alone would leave those calls without a canonical binding.
+	if rc.Inspection == nil {
+		rc.Inspection = models.InspectionFromContext(ctx)
+	}
+	if rc.Inspection != nil {
+		orgID := apiKey.Metadata["org_id"]
+		_, boundKey := rc.Inspection.Principal()
+		// Keys without an organization have no selected tenant policies. Keep
+		// their existing behavior, but never let them replace a bound principal.
+		if orgID != "" || boundKey != "" {
+			if !rc.Inspection.BindPrincipal(orgID, apiKey.ID) {
+				return pipeline.ResultError(models.ErrForbidden("Inspection principal does not match authenticated caller"))
+			}
+		}
+	}
+
 	// Note: provider ACL (CanAccessProvider) is not checked here because
 	// the auth plugin runs before provider resolution. Provider-level access
 	// control is enforced after routing resolves the provider.
