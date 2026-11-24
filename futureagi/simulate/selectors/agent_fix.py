@@ -1417,9 +1417,13 @@ def launch_blocker(
             "This run is still going. Run an epoch once it finishes.",
             status_code=409,
         )
-    if blocked := agent_blocker(source_run.environment) or unversioned_blocker(
-        source_run.environment
-    ):
+    environment = source_run.environment
+    if environment is None:
+        # As launch_fix_run and variations_blocker refuse one.
+        return HostedHarnessError(
+            "fix_source_not_a_run", "Epoch starts from a run", status_code=422
+        )
+    if blocked := agent_blocker(environment) or unversioned_blocker(environment):
         return blocked
     if AgentFixRun.no_workspace_objects.filter(
         environment=source_run.environment, state__in=AgentFixRun.ACTIVE_STATES

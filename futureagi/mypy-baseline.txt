@@ -3392,7 +3392,6 @@ simulate/selectors/agent_fix.py:0: error: "AgentFixRun" has no attribute "check_
 simulate/selectors/agent_fix.py:0: error: Argument "name" to "EvalWarning" has incompatible type "str | None"; expected "str"  [arg-type]
 simulate/selectors/agent_fix.py:0: error: Argument 1 to "_chat_lines" has incompatible type "*tuple[UUID, str, str]"; expected "str"  [arg-type]
 simulate/selectors/agent_fix.py:0: error: Argument 1 to "_kind_or_none" has incompatible type "HostedHarnessJob | None"; expected "HostedHarnessJob"  [arg-type]
-simulate/selectors/agent_fix.py:0: error: Argument 1 to "agent_kind" has incompatible type "HostedHarnessJob | None"; expected "HostedHarnessJob"  [arg-type]
 simulate/selectors/agent_fix.py:0: error: Argument 1 to "environment_name" has incompatible type "HostedHarnessJob | None"; expected "HostedHarnessJob"  [arg-type]
 simulate/selectors/agent_fix.py:0: error: Incompatible type for lookup 'id': (got "Any | UUID | None", expected "UUID | str")  [misc]
 simulate/selectors/agent_fix.py:0: error: Incompatible types in assignment (expression has type "list[Any]", variable has type "tuple[UUID, str, str]")  [assignment]
