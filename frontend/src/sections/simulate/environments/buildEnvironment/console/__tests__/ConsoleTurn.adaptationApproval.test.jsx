@@ -26,12 +26,49 @@ describe("an adaptation's approval in the chat", () => {
     rerender(
       <Turn
         turn={builder([
-          { id: "a1", kind: "ask", question: approval, resolved: true },
+          {
+            id: "a1",
+            kind: "ask",
+            question: approval,
+            resolved: true,
+            answerText: "yes",
+          },
         ])}
       />,
     );
     expect(
       screen.getByText("Approved in Review the design"),
     ).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      { answerText: "Map get_order to order_details instead" },
+      "You replied: “Map get_order to order_details instead”",
+    ],
+    [{ answerText: "no" }, "You replied: “no”"],
+    [
+      {
+        answerText: "yes",
+        answerFailed: { reason: "The builder has finished." },
+      },
+      "Your reply wasn't taken: “yes”. The builder has finished.",
+    ],
+  ])("shows any other answer as it was given", (answer, text) => {
+    render(
+      <Turn
+        turn={builder([
+          {
+            id: "a1",
+            kind: "ask",
+            question: approval,
+            resolved: true,
+            ...answer,
+          },
+        ])}
+      />,
+    );
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.queryByText("Approved in Review the design")).toBeNull();
   });
 });

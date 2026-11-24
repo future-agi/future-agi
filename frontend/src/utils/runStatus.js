@@ -21,6 +21,7 @@ export const RUN_STATUS = {
   in_progress: { role: "info", label: "In progress", shape: "live" },
   grading: { role: "info", label: "Grading", shape: "live" },
   syncing: { role: "info", label: "Syncing", shape: "live" },
+  checking: { role: "info", label: "Checking", shape: "live" },
   passed: { role: "success", label: "Passed" },
   pass: { role: "success", label: "Passed" },
   success: { role: "success", label: "Success" },

@@ -24,7 +24,10 @@ import {
   useHarnessAdaptationDesign,
 } from "src/api/harness/releases";
 import { cancelHarnessJob } from "src/api/harness/harness";
-import { errorMessage } from "src/pages/dashboard/harness/harnessShared";
+import {
+  errorMessage,
+  terminalStages,
+} from "src/pages/dashboard/harness/harnessShared";
 import ChatSplitPane from "../../components/ChatSplitPane";
 import BuilderConsole from "../../buildEnvironment/console/BuilderConsole";
 
@@ -62,7 +65,7 @@ function BriefRow({ label, children }) {
 BriefRow.propTypes = { label: PropTypes.string, children: PropTypes.node };
 
 /* One section of the design: a collapsed row with its count, its lines underneath. */
-function PlanRow({ label, count, children }) {
+function PlanRow({ label, count, note, children }) {
   const [open, setOpen] = useState(false);
   return (
     <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
@@ -91,6 +94,11 @@ function PlanRow({ label, count, children }) {
         <Typography sx={{ typography: "m3", color: "text.secondary" }}>
           {count}
         </Typography>
+        {note && (
+          <Typography sx={{ typography: "s1", color: "text.secondary" }}>
+            {note}
+          </Typography>
+        )}
       </ButtonBase>
       <Collapse in={open} unmountOnExit>
         <Stack spacing={0.75} sx={{ pl: 3.5, pr: 0.5, pb: 1.5 }}>
@@ -103,6 +111,7 @@ function PlanRow({ label, count, children }) {
 PlanRow.propTypes = {
   label: PropTypes.string.isRequired,
   count: PropTypes.number.isRequired,
+  note: PropTypes.string,
   children: PropTypes.node,
 };
 
@@ -131,7 +140,7 @@ PlanLine.propTypes = {
 
 const mono = { fontFamily: "monospace" };
 
-function Design({ design, onApprove, approving }) {
+function Design({ design, notMade, onApprove, approving }) {
   const { world, agent, fit, check } = design;
   const tables = Object.entries(world.records).filter(([, n]) => n > 0);
   const conflicts = design.conflicts.conflicts;
@@ -152,7 +161,7 @@ function Design({ design, onApprove, approving }) {
   const tip =
     design.state === "checking"
       ? "Checking the mapping on every case — approve once it's done"
-      : "";
+      : notMade;
   return (
     <Box sx={{ height: 1, overflowY: "auto", px: 3, py: 2.5 }}>
       <Stack direction="row" alignItems="flex-start" spacing={2} sx={{ mb: 2 }}>
@@ -186,6 +195,13 @@ function Design({ design, onApprove, approving }) {
         <ErrorState
           title="The adaptation failed"
           detail={design.failure?.message}
+          sx={{ mb: 2 }}
+        />
+      )}
+      {notMade && (
+        <ErrorState
+          title="No environment was made"
+          detail={notMade}
           sx={{ mb: 2 }}
         />
       )}
@@ -246,7 +262,11 @@ function Design({ design, onApprove, approving }) {
             </PlanLine>
           ))}
         </PlanRow>
-        <PlanRow label="Rules" count={world.rules.length}>
+        <PlanRow
+          label="Rules"
+          count={world.rules.length}
+          note={design.conflicts.checked ? "" : "Instructions not checked yet"}
+        >
           {world.rules.map((rule) => (
             <PlanLine key={rule.id}>
               {rule.text}
@@ -301,6 +321,8 @@ function Design({ design, onApprove, approving }) {
 }
 Design.propTypes = {
   design: PropTypes.object.isRequired,
+  // Why a finished adaptation made no environment, when it made none.
+  notMade: PropTypes.string,
   onApprove: PropTypes.func.isRequired,
   approving: PropTypes.bool,
 };
@@ -311,7 +333,7 @@ Design.propTypes = {
  * measures. The builder chat stays open on the left for corrections; nothing is built until
  * Approve and build, which is open once the mapping has been checked on every case.
  */
-export default function ReviewTheDesign({ jobId, chat }) {
+export default function ReviewTheDesign({ jobId, job, chat }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const designQuery = useHarnessAdaptationDesign(jobId);
@@ -333,8 +355,16 @@ export default function ReviewTheDesign({ jobId, chat }) {
     onError: (error) =>
       enqueueSnackbar(errorMessage(error), { variant: "error" }),
   });
-  const status =
-    design?.state === "checking" ? "awaiting_approval" : design?.state;
+  const result = job?.job?.metadata?.adaptation_result;
+  // A finished adaptation without an environment (an agent that reaches none of the world's
+  // tools) is only recorded, with the reason on its job.
+  const notMade =
+    design?.state === "ready" && !design.composition_id && result
+      ? result.compose?.message || "The adaptation finished without one."
+      : "";
+  const finished =
+    ["ready", "failed"].includes(design?.state) ||
+    terminalStages.has(job?.status?.stage);
 
   return (
     <Box
@@ -368,7 +398,9 @@ export default function ReviewTheDesign({ jobId, chat }) {
             ? `${design.world.title} · ${design.agent.name}`
             : "Review the design"}
         </Typography>
-        {status && <StatusBadge status={status} />}
+        {design && (
+          <StatusBadge status={notMade ? "completed" : design.state} />
+        )}
         <Stack
           direction="row"
           spacing={0.5}
@@ -395,11 +427,7 @@ export default function ReviewTheDesign({ jobId, chat }) {
           variant="outlined"
           color="inherit"
           size="small"
-          disabled={
-            !design ||
-            ["ready", "failed"].includes(design.state) ||
-            cancel.isPending
-          }
+          disabled={finished || cancel.isPending}
           onClick={() => cancel.mutate()}
           startIcon={<Iconify icon="solar:stop-circle-linear" width={16} />}
         >
@@ -427,24 +455,25 @@ export default function ReviewTheDesign({ jobId, chat }) {
             />
           )}
         >
-          {designQuery.isError ? (
+          {design ? (
+            <Design
+              design={design}
+              notMade={notMade}
+              onApprove={() => approve.mutate()}
+              approving={approve.isPending}
+            />
+          ) : designQuery.isError ? (
             <ErrorState
               title="Couldn't load the design"
               detail={errorMessage(designQuery.error)}
               onRetry={() => designQuery.refetch()}
               sx={{ m: 3 }}
             />
-          ) : !design ? (
+          ) : (
             <ContentSkeleton
               rows={6}
               label="Loading the design"
               sx={{ m: 3 }}
-            />
-          ) : (
-            <Design
-              design={design}
-              onApprove={() => approve.mutate()}
-              approving={approve.isPending}
             />
           )}
         </ChatSplitPane>
@@ -454,6 +483,8 @@ export default function ReviewTheDesign({ jobId, chat }) {
 }
 ReviewTheDesign.propTypes = {
   jobId: PropTypes.string.isRequired,
+  // The adaptation's job, as the page polls it.
+  job: PropTypes.object,
   // useWorkspaceChat's return: the builder's conversation on this adaptation.
   chat: PropTypes.object.isRequired,
 };

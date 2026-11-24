@@ -216,37 +216,6 @@ export const displayText = (value, fallback = "") => {
   }
 };
 
-export const providerCredentialName = (connector) =>
-  connector === "vapi"
-    ? "VAPI_API_KEY"
-    : ["retell", "retell_chat"].includes(connector)
-      ? "RETELL_API_KEY"
-      : null;
-
-export const parseProviderDynamicVariables = (text) => {
-  if (!text.trim()) return {};
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error("Dynamic variables must be valid JSON.");
-  }
-  if (
-    !value ||
-    Array.isArray(value) ||
-    typeof value !== "object" ||
-    Object.entries(value).some(
-      ([name, item]) =>
-        !name || !["string", "number", "boolean"].includes(typeof item),
-    )
-  ) {
-    throw new Error(
-      "Dynamic variables must be a JSON object with string, number, or boolean values.",
-    );
-  }
-  return value;
-};
-
 // "sha256:<64 hex>" reads as noise in a label; the first 12 hex digits identify it on screen.
 export const shortDigest = (digest) => {
   const text = String(digest || "");
@@ -267,12 +236,17 @@ export const ADAPTATION_STEPS = [
   { key: "sealed", label: "Approved and sealed", tool: "finish_adaptation" },
 ];
 
-// Which steps are done, from the conversation's tool results in order. A new binding voids the
-// proof of the one before it, so an earlier proof never shows a later binding as proved.
 // How agent-learning-kit's adaptation workbench opens its approval question (`approval_question`).
 export const isAdaptationApproval = (question) =>
   String(question?.prompt || "").startsWith("Use this binding for ");
 
+// The answers that workbench takes as yes; any other keeps the binding open.
+const ADAPTATION_YES = new Set(["yes", "y", "true", "approve", "approved", "ok"]);
+export const isAdaptationYes = (answer) =>
+  ADAPTATION_YES.has(String(answer || "").trim().toLowerCase());
+
+// Which steps are done, from the conversation's tool results in order. A new binding voids the
+// proof of the one before it, so an earlier proof never shows a later binding as proved.
 export const adaptationProgress = (conversation) => {
   const done = new Set();
   for (const event of conversation?.events || []) {
@@ -287,37 +261,6 @@ export const adaptationProgress = (conversation) => {
   }
   return done;
 };
-
-// The request body adaptation and composition share (environment-releases.md §7.6). The
-// agent block is the hosted-job agent in provider_import mode, so each run clones the agent.
-export const releaseUsePayload = ({
-  suiteId,
-  agentVersionId,
-  name,
-  connector,
-  targetId,
-  dynamicVariables,
-  secretRefs,
-  idempotencyKey,
-}) => ({
-  suite_id: suiteId,
-  agent_version_id: agentVersionId,
-  name: name.trim(),
-  idempotency_key: idempotencyKey,
-  agent: {
-    connector,
-    mode: "provider_import",
-    config: {
-      ...(connector === "vapi"
-        ? { assistant_id: targetId.trim() }
-        : { agent_id: targetId.trim() }),
-      ...(connector === "retell_chat" && dynamicVariables.trim()
-        ? { dynamic_variables: parseProviderDynamicVariables(dynamicVariables) }
-        : {}),
-    },
-    secret_refs: secretRefs,
-  },
-});
 
 export const BINDING_MODE_LABELS = {
   canonical: "Canonical",

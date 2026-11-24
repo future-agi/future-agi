@@ -85,13 +85,13 @@ const DESIGN = {
 
 const CHAT = { turns: [], running: false, send: vi.fn() };
 
-const render = () => {
+const render = (props = {}) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   baseRender(
     <QueryClientProvider client={client}>
-      <ReviewTheDesign jobId="adapt-job" chat={CHAT} />
+      <ReviewTheDesign jobId="adapt-job" chat={CHAT} {...props} />
     </QueryClientProvider>,
   );
 };
@@ -107,11 +107,13 @@ beforeEach(() => {
 });
 
 describe("Review the design", () => {
-  it("opens at once with the design read from the ready world, awaiting approval", () => {
+  it("opens at once with the design read from the ready world, still checking", () => {
     render();
 
     expect(screen.getByText("Retail · ShopMate")).toBeInTheDocument();
-    expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
+    expect(screen.getByText("Checking")).toBeInTheDocument();
+    expect(screen.queryByText("Awaiting approval")).toBeNull();
+    expect(screen.queryByText("Instructions not checked yet")).toBeNull();
     expect(screen.getByText("Runs: Live")).toBeInTheDocument();
     expect(screen.getByText("Builder chat")).toBeInTheDocument();
     expect(
@@ -170,6 +172,7 @@ describe("Review the design", () => {
     approveHarnessAdaptation.mockResolvedValue({ id: "adapt-job" });
     render();
 
+    expect(screen.getByText("Awaiting approval")).toBeInTheDocument();
     fireEvent.click(approve());
 
     await waitFor(() =>
@@ -202,5 +205,77 @@ describe("Review the design", () => {
     render();
 
     expect(screen.getByText("Couldn't load the design")).toBeInTheDocument();
+  });
+
+  it("cancels an adaptation whose design can't be loaded", async () => {
+    useHarnessAdaptationDesign.mockReturnValue({
+      data: undefined,
+      isError: true,
+      error: new Error("adaptation not found"),
+      refetch: vi.fn(),
+    });
+    cancelHarnessJob.mockResolvedValue({});
+    render({ job: { status: { stage: "running" } } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(navigate).toHaveBeenCalled());
+    expect(cancelHarnessJob.mock.calls[0][0]).toBe("adapt-job");
+  });
+
+  it("keeps the design up when a later read of it fails", () => {
+    useHarnessAdaptationDesign.mockReturnValue({
+      data: DESIGN,
+      isError: true,
+      error: new Error("timeout"),
+      refetch: vi.fn(),
+    });
+    render();
+
+    expect(screen.getByText("What the design is built from")).toBeVisible();
+    expect(screen.queryByText("Couldn't load the design")).toBeNull();
+  });
+
+  it("says the agent's instructions haven't been checked rather than showing no conflicts", () => {
+    useHarnessAdaptationDesign.mockReturnValue({
+      data: { ...DESIGN, conflicts: { checked: false, conflicts: [] } },
+      isError: false,
+    });
+    render();
+
+    expect(
+      screen.getByText("Instructions not checked yet"),
+    ).toBeInTheDocument();
+  });
+
+  it("says why a finished adaptation made no environment", () => {
+    useHarnessAdaptationDesign.mockReturnValue({
+      data: { ...DESIGN, state: "ready", composition_id: null },
+      isError: false,
+    });
+    render({
+      job: {
+        status: { stage: "completed" },
+        job: {
+          metadata: {
+            adaptation_result: {
+              composition_id: null,
+              mode: "conversation_only",
+              compose: {
+                code: "compose_unsupported",
+                message: "the agent reaches no environment tool",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(screen.getByText("No environment was made")).toBeInTheDocument();
+    expect(
+      screen.getByText("the agent reaches no environment tool"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   });
 });

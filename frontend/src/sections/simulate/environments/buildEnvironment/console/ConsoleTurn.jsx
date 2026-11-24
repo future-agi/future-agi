@@ -3,7 +3,10 @@ import { useMemo, useState } from "react";
 import { Box, Stack, Typography, Collapse } from "@mui/material";
 import Iconify from "src/components/iconify";
 
-import { isAdaptationApproval } from "src/pages/dashboard/harness/harnessShared";
+import {
+  isAdaptationApproval,
+  isAdaptationYes,
+} from "src/pages/dashboard/harness/harnessShared";
 import AskUserQuestionCard from "./AskUserQuestionCard";
 import ChatMarkdown from "./ChatMarkdown";
 import NudgeCard from "./NudgeCard";
@@ -124,6 +127,26 @@ const TOOL_ROLE = {
   interrupted: "neutral",
 };
 
+// Where an adaptation's approval stands: only a yes the builder took is an approval.
+function approvalRow({ resolved, answerText, answerFailed }) {
+  if (!resolved)
+    return {
+      role: "warning",
+      text: "Waiting for your approval in Review the design",
+    };
+  const reply = answerText ? `: “${answerText}”` : "";
+  if (answerFailed)
+    return {
+      role: "danger",
+      text: [`Your reply wasn't taken${reply}`, answerFailed.reason]
+        .filter(Boolean)
+        .join(". "),
+    };
+  if (isAdaptationYes(answerText))
+    return { role: "success", text: "Approved in Review the design" };
+  return { role: "neutral", text: `You replied${reply}` };
+}
+
 export function Step({ step }) {
   const [open, setOpen] = useState(false);
 
@@ -147,12 +170,11 @@ export function Step({ step }) {
 
   if (step.kind === "ask" && isAdaptationApproval(step.question)) {
     // An adaptation's design is approved on Review the design, not answered here.
+    const { role, text } = approvalRow(step);
     return (
-      <QuietRow role={step.resolved ? "success" : "warning"}>
+      <QuietRow role={role}>
         <Typography sx={{ typography: "s1", color: "text.secondary" }}>
-          {step.resolved
-            ? "Approved in Review the design"
-            : "Waiting for your approval in Review the design"}
+          {text}
         </Typography>
       </QuietRow>
     );

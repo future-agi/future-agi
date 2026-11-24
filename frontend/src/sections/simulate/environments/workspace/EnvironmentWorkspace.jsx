@@ -316,7 +316,7 @@ export default function EnvironmentWorkspace() {
     jobQuery.data?.job?.metadata?.adaptation?.mode === "review" &&
     !compositionId
   ) {
-    return <ReviewTheDesign jobId={envId} chat={chat} />;
+    return <ReviewTheDesign jobId={envId} job={jobQuery.data} chat={chat} />;
   }
 
   if (notFound) {
