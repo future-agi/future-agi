@@ -3,23 +3,26 @@ import { renderHook } from "src/utils/test-utils";
 
 // The drafts answer the hook reads, set per test; every mutation is idle.
 const state = {};
-const idle = () => ({
-  mutate: vi.fn(),
+const idle = (mutate = vi.fn()) => ({
+  mutate,
   reset: vi.fn(),
   isPending: false,
   isError: false,
   error: null,
 });
+const saveMutate = vi.fn();
+const validateMutate = vi.fn();
+const saveValidatedMutate = vi.fn();
 vi.mock("src/api/simulate-environments/versions", async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
     useDrafts: () => ({ data: actual.toDrafts(state.drafts) }),
     useDraftReview: () => ({ data: { review_digest: "d1", changes: [] } }),
-    useSaveDrafts: idle,
-    useDiscardDraft: idle,
-    useValidateDrafts: idle,
-    useSaveCandidates: idle,
+    useSaveDrafts: () => idle(saveMutate),
+    useDiscardDraft: () => idle(),
+    useValidateDrafts: () => idle(validateMutate),
+    useSaveCandidates: () => idle(saveValidatedMutate),
   };
 });
 
@@ -53,6 +56,28 @@ describe("useDraftSaveFlow", () => {
     const flow = renderHook(() => useDraftSaveFlow(ENV)).result.current;
     expect(flow.needsValidate).toBe(false);
     expect(flow.pending).toBe(false);
+  });
+
+  it("sends the revisions and the review it was shown, and the version's name", () => {
+    const flow = flowFor({ state: "ready" }, { candidates: CANDIDATES });
+    const digest = { expectedReviewDigest: "d1" };
+    flow.onValidate();
+    expect(validateMutate).toHaveBeenCalledWith({
+      expectedRevisions: { environment: 3 },
+      ...digest,
+    });
+    flow.onSaveValidated(" v2 ");
+    expect(saveValidatedMutate).toHaveBeenCalledWith({
+      candidates: { environmentVersionId: "c1", suiteVersionId: null },
+      ...digest,
+      name: "v2",
+    });
+    flow.onSave();
+    expect(saveMutate).toHaveBeenCalledWith({
+      drafts: [{ piece: "environment", parentId: "v1", revision: 3 }],
+      reviewDigest: "d1",
+      name: undefined,
+    });
   });
 
   it("says when scenarios are being validated, which Save waits for", () => {

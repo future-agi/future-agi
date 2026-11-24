@@ -544,9 +544,6 @@ export const DRAFTS_COPY = {
     `${added} added, ${removed} removed, ${changed} changed`,
   lastEdited: (name, when) =>
     name ? `last edited by ${name}, ${when}` : `last edited ${when}`,
-  viewChanges: "View changes",
-  save: "Save",
-  saving: "Saving…",
   discard: "Discard",
   discarding: "Discarding…",
   discardTitle: "Discard unsaved changes?",
@@ -556,9 +553,6 @@ export const DRAFTS_COPY = {
     `These unsaved changes started from ${piece} ${from || "an earlier version"}; it is now ${now || "a newer version"}. Discard them, or ask chat to make them again on the current version.`,
   busy: "Chat is working; save when it finishes",
   saveError: "Couldn't save the changes. Try again in a moment.",
-  validate: "Validate",
-  versionName: "Name this version",
-  validating: "Validating changes",
   validateError: "Couldn't start validating. Try again in a moment.",
   validation: {
     validating: "Validating the changes. Save opens when it's done.",
@@ -746,7 +740,6 @@ export const REVIEW_COPY = {
     `Accept or reject the ${n} change${n === 1 ? "" : "s"} still waiting first.`,
   saveAllRejected: "Every change is rejected. Discard all puts the world back.",
   reviewAndSave: "Review and save",
-  rejectedEdits: (n) => `${n} rejected edit${n === 1 ? "" : "s"}`,
   showChange: "Show the change",
   hideChange: "Hide the change",
   andMore: (n) => `and ${n} more`,
@@ -754,8 +747,6 @@ export const REVIEW_COPY = {
     `These change what's graded, so ${scenarioWord(n)} get${n === 1 ? "s" : ""} rechecked when you save`,
   showWhich: "Show which",
   hide: "Hide",
-  comparability: ({ rechecked, exact }) =>
-    `${scenarioWord(rechecked)} pair with past runs as Rechecked if their gates pass, outdated if not; ${exact} compare exactly. Agent, scenario set and evals don't move.`,
   // A plain save names the version only if asked; a validated one needs a name.
   nameLabel: (optional) =>
     optional ? "Name this version (optional)" : "Name this version",
@@ -780,13 +771,9 @@ export const REVIEW_COPY = {
   save: (next) => (next ? `Save version ${next}` : "Save version"),
   validate: "Validate",
   validating: "Validating…",
-  validateHint:
-    "Proves the accepted changes in a test sandbox before they're saved. It doesn't start a paid run.",
   saved: "Saved as a new version.",
   notActive: (n) =>
     `${n} scenario${n === 1 ? "" : "s"} won't run yet. Their reasons are on the Scenarios tab.`,
-  unsavedEdits: (n) => `${n} unsaved edit${n === 1 ? "" : "s"}`,
-  unsavedEditsUncounted: "Unsaved edits",
 };
 
 // The banner under the version bar while a new default agent is checked with this environment, and how it ended.

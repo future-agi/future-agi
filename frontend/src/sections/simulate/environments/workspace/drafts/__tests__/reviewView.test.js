@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import {
-  comparabilityLine,
   diffLines,
   groupChanges,
   keptChanges,
@@ -271,12 +270,5 @@ describe("saveLine", () => {
 
   it("has no number to promise before a numbered version exists", () => {
     expect(saveLine([change()], versions(null, null)).next).toBeNull();
-  });
-});
-
-describe("comparabilityLine", () => {
-  it("never reads a negative number of exact comparisons", () => {
-    expect(comparabilityLine(5, 3)).toEqual({ rechecked: 5, exact: 0 });
-    expect(comparabilityLine(2, 3)).toEqual({ rechecked: 2, exact: 1 });
   });
 });

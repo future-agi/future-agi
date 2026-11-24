@@ -627,9 +627,6 @@ export default function EnvironmentWorkspace() {
         env={env}
         busy={Boolean(chat.running || chat.draftsBlocked || chatSaving)}
         rebuilding={chat.rebuildHold}
-        onViewChanges={(piece, id) =>
-          setTab("versions", { version: `${piece}:${id}` })
-        }
         onReview={() => setReviewOpen(true)}
       />
 

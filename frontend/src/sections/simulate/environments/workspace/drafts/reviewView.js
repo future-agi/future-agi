@@ -208,12 +208,6 @@ export const saveLine = (changes = [], versions) => {
   };
 };
 
-/** How the saved version compares with past runs. */
-export const comparabilityLine = (rechecked, total) => ({
-  rechecked,
-  exact: Math.max(0, total - rechecked),
-});
-
 // The server keeps a version name of at most 80 characters.
 export const NAME_LIMIT = 80;
 
