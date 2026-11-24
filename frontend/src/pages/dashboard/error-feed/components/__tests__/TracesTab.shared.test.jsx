@@ -11,29 +11,6 @@ const mocks = vi.hoisted(() => ({
   drawerProps: vi.fn(),
 }));
 
-vi.mock("ag-grid-react", async () => {
-  const { forwardRef } = await import("react");
-  const AgGridReact = forwardRef(function MockAgGridReact(
-    { rowData, onRowClicked },
-    _ref,
-  ) {
-    return (
-      <div>
-        {rowData.map((row) => (
-          <button
-            key={row.id}
-            type="button"
-            onClick={() => onRowClicked({ data: row })}
-          >
-            {`Row ${row.id}`}
-          </button>
-        ))}
-      </div>
-    );
-  });
-  return { AgGridReact };
-});
-vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => ({}) }));
 vi.mock("src/api/errorFeed/error-feed", () => ({
   useErrorFeedTraces: mocks.useErrorFeedTraces,
 }));
@@ -76,12 +53,13 @@ describe("TracesTab on a shared issue", () => {
       </SharedIssueContext.Provider>,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "Row trace-b" }));
+    await userEvent.click(screen.getByText("trace-b").closest("tr"));
 
     expect(screen.getByTestId("trace-drawer")).toBeInTheDocument();
     const props = mocks.drawerProps.mock.lastCall[0];
     expect(props).toMatchObject({
       traceId: "trace-b",
+      defaultCompressed: false,
       readOnly: true,
       sharedToken: "tok",
       hasPrev: true,

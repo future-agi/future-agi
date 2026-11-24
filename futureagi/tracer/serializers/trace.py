@@ -671,6 +671,16 @@ class TraceDetailQuerySerializer(RunScopeQueryMixin):
     project_id = serializers.UUIDField(
         required=False, help_text=_DETAIL_PROJECT_ID_HELP
     )
+    cluster_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=128,
+        help_text=(
+            "Optional Error Feed issue cluster ID to focus causal key-path "
+            "annotations when a trace has multiple linked issues."
+        ),
+    )
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -1171,6 +1181,17 @@ class TraceDetailSpanSerializer(serializers.Serializer):
     annotations = serializers.ListField(child=serializers.JSONField(), required=False)
 
 
+class TraceErrorFeedIssueSerializer(serializers.Serializer):
+    """Compact Error Feed issue linked to a trace."""
+
+    cluster_id = serializers.CharField()
+    title = serializers.CharField()
+    severity = serializers.CharField()
+    status = serializers.CharField()
+    origin_span_id = serializers.CharField(required=False, allow_null=True)
+    symptom_span_id = serializers.CharField(required=False, allow_null=True)
+
+
 class TraceDetailResultSerializer(serializers.Serializer):
     """Envelope payload for the trace-detail endpoint (CH-assembled)."""
 
@@ -1180,6 +1201,8 @@ class TraceDetailResultSerializer(serializers.Serializer):
     cost_coverage = CostCoverageSerializer(required=False)
     capture_coverage = CaptureCoverageSerializer(required=False)
     graph = serializers.JSONField()
+    issues = TraceErrorFeedIssueSerializer(many=True, required=False)
+    active_cluster_id = serializers.CharField(required=False)
 
 
 class TraceDetailResponseSerializer(serializers.Serializer):

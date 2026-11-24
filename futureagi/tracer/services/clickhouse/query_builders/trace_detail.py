@@ -41,6 +41,8 @@ class TraceDetail(TypedDict):
     summary: dict[str, Any]
     graph: dict[str, Any]
     capture_coverage: NotRequired[CaptureCoverage]
+    issues: NotRequired[list[dict[str, Any]]]
+    active_cluster_id: NotRequired[str | None]
 
 
 def compute_trace_capture_coverage(

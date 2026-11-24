@@ -10,6 +10,35 @@ const alertKeys = {
 
 const unwrap = (response) => response?.data?.result ?? response?.data;
 
+// Normalize alert rule fields once at the API boundary so UI views read one shape.
+const normalizeAlertRule = (rule) => {
+  if (!rule || typeof rule !== "object") return rule;
+  const cfg = rule.configuration || {};
+  const emailRecipients = Array.isArray(rule.email_recipients)
+    ? rule.email_recipients
+    : Array.isArray(cfg.email_recipients)
+      ? cfg.email_recipients
+      : [];
+  const slackChannelId = rule.slack_channel_id ?? cfg.slack_channel_id ?? "";
+  const slackChannelName =
+    rule.slack_channel_name ?? cfg.slack_channel_name ?? "";
+  const slackConnectionId =
+    rule.slack_connection_id ?? cfg.slack_connection_id ?? "";
+  return {
+    ...rule,
+    slack_enabled:
+      rule.slack_enabled ??
+      cfg.slack_enabled ??
+      Boolean(slackChannelId || slackChannelName),
+    slack_connection_id: slackConnectionId,
+    slack_channel_id: slackChannelId,
+    slack_channel_name: slackChannelName,
+    email_enabled:
+      rule.email_enabled ?? cfg.email_enabled ?? emailRecipients.length > 0,
+    email_recipients: emailRecipients,
+  };
+};
+
 export const useErrorFeedAlerts = (options = {}) =>
   useQuery({
     queryKey: alertKeys.list(),
@@ -19,11 +48,11 @@ export const useErrorFeedAlerts = (options = {}) =>
       }),
     select: (response) => {
       const result = unwrap(response);
-      return (
+      const list =
         result?.alerts ||
         result?.results ||
-        (Array.isArray(result) ? result : [])
-      );
+        (Array.isArray(result) ? result : []);
+      return list.map(normalizeAlertRule);
     },
     staleTime: 30_000,
     ...options,
@@ -79,7 +108,7 @@ export const useTestErrorFeedAlert = () =>
   useMutation({
     mutationFn: (id) => axios.post(endpoints.errorFeed.alerts.test(id), {}),
     onSuccess: () =>
-      enqueueSnackbar("Test notification sent to Slack.", {
+      enqueueSnackbar("Test notification sent.", {
         variant: "success",
       }),
     onError: () =>

@@ -599,6 +599,7 @@ const COLUMN_SIZE_MAP = {
   trace_name: { minWidth: 250, flex: 2 },
   name: { minWidth: 250, flex: 2 },
   status: { minWidth: 130, maxWidth: 160, flex: 0 },
+  issues: { minWidth: 112, maxWidth: 140, flex: 0 },
   latency: { minWidth: 100, maxWidth: 140, flex: 0 },
   latency_ms: { minWidth: 100, maxWidth: 140, flex: 0 },
   total_tokens: { minWidth: 240, flex: 1 },

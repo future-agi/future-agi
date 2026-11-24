@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("src/api/errorFeed/error-feed", () => ({
+  useErrorFeedList: () => ({ data: { data: [] }, isLoading: false }),
   useErrorFeedRedirect: mocks.useErrorFeedRedirect,
   useErrorFeedDetail: mocks.useErrorFeedDetail,
   useUpdateErrorFeedIssue: () => ({ mutate: vi.fn(), isPending: false }),

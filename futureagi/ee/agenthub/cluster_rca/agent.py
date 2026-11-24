@@ -505,9 +505,11 @@ class ClusterAnalysisAgent:
         self._alias_to_uuid[self.cluster_label] = self.cluster_uuid
         self._uuid_to_alias[self.cluster_uuid] = self.cluster_label
 
-        # Preload the project's schema (custom span attribute keys) into the
-        # system prompt so the agent doesn't burn turns enumerating.
-        self.project_schema_context: str = build_project_schema_context(self.project_id)
+        # Preload the project's schema (custom span attribute keys) plus Omega v20.9
+        # grounded origin -> symptom causal attributions into the system prompt.
+        self.project_schema_context: str = build_project_schema_context(
+            self.project_id, cluster_uuid=self.cluster_uuid
+        )
 
         self.model = model
         self.temperature = temperature

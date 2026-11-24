@@ -2557,6 +2557,9 @@ _FILED_BY_MODULE: dict[str, dict[str, Filing]] = {
         "GroupingFeatureStore.write_and_verify": _GROUPING_STORE,
         "nearest_sql": _GROUPING_STORE,
     },
+    "tracer.services.grouping.lsh_narrowing": {
+        "lsh_bucket_sql": _GROUPING_STORE,
+    },
     "tracer.services.instant_eval_rows": {
         "_FACET_SQL": filed(
             BY_ID_ALONE,

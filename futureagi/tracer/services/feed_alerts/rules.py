@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.validators import validate_email
 from django.db import transaction
 from django.db.models import OuterRef, Subquery
 from rest_framework import serializers
@@ -45,8 +47,11 @@ _WRITE_KEYS = {
     "severity_threshold",
     "occurrence_threshold",
     "filters",
+    "slack_enabled",
     "slack_connection_id",
     "slack_channel_id",
+    "email_enabled",
+    "email_recipients",
     "cooldown_seconds",
 }
 
@@ -188,6 +193,35 @@ def _validate_trigger(trigger_type, trigger_value):
         )
 
 
+def _validate_email_recipients(value) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or len(value) > 50:
+        raise FeedAlertError(
+            "Provide up to 50 email recipients.", field="email_recipients"
+        )
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, str):
+            raise FeedAlertError(
+                "Enter valid email addresses.", field="email_recipients"
+            )
+        addr = raw.strip().lower()
+        if not addr:
+            continue
+        try:
+            validate_email(addr)
+        except DjangoValidationError as exc:
+            raise FeedAlertError(
+                f"Invalid email address: {addr}", field="email_recipients"
+            ) from exc
+        if addr not in seen:
+            seen.add(addr)
+            cleaned.append(addr)
+    return cleaned
+
+
 class FeedAlertRuleSerializer(serializers.Serializer):
     """The one Error Feed rule contract used for writes and representations."""
 
@@ -202,8 +236,15 @@ class FeedAlertRuleSerializer(serializers.Serializer):
         required=False, min_value=1, max_value=1_000_000
     )
     filters = serializers.JSONField(required=False)
-    slack_connection_id = serializers.UUIDField()
-    slack_channel_id = serializers.CharField(max_length=80)
+    slack_enabled = serializers.BooleanField(required=False)
+    slack_connection_id = serializers.UUIDField(required=False, allow_null=True)
+    slack_channel_id = serializers.CharField(
+        max_length=80, required=False, allow_blank=True, allow_null=True
+    )
+    email_enabled = serializers.BooleanField(required=False)
+    email_recipients = serializers.ListField(
+        child=serializers.CharField(max_length=254), required=False, max_length=50
+    )
     cooldown_seconds = serializers.IntegerField(
         required=False, min_value=0, max_value=86400
     )
@@ -223,6 +264,12 @@ class FeedAlertRuleSerializer(serializers.Serializer):
     def to_representation(self, rule):
         latest_status = getattr(rule, "latest_delivery_status", None)
         latest_error = getattr(rule, "latest_delivery_error", None)
+        slack_connection_id = (
+            str(rule.slack_connection_id) if rule.slack_connection_id else None
+        )
+        slack_enabled = getattr(rule, "slack_enabled", bool(slack_connection_id))
+        email_enabled = getattr(rule, "email_enabled", False)
+        email_recipients = list(getattr(rule, "email_recipients", None) or [])
         data = {
             "id": str(rule.id),
             "kind": "error_feed",
@@ -231,9 +278,12 @@ class FeedAlertRuleSerializer(serializers.Serializer):
             "project_id": str(rule.project_id) if rule.project_id else None,
             "trigger_type": rule.trigger_type,
             "filters": rule.filters,
-            "slack_connection_id": str(rule.slack_connection_id),
-            "slack_channel_id": rule.slack_channel_id,
-            "slack_channel_name": rule.slack_channel_name,
+            "slack_enabled": slack_enabled,
+            "slack_connection_id": slack_connection_id,
+            "slack_channel_id": rule.slack_channel_id or "",
+            "slack_channel_name": rule.slack_channel_name or "",
+            "email_enabled": email_enabled,
+            "email_recipients": email_recipients,
             "cooldown_seconds": rule.cooldown_seconds,
             "last_triggered_at": rule.last_triggered_at,
             "health": "failed" if latest_status == "failed" else "healthy",
@@ -279,21 +329,50 @@ class FeedAlertRuleSerializer(serializers.Serializer):
             if trigger_type == FeedAlertTrigger.OCCURRENCES_CROSSED
             else None
         )
+        email_enabled = bool(merged.get("email_enabled", False))
+        if "slack_enabled" in merged and merged["slack_enabled"] is not None:
+            slack_enabled = bool(merged["slack_enabled"])
+        elif (
+            email_enabled
+            and not merged.get("slack_connection_id")
+            and not merged.get("slack_channel_id")
+        ):
+            slack_enabled = False
+        else:
+            slack_enabled = True
         try:
             _validate_trigger(trigger_type, trigger_value)
             filters = _validate_filters(merged.get("filters", {}))
             project = _project(merged.get("project_id"), organization, workspace)
-            connection = _connection(
-                merged.get("slack_connection_id"), organization, workspace
+            if not slack_enabled and not email_enabled:
+                raise FeedAlertError(
+                    "Enable at least one notification destination (Slack or Email).",
+                    field="non_field_errors",
+                )
+            email_recipients = _validate_email_recipients(
+                merged.get("email_recipients")
             )
-            channel_id = merged.get("slack_channel_id")
-            channel_name = (
-                current.slack_channel_name
-                if current is not None
-                and current.slack_connection_id == connection.id
-                and current.slack_channel_id == channel_id
-                else _channel(connection, channel_id, join_public=True)
-            )
+            if email_enabled and not email_recipients:
+                raise FeedAlertError(
+                    "Add at least one email recipient.", field="email_recipients"
+                )
+            if slack_enabled:
+                connection = _connection(
+                    merged.get("slack_connection_id"), organization, workspace
+                )
+                channel_id = merged.get("slack_channel_id") or ""
+                channel_name = (
+                    current.slack_channel_name
+                    if current is not None
+                    and current.slack_connection_id == connection.id
+                    and current.slack_channel_id == channel_id
+                    and current.slack_channel_name
+                    else _channel(connection, channel_id, join_public=True)
+                )
+            else:
+                connection = None
+                channel_id = ""
+                channel_name = ""
         except FeedAlertError as exc:
             self._status_code = exc.status_code
             raise serializers.ValidationError(
@@ -306,9 +385,12 @@ class FeedAlertRuleSerializer(serializers.Serializer):
             "trigger_type": merged["trigger_type"],
             "trigger_value": trigger_value,
             "filters": filters,
+            "slack_enabled": slack_enabled,
             "slack_connection": connection,
             "slack_channel_id": channel_id,
             "slack_channel_name": channel_name,
+            "email_enabled": email_enabled,
+            "email_recipients": email_recipients,
             "cooldown_seconds": merged.get("cooldown_seconds", 3600),
         }
 
@@ -425,17 +507,43 @@ def test_rule(*, rule_id, organization, workspace, user) -> dict:
     ).first()
     if rule is None:
         raise FeedAlertError("Alert rule not found.", 404)
-    connection = _connection(rule.slack_connection_id, organization, workspace)
-    _channel(connection, rule.slack_channel_id)
-    from integrations.services.slack_service import SlackService
+    slack_enabled = getattr(rule, "slack_enabled", bool(rule.slack_connection_id))
+    email_enabled = getattr(rule, "email_enabled", False)
+    email_recipients = list(getattr(rule, "email_recipients", None) or [])
+    if not slack_enabled and not (email_enabled and email_recipients):
+        raise FeedAlertError("Enable Slack or Email notifications before testing.", 400)
+    slack_ts = ""
+    if slack_enabled:
+        connection = _connection(rule.slack_connection_id, organization, workspace)
+        _channel(connection, rule.slack_channel_id)
+        from integrations.services.slack_service import SlackService
 
-    credentials = CredentialManager.decrypt(bytes(connection.encrypted_credentials))
-    try:
-        result = SlackService().post_message(
-            credentials,
-            rule.slack_channel_id,
-            f"[Test] Error Feed alert: {rule.name}",
-        )
-    except Exception as exc:
-        raise FeedAlertError("Slack test notification failed.", 502) from exc
-    return {"sent": True, "slack_ts": result.get("ts", "")}
+        credentials = CredentialManager.decrypt(bytes(connection.encrypted_credentials))
+        try:
+            result = SlackService().post_message(
+                credentials,
+                rule.slack_channel_id,
+                f"[Test] Error Feed alert: {rule.name}",
+            )
+            slack_ts = result.get("ts", "")
+        except Exception as exc:
+            raise FeedAlertError("Slack test notification failed.", 502) from exc
+    if email_enabled and email_recipients:
+        from tfc.utils.email import email_helper
+
+        try:
+            email_helper(
+                mail_subject=f"[Test] Error Feed alert: {rule.name}",
+                template_name="alert_user.html",
+                template_data={
+                    "alert_name": rule.name,
+                    "alert_message": (
+                        f"This is a test notification for Error Feed alert rule '{rule.name}'."
+                    ),
+                    "alert_type": "Error Feed",
+                },
+                to_email_list=email_recipients,
+            )
+        except Exception as exc:
+            raise FeedAlertError("Email test notification failed.", 502) from exc
+    return {"sent": True, "slack_ts": slack_ts}

@@ -28,6 +28,8 @@ import {
   formatTokenCount,
 } from "src/sections/projects/LLMTracing/formatters";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { format } from "date-fns";
 import {
   JsonView,
   allExpanded,
@@ -68,6 +70,16 @@ function getSpan(entry) {
 
 function chipValue(v, fallback = "-") {
   return v != null && v !== "" && v !== 0 ? String(v) : fallback;
+}
+
+function compactSpanId(id) {
+  if (!id) return "";
+  const s = String(id);
+  if (s.includes("::")) {
+    const [left, right] = s.split("::");
+    return `${left.slice(0, 8)}::${right.slice(0, 8)}`;
+  }
+  return s.length > 20 ? `${s.slice(0, 14)}…` : s;
 }
 
 function copyText(text) {
@@ -188,7 +200,7 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
         <Typography
           variant="body2"
           sx={{
-            fontSize: 12,
+            fontSize: 13,
             fontWeight: 500,
             fontFamily: "'IBM Plex Sans', sans-serif",
             flex: 1,
@@ -279,9 +291,34 @@ const ContentCard = ({ title, content, viewMode = "markdown" }) => {
               {jsonPretty}
             </SyntaxHighlighter>
           ) : (
-            /* Plain text / Markdown */
-            <Box sx={{ "& p": { m: 0 }, "& pre": { whiteSpace: "pre-wrap" } }}>
-              <Markdown>{textContent}</Markdown>
+            /* Plain text / Markdown (GFM table support) */
+            <Box
+              sx={{
+                whiteSpace: "normal",
+                "& p": { m: 0, mb: 0.75, whiteSpace: "pre-wrap" },
+                "& p:last-child": { mb: 0 },
+                "& pre": { whiteSpace: "pre-wrap", m: 0, my: 0.75 },
+                "& table": {
+                  borderCollapse: "collapse",
+                  width: "100%",
+                  my: 0.75,
+                  display: "block",
+                  overflowX: "auto",
+                },
+                "& th, & td": {
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  px: 1,
+                  py: 0.5,
+                  textAlign: "left",
+                },
+                "& th": {
+                  fontWeight: 600,
+                  color: "text.secondary",
+                },
+              }}
+            >
+              <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
             </Box>
           )}
         </Box>
@@ -1503,7 +1540,7 @@ const EventCard = ({ event }) => {
             sx={{ color: "error.main" }}
           />
           <Typography
-            sx={{ fontSize: 12, fontWeight: 600, color: "error.main", flex: 1 }}
+            sx={{ fontSize: 13, fontWeight: 600, color: "error.main", flex: 1 }}
           >
             {exType || "Exception"}
           </Typography>
@@ -1527,7 +1564,7 @@ const EventCard = ({ event }) => {
             }}
           >
             <Typography
-              sx={{ fontSize: 12, color: "text.primary", lineHeight: 1.5 }}
+              sx={{ fontSize: 13, color: "text.primary", lineHeight: 1.5 }}
             >
               {exMessage}
             </Typography>
@@ -1628,7 +1665,7 @@ const EventCard = ({ event }) => {
           sx={{ color: "text.disabled" }}
         />
         <Typography
-          sx={{ fontSize: 12, fontWeight: 600, color: "text.primary", flex: 1 }}
+          sx={{ fontSize: 13, fontWeight: 600, color: "text.primary", flex: 1 }}
         >
           {event?.name || "Event"}
         </Typography>
@@ -1757,7 +1794,13 @@ const SpanDetailPane = ({
       status && { label: "Status", value: status },
       startTime && {
         label: "Start time",
-        value: new Date(startTime).toLocaleString(),
+        value: (() => {
+          try {
+            return format(new Date(startTime), "MMM d, HH:mm:ss");
+          } catch {
+            return String(startTime);
+          }
+        })(),
       },
       latency != null && {
         label: "Duration",
@@ -1836,7 +1879,7 @@ const SpanDetailPane = ({
                 variant="body1"
                 noWrap
                 sx={{
-                  fontSize: 12,
+                  fontSize: 13,
                   fontWeight: 500,
                   fontFamily: "'IBM Plex Sans', sans-serif",
                 }}
@@ -1855,16 +1898,26 @@ const SpanDetailPane = ({
               </IconButton>
             </Stack>
             <Stack direction="row" alignItems="center" spacing={0.25}>
-              <Typography
-                variant="caption"
-                sx={{
-                  fontFamily: "monospace",
-                  color: "text.secondary",
-                  fontSize: 12,
-                }}
+              <CustomTooltip
+                show={Boolean(span.id)}
+                title={span.id || ""}
+                placement="bottom"
+                arrow
+                size="small"
+                type="black"
               >
-                {span.id}
-              </Typography>
+                <Typography
+                  variant="caption"
+                  noWrap
+                  sx={{
+                    fontFamily: "monospace",
+                    color: "text.secondary",
+                    fontSize: 12,
+                  }}
+                >
+                  {compactSpanId(span.id)}
+                </Typography>
+              </CustomTooltip>
               <IconButton size="small" onClick={() => copyText(span.id || "")}>
                 <Iconify
                   icon="solar:copy-linear"
@@ -2516,7 +2569,7 @@ const AttributesCard = ({
             <Typography
               variant="body2"
               sx={{
-                fontSize: 12,
+                fontSize: 13,
                 fontWeight: 500,
                 fontFamily: "'IBM Plex Sans', sans-serif",
                 flex: 1,

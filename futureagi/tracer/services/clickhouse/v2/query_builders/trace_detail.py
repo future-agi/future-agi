@@ -72,12 +72,14 @@ class TraceDetailHandlerV2(V2RewriteMixin, TraceDetailHandler):
         project_id: str | None = None,
         test_execution_id: UUID | None = None,
         call_execution_id: UUID | None = None,
+        cluster_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.project_id = project_id
         self.test_execution_id = test_execution_id
         self.call_execution_id = call_execution_id
+        self.cluster_id = cluster_id
 
     def fetch(self) -> TraceDetail:
         """Return the assembled trace-detail dict from ClickHouse."""
@@ -89,6 +91,7 @@ class TraceDetailHandlerV2(V2RewriteMixin, TraceDetailHandler):
             project_id=self.project_id,
             test_execution_id=self.test_execution_id,
             call_execution_id=self.call_execution_id,
+            cluster_id=self.cluster_id,
         )
 
 
@@ -101,6 +104,7 @@ def retrieve_trace_detail_ch(
     project_id: str | None = None,
     test_execution_id: UUID | None = None,
     call_execution_id: UUID | None = None,
+    cluster_id: str | None = None,
 ) -> TraceDetail:
     """V2 trace detail from ClickHouse.
 
@@ -575,4 +579,29 @@ def retrieve_trace_detail_ch(
     capture = compute_trace_capture_coverage(observation_spans_response)
     if capture is not None:
         result["capture_coverage"] = capture
+    if run_scope is None:
+        from django.db import DatabaseError
+
+        try:
+            from tracer.queries.trace_error_feed import (
+                annotate_trace_detail_with_error_feed,
+            )
+
+            issues, active_cluster_id = annotate_trace_detail_with_error_feed(
+                project_id=str(project_id),
+                trace_id=str(trace_id),
+                observation_spans=observation_spans_response,
+                cluster_id=cluster_id or None,
+            )
+            if issues:
+                result["issues"] = issues
+                if active_cluster_id:
+                    result["active_cluster_id"] = active_cluster_id
+        except (DatabaseError, LookupError, ValueError, TypeError, RuntimeError) as exc:
+            logger.warning(
+                "trace_detail_error_feed_enrichment_failed",
+                trace_id=str(trace_id),
+                project_id=str(project_id),
+                error=str(exc),
+            )
     return result

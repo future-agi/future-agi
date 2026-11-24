@@ -184,7 +184,7 @@ base(
       async () => {
         await page.getByRole("tab", { name: /Traces/ }).click();
         await page
-          .locator(".ag-row")
+          .locator("tbody tr, .ag-row")
           .filter({ hasText: TRACE_A.slice(0, 8) })
           .click();
         // The grid already has a "Trace ID" header. Wait for detail-response

@@ -9,6 +9,7 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Divider,
   Drawer,
   FormControl,
   FormHelperText,
@@ -36,6 +37,8 @@ import SvgColor from "src/components/svg-color";
 import Section from "src/components/section";
 import StatusBadge from "src/components/status-badge/StatusBadge";
 import { ROW_HEIGHT } from "src/theme/sizes";
+import { useAuthContext } from "src/auth/hooks";
+import { paths } from "src/routes/paths";
 import { getErrorMessage } from "src/sections/settings/integrations/utils";
 import {
   useIntegrationConnections,
@@ -59,10 +62,45 @@ const TRIGGERS = [
     label: "Occurrence count crosses a threshold",
   },
 ];
-const SEVERITIES = ["low", "medium", "high", "critical"];
+const SEVERITIES = ["critical", "high", "medium", "low"];
 const SOURCES = ["scanner", "eval"];
 const COOLDOWNS = [0, 300, 900, 3600, 86400];
 const ALERT_DRAFT_KEY = "error-feed-slack-alert-draft-v1";
+
+const ALERT_PRESETS = [
+  {
+    id: "escalating",
+    label: "Escalating issues",
+    caption: "Alert when any issue begins escalating",
+    name: "Escalating production issues",
+    trigger: "escalating",
+    triggerValue: "",
+    severities: ["critical", "high"],
+    cooldown: 3600,
+  },
+  {
+    id: "high_critical",
+    label: "High & Critical",
+    caption: "Alert when an issue reaches High or Critical",
+    name: "High & critical issues",
+    trigger: "severity_reached",
+    triggerValue: "high",
+    severities: [],
+    cooldown: 3600,
+  },
+  {
+    id: "spike",
+    label: "Volume spike (10+)",
+    caption: "Alert when occurrences cross 10 events",
+    name: "High-volume issue spike",
+    trigger: "occurrences_crossed",
+    triggerValue: 10,
+    severities: [],
+    cooldown: 900,
+  },
+];
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function alertErrorField(attr) {
   const fields = {
@@ -73,6 +111,7 @@ function alertErrorField(attr) {
     occurrence_threshold: "triggerValue",
     slack_connection_id: "connection",
     slack_channel_id: "channel",
+    email_recipients: "emails",
     cooldown_seconds: "cooldown",
     "filters.sources": "sources",
     "filters.severities": "severities",
@@ -84,14 +123,23 @@ function alertErrorField(attr) {
 }
 
 function readReturningDraft() {
-  if (!new URLSearchParams(window.location.search).has("resume_alert"))
-    return null;
-  try {
-    const draft = JSON.parse(sessionStorage.getItem(ALERT_DRAFT_KEY) || "null");
-    return draft && typeof draft === "object" ? draft : null;
-  } catch {
+  const sp = new URLSearchParams(window.location.search);
+  if (sp.has("resume_alert")) {
+    try {
+      const draft = JSON.parse(sessionStorage.getItem(ALERT_DRAFT_KEY) || "null");
+      if (draft && typeof draft === "object") return draft;
+    } catch {
+      return null;
+    }
     return null;
   }
+  if (sp.get("create") === "1") {
+    return {
+      projectId: sp.get("project_id") || "",
+      trigger: "escalating",
+    };
+  }
+  return null;
 }
 
 const optionLabel = (value) =>
@@ -144,6 +192,8 @@ function summaryFor(rule) {
 
 function AlertRuleForm({ rule, draft, onClose }) {
   const navigate = useNavigate();
+  const auth = useAuthContext();
+  const currentUserEmail = auth?.user?.email || "";
   const edit = Boolean(rule);
   const config = rule?.configuration || rule || {};
   const connectionsQuery = useIntegrationConnections();
@@ -154,6 +204,7 @@ function AlertRuleForm({ rule, draft, onClose }) {
   const optionQuery = useErrorFeedAlertOptions();
   const projects = optionQuery.data?.projects || [];
   const [name, setName] = useState(draft?.name ?? rule?.name ?? "");
+  const [nameTouched, setNameTouched] = useState(Boolean(edit || draft?.name));
   const [projectId, setProjectId] = useState(
     draft?.projectId ?? config.project_id ?? rule?.project_id ?? "",
   );
@@ -162,15 +213,15 @@ function AlertRuleForm({ rule, draft, onClose }) {
   );
   const selectedProjectName =
     selectedProject?.label || selectedProject?.name || "Selected project";
-  const [trigger, setTrigger] = useState(
-    draft?.trigger ?? config.trigger_type ?? "new_issue",
-  );
+  const initialTrigger = draft?.trigger ?? config.trigger_type ?? "new_issue";
+  const [trigger, setTrigger] = useState(initialTrigger);
   const [triggerValue, setTriggerValue] = useState(
     draft?.triggerValue ??
-      (config.trigger_type === "occurrences_crossed"
-        ? config.occurrence_threshold
-        : config.severity_threshold) ??
-      "high",
+      (initialTrigger === "occurrences_crossed"
+        ? config.occurrence_threshold ?? 5
+        : initialTrigger === "severity_reached"
+          ? config.severity_threshold ?? "high"
+          : ""),
   );
   const [sources, setSources] = useState(
     draft?.sources ?? config.filters?.sources ?? [],
@@ -187,18 +238,37 @@ function AlertRuleForm({ rule, draft, onClose }) {
   const [issueGroups, setIssueGroups] = useState(() =>
     toTags(draft?.issueGroups ?? config.filters?.issue_groups),
   );
-  const [connectionId, setConnectionId] = useState(
-    config.slack_connection_id || rule?.slack_connection_id || "",
+  const [slackEnabled, setSlackEnabled] = useState(() =>
+    Boolean(
+      draft?.slackEnabled ??
+        rule?.slack_enabled ??
+        (edit ? Boolean(rule?.slack_channel_id) : true),
+    ),
   );
+  const [emailEnabled, setEmailEnabled] = useState(() =>
+    Boolean(
+      draft?.emailEnabled ??
+        rule?.email_enabled ??
+        ((rule?.email_recipients || []).length > 0),
+    ),
+  );
+  const [emailRecipients, setEmailRecipients] = useState(() =>
+    toTags(draft?.emailRecipients ?? rule?.email_recipients),
+  );
+  const [emailInput, setEmailInput] = useState("");
+  const [connectionId, setConnectionId] = useState(
+    rule?.slack_connection_id || "",
+  );
+  const effectiveConnectionId = connectionId || slackConnections[0]?.id || "";
   const [channelId, setChannelId] = useState(
-    config.slack_channel_id || rule?.slack_channel_id || "",
+    rule?.slack_channel_id || "",
   );
   const [channelSearch, setChannelSearch] = useState("");
   const [cooldown, setCooldown] = useState(
     draft?.cooldown ?? config.cooldown_seconds ?? 3600,
   );
   const [fieldErrors, setFieldErrors] = useState({});
-  const channelsQuery = useSlackChannels(connectionId);
+  const channelsQuery = useSlackChannels(effectiveConnectionId);
   const {
     hasNextPage,
     isFetchingNextPage,
@@ -211,12 +281,13 @@ function AlertRuleForm({ rule, draft, onClose }) {
     (channelId
       ? {
           id: channelId,
-          name:
-            config.slack_channel_name ||
-            rule?.slack_channel_name ||
-            "Previously selected channel",
+          name: rule?.slack_channel_name || "Previously selected channel",
         }
       : null);
+  const selectedChannelName =
+    channels.find((item) => String(item.id) === String(channelId))?.name ||
+    selectedChannel?.name ||
+    null;
   const save = useSaveErrorFeedAlert({ showErrorToast: false });
 
   const clearFieldError = (field) =>
@@ -229,12 +300,12 @@ function AlertRuleForm({ rule, draft, onClose }) {
     setFieldErrors({ [field]: message });
 
   useEffect(() => {
-    if (!connectionId || (!channelSearch.trim() && channels.length > 0)) return;
+    if (!effectiveConnectionId || (!channelSearch.trim() && channels.length > 0)) return;
     if (hasNextPage && !isFetchingNextPage && !channelsError) {
       fetchNextPage();
     }
   }, [
-    connectionId,
+    effectiveConnectionId,
     channelSearch,
     channels.length,
     hasNextPage,
@@ -254,6 +325,17 @@ function AlertRuleForm({ rule, draft, onClose }) {
     ) {
       channelsQuery.fetchNextPage();
     }
+  };
+
+  const applyPreset = (preset) => {
+    setTrigger(preset.trigger);
+    setTriggerValue(preset.triggerValue);
+    setSeverities(preset.severities);
+    setCooldown(preset.cooldown);
+    if (!nameTouched || ALERT_PRESETS.some((p) => p.name === name)) {
+      setName(preset.name);
+    }
+    setFieldErrors({});
   };
 
   const onTriggerChange = (value) => {
@@ -287,12 +369,25 @@ function AlertRuleForm({ rule, draft, onClose }) {
         issueCategories,
         issueGroups,
         cooldown,
+        slackEnabled,
+        emailEnabled,
+        emailRecipients,
       }),
     );
-    const returnTo = encodeURIComponent("/dashboard/error-feed/alerts");
+    const returnTo = encodeURIComponent(paths.dashboard.errorFeed.alerts);
     navigate(
-      `/dashboard/settings/integrations?return_to=${returnTo}&platform=slack`,
+      `${paths.dashboard.settings.integrations}?return_to=${returnTo}&platform=slack`,
     );
+  };
+
+  const commitEmailInput = (rawText) => {
+    const extra = toTags(rawText);
+    if (!extra.length) return emailRecipients;
+    const merged = toTags([...emailRecipients, ...extra]);
+    setEmailRecipients(merged);
+    setEmailInput("");
+    clearFieldError("emails");
+    return merged;
   };
 
   const submit = () => {
@@ -304,10 +399,10 @@ function AlertRuleForm({ rule, draft, onClose }) {
         "project",
         "Could not load alert options. Try again before saving.",
       );
-    if (connectionsQuery.isLoading || connectionsQuery.isError)
+    if (!slackEnabled && !emailEnabled)
       return showFieldError(
-        "connection",
-        "Could not load Slack connections. Try again before saving.",
+        "channels",
+        "Turn on Slack or Email (or both) to choose where alerts are sent.",
       );
     if (
       trigger === "occurrences_crossed" &&
@@ -317,16 +412,34 @@ function AlertRuleForm({ rule, draft, onClose }) {
         "triggerValue",
         "Occurrence threshold must be a positive whole number.",
       );
-    if (!connectionId)
-      return showFieldError("connection", "Choose a Slack workspace.");
-    if (!channelId) return showFieldError("channel", "Choose a Slack channel.");
-    if (channelsQuery.isLoading || channelsQuery.isError)
-      return showFieldError(
-        "channel",
-        "Could not verify the Slack channel. Try loading channels again.",
-      );
-    if (!channels.some((channel) => String(channel.id) === String(channelId)))
-      return showFieldError("channel", "Choose an available Slack channel.");
+    if (slackEnabled) {
+      if (connectionsQuery.isLoading || connectionsQuery.isError)
+        return showFieldError(
+          "connection",
+          "Could not load Slack connections. Try again before saving.",
+        );
+      if (!effectiveConnectionId)
+        return showFieldError("connection", "Connect Slack and choose a workspace.");
+      if (!channelId) return showFieldError("channel", "Choose a Slack channel.");
+      if (channelsQuery.isLoading || channelsQuery.isError)
+        return showFieldError(
+          "channel",
+          "Could not verify the Slack channel. Try loading channels again.",
+        );
+      if (!channels.some((channel) => String(channel.id) === String(channelId)))
+        return showFieldError("channel", "Choose an available Slack channel.");
+    }
+    const resolvedEmails = emailEnabled ? commitEmailInput(emailInput) : [];
+    if (emailEnabled) {
+      if (resolvedEmails.length === 0)
+        return showFieldError("emails", "Add at least one email address.");
+      const badEmail = resolvedEmails.find((addr) => !EMAIL_RE.test(addr));
+      if (badEmail)
+        return showFieldError(
+          "emails",
+          `Enter a valid email address (“${badEmail}”).`,
+        );
+    }
     const body = {
       name: name.trim(),
       enabled: rule?.enabled ?? true,
@@ -344,8 +457,22 @@ function AlertRuleForm({ rule, draft, onClose }) {
         issue_categories: issueCategories,
         issue_groups: issueGroups,
       },
-      slack_connection_id: connectionId,
-      slack_channel_id: channelId,
+      slack_enabled: slackEnabled,
+      ...(slackEnabled
+        ? {
+            slack_connection_id: effectiveConnectionId,
+            slack_channel_id: channelId,
+            ...(selectedChannelName
+              ? { slack_channel_name: selectedChannelName }
+              : {}),
+          }
+        : {
+            slack_connection_id: null,
+            slack_channel_id: null,
+            slack_channel_name: null,
+          }),
+      email_enabled: emailEnabled,
+      email_recipients: emailEnabled ? resolvedEmails : [],
       cooldown_seconds: Number(cooldown),
     };
     save.mutate(
@@ -363,6 +490,24 @@ function AlertRuleForm({ rule, draft, onClose }) {
     );
   };
 
+  const activePresetId = ALERT_PRESETS.find(
+    (p) =>
+      p.trigger === trigger &&
+      String(p.triggerValue) === String(triggerValue || "") &&
+      p.severities.join(",") === severities.join(","),
+  )?.id;
+
+  const summaryDestinations = [
+    slackEnabled ? (selectedChannelName ? `#${selectedChannelName}` : "Slack") : null,
+    emailEnabled
+      ? emailRecipients.length === 1
+        ? emailRecipients[0]
+        : emailRecipients.length > 1
+          ? `${emailRecipients[0]} +${emailRecipients.length - 1} more`
+          : "email"
+      : null,
+  ].filter(Boolean);
+
   return (
     <Box
       sx={{
@@ -375,9 +520,11 @@ function AlertRuleForm({ rule, draft, onClose }) {
         bgcolor: "background.paper",
       }}
     >
+      {/* ── Drawer Header ── */}
       <Box
         sx={{
-          p: 2,
+          px: 2.25,
+          py: 1.75,
           borderBottom: 1,
           borderColor: "divider",
           flexShrink: 0,
@@ -394,7 +541,7 @@ function AlertRuleForm({ rule, draft, onClose }) {
               {edit ? "Edit Error Feed alert" : "Create Error Feed alert"}
             </Typography>
             <Typography typography="s2" color="text.secondary">
-              Choose when an issue should send a message to Slack.
+              Notify Slack and/or email when agent issues need attention.
             </Typography>
           </Box>
           <IconButton
@@ -407,531 +554,852 @@ function AlertRuleForm({ rule, draft, onClose }) {
           </IconButton>
         </Stack>
       </Box>
+
+      {/* Scrollable form body */}
       <Box
         sx={{
-          p: 2,
+          px: 2.25,
+          py: 2,
           flex: 1,
           minHeight: 0,
           overflowY: "auto",
           overflowX: "hidden",
         }}
       >
-        <Stack spacing={2} sx={{ minWidth: 0 }}>
+        <Stack spacing={2.25} sx={{ minWidth: 0 }}>
           {(optionQuery.isLoading || connectionsQuery.isLoading) && (
             <Typography typography="s2" color="text.secondary">
               Loading alert settings…
             </Typography>
           )}
-          <TextField
-            size="small"
-            label="Rule name"
-            placeholder="For example, Critical production issues"
-            InputLabelProps={{ shrink: true }}
-            value={name}
-            onChange={(e) => {
-              setName(e.target.value);
-              clearFieldError("name");
-            }}
-            error={Boolean(fieldErrors.name)}
-            helperText={fieldErrors.name}
-            fullWidth
-          />
-          <FormControl
-            fullWidth
-            size="small"
-            error={Boolean(fieldErrors.project || optionQuery.isError)}
-          >
-            <InputLabel id="project-label" shrink>
-              Project
-            </InputLabel>
-            <Select
-              labelId="project-label"
-              label="Project"
-              displayEmpty
-              value={projectId}
-              onChange={(e) => {
-                setProjectId(e.target.value);
-                clearFieldError("project");
-              }}
-              renderValue={(value) =>
-                value
-                  ? selectedProjectName
-                  : placeholder("All projects in this workspace")
-              }
-            >
-              <MenuItem value="">All projects in this workspace</MenuItem>
-              {projects.map((project) => (
-                <MenuItem
-                  key={project.value || project.id}
-                  value={project.value || project.id}
-                >
-                  {project.label || project.name}
-                </MenuItem>
-              ))}
-            </Select>
-            {(fieldErrors.project || optionQuery.isError) && (
-              <FormHelperText>
-                {fieldErrors.project || "Could not load alert options."}
-                {optionQuery.isError && (
-                  <Button size="small" onClick={() => optionQuery.refetch?.()}>
-                    Retry
-                  </Button>
-                )}
-              </FormHelperText>
-            )}
-          </FormControl>
-          <SectionTitle
-            step="1"
-            title="When"
-            subtitle="Choose the issue event that starts this rule."
-          />
-          <FormControl
-            fullWidth
-            size="small"
-            error={Boolean(fieldErrors.trigger)}
-          >
-            <InputLabel id="when-label">Issue event</InputLabel>
-            <Select
-              labelId="when-label"
-              label="Issue event"
-              value={trigger}
-              onChange={(e) => onTriggerChange(e.target.value)}
-            >
-              {TRIGGERS.map((item) => (
-                <MenuItem key={item.value} value={item.value}>
-                  {item.label}
-                </MenuItem>
-              ))}
-            </Select>
-            {fieldErrors.trigger && (
-              <FormHelperText>{fieldErrors.trigger}</FormHelperText>
-            )}
-          </FormControl>
-          {trigger === "severity_reached" && (
-            <FormControl
-              fullWidth
-              size="small"
-              error={Boolean(fieldErrors.triggerValue)}
-            >
-              <InputLabel id="severity-trigger-label">Severity</InputLabel>
-              <Select
-                labelId="severity-trigger-label"
-                label="Severity"
-                value={triggerValue}
-                onChange={(e) => {
-                  setTriggerValue(e.target.value);
-                  clearFieldError("triggerValue");
+
+          {/* Quick-start templates (create mode) */}
+          {!edit && (
+            <Stack gap={0.75}>
+              <Typography typography="s3" fontWeight={600} color="text.secondary">
+                Quick templates
+              </Typography>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, 1fr)",
+                  gap: 0.75,
                 }}
               >
-                {SEVERITIES.map((value) => (
-                  <MenuItem key={value} value={value}>
-                    {optionLabel(value)}
-                  </MenuItem>
-                ))}
-              </Select>
-              {fieldErrors.triggerValue && (
-                <FormHelperText>{fieldErrors.triggerValue}</FormHelperText>
-              )}
-            </FormControl>
+                {ALERT_PRESETS.map((preset) => {
+                  const active = activePresetId === preset.id;
+                  return (
+                    <Box
+                      key={preset.id}
+                      component="button"
+                      type="button"
+                      onClick={() => applyPreset(preset)}
+                      sx={{
+                        textAlign: "left",
+                        p: 1,
+                        borderRadius: "6px",
+                        border: "1px solid",
+                        borderColor: active ? "text.primary" : "divider",
+                        bgcolor: active ? "action.selected" : "transparent",
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        transition: "border-color 120ms, background-color 120ms",
+                        "&:hover": {
+                          borderColor: active ? "text.primary" : "text.secondary",
+                          bgcolor: active ? "action.selected" : "action.hover",
+                        },
+                      }}
+                    >
+                      <Typography
+                        typography="s2"
+                        fontWeight={600}
+                        color="text.primary"
+                        noWrap
+                      >
+                        {preset.label}
+                      </Typography>
+                      <Typography
+                        typography="s3"
+                        color="text.secondary"
+                        sx={{
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                          mt: 0.2,
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        {preset.caption}
+                      </Typography>
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Stack>
           )}
-          {trigger === "occurrences_crossed" && (
-            <TextField
-              size="small"
-              label="Occurrence threshold"
-              placeholder="For example, 5"
-              InputLabelProps={{ shrink: true }}
-              type="number"
-              inputProps={{ min: 1 }}
-              value={triggerValue}
-              onChange={(e) => {
-                setTriggerValue(
-                  e.target.value === "" ? "" : Number(e.target.value),
-                );
-                clearFieldError("triggerValue");
-              }}
-              error={Boolean(fieldErrors.triggerValue)}
-              helperText={fieldErrors.triggerValue}
+
+          {/* Step 1: Destinations */}
+          <Stack gap={1.25}>
+            <SectionTitle
+              step="1"
+              title="Where to notify"
+              subtitle="Send alerts to Slack, email, or both."
             />
-          )}
 
-          <SectionTitle
-            step="2"
-            title="If"
-            subtitle="Limit the rule to matching issues. Each selected value is an OR; fields combine with AND."
-          />
-          {fieldErrors.filters && (
-            <FormHelperText error>{fieldErrors.filters}</FormHelperText>
-          )}
-          <FormControl
-            fullWidth
-            size="small"
-            error={Boolean(fieldErrors.sources)}
-          >
-            <InputLabel id="source-label" shrink>
-              Sources
-            </InputLabel>
-            <Select
-              multiple
-              labelId="source-label"
-              label="Sources"
-              displayEmpty
-              value={sources}
-              onChange={setMulti(setSources, "sources")}
-              renderValue={(values) =>
-                values.length ? labels(values) : placeholder("Any source")
-              }
-            >
-              {SOURCES.map((value) => (
-                <MenuItem key={value} value={value}>
-                  {optionLabel(value)}
-                </MenuItem>
-              ))}
-            </Select>
-            {fieldErrors.sources && (
-              <FormHelperText>{fieldErrors.sources}</FormHelperText>
-            )}
-          </FormControl>
-          <FormControl
-            fullWidth
-            size="small"
-            error={Boolean(fieldErrors.severities)}
-          >
-            <InputLabel id="severity-filter-label" shrink>
-              Severity filter
-            </InputLabel>
-            <Select
-              multiple
-              labelId="severity-filter-label"
-              label="Severity filter"
-              displayEmpty
-              value={severities}
-              onChange={setMulti(setSeverities, "severities")}
-              renderValue={(values) =>
-                values.length ? labels(values) : placeholder("Any severity")
-              }
-            >
-              {SEVERITIES.map((value) => (
-                <MenuItem key={value} value={value}>
-                  {optionLabel(value)}
-                </MenuItem>
-              ))}
-            </Select>
-            {fieldErrors.severities && (
-              <FormHelperText>{fieldErrors.severities}</FormHelperText>
-            )}
-          </FormControl>
-          <FormControl
-            fullWidth
-            size="small"
-            error={Boolean(fieldErrors.statuses)}
-          >
-            <InputLabel id="status-filter-label" shrink>
-              Status
-            </InputLabel>
-            <Select
-              multiple
-              labelId="status-filter-label"
-              label="Status"
-              displayEmpty
-              value={statuses}
-              onChange={setMulti(setStatuses, "statuses")}
-              renderValue={(values) =>
-                values.length ? labels(values) : placeholder("Any status")
-              }
-            >
-              {["escalating", "for_review", "acknowledged", "resolved"].map(
-                (value) => (
-                  <MenuItem key={value} value={value}>
-                    {optionLabel(value)}
-                  </MenuItem>
-                ),
+            {/* Channel destination toggles */}
+            <Stack gap={0.5}>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, 1fr)",
+                  gap: 0.85,
+                }}
+              >
+                {[
+                  {
+                    id: "slack",
+                    label: "Slack",
+                    hint: slackEnabled
+                      ? selectedChannelName
+                        ? `#${selectedChannelName}`
+                        : slackConnections.length > 0
+                          ? "Pick a channel"
+                          : "Connect workspace"
+                      : "Off",
+                    icon: "simple-icons:slack",
+                    active: slackEnabled,
+                    onToggle: () => {
+                      setSlackEnabled((v) => !v);
+                      clearFieldError("channels");
+                      clearFieldError("connection");
+                      clearFieldError("channel");
+                    },
+                  },
+                  {
+                    id: "email",
+                    label: "Email",
+                    hint: emailEnabled
+                      ? emailRecipients.length > 0
+                        ? `${emailRecipients.length} recipient${emailRecipients.length === 1 ? "" : "s"}`
+                        : "Add recipients"
+                      : "Off",
+                    icon: "solar:letter-linear",
+                    active: emailEnabled,
+                    onToggle: () => {
+                      setEmailEnabled((v) => !v);
+                      clearFieldError("channels");
+                      clearFieldError("emails");
+                    },
+                  },
+                ].map((dest) => (
+                  <Box
+                    key={dest.id}
+                    component="button"
+                    type="button"
+                    aria-pressed={dest.active}
+                    onClick={dest.onToggle}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 1,
+                      px: 1.25,
+                      py: 0.9,
+                      borderRadius: "8px",
+                      border: "1px solid",
+                      borderColor: dest.active ? "text.primary" : "divider",
+                      bgcolor: dest.active ? "action.selected" : "transparent",
+                      color: "text.primary",
+                      fontFamily: "inherit",
+                      textAlign: "left",
+                      cursor: "pointer",
+                      transition: "border-color 120ms, background-color 120ms",
+                      "&:hover": {
+                        borderColor: dest.active ? "text.primary" : "text.secondary",
+                        bgcolor: dest.active ? "action.selected" : "action.hover",
+                      },
+                    }}
+                  >
+                    <Stack direction="row" alignItems="center" gap={0.85} sx={{ minWidth: 0 }}>
+                      <Iconify
+                        icon={dest.icon}
+                        width={16}
+                        sx={{
+                          color: dest.active ? "text.primary" : "text.secondary",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography typography="s2" fontWeight={600} color="text.primary" noWrap>
+                          {dest.label}
+                        </Typography>
+                        <Typography typography="s3" color="text.secondary" noWrap>
+                          {dest.hint}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                    <Iconify
+                      icon={
+                        dest.active
+                          ? "solar:check-circle-bold"
+                          : "solar:add-circle-linear"
+                      }
+                      width={16}
+                      sx={{
+                        color: dest.active ? "text.primary" : "text.disabled",
+                        flexShrink: 0,
+                      }}
+                    />
+                  </Box>
+                ))}
+              </Box>
+              {fieldErrors.channels && (
+                <FormHelperText error>{fieldErrors.channels}</FormHelperText>
               )}
-            </Select>
-            {fieldErrors.statuses && (
-              <FormHelperText>{fieldErrors.statuses}</FormHelperText>
-            )}
-          </FormControl>
-          <TagFilter
-            label="Issue categories"
-            example="Timeout"
-            value={issueCategories}
-            onChange={(value) => {
-              setIssueCategories(value);
-              clearFieldError("issueCategories");
-            }}
-            error={fieldErrors.issueCategories}
-          />
-          <TagFilter
-            label="Issue groups"
-            example="Tool Failures"
-            value={issueGroups}
-            onChange={(value) => {
-              setIssueGroups(value);
-              clearFieldError("issueGroups");
-            }}
-            error={fieldErrors.issueGroups}
-          />
+            </Stack>
 
-          <SectionTitle
-            step="3"
-            title="Then"
-            subtitle="Send a notification to one channel in a connected Slack workspace."
-          />
-          {connectionsQuery.isLoading ? null : connectionsQuery.isError ? (
-            <FormControl fullWidth size="small" error>
-              <InputLabel id="workspace-label" shrink>
-                Slack workspace
-              </InputLabel>
-              <Select
-                labelId="workspace-label"
-                label="Slack workspace"
-                displayEmpty
-                value=""
-                disabled
-                renderValue={() => placeholder("Select a Slack workspace")}
-              />
-              <FormHelperText>
-                Could not load Slack connections.{" "}
-                <Button
+            {slackEnabled && (
+              <>
+                {connectionsQuery.isLoading ? null : connectionsQuery.isError ? (
+                  <MuiAlert severity="error" variant="outlined">
+                    Could not load Slack connections.{" "}
+                    <Button size="small" onClick={() => connectionsQuery.refetch?.()}>
+                      Retry
+                    </Button>
+                  </MuiAlert>
+                ) : slackConnections.length === 0 ? (
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    gap={1.5}
+                    sx={{
+                      p: 1.5,
+                      borderRadius: "8px",
+                      border: "1px solid",
+                      borderColor: fieldErrors.connection
+                        ? "status.danger.border"
+                        : "status.warning.border",
+                      bgcolor: fieldErrors.connection
+                        ? "status.danger.bg"
+                        : "status.warning.bg",
+                    }}
+                  >
+                    <Stack direction="row" alignItems="flex-start" gap={1.1} sx={{ minWidth: 0 }}>
+                      <Iconify
+                        icon="simple-icons:slack"
+                        width={16}
+                        sx={{
+                          color: fieldErrors.connection
+                            ? "status.danger.fg"
+                            : "status.warning.fg",
+                          flexShrink: 0,
+                          mt: 0.15,
+                        }}
+                      />
+                      <Stack gap={0.2} sx={{ minWidth: 0 }}>
+                        <Typography typography="s2" fontWeight={600} color="text.primary">
+                          Slack workspace not connected
+                        </Typography>
+                        <Typography typography="s3" color="text.secondary">
+                          {fieldErrors.connection ||
+                            "Connect Slack once to pick a channel, or enable Email above."}
+                        </Typography>
+                      </Stack>
+                    </Stack>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={connectSlack}
+                      sx={{ flexShrink: 0, whiteSpace: "nowrap" }}
+                    >
+                      Connect Slack
+                    </Button>
+                  </Stack>
+                ) : (
+                  <Stack direction={{ xs: "column", sm: "row" }} gap={1.25}>
+                    <FormControl
+                      size="small"
+                      sx={{ flex: 1, minWidth: 0 }}
+                      error={Boolean(fieldErrors.connection)}
+                    >
+                      <InputLabel id="workspace-label" shrink>
+                        Slack workspace
+                      </InputLabel>
+                      <Select
+                        labelId="workspace-label"
+                        label="Slack workspace"
+                        displayEmpty
+                        value={effectiveConnectionId}
+                        onChange={(e) => {
+                          setConnectionId(e.target.value);
+                          setChannelId("");
+                          setChannelSearch("");
+                          clearFieldError("connection");
+                          clearFieldError("channel");
+                        }}
+                        renderValue={(value) => {
+                          const connection = slackConnections.find(
+                            (item) => String(item.id) === String(value),
+                          );
+                          return value
+                            ? connection?.display_name ||
+                                connection?.name ||
+                                "Previously selected workspace"
+                            : placeholder("Select workspace");
+                        }}
+                      >
+                        {slackConnections.map((connection) => (
+                          <MenuItem key={connection.id} value={connection.id}>
+                            {connection.display_name ||
+                              connection.name ||
+                              "Slack workspace"}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                      {fieldErrors.connection && (
+                        <FormHelperText>{fieldErrors.connection}</FormHelperText>
+                      )}
+                    </FormControl>
+
+                    <Autocomplete
+                      size="small"
+                      sx={{ flex: 1.2, minWidth: 0 }}
+                      autoHighlight
+                      openOnFocus
+                      disabled={!effectiveConnectionId || channelsQuery.isLoading}
+                      options={channels}
+                      value={selectedChannel}
+                      onChange={(_, channel) => {
+                        setChannelId(channel?.id || "");
+                        clearFieldError("channel");
+                      }}
+                      onInputChange={(_, value, reason) => {
+                        if (reason === "input") setChannelSearch(value);
+                        if (reason === "clear") setChannelSearch("");
+                      }}
+                      onClose={() => setChannelSearch("")}
+                      getOptionLabel={(channel) => `#${channel.name}`}
+                      isOptionEqualToValue={(option, value) =>
+                        String(option.id) === String(value.id)
+                      }
+                      loading={
+                        channelsQuery.isLoading || channelsQuery.isFetchingNextPage
+                      }
+                      loadingText="Loading channels…"
+                      noOptionsText={
+                        channelsQuery.hasNextPage
+                          ? "Searching more channels…"
+                          : "No channels found"
+                      }
+                      ListboxProps={{
+                        sx: { maxHeight: 280, overflowY: "auto" },
+                        onScroll: loadChannelsOnScroll,
+                      }}
+                      renderOption={(props, channel) => (
+                        <li {...props} key={channel.id}>
+                          #{channel.name}
+                          {channel.is_private ? " · private" : ""}
+                        </li>
+                      )}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Channel"
+                          error={Boolean(
+                            fieldErrors.channel || channelsQuery.isError,
+                          )}
+                          helperText={
+                            fieldErrors.channel ||
+                            (channelsQuery.isError ? (
+                              <>
+                                Could not load channels.{" "}
+                                <Button
+                                  size="small"
+                                  onClick={() => channelsQuery.refetch?.()}
+                                >
+                                  Retry
+                                </Button>
+                              </>
+                            ) : undefined)
+                          }
+                          placeholder={
+                            effectiveConnectionId
+                              ? channelsQuery.isLoading
+                                ? "Loading channels…"
+                                : "Select #channel"
+                              : "Select workspace first"
+                          }
+                          InputLabelProps={{ shrink: true }}
+                          InputProps={{
+                            ...params.InputProps,
+                            endAdornment: (
+                              <>
+                                {(channelsQuery.isLoading ||
+                                  channelsQuery.isFetchingNextPage) && (
+                                  <CircularProgress size={16} />
+                                )}
+                                {params.InputProps.endAdornment}
+                              </>
+                            ),
+                          }}
+                        />
+                      )}
+                    />
+                  </Stack>
+                )}
+              </>
+            )}
+
+            {emailEnabled && (
+              <Stack gap={0.75}>
+                <Autocomplete
+                  multiple
+                  freeSolo
+                  autoSelect
                   size="small"
-                  onClick={() => connectionsQuery.refetch?.()}
-                >
-                  Retry
-                </Button>
-              </FormHelperText>
-            </FormControl>
-          ) : slackConnections.length === 0 ? (
-            <MuiAlert
-              severity="info"
-              variant="outlined"
-              sx={{ "& .MuiAlert-message": { width: "100%", minWidth: 0 } }}
-            >
-              <Stack spacing={1} alignItems="flex-start">
-                <Typography typography="s2">
-                  Connect Slack to choose a destination. Your draft will be
-                  saved while you connect.
-                </Typography>
-                <Button
-                  color="primary"
-                  size="small"
-                  variant="outlined"
-                  onClick={connectSlack}
-                >
-                  Connect Slack
-                </Button>
-                {fieldErrors.connection && (
-                  <FormHelperText error>
-                    {fieldErrors.connection}
-                  </FormHelperText>
+                  options={[]}
+                  value={emailRecipients}
+                  inputValue={emailInput}
+                  onInputChange={(_, value, reason) => {
+                    if (reason === "input") {
+                      if (value.includes(",")) {
+                        commitEmailInput(value);
+                        return;
+                      }
+                      setEmailInput(value);
+                      clearFieldError("emails");
+                    } else if (reason === "clear") {
+                      setEmailInput("");
+                    }
+                  }}
+                  onChange={(_, nextValue) => {
+                    setEmailRecipients(toTags(nextValue));
+                    setEmailInput("");
+                    clearFieldError("emails");
+                  }}
+                  renderTags={(selected, getTagProps) =>
+                    selected.map((addr, index) => (
+                      <Chip
+                        {...getTagProps({ index })}
+                        key={addr}
+                        label={addr}
+                        size="small"
+                        sx={{
+                          maxWidth: "calc(100% - 8px)",
+                          bgcolor: "action.selected",
+                          color: "text.primary",
+                          "& .MuiChip-deleteIcon": { color: "text.secondary" },
+                        }}
+                      />
+                    ))
+                  }
+                  sx={{
+                    minWidth: 0,
+                    "& .MuiAutocomplete-tag": { maxWidth: "calc(100% - 8px)" },
+                  }}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Email recipients"
+                      InputLabelProps={{ shrink: true }}
+                      error={Boolean(fieldErrors.emails)}
+                      placeholder={
+                        emailRecipients.length
+                          ? "Add another email"
+                          : "oncall@company.com"
+                      }
+                      helperText={
+                        fieldErrors.emails ||
+                        "Press Enter or comma to add team members or distribution lists."
+                      }
+                    />
+                  )}
+                />
+                {currentUserEmail && !emailRecipients.includes(currentUserEmail) && (
+                  <Stack direction="row" alignItems="center">
+                    <Button
+                      size="small"
+                      variant="text"
+                      startIcon={<Iconify icon="solar:add-linear" width={14} />}
+                      onClick={() => {
+                        setEmailRecipients((prev) =>
+                          toTags([...prev, currentUserEmail]),
+                        );
+                        clearFieldError("emails");
+                      }}
+                      sx={{ color: "text.secondary" }}
+                    >
+                      Add my email ({currentUserEmail})
+                    </Button>
+                  </Stack>
                 )}
               </Stack>
-            </MuiAlert>
-          ) : (
-            <>
+            )}
+          </Stack>
+
+          <Divider />
+
+          {/* Step 2: Trigger & Scope */}
+          <Stack gap={1.5}>
+            <SectionTitle
+              step="2"
+              title="When to alert"
+              subtitle="Choose which project, event, and severities trigger this rule."
+            />
+
+            <Stack direction={{ xs: "column", sm: "row" }} gap={1.25}>
               <FormControl
-                fullWidth
                 size="small"
-                error={Boolean(fieldErrors.connection)}
+                sx={{ flex: 1, minWidth: 0 }}
+                error={Boolean(fieldErrors.trigger)}
               >
-                <InputLabel id="workspace-label" shrink>
-                  Slack workspace
+                <InputLabel id="when-label" shrink>
+                  Issue event
                 </InputLabel>
                 <Select
-                  labelId="workspace-label"
-                  label="Slack workspace"
-                  displayEmpty
-                  value={connectionId}
-                  onChange={(e) => {
-                    setConnectionId(e.target.value);
-                    setChannelId("");
-                    setChannelSearch("");
-                    clearFieldError("connection");
-                    clearFieldError("channel");
-                  }}
-                  renderValue={(value) => {
-                    const connection = slackConnections.find(
-                      (item) => String(item.id) === String(value),
-                    );
-                    return value
-                      ? connection?.display_name ||
-                          connection?.name ||
-                          "Previously selected workspace"
-                      : placeholder("Select a Slack workspace");
-                  }}
+                  labelId="when-label"
+                  label="Issue event"
+                  value={trigger}
+                  onChange={(e) => onTriggerChange(e.target.value)}
                 >
-                  {slackConnections.map((connection) => (
-                    <MenuItem key={connection.id} value={connection.id}>
-                      {connection.display_name ||
-                        connection.name ||
-                        "Slack workspace"}
+                  {TRIGGERS.map((item) => (
+                    <MenuItem key={item.value} value={item.value}>
+                      {item.label}
                     </MenuItem>
                   ))}
                 </Select>
-                {fieldErrors.connection && (
-                  <FormHelperText>{fieldErrors.connection}</FormHelperText>
+                {fieldErrors.trigger && (
+                  <FormHelperText>{fieldErrors.trigger}</FormHelperText>
                 )}
               </FormControl>
-              <Autocomplete
+
+              <FormControl
                 size="small"
-                fullWidth
-                autoHighlight
-                openOnFocus
-                disabled={!connectionId || channelsQuery.isLoading}
-                options={channels}
-                value={selectedChannel}
-                onChange={(_, channel) => {
-                  setChannelId(channel?.id || "");
-                  clearFieldError("channel");
-                }}
-                onInputChange={(_, value, reason) => {
-                  if (reason === "input") setChannelSearch(value);
-                  if (reason === "clear") setChannelSearch("");
-                }}
-                onClose={() => setChannelSearch("")}
-                getOptionLabel={(channel) => `#${channel.name}`}
-                isOptionEqualToValue={(option, value) =>
-                  String(option.id) === String(value.id)
-                }
-                loading={
-                  channelsQuery.isLoading || channelsQuery.isFetchingNextPage
-                }
-                loadingText="Loading channels…"
-                noOptionsText={
-                  channelsQuery.hasNextPage
-                    ? "Searching more channels…"
-                    : "No channels found"
-                }
-                ListboxProps={{
-                  sx: { maxHeight: 320, overflowY: "auto" },
-                  onScroll: loadChannelsOnScroll,
-                }}
-                renderOption={(props, channel) => (
-                  <li {...props} key={channel.id}>
-                    #{channel.name}
-                    {channel.is_private ? " · private" : ""}
-                  </li>
-                )}
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label="Channel"
-                    error={Boolean(
-                      fieldErrors.channel || channelsQuery.isError,
-                    )}
-                    helperText={
-                      fieldErrors.channel ||
-                      (channelsQuery.isError ? (
-                        <>
-                          Could not load channels.{" "}
-                          <Button
-                            size="small"
-                            onClick={() => channelsQuery.refetch?.()}
-                          >
-                            Retry
-                          </Button>
-                        </>
-                      ) : undefined)
-                    }
-                    placeholder={
-                      connectionId
-                        ? channelsQuery.isLoading
-                          ? "Loading channels…"
-                          : "Search channels"
-                        : "Select a Slack workspace first"
-                    }
-                    InputLabelProps={{ shrink: true }}
-                    InputProps={{
-                      ...params.InputProps,
-                      endAdornment: (
-                        <>
-                          {(channelsQuery.isLoading ||
-                            channelsQuery.isFetchingNextPage) && (
-                            <CircularProgress size={16} />
-                          )}
-                          {params.InputProps.endAdornment}
-                        </>
-                      ),
-                    }}
-                  />
-                )}
-              />
-              {!channelsQuery.isLoading &&
-                !channelsQuery.isError &&
-                connectionId &&
-                channels.length === 0 && (
+                sx={{ flex: 1, minWidth: 0 }}
+                error={Boolean(fieldErrors.project || optionQuery.isError)}
+              >
+                <InputLabel id="project-label" shrink>
+                  Project
+                </InputLabel>
+                <Select
+                  labelId="project-label"
+                  label="Project"
+                  displayEmpty
+                  value={projectId}
+                  onChange={(e) => {
+                    setProjectId(e.target.value);
+                    clearFieldError("project");
+                  }}
+                  renderValue={(value) =>
+                    value
+                      ? selectedProjectName
+                      : placeholder("All projects in this workspace")
+                  }
+                >
+                  <MenuItem value="">All projects in this workspace</MenuItem>
+                  {projects.map((project) => (
+                    <MenuItem
+                      key={project.value || project.id}
+                      value={project.value || project.id}
+                    >
+                      {project.label || project.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+                {(fieldErrors.project || optionQuery.isError) && (
                   <FormHelperText>
-                    No channels are available to this Slack app. Invite it to a
-                    channel, then reload.
+                    {fieldErrors.project || "Could not load projects."}
                   </FormHelperText>
                 )}
-            </>
-          )}
-          <FormControl
-            fullWidth
-            size="small"
-            error={Boolean(fieldErrors.cooldown)}
-          >
-            <InputLabel id="cooldown-label">Notify at most</InputLabel>
-            <Select
-              labelId="cooldown-label"
-              label="Notify at most"
-              value={cooldown}
-              onChange={(e) => {
-                setCooldown(e.target.value);
-                clearFieldError("cooldown");
-              }}
-            >
-              {COOLDOWNS.map((seconds) => (
-                <MenuItem key={seconds} value={seconds}>
-                  {cooldownLabel(seconds)}
-                </MenuItem>
-              ))}
-            </Select>
-            {fieldErrors.cooldown && (
-              <FormHelperText>{fieldErrors.cooldown}</FormHelperText>
+              </FormControl>
+            </Stack>
+
+            {trigger === "severity_reached" && (
+              <FormControl
+                fullWidth
+                size="small"
+                error={Boolean(fieldErrors.triggerValue)}
+              >
+                <InputLabel id="severity-trigger-label" shrink>
+                  Severity
+                </InputLabel>
+                <Select
+                  labelId="severity-trigger-label"
+                  label="Severity"
+                  value={triggerValue}
+                  onChange={(e) => {
+                    setTriggerValue(e.target.value);
+                    clearFieldError("triggerValue");
+                  }}
+                >
+                  {SEVERITIES.map((value) => (
+                    <MenuItem key={value} value={value}>
+                      {optionLabel(value)}
+                    </MenuItem>
+                  ))}
+                </Select>
+                {fieldErrors.triggerValue && (
+                  <FormHelperText>{fieldErrors.triggerValue}</FormHelperText>
+                )}
+              </FormControl>
             )}
-          </FormControl>
-          <Box
-            sx={{
-              p: 1.5,
-              borderRadius: "8px",
-              bgcolor: "background.neutral",
-              overflowWrap: "anywhere",
-            }}
-          >
-            <Typography typography="s2" color="text.secondary">
-              Preview
-            </Typography>
-            <Typography typography="s1" color="text.primary" mt={0.5}>
-              When{" "}
-              {TRIGGERS.find(
-                (item) => item.value === trigger,
-              )?.label.toLowerCase()}
-              {trigger === "severity_reached"
-                ? `: ${triggerValue}`
-                : trigger === "occurrences_crossed"
-                  ? `: ${triggerValue}`
-                  : ""}
-              {projectId
-                ? ` in ${selectedProjectName.toLowerCase() === "selected project" ? "selected project" : selectedProjectName}`
-                : " in any project"}
-              , post to #
-              {channels.find((item) => String(item.id) === String(channelId))
-                ?.name || "selected channel"}
-              .
-            </Typography>
-          </Box>
+
+            {trigger === "occurrences_crossed" && (
+              <TextField
+                size="small"
+                label="Occurrence threshold"
+                placeholder="For example, 10"
+                InputLabelProps={{ shrink: true }}
+                type="number"
+                inputProps={{ min: 1 }}
+                value={triggerValue}
+                onChange={(e) => {
+                  setTriggerValue(
+                    e.target.value === "" ? "" : Number(e.target.value),
+                  );
+                  clearFieldError("triggerValue");
+                }}
+                error={Boolean(fieldErrors.triggerValue)}
+                helperText={fieldErrors.triggerValue}
+              />
+            )}
+          </Stack>
+
+          <Divider />
+
+          {/* Step 3: Rule name & Frequency */}
+          <Stack direction={{ xs: "column", sm: "row" }} gap={1.25}>
+            <TextField
+              size="small"
+              label="Rule name"
+              placeholder="e.g., Critical production issues"
+              InputLabelProps={{ shrink: true }}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameTouched(true);
+                clearFieldError("name");
+              }}
+              error={Boolean(fieldErrors.name)}
+              helperText={fieldErrors.name}
+              sx={{ flex: 1.25, minWidth: 0 }}
+            />
+            <FormControl
+              size="small"
+              sx={{ flex: 1, minWidth: 0 }}
+              error={Boolean(fieldErrors.cooldown)}
+            >
+              <InputLabel id="cooldown-label" shrink>
+                Notify at most
+              </InputLabel>
+              <Select
+                labelId="cooldown-label"
+                label="Notify at most"
+                value={cooldown}
+                onChange={(e) => {
+                  setCooldown(e.target.value);
+                  clearFieldError("cooldown");
+                }}
+              >
+                {COOLDOWNS.map((seconds) => (
+                  <MenuItem key={seconds} value={seconds}>
+                    {cooldownLabel(seconds)}
+                  </MenuItem>
+                ))}
+              </Select>
+              {fieldErrors.cooldown && (
+                <FormHelperText>{fieldErrors.cooldown}</FormHelperText>
+              )}
+            </FormControl>
+          </Stack>
+
+          <Divider />
+
+          {/* Step 4: Optional filters */}
+          <Stack spacing={1.5}>
+            <SectionTitle
+              step="3"
+              title="If the issue matches"
+              subtitle="Leave blank to match any source, severity, status, category, or group."
+            />
+            {fieldErrors.filters && (
+              <FormHelperText error>{fieldErrors.filters}</FormHelperText>
+            )}
+            <Stack direction={{ xs: "column", sm: "row" }} gap={1.25}>
+              <FormControl
+                size="small"
+                sx={{ flex: 1, minWidth: 0 }}
+                error={Boolean(fieldErrors.sources)}
+              >
+                <InputLabel id="source-label" shrink>
+                  Sources
+                </InputLabel>
+                <Select
+                  multiple
+                  labelId="source-label"
+                  label="Sources"
+                  displayEmpty
+                  value={sources}
+                  onChange={setMulti(setSources, "sources")}
+                  renderValue={(values) =>
+                    values.length ? labels(values) : placeholder("Any source")
+                  }
+                >
+                  {SOURCES.map((value) => (
+                    <MenuItem key={value} value={value}>
+                      {optionLabel(value)}
+                    </MenuItem>
+                  ))}
+                </Select>
+                {fieldErrors.sources && (
+                  <FormHelperText>{fieldErrors.sources}</FormHelperText>
+                )}
+              </FormControl>
+              <FormControl
+                size="small"
+                sx={{ flex: 1, minWidth: 0 }}
+                error={Boolean(fieldErrors.severities)}
+              >
+                <InputLabel id="severity-filter-label" shrink>
+                  Severity filter
+                </InputLabel>
+                <Select
+                  multiple
+                  labelId="severity-filter-label"
+                  label="Severity filter"
+                  displayEmpty
+                  value={severities}
+                  onChange={setMulti(setSeverities, "severities")}
+                  renderValue={(values) =>
+                    values.length ? labels(values) : placeholder("Any severity")
+                  }
+                >
+                  {SEVERITIES.map((value) => (
+                    <MenuItem key={value} value={value}>
+                      {optionLabel(value)}
+                    </MenuItem>
+                  ))}
+                </Select>
+                {fieldErrors.severities && (
+                  <FormHelperText>{fieldErrors.severities}</FormHelperText>
+                )}
+              </FormControl>
+              <FormControl
+                size="small"
+                sx={{ flex: 1, minWidth: 0 }}
+                error={Boolean(fieldErrors.statuses)}
+              >
+                <InputLabel id="status-filter-label" shrink>
+                  Status
+                </InputLabel>
+                <Select
+                  multiple
+                  labelId="status-filter-label"
+                  label="Status"
+                  displayEmpty
+                  value={statuses}
+                  onChange={setMulti(setStatuses, "statuses")}
+                  renderValue={(values) =>
+                    values.length ? labels(values) : placeholder("Any status")
+                  }
+                >
+                  {["escalating", "for_review", "acknowledged", "resolved"].map(
+                    (value) => (
+                      <MenuItem key={value} value={value}>
+                        {optionLabel(value)}
+                      </MenuItem>
+                    ),
+                  )}
+                </Select>
+                {fieldErrors.statuses && (
+                  <FormHelperText>{fieldErrors.statuses}</FormHelperText>
+                )}
+              </FormControl>
+            </Stack>
+            <TagFilter
+              label="Issue categories"
+              example="Timeout"
+              value={issueCategories}
+              onChange={(value) => {
+                setIssueCategories(value);
+                clearFieldError("issueCategories");
+              }}
+              error={fieldErrors.issueCategories}
+            />
+            <TagFilter
+              label="Issue groups"
+              example="Tool Failures"
+              value={issueGroups}
+              onChange={(value) => {
+                setIssueGroups(value);
+                clearFieldError("issueGroups");
+              }}
+              error={fieldErrors.issueGroups}
+            />
+          </Stack>
         </Stack>
       </Box>
+
+      {/* Pinned footer */}
       <Box
         sx={{
-          p: { xs: 1.5, sm: 2 },
+          px: 2.25,
+          py: 1.5,
           borderTop: 1,
           borderColor: "divider",
           flexShrink: 0,
           bgcolor: "background.paper",
         }}
       >
+        <Stack
+          direction="row"
+          alignItems="flex-start"
+          gap={0.85}
+          sx={{
+            px: 1.25,
+            py: 0.85,
+            mb: 1.25,
+            borderRadius: "6px",
+            bgcolor: "action.hover",
+          }}
+        >
+          <Iconify
+            icon={
+              slackEnabled && !emailEnabled
+                ? "simple-icons:slack"
+                : emailEnabled && !slackEnabled
+                  ? "solar:letter-linear"
+                  : "solar:bell-bing-linear"
+            }
+            width={14}
+            sx={{ color: "text.secondary", flexShrink: 0, mt: 0.2 }}
+          />
+          <Typography typography="s3" color="text.secondary" sx={{ lineHeight: 1.45 }}>
+            When{" "}
+            <Box component="strong" sx={{ color: "text.primary", fontWeight: 600 }}>
+              {TRIGGERS.find((item) => item.value === trigger)?.label.toLowerCase()}
+              {trigger === "severity_reached"
+                ? ` (${optionLabel(triggerValue)})`
+                : trigger === "occurrences_crossed"
+                  ? ` (${triggerValue || 1}+)`
+                  : ""}
+            </Box>
+            {severities.length > 0 ? ` [${labels(severities)}]` : ""} in{" "}
+            <Box component="strong" sx={{ color: "text.primary", fontWeight: 600 }}>
+              {projectId ? selectedProjectName : "all projects"}
+            </Box>
+            {" → notify "}
+            <Box component="strong" sx={{ color: "text.primary", fontWeight: 600 }}>
+              {summaryDestinations.length > 0
+                ? summaryDestinations.join(" & ")
+                : "no destination selected"}
+            </Box>
+            .
+          </Typography>
+        </Stack>
+
         {fieldErrors.form && (
           <FormHelperText error sx={{ mb: 1 }}>
             {fieldErrors.form}
@@ -953,8 +1421,8 @@ function AlertRuleForm({ rule, draft, onClose }) {
             loading={save.isPending}
             disabled={
               optionQuery.isLoading ||
-              connectionsQuery.isLoading ||
-              channelsQuery.isLoading
+              (slackEnabled &&
+                (connectionsQuery.isLoading || channelsQuery.isLoading))
             }
           >
             {edit ? "Save changes" : "Create alert"}
@@ -1048,7 +1516,7 @@ export default function ErrorFeedAlerts() {
   const alertsQuery = useErrorFeedAlerts();
   const { data: rawRules = [], isLoading, isError } = alertsQuery;
   const rules = useMemo(
-    () => rawRules.map((row) => ({ ...row, ...(row.configuration || {}) })),
+    () => rawRules.map((row) => ({ ...(row.configuration || {}), ...row })),
     [rawRules],
   );
   const [page, setPage] = useState(0);
@@ -1098,7 +1566,7 @@ export default function ErrorFeedAlerts() {
           <Button
             size="small"
             startIcon={<Iconify icon="solar:alt-arrow-left-linear" />}
-            onClick={() => navigate("/dashboard/error-feed")}
+            onClick={() => navigate(paths.dashboard.errorFeed.root)}
           >
             Error Feed
           </Button>
@@ -1106,7 +1574,7 @@ export default function ErrorFeedAlerts() {
             Alert rules
           </Typography>
           <Typography typography="s2" color="text.secondary">
-            Notify a Slack channel when an issue matches your rule.
+            Notify Slack or email when an issue matches your rule.
           </Typography>
         </Box>
         <Button
@@ -1138,7 +1606,7 @@ export default function ErrorFeedAlerts() {
             <EmptyState
               icon="solar:bell-linear"
               title="No Error Feed alerts yet"
-              description="Create a rule to send matching issue notifications to Slack."
+              description="Create a rule to send matching issue notifications to Slack or email."
               action={
                 <Button
                   variant="contained"
@@ -1188,14 +1656,27 @@ export default function ErrorFeedAlerts() {
                     <TableCell>Rule name</TableCell>
                     <TableCell>When</TableCell>
                     <TableCell>Project</TableCell>
-                    <TableCell>Slack channel</TableCell>
+                    <TableCell>Destinations</TableCell>
                     <TableCell>Last sent</TableCell>
                     <TableCell>Status</TableCell>
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {visibleRules.map((rule) => (
+                  {visibleRules.map((rule) => {
+                    const hasSlack =
+                      rule.slack_enabled !== false &&
+                      Boolean(rule.slack_channel_name || rule.slack_channel_id);
+                    const slackLabel =
+                      rule.slack_channel_name || "Slack channel";
+                    const recipients = toTags(rule.email_recipients);
+                    const hasEmail =
+                      rule.email_enabled !== false && recipients.length > 0;
+                    const emailLabel =
+                      recipients.length === 1
+                        ? recipients[0]
+                        : `${recipients[0]} +${recipients.length - 1}`;
+                    return (
                     <TableRow
                       key={rule.id}
                       hover
@@ -1224,7 +1705,7 @@ export default function ErrorFeedAlerts() {
                           >
                             {rule.failure_reason ||
                               rule.error ||
-                              "Slack connection needs attention."}
+                              "Alert delivery needs attention."}
                           </Typography>
                         )}
                       </TableCell>
@@ -1242,12 +1723,37 @@ export default function ErrorFeedAlerts() {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography typography="s1">
-                          #
-                          {rule.slack_channel_name ||
-                            rule.configuration?.slack_channel_name ||
-                            "Slack channel"}
-                        </Typography>
+                        <Stack gap={0.35}>
+                          {hasSlack && (
+                            <Stack direction="row" alignItems="center" gap={0.55}>
+                              <Iconify
+                                icon="simple-icons:slack"
+                                width={14}
+                                sx={{ color: "text.secondary", flexShrink: 0 }}
+                              />
+                              <Typography typography="s2" noWrap>
+                                #{slackLabel}
+                              </Typography>
+                            </Stack>
+                          )}
+                          {hasEmail && (
+                            <Stack direction="row" alignItems="center" gap={0.55}>
+                              <Iconify
+                                icon="solar:letter-linear"
+                                width={14}
+                                sx={{ color: "text.secondary", flexShrink: 0 }}
+                              />
+                              <Typography typography="s2" noWrap>
+                                {emailLabel}
+                              </Typography>
+                            </Stack>
+                          )}
+                          {!hasSlack && !hasEmail && (
+                            <Typography typography="s2" color="text.secondary">
+                              —
+                            </Typography>
+                          )}
+                        </Stack>
                       </TableCell>
                       <TableCell sx={{ whiteSpace: "nowrap" }}>
                         <Typography typography="s1">
@@ -1333,7 +1839,8 @@ export default function ErrorFeedAlerts() {
                         </Stack>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -1449,9 +1956,15 @@ AlertRuleForm.propTypes = {
     name: PropTypes.string,
     configuration: PropTypes.object,
     project_id: PropTypes.string,
+    slack_enabled: PropTypes.bool,
     slack_connection_id: PropTypes.string,
     slack_channel_id: PropTypes.string,
     slack_channel_name: PropTypes.string,
+    email_enabled: PropTypes.bool,
+    email_recipients: PropTypes.oneOfType([
+      PropTypes.arrayOf(PropTypes.string),
+      PropTypes.string,
+    ]),
     enabled: PropTypes.bool,
   }),
   draft: PropTypes.shape({
@@ -1471,6 +1984,12 @@ AlertRuleForm.propTypes = {
       PropTypes.string,
     ]),
     cooldown: PropTypes.number,
+    slackEnabled: PropTypes.bool,
+    emailEnabled: PropTypes.bool,
+    emailRecipients: PropTypes.oneOfType([
+      PropTypes.arrayOf(PropTypes.string),
+      PropTypes.string,
+    ]),
   }),
   onClose: PropTypes.func.isRequired,
 };

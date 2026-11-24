@@ -67178,9 +67178,12 @@ export const TracerAlertsListResponse = zod.object({
           .optional(),
         occurrence_threshold: zod.number().optional(),
         filters: zod.object({}).passthrough().optional(),
+        slack_enabled: zod.boolean().optional(),
         slack_connection_id: zod.string().uuid().optional(),
-        slack_channel_id: zod.string().min(1).optional(),
-        slack_channel_name: zod.string().min(1).optional(),
+        slack_channel_id: zod.string().optional(),
+        slack_channel_name: zod.string().optional(),
+        email_enabled: zod.boolean().optional(),
+        email_recipients: zod.array(zod.string().email().min(1)).optional(),
         cooldown_seconds: zod.number().optional(),
         last_triggered_at: zod.string().datetime({ offset: true }).optional(),
         health: zod.string().min(1).optional(),
@@ -67216,6 +67219,8 @@ export const TracerAlertsListResponse = zod.object({
 
 export const tracerAlertsCreateBodyOccurrenceThresholdMax = 1000000;
 
+export const tracerAlertsCreateBodyEmailRecipientsMax = 50;
+
 export const tracerAlertsCreateBodyCooldownSecondsMin = 0;
 
 export const TracerAlertsCreateBody = zod.object({
@@ -67233,8 +67238,14 @@ export const TracerAlertsCreateBody = zod.object({
     .max(tracerAlertsCreateBodyOccurrenceThresholdMax)
     .optional(),
   filters: zod.object({}).passthrough().optional(),
+  slack_enabled: zod.boolean().optional(),
   slack_connection_id: zod.string().uuid().optional(),
-  slack_channel_id: zod.string().min(1).optional(),
+  slack_channel_id: zod.string().optional(),
+  email_enabled: zod.boolean().optional(),
+  email_recipients: zod
+    .array(zod.string().email().min(1))
+    .max(tracerAlertsCreateBodyEmailRecipientsMax)
+    .optional(),
   cooldown_seconds: zod
     .number()
     .min(tracerAlertsCreateBodyCooldownSecondsMin)
@@ -67265,7 +67276,7 @@ export const TracerAlertsErrorFeedTestCreateResponse = zod.object({
   status: zod.boolean(),
   result: zod.object({
     sent: zod.boolean(),
-    slack_ts: zod.string().min(1),
+    slack_ts: zod.string(),
   }),
 });
 
@@ -67313,9 +67324,12 @@ export const TracerAlertsReadResponse = zod.object({
       .optional(),
     occurrence_threshold: zod.number().optional(),
     filters: zod.object({}).passthrough().optional(),
+    slack_enabled: zod.boolean().optional(),
     slack_connection_id: zod.string().uuid().optional(),
-    slack_channel_id: zod.string().min(1).optional(),
-    slack_channel_name: zod.string().min(1).optional(),
+    slack_channel_id: zod.string().optional(),
+    slack_channel_name: zod.string().optional(),
+    email_enabled: zod.boolean().optional(),
+    email_recipients: zod.array(zod.string().email().min(1)).optional(),
     cooldown_seconds: zod.number().optional(),
     last_triggered_at: zod.string().datetime({ offset: true }).optional(),
     health: zod.string().min(1).optional(),
@@ -67354,6 +67368,8 @@ export const TracerAlertsPartialUpdateParams = zod.object({
 
 export const tracerAlertsPartialUpdateBodyOccurrenceThresholdMax = 1000000;
 
+export const tracerAlertsPartialUpdateBodyEmailRecipientsMax = 50;
+
 export const tracerAlertsPartialUpdateBodyCooldownSecondsMin = 0;
 
 export const TracerAlertsPartialUpdateBody = zod.object({
@@ -67371,8 +67387,14 @@ export const TracerAlertsPartialUpdateBody = zod.object({
     .max(tracerAlertsPartialUpdateBodyOccurrenceThresholdMax)
     .optional(),
   filters: zod.object({}).passthrough().optional(),
+  slack_enabled: zod.boolean().optional(),
   slack_connection_id: zod.string().uuid().optional(),
-  slack_channel_id: zod.string().min(1).optional(),
+  slack_channel_id: zod.string().optional(),
+  email_enabled: zod.boolean().optional(),
+  email_recipients: zod
+    .array(zod.string().email().min(1))
+    .max(tracerAlertsPartialUpdateBodyEmailRecipientsMax)
+    .optional(),
   cooldown_seconds: zod
     .number()
     .min(tracerAlertsPartialUpdateBodyCooldownSecondsMin)
@@ -67407,9 +67429,12 @@ export const TracerAlertsPartialUpdateResponse = zod.object({
       .optional(),
     occurrence_threshold: zod.number().optional(),
     filters: zod.object({}).passthrough().optional(),
+    slack_enabled: zod.boolean().optional(),
     slack_connection_id: zod.string().uuid().optional(),
-    slack_channel_id: zod.string().min(1).optional(),
-    slack_channel_name: zod.string().min(1).optional(),
+    slack_channel_id: zod.string().optional(),
+    slack_channel_name: zod.string().optional(),
+    email_enabled: zod.boolean().optional(),
+    email_recipients: zod.array(zod.string().email().min(1)).optional(),
     cooldown_seconds: zod.number().optional(),
     last_triggered_at: zod.string().datetime({ offset: true }).optional(),
     health: zod.string().min(1).optional(),
@@ -92139,6 +92164,40 @@ export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemFixLaye
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemConfidenceMax = 2;
 
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemTitleMax = 256;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaTitleMax = 256;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaWorkflowTypeMax = 64;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaRootCauseMax = 4000;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaTriggerSpanIdMax = 128;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaTriggerSpanAliasMax = 128;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaSymptomSpanIdMax = 128;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaCausalChainItemMax = 400;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaCausalChainMax = 20;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaUserImpactMax = 2000;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaSuggestedFixMax = 2000;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaEvidenceRefsItemMax = 128;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaEvidenceRefsMax = 50;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaLinkedTracesItemMax = 128;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaLinkedTracesMax = 50;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaMediaIdsItemMax = 128;
+
+export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaMediaIdsMax = 50;
+
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionOriginSpanIdMax = 64;
 
 export const tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemAttributionOriginEvidenceIdsItemMax = 128;
@@ -92333,6 +92392,120 @@ export const TracerInternalErrorFeedV2ReportsCreateBody = zod.object({
           .max(
             tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemConfidenceMax,
           )
+          .optional(),
+        severity: zod.enum(["critical", "high", "medium", "low"]).optional(),
+        title: zod
+          .string()
+          .max(
+            tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemTitleMax,
+          )
+          .optional(),
+        rca: zod
+          .object({
+            title: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaTitleMax,
+              )
+              .optional(),
+            severity: zod
+              .enum(["critical", "high", "medium", "low"])
+              .optional(),
+            workflow_type: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaWorkflowTypeMax,
+              )
+              .optional(),
+            root_cause: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaRootCauseMax,
+              )
+              .optional(),
+            trigger_span_id: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaTriggerSpanIdMax,
+              )
+              .optional(),
+            trigger_span_alias: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaTriggerSpanAliasMax,
+              )
+              .optional(),
+            symptom_span_id: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaSymptomSpanIdMax,
+              )
+              .optional(),
+            causal_chain: zod
+              .array(
+                zod
+                  .string()
+                  .min(1)
+                  .max(
+                    tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaCausalChainItemMax,
+                  ),
+              )
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaCausalChainMax,
+              )
+              .optional(),
+            user_impact: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaUserImpactMax,
+              )
+              .optional(),
+            suggested_fix: zod
+              .string()
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaSuggestedFixMax,
+              )
+              .optional(),
+            evidence_refs: zod
+              .array(
+                zod
+                  .string()
+                  .min(1)
+                  .max(
+                    tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaEvidenceRefsItemMax,
+                  ),
+              )
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaEvidenceRefsMax,
+              )
+              .optional(),
+            linked_traces: zod
+              .array(
+                zod
+                  .string()
+                  .min(1)
+                  .max(
+                    tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaLinkedTracesItemMax,
+                  ),
+              )
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaLinkedTracesMax,
+              )
+              .optional(),
+            media_ids: zod
+              .array(
+                zod
+                  .string()
+                  .min(1)
+                  .max(
+                    tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaMediaIdsItemMax,
+                  ),
+              )
+              .max(
+                tracerInternalErrorFeedV2ReportsCreateBodyResultFindingsItemRcaMediaIdsMax,
+              )
+              .optional(),
+          })
           .optional(),
         attribution: zod.object({
           origin: zod.object({
@@ -99382,6 +99555,19 @@ export const TracerSharedTracesReadResponse = zod.object({
       })
       .optional(),
     graph: zod.object({}).passthrough(),
+    issues: zod
+      .array(
+        zod.object({
+          cluster_id: zod.string().min(1),
+          title: zod.string().min(1),
+          severity: zod.string().min(1),
+          status: zod.string().min(1),
+          origin_span_id: zod.string().min(1).optional(),
+          symptom_span_id: zod.string().min(1).optional(),
+        }),
+      )
+      .optional(),
+    active_cluster_id: zod.string().min(1).optional(),
   }),
 });
 
@@ -102763,6 +102949,8 @@ export const TracerTraceReadParams = zod.object({
   id: zod.string(),
 });
 
+export const tracerTraceReadQueryClusterIdMax = 128;
+
 export const TracerTraceReadQueryParams = zod.object({
   test_execution_id: zod
     .string()
@@ -102784,6 +102972,13 @@ export const TracerTraceReadQueryParams = zod.object({
     .optional()
     .describe(
       "Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.",
+    ),
+  cluster_id: zod
+    .string()
+    .max(tracerTraceReadQueryClusterIdMax)
+    .optional()
+    .describe(
+      "Optional Error Feed issue cluster ID to focus causal key-path annotations when a trace has multiple linked issues.",
     ),
 });
 
@@ -102889,6 +103084,19 @@ export const TracerTraceReadResponse = zod.object({
       })
       .optional(),
     graph: zod.object({}).passthrough(),
+    issues: zod
+      .array(
+        zod.object({
+          cluster_id: zod.string().min(1),
+          title: zod.string().min(1),
+          severity: zod.string().min(1),
+          status: zod.string().min(1),
+          origin_span_id: zod.string().min(1).optional(),
+          symptom_span_id: zod.string().min(1).optional(),
+        }),
+      )
+      .optional(),
+    active_cluster_id: zod.string().min(1).optional(),
   }),
 });
 

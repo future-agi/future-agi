@@ -31059,11 +31059,12 @@ export interface AlertItemApi {
   severity_threshold?: AlertItemApiSeverityThreshold;
   occurrence_threshold?: number;
   filters?: AlertItemApiFilters;
+  slack_enabled?: boolean;
   slack_connection_id?: string;
-  /** @minLength 1 */
   slack_channel_id?: string;
-  /** @minLength 1 */
   slack_channel_name?: string;
+  email_enabled?: boolean;
+  email_recipients?: string[];
   cooldown_seconds?: number;
   last_triggered_at?: string;
   /** @minLength 1 */
@@ -31144,9 +31145,12 @@ export interface AlertWriteRequestApi {
    */
   occurrence_threshold?: number;
   filters?: AlertWriteRequestApiFilters;
+  slack_enabled?: boolean;
   slack_connection_id?: string;
-  /** @minLength 1 */
   slack_channel_id?: string;
+  email_enabled?: boolean;
+  /** @maxItems 50 */
+  email_recipients?: string[];
   /** @minimum 0 */
   cooldown_seconds?: number;
   project?: string;
@@ -31179,7 +31183,6 @@ export interface AlertTestRequestApi {
 
 export interface AlertTestResultApi {
   sent: boolean;
-  /** @minLength 1 */
   slack_ts: string;
 }
 
@@ -38365,6 +38368,54 @@ export const InvestigationResultApiOutcome = {
   unknown: "unknown",
 } as const;
 
+export type InvestigationFindingApiSeverity =
+  (typeof InvestigationFindingApiSeverity)[keyof typeof InvestigationFindingApiSeverity];
+
+export const InvestigationFindingApiSeverity = {
+  critical: "critical",
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
+
+export type InvestigationRcaApiSeverity =
+  (typeof InvestigationRcaApiSeverity)[keyof typeof InvestigationRcaApiSeverity];
+
+export const InvestigationRcaApiSeverity = {
+  critical: "critical",
+  high: "high",
+  medium: "medium",
+  low: "low",
+} as const;
+
+export interface InvestigationRcaApi {
+  /** @maxLength 256 */
+  title?: string;
+  severity?: InvestigationRcaApiSeverity;
+  /** @maxLength 64 */
+  workflow_type?: string;
+  /** @maxLength 4000 */
+  root_cause?: string;
+  /** @maxLength 128 */
+  trigger_span_id?: string;
+  /** @maxLength 128 */
+  trigger_span_alias?: string;
+  /** @maxLength 128 */
+  symptom_span_id?: string;
+  /** @maxItems 20 */
+  causal_chain?: string[];
+  /** @maxLength 2000 */
+  user_impact?: string;
+  /** @maxLength 2000 */
+  suggested_fix?: string;
+  /** @maxItems 50 */
+  evidence_refs?: string[];
+  /** @maxItems 50 */
+  linked_traces?: string[];
+  /** @maxItems 50 */
+  media_ids?: string[];
+}
+
 export type FindingAttributionRoleApiStatus =
   (typeof FindingAttributionRoleApiStatus)[keyof typeof FindingAttributionRoleApiStatus];
 
@@ -38442,6 +38493,10 @@ export interface InvestigationFindingApi {
    * @maxLength 2
    */
   confidence?: string;
+  severity?: InvestigationFindingApiSeverity;
+  /** @maxLength 256 */
+  title?: string;
+  rca?: InvestigationRcaApi;
   attribution: FindingAttributionApi;
 }
 
@@ -40719,6 +40774,21 @@ export type CaptureCoverageApi = {
   coverage_unknown: boolean;
 };
 
+export interface TraceErrorFeedIssueApi {
+  /** @minLength 1 */
+  cluster_id: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  severity: string;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  origin_span_id?: string;
+  /** @minLength 1 */
+  symptom_span_id?: string;
+}
+
 export type TraceDetailResultApiTrace = { [key: string]: unknown };
 
 export type TraceDetailResultApiSummary = { [key: string]: unknown };
@@ -40732,6 +40802,9 @@ export interface TraceDetailResultApi {
   cost_coverage?: CostCoverageApi;
   capture_coverage?: CaptureCoverageApi;
   graph: TraceDetailResultApiGraph;
+  issues?: TraceErrorFeedIssueApi[];
+  /** @minLength 1 */
+  active_cluster_id?: string;
 }
 
 export interface TraceDetailResponseApi {
@@ -49658,6 +49731,11 @@ export type TracerTraceReadParams = {
    * Project the detail was opened from. The same id can exist in several projects; when supplied, only that project's copy is read.
    */
   project_id?: string;
+  /**
+   * Optional Error Feed issue cluster ID to focus causal key-path annotations when a trace has multiple linked issues.
+   * @maxLength 128
+   */
+  cluster_id?: string;
 };
 
 export type TracerUserAlertLogsListParams = {

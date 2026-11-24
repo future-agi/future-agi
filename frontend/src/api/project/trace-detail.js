@@ -11,22 +11,30 @@ import axios, { endpoints } from "src/utils/axios";
  */
 export const useGetTraceDetail = (
   traceId,
-  { projectId, testExecutionId } = {},
+  { projectId, testExecutionId, clusterId } = {},
 ) => {
   const params = {
     ...(projectId ? { project_id: projectId } : {}),
     ...(testExecutionId ? { test_execution_id: testExecutionId } : {}),
+    ...(clusterId ? { cluster_id: clusterId } : {}),
   };
   return useQuery({
     // Keep the trace-ID prefix used by narrow mutation invalidations.
     queryKey: [
-      "trace-detail", traceId, projectId, testExecutionId, "capture-coverage-v1",
+      "trace-detail",
+      traceId,
+      projectId,
+      testExecutionId,
+      clusterId,
+      "capture-coverage-v1",
     ].filter(Boolean),
     queryFn: () =>
       axios.get(endpoints.project.getTrace(traceId), {
         params: Object.keys(params).length ? params : undefined,
       }),
     select: (d) => d.data?.result,
+    placeholderData: (prev, prevQuery) =>
+      prevQuery?.queryKey?.[1] === traceId ? prev : undefined,
     enabled: !!traceId,
     staleTime: 30_000,
   });

@@ -129,8 +129,15 @@ class AlertWriteRequestSerializer(serializers.Serializer):
         required=False, min_value=1, max_value=1_000_000
     )
     filters = serializers.JSONField(required=False)
-    slack_connection_id = serializers.UUIDField(required=False)
-    slack_channel_id = serializers.CharField(required=False)
+    slack_enabled = serializers.BooleanField(required=False)
+    slack_connection_id = serializers.UUIDField(required=False, allow_null=True)
+    slack_channel_id = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    email_enabled = serializers.BooleanField(required=False)
+    email_recipients = serializers.ListField(
+        child=serializers.EmailField(), required=False, max_length=50
+    )
     cooldown_seconds = serializers.IntegerField(required=False, min_value=0)
     project = serializers.UUIDField(required=False, allow_null=True)
     metric_type = serializers.CharField(required=False)
@@ -158,7 +165,7 @@ class AlertWriteRequestSerializer(serializers.Serializer):
 
 class AlertTestResultSerializer(serializers.Serializer):
     sent = serializers.BooleanField()
-    slack_ts = serializers.CharField()
+    slack_ts = serializers.CharField(allow_blank=True)
 
 
 class AlertTestResponseSerializer(serializers.Serializer):
@@ -184,9 +191,18 @@ class AlertItemSerializer(serializers.Serializer):
     )
     occurrence_threshold = serializers.IntegerField(required=False)
     filters = serializers.JSONField(required=False)
-    slack_connection_id = serializers.UUIDField(required=False)
-    slack_channel_id = serializers.CharField(required=False)
-    slack_channel_name = serializers.CharField(required=False)
+    slack_enabled = serializers.BooleanField(required=False)
+    slack_connection_id = serializers.UUIDField(required=False, allow_null=True)
+    slack_channel_id = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    slack_channel_name = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    email_enabled = serializers.BooleanField(required=False)
+    email_recipients = serializers.ListField(
+        child=serializers.EmailField(), required=False
+    )
     cooldown_seconds = serializers.IntegerField(required=False)
     last_triggered_at = serializers.DateTimeField(required=False, allow_null=True)
     health = serializers.CharField(required=False)

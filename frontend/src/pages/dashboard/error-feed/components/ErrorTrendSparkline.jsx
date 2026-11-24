@@ -1,172 +1,198 @@
-import React, { useEffect, useMemo, useRef } from "react";
-import ApexCharts from "apexcharts";
+import React, { useId, useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, useTheme } from "@mui/material";
+import { Box, Tooltip, Typography, useTheme } from "@mui/material";
 import { format } from "date-fns";
+import { seriesColor } from "src/theme/data-colors";
 
-function toDateKey(d) {
-  // UTC date key YYYY-MM-DD — avoids timezone mismatches
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+function toLocalDateKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function padToRange(data, days = 14) {
+function padToRange(data, days = 7) {
   if (!data?.length) return [];
   const now = new Date();
   const buckets = new Map();
   for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i),
-    );
-    buckets.set(toDateKey(d), { timestamp: d.getTime(), value: 0 });
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    buckets.set(toLocalDateKey(d), { timestamp: d.getTime(), value: 0 });
   }
   for (const pt of data) {
-    const key = toDateKey(new Date(pt.timestamp));
+    const key = toLocalDateKey(new Date(pt.timestamp));
     if (buckets.has(key)) {
-      buckets.get(key).value += pt.value;
+      buckets.get(key).value += Number(pt.value || 0);
     }
   }
   return Array.from(buckets.values());
 }
 
-function ErrorTrendSparkline({ data }) {
-  const chartRef = useRef(null);
+// Smooth monotone cubic curve matching Future AGI's Tracing line sparklines
+function buildSmoothPath(pts) {
+  if (pts.length < 2) return "";
+  let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i];
+    const p1 = pts[i + 1];
+    const cx = ((p0.x + p1.x) / 2).toFixed(1);
+    d += ` C${cx},${p0.y.toFixed(1)} ${cx},${p1.y.toFixed(1)} ${p1.x.toFixed(1)},${p1.y.toFixed(1)}`;
+  }
+  return d;
+}
+
+export default function ErrorTrendSparkline({
+  data,
+  days = 7,
+  maxScale = 4,
+  totalEvents,
+}) {
   const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
+  const uid = useId();
+  const [hoveredIdx, setHoveredIdx] = useState(null);
 
-  const barColor = theme.palette.text.disabled;
-  const tooltipBg = theme.palette.background.paper;
-  const tooltipBorder = theme.palette.border.default;
-  const tooltipText = theme.palette.text.primary;
-  const tooltipSub = theme.palette.text.tertiary;
+  const buckets = useMemo(() => padToRange(data, days), [data, days]);
+  const sum = useMemo(
+    () => totalEvents ?? buckets.reduce((acc, b) => acc + b.value, 0),
+    [buckets, totalEvents],
+  );
 
-  const paddedData = useMemo(() => padToRange(data), [data]);
+  const svgWidth = 88;
+  const svgHeight = 26;
+  const padX = 2;
+  const padY = 3;
+  const plotW = svgWidth - padX * 2;
+  const plotH = svgHeight - padY * 2;
+  const bottomY = padY + plotH;
 
-  useEffect(() => {
-    if (!paddedData?.length || !chartRef.current) return;
+  const peak = useMemo(
+    () => Math.max(maxScale, ...buckets.map((b) => b.value), 1),
+    [buckets, maxScale],
+  );
 
-    const chartOptions = {
-      chart: {
-        type: "area",
-        height: 36,
-        width: "100%",
-        sparkline: { enabled: true },
-        toolbar: { show: false },
-        background: "transparent",
-        animations: { enabled: false },
-      },
-      stroke: {
-        curve: "straight",
-        width: 1.5,
-      },
-      fill: {
-        type: "gradient",
-        gradient: {
-          shadeIntensity: 1,
-          opacityFrom: isDark ? 0.3 : 0.4,
-          opacityTo: 0.05,
-          stops: [0, 100],
-        },
-      },
-      states: {
-        hover: { filter: { type: "lighten", value: 0.1 } },
-        active: { filter: { type: "none" } },
-      },
-      colors: [barColor],
-      series: [
-        {
-          name: "Events",
-          data: paddedData.map((item) => ({
-            x: item.timestamp,
-            y: item.value,
-          })),
-        },
-      ],
-      dataLabels: { enabled: false },
-      tooltip: {
-        enabled: true,
-        shared: false,
-        followCursor: true,
-        custom: ({ series, seriesIndex, dataPointIndex, w }) => {
-          const val = series[seriesIndex][dataPointIndex];
-          const raw = w.globals.seriesX[seriesIndex][dataPointIndex];
-          const dateStr = raw
-            ? format(new Date(raw), "MMM d, yyyy h:mm a")
-            : "";
-          return `
-            <div style="
-              background:${tooltipBg};
-              border:1px solid ${tooltipBorder};
-              border-radius:8px;
-              padding:8px 12px;
-              font-family:Inter,sans-serif;
-              min-width:160px;
-              box-shadow:0 4px 12px rgba(0,0,0,0.25);
-            ">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-                <span style="
-                  width:8px;height:8px;border-radius:50%;
-                  background:${barColor};display:inline-block;flex-shrink:0;
-                "></span>
-                <span style="font-size:12px;color:${tooltipText};font-weight:500;">Events</span>
-                <span style="font-size:12px;color:${tooltipText};font-weight:600;margin-left:auto;">
-                  ${val?.toLocaleString() ?? "—"}
-                </span>
-              </div>
-              <div style="font-size:12px;color:${tooltipSub};">${dateStr}</div>
-            </div>
-          `;
-        },
-      },
-      xaxis: { type: "datetime" },
-      yaxis: { show: false, min: 0 },
-      grid: { padding: { top: 2, bottom: 0, left: 0, right: 0 } },
-    };
+  const points = useMemo(() => {
+    if (!buckets.length) return [];
+    const step = buckets.length > 1 ? plotW / (buckets.length - 1) : plotW / 2;
+    return buckets.map((b, i) => ({
+      x: buckets.length > 1 ? padX + i * step : padX + plotW / 2,
+      y: bottomY - (b.value / peak) * plotH,
+      value: b.value,
+      timestamp: b.timestamp,
+      label: `${format(new Date(b.timestamp), "MMM d")}: ${b.value} event${b.value === 1 ? "" : "s"}`,
+    }));
+  }, [buckets, plotW, plotH, bottomY, peak]);
 
-    const chart = new ApexCharts(chartRef.current, chartOptions);
-    chart.render();
+  const linePath = useMemo(() => buildSmoothPath(points), [points]);
+  const areaPath = useMemo(() => {
+    if (!linePath || points.length < 2) return "";
+    return `${linePath} L${points[points.length - 1].x.toFixed(1)},${bottomY} L${points[0].x.toFixed(1)},${bottomY} Z`;
+  }, [linePath, points, bottomY]);
 
-    return () => {
-      try {
-        chart.destroy();
-      } catch {
-        /* ignore */
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    data,
-    barColor,
-    isDark,
-    tooltipBg,
-    tooltipBorder,
-    tooltipText,
-    tooltipSub,
-  ]);
-
-  if (!data?.length)
+  if (!buckets.length || sum === 0) {
     return (
-      <span style={{ color: theme.palette.text.disabled, fontSize: 12 }}>
-        —
-      </span>
+      <Tooltip title={`No events in last ${days} days`} arrow placement="top">
+        <Typography typography="s3" color="text.secondary" sx={{ width: "fit-content" }}>
+          —
+        </Typography>
+      </Tooltip>
     );
+  }
+
+  const strokeColor = seriesColor(theme, 0);
+  const baselineColor = theme.palette.divider;
+  const gradId = `ef-spark-${uid.replace(/:/g, "")}`;
+  const hitW = svgWidth / Math.max(1, points.length);
+  const hovered = hoveredIdx != null ? points[hoveredIdx] : null;
 
   return (
-    <Box sx={{ width: "100%" }}>
-      <div
-        ref={chartRef}
-        style={{
-          width: "100%",
-          height: 36,
-          display: "flex",
+    <Tooltip
+      title={hovered ? hovered.label : `${sum} event${sum === 1 ? "" : "s"} in last ${days}d`}
+      arrow
+      placement="top"
+    >
+      <Box
+        sx={{
+          width: svgWidth,
+          height: svgHeight,
+          position: "relative",
+          display: "inline-flex",
           alignItems: "center",
         }}
-      />
-    </Box>
+        onMouseLeave={() => setHoveredIdx(null)}
+      >
+        <svg
+          width={svgWidth}
+          height={svgHeight}
+          viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+          style={{ display: "block", overflow: "visible" }}
+        >
+          <defs>
+            <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={strokeColor} stopOpacity="0.22" />
+              <stop offset="100%" stopColor={strokeColor} stopOpacity="0.01" />
+            </linearGradient>
+          </defs>
+
+          {/* Subtle baseline */}
+          <line
+            x1={0}
+            y1={bottomY}
+            x2={svgWidth}
+            y2={bottomY}
+            stroke={baselineColor}
+            strokeWidth={1}
+          />
+
+          {/* Soft gradient fill under the line */}
+          {areaPath && <path d={areaPath} fill={`url(#${gradId})`} />}
+
+          {/* Crisp Tracing-style line */}
+          {linePath && (
+            <path
+              d={linePath}
+              fill="none"
+              stroke={strokeColor}
+              strokeWidth={1.6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          )}
+
+          {/* Active hover dot */}
+          {hovered && (
+            <circle
+              cx={hovered.x}
+              cy={hovered.y}
+              r={2.5}
+              fill={strokeColor}
+              stroke={theme.palette.background.paper}
+              strokeWidth={1}
+            />
+          )}
+
+          {/* Per-day invisible hover hit zones */}
+          {points.map((pt, i) => (
+            <rect
+              key={pt.timestamp}
+              x={i * hitW}
+              y={0}
+              width={hitW}
+              height={svgHeight}
+              fill="transparent"
+              onMouseEnter={() => setHoveredIdx(i)}
+            />
+          ))}
+        </svg>
+      </Box>
+    </Tooltip>
   );
 }
 
 ErrorTrendSparkline.propTypes = {
-  data: PropTypes.array,
+  data: PropTypes.arrayOf(
+    PropTypes.shape({
+      timestamp: PropTypes.number,
+      value: PropTypes.number,
+    }),
+  ),
+  days: PropTypes.number,
+  maxScale: PropTypes.number,
+  totalEvents: PropTypes.number,
 };
-
-export default React.memo(ErrorTrendSparkline);

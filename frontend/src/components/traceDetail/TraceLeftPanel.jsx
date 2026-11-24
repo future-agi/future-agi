@@ -80,8 +80,14 @@ const LeftPanelSplit = ({
   setVisibleMetrics,
   showAgentGraph,
   onRefresh,
+  traceIssues = [],
+  activeClusterId = null,
+  defaultCompressed = false,
+  onSelectIssue,
+  onOpenIssue,
 }) => {
   const [showTimingSpans, setShowTimingSpans] = useState(false);
+  const [isKeyPathMode, setIsKeyPathMode] = useState(Boolean(defaultCompressed));
   const graphSpans = useMemo(() => showTimingSpans ? spans : withoutTimingSpans(spans || []), [spans, showTimingSpans]);
   const [topPercent, setTopPercent] = useState(showAgentGraph ? 50 : 100);
   const containerRef = useRef(null);
@@ -110,7 +116,27 @@ const LeftPanelSplit = ({
     [topPercent],
   );
 
-  const showGraph = showAgentGraph && spans?.length > 0;
+  const { spanCount, hasErrorFeedAnnotations } = useMemo(() => {
+    let count = 0;
+    let hasEf = false;
+    const walk = (list) => {
+      for (const e of list || []) {
+        count += 1;
+        if (e?.observation_span?.span_attributes?.["error_feed.step"] != null) {
+          hasEf = true;
+        }
+        if (e?.children?.length) walk(e.children);
+      }
+    };
+    walk(spans);
+    return { spanCount: count, hasErrorFeedAnnotations: hasEf };
+  }, [spans]);
+
+  // Keep dense (> 25 spans) key-path lists uncluttered while leaving Agent Graph available in All mode.
+  const showGraph =
+    showAgentGraph &&
+    spans?.length > 0 &&
+    !(isKeyPathMode && hasErrorFeedAnnotations && spanCount > 25);
 
   return (
     <Box
@@ -129,7 +155,9 @@ const LeftPanelSplit = ({
       <Box
         sx={{
           height: showGraph ? `${topPercent}%` : "100%",
-          overflow: "auto",
+          display: "flex",
+          flexDirection: "column",
+          overflow: viewMode === "tree" ? "hidden" : "auto",
           flexShrink: 0,
         }}
       >
@@ -156,6 +184,12 @@ const LeftPanelSplit = ({
             onRefresh={onRefresh}
             showTimingSpans={showTimingSpans}
             onTimingVisibilityChange={setShowTimingSpans}
+            traceIssues={traceIssues}
+            activeClusterId={activeClusterId}
+            defaultCompressed={defaultCompressed}
+            onTreeModeChange={(mode) => setIsKeyPathMode(mode === "key_path")}
+            onSelectIssue={onSelectIssue}
+            onOpenIssue={onOpenIssue}
           />
         ) : (
           <SpanTreeTimeline
@@ -217,6 +251,11 @@ LeftPanelSplit.propTypes = {
   setVisibleMetrics: PropTypes.func,
   showAgentGraph: PropTypes.bool,
   onRefresh: PropTypes.func,
+  traceIssues: PropTypes.array,
+  activeClusterId: PropTypes.string,
+  defaultCompressed: PropTypes.bool,
+  onSelectIssue: PropTypes.func,
+  onOpenIssue: PropTypes.func,
 };
 
 export default LeftPanelSplit;

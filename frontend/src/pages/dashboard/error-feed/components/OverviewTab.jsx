@@ -7,6 +7,8 @@ import {
   Box,
   Button,
   Chip,
+  Collapse,
+  Popover,
   Skeleton,
   Stack,
   Typography,
@@ -15,11 +17,14 @@ import {
   Tab,
 } from "@mui/material";
 import PropTypes from "prop-types";
+import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
+import StatusBadge from "src/components/status-badge";
 import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph";
 import AgentPath from "src/sections/projects/LLMTracing/GraphSection/AgentPath";
 import GraphSkeleton from "src/sections/projects/LLMTracing/GraphSection/GraphSkeleton";
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
+import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import { statusColors } from "src/utils/runStatus";
 import { seriesColor } from "src/theme/data-colors";
 import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
@@ -27,12 +32,42 @@ import { useIssueTraceDetail } from "../useIssueTraceDetail";
 import { useSharedIssue } from "../sharedIssueContext";
 import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
+import EvidenceRichBody from "./EvidenceRichBody";
 import { buildGraphDiff, comparisonGraphForMode } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
-import { TOKEN_PRICE_USD, TRACE_STATUS } from "../constants";
+import { TRACE_STATUS } from "../constants";
 
-const estimateTraceCost = (inputTokens = 0, outputTokens = 0) =>
-  inputTokens * TOKEN_PRICE_USD.INPUT + outputTokens * TOKEN_PRICE_USD.OUTPUT;
+const formatDur = (ms) => {
+  if (ms == null) return "—";
+  if (ms >= 60_000) {
+    const totalSec = Math.round(ms / 1000);
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+  }
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+};
+
+const formatCompactTokens = (tok) => {
+  if (tok == null) return "";
+  if (tok >= 1_000_000) {
+    return `${(tok / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`;
+  }
+  if (tok >= 1_000) {
+    return `${(tok / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  }
+  return tok.toLocaleString();
+};
+
+const formatShortTime = (iso) => {
+  if (!iso) return "";
+  try {
+    return format(new Date(iso), "MMM d, HH:mm");
+  } catch {
+    return "";
+  }
+};
 
 // ── Shared section card (collapsible) ────────────────────────────────────────
 function SectionCard({
@@ -420,7 +455,7 @@ function EventsUsersChart({
             offsetY: 6,
             orientation: "vertical",
             style: {
-              color: "#F5A623",
+              color: theme.palette.status.warning.solid,
               background: annotBg,
               cssClass: "",
               fontSize: "12px",
@@ -494,7 +529,7 @@ function EventsUsersChart({
               />
               <Typography
                 fontSize="12px"
-                color="text.disabled"
+                color="text.secondary"
                 sx={{ textTransform: "none", letterSpacing: 0 }}
               >
                 {item.label}
@@ -504,7 +539,7 @@ function EventsUsersChart({
               <Skeleton width={28} height={14} sx={{ borderRadius: "4px" }} />
             ) : (
               <Typography
-                fontSize="12px"
+                fontSize="13px"
                 fontWeight={600}
                 color="text.primary"
                 sx={{ fontFeatureSettings: "'tnum'", lineHeight: 1 }}
@@ -555,30 +590,28 @@ EventsUsersChart.propTypes = {
   loading: PropTypes.bool,
 };
 
-// ── Trace list (left panel) ───────────────────────────────────────────────────
-function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
+function TraceList({ traces, selectedIndex, onSelect, filterQuery = "", loading = false }) {
   if (loading) {
     return (
-      <Stack gap={0}>
+      <Stack gap={0.5} sx={{ px: 1, pb: 1 }}>
         {Array.from({ length: 6 }).map((_, i) => (
           <Box
             key={i}
             sx={{
-              px: 1.5,
+              px: 1.25,
               py: 1,
-              borderBottom: "1px solid",
-              borderColor: "divider",
+              borderRadius: "6px",
             }}
           >
             <Stack direction="row" alignItems="center" gap={0.75} mb={0.4}>
-              <Skeleton width="55%" height={11} sx={{ borderRadius: "4px" }} />
+              <Skeleton width="65%" height={12} sx={{ borderRadius: "4px" }} />
               <Box sx={{ flex: 1 }} />
-              <Skeleton width={36} height={10} sx={{ borderRadius: "4px" }} />
+              <Skeleton width={44} height={10} sx={{ borderRadius: "4px" }} />
             </Stack>
             <Stack direction="row" gap={1.5}>
-              <Skeleton width={50} height={10} sx={{ borderRadius: "4px" }} />
+              <Skeleton width={56} height={10} sx={{ borderRadius: "4px" }} />
               <Skeleton width={42} height={10} sx={{ borderRadius: "4px" }} />
-              <Skeleton width={34} height={10} sx={{ borderRadius: "4px" }} />
+              <Skeleton width={38} height={10} sx={{ borderRadius: "4px" }} />
             </Stack>
           </Box>
         ))}
@@ -586,96 +619,108 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
     );
   }
 
+  const q = filterQuery.trim().toLowerCase();
+  const visible = traces
+    .map((t, i) => ({ t, i }))
+    .filter(({ t }) => {
+      if (!q) return true;
+      const hay = `${t.id} ${t.evidence?.input || ""} ${t.short_request || ""} ${t.omega_deep?.origin_alias || ""} ${t.omega_deep?.symptom_alias || ""}`.toLowerCase();
+      return hay.includes(q);
+    });
+
+  if (!visible.length) {
+    return (
+      <Typography typography="s1" color="text.disabled" sx={{ px: 1.5, py: 3, textAlign: "center" }}>
+        No matching traces
+      </Typography>
+    );
+  }
+
   return (
-    <Stack gap={0}>
-      {traces.map((t, i) => {
+    <Stack gap={0.25} sx={{ px: 1, pb: 1.25 }}>
+      {visible.map(({ t, i }) => {
         const isSelected = i === selectedIndex;
-        const time = new Date(t.timestamp).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        });
-        const tokens =
-          (t.summary.input_tokens ?? 0) + (t.summary.output_tokens ?? 0);
-        const cost = estimateTraceCost(
-          t.summary.input_tokens ?? 0,
-          t.summary.output_tokens ?? 0,
-        ).toFixed(4);
+        const deep = t.omega_deep;
+        const turns = t.summary?.turns ?? deep?.telemetry?.turn_count ?? 1;
+        const spanCount = deep?.telemetry?.span_count ?? null;
+        const pathLabel = deep
+          ? `${deep.origin_alias}${deep.symptom_alias && deep.symptom_alias !== deep.origin_alias ? ` → ${deep.symptom_alias}` : ""}`
+          : String(t.id || "");
+        const promptPreview = t.evidence?.input || t.short_request || t.id;
 
         return (
           <Box
             key={t.id}
+            component="button"
+            type="button"
             onClick={() => onSelect(i)}
             sx={{
-              px: 1.5,
+              width: "100%",
+              display: "block",
+              textAlign: "left",
+              border: 0,
+              px: 1.25,
               py: 1,
               cursor: "pointer",
-              borderBottom: "1px solid",
-              borderColor: "divider",
+              borderRadius: "6px",
               bgcolor: isSelected ? "action.selected" : "transparent",
-              transition: "background 0.12s",
+              fontFamily: "inherit",
               "&:hover": {
-                bgcolor: isSelected ? "action.focus" : "action.hover",
+                bgcolor: isSelected ? "action.selected" : "action.hover",
+              },
+              "&:focus-visible": {
+                outline: "2px solid",
+                outlineColor: "primary.main",
+                outlineOffset: -2,
               },
             }}
           >
-            {/* Top row: trace ID + time */}
-            <Stack direction="row" alignItems="center" gap={0.75} mb={0.4}>
-              <Typography
-                fontSize="12px"
-                fontWeight={500}
-                color="text.primary"
-                sx={{ flex: 1, minWidth: 0 }}
-                noWrap
-              >
-                {t.id}
-              </Typography>
-              <Typography fontSize="12px" color="text.disabled" flexShrink={0}>
-                {time}
-              </Typography>
-            </Stack>
-
-            {/* Input text */}
             <Typography
-              fontSize="12px"
-              color="text.secondary"
-              noWrap
-              sx={{ mb: 0.5 }}
+              typography="s1"
+              fontWeight={isSelected ? 500 : 400}
+              color="text.primary"
+              sx={{
+                lineHeight: 1.4,
+                mb: 0.5,
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
             >
-              {t.evidence?.input ?? "—"}
+              {promptPreview}
             </Typography>
 
-            {/* Bottom row: latency · cost · tokens */}
-            <Stack direction="row" alignItems="center" gap={1}>
-              <Stack direction="row" alignItems="center" gap={0.3}>
-                <Iconify
-                  icon="solar:clock-circle-linear"
-                  width={12}
-                  sx={{ color: "text.disabled" }}
-                />
-                <Typography fontSize="12px" color="text.disabled">
-                  {t.summary.latency_ms}ms
+            <Stack direction="row" alignItems="center" justifyContent="space-between" gap={0.75}>
+              <Stack direction="row" alignItems="center" gap={0.65} sx={{ minWidth: 0 }}>
+                <Typography
+                  typography="s3"
+                  color={isSelected ? "text.primary" : "text.secondary"}
+                  noWrap
+                  sx={{
+                    fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                    maxWidth: deep ? "none" : 78,
+                    flexShrink: deep ? 0 : 1,
+                  }}
+                >
+                  {pathLabel}
+                </Typography>
+                <Typography typography="s3" color="text.tertiary" noWrap>
+                  {turns > 1
+                    ? `${turns} turns`
+                    : spanCount != null
+                      ? `${spanCount} ${spanCount === 1 ? "span" : "spans"}`
+                      : ""}
+                  {t.summary?.latency_ms != null ? ` · ${formatDur(t.summary.latency_ms)}` : ""}
                 </Typography>
               </Stack>
-              <Stack direction="row" alignItems="center" gap={0.3}>
-                <Iconify
-                  icon="solar:dollar-minimalistic-linear"
-                  width={12}
-                  sx={{ color: "text.disabled" }}
-                />
-                <Typography fontSize="12px" color="text.disabled">
-                  ${cost}
-                </Typography>
-              </Stack>
-              <Stack direction="row" alignItems="center" gap={0.3}>
-                <Iconify
-                  icon="solar:notes-linear"
-                  width={12}
-                  sx={{ color: "text.disabled" }}
-                />
-                <Typography fontSize="12px" color="text.disabled">
-                  {tokens.toLocaleString()} tok
-                </Typography>
-              </Stack>
+              <Typography
+                typography="s3"
+                color="text.tertiary"
+                sx={{ flexShrink: 0, fontVariantNumeric: "tabular-nums" }}
+              >
+                {formatShortTime(t.timestamp)}
+              </Typography>
             </Stack>
           </Box>
         );
@@ -688,6 +733,7 @@ TraceList.propTypes = {
   traces: PropTypes.array.isRequired,
   selectedIndex: PropTypes.number.isRequired,
   onSelect: PropTypes.func.isRequired,
+  filterQuery: PropTypes.string,
 };
 
 function renderRichCaption(text) {
@@ -1176,9 +1222,15 @@ function TraceGraphCompare({
           )}
         </CompareColumn>
         <CompareColumn
-          title="Working trace"
+          title="Expected path"
           role="success"
-          traceShortId={workingTraceId ? workingTraceId.slice(0, 8) : null}
+          traceShortId={
+            workingTraceId
+              ? workingTraceId.startsWith("working_")
+                ? "reference baseline"
+                : workingTraceId.slice(0, 8)
+              : null
+          }
         >
           {renderSide(
             passRenderGraph,
@@ -1283,73 +1335,123 @@ RichText.propTypes = {
 const FAIL_COLOR = "status.danger.solid";
 const PASS_COLOR = "status.success.solid";
 
-function roleColor(isFailure) {
-  return isFailure ? "status.danger.fg" : "text.tertiary";
-}
-
-function ReelStep({ step, isFailReel, isLast }) {
+function ReelStep({
+  step,
+  isFailReel,
+  isLast,
+  compact = false,
+  defaultExpanded = true,
+  onInspectSpan,
+  onClaimClick,
+}) {
   const [showRaw, setShowRaw] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(defaultExpanded);
 
   const status = step.status;
   const isFailure = step.isFailure || status === "fail";
+  const isOrigin = step.role === "origin" || status === "warning";
   const dotColor = isFailure
     ? FAIL_COLOR
-    : status === "pass" || status === "ok"
-      ? PASS_COLOR
-      : "text.disabled";
+    : isOrigin
+      ? "status.warning.solid"
+      : !isFailReel && (status === "pass" || status === "ok")
+        ? PASS_COLOR
+        : "text.secondary";
   const raw = step.rawJson || step.raw;
-  const note = step.note;
-  const rColor = roleColor(isFailure);
+  const hasRichEvidence = Boolean(step.evidence_text || step.evidence_error);
+  const isCollapsible =
+    hasRichEvidence &&
+    step.evidence_kind !== "propagated" &&
+    step.evidence_kind !== "empty_abort";
+  const rColor = isFailure
+    ? "status.danger.fg"
+    : isOrigin
+      ? "status.warning.fg"
+      : status === "pass"
+        ? "status.success.fg"
+        : "text.tertiary";
 
   const header = (
-    <Stack direction="row" alignItems="baseline" gap={0.85}>
-      <Box
-        component="span"
-        sx={{
-          flexShrink: 0,
-          fontSize: "12px",
-          fontWeight: 600,
-          textTransform: "none",
-          letterSpacing: 0,
-          color: rColor,
-        }}
-      >
-        {step.label}
-      </Box>
-      <Typography
-        component="span"
-        fontSize="12px"
-        color="text.primary"
-        sx={{ lineHeight: 1.5, flex: 1, minWidth: 0 }}
-      >
-        <RichText text={step.text} isFailReel={isFailReel} />
-      </Typography>
-      {step.meta && (
+    <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1} flexWrap="wrap">
+      <Stack direction="row" alignItems="baseline" gap={0.75} sx={{ flex: 1, minWidth: 0 }}>
         <Box
           component="span"
           sx={{
             flexShrink: 0,
             fontSize: "12px",
-            fontFamily: "ui-monospace, SFMono-Regular, monospace",
-            color: "text.disabled",
-            whiteSpace: "nowrap",
+            fontWeight: 600,
+            color: rColor,
           }}
         >
-          {step.meta}
+          {step.label}
         </Box>
-      )}
+        {step.span_name && (
+          <Typography
+            component="span"
+            fontSize="11px"
+            color="text.secondary"
+            noWrap
+            sx={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
+          >
+            {step.span_name}
+            {step.relation_note ? ` (${step.relation_note})` : ""}
+          </Typography>
+        )}
+      </Stack>
+
+      <Stack direction="row" alignItems="center" gap={0.75} sx={{ flexShrink: 0 }}>
+        {step.meta && (
+          <Box
+            component="span"
+            sx={{
+              fontSize: "11px",
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+              color: "text.secondary",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {step.meta}
+          </Box>
+        )}
+        {isCollapsible && !compact && (
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => setEvidenceOpen((v) => !v)}
+            sx={{ minWidth: 0, px: 0.5, py: 0, color: "text.secondary" }}
+          >
+            {evidenceOpen ? "Hide" : "Evidence"}
+          </Button>
+        )}
+        {step.span_id && onInspectSpan && (
+          <Button
+            size="small"
+            variant="text"
+            onClick={() => onInspectSpan(step.span_id)}
+            sx={{ minWidth: 0, px: 0.5, py: 0, color: "text.secondary" }}
+          >
+            Inspect →
+          </Button>
+        )}
+      </Stack>
     </Stack>
   );
 
+  const stepBorderColor = isFailure
+    ? "status.danger.border"
+    : isOrigin
+      ? "status.warning.border"
+      : "divider";
+
   return (
     <Box sx={{ position: "relative", mb: isLast ? 0 : 1.25 }}>
-      {/* Timeline dot — ! badge for the failure moment, else status dot. */}
+      {/* Timeline dot */}
       {isFailure ? (
         <Box
           sx={{
             position: "absolute",
             left: "-16px",
-            top: "11px",
+            top: "12px",
             width: 13,
             height: 13,
             borderRadius: "50%",
@@ -1359,7 +1461,7 @@ function ReelStep({ step, isFailReel, isLast }) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "12px",
+            fontSize: "11px",
             fontWeight: 600,
             color: FAIL_COLOR,
             zIndex: 1,
@@ -1371,8 +1473,8 @@ function ReelStep({ step, isFailReel, isLast }) {
         <Box
           sx={{
             position: "absolute",
-            left: "-16px",
-            top: "4px",
+            left: "-15px",
+            top: "13px",
             width: 11,
             height: 11,
             borderRadius: "50%",
@@ -1384,32 +1486,92 @@ function ReelStep({ step, isFailReel, isLast }) {
         />
       )}
 
-      {isFailure ? (
-        <Box
-          sx={{
-            border: "1px solid",
-            borderColor: "status.danger.border",
-            borderRadius: "6px",
-            bgcolor: "status.danger.bg",
-            px: 1.25,
-            py: 0.85,
-          }}
+      {/* Flat DS step panel with 1px hairline border */}
+      <Box
+        sx={{
+          border: "1px solid",
+          borderColor: stepBorderColor,
+          borderRadius: "8px",
+          bgcolor: "background.paper",
+          px: 1.5,
+          py: 1.1,
+        }}
+      >
+        {header}
+        <Typography
+          fontSize="12px"
+          fontWeight={500}
+          color="text.primary"
+          sx={{ lineHeight: 1.45, mt: 0.4 }}
         >
-          {header}
-          {note && (
-            <Typography
-              component="div"
-              fontSize="12px"
-              color="text.secondary"
-              sx={{ lineHeight: 1.55, mt: 0.6 }}
-            >
-              <RichText text={note} isFailReel={isFailReel} />
-            </Typography>
-          )}
-        </Box>
-      ) : (
-        header
+          <RichText text={step.text} isFailReel={isFailReel} />
+        </Typography>
+
+        {step.evidence_kind === "propagated" && step.evidence_text && (
+          <Typography fontSize="12px" color="text.secondary" sx={{ mt: 0.5 }}>
+            {step.evidence_text}
+          </Typography>
+        )}
+
+        {step.evidence_kind === "empty_abort" && step.evidence_text && (
+          <Typography fontSize="12px" color="status.danger.fg" sx={{ mt: 0.5 }}>
+            {step.evidence_text}
+          </Typography>
+        )}
+
+        {isCollapsible && (
+          <Collapse in={evidenceOpen}>
+            <Box sx={{ mt: 1 }}>
+              {step.evidence_kind === "error" && step.evidence_error ? (
+                <Box
+                  sx={{
+                    p: 1.15,
+                    border: "1px solid",
+                    borderColor: "status.danger.border",
+                    borderRadius: "6px",
+                    bgcolor: "status.danger.bg",
+                  }}
+                >
+                  <Typography fontSize="11px" fontWeight={600} color="status.danger.fg" sx={{ mb: 0.25 }}>
+                    {step.evidence_error.title}
+                  </Typography>
+                  <Typography
+                    fontSize="12px"
+                    color="text.primary"
+                    sx={{ fontFamily: "ui-monospace, SFMono-Regular, monospace", whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                  >
+                    {step.evidence_error.message}
+                  </Typography>
+                </Box>
+              ) : (
+                <EvidenceRichBody
+                  text={step.evidence_text}
+                  terms={step.evidence_highlights || []}
+                  role={isOrigin ? "warning" : "danger"}
+                  maxRows={5}
+                  truncation={step.truncation}
+                  onClaimClick={
+                    step.claim_provenance && onClaimClick
+                      ? (anchor, phrase) => onClaimClick(anchor, phrase, step.claim_provenance)
+                      : null
+                  }
+                />
+              )}
+            </Box>
+          </Collapse>
+        )}
+      </Box>
+
+      {/* Explicit causal bridge connecting this step -> next step */}
+      {!isLast && step.causal_link_to_next && (
+        <Stack direction="row" alignItems="center" gap={0.5} sx={{ mt: 0.5, pl: 0.5 }}>
+          <Iconify icon="solar:arrow-down-linear" width={12} sx={{ color: "text.disabled", flexShrink: 0 }} />
+          <Typography fontSize="11px" color="text.secondary">
+            {step.causal_link_to_next}
+          </Typography>
+        </Stack>
       )}
+
       {raw && (
         <Box
           component="button"
@@ -1460,11 +1622,24 @@ ReelStep.propTypes = {
   step: PropTypes.object.isRequired,
   isFailReel: PropTypes.bool,
   isLast: PropTypes.bool,
+  compact: PropTypes.bool,
+  defaultExpanded: PropTypes.bool,
+  onInspectSpan: PropTypes.func,
+  onClaimClick: PropTypes.func,
 };
 
-function BreadcrumbList({ steps, isFailReel }) {
+function BreadcrumbList({
+  steps,
+  isFailReel,
+  compact = false,
+  userRequest = null,
+  onInspectSpan,
+  onClaimClick,
+}) {
   const theme = useTheme();
+  const [reqExpanded, setReqExpanded] = useState(false);
   const accent = statusColors(theme, isFailReel ? "danger" : "success").solid;
+  const isLongRequest = Boolean(userRequest && userRequest.length > 180);
   if (!steps.length) {
     return (
       <Box sx={{ p: 2, textAlign: "center" }}>
@@ -1475,35 +1650,99 @@ function BreadcrumbList({ steps, isFailReel }) {
     );
   }
   return (
-    <Box>
-      <Box sx={{ position: "relative", pl: 2, pt: 0.5 }}>
-        {/* Vertical timeline line — gradient from the reel accent → fade. */}
+    <Stack gap={1.25}>
+      {userRequest && (
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderRadius: "8px",
+            bgcolor: "background.neutral",
+          }}
+        >
+          <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1} sx={{ mb: 0.35 }}>
+            <Stack direction="row" alignItems="center" gap={0.6}>
+              <Iconify
+                icon="solar:chat-round-line-linear"
+                width={13}
+                sx={{ color: "text.tertiary", flexShrink: 0 }}
+              />
+              <Typography typography="s3" fontWeight={600} color="text.secondary">
+                User request
+              </Typography>
+            </Stack>
+            {isLongRequest && (
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => setReqExpanded((v) => !v)}
+                sx={{ minWidth: 0, px: 0.4, py: 0, color: "text.secondary" }}
+              >
+                {reqExpanded ? "Show less" : "Show more"}
+              </Button>
+            )}
+          </Stack>
+          <Typography
+            typography="s1"
+            color="text.primary"
+            sx={{
+              lineHeight: 1.5,
+              ...(!reqExpanded && isLongRequest
+                ? {
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }
+                : {}),
+            }}
+          >
+            {userRequest}
+          </Typography>
+        </Box>
+      )}
+      <Box sx={{ position: "relative", pl: 2, pt: 0.25 }}>
         <Box
           sx={{
             position: "absolute",
             left: "5px",
-            top: 10,
-            bottom: 10,
+            top: 12,
+            bottom: 12,
             width: "2px",
             borderRadius: "1px",
-            background: `linear-gradient(${alpha(accent, 0.45)}, ${alpha(accent, 0.08)})`,
+            background: `linear-gradient(${alpha(accent, 0.28)}, ${alpha(accent, 0.05)})`,
           }}
         />
-        {steps.map((step, i) => (
-          <ReelStep
-            key={i}
-            step={step}
-            isFailReel={isFailReel}
-            isLast={i === steps.length - 1}
-          />
-        ))}
+        {steps.map((step, i) => {
+          const defaultExpanded =
+            steps.length <= 3 ||
+            step.role === "origin" ||
+            step.role === "symptom" ||
+            i === steps.length - 1;
+          return (
+            <ReelStep
+              key={step.span_id || `${step.step}-${i}`}
+              step={step}
+              isFailReel={isFailReel}
+              isLast={i === steps.length - 1}
+              compact={compact}
+              defaultExpanded={defaultExpanded}
+              onInspectSpan={onInspectSpan}
+              onClaimClick={onClaimClick}
+            />
+          );
+        })}
       </Box>
-    </Box>
+    </Stack>
   );
 }
 BreadcrumbList.propTypes = {
   steps: PropTypes.array.isRequired,
   isFailReel: PropTypes.bool,
+  compact: PropTypes.bool,
+  userRequest: PropTypes.string,
+  onInspectSpan: PropTypes.func,
+  onClaimClick: PropTypes.func,
 };
 
 function ReelColumn({
@@ -1513,15 +1752,18 @@ function ReelColumn({
   steps,
   isFailReel,
   emptyMessage,
+  userRequest,
+  onInspectSpan,
+  onClaimClick,
 }) {
   return (
     <Box
       sx={{
         border: "1px solid",
-        borderColor: `status.${role}.border`,
+        borderColor: "divider",
         borderRadius: "8px",
         overflow: "hidden",
-        bgcolor: "transparent",
+        bgcolor: "background.paper",
         display: "flex",
         flexDirection: "column",
         minWidth: 0,
@@ -1533,10 +1775,10 @@ function ReelColumn({
         gap={1}
         sx={{
           px: 1.5,
-          py: 0.85,
+          py: 0.9,
           borderBottom: "1px solid",
-          borderColor: `status.${role}.border`,
-          bgcolor: `status.${role}.bg`,
+          borderColor: "divider",
+          bgcolor: "background.neutral",
         }}
       >
         <Box
@@ -1575,7 +1817,14 @@ function ReelColumn({
       </Stack>
       <Box sx={{ flex: 1, px: 1.25, py: 1 }}>
         {steps.length > 0 ? (
-          <BreadcrumbList steps={steps} isFailReel={isFailReel} />
+          <BreadcrumbList
+            steps={steps}
+            isFailReel={isFailReel}
+            compact
+            userRequest={userRequest}
+            onInspectSpan={onInspectSpan}
+            onClaimClick={onClaimClick}
+          />
         ) : (
           <Stack
             alignItems="center"
@@ -1607,13 +1856,16 @@ ReelColumn.propTypes = {
   steps: PropTypes.array.isRequired,
   isFailReel: PropTypes.bool,
   emptyMessage: PropTypes.string,
+  userRequest: PropTypes.string,
+  onInspectSpan: PropTypes.func,
+  onClaimClick: PropTypes.func,
 };
 
 function ViewModeToggle({ value, onChange }) {
   const options = [
-    { v: "breadcrumb", label: "Breadcrumb", icon: "solar:list-linear" },
-    { v: "agentgraph", label: "Agent Graph", icon: "solar:graph-linear" },
-    { v: "agentpath", label: "Agent Path", icon: "solar:graph-linear" },
+    { v: "breadcrumb", label: "Steps", icon: "solar:list-linear" },
+    { v: "agentgraph", label: "Graph", icon: "solar:graph-linear" },
+    { v: "agentpath", label: "Path", icon: "solar:routing-2-linear" },
   ];
   return (
     <SegmentedTabs value={value} onChange={(_, v) => onChange(v)}>
@@ -1634,30 +1886,37 @@ ViewModeToggle.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
-// `...other` carries MUI's iconWrapper class, which gives the gap to the label.
-function TabDot({ color, active, ...other }) {
+function ReelTabLabel({ label, dot, active }) {
   return (
     <Box
-      {...other}
-      sx={{
-        width: 6,
-        height: 6,
-        borderRadius: "50%",
-        bgcolor: color,
-        opacity: active ? 1 : 0.5,
-      }}
-    />
+      component="span"
+      sx={{ display: "inline-flex", alignItems: "center", gap: 0.625 }}
+    >
+      <Box
+        component="span"
+        sx={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          bgcolor: dot,
+          opacity: active ? 1 : 0.5,
+          flexShrink: 0,
+        }}
+      />
+      {label}
+    </Box>
   );
 }
-TabDot.propTypes = {
-  color: PropTypes.string,
-  active: PropTypes.bool,
+ReelTabLabel.propTypes = {
+  label: PropTypes.string.isRequired,
+  dot: PropTypes.string.isRequired,
+  active: PropTypes.bool.isRequired,
 };
 
 function ReelTabs({ value, onChange }) {
   const opts = [
     { v: "fail", label: "Failing", dot: FAIL_COLOR },
-    { v: "pass", label: "Working", dot: PASS_COLOR },
+    { v: "pass", label: "Expected", dot: PASS_COLOR },
   ];
   return (
     <SegmentedTabs value={value} onChange={(_, v) => onChange(v)}>
@@ -1665,9 +1924,7 @@ function ReelTabs({ value, onChange }) {
         <Tab
           key={v}
           value={v}
-          label={label}
-          icon={<TabDot color={dot} active={value === v} />}
-          iconPosition="start"
+          label={<ReelTabLabel label={label} dot={dot} active={value === v} />}
         />
       ))}
     </SegmentedTabs>
@@ -1684,6 +1941,8 @@ function TraceEvidence({
   traceId,
   workingTraceId,
   projectId,
+  onInspectSpan,
+  onClaimClick,
 }) {
   const [viewMode, setViewMode] = useState("breadcrumb");
   const [activeReel, setActiveReel] = useState("fail");
@@ -1704,74 +1963,70 @@ function TraceEvidence({
   const isBreadcrumb = viewMode === "breadcrumb";
 
   const summary = trace?.summary ?? {};
+  const deep = trace?.omega_deep ?? null;
+  const tel = deep?.telemetry ?? {};
+  const truthLanes = deep?.evidence_pairs?.[0]?.truncation
+    ? deep.evidence_pairs[0].truth_loss_lanes || []
+    : [];
   const tokens =
     (summary.input_tokens ?? 0) + (summary.output_tokens ?? 0) || null;
-  const cost =
-    summary.cost ??
-    (estimateTraceCost(summary.input_tokens ?? 0, summary.output_tokens ?? 0) ||
-      null);
   const shortId = traceId ? traceId.slice(0, 8) : null;
-  // Fail explicitly — an undefined/loading status must not read as "Failing".
   const isTraceFail = trace?.status === TRACE_STATUS.FAIL;
+  const turnCount = summary.turns ?? tel.turn_count ?? null;
 
-  const metaItems = [
-    shortId && { icon: "solar:graph-linear", text: shortId, mono: true },
-    summary.latency_ms != null && {
-      icon: "solar:clock-circle-linear",
-      text: `${summary.latency_ms}ms`,
+  const pathValue = deep?.origin_alias
+    ? deep.symptom_alias && deep.symptom_alias !== deep.origin_alias
+      ? `${deep.origin_alias} → ${deep.symptom_alias}`
+      : deep.origin_alias
+    : null;
+
+  const telemetryStats = [
+    shortId && {
+      label: "Trace",
+      value: shortId,
+      mono: true,
     },
-    tokens != null && { icon: "solar:notes-linear", text: `${tokens} tok` },
-    cost != null && {
-      icon: "solar:dollar-minimalistic-linear",
-      text: cost.toFixed(4),
+    pathValue && {
+      label: "Path",
+      value: pathValue,
+      mono: true,
+    },
+    tel.span_count != null && {
+      label: "Spans",
+      value: tel.span_count.toLocaleString(),
+    },
+    turnCount != null && turnCount > 1 && {
+      label: "Turns",
+      value: turnCount.toLocaleString(),
+    },
+    summary.latency_ms != null && {
+      label: "Duration",
+      value: formatDur(summary.latency_ms),
+    },
+    tokens != null && {
+      label: "Tokens",
+      value: formatCompactTokens(tokens),
     },
   ].filter(Boolean);
 
   return (
-    <Box
-      sx={{
-        borderRadius: "8px",
-        border: "1px solid",
-        borderColor: "divider",
-        overflow: "hidden",
-        bgcolor: "background.paper",
-      }}
-    >
-      {/* ── Header — matches the other section headings (icon + uppercase) ── */}
+    <Box sx={{ bgcolor: "background.paper" }}>
+      {/* ── Row 1: Single-line calm toolbar (no wrapping, no enclosing box borders) ── */}
       <Stack
         direction="row"
         alignItems="center"
-        gap={1.25}
-        flexWrap="wrap"
+        gap={0.75}
+        flexWrap="nowrap"
         sx={{
-          px: 1.75,
-          py: 1.1,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          bgcolor: "action.hover",
+          px: 2,
+          pt: 1.25,
+          pb: 1,
+          overflowX: "auto",
         }}
       >
-        <Stack direction="row" alignItems="center" gap={0.75}>
-          <Iconify
-            icon="solar:file-search-linear"
-            width={14}
-            sx={{ color: "text.disabled" }}
-          />
-          <Typography
-            fontSize="12px"
-            fontWeight={600}
-            color="text.secondary"
-            sx={{ textTransform: "none", letterSpacing: 0 }}
-          >
-            {failReel.some((step) => step.label === "RECEIPT")
-              ? "Investigation Evidence"
-              : "Trace Evidence"}
-          </Typography>
-        </Stack>
-
         <ViewModeToggle value={viewMode} onChange={setViewMode} />
 
-        <Box sx={{ flex: 1 }} />
+        <Box sx={{ flex: 1, minWidth: 8 }} />
 
         {isBreadcrumb && !splitView && (
           <ReelTabs value={activeReel} onChange={setActiveReel} />
@@ -1788,97 +2043,120 @@ function TraceEvidence({
                     ? "solar:list-linear"
                     : "solar:transfer-horizontal-linear"
                 }
-                width={14}
+                width={13}
               />
             }
             onClick={() => setSplitView((v) => !v)}
             sx={{
-              // Dark theme: translucent lift avoids flat mismatch against header strip.
-              color: "text.primary",
+              whiteSpace: "nowrap",
+              flexShrink: 0,
               borderColor: "divider",
-              bgcolor: "background.paper",
-              "&:hover": {
-                borderColor: "text.secondary",
-                bgcolor: "action.selected",
-              },
+              color: splitView ? "text.primary" : "text.secondary",
+              bgcolor: splitView ? "action.selected" : "transparent",
             }}
           >
-            {splitView ? "Single view" : "Split with working"}
+            {splitView ? "Single" : "Split"}
+          </Button>
+        )}
+
+        {onInspectSpan && traceId && (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Iconify icon="solar:layers-linear" width={13} />}
+            onClick={() => onInspectSpan(trace?.origin_span_id || null)}
+            sx={{
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+              borderColor: "divider",
+              color: "text.primary",
+            }}
+          >
+            Inspect trace
           </Button>
         )}
       </Stack>
 
-      {/* ── Dense trace meta strip (observability style) ── */}
-      {metaItems.length > 0 && (
+      {/* Trace telemetry strip — flat hairline-bordered DS strip */}
+      {telemetryStats.length > 0 && (
         <Stack
           direction="row"
           alignItems="center"
-          gap={1.5}
+          gap={{ xs: 1.5, sm: 2.25 }}
           flexWrap="wrap"
           sx={{
-            px: 2,
-            py: 0.85,
-            borderBottom: "1px solid",
+            mx: 2,
+            mb: 1.5,
+            px: 1.5,
+            py: 1,
+            border: "1px solid",
             borderColor: "divider",
-            bgcolor: "action.hover",
+            borderRadius: "8px",
+            bgcolor: "background.paper",
           }}
         >
-          <Stack
-            direction="row"
-            alignItems="center"
-            gap={0.4}
-            sx={{ flexShrink: 0 }}
-          >
+          <StatusBadge
+            role={isTraceFail ? "danger" : "success"}
+            label={isTraceFail ? "Failed" : "Passed"}
+            size="sm"
+          />
+
+          {telemetryStats.map((stat) => (
             <Box
+              key={stat.label}
+              component={stat.onClick ? "button" : "div"}
+              type={stat.onClick ? "button" : undefined}
+              onClick={stat.onClick || undefined}
               sx={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                bgcolor: isTraceFail ? FAIL_COLOR : PASS_COLOR,
-              }}
-            />
-            <Typography
-              fontSize="12px"
-              fontWeight={600}
-              sx={{
-                textTransform: "none",
-                letterSpacing: 0,
-                color: isTraceFail ? FAIL_COLOR : PASS_COLOR,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                gap: 0.15,
+                p: 0,
+                border: "none",
+                bgcolor: "transparent",
+                fontFamily: "inherit",
+                textAlign: "left",
+                flexShrink: 0,
+                cursor: stat.onClick ? "pointer" : "default",
+                ...(stat.onClick
+                  ? {
+                      "&:hover .telemetry-val": { textDecoration: "underline" },
+                    }
+                  : {}),
               }}
             >
-              {isTraceFail ? "Failing" : "Passing"}
-            </Typography>
-          </Stack>
-          {metaItems.map((m, i) => (
-            <Stack
-              key={i}
-              direction="row"
-              alignItems="center"
-              gap={0.4}
-              sx={{ flexShrink: 0 }}
-            >
-              <Iconify
-                icon={m.icon}
-                width={12}
-                sx={{ color: "text.disabled" }}
-              />
               <Typography
+                fontSize="11px"
+                fontWeight={500}
+                color="text.tertiary"
+                sx={{ lineHeight: 1.15 }}
+              >
+                {stat.label}
+              </Typography>
+              <Typography
+                className="telemetry-val"
                 fontSize="12px"
+                fontWeight={stat.mono ? 400 : 500}
+                color="text.primary"
                 sx={{
-                  color: "text.secondary",
-                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                  lineHeight: 1.25,
+                  fontFamily: stat.mono
+                    ? "ui-monospace, SFMono-Regular, monospace"
+                    : "inherit",
+                  fontVariantNumeric: "tabular-nums",
                   whiteSpace: "nowrap",
                 }}
               >
-                {m.text}
+                {stat.value}
               </Typography>
-            </Stack>
+            </Box>
           ))}
         </Stack>
       )}
 
       {/* ── Body ── */}
-      <Box sx={{ p: 1.75 }}>
+      <Box sx={{ px: 2, pb: 2, pt: 0.25 }}>
         {/* Agent Graph / Agent Path — single trace, or split with a working trace. */}
         {isGraphMode &&
           (traceId ? (
@@ -1906,10 +2184,79 @@ function TraceEvidence({
             </Typography>
           ))}
 
-        {/* Breadcrumb mode — single reel or side-by-side */}
+        {/* Breadcrumb mode — single reel or side-by-side Failing vs Working */}
         {isBreadcrumb &&
           (!splitView ? (
-            <BreadcrumbList steps={steps} isFailReel={isFailActive} />
+            <Stack gap={1.5}>
+              {isFailActive && truthLanes.length >= 2 && (
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: {
+                      xs: "1fr",
+                      sm: `repeat(${truthLanes.length}, 1fr)`,
+                    },
+                    gap: 1.25,
+                  }}
+                >
+                  {truthLanes.map((lane, idx) => (
+                    <Stack
+                      key={idx}
+                      gap={0.25}
+                      sx={{
+                        px: 1.4,
+                        py: 1,
+                        border: "1px solid",
+                        borderColor: lane.is_failure
+                          ? "status.danger.border"
+                          : lane.is_origin
+                            ? "status.warning.border"
+                            : "divider",
+                        borderRadius: "8px",
+                        bgcolor: "background.paper",
+                      }}
+                    >
+                      <Stack direction="row" justifyContent="space-between" gap={0.5}>
+                        <Typography
+                          fontSize="11px"
+                          fontWeight={600}
+                          color={
+                            lane.is_failure
+                              ? "status.danger.fg"
+                              : lane.is_origin
+                                ? "status.warning.fg"
+                                : "text.secondary"
+                          }
+                        >
+                          {idx + 1}. {lane.stage}
+                        </Typography>
+                        <Typography
+                          fontSize="11px"
+                          color="text.tertiary"
+                          sx={{ fontFamily: "ui-monospace, SFMono-Regular, monospace" }}
+                        >
+                          {lane.span_alias}
+                        </Typography>
+                      </Stack>
+                      <Typography fontSize="13px" fontWeight={600} color="text.primary" noWrap>
+                        {lane.value}
+                      </Typography>
+                      <Typography fontSize="11px" color="text.secondary" noWrap>
+                        {lane.detail}
+                      </Typography>
+                    </Stack>
+                  ))}
+                </Box>
+              )}
+
+              <BreadcrumbList
+                steps={steps}
+                isFailReel={isFailActive}
+                userRequest={isFailActive ? evidence.input : null}
+                onInspectSpan={isFailActive ? onInspectSpan : undefined}
+                onClaimClick={isFailActive ? onClaimClick : undefined}
+              />
+            </Stack>
           ) : (
             <Box
               sx={{
@@ -1921,18 +2268,22 @@ function TraceEvidence({
             >
               <ReelColumn
                 title="Failing trace"
+                headerMeta={shortId || undefined}
                 role="danger"
                 steps={failReel}
                 isFailReel
+                userRequest={evidence.input}
+                onInspectSpan={onInspectSpan}
+                onClaimClick={onClaimClick}
                 emptyMessage="No failing-trace evidence available."
               />
               <ReelColumn
-                title="Working trace"
-                headerMeta={hasPassing ? "nearest passing run" : undefined}
+                title="Expected path"
+                headerMeta={hasPassing ? "reference baseline" : undefined}
                 role="success"
                 steps={passReel}
                 isFailReel={false}
-                emptyMessage="No matching passing trace found for this cluster yet."
+                emptyMessage="No reference expected path available for this issue yet."
               />
             </Box>
           ))}
@@ -1946,6 +2297,8 @@ TraceEvidence.propTypes = {
   traceId: PropTypes.string,
   workingTraceId: PropTypes.string,
   projectId: PropTypes.string,
+  onInspectSpan: PropTypes.func,
+  onClaimClick: PropTypes.func,
 };
 
 // ── Co-occurring issues ───────────────────────────────────────────────────────
@@ -2097,7 +2450,6 @@ const PRIORITY_META = {
     icon: "solar:check-circle-linear",
   },
 };
-const EFFORT_COLOR = { Low: "#5ACE6D", Medium: "#F5A623", High: "#DB2F2D" };
 
 // Shared sub-heading style inside expanded card
 function RecSectionLabel({ icon, label }) {
@@ -2418,8 +2770,16 @@ DeepAnalysisResults.propTypes = {
 };
 
 // ── Main OverviewTab ──────────────────────────────────────────────────────────
-export default function OverviewTab({ _error: currentError }) {
-  const [leftWidth, setLeftWidth] = useState(347);
+export default function OverviewTab({
+  _error: currentError,
+  onOpenFix,
+  onOpenTraces,
+}) {
+  const [leftWidth, setLeftWidth] = useState(276);
+  const [traceFilter, setTraceFilter] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerInitialSpanId, setDrawerInitialSpanId] = useState(null);
+  const [claimPopover, setClaimPopover] = useState({ anchorEl: null, phrase: "", prov: null });
   const containerRef = useRef(null);
   const isDraggingRef = useRef(false);
   const clusterId = currentError?.cluster_id;
@@ -2462,11 +2822,25 @@ export default function OverviewTab({ _error: currentError }) {
   }, [clusterId, traces, selectedTraceId, setSelectedTraceId]);
 
   const eventsOverTime = overview?.events_over_time ?? null;
-  const patternSummary = overview?.pattern_summary ?? null;
+  const totalEventsInWindow = useMemo(
+    () => (eventsOverTime || []).reduce((acc, d) => acc + Number(d.errors || 0), 0),
+    [eventsOverTime],
+  );
+  const managerSummary = trace?.omega_deep?.manager_summary || null;
+  const impactText = managerSummary?.user_impact || currentError?.rca?.user_impact || "";
+  const rootCauseText =
+    managerSummary?.why_it_happened || currentError?.rca?.synthesis || currentError?.description || "";
+  const suggestedFixText = managerSummary?.recommended_fix || currentError?.rca?.fix || "";
 
   const selectTrace = (i) => {
     const next = traces[i];
     if (next && clusterId) setSelectedTraceId(clusterId, next.id);
+  };
+
+  const openNativeTraceDrawer = (spanId = null) => {
+    setClaimPopover({ anchorEl: null, phrase: "", prov: null });
+    setDrawerInitialSpanId(spanId || trace?.origin_span_id || null);
+    setDrawerOpen(true);
   };
 
   // Draggable divider handlers
@@ -2474,7 +2848,7 @@ export default function OverviewTab({ _error: currentError }) {
     const onMove = (e) => {
       if (!isDraggingRef.current || !containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      const newW = Math.min(Math.max(e.clientX - rect.left, 220), 600);
+      const newW = Math.min(Math.max(e.clientX - rect.left, 230), 540);
       setLeftWidth(newW);
     };
     const onUp = () => {
@@ -2491,119 +2865,206 @@ export default function OverviewTab({ _error: currentError }) {
   }, []);
 
   return (
-    <Stack gap={1.5} sx={{ minHeight: 0 }}>
-      {/* ── Patterns across the cluster ── */}
-      {(patternSummary?.insights ?? []).some((i) => i && i.title) && (
-        <SectionCard
-          title="Patterns across the cluster"
-          icon="solar:clipboard-linear"
+    <Stack gap={2} sx={{ minHeight: 0 }}>
+      {(impactText || rootCauseText || suggestedFixText) && (
+        <Stack
+          gap={0.85}
+          sx={{
+            px: 2,
+            py: 1.5,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            bgcolor: "background.paper",
+          }}
         >
-          <PatternSummary summary={patternSummary} />
-        </SectionCard>
+          {impactText && (
+            <Stack direction={{ xs: "column", sm: "row" }} alignItems="baseline" gap={{ xs: 0.25, sm: 2 }}>
+              <Typography typography="s3" color="text.tertiary" sx={{ width: 88, flexShrink: 0 }}>
+                Impact
+              </Typography>
+              <Typography typography="s1" fontWeight={500} color="text.primary" sx={{ lineHeight: 1.5 }}>
+                {impactText}
+              </Typography>
+            </Stack>
+          )}
+          {rootCauseText && (
+            <Stack direction={{ xs: "column", sm: "row" }} alignItems="baseline" gap={{ xs: 0.25, sm: 2 }}>
+              <Typography typography="s3" color="text.tertiary" sx={{ width: 88, flexShrink: 0 }}>
+                Root cause
+              </Typography>
+              <Typography typography="s1" color="text.secondary" sx={{ lineHeight: 1.5 }}>
+                {rootCauseText}
+              </Typography>
+            </Stack>
+          )}
+          {suggestedFixText && (
+            <Stack direction={{ xs: "column", sm: "row" }} alignItems="baseline" gap={{ xs: 0.25, sm: 2 }}>
+              <Typography typography="s3" color="text.tertiary" sx={{ width: 88, flexShrink: 0 }}>
+                Suggested fix
+              </Typography>
+              <Stack
+                direction={{ xs: "column", md: "row" }}
+                alignItems={{ xs: "flex-start", md: "baseline" }}
+                justifyContent="space-between"
+                gap={1.25}
+                sx={{ flex: 1, minWidth: 0 }}
+              >
+                <Typography
+                  typography="s1"
+                  color="text.secondary"
+                  sx={{
+                    lineHeight: 1.5,
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  }}
+                >
+                  {suggestedFixText}
+                </Typography>
+                {onOpenFix && (
+                  <Button
+                    size="small"
+                    variant="text"
+                    onClick={onOpenFix}
+                    endIcon={<Iconify icon="solar:arrow-right-linear" width={13} />}
+                    sx={{ px: 0, minWidth: 0, flexShrink: 0, whiteSpace: "nowrap" }}
+                  >
+                    Review & verify fix
+                  </Button>
+                )}
+              </Stack>
+            </Stack>
+          )}
+        </Stack>
       )}
 
+      {/* Master-detail workspace — flat DS surfaces with 1px hairline borders */}
       <Box
         ref={containerRef}
         sx={{
           display: "flex",
           gap: 0,
-          height: "calc(100vh - 360px)",
-          minHeight: 420,
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: "8px",
+          minHeight: 540,
+          flex: 1,
           overflow: "hidden",
           bgcolor: "background.paper",
         }}
       >
-        {/* ── LEFT PANEL: chart + trace list ── */}
         <Stack
           sx={{
             width: leftWidth,
             flexShrink: 0,
             overflow: "hidden",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "8px",
+            bgcolor: "background.paper",
           }}
         >
-          {/* Events/Users chart — flat (no own border) */}
-          <Box
-            sx={{
-              flexShrink: 0,
-              borderBottom: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <EventsUsersChart
-              flat
-              data={eventsOverTime}
-              deployMarkers={[]}
-              loading={isOverviewLoading && !overview}
-            />
+          {/* Show chart only when enough volume; otherwise a clean 1-line 7d summary */}
+          <Box sx={{ flexShrink: 0 }}>
+            {totalEventsInWindow >= 5 ? (
+              <EventsUsersChart
+                flat
+                data={eventsOverTime}
+                deployMarkers={[]}
+                loading={isOverviewLoading && !overview}
+              />
+            ) : (
+              <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ px: 1.5, pt: 1.25, pb: 0.5 }}>
+                <Typography typography="s3" color="text.tertiary">
+                  Last 7 days
+                </Typography>
+                <Typography typography="s3" fontWeight={500} color="text.secondary" sx={{ fontVariantNumeric: "tabular-nums" }}>
+                  {repTotal.toLocaleString()} {repTotal === 1 ? "event" : "events"} ·{" "}
+                  {(currentError?.users_affected ?? 1).toLocaleString()}{" "}
+                  {(currentError?.users_affected ?? 1) === 1 ? "user" : "users"}
+                </Typography>
+              </Stack>
+            )}
           </Box>
 
-          {/* Traces heading */}
+          {/* Traces / Conversations heading + inline filter */}
           <Stack
-            direction="row"
-            alignItems="center"
             gap={0.75}
             sx={{
               px: 1.5,
-              py: 0.75,
+              py: 0.85,
               flexShrink: 0,
-              borderBottom: "1px solid",
-              borderColor: "divider",
             }}
           >
-            <Typography fontSize="12px" fontWeight={600} color="text.secondary">
-              Traces affected
-            </Typography>
-            {isOverviewLoading && !overview ? (
-              <Skeleton
-                width={28}
-                height={14}
-                sx={{
-                  borderRadius: "4px",
-                  bgcolor: "action.selected",
-                }}
+            <Stack direction="row" alignItems="center" justifyContent="space-between" gap={0.75}>
+              <Stack direction="row" alignItems="center" gap={0.65}>
+                <Typography fontSize="12px" fontWeight={600} color="text.secondary">
+                  Traces affected
+                </Typography>
+                {isOverviewLoading && !overview ? (
+                  <Skeleton width={28} height={14} sx={{ borderRadius: "4px", bgcolor: "action.selected" }} />
+                ) : (
+                  <Typography
+                    fontSize="11px"
+                    fontWeight={600}
+                    sx={{
+                      color: "text.secondary",
+                      bgcolor: "action.selected",
+                      px: 0.7,
+                      py: 0.1,
+                      borderRadius: "4px",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {repTotal.toLocaleString()}
+                  </Typography>
+                )}
+              </Stack>
+              {onOpenTraces && (
+                <Button
+                  size="small"
+                  variant="text"
+                  onClick={onOpenTraces}
+                  sx={{ minWidth: 0, px: 0.5, py: 0, color: "text.secondary" }}
+                >
+                  All traces →
+                </Button>
+              )}
+            </Stack>
+
+            {traces.length > 2 && (
+              <FormSearchField
+                searchQuery={traceFilter}
+                onChange={(e) => setTraceFilter(e.target.value)}
+                placeholder="Filter traces or conversations"
               />
-            ) : (
-              <Typography
-                fontSize="12px"
-                fontWeight={600}
-                sx={{
-                  color: "text.disabled",
-                  bgcolor: "action.selected",
-                  px: 0.75,
-                  py: 0.1,
-                  borderRadius: "4px",
-                }}
-              >
-                {repTotal.toLocaleString()}
-              </Typography>
             )}
           </Stack>
 
-          {/* Scrollable trace list */}
+          {/* Scrollable trace / conversation list */}
           <Box sx={{ flex: 1, overflow: "auto" }}>
             <TraceList
               traces={traces}
               selectedIndex={traceIndex}
               onSelect={selectTrace}
+              filterQuery={traceFilter}
               loading={isOverviewLoading && !overview}
             />
             {repTotal > traces.length && (
-              <Typography
-                fontSize="12px"
-                color="text.disabled"
-                sx={{ px: 1.5, py: 1, textAlign: "center" }}
-              >
-                Showing the {traces.length} most recent — all{" "}
-                {repTotal.toLocaleString()} are in the Traces tab
-              </Typography>
+              <Stack alignItems="center" sx={{ px: 1.5, py: 1.25 }}>
+                <Typography fontSize="12px" color="text.disabled" sx={{ textAlign: "center" }}>
+                  Showing {traces.length} most recent of {repTotal.toLocaleString()}
+                </Typography>
+                {onOpenTraces && (
+                  <Button size="small" variant="text" onClick={onOpenTraces} sx={{ mt: 0.25 }}>
+                    Browse all in Traces tab →
+                  </Button>
+                )}
+              </Stack>
             )}
           </Box>
         </Stack>
 
-        {/* ── DRAG HANDLE ── */}
+        {/* ── QUIET DRAG HANDLE (invisible until hovered — zero vertical border clutter) ── */}
         <Box
           onMouseDown={(e) => {
             e.preventDefault();
@@ -2612,21 +3073,19 @@ export default function OverviewTab({ _error: currentError }) {
             document.body.style.userSelect = "none";
           }}
           sx={{
-            width: 5,
+            width: 8,
             flexShrink: 0,
             cursor: "col-resize",
             bgcolor: "transparent",
-            borderLeft: "1px solid",
-            borderColor: "divider",
             position: "relative",
+            borderRadius: "4px",
             transition: "background 0.15s",
             "&:hover": {
-              bgcolor: "status.discovery.bg",
+              bgcolor: "action.hover",
             },
             "&:hover .drag-dots": { opacity: 1 },
           }}
         >
-          {/* Grip dots */}
           <Stack
             className="drag-dots"
             alignItems="center"
@@ -2648,37 +3107,20 @@ export default function OverviewTab({ _error: currentError }) {
                   width: 3,
                   height: 3,
                   borderRadius: "50%",
-                  bgcolor: "action.selected",
+                  bgcolor: "text.disabled",
                 }}
               />
             ))}
           </Stack>
         </Box>
 
-        {/* ── RIGHT PANEL: trace detail ── */}
+        {/* ── RIGHT PANEL: Flush Trace Evidence Canvas (zero enclosing box!) ── */}
         <Box sx={{ flex: 1, minWidth: 0, overflow: "auto" }}>
           {isOverviewLoading && !trace ? (
-            <Stack gap={1.5} sx={{ p: 1.75 }}>
-              <Skeleton
-                variant="rectangular"
-                height={56}
-                sx={{ borderRadius: "6px" }}
-              />
-              <Skeleton
-                variant="rectangular"
-                height={140}
-                sx={{ borderRadius: "8px" }}
-              />
-              <Skeleton
-                variant="rectangular"
-                height={260}
-                sx={{ borderRadius: "8px" }}
-              />
-              <Skeleton
-                variant="rectangular"
-                height={200}
-                sx={{ borderRadius: "8px" }}
-              />
+            <Stack gap={1.5} sx={{ p: 2 }}>
+              <Skeleton variant="rectangular" height={56} sx={{ borderRadius: "8px" }} />
+              <Skeleton variant="rectangular" height={140} sx={{ borderRadius: "8px" }} />
+              <Skeleton variant="rectangular" height={260} sx={{ borderRadius: "8px" }} />
             </Stack>
           ) : !trace ? (
             <EmptyState
@@ -2687,38 +3129,146 @@ export default function OverviewTab({ _error: currentError }) {
               description="No trace evidence available for this cluster yet."
               sx={{ pt: 6, pb: 6 }}
             />
+          ) : currentError?.source === "eval" ? (
+            <Box sx={{ p: 1.5 }}>
+              <SectionCard
+                title={isVoice ? "Voice call" : "Input / Output"}
+                icon={isVoice ? "solar:phone-linear" : "solar:code-linear"}
+                collapsible
+              >
+                {isVoice && !shared ? (
+                  <VoiceEvalPanel
+                    trace={trace}
+                    evalScore={trace?.eval_score}
+                    successTraceId={currentError?.success_trace?.trace_id}
+                    projectId={currentError?.project_id}
+                  />
+                ) : (
+                  <EvalIOPanel trace={trace} evalScore={trace?.eval_score} />
+                )}
+              </SectionCard>
+            </Box>
           ) : (
-            <Stack gap={1.5} sx={{ p: 1.75 }}>
-              {currentError?.source === "eval" ? (
-                <SectionCard
-                  title={isVoice ? "Voice call" : "Input / Output"}
-                  icon={isVoice ? "solar:phone-linear" : "solar:code-linear"}
-                  collapsible
-                >
-                  {isVoice && !shared ? (
-                    <VoiceEvalPanel
-                      trace={trace}
-                      evalScore={trace?.eval_score}
-                      successTraceId={currentError?.success_trace?.trace_id}
-                      projectId={currentError?.project_id}
-                    />
-                  ) : (
-                    <EvalIOPanel trace={trace} evalScore={trace?.eval_score} />
-                  )}
-                </SectionCard>
-              ) : (
-                <TraceEvidence
-                  evidence={trace.evidence ?? {}}
-                  trace={trace}
-                  traceId={trace.id}
-                  workingTraceId={currentError?.success_trace?.trace_id}
-                  projectId={currentError?.project_id}
-                />
-              )}
-            </Stack>
+            <TraceEvidence
+              key={trace.id}
+              evidence={trace.evidence ?? {}}
+              trace={trace}
+              traceId={trace.id}
+              workingTraceId={currentError?.success_trace?.trace_id}
+              projectId={currentError?.project_id}
+              onInspectSpan={openNativeTraceDrawer}
+              onClaimClick={(anchorEl, phrase, prov) =>
+                setClaimPopover({ anchorEl, phrase, prov })
+              }
+            />
           )}
         </Box>
       </Box>
+
+      {/* ── Interactive Claim-to-Source Popover (jumps straight into native TraceDetailDrawerV2!) ── */}
+      <Popover
+        open={Boolean(claimPopover.anchorEl && claimPopover.prov)}
+        anchorEl={claimPopover.anchorEl}
+        onClose={() => setClaimPopover({ anchorEl: null, phrase: "", prov: null })}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+        PaperProps={{
+          sx: {
+            width: 340,
+            p: 1.75,
+            mt: 0.75,
+            borderRadius: "8px",
+            border: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+          },
+        }}
+      >
+        {claimPopover.prov && (
+          <Stack gap={1.25}>
+            <Stack gap={0.25}>
+              <Typography typography="s3" fontWeight={600} color="status.danger.fg">
+                Contradicted claim{claimPopover.prov.entity_label ? ` · ${claimPopover.prov.entity_label}` : ""}
+              </Typography>
+              <Typography typography="s1" fontWeight={500} color="text.primary">
+                “{claimPopover.phrase || claimPopover.prov.claimed_text}”
+              </Typography>
+            </Stack>
+
+            <Stack gap={0.6} sx={{ pt: 0.75, borderTop: "1px solid", borderColor: "divider" }}>
+              {claimPopover.prov.facts.map((fact) => (
+                <Stack key={fact.label} direction="row" alignItems="baseline" justifyContent="space-between" gap={1}>
+                  <Typography typography="s3" color="text.secondary">
+                    {fact.label}
+                  </Typography>
+                  <Typography typography="s3" fontWeight={600} color="text.primary">
+                    {fact.value}
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
+
+            <Stack direction="row" justifyContent="space-between" gap={1} sx={{ pt: 0.5 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => {
+                  const st = (trace?.omega_deep?.story_steps || []).find(
+                    (s) => s.span_alias === claimPopover.prov.tool_alias,
+                  );
+                  openNativeTraceDrawer(st?.span_id || trace?.origin_span_id || null);
+                }}
+                sx={{ borderColor: "divider", color: "text.primary" }}
+              >
+                Open tool span ({claimPopover.prov.tool_alias})
+              </Button>
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => {
+                  const st = (trace?.omega_deep?.story_steps || []).find(
+                    (s) => s.span_alias === claimPopover.prov.reply_alias,
+                  );
+                  openNativeTraceDrawer(st?.span_id || null);
+                }}
+                sx={{ color: "text.secondary" }}
+              >
+                Open reply ({claimPopover.prov.reply_alias})
+              </Button>
+            </Stack>
+          </Stack>
+        )}
+      </Popover>
+
+      {drawerOpen && Boolean(trace?.id) && (
+        <TraceDetailDrawerV2
+          traceId={trace.id}
+          initialSpanId={drawerInitialSpanId}
+          open
+          onClose={() => setDrawerOpen(false)}
+          projectId={currentError?.project_id}
+          clusterId={clusterId}
+          defaultCompressed
+          readOnly={!!shared}
+          sharedToken={shared?.token ?? null}
+          hasPrev={traceIndex > 0}
+          hasNext={traceIndex < traces.length - 1}
+          onPrev={() => {
+            if (traceIndex > 0) {
+              const prevTrace = traces[traceIndex - 1];
+              selectTrace(traceIndex - 1);
+              setDrawerInitialSpanId(prevTrace?.origin_span_id || null);
+            }
+          }}
+          onNext={() => {
+            if (traceIndex < traces.length - 1) {
+              const nextTrace = traces[traceIndex + 1];
+              selectTrace(traceIndex + 1);
+              setDrawerInitialSpanId(nextTrace?.origin_span_id || null);
+            }
+          }}
+        />
+      )}
     </Stack>
   );
 }
@@ -2729,8 +3279,17 @@ OverviewTab.propTypes = {
     project_id: PropTypes.string,
     source: PropTypes.string,
     modality: PropTypes.string,
+    description: PropTypes.string,
+    users_affected: PropTypes.number,
+    rca: PropTypes.shape({
+      user_impact: PropTypes.string,
+      synthesis: PropTypes.string,
+      fix: PropTypes.string,
+    }),
     success_trace: PropTypes.shape({
       trace_id: PropTypes.string,
     }),
   }),
+  onOpenFix: PropTypes.func,
+  onOpenTraces: PropTypes.func,
 };

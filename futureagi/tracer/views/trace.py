@@ -2160,6 +2160,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 project_id=query.get("project_id"),
                 test_execution_id=query.get("test_execution_id"),
                 call_execution_id=query.get("call_execution_id"),
+                cluster_id=query.get("cluster_id"),
             )
             return self._gm.success_response(handler.fetch())
         except Trace.DoesNotExist:
@@ -5914,6 +5915,42 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
             if filter_evidence["query_applied_filter_count"]:
                 metadata.update(filter_evidence)
+        if table_data:
+            from django.db import DatabaseError
+
+            try:
+                from tracer.queries.trace_error_feed import list_issues_for_traces
+
+                row_project_ids = {
+                    str(row["project_id"])
+                    for row in table_data
+                    if row.get("project_id")
+                }
+                if project_id:
+                    row_project_ids.add(str(project_id))
+                row_trace_ids = [
+                    str(row["trace_id"]) for row in table_data if row.get("trace_id")
+                ]
+                issues_by_trace = list_issues_for_traces(
+                    project_ids=row_project_ids,
+                    trace_ids=row_trace_ids,
+                )
+                for row in table_data:
+                    row["issues"] = issues_by_trace.get(
+                        str(row.get("trace_id") or ""), []
+                    )
+            except (
+                DatabaseError,
+                LookupError,
+                ValueError,
+                TypeError,
+                RuntimeError,
+            ) as exc:
+                logger.warning(
+                    "trace_list_error_feed_enrichment_failed",
+                    project_id=str(project_id) if project_id else None,
+                    error=str(exc),
+                )
         response = {
             "metadata": metadata,
             "table": _sanitize_nonfinite_floats(table_data),

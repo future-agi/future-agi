@@ -46,6 +46,56 @@ const SmartPreview = ({
   const isEmbedding = type === "embedding";
   const isGuardrail = type === "guardrail";
   const isError = status === "ERROR";
+  const cleanErrTitle = attributes?.["error_feed.clean_error_title"];
+  const cleanErrMessage = attributes?.["error_feed.clean_error_message"];
+
+  // Strip internal Error Feed keys from the user-facing OTel attributes table.
+  const displayAttributes = useMemo(() => {
+    if (!attributes || typeof attributes !== "object") return attributes;
+    const cleaned = {};
+    for (const [k, v] of Object.entries(attributes)) {
+      if (!k.startsWith("error_feed.")) cleaned[k] = v;
+    }
+    return cleaned;
+  }, [attributes]);
+
+  // Format OpenAI Responses API [{"role":"...","content":[{"text":"..."}]}] arrays for readable preview.
+  const readableInput = useMemo(() => {
+    if (typeof input !== "string") return input;
+    const trimmed = input.trim();
+    if (!trimmed.startsWith("[")) return input;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
+        parsed.every(
+          (m) =>
+            m &&
+            typeof m === "object" &&
+            (Array.isArray(m.content) || typeof m.text === "string"),
+        )
+      ) {
+        const blocks = parsed
+          .map((m) => {
+            const roleHeading = m.role ? `**${String(m.role)}**\n` : "";
+            if (Array.isArray(m.content)) {
+              const text = m.content
+                .map((c) => (typeof c === "string" ? c : c?.text || ""))
+                .filter(Boolean)
+                .join("\n");
+              return text ? `${roleHeading}${text}` : "";
+            }
+            return m.text ? `${roleHeading}${m.text}` : "";
+          })
+          .filter(Boolean);
+        if (blocks.length > 0) return blocks.join("\n\n");
+      }
+    } catch {
+      // Keep original input string when not valid JSON.
+    }
+    return input;
+  }, [input]);
 
   // Extract LLM messages from span_attributes (OpenInference / GenAI format)
   // This is what the old drawer's DrawerRightRenderer did via getLlmData()
@@ -76,12 +126,17 @@ const SmartPreview = ({
   if (viewMode === "json") {
     return (
       <Stack spacing={1.5}>
-        {isError && <ErrorBanner message={statusMessage} />}
+        {(isError || cleanErrMessage) && (
+          <ErrorBanner
+            title={cleanErrTitle}
+            message={cleanErrMessage || statusMessage}
+          />
+        )}
         <JsonPreviewBlock
           span={span}
           input={input}
           output={output}
-          attributes={attributes}
+          attributes={displayAttributes}
           searchQuery={searchQuery}
           hideInlineSearch
         />
@@ -93,7 +148,12 @@ const SmartPreview = ({
   if (viewMode === "chat" && isLLM && hasMessages) {
     return (
       <Stack spacing={1.5}>
-        {isError && <ErrorBanner message={statusMessage} />}
+        {(isError || cleanErrMessage) && (
+          <ErrorBanner
+            title={cleanErrTitle}
+            message={cleanErrMessage || statusMessage}
+          />
+        )}
         <ChatMessageView
           input={input}
           output={output}
@@ -106,7 +166,7 @@ const SmartPreview = ({
           attrOutputMessages={outputMessages}
         />
         <AttributesCard
-          attributes={attributes}
+          attributes={displayAttributes}
           searchQuery={searchQuery}
           hideInlineSearch
           spanId={span?.id}
@@ -120,7 +180,12 @@ const SmartPreview = ({
   // Markdown mode with smart rendering
   return (
     <Stack spacing={1.5}>
-      {isError && <ErrorBanner message={statusMessage} />}
+      {(isError || cleanErrMessage) && (
+        <ErrorBanner
+          title={cleanErrTitle}
+          message={cleanErrMessage || statusMessage}
+        />
+      )}
 
       {/* LLM with messages → auto-detect and show chat view */}
       {isLLM && hasMessages ? (
@@ -149,7 +214,7 @@ const SmartPreview = ({
           )}
           <ContentCard
             title="Input"
-            content={input}
+            content={readableInput}
             viewMode={viewMode}
             searchQuery={searchQuery}
           />
@@ -197,7 +262,7 @@ const SmartPreview = ({
           )}
           <ContentCard
             title="Input"
-            content={input}
+            content={readableInput}
             viewMode={viewMode}
             searchQuery={searchQuery}
           />
@@ -224,7 +289,7 @@ const SmartPreview = ({
         /* Agent/Chain span — smart preview extracting key info */
         <AgentPreview
           span={span}
-          input={input}
+          input={readableInput}
           output={output}
           model={model}
           provider={provider}
@@ -232,7 +297,7 @@ const SmartPreview = ({
           tokens={totalTokens}
           cost={cost}
           latency={latency}
-          attributes={attributes}
+          attributes={displayAttributes}
           viewMode={viewMode}
           searchQuery={searchQuery}
           ContentCard={ContentCard}
@@ -242,7 +307,7 @@ const SmartPreview = ({
         <>
           <ContentCard
             title="Input"
-            content={input}
+            content={readableInput}
             viewMode={viewMode}
             searchQuery={searchQuery}
           />
@@ -256,7 +321,7 @@ const SmartPreview = ({
       )}
 
       <AttributesCard
-        attributes={attributes}
+        attributes={displayAttributes}
         searchQuery={searchQuery}
         hideInlineSearch
         spanId={span?.id}
@@ -268,21 +333,21 @@ const SmartPreview = ({
 };
 
 // ── Error Banner ──
-const ErrorBanner = ({ message }) => (
+const ErrorBanner = ({ title, message }) => (
   <Alert
     severity="error"
     sx={{ "& .MuiAlert-message": { overflow: "hidden" } }}
   >
     <Typography sx={{ fontSize: 12, fontWeight: 600, mb: message ? 0.25 : 0 }}>
-      Error
+      {title || "Error"}
     </Typography>
     {message && (
       <Typography
         sx={{
           fontSize: 12,
           whiteSpace: "pre-wrap",
-          wordBreak: "break-all",
-          maxHeight: 120,
+          wordBreak: "break-word",
+          maxHeight: 140,
           overflow: "auto",
         }}
       >
@@ -292,7 +357,7 @@ const ErrorBanner = ({ message }) => (
   </Alert>
 );
 
-ErrorBanner.propTypes = { message: PropTypes.string };
+ErrorBanner.propTypes = { title: PropTypes.string, message: PropTypes.string };
 
 // ── Model Header ──
 const ModelHeader = ({ model, provider, providerLogo, tokens, cost }) => (
@@ -397,7 +462,7 @@ const ToolPreview = ({
           sx={{ color: "status.warning.fg" }}
         />
         <Typography
-          sx={{ fontSize: 12, fontWeight: 600, color: "status.warning.fg" }}
+          sx={{ fontSize: 13, fontWeight: 600, color: "status.warning.fg" }}
         >
           {name || "Tool"}
         </Typography>
@@ -468,7 +533,7 @@ const RetrieverPreview = ({
         <Box>
           <Typography
             data-search-skip="true"
-            sx={{ fontSize: 12, fontWeight: 500, mb: 0.75 }}
+            sx={{ fontSize: 13, fontWeight: 500, mb: 0.75 }}
           >
             Retrieved Documents ({docs.length})
           </Typography>

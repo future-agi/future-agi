@@ -39,11 +39,17 @@ class ErrorFeedAlertRule(BaseModel):
     trigger_type = models.CharField(max_length=32, choices=FeedAlertTrigger.choices)
     trigger_value = models.JSONField(null=True, blank=True)
     filters = models.JSONField(default=dict, blank=True)
+    slack_enabled = models.BooleanField(default=True)
     slack_connection = models.ForeignKey(
-        "integrations.IntegrationConnection", on_delete=models.PROTECT
+        "integrations.IntegrationConnection",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
     )
-    slack_channel_id = models.CharField(max_length=80)
-    slack_channel_name = models.CharField(max_length=255)
+    slack_channel_id = models.CharField(max_length=80, blank=True, default="")
+    slack_channel_name = models.CharField(max_length=255, blank=True, default="")
+    email_enabled = models.BooleanField(default=False)
+    email_recipients = models.JSONField(default=list, blank=True)
     cooldown_seconds = models.PositiveIntegerField(default=3600)
     last_triggered_at = models.DateTimeField(null=True, blank=True)
 

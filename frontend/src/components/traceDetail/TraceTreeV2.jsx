@@ -11,12 +11,16 @@ import {
   Button,
   Collapse,
   IconButton,
+  Menu,
+  MenuItem,
   Stack,
+  Tab,
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import { SegmentedTabs } from "src/components/tabs/tabs";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import {
   formatLatency,
@@ -95,6 +99,31 @@ function collectAllIds(entries) {
   return ids;
 }
 
+function collectErrorFeedSteps(entries) {
+  const steps = [];
+  const walk = (list) => {
+    for (const entry of list || []) {
+      const sp = getSpan(entry);
+      const attrs = sp.span_attributes || {};
+      if (attrs["error_feed.step"] != null) {
+        steps.push({
+          id: sp.id,
+          step: Number(attrs["error_feed.step"]),
+          role: attrs["error_feed.role"] || "cited_span",
+          alias: attrs["error_feed.alias"] || "",
+          headline: attrs["error_feed.headline"] || sp.name || "span",
+          name: sp.name || "span",
+          latencyMs: sp.latency_ms ?? sp.latency ?? null,
+        });
+      }
+      if (entry.children?.length) walk(entry.children);
+    }
+  };
+  walk(entries);
+  steps.sort((a, b) => a.step - b.step);
+  return steps;
+}
+
 // ---------------------------------------------------------------------------
 // Compact toolbar
 // ---------------------------------------------------------------------------
@@ -107,124 +136,148 @@ const TreeToolbar = ({
   onExpandAll,
   showMetrics,
   onToggleMetrics,
-}) => (
-  <Stack
-    spacing={0.25}
-    sx={{
-      px: 1,
-      py: 0.5,
-      borderBottom: "1px solid",
-      borderColor: "divider",
-      flexShrink: 0,
-    }}
-  >
-    <Stack direction="row" alignItems="center" justifyContent="space-between">
-      <Typography
-        sx={{
-          fontSize: 12,
-          fontWeight: 600,
-          color: "text.disabled",
-          letterSpacing: "0.03em",
-          textTransform: "none",
-        }}
-      >
-        Trace Tree
-      </Typography>
-      <Stack direction="row" spacing={0}>
-        {onRefresh && (
-          <CustomTooltip
-            show
-            title="Refresh"
-            placement="top"
-            arrow
-            size="small"
-            type="black"
-          >
-            <IconButton size="small" onClick={onRefresh}>
-              <Iconify
-                icon="solar:refresh-linear"
-                width={14}
-                color="text.disabled"
-              />
-            </IconButton>
-          </CustomTooltip>
-        )}
-        <CustomTooltip
-          show
-          title={allCollapsed ? "Expand all" : "Collapse all"}
-          placement="top"
-          arrow
-          size="small"
-          type="black"
-        >
-          <IconButton
-            size="small"
-            onClick={allCollapsed ? onExpandAll : onCollapseAll}
-          >
-            <Iconify
-              icon={
-                allCollapsed
-                  ? "solar:chevrons-up-down-linear"
-                  : "solar:chevrons-down-up-linear"
-              }
-              width={14}
-              color="text.disabled"
-            />
-          </IconButton>
-        </CustomTooltip>
-        <CustomTooltip
-          show
-          title={showMetrics ? "Hide metrics" : "Show metrics"}
-          placement="top"
-          arrow
-          size="small"
-          type="black"
-        >
-          <IconButton size="small" onClick={onToggleMetrics}>
-            <Iconify
-              icon={
-                showMetrics ? "solar:eye-linear" : "solar:eye-closed-linear"
-              }
-              width={14}
-              color="text.disabled"
-            />
-          </IconButton>
-        </CustomTooltip>
-      </Stack>
-    </Stack>
-    <Box
+  keyStepCount = 0,
+  totalSpanCount = 0,
+  treeMode = "all",
+  onTreeModeChange,
+}) => {
+  const isKeyPath = treeMode === "key_path" && keyStepCount >= 2;
+
+  return (
+    <Stack
+      spacing={0.5}
       sx={{
-        display: "flex",
-        alignItems: "center",
-        gap: 0.5,
-        px: 0.75,
-        py: 0.25,
-        border: "1px solid",
+        px: 1,
+        py: 0.75,
+        borderBottom: "1px solid",
         borderColor: "divider",
-        borderRadius: "4px",
+        flexShrink: 0,
       }}
     >
-      <Iconify icon="solar:magnifier-linear" width={12} color="text.disabled" />
-      <Box
-        component="input"
-        placeholder="Search"
-        value={searchQuery}
-        onChange={(e) => onSearchChange(e.target.value)}
-        sx={{
-          border: "none",
-          outline: "none",
-          flex: 1,
-          fontSize: 12,
-          color: "text.primary",
-          bgcolor: "transparent",
-          fontFamily: "inherit",
-          py: 0.25,
-          "&::placeholder": { color: "text.disabled" },
-        }}
-      />
-    </Box>
-  </Stack>
-);
+      <Stack direction="row" alignItems="center" justifyContent="space-between" gap={0.5}>
+        {keyStepCount >= 2 && onTreeModeChange ? (
+          <SegmentedTabs
+            value={isKeyPath ? "key_path" : "all"}
+            onChange={(_, nextMode) => onTreeModeChange(nextMode)}
+          >
+            <Tab value="all" label={`All (${totalSpanCount})`} />
+            <Tab value="key_path" label={`Key path (${keyStepCount})`} />
+          </SegmentedTabs>
+        ) : (
+          <Typography
+            sx={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: "text.disabled",
+              letterSpacing: "0.03em",
+              textTransform: "none",
+            }}
+          >
+            Trace Tree
+          </Typography>
+        )}
+        <Stack direction="row" spacing={0}>
+          {onRefresh && (
+            <CustomTooltip
+              show
+              title="Refresh"
+              placement="top"
+              arrow
+              size="small"
+              type="black"
+            >
+              <IconButton size="small" onClick={onRefresh}>
+                <Iconify
+                  icon="solar:refresh-linear"
+                  width={14}
+                  color="text.disabled"
+                />
+              </IconButton>
+            </CustomTooltip>
+          )}
+          {!isKeyPath && (
+            <>
+              <CustomTooltip
+                show
+                title={allCollapsed ? "Expand all" : "Collapse all"}
+                placement="top"
+                arrow
+                size="small"
+                type="black"
+              >
+                <IconButton
+                  size="small"
+                  onClick={allCollapsed ? onExpandAll : onCollapseAll}
+                >
+                  <Iconify
+                    icon={
+                      allCollapsed
+                        ? "solar:chevrons-up-down-linear"
+                        : "solar:chevrons-down-up-linear"
+                    }
+                    width={14}
+                    color="text.disabled"
+                  />
+                </IconButton>
+              </CustomTooltip>
+              <CustomTooltip
+                show
+                title={showMetrics ? "Hide metrics" : "Show metrics"}
+                placement="top"
+                arrow
+                size="small"
+                type="black"
+              >
+                <IconButton size="small" onClick={onToggleMetrics}>
+                  <Iconify
+                    icon={
+                      showMetrics ? "solar:eye-linear" : "solar:eye-closed-linear"
+                    }
+                    width={14}
+                    color="text.disabled"
+                  />
+                </IconButton>
+              </CustomTooltip>
+            </>
+          )}
+        </Stack>
+      </Stack>
+      {!isKeyPath && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            px: 0.75,
+            py: 0.25,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "6px",
+          }}
+        >
+          <Iconify icon="solar:magnifier-linear" width={12} color="text.disabled" />
+          <Box
+            component="input"
+            placeholder="Search"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            sx={{
+              border: "none",
+              outline: "none",
+              flex: 1,
+              fontSize: 12,
+              color: "text.primary",
+              bgcolor: "transparent",
+              fontFamily: "inherit",
+              py: 0.25,
+              "&::placeholder": { color: "text.disabled" },
+            }}
+          />
+        </Box>
+      )}
+    </Stack>
+  );
+};
 
 TreeToolbar.propTypes = {
   searchQuery: PropTypes.string,
@@ -235,6 +288,10 @@ TreeToolbar.propTypes = {
   onExpandAll: PropTypes.func.isRequired,
   showMetrics: PropTypes.bool,
   onToggleMetrics: PropTypes.func.isRequired,
+  keyStepCount: PropTypes.number,
+  totalSpanCount: PropTypes.number,
+  treeMode: PropTypes.oneOf(["all", "key_path"]),
+  onTreeModeChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -275,6 +332,7 @@ const TreeNodeRow = ({
   const hasError = span.status === "ERROR";
   const errorCount = isRoot ? countErrors(entry) : hasError ? 1 : 0;
   const spanName = span.name || "unnamed";
+  const efRole = span.span_attributes?.["error_feed.role"] || null;
   // _filterMatch: true = this span matched the filter, false/undefined = ancestor kept for hierarchy
   const isDimmed = entry._filterMatch === false;
 
@@ -394,17 +452,33 @@ const TreeNodeRow = ({
 
         {/* Name + metrics */}
         <Box sx={{ flex: 1, minWidth: 0, ml: 0.5 }}>
-          <Typography
-            noWrap
-            sx={{
-              fontSize: 12,
-              fontWeight: isSelected ? 600 : 500,
-              lineHeight: "16px",
-              color: "text.primary",
-            }}
-          >
-            {spanName}
-          </Typography>
+          <Stack direction="row" alignItems="center" gap={0.5} sx={{ minWidth: 0 }}>
+            {(efRole === "origin_span" || efRole === "symptom_span") && (
+              <Box
+                sx={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  bgcolor:
+                    efRole === "symptom_span"
+                      ? "status.danger.solid"
+                      : "status.warning.solid",
+                }}
+              />
+            )}
+            <Typography
+              noWrap
+              sx={{
+                fontSize: 13,
+                fontWeight: isSelected ? 600 : 500,
+                lineHeight: "16px",
+                color: "text.primary",
+              }}
+            >
+              {spanName}
+            </Typography>
+          </Stack>
           {showMetrics && (
             <Stack direction="row" spacing={0.75} sx={{ mt: 0, lineHeight: 1 }}>
               {(!visibleMetrics || visibleMetrics.latency) && (
@@ -697,8 +771,15 @@ const TraceTreeV2 = ({
   onRefresh,
   showTimingSpans: showTimingProp,
   onTimingVisibilityChange,
+  traceIssues = [],
+  activeClusterId = null,
+  defaultCompressed = false,
+  onTreeModeChange,
+  onSelectIssue,
+  onOpenIssue,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
+  const [issueMenuAnchor, setIssueMenuAnchor] = useState(null);
   const [showTimingLocal, setShowTimingLocal] = useState(false);
   const showTimingSpans = showTimingProp ?? showTimingLocal;
   const setShowTimingSpans = useCallback((show) => {
@@ -725,10 +806,57 @@ const TraceTreeV2 = ({
     () => (spans ? collectAllIds(spans) : new Set()),
     [spans],
   );
+  const keySteps = useMemo(() => collectErrorFeedSteps(spans), [spans]);
   const allCollapsed = expandedSet.size === 0;
 
   // Re-expand all when a new trace loads
   const spansKey = spans?.length ? getSpan(spans[0])?.id : null;
+  const modeScopeKey = `${spansKey ?? ""}:${defaultCompressed ? 1 : 0}`;
+  const defaultMode =
+    defaultCompressed && keySteps.length >= 2 ? "key_path" : "all";
+  const [modeSelection, setModeSelection] = useState({
+    scopeKey: modeScopeKey,
+    mode: defaultMode,
+  });
+  const treeMode =
+    keySteps.length < 2
+      ? "all"
+      : modeSelection.scopeKey === modeScopeKey
+        ? modeSelection.mode
+        : defaultMode;
+  const isKeyPath = treeMode === "key_path";
+
+  const handleTreeModeChange = useCallback(
+    (nextMode) => {
+      setModeSelection({ scopeKey: modeScopeKey, mode: nextMode });
+      onTreeModeChange?.(nextMode);
+      if (
+        nextMode === "key_path" &&
+        keySteps.length > 0 &&
+        !keySteps.some((st) => st.id === selectedSpanId)
+      ) {
+        const target =
+          keySteps.find((st) => st.role === "origin_span") || keySteps[0];
+        if (target?.id) onSelectSpan(target.id);
+      }
+    },
+    [modeScopeKey, onTreeModeChange, keySteps, selectedSpanId, onSelectSpan],
+  );
+
+  const handleSearchChange = useCallback((nextQuery) => {
+    setSearchQuery(nextQuery);
+  }, []);
+
+  const activeIssue =
+    traceIssues.find((iss) => iss.cluster_id === activeClusterId) ||
+    traceIssues[0] ||
+    null;
+  const activeIssueIdx = activeIssue
+    ? traceIssues.findIndex((iss) => iss.cluster_id === activeIssue.cluster_id)
+    : -1;
+  const showIssueSwitcher =
+    traceIssues.length > 1 || (!defaultCompressed && traceIssues.length >= 1);
+
   React.useEffect(() => {
     if (spans) {
       setExpandedSet(collectAllIds(spans));
@@ -774,20 +902,174 @@ const TraceTreeV2 = ({
         display: "flex",
         flexDirection: "column",
         flex: 1,
+        height: "100%",
+        minHeight: 0,
         overflow: "hidden",
       }}
     >
       <TreeToolbar
         searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
+        onSearchChange={handleSearchChange}
         onRefresh={onRefresh}
         allCollapsed={allCollapsed}
         onCollapseAll={handleCollapseAll}
         onExpandAll={handleExpandAll}
         showMetrics={showMetrics}
         onToggleMetrics={handleToggleMetrics}
+        keyStepCount={keySteps.length}
+        totalSpanCount={allIds.size}
+        treeMode={treeMode}
+        onTreeModeChange={handleTreeModeChange}
       />
-      {timingIds.size > 0 && (
+      {showIssueSwitcher && activeIssue && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="space-between"
+          gap={0.5}
+          sx={{
+            px: 1.25,
+            py: 0.75,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            flexShrink: 0,
+          }}
+        >
+          <Box
+            component={traceIssues.length > 1 ? "button" : "div"}
+            type={traceIssues.length > 1 ? "button" : undefined}
+            onClick={
+              traceIssues.length > 1
+                ? (e) => setIssueMenuAnchor(e.currentTarget)
+                : undefined
+            }
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.625,
+              flex: 1,
+              minWidth: 0,
+              border: 0,
+              p: 0,
+              bgcolor: "transparent",
+              cursor: traceIssues.length > 1 ? "pointer" : "default",
+              textAlign: "left",
+              fontFamily: "inherit",
+              borderRadius: "4px",
+              "&:focus-visible": {
+                outline: "2px solid",
+                outlineColor: "primary.main",
+                outlineOffset: -2,
+              },
+            }}
+          >
+            <Box
+              sx={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                bgcolor: "status.danger.solid",
+                flexShrink: 0,
+              }}
+            />
+            <CustomTooltip
+              show={Boolean(activeIssue.title)}
+              title={activeIssue.title || ""}
+              placement="top"
+              arrow
+              size="small"
+              type="black"
+            >
+              <Typography
+                noWrap
+                variant="s1"
+                sx={{ color: "text.primary", flex: 1, minWidth: 0 }}
+              >
+                <Box
+                  component="span"
+                  sx={{ color: "text.secondary", fontWeight: 500, mr: 0.625 }}
+                >
+                  {traceIssues.length > 1
+                    ? `Issue ${activeIssueIdx + 1} of ${traceIssues.length}:`
+                    : "Issue:"}
+                </Box>
+                {activeIssue.title}
+              </Typography>
+            </CustomTooltip>
+            {traceIssues.length > 1 && (
+              <Iconify
+                icon="solar:alt-arrow-down-linear"
+                width={12}
+                sx={{ color: "text.secondary", flexShrink: 0 }}
+              />
+            )}
+          </Box>
+          {onOpenIssue && (
+            <CustomTooltip
+              show
+              title="Open issue in Error Feed"
+              placement="top"
+              arrow
+              size="small"
+              type="black"
+            >
+              <IconButton
+                size="small"
+                aria-label="Open issue in Error Feed"
+                onClick={() => onOpenIssue(activeIssue.cluster_id)}
+                sx={{ p: 0.25, color: "text.secondary" }}
+              >
+                <Iconify icon="solar:arrow-right-up-linear" width={14} />
+              </IconButton>
+            </CustomTooltip>
+          )}
+          <Menu
+            anchorEl={issueMenuAnchor}
+            open={Boolean(issueMenuAnchor)}
+            onClose={() => setIssueMenuAnchor(null)}
+            PaperProps={{
+              sx: { maxWidth: 320 },
+            }}
+          >
+            {traceIssues.map((iss, idx) => (
+              <MenuItem
+                key={iss.cluster_id}
+                selected={iss.cluster_id === activeIssue.cluster_id}
+                onClick={() => {
+                  setIssueMenuAnchor(null);
+                  onSelectIssue?.(iss.cluster_id);
+                }}
+              >
+                <Stack gap={0.15} sx={{ minWidth: 0 }}>
+                  <Typography
+                    variant="s1"
+                    sx={{
+                      fontWeight: 500,
+                      color: "text.primary",
+                      whiteSpace: "normal",
+                    }}
+                  >
+                    {idx + 1}. {iss.title}
+                  </Typography>
+                  {iss.origin_alias && (
+                    <Typography
+                      variant="s3"
+                      sx={{ color: "text.tertiary", fontFamily: "monospace" }}
+                    >
+                      {iss.origin_alias}
+                      {iss.symptom_alias &&
+                      iss.symptom_alias !== iss.origin_alias
+                        ? ` → ${iss.symptom_alias}`
+                        : ""}
+                    </Typography>
+                  )}
+                </Stack>
+              </MenuItem>
+            ))}
+          </Menu>
+        </Stack>
+      )}
+      {!isKeyPath && timingIds.size > 0 && (
         <Button
           size="small"
           color="inherit"
@@ -806,22 +1088,128 @@ const TraceTreeV2 = ({
         </Button>
       )}
       <Box sx={{ flex: 1, overflow: "auto" }}>
-        {visibleSpans.map((entry, idx) => (
-          <TreeNodeRow
-            key={getSpan(entry).id || idx}
-            entry={entry}
-            depth={0}
-            isLast={idx === visibleSpans.length - 1}
-            selectedSpanId={selectedSpanId}
-            onSelect={onSelectSpan}
-            expandedSet={expandedSet}
-            onToggleExpand={handleToggleExpand}
-            showMetrics={showMetrics}
-            visibleMetrics={visibleMetrics}
-            rootLatency={rootLatency}
-            searchQuery={searchQuery}
-          />
-        ))}
+        {isKeyPath ? (
+          <Box>
+            {keySteps.map((st, idx) => {
+              const selected = selectedSpanId === st.id;
+              const isOrig = st.role === "origin_span";
+              const isSymp = st.role === "symptom_span";
+              return (
+                <Box
+                  key={st.id || idx}
+                  component="button"
+                  type="button"
+                  onClick={() => {
+                    if (!selected) onSelectSpan(st.id);
+                  }}
+                  sx={{
+                    width: "100%",
+                    display: "block",
+                    textAlign: "left",
+                    border: 0,
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                    bgcolor: selected ? "action.selected" : "transparent",
+                    px: 1.25,
+                    py: 1,
+                    cursor: "pointer",
+                    fontFamily: "inherit",
+                    "&:hover": {
+                      bgcolor: selected ? "action.selected" : "action.hover",
+                    },
+                    "&:focus-visible": {
+                      outline: "2px solid",
+                      outlineColor: "primary.main",
+                      outlineOffset: -2,
+                    },
+                  }}
+                >
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    gap={0.75}
+                    sx={{ mb: 0.25 }}
+                  >
+                    <Stack direction="row" alignItems="center" gap={0.5}>
+                      <Typography variant="s3" color="text.tertiary">
+                        {st.step}.
+                      </Typography>
+                      <Typography
+                        variant="s3"
+                        sx={{
+                          fontWeight: 500,
+                          color: isSymp
+                            ? "status.danger.fg"
+                            : isOrig
+                              ? "status.warning.fg"
+                              : "text.secondary",
+                        }}
+                      >
+                        {isOrig
+                          ? "Origin"
+                          : isSymp
+                            ? "Failure"
+                            : `Step ${st.step}`}
+                      </Typography>
+                    </Stack>
+                    <Typography
+                      variant="s3"
+                      color="text.tertiary"
+                      sx={{
+                        fontFamily: "monospace",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {st.alias}
+                      {st.latencyMs != null
+                        ? ` · ${formatLatency(st.latencyMs)}`
+                        : ""}
+                    </Typography>
+                  </Stack>
+                  <Typography
+                    variant="s1"
+                    sx={{
+                      color: "text.primary",
+                      fontWeight: selected ? 500 : 400,
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                    }}
+                  >
+                    {st.headline}
+                  </Typography>
+                  <Typography
+                    noWrap
+                    variant="s3"
+                    color="text.tertiary"
+                    sx={{ fontFamily: "monospace", mt: 0.25 }}
+                  >
+                    {st.name}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Box>
+        ) : (
+          visibleSpans.map((entry, idx) => (
+            <TreeNodeRow
+              key={getSpan(entry).id || idx}
+              entry={entry}
+              depth={0}
+              isLast={idx === visibleSpans.length - 1}
+              selectedSpanId={selectedSpanId}
+              onSelect={onSelectSpan}
+              expandedSet={expandedSet}
+              onToggleExpand={handleToggleExpand}
+              showMetrics={showMetrics}
+              visibleMetrics={visibleMetrics}
+              rootLatency={rootLatency}
+              searchQuery={searchQuery}
+            />
+          ))
+        )}
       </Box>
     </Box>
   );
@@ -837,6 +1225,12 @@ TraceTreeV2.propTypes = {
   onRefresh: PropTypes.func,
   showTimingSpans: PropTypes.bool,
   onTimingVisibilityChange: PropTypes.func,
+  traceIssues: PropTypes.array,
+  activeClusterId: PropTypes.string,
+  defaultCompressed: PropTypes.bool,
+  onTreeModeChange: PropTypes.func,
+  onSelectIssue: PropTypes.func,
+  onOpenIssue: PropTypes.func,
 };
 
 export default React.memo(TraceTreeV2);
