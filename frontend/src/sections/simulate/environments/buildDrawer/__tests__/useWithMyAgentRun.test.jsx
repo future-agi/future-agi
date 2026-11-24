@@ -132,7 +132,8 @@ describe("preparing a run", () => {
       .mockResolvedValue(jobOf("completed", { ...done, run: RUN }));
     render();
     fireEvent.click(run());
-    await pass(100);
+    for (let update = 0; update < 3; update += 1) await pass(100);
+    expect(readJob).toHaveBeenCalledTimes(1);
     expect(navigate).not.toHaveBeenCalled();
 
     await pass(2500);
@@ -145,7 +146,8 @@ describe("preparing a run", () => {
     readJob.mockResolvedValue(jobOf("completed", { composition_id: "env-1" }));
     render();
     fireEvent.click(run());
-    await pass(100);
+    // The job starts, then is read, then its wait is timed: each is an update of its own.
+    for (let update = 0; update < 3; update += 1) await pass(100);
     expect(preparing()).toBeInTheDocument();
     await pass(40000);
 
