@@ -3,8 +3,11 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { palette } from "src/theme/palette";
 
 import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
+import axios from "src/utils/axios";
 
 import FixChangesTab from "../FixChangesTab";
 import FixCostTab from "../FixCostTab";
@@ -21,15 +24,19 @@ const byId = (id) => ({
   ...FIX_RUN_FIXTURES.find((f) => f.id === id),
   environment_id: "env-1",
 });
+// The Scenarios tab's badges and states read the theme's status colours.
+const appTheme = createTheme({ palette: palette("light") });
 const wrap = (ui) =>
   render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
-      <MemoryRouter>{ui}</MemoryRouter>
-    </QueryClientProvider>,
+    <ThemeProvider theme={appTheme}>
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <MemoryRouter>{ui}</MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
 
 describe("Changes tab", () => {
@@ -73,33 +80,104 @@ describe("Cost tab", () => {
   });
 });
 
-describe("Per scenario tab", () => {
-  it("lists each scenario with its split, what the winner did and its check run", async () => {
+describe("Scenarios tab", () => {
+  const rowIds = () =>
+    screen.getAllByTestId(/^scenario-/).map((el) => el.dataset.testid);
+
+  it("lists each scenario with its set and what the winner did, Broke first", async () => {
     wrap(<FixScenariosTab fix={byId("fix-ready-archive")} />);
     const row = within(await screen.findByTestId("scenario-late-cancel"));
     expect(row.getByText("Target")).toBeInTheDocument();
     expect(row.getByText("Fixed")).toBeInTheDocument();
-    expect(row.getByRole("link", { name: "Open run" })).toHaveAttribute(
-      "href",
-      "/dashboard/simulate/environments/env-1/runs/rt-fix-ready-archive/te-fix-ready-archive-c3",
-    );
-    expect(
-      within(screen.getByTestId("scenario-on-time-cancel")).getByText("Broke"),
-    ).toBeInTheDocument();
+    expect(row.getByText("3/3 trials")).toBeInTheDocument();
+    // Held-back cases stay marked; the protected case reads Must-pass, and no
+    // other row is guessed into it.
     expect(
       within(screen.getByTestId("scenario-late-cancel-3")).getByText(
         "Held back",
       ),
     ).toBeInTheDocument();
+    const broke = within(screen.getByTestId("scenario-on-time-cancel"));
+    expect(broke.getByText("Broke")).toBeInTheDocument();
+    expect(broke.getByText("Must-pass")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("scenario-refund-window")).queryByText(
+        "Must-pass",
+      ),
+    ).toBeNull();
+    expect(rowIds()).toEqual([
+      "scenario-on-time-cancel",
+      "scenario-late-cancel",
+      "scenario-late-cancel-2",
+      "scenario-late-cancel-3",
+      "scenario-refund-window",
+    ]);
   });
 
-  it("filters to one outcome and back", async () => {
+  it("filters to one set and back, and puts Broke last on a second sort", async () => {
     const user = userEvent.setup();
     wrap(<FixScenariosTab fix={byId("fix-ready-archive")} />);
-    await user.click(await screen.findByRole("button", { name: "Broke 1" }));
-    expect(screen.getAllByTestId(/^scenario-/)).toHaveLength(1);
-    expect(screen.getByTestId("scenario-on-time-cancel")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Broke 1" }));
-    expect(screen.getAllByTestId(/^scenario-/)).toHaveLength(5);
+    await user.click(await screen.findByRole("tab", { name: "Held back 2" }));
+    expect(rowIds()).toEqual([
+      "scenario-late-cancel-2",
+      "scenario-late-cancel-3",
+    ]);
+    await user.click(screen.getByRole("tab", { name: "All 5" }));
+    expect(rowIds()).toHaveLength(5);
+    expect(screen.getByRole("tab", { name: "Target 1" })).toBeInTheDocument();
+    // No Must-pass filter: the read does not list the must-pass scenarios.
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "All 5",
+      "Target 1",
+      "Held back 2",
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Result" }));
+    expect(rowIds().at(-1)).toBe("scenario-on-time-cancel");
+  });
+
+  it("opens a scenario's calls before the change beside the candidate's", async () => {
+    const user = userEvent.setup();
+    wrap(<FixScenariosTab fix={byId("fix-ready-archive")} />);
+    await user.click(await screen.findByTestId("scenario-on-time-cancel"));
+    const drawer = within(await screen.findByTestId("scenario-compare"));
+    expect(
+      drawer.getByText("Broke · before the change and with Candidate 3"),
+    ).toBeInTheDocument();
+    expect(drawer.getByText("Before the change")).toBeInTheDocument();
+    expect(drawer.getByText("With Candidate 3")).toBeInTheDocument();
+    const before = within(
+      drawer.getByTestId(
+        "compare-call-te-fix-ready-archive-baseline-on-time-cancel-1",
+      ),
+    );
+    expect(before.getByText("Passed")).toBeInTheDocument();
+    const after = within(
+      drawer.getByTestId(
+        "compare-call-te-fix-ready-archive-c3-on-time-cancel-1",
+      ),
+    );
+    expect(after.getByText("Failed")).toBeInTheDocument();
+    expect(after.getByRole("link", { name: "Open call" })).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/runs/rt-fix-ready-archive/te-fix-ready-archive-c3?rowId=te-fix-ready-archive-c3-on-time-cancel-1",
+    );
+  });
+
+  it("says the results could not load, and why", async () => {
+    const real = axios.get.getMockImplementation();
+    axios.get.mockImplementation((url, config) =>
+      /\/calls\/$/.test(url)
+        ? Promise.reject({ statusCode: 500 })
+        : real(url, config),
+    );
+    try {
+      wrap(<FixScenariosTab fix={byId("fix-ready-archive")} />);
+      expect(
+        await screen.findByText("Could not load the scenario results"),
+      ).toBeInTheDocument();
+    } finally {
+      axios.get.mockImplementation(real);
+    }
   });
 });

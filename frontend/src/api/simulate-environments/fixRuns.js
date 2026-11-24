@@ -1,5 +1,4 @@
 import {
-  keepPreviousData,
   useMutation,
   useQueries,
   useQuery,
@@ -17,12 +16,12 @@ export const FIX_POLL_MS = 5000;
 
 export const FIX_RUNS_PAGE_SIZE = 25;
 
-// The page and size sit after the env id, so invalidating fixRunsKey(envId)
-// refreshes every page of that environment.
-export const fixRunsKey = (envId, page, pageSize) =>
+// The page, size and states sit after the env id, so invalidating
+// fixRunsKey(envId) refreshes every page and filter of that environment.
+export const fixRunsKey = (envId, page, pageSize, states = []) =>
   page == null
     ? ["agent-fix-runs", envId]
-    : ["agent-fix-runs", envId, page, pageSize];
+    : ["agent-fix-runs", envId, page, pageSize, states.join(",")];
 export const fixRunKey = (fixId) => ["agent-fix-run", fixId];
 
 // A finished fix is read again while its winner's evals grade: it ships once they have.
@@ -31,14 +30,15 @@ export const fixPollInterval = (fix) =>
     ? FIX_POLL_MS
     : false;
 
-// One server page, 1-based, as { results, count }.
+// One server page, 1-based, as { results, count }; with states, only the fixes
+// in them, counted alone.
 export async function listFixRuns(
   envId,
-  { page = 1, limit = FIX_RUNS_PAGE_SIZE } = {},
+  { page = 1, limit = FIX_RUNS_PAGE_SIZE, states = [] } = {},
 ) {
-  const res = await axios.get(endpoints.agentFixRuns.list(), {
-    params: { environment_id: envId, page, limit },
-  });
+  const params = { environment_id: envId, page, limit };
+  if (states.length) params.state = states.join(",");
+  const res = await axios.get(endpoints.agentFixRuns.list(), { params });
   return res.data;
 }
 
@@ -48,20 +48,26 @@ export async function getFixRun(fixId) {
 }
 
 // 0-based page in, like the other environment lists; count is the server's
-// total across pages. Polls while a fix on the visible page is live. Asks
-// nothing when the org lacks Fix my agent, since the list answers 402 there.
+// total across pages, of the given states when there are some. Polls while a
+// fix on the visible page is live. Asks nothing when the org lacks Fix my
+// agent, since the list answers 402 there.
 export function useEnvironmentFixRuns(
   envId,
-  { page = 0, pageSize = FIX_RUNS_PAGE_SIZE } = {},
+  { page = 0, pageSize = FIX_RUNS_PAGE_SIZE, states = [] } = {},
 ) {
   const { allowed, isLoading: capabilityLoading } = useFeatureAllowed(
     CAPABILITY.FIX_MY_AGENT,
   );
-  const { data, isLoading } = useQuery({
-    queryKey: fixRunsKey(envId, page, pageSize),
-    queryFn: () => listFixRuns(envId, { page: page + 1, limit: pageSize }),
+  const key = fixRunsKey(envId, page, pageSize, states);
+  const { data, isLoading, error } = useQuery({
+    queryKey: key,
+    queryFn: () =>
+      listFixRuns(envId, { page: page + 1, limit: pageSize, states }),
     enabled: allowed && !!envId,
-    placeholderData: keepPreviousData,
+    // Another page keeps the last one on screen while it loads; another
+    // filter never shows the last filter's fixes.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[4] === key[4] ? previous : undefined,
     refetchInterval: (query) =>
       (query.state.data?.results || []).some((f) =>
         FIX_LIVE_STATES.has(f.state),
@@ -74,6 +80,8 @@ export function useEnvironmentFixRuns(
     fixes,
     count: data?.count ?? 0,
     isLoading: capabilityLoading || isLoading,
+    // A page past the end answers 404: the list's page can step back.
+    error,
   };
 }
 
@@ -225,7 +233,7 @@ export function checkRunsForScenarios(fix, candidateId) {
   };
 }
 
-// The baseline's and one candidate's check-run results, for the Per scenario
+// The baseline's and one candidate's check-run results, for the Scenarios
 // tab: what the scenario did before the change and after it.
 export function useFixScenarioRows(fix, candidateId) {
   const { before: baseline, after: candidateRuns } = checkRunsForScenarios(
@@ -241,10 +249,14 @@ export function useFixScenarioRows(fix, candidateId) {
       staleTime: 1000 * 60 * 5,
     })),
   });
-  const rowsOf = (list) => list.flatMap((r) => r.data ?? []);
+  // Each call keeps the check run it came from, so it can link to its run.
+  const rowsOf = (list, from) =>
+    list.flatMap((r, i) =>
+      (r.data ?? []).map((task) => ({ ...task, checkRun: from[i] })),
+    );
   return {
-    before: rowsOf(results.slice(0, baseline.length)),
-    after: rowsOf(results.slice(baseline.length)),
+    before: rowsOf(results.slice(0, baseline.length), baseline),
+    after: rowsOf(results.slice(baseline.length), candidateRuns),
     run: candidateRuns[0],
     isLoading: results.some((r) => r.isLoading),
     isError: results.some((r) => r.isError),

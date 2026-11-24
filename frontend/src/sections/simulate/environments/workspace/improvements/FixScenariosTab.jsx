@@ -1,16 +1,29 @@
 import PropTypes from "prop-types";
 import { useState } from "react";
-import { useLocation } from "react-router-dom";
-import { Box, Link, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Stack,
+  Tab,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TableSortLabel,
+  Tooltip,
+  Typography,
+} from "@mui/material";
 
-import { RouterLink } from "src/routes/components";
-import { paths } from "src/routes/paths";
+import ContentSkeleton from "src/components/content-skeleton";
+import EmptyState from "src/components/empty-state";
+import ErrorState from "src/components/error-state";
+import { SegmentedTabs } from "src/components/tabs/tabs";
+import { ROW_HEIGHT, TABLE_HEADER_HEIGHT } from "src/theme/sizes";
 import { useFixScenarioRows } from "src/api/simulate-environments/fixRuns";
 
-import { BUILD_TONES } from "../../buildEnvironment/buildTones";
-
+import ScenarioCompare from "./ScenarioCompare";
 import { winnerOf } from "./fixRunView";
-import { OUTCOME_ORDER, scenarioOutcomes } from "./scenarioOutcomes";
+import { scenarioOutcomes, scenarioSetOf } from "./scenarioOutcomes";
 
 const OUTCOME = {
   fixed: "Fixed",
@@ -19,153 +32,179 @@ const OUTCOME = {
   same: "Unchanged",
 };
 
-const splitOf = (request, key) => {
-  if (request.held_back_scenario_keys?.includes(key)) return "Held back";
-  if (request.target_scenario_keys?.includes(key)) return "Target";
-  if (request.protected_scenario_keys?.includes(key)) return "Must-pass";
-  return "";
+// Colour only for the two results that change something.
+const OUTCOME_COLOR = {
+  broke: "status.danger.fg",
+  fixed: "status.success.fg",
 };
 
-// The design's per-scenario list (ScenarioOutcomes), fed from the check runs:
-// what the chosen trial did to each scenario against today's version.
+// The sets a scenario filters by. Must-pass has no filter: the read counts its
+// scenarios but does not list them.
+const SETS = [
+  {
+    id: "target",
+    label: "Target",
+    tip: "The failing scenarios the candidates were tuned on",
+  },
+  {
+    id: "held",
+    label: "Held back",
+    tip: "Never shown to the candidates: they check the change holds",
+  },
+];
+// A protected case is must-pass whatever else holds, so its row says so.
+const SET_LABEL = {
+  ...Object.fromEntries(SETS.map((s) => [s.id, s.label])),
+  protected: "Must-pass",
+};
+
+const trialsText = ({ passed, of }) =>
+  `${passed}/${of} ${of === 1 ? "trial" : "trials"}`;
+
+// The design's Scenarios tab (EpochScenarioResults), fed from the check runs:
+// what the chosen candidate did to each scenario against today's version, Broke
+// first. A row opens its calls before the change beside the candidate's.
 export default function FixScenariosTab({ fix, candidateId }) {
-  const location = useLocation();
   const picked = candidateId || winnerOf(fix)?.id;
-  const { before, after, run, isLoading } = useFixScenarioRows(fix, picked);
-  const [only, setOnly] = useState(null);
-  const rows = scenarioOutcomes(before, after);
-  const counts = Object.fromEntries(
-    OUTCOME_ORDER.map((k) => [k, rows.filter((r) => r.outcome === k).length]),
-  );
-  const shown = rows.filter((r) => !only || r.outcome === only);
-  const runHref = run
-    ? paths.dashboard.simulate.environments.execution(
-        fix.environment_id,
-        run.run_id,
-        run.test_execution_id,
-      )
-    : null;
-  if (isLoading) {
+  const candidate = (fix.candidates || []).find((c) => c.id === picked);
+  const { before, after, isLoading, isError } = useFixScenarioRows(fix, picked);
+  const [set, setSet] = useState("all");
+  const [dir, setDir] = useState("asc");
+  const [openKey, setOpenKey] = useState(null);
+
+  if (isLoading)
+    return <ContentSkeleton rows={5} label="Loading the results" />;
+  if (isError) {
     return (
-      <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
-        Loading the results…
-      </Typography>
+      <ErrorState
+        title="Could not load the scenario results"
+        detail="The calls of this epoch's check runs did not load. Reload the page to try again."
+      />
     );
   }
+
+  const rows = scenarioOutcomes(before, after).map((r) => ({
+    ...r,
+    set: scenarioSetOf(fix.request, r.key),
+  }));
+  if (!rows.length) {
+    return (
+      <EmptyState
+        variant="no-results"
+        icon="solar:list-check-linear"
+        title="No scenario to compare yet"
+        description="A scenario shows here once the current version and this candidate both have a measured call on it."
+      />
+    );
+  }
+  const counts = Object.fromEntries(
+    SETS.map((s) => [s.id, rows.filter((r) => r.set === s.id).length]),
+  );
+  const shown = rows.filter((r) => set === "all" || r.set === set);
+  // Sorted Broke first; the other way puts it last.
+  if (dir === "desc") shown.reverse();
+  const name = candidate ? `Candidate ${candidate.attempt}` : "the candidate";
+  const opened = rows.find((r) => r.key === openKey) || null;
+
   return (
-    <Box
-      sx={{ border: "1px solid", borderColor: "divider", borderRadius: "8px" }}
-    >
-      <Box
-        sx={{
-          px: 2,
-          py: 1.25,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Stack
-          direction="row"
-          alignItems="center"
-          spacing={0.75}
-          flexWrap="wrap"
-          rowGap={0.75}
+    <Box>
+      <Stack direction="row" alignItems="center" sx={{ mb: 1 }}>
+        <SegmentedTabs
+          value={set}
+          onChange={(_, v) => setSet(v)}
+          aria-label="Scenario set"
         >
-          {OUTCOME_ORDER.map((k) => {
-            const on = only === k;
-            return (
-              <Box
-                key={k}
-                role="button"
-                tabIndex={0}
-                aria-pressed={on}
-                onClick={() => setOnly(on ? null : k)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ")
-                    setOnly(on ? null : k);
-                }}
-                sx={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  height: 22,
-                  px: 0.75,
-                  borderRadius: 0.5,
-                  border: "1px solid",
-                  borderColor: on ? "text.primary" : "divider",
-                  bgcolor: on ? "action.selected" : "transparent",
-                  color: "text.primary",
-                  typography: "s3",
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  userSelect: "none",
-                  transition: "background-color 120ms, border-color 120ms",
-                  "&:hover": {
-                    bgcolor: on ? "action.selected" : "action.hover",
-                  },
-                }}
-              >
-                {`${OUTCOME[k]} ${counts[k]}`}
-              </Box>
-            );
-          })}
-        </Stack>
-      </Box>
-      <Stack
-        divider={
-          <Box sx={{ borderBottom: "1px solid", borderColor: "divider" }} />
-        }
-      >
-        {shown.map((r) => (
-          <Stack
-            key={r.key}
-            data-testid={`scenario-${r.key}`}
-            direction="row"
-            alignItems="center"
-            spacing={1.5}
-            sx={{ px: 2, py: 0.875 }}
-          >
-            <Typography noWrap sx={{ typography: "s2", flex: 1, minWidth: 0 }}>
-              {r.name}
-            </Typography>
-            <Typography
-              sx={{
-                typography: "s3",
-                color: "text.tertiary",
-                width: 70,
-                flexShrink: 0,
-              }}
-            >
-              {splitOf(fix.request, r.key)}
-            </Typography>
-            <Typography
-              sx={{
-                typography: "s3",
-                fontWeight: 600,
-                width: 84,
-                flexShrink: 0,
-                color:
-                  r.outcome === "fixed"
-                    ? BUILD_TONES.green
-                    : r.outcome === "broke"
-                      ? BUILD_TONES.red
-                      : "text.secondary",
-              }}
-            >
-              {OUTCOME[r.outcome]}
-            </Typography>
-            {runHref && (
-              <Link
-                component={RouterLink}
-                href={runHref}
-                state={{ backTo: location.pathname }}
-                sx={{ typography: "s3", flexShrink: 0 }}
-              >
-                Open run
-              </Link>
-            )}
-          </Stack>
-        ))}
+          <Tab value="all" label={`All ${rows.length}`} />
+          {SETS.filter((s) => counts[s.id] > 0).map((s) => (
+            <Tab
+              key={s.id}
+              value={s.id}
+              label={
+                <Tooltip arrow describeChild title={s.tip}>
+                  <span>{`${s.label} ${counts[s.id]}`}</span>
+                </Tooltip>
+              }
+            />
+          ))}
+        </SegmentedTabs>
       </Stack>
+      <Table size="small" aria-label="Scenarios">
+        <TableHead>
+          <TableRow sx={{ height: TABLE_HEADER_HEIGHT.default }}>
+            <TableCell>Scenario</TableCell>
+            <TableCell sx={{ width: 120 }}>Set</TableCell>
+            <TableCell sx={{ width: 200 }} sortDirection={dir}>
+              <Tooltip
+                arrow
+                describeChild
+                title={`What ${name} did to this scenario, against the agent before the change`}
+              >
+                <TableSortLabel
+                  active
+                  direction={dir}
+                  onClick={() => setDir((d) => (d === "asc" ? "desc" : "asc"))}
+                >
+                  Result
+                </TableSortLabel>
+              </Tooltip>
+            </TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {shown.map((r) => (
+            <TableRow
+              key={r.key}
+              hover
+              tabIndex={0}
+              data-testid={`scenario-${r.key}`}
+              onClick={() => setOpenKey(r.key)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setOpenKey(r.key);
+                }
+              }}
+              sx={{ height: ROW_HEIGHT.default, cursor: "pointer" }}
+            >
+              <TableCell>
+                <Typography sx={{ typography: "s2" }}>{r.name}</Typography>
+              </TableCell>
+              <TableCell>
+                <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                  {SET_LABEL[r.set] || ""}
+                </Typography>
+              </TableCell>
+              <TableCell>
+                <Stack direction="row" alignItems="baseline" spacing={0.75}>
+                  <Typography
+                    sx={{
+                      typography: "s2",
+                      fontWeight: 500,
+                      color: OUTCOME_COLOR[r.outcome] || "text.secondary",
+                    }}
+                  >
+                    {OUTCOME[r.outcome]}
+                  </Typography>
+                  <Typography sx={{ typography: "s3", color: "text.tertiary" }}>
+                    {trialsText(r.afterTrials)}
+                  </Typography>
+                </Stack>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+      <ScenarioCompare
+        row={opened}
+        heading={
+          opened
+            ? `${OUTCOME[opened.outcome]} · before the change and with ${name}`
+            : ""
+        }
+        afterTitle={`With ${name}`}
+        envId={fix.environment_id}
+        onClose={() => setOpenKey(null)}
+      />
     </Box>
   );
 }

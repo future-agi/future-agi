@@ -14,7 +14,8 @@ vi.mock("react-router-dom", async (importOriginal) => ({
 // DataGrid does not lay out rows in jsdom; render the real column cells in a
 // plain table instead, so the assertions are about our columns.
 vi.mock("src/components/data-table", () => {
-  function DataTable({ columns, data, onRowClick, emptyMessage }) {
+  function DataTable({ columns, data, onRowClick, emptyMessage, isLoading }) {
+    if (isLoading) return <p>Loading rows</p>;
     if (!data.length) return <p>{emptyMessage}</p>;
     return (
       <table>
@@ -39,19 +40,41 @@ vi.mock("src/components/data-table", () => {
     data: PropTypes.array,
     onRowClick: PropTypes.func,
     emptyMessage: PropTypes.string,
+    isLoading: PropTypes.bool,
   };
   return { DataTable };
 });
 
-// One server page of the fixtures for the 0-based page the panel asks for.
+// The server, as the list sees it: the fixes in the asked states, one 0-based
+// page of them and their total, and 404 for a page past the end. `asked`
+// records the states of each read; `loading` holds a read in flight.
 let allFixes;
+let loading = false;
+const asked = [];
 vi.mock("src/api/simulate-environments/fixRuns", () => ({
   FIX_RUNS_PAGE_SIZE: 25,
-  useEnvironmentFixRuns: (_envId, { page, pageSize }) => ({
-    fixes: allFixes.slice(page * pageSize, (page + 1) * pageSize),
-    count: allFixes.length,
-    isLoading: false,
-  }),
+  FIX_LIVE_STATES: new Set(["queued", "running", "stopping"]),
+  useEnvironmentFixRuns: (_envId, { page, pageSize, states = [] } = {}) => {
+    asked.push(states.join(","));
+    if (loading) return { fixes: [], count: 0, isLoading: true, error: null };
+    const matched = allFixes.filter(
+      (f) => !states.length || states.includes(f.state),
+    );
+    if (page > 0 && page * pageSize >= matched.length) {
+      return {
+        fixes: [],
+        count: 0,
+        isLoading: false,
+        error: { statusCode: 404 },
+      };
+    }
+    return {
+      fixes: matched.slice(page * pageSize, (page + 1) * pageSize),
+      count: matched.length,
+      isLoading: false,
+      error: null,
+    };
+  },
 }));
 
 const { default: ImprovementsPanel } = await import("../ImprovementsPanel");
@@ -61,7 +84,97 @@ const env = { id: "env-1", name: "new env" };
 describe("ImprovementsPanel", () => {
   beforeEach(() => {
     navigate.mockReset();
+    asked.length = 0;
+    loading = false;
     allFixes = FIX_RUN_FIXTURES.map((f) => ({ ...f, environment_id: "env-1" }));
+  });
+
+  const chooseStatus = async (user, label) => {
+    await user.click(screen.getByRole("combobox", { name: "Status" }));
+    await user.click(await screen.findByRole("option", { name: label }));
+  };
+
+  const stoppedFixes = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      ...FIX_RUN_FIXTURES.find((f) => f.id === "fix-stopped"),
+      id: `stopped-${i}`,
+      number: 100 + i,
+      environment_id: "env-1",
+    }));
+
+  it("asks the server for the status's states, and pages its total", async () => {
+    const user = userEvent.setup();
+    allFixes = stoppedFixes(30).concat(
+      allFixes.filter(
+        (f) => f.id === "fix-ready-archive" || f.id === "fix-failed",
+      ),
+    );
+    render(<ImprovementsPanel env={env} />);
+    expect(asked.at(-1)).toBe("");
+    expect(screen.getByText("1–25 of 32")).toBeInTheDocument();
+
+    await chooseStatus(user, "Ready for review");
+    expect(asked.at(-1)).toBe("ready");
+    expect(screen.getAllByTestId(/^row-/).map((r) => r.dataset.testid)).toEqual(
+      ["row-fix-ready-archive"],
+    );
+    expect(screen.getByText("1–1 of 1")).toBeInTheDocument();
+
+    await chooseStatus(user, "Stopped");
+    expect(screen.getAllByTestId(/^row-/)).toHaveLength(25);
+    expect(screen.getByText("1–25 of 30")).toBeInTheDocument();
+  });
+
+  it("steps back to a page that exists when a poll shrinks the count", async () => {
+    const user = userEvent.setup();
+    allFixes = stoppedFixes(30);
+    const { rerender } = render(<ImprovementsPanel env={env} />);
+    await chooseStatus(user, "Stopped");
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(screen.getByText("26–30 of 30")).toBeInTheDocument();
+
+    // Ten of them left the status: the second page is past the end now.
+    allFixes = stoppedFixes(20);
+    rerender(<ImprovementsPanel env={env} />);
+    expect(await screen.findByText("1–20 of 20")).toBeInTheDocument();
+    expect(screen.queryByText(/has the status/)).toBeNull();
+  });
+
+  it("reads queued, running and stopping as one Running", async () => {
+    const user = userEvent.setup();
+    render(<ImprovementsPanel env={env} />);
+    await chooseStatus(user, "Running");
+    expect(asked.at(-1)).toBe("queued,running,stopping");
+    const shown = screen.getAllByTestId(/^row-/).map((r) => r.dataset.testid);
+    expect(shown).toEqual(
+      expect.arrayContaining([
+        "row-fix-queued",
+        "row-fix-search",
+        "row-fix-stopping",
+      ]),
+    );
+    expect(shown).not.toContain("row-fix-ready-archive");
+  });
+
+  it("says why the list is empty when no epoch has the status", async () => {
+    const user = userEvent.setup();
+    allFixes = allFixes.filter((f) => f.state !== "too_few_cases");
+    render(<ImprovementsPanel env={env} />);
+    await chooseStatus(user, "Too few failing scenarios");
+    expect(
+      screen.getByText(
+        "No epoch in this environment has the status “Too few failing scenarios”. Choose All statuses to see every epoch.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing is missing while the filtered page is still loading", async () => {
+    const user = userEvent.setup();
+    render(<ImprovementsPanel env={env} />);
+    loading = true;
+    await chooseStatus(user, "Stopped");
+    expect(screen.getByText("Loading rows")).toBeInTheDocument();
+    expect(screen.queryByText(/has the status/)).toBeNull();
   });
 
   it("shows a fix's name, agent, state, held-back result and cost", () => {

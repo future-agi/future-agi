@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 
 import { mapCallRow } from "src/api/simulate-environments/runCalls";
 
-import { heldBackTally, scenarioOutcomes } from "../scenarioOutcomes";
+import {
+  heldBackTally,
+  scenarioOutcomes,
+  scenarioSetOf,
+} from "../scenarioOutcomes";
 
 const task = (key, status, name = key) => ({
   sourceScenarioKey: key,
@@ -54,7 +58,7 @@ describe("scenarioOutcomes", () => {
     expect(mixed[0].outcome).toBe("broke");
   });
 
-  it("orders fixed, broke, still failing, then unchanged", () => {
+  it("orders broke, fixed, still failing, then unchanged", () => {
     const rows = scenarioOutcomes(
       [
         task("d", "passed"),
@@ -70,11 +74,21 @@ describe("scenarioOutcomes", () => {
       ],
     );
     expect(rows.map((r) => r.outcome)).toEqual([
-      "fixed",
       "broke",
+      "fixed",
       "still-failing",
       "same",
     ]);
+  });
+
+  it("keeps every call of a scenario for the compare, and counts the measured trials", () => {
+    const [row] = scenarioOutcomes(
+      [task("a", "failed"), task("a", "unmeasured")],
+      [task("a", "passed"), task("a", "failed"), task("a", "unmeasured")],
+    );
+    expect(row.beforeCalls).toHaveLength(2);
+    expect(row.afterCalls).toHaveLength(3);
+    expect(row.afterTrials).toEqual({ passed: 1, of: 2 });
   });
 
   it("reads the judge's outcome, so a call a platform eval made inconclusive still counts", () => {
@@ -92,6 +106,19 @@ describe("scenarioOutcomes", () => {
         [row("inconclusive", "passed")],
       ).map((r) => [r.key, r.outcome]),
     ).toEqual([["late-cancel", "fixed"]]);
+  });
+
+  it("puts each scenario in the set the request names, never a guessed must-pass", () => {
+    const request = {
+      target_scenario_keys: ["t"],
+      held_back_scenario_keys: ["h"],
+      protected_scenario_keys: ["p"],
+    };
+    expect(scenarioSetOf(request, "t")).toBe("target");
+    expect(scenarioSetOf(request, "h")).toBe("held");
+    expect(scenarioSetOf(request, "p")).toBe("protected");
+    // The read lists no must-pass scenarios, so any other case is in no set.
+    expect(scenarioSetOf(request, "x")).toBeNull();
   });
 
   it("counts a held-back scenario the winner never measured as not fixed", () => {

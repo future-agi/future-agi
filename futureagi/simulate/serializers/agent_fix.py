@@ -95,6 +95,16 @@ class AgentFixListQuerySerializer(serializers.Serializer):
     # Named as ExtendedPageNumberPagination reads them.
     page = serializers.IntegerField(required=False, min_value=1)
     limit = serializers.IntegerField(required=False, min_value=1, max_value=100)
+    state = serializers.CharField(
+        required=False, help_text="Comma-separated fix states to list."
+    )
+
+    def validate_state(self, value):
+        states = [one.strip() for one in value.split(",") if one.strip()]
+        unknown = sorted(set(states) - set(AgentFixRun.State.values))
+        if unknown:
+            raise serializers.ValidationError(f"Unknown state: {', '.join(unknown)}")
+        return states
 
 
 class AgentFixRequestSerializer(serializers.Serializer):

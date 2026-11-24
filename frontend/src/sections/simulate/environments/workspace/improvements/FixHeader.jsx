@@ -19,8 +19,9 @@ import {
   useStopFixRun,
 } from "src/api/simulate-environments/fixRuns";
 
+import EpochMoreMenu from "./EpochMoreMenu";
 import FixStatusChip from "./FixStatusChip";
-import { STEP_LABEL, fixName, formatCredits, identityLine } from "./fixRunView";
+import { fixName, formatCredits, identityLine, stageLabel } from "./fixRunView";
 
 const STOPPABLE = new Set(["queued", "running"]);
 
@@ -156,12 +157,14 @@ export default function FixHeader({ fix, envId, actions }) {
             {fixName(fix)}
           </Typography>
           <FixStatusChip state={fix.state} />
-          {STEP_LABEL[fix.step] && STOPPABLE.has(fix.state) && (
+          {/* Queued and Stopping are the status itself; a running epoch says its stage. */}
+          {fix.state === "running" && stageLabel(fix) && (
             <Typography
               noWrap
+              data-testid="epoch-stage"
               sx={{ typography: "s3", color: "text.tertiary" }}
             >
-              {STEP_LABEL[fix.step]}
+              {stageLabel(fix)}
             </Typography>
           )}
         </Stack>
@@ -171,6 +174,7 @@ export default function FixHeader({ fix, envId, actions }) {
       </Box>
       <Stack direction="row" spacing={1} alignItems="center">
         <StopControl fix={fix} />
+        <EpochMoreMenu fix={fix} />
         {actions}
       </Stack>
     </Stack>

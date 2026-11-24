@@ -128,6 +128,41 @@ describe("fix-run list", () => {
     expect(result.current.count).toBe(FIX_RUN_FIXTURES.length);
   });
 
+  it("asks the server for the filter's states, one page at a time", async () => {
+    const live = ["queued", "running", "stopping"];
+    const { result } = renderHook(
+      () => useEnvironmentFixRuns("env-1", { states: live }),
+      { wrapper: makeWrapper() },
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(axios.get).toHaveBeenCalledWith("/simulate/api/agent-fix-runs/", {
+      params: {
+        environment_id: "env-1",
+        page: 1,
+        limit: 25,
+        state: "queued,running,stopping",
+      },
+    });
+    const expected = FIX_RUN_FIXTURES.filter((f) => live.includes(f.state));
+    expect(result.current.count).toBe(expected.length);
+    expect(result.current.fixes.map((f) => f.id).sort()).toEqual(
+      expected.map((f) => f.id).sort(),
+    );
+  });
+
+  it("never shows the last filter's fixes while another filter loads", async () => {
+    const { result, rerender } = renderHook(
+      ({ states }) => useEnvironmentFixRuns("env-1", { states }),
+      { wrapper: makeWrapper(), initialProps: { states: ["ready"] } },
+    );
+    await waitFor(() => expect(result.current.fixes.length).toBeGreaterThan(0));
+    rerender({ states: ["failed"] });
+    expect(result.current.fixes).toEqual([]);
+    await waitFor(() =>
+      expect(result.current.fixes.map((f) => f.state)).toEqual(["failed"]),
+    );
+  });
+
   it("asks nothing when the org lacks Fix my agent", async () => {
     capability.allowed = false;
     const { result } = renderHook(() => useEnvironmentFixRuns("env-1"), {
@@ -224,7 +259,7 @@ describe("fixErrorOf", () => {
   });
 });
 
-describe("Per scenario data", () => {
+describe("Scenarios tab data", () => {
   it("counts every fix-level check run as baseline and reads every page of calls", async () => {
     const fix = structuredClone(fixtureFixRun("fix-ready-archive"));
     fix.check_runs = [

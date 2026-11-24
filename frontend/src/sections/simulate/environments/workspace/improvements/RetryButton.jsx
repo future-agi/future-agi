@@ -10,8 +10,11 @@ import {
   useRetryFixRun,
 } from "src/api/simulate-environments/fixRuns";
 
+import { fixName } from "./fixRunView";
+
 // A failed fix the backend allows to start again: the new fix takes the same
-// request and reuses the check runs this one finished, then opens.
+// request and reuses the check runs this one finished, then opens. It names the
+// epoch it retries, here and on the issue page.
 export default function RetryButton({ fix }) {
   const navigate = useNavigate();
   const retry = useRetryFixRun(fix);
@@ -40,7 +43,7 @@ export default function RetryButton({ fix }) {
         })
       }
     >
-      Retry
+      {`Retry ${fixName(fix)}`}
     </Button>
   );
 }

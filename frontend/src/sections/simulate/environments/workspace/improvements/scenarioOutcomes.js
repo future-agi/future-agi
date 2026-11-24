@@ -3,16 +3,36 @@
 // of it passed; unmeasured results are left out. It reads the judge's result,
 // the one the verdict uses: a failed platform eval makes a call's outcome
 // inconclusive without changing whether the judge passed it.
-const ORDER = ["fixed", "broke", "still-failing", "same"];
+// Broke first: it is what must be read before anything ships.
+const ORDER = ["broke", "fixed", "still-failing", "same"];
+
+const measured = (t) =>
+  t.harnessOutcomeStatus === "passed" || t.harnessOutcomeStatus === "failed";
+
+// Every call of each scenario, with how many of its measured calls passed.
+function byScenario(tasks) {
+  const byKey = new Map();
+  tasks.forEach((t) => {
+    const prev = byKey.get(t.sourceScenarioKey) || {
+      name: t.sourceScenario,
+      calls: [],
+      measured: 0,
+      passing: 0,
+    };
+    prev.calls.push(t);
+    if (measured(t)) {
+      prev.measured += 1;
+      if (t.harnessOutcomeStatus === "passed") prev.passing += 1;
+    }
+    byKey.set(t.sourceScenarioKey, prev);
+  });
+  return byKey;
+}
 
 function verdicts(tasks) {
   const byKey = new Map();
-  tasks.forEach((t) => {
-    const status = t.harnessOutcomeStatus;
-    if (status !== "passed" && status !== "failed") return;
-    const prev = byKey.get(t.sourceScenarioKey);
-    const passed = status === "passed" && (prev ? prev.passed : true);
-    byKey.set(t.sourceScenarioKey, { name: t.sourceScenario, passed });
+  byScenario(tasks).forEach((s, key) => {
+    if (s.measured) byKey.set(key, { ...s, passed: s.passing === s.measured });
   });
   return byKey;
 }
@@ -37,6 +57,10 @@ export function scenarioOutcomes(beforeTasks, afterTasks) {
       before: b.passed ? "passed" : "failed",
       after: a.passed ? "passed" : "failed",
       outcome: outcomeOf(b.passed, a.passed),
+      // The calls on each side, for the before-and-after compare.
+      beforeCalls: b.calls,
+      afterCalls: a.calls,
+      afterTrials: { passed: a.passing, of: a.measured },
     });
   });
   return rows.sort(
@@ -44,7 +68,15 @@ export function scenarioOutcomes(beforeTasks, afterTasks) {
   );
 }
 
-export const OUTCOME_ORDER = ORDER;
+// The set a scenario was in, as the request names it. The read has no list of
+// the must-pass scenarios, only their count, so a protected case is the one
+// must-pass scenario it can name; the rest are in no set here.
+export function scenarioSetOf(request, key) {
+  if (request?.held_back_scenario_keys?.includes(key)) return "held";
+  if (request?.target_scenario_keys?.includes(key)) return "target";
+  if (request?.protected_scenario_keys?.includes(key)) return "protected";
+  return null;
+}
 
 // Held-back scenarios that failed before the change, and how many of them the
 // winner fixed. A failing one the winner never measured counts as not fixed,

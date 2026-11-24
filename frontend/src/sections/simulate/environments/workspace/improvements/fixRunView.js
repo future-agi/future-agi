@@ -42,26 +42,35 @@ const SURFACE_LABEL = {
 const MUST_PASS_RULE =
   "A case that passed every time before must not drop beyond normal noise. A case that fails every run is run again to confirm before it counts.";
 
-// Only a fix whose run had too few failing cases has the first step.
-const VARIATIONS_STEP = { id: "variations", label: "Variations" };
-const STEPS = [
-  { id: "reproduce", label: "Reproduce" },
-  { id: "search", label: "Search" },
-  { id: "verify", label: "Verify" },
-  { id: "done", label: "Ready for review" },
-];
-
-// What a running fix is doing, for the header: the step, never the engine's own stage name.
-export const STEP_LABEL = {
+// The stages a running epoch goes through, as the design names them, one name
+// each on the epoch page and the issue page: never the engine's own stage name.
+// Only a fix whose run had too few failing cases has the first one.
+export const STAGE_LABEL = {
   variations: "Writing variations",
   reproduce: "Reproducing",
-  search: "Searching",
-  verify: "Verifying",
+  diagnose: "Diagnosing",
+  search: "Proposing",
+  verify: "Checking",
 };
+const stage = (id) => ({ id, label: STAGE_LABEL[id] });
+const VARIATIONS_STAGE = stage("variations");
+const STAGES = ["reproduce", "diagnose", "search", "verify"].map(stage);
+
+// The engine has no diagnose step: it diagnoses as its search starts. A search
+// with no diagnosis and no candidate yet is still diagnosing; the report's
+// diagnosis is optional, so a candidate means it has moved on. The issue job's
+// summary of an epoch carries neither, so it reads as the search.
+export function stageOf(fix) {
+  if (fix.step !== "search" || fix.summary) return fix.step;
+  return fix.diagnosis || (fix.candidates || []).length ? "search" : "diagnose";
+}
+
+// The stage a running epoch is in, beside its status.
+export const stageLabel = (fix) => STAGE_LABEL[stageOf(fix)] || null;
 
 export const pct = (x) => Math.round(x * 100);
 export const pts = (rate) => Math.round((rate[1] - rate[0]) * 100);
-// A rate pools every repeat, so it is not a count of scenarios: Per scenario has those.
+// A rate pools every repeat, so it is not a count of scenarios: the Scenarios tab has those.
 const rateChange = ([before, after]) => `${pct(before)}% → ${pct(after)}%`;
 
 export const formatCredits = (n) =>
@@ -325,6 +334,61 @@ function partDetail(part, request, numbers) {
 
 const PART_NUMBERS = { "reply latency": "latency", "agent cost": "cost" };
 
+const CEILING_CARDS = [
+  { id: "cost", part: "agent cost", label: "Cost / conversation" },
+  { id: "latency", part: "reply latency", label: "Reply time" },
+];
+
+const signedPct = (n) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(n)}%`;
+
+// The winner's cost and reply time against the current version's, from the
+// numbers its ceilings check was decided on. A read without that check, or
+// without the part, has no card; a part it could not measure says why.
+export function ceilingCards(fix) {
+  const tier = (winnerOf(fix)?.verdict?.tiers || []).find(
+    (t) => t.name === "ceilings",
+  );
+  if (!tier) return [];
+  return CEILING_CARDS.flatMap(({ id, part: name, label }) => {
+    const part = (tier.parts || []).find((p) => p.name === name);
+    if (!part) return [];
+    const numbers = tier[PART_NUMBERS[name]];
+    if (part.status === "skipped") {
+      return [
+        {
+          id,
+          label,
+          value: "Not measured",
+          note: sentence(unknownWhy(part, fix.request)),
+        },
+      ];
+    }
+    if (numbers?.candidate == null || !numbers?.baseline) {
+      return [
+        {
+          id,
+          label,
+          value:
+            part.status === "failed" ? "Over the limit" : "Within the limit",
+          note: "against the current version",
+        },
+      ];
+    }
+    const format = CEILING_FORMAT[name];
+    const change = Math.round(
+      ((numbers.candidate - numbers.baseline) / numbers.baseline) * 100,
+    );
+    return [
+      {
+        id,
+        label,
+        value: signedPct(change),
+        note: `${format(numbers.candidate)} against ${format(numbers.baseline)} on the current version`,
+      },
+    ];
+  });
+}
+
 function describePart(part, request, tier) {
   const label = PART_LABELS[part.name] || part.name;
   if (part.status !== "skipped")
@@ -556,6 +620,140 @@ export function noSafeNumbers(fix) {
   };
 }
 
+// The Candidates tab, grouped as the design groups it: the winner, the ones that
+// passed and were not picked, then each check that rejected one, the furthest
+// check first, since a candidate that got that far was the closest call. A
+// verdict from before checks were recorded has no check to group by.
+const GROUP_ORDER = [
+  "winner",
+  "finalist",
+  "must-pass",
+  "held-back",
+  "repeats",
+  "target",
+  "ceilings",
+  "model-lock",
+];
+// A check this list does not know sorts after the known ones.
+const LAST_GROUPS = { static: 1, rejected: 2, pending: 3 };
+const OPEN_GROUPS = new Set(["winner", "finalist", "must-pass"]);
+
+const groupRank = (id) => {
+  const at = GROUP_ORDER.indexOf(id);
+  return at >= 0 ? at : GROUP_ORDER.length + (LAST_GROUPS[id] ?? 0);
+};
+
+const failedTierOf = (c) =>
+  (c.verdict?.tiers || []).find((t) => t.status === "failed") || null;
+
+const groupOf = (c) =>
+  ["winner", "finalist", "pending"].includes(c.outcome)
+    ? c.outcome
+    : failedTierOf(c)?.name || "rejected";
+
+const lowerFirst = (s) => `${s.charAt(0).toLowerCase()}${s.slice(1)}`;
+
+function groupLabel(id, fix, live) {
+  if (["winner", "finalist", "pending"].includes(id))
+    return outcomeLabel(id, live);
+  if (id === "rejected") return "Rejected";
+  return `Rejected at ${lowerFirst(checkLabel(id, fix.request))}`;
+}
+
+// What stopped a candidate, in the words its verdict's own numbers give.
+function candidateResult(c, group, fix, live) {
+  if (["winner", "finalist", "pending"].includes(group))
+    return { result: outcomeLabel(c.outcome, live), broke: false };
+  if (group === "rejected")
+    return { result: oldVerdictLine(c.verdict), broke: false };
+  if (group === "must-pass") {
+    const n = (c.verdict?.must_pass_regressions || []).length;
+    return {
+      result: n
+        ? `Broke ${n} must-pass ${n === 1 ? "scenario" : "scenarios"}`
+        : "Broke a must-pass scenario",
+      broke: true,
+    };
+  }
+  return {
+    result: tierLine(failedTierOf(c), c.verdict, fix.plan, fix.request),
+    broke: false,
+  };
+}
+
+export function candidateGroups(fix) {
+  const live = FIX_LIVE_STATES.has(fix.state);
+  const hasWinner = !!winnerOf(fix);
+  const groups = new Map();
+  (fix.candidates || []).forEach((c) => {
+    const id = groupOf(c);
+    const target = c.verdict?.target_pass_rate;
+    const held = c.verdict?.held_back_pass_rate;
+    groups.set(id, [
+      ...(groups.get(id) || []),
+      {
+        id: c.id,
+        attempt: c.attempt,
+        tried: c.summary || "",
+        // The candidate's own check run, for its Open run.
+        run: c.check_runs?.[0] || null,
+        target: Array.isArray(target)
+          ? { score: pct(target[1]), delta: pts(target) }
+          : null,
+        held: Array.isArray(held) ? rateChange(held) : null,
+        ...candidateResult(c, id, fix, live),
+      },
+    ]);
+  });
+  return [...groups.entries()]
+    .sort(([a], [b]) => groupRank(a) - groupRank(b))
+    .map(([id, rows]) => ({
+      id,
+      label: groupLabel(id, fix, live),
+      // With no winner, the closest calls were stopped at held back.
+      open: OPEN_GROUPS.has(id) || (!hasWinner && id === "held-back"),
+      rows: rows.sort(
+        (a, b) =>
+          (b.target?.score ?? -1) - (a.target?.score ?? -1) ||
+          a.attempt - b.attempt,
+      ),
+    }));
+}
+
+// The ending card of an epoch that shipped nothing: its badge, red only when a
+// candidate broke a must-pass scenario.
+export const endingLabel = (fix) =>
+  `${fixName(fix)} · ${STATE_LABEL[fix.state] || fix.state}`;
+
+export const endingBroke = (fix) =>
+  fix.state === "no_improvement" &&
+  (fix.candidates || []).some(
+    (c) => c.outcome === "rejected" && failedTierOf(c)?.name === "must-pass",
+  );
+
+// The ending's one sentence. The badge already names a no-safe ending, so its
+// headline drops the name.
+export function endingSentence(fix) {
+  const text = headline(fix);
+  if (fix.state !== "no_improvement" || !text) return text;
+  return sentence(text.replace(/^No safe improvement: /, ""));
+}
+
+const SPENT_ON = {
+  stopped: " before it stopped",
+  failed: " before it stopped",
+  out_of_budget: " before it stopped",
+  not_reproduced: " on this check",
+  too_few_cases: " reproducing the failing scenarios",
+};
+
+// What the ending spent. An epoch that never started, or spent nothing, says
+// nothing about it.
+export const endingSpent = (fix) =>
+  fix.started_at && fix.spent_credits
+    ? `Spent ${formatCredits(fix.spent_credits)}${SPENT_ON[fix.state] || ""}.`
+    : null;
+
 export const tierIcon = (status) =>
   ({
     passed: "solar:check-circle-linear",
@@ -605,8 +803,27 @@ function variationLines(fix) {
   ];
 }
 
-function stepLines(id, fix) {
-  const { plan, diagnosis } = fix;
+// What the diagnosis found: every cause, the first one leading. Before it has
+// run, what the stage does.
+export const diagnosisCauses = (fix) =>
+  (fix.diagnosis?.causes || []).map(sentence);
+
+function diagnoseLines(fix, state) {
+  if (!fix.diagnosis) {
+    return [
+      state === "done"
+        ? "No diagnosis was recorded, so the candidates start from the failures"
+        : "Reads the failures to find what to change",
+    ];
+  }
+  const [first, ...rest] = diagnosisCauses(fix);
+  if (!first)
+    return ["Named no single cause, so the candidates start from the failures"];
+  return [`Starts from its diagnosis: ${first}`, ...rest];
+}
+
+function stepLines(id, fix, state) {
+  const { plan } = fix;
   const candidates = fix.candidates || [];
   if (id === "variations") return variationLines(fix);
   if (id === "reproduce") {
@@ -619,38 +836,43 @@ function stepLines(id, fix) {
         : null,
     ].filter(Boolean);
   }
+  if (id === "diagnose") return diagnoseLines(fix, state);
   if (id === "search") {
-    const count = plan ? searchCount(plan, candidates) : null;
-    const cause = diagnosis?.causes?.[0]
-      ? `Starts from its diagnosis: ${diagnosis.causes[0]}`
-      : null;
-    return [count, cause].filter(Boolean);
+    if (state === "todo")
+      return [
+        "Tries changes one at a time; stops early once candidates stop beating the best",
+      ];
+    return plan ? [searchCount(plan, candidates)] : [];
   }
-  if (id === "verify") {
-    if (!plan) return [];
-    // Must-pass holds every other scenario too, so it is larger than the
-    // protected count the launch form showed; name both.
-    const kept = plan.protected
-      ? `, including the ${plan.protected} you protected`
-      : "";
-    return [
-      `${plan.held_back} held-back scenarios it never saw and ${plan.must_pass} must-pass scenarios${kept}`,
-    ];
-  }
+  if (!plan) return [];
+  // Must-pass holds every other scenario too, so it is larger than the
+  // protected count the launch form showed; name both.
+  const kept = plan.protected
+    ? `, including the ${plan.protected} you protected`
+    : "";
+  const held = plan.held_back
+    ? `${plan.held_back} held-back scenarios it never saw and `
+    : "";
   return [
-    "The best candidate comes back for review. Nothing changes until you ship it.",
+    `${state === "done" ? "Checked" : "Checks"} the best candidate on ${held}${plan.must_pass} must-pass scenarios${kept}`,
   ];
 }
 
+// One row per stage, the current one running. Waiting to start reads Queued in
+// the first stage's place, and a stop in progress reads Stopping on the stage
+// it interrupts.
 export function stepRows(fix) {
-  const steps = hasVariations(fix) ? [VARIATIONS_STEP, ...STEPS] : STEPS;
-  const current = steps.findIndex((s) => s.id === fix.step);
+  const stages = hasVariations(fix) ? [VARIATIONS_STAGE, ...STAGES] : STAGES;
+  const current = stages.findIndex((s) => s.id === stageOf(fix));
   const finished = fix.step === "done";
-  return steps.map((s, i) => {
+  return stages.map((s, i) => {
     let state = "todo";
     if (finished || i < current) state = "done";
     else if (i === current) state = "now";
-    return { ...s, state, lines: stepLines(s.id, fix) };
+    let { label } = s;
+    if (state === "now" && fix.state === "stopping") label = "Stopping";
+    else if (i === 0 && fix.state === "queued") label = "Queued";
+    return { ...s, label, state, lines: stepLines(s.id, fix, state) };
   });
 }
 

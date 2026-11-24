@@ -81,7 +81,10 @@ export function createFixRunsAxios(actual) {
   const get = vi.fn((url, config = {}) => {
     const params = config.params || {};
     if (url === fixRuns.list()) {
-      const all = fixtureFixRuns(params.environment_id);
+      const states = params.state ? params.state.split(",") : null;
+      const all = fixtureFixRuns(params.environment_id).filter(
+        (f) => !states || states.includes(f.state),
+      );
       const page = params.page ?? 1;
       const limit = params.limit ?? 25;
       return ok({
@@ -107,7 +110,8 @@ export function createFixRunsAxios(actual) {
     const retry = RETRY.exec(url);
     if (retry) return ok(fixtureRetry(retry[1]));
     const cand = CANDIDATE.exec(url);
-    if (cand && cand[3] === "make-default") return makeDefault(cand[1], cand[2]);
+    if (cand && cand[3] === "make-default")
+      return makeDefault(cand[1], cand[2]);
     if (cand && cand[3] === "pull-request") {
       return openPullRequest(cand[1], cand[2]);
     }

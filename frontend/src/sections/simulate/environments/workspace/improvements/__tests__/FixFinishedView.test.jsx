@@ -65,7 +65,7 @@ vi.mock("../LaunchFixDialog", () => ({
 }));
 
 const axios = (await import("src/utils/axios")).default;
-const { listResult } = await import("../fixRunView");
+const { headline, listResult } = await import("../fixRunView");
 const { default: FixRunPage } = await import("../FixRunPage");
 const { default: FixFinishedView, FinishedActions } = await import(
   "../FixFinishedView"
@@ -209,6 +209,25 @@ describe("FixVerdict", () => {
     return fix;
   };
 
+  it("shows the winner's cost and reply time as cards, and none without a ceilings check", () => {
+    const { unmount } = renderUi(<FixVerdict fix={withCeilingParts()} />);
+    const latency = within(screen.getByTestId("verdict-card-latency"));
+    expect(latency.getByText("Reply time")).toBeInTheDocument();
+    expect(latency.getByText("+10%")).toBeInTheDocument();
+    expect(
+      latency.getByText("1.10 s against 1.00 s on the current version"),
+    ).toBeInTheDocument();
+    const cost = within(screen.getByTestId("verdict-card-cost"));
+    expect(cost.getByText("Cost / conversation")).toBeInTheDocument();
+    expect(cost.getByText("Not measured")).toBeInTheDocument();
+    unmount();
+
+    renderUi(<FixVerdict fix={fixOf("fix-ready-archive")} />);
+    expect(screen.queryByTestId("verdict-card-latency")).toBeNull();
+    expect(screen.queryByTestId("verdict-card-cost")).toBeNull();
+    expect(screen.getByTestId("verdict-card-held")).toBeInTheDocument();
+  });
+
   it("shows each ceiling's own status in the verdict's full list of checks", async () => {
     renderUi(<FixVerdict fix={withCeilingParts()} />);
 
@@ -216,8 +235,9 @@ describe("FixVerdict", () => {
       .setup()
       .click(screen.getByRole("button", { name: "Show all" }));
 
-    const latency = screen.getByText("Reply time").parentElement;
-    const cost = screen.getByText("Agent's cost").parentElement;
+    const checks = within(screen.getByTestId("verdict-checks"));
+    const latency = checks.getByText("Reply time").parentElement;
+    const cost = checks.getByText("Agent's cost").parentElement;
     expect(within(latency).queryByText("Reply time unknown")).toBeNull();
     expect(
       within(latency).getByText(
@@ -349,11 +369,15 @@ describe("FixFinishedView, no safe improvement", () => {
       />,
     );
 
+    // The badge names the ending; the sentence says what stopped the candidates.
+    const ending = within(screen.getByTestId("epoch-ending"));
     expect(
-      screen.getByText(
-        "No safe improvement: neither candidate improved the target scenarios.",
-      ),
+      ending.getByText("Epoch 6 · No safe improvement"),
     ).toBeInTheDocument();
+    expect(
+      ending.getByText("Neither candidate improved the target scenarios."),
+    ).toBeInTheDocument();
+    expect(ending.getByText("Spent 412 credits.")).toBeInTheDocument();
     // The engine's summary is not the headline any more.
     expect(
       screen.queryByText(
@@ -592,22 +616,225 @@ describe("FixFinishedView", () => {
     ).toBeNull();
   });
 
-  it("offers Retry on a retryable failed fix and opens the new fix", async () => {
-    const user = userEvent.setup();
-    const { unmount } = renderUi(
-      <FinishedActions
-        fix={fixOf("fix-failed", { retryable: false })}
-        onReview={vi.fn()}
+  const view = (fix) =>
+    renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
       />,
     );
-    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    unmount();
-    renderUi(<FinishedActions fix={fixOf("fix-failed")} onReview={vi.fn()} />);
-    await user.click(screen.getByRole("button", { name: "Retry" }));
+
+  it("offers Retry Epoch N as the ending's one way on, and opens the new fix", async () => {
+    const user = userEvent.setup();
+    view(fixOf("fix-failed"));
+    const ending = within(screen.getByTestId("epoch-ending"));
+    expect(ending.getByText("Epoch 2 · Failed")).toBeInTheDocument();
+    expect(
+      ending.getByText("Spent 412 credits before it stopped."),
+    ).toBeInTheDocument();
+    expect(
+      ending.queryByRole("button", { name: "Run Epoch again" }),
+    ).toBeNull();
+    await user.click(ending.getByRole("button", { name: "Retry Epoch 2" }));
     await waitFor(() => expect(navigate).toHaveBeenCalled());
     expect(navigate.mock.calls[0][0]).toMatch(
       /^\/dashboard\/simulate\/environments\/env-1\/improvements\/fix-new-\d+$/,
     );
+  });
+
+  it("keeps Retry out of the header, so the ending's is the one primary", () => {
+    renderUi(<FinishedActions fix={fixOf("fix-failed")} onReview={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /^Retry/ })).toBeNull();
+  });
+
+  it("runs a new epoch from the same run once a failed fix was retried", async () => {
+    view(fixOf("fix-failed", { retryable: false }));
+    const ending = within(screen.getByTestId("epoch-ending"));
+    expect(ending.queryByRole("button", { name: /^Retry/ })).toBeNull();
+    await userEvent
+      .setup()
+      .click(ending.getByRole("button", { name: "Run Epoch again" }));
+    expect(screen.getByTestId("launch-fix-dialog")).toHaveAttribute(
+      "data-source",
+      "te-source-run-1",
+    );
+  });
+
+  it.each([
+    [
+      "fix-stopped",
+      "Epoch 3 · Stopped",
+      "Spent 412 credits before it stopped.",
+    ],
+    [
+      "fix-out-of-budget",
+      "Epoch 4 · Stopped at budget",
+      "Spent 1,500 credits before it stopped.",
+    ],
+    [
+      "fix-not-reproduced",
+      "Epoch 5 · Could not reproduce",
+      "Spent 412 credits on this check.",
+    ],
+  ])(
+    "reads %s in the one ending layout: badge, sentence, spent, one way on",
+    (id, label, spent) => {
+      const fix = fixOf(id);
+      view(fix);
+      const ending = within(screen.getByTestId("epoch-ending"));
+      expect(ending.getByText(label)).toBeInTheDocument();
+      expect(ending.getByText(headline(fix))).toBeInTheDocument();
+      expect(ending.getByText(spent)).toBeInTheDocument();
+      expect(
+        ending.getAllByRole("button", { name: "Run Epoch again" }),
+      ).toHaveLength(1);
+    },
+  );
+
+  it("says nothing about spend for an epoch that never started", () => {
+    view(
+      fixOf("fix-failed", {
+        started_at: null,
+        failure: { code: "fix_queue_timeout", message: "" },
+      }),
+    );
+    const ending = within(screen.getByTestId("epoch-ending"));
+    expect(ending.getByText(/could not start/)).toBeInTheDocument();
+    expect(ending.queryByText(/^Spent/)).toBeNull();
+  });
+
+  it("runs an issue's epoch again from its issue", () => {
+    view(
+      fixOf("fix-stopped", {
+        issue: { job_id: "j", cluster_id: "S-1A2B3C4D", project_id: "p" },
+      }),
+    );
+    expect(
+      within(screen.getByTestId("epoch-ending")).getByRole("link", {
+        name: "Run Epoch again",
+      }),
+    ).toHaveAttribute("href", "/dashboard/error-feed/S-1A2B3C4D");
+  });
+
+  it("offers no way on when the run it started from is gone", () => {
+    view(fixOf("fix-stopped", { source_run_id: null }));
+    const ending = within(screen.getByTestId("epoch-ending"));
+    expect(
+      ending.queryByRole("button", { name: "Run Epoch again" }),
+    ).toBeNull();
+    expect(ending.getByText(/You stopped this epoch/)).toBeInTheDocument();
+  });
+});
+
+describe("FixFinishedView, candidates", () => {
+  const view = (id) =>
+    renderUi(
+      <FixFinishedView
+        fix={fixOf(id)}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+
+  it("groups the candidates by where they stopped, the closest calls open", async () => {
+    view("fix-ready-archive");
+    expect(screen.getByTestId("candidate-group-winner")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(
+      within(screen.getByTestId("candidate-3")).getByText("Winner"),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("candidate-2")).getByText("Passed, not picked"),
+    ).toBeInTheDocument();
+    // A rejected group starts folded.
+    const rejected = screen.getByTestId("candidate-group-target");
+    expect(rejected).toHaveTextContent("Rejected at target scenarios");
+    expect(screen.queryByTestId("candidate-1")).toBeNull();
+    await userEvent.setup().click(rejected);
+    const row = within(screen.getByTestId("candidate-1"));
+    expect(row.getByText("0% → 0%, not a clear gain.")).toBeInTheDocument();
+    expect(row.getByText("Not run")).toBeInTheDocument();
+  });
+
+  it("opens each candidate's own check run, and keeps the pass-rate chart below", () => {
+    view("fix-ready-archive");
+    expect(
+      within(screen.getByTestId("candidate-3")).getByRole("link", {
+        name: "Open run",
+      }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/environments/env-1/runs/rt-fix-ready-archive/te-fix-ready-archive-c3",
+    );
+    expect(screen.getAllByTestId("trial-point")).toHaveLength(3);
+  });
+
+  it("folds a finished epoch's diagnosis into one line that opens to every cause", async () => {
+    const fix = fixOf("fix-ready-archive", {
+      diagnosis: {
+        causes: [
+          "the instructions never ask it to escalate",
+          "it replies before it looks the order up",
+        ],
+      },
+    });
+    renderUi(
+      <FixFinishedView
+        fix={fix}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    const diagnosis = within(screen.getByTestId("finished-diagnosis"));
+    const toggle = diagnosis.getByRole("button");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveTextContent(
+      "The instructions never ask it to escalate. · 1 more",
+    );
+    await userEvent.setup().click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      diagnosis.getByText("It replies before it looks the order up."),
+    ).toBeInTheDocument();
+    // Open, each cause shows once: the folded summary does not repeat the first.
+    expect(
+      diagnosis.getAllByText(/The instructions never ask it to escalate\./),
+    ).toHaveLength(1);
+    expect(diagnosis.queryByText(/· 1 more/)).toBeNull();
+  });
+
+  it("says nothing about a diagnosis a finished epoch never ran", () => {
+    renderUi(
+      <FixFinishedView
+        fix={fixOf("fix-stopped", { diagnosis: null })}
+        tab="trials"
+        onTab={vi.fn()}
+        renderTab={() => null}
+      />,
+    );
+    expect(screen.queryByTestId("finished-diagnosis")).toBeNull();
+  });
+
+  it("opens a candidate's change beside the page", async () => {
+    const user = userEvent.setup();
+    view("fix-no-improvement");
+    await user.click(screen.getByTestId("candidate-group-target"));
+    await user.click(
+      within(screen.getByTestId("candidate-2")).getByRole("button", {
+        name: "See its change",
+      }),
+    );
+    const drawer = within(await screen.findByTestId("candidate-change"));
+    expect(drawer.getByText("Candidate 2's change")).toBeInTheDocument();
+    expect(
+      await drawer.findByText("<!-- fix-no-improvement-c2 -->"),
+    ).toBeInTheDocument();
   });
 });
 

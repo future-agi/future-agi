@@ -3,7 +3,13 @@ import { describe, it, expect } from "vitest";
 import { FIX_RUN_FIXTURES } from "src/api/simulate-environments/__tests__/fixtures/fixRuns";
 
 import {
+  candidateGroups,
+  ceilingCards,
   checksLine,
+  endingBroke,
+  endingLabel,
+  endingSentence,
+  endingSpent,
   fixName,
   headline,
   heldToRows,
@@ -17,6 +23,8 @@ import {
   outcomeLabel,
   rejectionChecks,
   STATE_LABEL,
+  stageLabel,
+  stageOf,
   stepRows,
   verdictCards,
   winnerOf,
@@ -489,37 +497,148 @@ describe("verdict", () => {
 });
 
 describe("step rows", () => {
-  it("marks the current step and fills its lines", () => {
+  it("marks the current stage and fills its lines", () => {
     const rows = stepRows(byId("fix-search"));
-    expect(rows.map((r) => [r.id, r.state])).toEqual([
-      ["reproduce", "done"],
-      ["search", "now"],
-      ["verify", "todo"],
-      ["done", "todo"],
+    expect(rows.map((r) => [r.id, r.label, r.state])).toEqual([
+      ["reproduce", "Reproducing", "done"],
+      ["diagnose", "Diagnosing", "done"],
+      ["search", "Proposing", "now"],
+      ["verify", "Checking", "todo"],
     ]);
     expect(rows[0].lines).toEqual([
       "Starts from Run 1 on v8",
       "The current version varied by 17 pts between repeats.",
     ]);
-    expect(rows[1].lines[0]).toBe(
-      "2 of up to 4 candidates · best so far 67% on 6 target scenarios",
-    );
+    // The diagnosis leads its own stage, never the search's.
+    expect(rows[1].lines).toEqual([
+      "Starts from its diagnosis: The instructions never ask the agent to escalate cancellations.",
+    ]);
     expect(rows[2].lines).toEqual([
-      "2 held-back scenarios it never saw and 9 must-pass scenarios, including the 1 you protected",
+      "2 of up to 4 candidates · best so far 67% on 6 target scenarios",
+    ]);
+    expect(rows[3].lines).toEqual([
+      "Checks the best candidate on 2 held-back scenarios it never saw and 9 must-pass scenarios, including the 1 you protected",
     ]);
   });
 
-  it("counts must-pass scenarios alone when none were protected", () => {
+  it("counts must-pass scenarios alone when none were protected or held back", () => {
     const fix = byId("fix-search");
     const rows = stepRows({ ...fix, plan: { ...fix.plan, protected: 0 } });
-    expect(rows[2].lines).toEqual([
-      "2 held-back scenarios it never saw and 9 must-pass scenarios",
+    expect(rows[3].lines).toEqual([
+      "Checks the best candidate on 2 held-back scenarios it never saw and 9 must-pass scenarios",
+    ]);
+    const none = stepRows({
+      ...fix,
+      plan: { ...fix.plan, protected: 0, held_back: 0 },
+    });
+    expect(none[3].lines).toEqual([
+      "Checks the best candidate on 9 must-pass scenarios",
     ]);
   });
 
   it("omits lines whose data has not arrived", () => {
     const rows = stepRows(byId("fix-unknown-identity"));
-    expect(rows.slice(0, 3).map((r) => r.lines)).toEqual([[], [], []]);
+    expect(rows[0].lines).toEqual([]);
+    expect(rows[3].lines).toEqual([]);
+  });
+
+  it("is diagnosing until the diagnosis or a candidate arrives, then proposing", () => {
+    const fix = byId("fix-unknown-identity");
+    expect(fix.diagnosis).toBeNull();
+    expect(stageOf(fix)).toBe("diagnose");
+    expect(stageLabel(fix)).toBe("Diagnosing");
+    const diagnosing = stepRows(fix);
+    expect(diagnosing.map((r) => r.state)).toEqual([
+      "done",
+      "now",
+      "todo",
+      "todo",
+    ]);
+    expect(diagnosing[1].lines).toEqual([
+      "Reads the failures to find what to change",
+    ]);
+    expect(diagnosing[2].lines).toEqual([
+      "Tries changes one at a time; stops early once candidates stop beating the best",
+    ]);
+
+    // A diagnosis that named no cause has still run.
+    const empty = { ...fix, diagnosis: { causes: [] } };
+    expect(stageOf(empty)).toBe("search");
+    expect(stepRows(empty)[1]).toMatchObject({
+      state: "done",
+      lines: [
+        "Named no single cause, so the candidates start from the failures",
+      ],
+    });
+
+    // The report's diagnosis is optional: a candidate means it has moved on,
+    // and the finished stage says none was recorded.
+    const proposing = {
+      ...fix,
+      candidates: byId("fix-search").candidates.slice(0, 1),
+    };
+    expect(stageOf(proposing)).toBe("search");
+    expect(stageLabel(proposing)).toBe("Proposing");
+    expect(stepRows(proposing)[1]).toMatchObject({
+      state: "done",
+      lines: [
+        "No diagnosis was recorded, so the candidates start from the failures",
+      ],
+    });
+    // The issue job's summary carries no diagnosis: it reads as the search.
+    expect(stageOf({ ...fix, summary: true })).toBe("search");
+  });
+
+  it("lists every cause the diagnosis found", () => {
+    const rows = stepRows({
+      ...byId("fix-search"),
+      diagnosis: {
+        causes: [
+          "the instructions never ask it to escalate",
+          "it replies before it looks the order up",
+        ],
+      },
+    });
+    expect(rows[1].lines).toEqual([
+      "Starts from its diagnosis: The instructions never ask it to escalate.",
+      "It replies before it looks the order up.",
+    ]);
+  });
+
+  it("reads Queued in Reproducing's place, and Stopping on the stage it interrupts", () => {
+    const queued = stepRows(byId("fix-queued"));
+    expect(queued[0]).toMatchObject({
+      id: "reproduce",
+      label: "Queued",
+      state: "now",
+    });
+    // An epoch that writes variations first is queued on that stage.
+    const variations = stepRows({
+      ...byId("fix-queued"),
+      step: "variations",
+      request: {
+        ...byId("fix-queued").request,
+        variations_pending: true,
+        variation_parents: {},
+      },
+    });
+    expect(variations.slice(0, 2).map((r) => [r.id, r.label])).toEqual([
+      ["variations", "Queued"],
+      ["reproduce", "Reproducing"],
+    ]);
+    const stopping = stepRows(byId("fix-stopping"));
+    expect(stopping.map((r) => [r.id, r.label])).toEqual([
+      ["reproduce", "Reproducing"],
+      ["diagnose", "Diagnosing"],
+      ["search", "Stopping"],
+      ["verify", "Checking"],
+    ]);
+  });
+
+  it("names each stage for the header", () => {
+    expect(stageLabel(byId("fix-reproduce"))).toBe("Reproducing");
+    expect(stageLabel(byId("fix-search"))).toBe("Proposing");
+    expect(stageLabel(byId("fix-verify"))).toBe("Checking");
   });
 
   it("starts with writing variations when the run had too few failing cases", () => {
@@ -536,12 +655,12 @@ describe("step rows", () => {
       },
     };
     const rows = stepRows(pending);
-    expect(rows.map((r) => [r.id, r.state])).toEqual([
-      ["variations", "now"],
-      ["reproduce", "todo"],
-      ["search", "todo"],
-      ["verify", "todo"],
-      ["done", "todo"],
+    expect(rows.map((r) => [r.id, r.label, r.state])).toEqual([
+      ["variations", "Writing variations", "now"],
+      ["reproduce", "Reproducing", "todo"],
+      ["diagnose", "Diagnosing", "todo"],
+      ["search", "Proposing", "todo"],
+      ["verify", "Checking", "todo"],
     ]);
     expect(rows[0].lines).toEqual([
       "Writes variations of the 4 failing cases, then keeps those the current version also fails",
@@ -556,9 +675,10 @@ describe("step rows", () => {
         variation_parents: { "a-v1": "a", "b-v2": "b" },
       },
     });
-    expect(settled.map((r) => [r.id, r.state]).slice(0, 3)).toEqual([
+    expect(settled.map((r) => [r.id, r.state]).slice(0, 4)).toEqual([
       ["variations", "done"],
       ["reproduce", "done"],
+      ["diagnose", "done"],
       ["search", "now"],
     ]);
     expect(settled[0].lines).toEqual([
@@ -668,5 +788,236 @@ describe("measuredNotice", () => {
       measuredNotice({ request: { measured_automatically: false } }),
     ).toBeNull();
     expect(measuredNotice({})).toBeNull();
+  });
+});
+
+describe("ceilingCards", () => {
+  const withCeilings = (parts, numbers = {}) => {
+    const fix = structuredClone(byId("fix-ready-archive"));
+    const winner = fix.candidates.find((c) => c.outcome === "winner");
+    winner.verdict.tiers.push({
+      name: "ceilings",
+      status: "passed",
+      detail: "",
+      parts,
+      ...numbers,
+    });
+    return fix;
+  };
+
+  it("has no card without a ceilings check", () => {
+    expect(ceilingCards(byId("fix-ready-archive"))).toEqual([]);
+  });
+
+  it("reads cost and reply time against the current version, or why it could not", () => {
+    const fix = withCeilings(
+      [
+        { name: "reply latency", status: "passed", detail: "" },
+        { name: "agent cost", status: "skipped", detail: "" },
+      ],
+      {
+        latency: { baseline: 1, candidate: 1.1, allowed: 1.25, limit: null },
+        cost: { baseline: null, candidate: null, allowed: null, limit: null },
+      },
+    );
+    expect(ceilingCards(fix)).toEqual([
+      {
+        id: "cost",
+        label: "Cost / conversation",
+        value: "Not measured",
+        note: "This agent's model calls weren't measured. Epoch measures calls made through the OpenAI or Anthropic Python SDK on its own. For other agents, add traceAI tracing.",
+      },
+      {
+        id: "latency",
+        label: "Reply time",
+        value: "+10%",
+        note: "1.10 s against 1.00 s on the current version",
+      },
+    ]);
+  });
+
+  it("signs a drop, says within the limit without a baseline, and skips a part it lacks", () => {
+    const cheaper = withCeilings(
+      [{ name: "agent cost", status: "passed", detail: "" }],
+      { cost: { baseline: 0.002, candidate: 0.0019 } },
+    );
+    expect(ceilingCards(cheaper)).toEqual([
+      {
+        id: "cost",
+        label: "Cost / conversation",
+        value: "−5%",
+        note: "$0.0019 against $0.002 on the current version",
+      },
+    ]);
+    const noBaseline = withCeilings(
+      [{ name: "reply latency", status: "passed", detail: "" }],
+      { latency: { baseline: null, candidate: 1.1 } },
+    );
+    expect(ceilingCards(noBaseline)).toEqual([
+      {
+        id: "latency",
+        label: "Reply time",
+        value: "Within the limit",
+        note: "against the current version",
+      },
+    ]);
+  });
+});
+
+describe("candidateGroups", () => {
+  const cand = (attempt, outcome, verdict) => ({
+    id: `c${attempt}`,
+    attempt,
+    outcome,
+    summary: `Change ${attempt}`,
+    verdict,
+  });
+  const rejectedAt = (name, extra = {}) => ({
+    target_pass_rate: [0.33, 0.33],
+    held_back_pass_rate: null,
+    must_pass_regressions: [],
+    tiers: [
+      { name: "static", status: "passed", detail: "" },
+      { name, status: "failed", detail: "" },
+    ],
+    ...extra,
+  });
+
+  it("puts the winner first, then the ones not picked, then each check that rejected one", () => {
+    const groups = candidateGroups(byId("fix-ready-archive"));
+    expect(groups.map((g) => [g.id, g.label, g.open])).toEqual([
+      ["winner", "Winner", true],
+      ["finalist", "Passed, not picked", true],
+      ["target", "Rejected at target scenarios", false],
+    ]);
+    expect(groups[0].rows).toEqual([
+      expect.objectContaining({
+        attempt: 3,
+        target: { score: 100, delta: 67 },
+        held: "17% → 83%",
+        result: "Winner",
+      }),
+    ]);
+    expect(groups[2].rows[0]).toMatchObject({
+      attempt: 1,
+      target: { score: 0, delta: 0 },
+      held: null,
+      result: "0% → 0%, not a clear gain.",
+      broke: false,
+    });
+  });
+
+  it("orders the furthest check first, opens held back with no winner, and keeps every candidate", () => {
+    const fix = {
+      ...structuredClone(byId("fix-no-improvement")),
+      candidates: [
+        cand(
+          1,
+          "rejected",
+          rejectedAt("held-back", {
+            target_pass_rate: [0.33, 0.67],
+            held_back_pass_rate: [0.17, 0.33],
+          }),
+        ),
+        cand(
+          2,
+          "rejected",
+          rejectedAt("must-pass", { must_pass_regressions: ["a", "b"] }),
+        ),
+        cand(3, "rejected", rejectedAt("sandbox-fit")),
+        cand(4, "rejected", null),
+        cand(5, "pending", null),
+        cand(
+          6,
+          "rejected",
+          rejectedAt("static", {
+            tiers: [{ name: "static", status: "failed", detail: "" }],
+          }),
+        ),
+        cand(7, "rejected", rejectedAt("target")),
+        cand(
+          8,
+          "rejected",
+          rejectedAt("target", { target_pass_rate: [0.33, 0.67] }),
+        ),
+      ],
+    };
+    const groups = candidateGroups(fix);
+    expect(groups.map((g) => [g.id, g.label, g.open])).toEqual([
+      ["must-pass", "Rejected at must-pass scenarios", true],
+      ["held-back", "Rejected at held-back scenarios", true],
+      ["target", "Rejected at target scenarios", false],
+      ["sandbox-fit", "Rejected at sandbox fit", false],
+      ["static", "Rejected at change is valid", false],
+      ["rejected", "Rejected", false],
+      ["pending", "Did not run", false],
+    ]);
+    const byGroup = Object.fromEntries(groups.map((g) => [g.id, g.rows]));
+    expect(byGroup["must-pass"][0]).toMatchObject({
+      result: "Broke 2 must-pass scenarios",
+      broke: true,
+    });
+    expect(byGroup["held-back"][0].result).toBe(
+      "17% → 33% on scenarios the epoch never saw, not a clear gain.",
+    );
+    // High to low on target inside a group.
+    expect(byGroup.target.map((r) => r.attempt)).toEqual([8, 7]);
+    expect(byGroup.rejected[0]).toMatchObject({
+      result: "Rejected.",
+      target: null,
+    });
+    expect(groups.flatMap((g) => g.rows)).toHaveLength(8);
+  });
+});
+
+describe("ending", () => {
+  it("badges the ending with the epoch and its status", () => {
+    expect(endingLabel(byId("fix-stopped"))).toBe("Epoch 3 · Stopped");
+    expect(endingLabel(byId("fix-no-improvement"))).toBe(
+      "Epoch 6 · No safe improvement",
+    );
+  });
+
+  it("says what it spent, and on what", () => {
+    expect(endingSpent(byId("fix-stopped"))).toBe(
+      "Spent 412 credits before it stopped.",
+    );
+    expect(endingSpent(byId("fix-out-of-budget"))).toBe(
+      "Spent 1,500 credits before it stopped.",
+    );
+    expect(endingSpent(byId("fix-not-reproduced"))).toBe(
+      "Spent 412 credits on this check.",
+    );
+    expect(endingSpent(byId("fix-no-improvement"))).toBe("Spent 412 credits.");
+    expect(
+      endingSpent({ ...byId("fix-stopped"), state: "too_few_cases" }),
+    ).toBe("Spent 412 credits reproducing the failing scenarios.");
+  });
+
+  it("says nothing about spend for an epoch that never started or spent nothing", () => {
+    expect(endingSpent({ ...byId("fix-failed"), started_at: null })).toBeNull();
+    expect(
+      endingSpent({ ...byId("fix-stopped"), spent_credits: 0 }),
+    ).toBeNull();
+  });
+
+  it("drops the badge's words from a no-safe sentence, and keeps every other one", () => {
+    expect(endingSentence(byId("fix-no-improvement"))).toBe(
+      "Neither candidate improved the target scenarios.",
+    );
+    expect(endingSentence(byId("fix-stopped"))).toBe(
+      headline(byId("fix-stopped")),
+    );
+  });
+
+  it("is red only when a candidate broke a must-pass scenario", () => {
+    const fix = structuredClone(byId("fix-no-improvement"));
+    expect(endingBroke(fix)).toBe(false);
+    fix.candidates[0].verdict.tiers = [
+      { name: "static", status: "passed", detail: "" },
+      { name: "must-pass", status: "failed", detail: "" },
+    ];
+    expect(endingBroke(fix)).toBe(true);
+    expect(endingBroke(byId("fix-failed"))).toBe(false);
   });
 });

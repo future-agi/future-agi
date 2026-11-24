@@ -1369,10 +1369,15 @@ def eval_review(fix_run: AgentFixRun) -> EvalReview:
     )
 
 
-def fix_runs_for_environment(environment: HostedHarnessJob) -> QuerySet[AgentFixRun]:
+def fix_runs_for_environment(
+    environment: HostedHarnessJob, states: list[str] | None = None
+) -> QuerySet[AgentFixRun]:
+    """An environment's fixes, newest first; with `states`, only those in them."""
+    fixes = AgentFixRun.no_workspace_objects.filter(environment=environment)
+    if states:
+        fixes = fixes.filter(state__in=states)
     return fix_runs_for_read(
-        AgentFixRun.no_workspace_objects.filter(environment=environment)
-        .select_related("base_agent_version", "source_run")
+        fixes.select_related("base_agent_version", "source_run")
         # The id breaks ties, so a page holds still while fixes are added.
         .order_by("-created_at", "-id")
     )

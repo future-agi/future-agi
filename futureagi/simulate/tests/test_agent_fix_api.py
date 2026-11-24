@@ -1372,6 +1372,45 @@ class TestUserApi:
         assert page(limit=2) == (3, newest_first[:2])
         assert page(limit=2, page=2) == (3, newest_first[2:])
 
+    def test_fixes_list_by_state_with_their_total(
+        self, auth_client, environment, source_run
+    ):
+        ready = _fix_run(source_run, state=AgentFixRun.State.READY)
+        stopped = _fix_run(source_run, state=AgentFixRun.State.STOPPED)
+        # An environment holds one live fix at a time.
+        stopping = _fix_run(source_run, state=AgentFixRun.State.STOPPING)
+        failed = _fix_run(source_run, state=AgentFixRun.State.FAILED)
+
+        def listed(**query):
+            response = auth_client.get(
+                f"{BASE}/", {"environment_id": str(environment.id), **query}
+            )
+            assert response.status_code == 200, response.content
+            body = response.json()
+            return body["count"], [one["id"] for one in body["results"]]
+
+        # Running, as the list's filter sends it: every live state.
+        assert listed(state="queued,running,stopping") == (1, [str(stopping.id)])
+        assert listed(state="ready") == (1, [str(ready.id)])
+        assert listed(state=" failed , stopped ") == (
+            2,
+            [str(failed.id), str(stopped.id)],
+        )
+        # No state lists every fix, as before.
+        assert listed()[0] == 4
+        assert listed(state="ready", limit=1, page=1) == (1, [str(ready.id)])
+
+    def test_an_unknown_state_is_refused(self, auth_client, environment, source_run):
+        _fix_run(source_run, state=AgentFixRun.State.READY)
+
+        response = auth_client.get(
+            f"{BASE}/",
+            {"environment_id": str(environment.id), "state": "ready,shipped"},
+        )
+
+        assert response.status_code == 400, response.content
+        assert "shipped" in response.content.decode()
+
     def test_a_fix_shows_its_limit_and_spend_in_credits(
         self, auth_client, environment, source_run, settings
     ):

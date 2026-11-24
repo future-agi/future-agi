@@ -4,15 +4,23 @@ import { Box, Button, Stack, Tab, Typography } from "@mui/material";
 
 import Iconify from "src/components/iconify";
 import { CustomTabs } from "src/components/tabs/tabs";
+import { RouterLink } from "src/routes/components";
+import { paths } from "src/routes/paths";
 
+import CandidatesTable from "./CandidatesTable";
+import EpochEnding from "./EpochEnding";
+import FinishedDiagnosis from "./FinishedDiagnosis";
 import FixVerdict from "./FixVerdict";
 import FixDecisionDrawer from "./FixDecisionDrawer";
 import LaunchFixDialog from "./LaunchFixDialog";
 import RetryButton from "./RetryButton";
 import ShipButton from "./ShipButton";
 import TrialChart from "./TrialChart";
-import TrialsTable from "./TrialsTable";
 import {
+  endingBroke,
+  endingLabel,
+  endingSentence,
+  endingSpent,
   flakyProtectedText,
   headline,
   noSafeNumbers,
@@ -20,7 +28,7 @@ import {
 } from "./fixRunView";
 
 // The header actions of a finished fix: how it was decided, the winner's
-// changes, and Ship.
+// changes, and Ship. A failed fix's Retry is its ending's one way on.
 export function FinishedActions({ fix, onReview }) {
   const [deciding, setDeciding] = useState(false);
   const winner = winnerOf(fix);
@@ -48,7 +56,6 @@ export function FinishedActions({ fix, onReview }) {
         </Button>
       )}
       <ShipButton fix={fix} />
-      <RetryButton fix={fix} />
       <FixDecisionDrawer
         fix={fix}
         open={deciding}
@@ -72,7 +79,7 @@ const TABS_SX = {
 const TABS = [
   { id: "trials", label: "Candidates" },
   { id: "changes", label: "Changes" },
-  { id: "scenarios", label: "Per scenario" },
+  { id: "scenarios", label: "Scenarios" },
   { id: "cost", label: "Cost" },
 ];
 
@@ -84,7 +91,7 @@ function NoSafeNumbers({ fix }) {
   if (!trials.length) return null;
   const line = { typography: "s3", color: "text.secondary" };
   return (
-    <Box sx={{ mt: 0.5 }}>
+    <Box sx={{ mb: 1 }}>
       <Button size="small" onClick={() => setOpen((o) => !o)} sx={{ px: 0 }}>
         {open ? "Hide each candidate's result" : "Show each candidate's result"}
       </Button>
@@ -105,13 +112,12 @@ NoSafeNumbers.propTypes = { fix: PropTypes.object.isRequired };
 // What is left to do when a fix found no safe improvement: keep the current
 // version, read the evidence, or start a new fix on other cases or parts of the
 // agent. Each is an action the product already has.
-function WhatToTryNext({ fix, onTab }) {
+function WhatToTryNext({ fix, onTab, onLaunch }) {
   const [deciding, setDeciding] = useState(false);
-  const [launching, setLaunching] = useState(false);
   const tried = (fix.candidates || []).length > 0;
   const line = { typography: "s2", color: "text.secondary" };
   return (
-    <Box data-testid="what-to-try-next" sx={{ mb: 2 }}>
+    <Box data-testid="what-to-try-next">
       <Typography sx={{ typography: "s2", fontWeight: 600, mb: 0.5 }}>
         What to try next
       </Typography>
@@ -139,7 +145,7 @@ function WhatToTryNext({ fix, onTab }) {
               Pick other failing cases, or let an epoch change other parts of
               the agent.
             </Typography>
-            <Button size="small" onClick={() => setLaunching(true)}>
+            <Button size="small" onClick={onLaunch}>
               Run a new epoch
             </Button>
           </Stack>
@@ -152,56 +158,80 @@ function WhatToTryNext({ fix, onTab }) {
           onClose={() => setDeciding(false)}
         />
       )}
-      {/* Kept mounted and toggled, as on the run page, so the drawer slides
-          in and out (MUI skips the transition for a drawer mounted open). */}
-      <LaunchFixDialog
-        open={launching}
-        envId={fix.environment_id}
-        sourceRunId={fix.source_run_id}
-        onClose={() => setLaunching(false)}
-      />
     </Box>
   );
 }
 WhatToTryNext.propTypes = {
   fix: PropTypes.object.isRequired,
   onTab: PropTypes.func,
+  onLaunch: PropTypes.func.isRequired,
 };
 
+// An ending's one way on: retry a failed epoch the platform lets you retry,
+// else run a new one where Run Epoch lives, on the issue it came from or the
+// run it started from. With neither left, the sentence says what to do.
+function endingPrimary(fix, onLaunch) {
+  // Retry lives here, never in the header: the ending's one primary.
+  if (fix.state === "failed" && fix.retryable) return <RetryButton fix={fix} />;
+  const again = {
+    size: "small",
+    variant: "contained",
+    color: "primary",
+    startIcon: <Iconify icon="solar:play-linear" width={16} />,
+  };
+  if (fix.issue) {
+    return (
+      <Button
+        {...again}
+        component={RouterLink}
+        href={paths.dashboard.errorFeed.detail(fix.issue.cluster_id)}
+      >
+        Run Epoch again
+      </Button>
+    );
+  }
+  if (!fix.source_run_id) return null;
+  return (
+    <Button {...again} onClick={onLaunch}>
+      Run Epoch again
+    </Button>
+  );
+}
+
 // Screen 3: a finished fix. A ready fix leads with its verdict; any other
-// ending says why it ended, and nothing ships.
+// ending reads in the one ending layout, says why it ended, and ships nothing.
 export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
+  const [launching, setLaunching] = useState(false);
   const ready = fix.state === "ready" && !!winnerOf(fix);
   const trials = fix.candidates || [];
   const noSafe = fix.state === "no_improvement";
-  const ending = headline(fix);
+  const ending = !ready && headline(fix);
   const tabs = ready
     ? TABS
     : TABS.filter((t) => t.id === "trials" || t.id === "cost");
   const current = tabs.find((t) => t.id === tab) ? tab : "trials";
   const flaky = flakyProtectedText(fix);
+  const launch = () => setLaunching(true);
   return (
     <Box data-testid="fix-finished-view" sx={{ px: 3, py: 2.5 }}>
-      {ready ? (
-        <FixVerdict fix={fix} />
-      ) : (
-        ending && (
-          <Box
-            sx={{
-              mb: 2,
-              p: 2,
-              border: "1px solid",
-              borderColor: "divider",
-              borderRadius: "8px",
-            }}
-          >
-            <Typography sx={{ typography: "s1", fontWeight: 600 }}>
-              {ending}
-            </Typography>
-            {noSafe && <NoSafeNumbers fix={fix} />}
-          </Box>
-        )
+      {ready && <FixVerdict fix={fix} />}
+      {ending && (
+        <EpochEnding
+          label={endingLabel(fix)}
+          danger={endingBroke(fix)}
+          sentence={endingSentence(fix)}
+          spent={endingSpent(fix)}
+          primary={noSafe ? null : endingPrimary(fix, launch)}
+        >
+          {noSafe && (
+            <>
+              <NoSafeNumbers fix={fix} />
+              <WhatToTryNext fix={fix} onTab={onTab} onLaunch={launch} />
+            </>
+          )}
+        </EpochEnding>
       )}
+      <FinishedDiagnosis fix={fix} />
       {flaky && (
         <Typography
           data-testid="flaky-protected"
@@ -210,7 +240,6 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
           {flaky}
         </Typography>
       )}
-      {noSafe && <WhatToTryNext fix={fix} onTab={onTab} />}
       <CustomTabs value={current} onChange={(_, v) => onTab(v)} sx={TABS_SX}>
         {tabs.map((t) => (
           <Tab
@@ -225,8 +254,12 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
       {current === "trials" ? (
         trials.length > 0 ? (
           <>
-            <TrialChart candidates={trials} />
-            <TrialsTable fix={fix} />
+            <CandidatesTable fix={fix} />
+            {/* Every candidate's target pass rate, until the design's
+                All measurements view replaces it. */}
+            <Box sx={{ mt: 2 }}>
+              <TrialChart candidates={trials} />
+            </Box>
           </>
         ) : (
           <Typography sx={{ typography: "s2", color: "text.subtitle" }}>
@@ -235,6 +268,16 @@ export default function FixFinishedView({ fix, tab, onTab, renderTab }) {
         )
       ) : (
         renderTab?.(current)
+      )}
+      {/* Kept mounted and toggled, as on the run page, so the drawer slides
+          in and out (MUI skips the transition for a drawer mounted open). */}
+      {ending && fix.source_run_id && (
+        <LaunchFixDialog
+          open={launching}
+          envId={fix.environment_id}
+          sourceRunId={fix.source_run_id}
+          onClose={() => setLaunching(false)}
+        />
       )}
     </Box>
   );
