@@ -2765,4 +2765,4 @@ def test_the_sandbox_provider_refuses_a_read_of_only_new_events():
     )
 
     assert answer.status_code == 501
-    assert answer.data["error"] == "events_after_not_supported"
+    assert answer.data["code"] == "events_after_not_supported"

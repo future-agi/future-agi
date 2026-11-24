@@ -1825,7 +1825,10 @@ class HostedHarnessProvider:
         )
         if conversation is None:
             return Response(
-                {"detail": "Hosted harness conversation not found"},
+                build_error_envelope(
+                    "Hosted harness conversation not found",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                ),
                 status=status.HTTP_404_NOT_FOUND,
             )
         query = request.validated_query_data
@@ -3449,10 +3452,11 @@ class SandboxHarnessProvider:
 
     def conversation_history(self, request, pk) -> Response:
         return Response(
-            {
-                "error": "conversation_history_not_supported",
-                "message": "reading back the builder chat is only available on the hosted provider",
-            },
+            build_error_envelope(
+                "reading back the builder chat is only available on the hosted provider",
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                code="conversation_history_not_supported",
+            ),
             status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
@@ -3583,10 +3587,11 @@ class SandboxHarnessProvider:
             "events_after"
         ) is not None:
             return Response(
-                {
-                    "error": "events_after_not_supported",
-                    "message": "reading only new builder chat events is only available on the hosted provider",
-                },
+                build_error_envelope(
+                    "reading only new builder chat events is only available on the hosted provider",
+                    status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                    code="events_after_not_supported",
+                ),
                 status=status.HTTP_501_NOT_IMPLEMENTED,
             )
         from simulate.services.harness_sandbox import (
