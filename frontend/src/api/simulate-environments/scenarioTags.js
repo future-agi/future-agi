@@ -45,10 +45,13 @@ export function useEnvironmentTags(envId, { enabled = true } = {}) {
 
 function useRefreshAfterTagging(envId) {
   const queryClient = useQueryClient();
-  return () => {
-    queryClient.invalidateQueries({ queryKey: harnessScenariosListKey(envId) });
-    queryClient.invalidateQueries({ queryKey: environmentTagsKey(envId) });
-  };
+  return () =>
+    Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: harnessScenariosListKey(envId),
+      }),
+      queryClient.invalidateQueries({ queryKey: environmentTagsKey(envId) }),
+    ]);
 }
 
 export function useSetScenarioTags(envId) {
