@@ -658,10 +658,9 @@ the gate when the repository variable `E2E_ENFORCE_RUNTIME_SKIPS` is `true`, unl
 enough. An entry that is not by design names the ticket that removes it, an owner, and an expiry
 at most 45 days ahead; after that date it no longer allows the skip. Each listed skip gets a
 warning on the run, and an entry whose test ran and passed is reported as out of date. Expiry is
-judged on the run's date, so re-running only the report job cannot change its verdict. Today it
-lists OBS-E2E-031 and OBS-E2E-032 on Standalone only (TH-10597, expiring 2027-01-06): their churn
-guard measured no DOM mutations in CI, so they skipped themselves. They now run and pass on
-Distributed; the Standalone entries go once a Standalone run shows the same.
+judged on the run's date, so re-running only the report job cannot change its verdict. Today the
+list is empty: OBS-E2E-031 and OBS-E2E-032 (TH-10597), whose churn guard once measured no DOM
+mutations in CI, now run and pass on both stacks.
 
 The backend has a stricter rule for its own skips in `futureagi/.ci/runtime-skips.json`
 (`BACKEND_ENFORCE_RUNTIME_SKIPS`). Each rule names the exact test files it covers, each with the
@@ -678,9 +677,9 @@ without the private package) or internal runs (`"runs": "internal"`).
 A skip that depends on data other tests leave behind cannot have an exact count. Its rule says why
 in `"varies"`, and each of its files maps to the number of tests the inventory collects there: an
 upper bound, checked against the inventory on every complete run, and matching nothing is no
-problem. Exact counts stay the default. Today one rule varies: `tracer/tests/test_hourly_aggregate_state_route_live_ch.py`
-(TH-10618, up to its 8 tests) skips when its shard's earlier tests left no spans in the shared
-ClickHouse table; 1 or 2 of its tests skipped in six runs on 22 Nov.
+problem. Exact counts stay the default, and no rule varies today. The last one, for
+`tracer/tests/test_hourly_aggregate_state_route_live_ch.py`, went once its tests ran against the
+CI ClickHouse sidecar, which they seed themselves.
 
 Work that needs to run once per stack runs on the **last** shard: the flow catalog check and the
 SDK live suites. The last shard, because the longest spec file always goes to shard 1. That shard
