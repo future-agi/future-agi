@@ -116,6 +116,11 @@ describe("ValidateScenariosButton", () => {
       expect(getScenarioValidation).toHaveBeenCalledWith("env-1", "val-10"),
     );
     await waitFor(() => expect(enqueueSnackbar).toHaveBeenCalledTimes(2));
+    // Reached, not proved: a scenario can be checked and still not be proved.
+    expect(enqueueSnackbar).toHaveBeenLastCalledWith(
+      "Validation finished · checked 1 of 1",
+      { variant: "success" },
+    );
   });
 
   it("stays held while the server says one is running, even if its own status has ended", async () => {

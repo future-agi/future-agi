@@ -96,9 +96,10 @@ export const LIFECYCLE_COPY = {
       n > 0 ? `Re-prove all ${n} scenarios?` : "Re-prove every scenario?",
     reproveConfirmBody:
       "Every scenario is validated again, including proved ones. Save waits until it finishes; runs use the saved version.",
-    done: (proved, total) =>
+    // The server's `proved` counts the scenarios the validation reached, proved or not.
+    done: (reached, total) =>
       Number.isInteger(total) && total > 0
-        ? `Validation finished · proved ${proved} of ${total}`
+        ? `Validation finished · checked ${reached} of ${total}`
         : "Validation finished",
     noResults: "Validation finished but recorded no results. Try again.",
     elsewhere: "Another validation is running. Validate this one when it ends.",
