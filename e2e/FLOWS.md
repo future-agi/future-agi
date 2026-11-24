@@ -132,6 +132,30 @@
 - A private destination is rejected and the saved webhook remains unchanged.
 - Cross-organization, cross-workspace and viewer updates are refused without changing the saved webhook.
 
+### ALERT-E2E-004 — an alert recipient unsubscribes from one monitor and an open editor's save does not add them back
+
+**Goal:** An on-call address stops one monitor's alert emails from the link in an alert, and stays off when the alert owner later saves an editor they opened before the unsubscribe.
+
+**Spec:** `flows/alerts/monitor-alert-unsubscribe.spec.ts:15`
+
+**Tags:** —
+
+**User steps:**
+
+1. create a muted monitor that emails the owner and an on-call address
+2. open the monitor in the alert editor
+3. open the on-call address's unsubscribe link in another tab and see the monitor named
+4. press Unsubscribe and see Unsubscribed with no Resubscribe button
+5. rename the monitor in the editor opened before the unsubscribe and save it
+6. delete the monitor and open the link again
+
+**Backend state verified:**
+
+- opening the link alone leaves both addresses on the monitor in PG tracer_useralertmonitor.notification_emails
+- Unsubscribe removes only the on-call address from the monitor in PG
+- the editor's save renames the monitor in PG and keeps the on-call address removed
+- after the monitor is deleted the link says Monitor deleted and the deleted row's recipients are unchanged
+
 ## annotations
 
 ### ANNOT-E2E-001 — workspace annotation choices follow UI edits without scores
@@ -278,6 +302,31 @@
 - PG model_hub_row and model_hub_cell keep the seeded order, minted value, deleted=false and updated_at
 - items API the grid calls returns exactly the seeded item with its dataset_row preview, and the grid Preview cell reads that exact text
 - the browser sends no DELETE for the item and no POST to items/bulk-remove/
+
+### ANNOT-E2E-008 — the annotation digest's snooze and older unsubscribe links ask before they act
+
+**Goal:** An annotator pauses realtime annotation emails for a week from the digest's snooze link, and later stops the digest from the unsubscribe link in an older digest email.
+
+**Spec:** `flows/annotations/digest-email-links.spec.ts:14`
+
+**Tags:** —
+
+**User steps:**
+
+1. mint the signed digest token the realtime digest's links carry for the actor
+2. open the snooze link and see Pause realtime emails? for 7 days
+3. press Pause and see Snoozed
+4. open the older digest unsubscribe link and see the Unsubscribe? confirmation
+5. press Unsubscribe and see Unsubscribed
+6. open a snooze link signed 31 days ago and see Link expired
+
+**Backend state verified:**
+
+- opening the snooze link alone leaves the actor without a realtime snooze in PG model_hub_annotationnotificationstate
+- Pause sets realtime_snoozed_until to about 7 days from now and keeps the digest enabled
+- opening the older unsubscribe link alone keeps the digest enabled
+- Unsubscribe turns digest_enabled off for the actor
+- a 31-day-old snooze link leaves the state unchanged
 
 ## auth
 
@@ -441,9 +490,9 @@
 
 ### AUTH-E2E-018 — an emailed unsubscribe link turns one notification category off and back on
 
-**Goal:** A user who gets integration error emails opens the unsubscribe link from one, stops that category, and resubscribes from the same page.
+**Goal:** A user who gets integration error emails opens the unsubscribe link from one, stops that category, keeps it stopped while using the app, and resubscribes from the same page.
 
-**Spec:** `flows/auth/email-unsubscribe.spec.ts:37`
+**Spec:** `flows/auth/email-unsubscribe.spec.ts:15`
 
 **Tags:** —
 
@@ -452,13 +501,36 @@
 1. mint the signed integration-errors link an email carries for the actor
 2. open the link and see the Unsubscribe? confirmation naming the category and address
 3. press Unsubscribe and see Unsubscribed with a Resubscribe button
-4. press Resubscribe and see Resubscribed
+4. switch organization in the already signed-in app session
+5. press Resubscribe and see Resubscribed
 
 **Backend state verified:**
 
-- opening the link alone leaves the actor with no email opt-outs in PG accounts_user.config
-- Unsubscribe records exactly the integration_errors opt-out on the actor in PG accounts_user.config
-- Resubscribe leaves the actor with an empty opt-out list in PG accounts_user.config
+- opening the link alone leaves the actor's email opt-outs in PG accounts_user.config unchanged
+- Unsubscribe adds exactly the integration_errors opt-out to the actor in PG accounts_user.config
+- an organization switch in a session signed in before the unsubscribe keeps the opt-out in PG and the session stays signed in
+- Resubscribe removes exactly that opt-out again, back to the list the actor started with
+
+### AUTH-E2E-019 — unsubscribe links act only when valid, recent and pressed, and mail clients can unsubscribe in one click
+
+**Goal:** A recipient whose unsubscribe link was altered or is over 30 days old is told so and nothing changes, while their mail client's one-click unsubscribe button works without opening a page.
+
+**Spec:** `flows/auth/email-unsubscribe-guards.spec.ts:12`
+
+**Tags:** —
+
+**User steps:**
+
+1. open an unsubscribe link whose signature was altered and see Link invalid
+2. open a link signed 31 days ago and see Link invalid
+3. send a POST to a valid link with no button pressed and no one-click marker
+4. send the mail client's RFC 8058 one-click POST to the valid link
+5. open the valid link and see that the category is already off
+
+**Backend state verified:**
+
+- an altered link, a 31-day-old link and an unpressed POST each leave the actor's email opt-outs in PG accounts_user.config unchanged
+- the one-click POST adds exactly the automation_rule_runs opt-out to the actor in PG accounts_user.config
 
 ### SAML-E2E-001 — signed login issues one organization-scoped session
 
