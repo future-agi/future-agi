@@ -108,7 +108,10 @@ export default function useDraftSaveFlow(env, { reviewEnabled = true } = {}) {
   if (needsValidate && !validationState && !error)
     validationNote = COPY.errors.validation_required;
   else if (validationState === "failed")
-    validationNote = COPY.validation.failed(failedScenarios.length);
+    validationNote = COPY.validation.failed(
+      failedScenarios.length,
+      validation.reason,
+    );
   else if (COPY.validation[validationState])
     validationNote = COPY.validation[validationState];
 

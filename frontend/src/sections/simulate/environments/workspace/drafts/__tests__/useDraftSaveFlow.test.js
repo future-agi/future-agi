@@ -69,6 +69,21 @@ describe("useDraftSaveFlow", () => {
     expect(flow.validationNote).toMatch(/Validating the changes/);
   });
 
+  it("says the server's reason when the check failed for no scenario's sake", () => {
+    const flow = flowFor({
+      state: "failed",
+      affected_scenarios: [],
+      error: { code: "x", message: "We couldn't run this agent version." },
+    });
+    expect(flow.validationNote).toBe(
+      "Validation failed: We couldn't run this agent version.",
+    );
+    // Without a reason it still doesn't count scenarios it has none of.
+    expect(flowFor({ state: "failed" }).validationNote).toBe(
+      "Validation failed. Validate again",
+    );
+  });
+
   it.each(["ready", "check_unavailable"])(
     "offers Save once the check ends %s",
     (end) => {

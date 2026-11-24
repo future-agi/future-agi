@@ -877,6 +877,8 @@ export const toDrafts = (data = {}) => {
       ? {
           state: data.validation.state,
           affectedScenarios: data.validation.affected_scenarios ?? [],
+          // Why it failed, when the server says.
+          reason: data.validation.error?.message,
         }
       : null,
     candidates: data?.candidates

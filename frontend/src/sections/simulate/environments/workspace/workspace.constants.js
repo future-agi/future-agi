@@ -564,8 +564,14 @@ export const DRAFTS_COPY = {
     validating: "Validating the changes. Save opens when it's done.",
     retry: "Validation did not start. Try again",
     superseded: "The environment changed while validating. Validate again",
-    failed: (n) =>
-      `Validation failed. ${plural(n, "scenario")} need${n === 1 ? "s" : ""} a change`,
+    // The scenarios to change, else why the pair itself failed.
+    failed: (n, reason) => {
+      if (n > 0)
+        return `Validation failed. ${plural(n, "scenario")} need${n === 1 ? "s" : ""} a change`;
+      return reason
+        ? `Validation failed: ${reason}`
+        : "Validation failed. Validate again";
+    },
     check_unavailable:
       "The check is unavailable on our side, so this saves without a check. Re-check the pairing once it is back.",
     unavailable: "Validation isn't available right now. Try again later",
