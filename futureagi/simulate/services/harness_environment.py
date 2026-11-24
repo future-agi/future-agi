@@ -714,6 +714,11 @@ def environment_detail(
         "settings": _settings(job),
         "actors_tab": _actors_tab(contract_section),
     }
+    entrypoints = (contract_section or {}).get("tool_entrypoints")
+    if entrypoints:
+        from simulate.services.harness_tool_source import with_tool_sources
+
+        contract_section["tool_entrypoints"] = with_tool_sources(job, entrypoints)
     if contract_version == 2:
         return environment_detail_v2(
             detail, contract.get("tool_entrypoint_details") or []
