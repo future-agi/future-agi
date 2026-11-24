@@ -167,17 +167,40 @@ class TestRunCallIds:
 
         assert run_call_ids(run) == ["call-live"]
 
-    def test_a_finished_call_counts_by_its_receipt_and_a_live_one_by_its_event(
+    def test_a_finished_call_is_trusted_by_its_receipt_and_only_the_live_one_is_checked(
         self, running_run
     ):
         run, attempt = running_run
         first, second = self._keys(run)
         self._event(attempt, "scenario_started", first.execution_key)
+        self._event(attempt, "call_connected", first.execution_key, "call-done")
         self._receive(run, attempt, first, "call-done")
         self._event(attempt, "scenario_started", second.execution_key)
         self._event(attempt, "call_connected", second.execution_key, "call-live")
 
-        assert run_call_ids(run) == ["call-done", "call-live"]
+        assert run_call_ids(run) == ["call-live"]
+
+    def test_every_started_call_finished_leaves_nothing_to_check(self, running_run):
+        run, attempt = running_run
+        first, _ = self._keys(run)
+        self._event(attempt, "scenario_started", first.execution_key)
+        self._receive(run, attempt, first, None)
+
+        assert run_call_ids(run) == []
+
+    def test_finished_calls_never_push_a_large_run_past_the_lookup_limit(
+        self, running_run
+    ):
+        run, attempt = running_run
+        finished = {f"done-{number}" for number in range(30)}
+        for key in sorted(finished):
+            self._event(attempt, "scenario_started", key)
+            self._event(attempt, "call_connected", key, f"call-{key}")
+        self._event(attempt, "scenario_started", "live")
+        self._event(attempt, "call_connected", "live", "call-live")
+
+        with patch.object(harness_cancel, "_received_keys", return_value=finished):
+            assert run_call_ids(run) == ["call-live"]
 
     def test_a_started_call_that_never_named_its_id_falls_back_to_the_time_window(
         self, running_run
@@ -452,6 +475,18 @@ class TestVapiCalls:
             ),
         ):
             assert provider_calls(job) is ProviderCalls.ACTIVE
+
+    def test_no_live_call_left_reads_ended_without_asking_vapi(self, job):
+        with (
+            patch.object(harness_cancel, "run_call_ids", return_value=[]),
+            patch.object(
+                harness_cancel, "_job_secrets", return_value={"VAPI_API_KEY": "k"}
+            ),
+            patch.object(harness_cancel.requests, "get") as get,
+        ):
+            assert provider_calls(job) is ProviderCalls.ENDED
+
+        get.assert_not_called()
 
     @pytest.mark.parametrize(
         ("statuses", "outcome"),

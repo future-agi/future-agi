@@ -325,39 +325,26 @@ def run_call_ids(job: HostedHarnessJob) -> list[str] | None:
             starts[key] += 1
         elif body.get("provider_call_id"):
             connected[key].append(str(body["provider_call_id"]))
-    received = _received_call_ids(job)
+    received = _received_keys(job)
     ids: set[str] = set()
     for key, started in starts.items():
-        if len(connected[key]) < started and key not in received:
+        if key in received:
+            continue
+        if len(connected[key]) < started:
             return None
         ids.update(connected[key])
-        if received.get(key):
-            ids.add(received[key])
-    if not ids or len(ids) > _CALL_ID_LOOKUP_LIMIT:
+    if not starts or len(ids) > _CALL_ID_LOOKUP_LIMIT:
         return None
     return sorted(ids)
 
 
-def _received_call_ids(job: HostedHarnessJob) -> dict[str, str]:
-    received: dict[str, str] = {}
-    for (
-        execution_key,
-        execution_call,
-        scenario_key,
-        scenario_call,
-    ) in HostedHarnessReceipt.no_workspace_objects.filter(
-        job=job, attempt_number=job.current_attempt_number
-    ).values_list(
-        "execution__execution_key",
-        "execution__call_execution__customer_call_id",
-        "scenario__scenario_key",
-        "scenario__call_execution__customer_call_id",
-    ):
-        if execution_key:
-            received[execution_key] = execution_call or ""
-        else:
-            received[scenario_key] = scenario_call or ""
-    return received
+def _received_keys(job: HostedHarnessJob) -> set[str]:
+    return {
+        execution_key or scenario_key
+        for execution_key, scenario_key in HostedHarnessReceipt.no_workspace_objects.filter(
+            job=job, attempt_number=job.current_attempt_number
+        ).values_list("execution__execution_key", "scenario__scenario_key")
+    }
 
 
 def _key_rejected(error: requests.HTTPError) -> bool:
