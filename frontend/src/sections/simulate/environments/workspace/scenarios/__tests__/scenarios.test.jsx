@@ -686,6 +686,35 @@ describe("ScenariosStep lifecycle", () => {
     legacy_without_control: 0,
   };
 
+  it("reaches archived scenarios from the counts line, even when every one is archived, and back", async () => {
+    listScenarios.mockImplementation((jobId, params) => ({
+      ...queryScenarioFixture(
+        params.lifecycle === "archived"
+          ? { limit: params.limit, page: 1 }
+          : { ...params, search: "no-such-scenario" },
+        SERVER_ROWS,
+      ),
+      lifecycle_counts: { ...COUNTS, active: 0, draft: 0, archived: 10 },
+    }));
+    renderStep();
+    const archived = await screen.findByRole("button", { name: "10 archived" });
+    expect(archived).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(archived);
+    await waitFor(() =>
+      expect(listScenarios).toHaveBeenCalledWith(
+        "job-test",
+        expect.objectContaining({ lifecycle: "archived" }),
+      ),
+    );
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+    expect(archived).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "Filter (1)" }),
+    ).toBeInTheDocument();
+    fireEvent.click(archived);
+    expect(archived).toHaveAttribute("aria-pressed", "false");
+  });
+
   it("shows the counts line and asks the list for one state, empty when none match", async () => {
     listScenarios.mockImplementation((jobId, params) => {
       if (params.lifecycle === "source_changed") {

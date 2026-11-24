@@ -50,6 +50,8 @@ export const SCENARIOS_COPY = {
 
 // A scenario's state on the versions in view. Active and Validated get no mark: Active is the
 // normal case and Validated only lasts until Save.
+// The State filter's name for archived scenarios, which the counts line applies.
+export const ARCHIVED_LABEL = "Archived";
 const DRAFT_LABEL = "Not proved";
 
 export const LIFECYCLE_COPY = {
@@ -67,13 +69,17 @@ export const LIFECYCLE_COPY = {
     not_proved: notProved = 0,
   }) => `${proved} proved · ${kept} kept as written · ${notProved} not proved`,
   countsLegacy: (n) => ` · ${n} without a wrong-way example`,
+  // Archived scenarios are left out of the list, so the count is also the way to them.
+  countsArchived: (n) => `${n} archived`,
+  countsArchivedHint: (on) =>
+    on ? "Show all scenarios" : "Show archived scenarios",
   filterLabel: "State",
   // The list's `lifecycle` query values; archived rows show only when asked for.
   filters: [
     { value: "active", label: "Active" },
     { value: "draft", label: DRAFT_LABEL },
     { value: "kept_as_written", label: "Kept as written" },
-    { value: "archived", label: "Archived" },
+    { value: "archived", label: ARCHIVED_LABEL },
     { value: "source_changed", label: "Source changed" },
   ],
   validate: {

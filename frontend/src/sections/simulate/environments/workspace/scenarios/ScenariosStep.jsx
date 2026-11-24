@@ -6,6 +6,7 @@ import {
   Typography,
   Button,
   ClickAwayListener,
+  Tooltip,
 } from "@mui/material";
 import { useSnackbar } from "notistack";
 import { useSearchParams } from "react-router-dom";
@@ -35,7 +36,11 @@ import {
   publishScenarioSelection,
   clearScenarioSelection,
 } from "../../buildEnvironment/console/scenarioSelectionBus";
-import { LIFECYCLE_COPY, SCENARIOS_COPY } from "./scenarios.constants";
+import {
+  ARCHIVED_LABEL,
+  LIFECYCLE_COPY,
+  SCENARIOS_COPY,
+} from "./scenarios.constants";
 import { countsLine, isBeingValidated } from "./lifecycleView";
 import ValidateScenariosButton from "./ValidateScenariosButton";
 import { DRAFTS_COPY, WORKSPACE_COPY } from "../workspace.constants";
@@ -257,7 +262,9 @@ export default function ScenariosStep({
     if (pageData.isError) pageData.refetch();
     if (suiteQuery.isError) suiteQuery.refetch();
   };
-  const hasScenarios = suiteTotal > 0;
+  // With every scenario archived the list is empty, but they can still be restored from it.
+  const archivedCount = pageData.proofCounts?.archived ?? 0;
+  const hasScenarios = suiteTotal > 0 || archivedCount > 0;
 
   // A change to the search, the filters or the grouping moves the matching set,
   // so the page position and the selection predicate are reset in each change
@@ -359,6 +366,15 @@ export default function ScenariosStep({
     : 0;
   const hiddenCount = hiddenGroupIds.length;
   const hasSearchOrFilters = query.length > 0 || filterCount > 0;
+  const showingArchived = filters[STATE_FIELD]?.[0] === ARCHIVED_LABEL;
+  const toggleArchived = () => {
+    setFilters(
+      showingArchived
+        ? fieldFilters
+        : { ...fieldFilters, [STATE_FIELD]: [ARCHIVED_LABEL] },
+    );
+    resetView();
+  };
   const clearFilters = () => {
     setQuery("");
     setFilters({});
@@ -707,6 +723,31 @@ export default function ScenariosStep({
                 >
                   {countsText}
                 </Typography>
+                {archivedCount > 0 && (
+                  <Tooltip
+                    arrow
+                    describeChild
+                    title={LIFECYCLE_COPY.countsArchivedHint(showingArchived)}
+                  >
+                    <Button
+                      size="small"
+                      color="inherit"
+                      aria-pressed={showingArchived}
+                      onClick={toggleArchived}
+                      sx={{
+                        typography: "s3",
+                        minWidth: 0,
+                        px: 0.75,
+                        color: showingArchived
+                          ? "text.primary"
+                          : "text.secondary",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {LIFECYCLE_COPY.countsArchived(archivedCount)}
+                    </Button>
+                  </Tooltip>
+                )}
                 {!rowsLocked && env?.id && (
                   <Stack
                     direction="row"
