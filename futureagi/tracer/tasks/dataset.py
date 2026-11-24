@@ -79,15 +79,14 @@ def _chspan_field_value(span, field_name):
         merged: dict = {}
         merged.update(span.attrs_string or {})
         merged.update(span.attrs_number or {})
-        for k, v in (span.attrs_bool or {}).items():
-            merged[k] = bool(v)
+        merged.update(span.attrs_bool or {})
         for k, v in extra.items():
             if k not in (
                 "model_parameters",
                 "input_images",
                 "eval_input",
                 "eval_attributes",
-            ) and not str(k).startswith("__fi_promoted_"):
+            ):
                 merged[k] = v
         return merged
     if field_name == "metadata":
@@ -154,15 +153,14 @@ def _export_span_field_value(span, field_name):
         merged = {}
         merged.update(span.get("attrs_string") or {})
         merged.update(span.get("attrs_number") or {})
-        for k, v in (span.get("attrs_bool") or {}).items():
-            merged[k] = bool(v)
+        merged.update(span.get("attrs_bool") or {})
         for key, value in extra.items():
             if key not in (
                 "model_parameters",
                 "input_images",
                 "eval_input",
                 "eval_attributes",
-            ) and not str(key).startswith("__fi_promoted_"):
+            ):
                 merged[key] = value
         return merged
 
