@@ -92,9 +92,7 @@ const BUILDING_JOB = {
     scenario_count: 3,
     agent: { connector: "livekit" },
   },
-  // A stage that is genuinely still assembling the world. "running" is stage 10
-  // of 14, past connecting_agent, so it reads as built — not what this fixture
-  // is for.
+  // A stage that is genuinely still assembling the world.
   status: { stage: "generating_environment", created_at: NOW },
   credentials: { detected_connectors: ["livekit"] },
   stage_outputs: [],
@@ -822,6 +820,47 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(strip).toHaveTextContent("Stopped at Understanding agent");
   });
 
+  it("keeps the build strip through the release checks", async () => {
+    let currentJob = {
+      ...BUILDING_JOB,
+      status: { stage: "connecting_agent", created_at: NOW },
+    };
+    getHarnessJob.mockImplementation(() => Promise.resolve(currentJob));
+
+    renderWorkspace("/dashboard/simulate/environments/job-build");
+
+    expect(await screen.findByTestId("build-strip")).toHaveTextContent(
+      "Connecting agent · 8 of 12",
+    );
+
+    currentJob = {
+      ...BUILDING_JOB,
+      status: { stage: "running", created_at: NOW },
+    };
+    await waitFor(
+      () =>
+        expect(screen.getByTestId("build-strip")).toHaveTextContent(
+          "Running · 9 of 12",
+        ),
+      { timeout: 6000 },
+    );
+
+    currentJob = {
+      ...BUILDING_JOB,
+      status: { stage: "grading", created_at: NOW },
+    };
+    await waitFor(
+      () =>
+        expect(screen.getByTestId("build-strip")).toHaveTextContent(
+          "Grading · 10 of 12",
+        ),
+      { timeout: 6000 },
+    );
+    expect(
+      screen.getByRole("button", { name: /Run simulation/ }),
+    ).toBeDisabled();
+  }, 15000);
+
   it("swaps the build experience for the workspace in place when the job completes", async () => {
     // First poll is still building; the 2s harness-job refetch then lands
     // completed. There is no adopt hand-off — buildStatus flips building→ready
@@ -846,7 +885,7 @@ describe("EnvironmentWorkspace route shell", () => {
     expect(useEnvironmentsStore.getState().byEnv["job-build"]).toBeUndefined();
 
     // ...then the job completes: Run enables (the harness bridge is live) and the
-    // build strip is gone — the workspace took over in place, same url.
+    // build strip is gone and the workspace took over in place, same url.
     currentJob = COMPLETED_BUILD_JOB;
     await waitFor(
       () =>

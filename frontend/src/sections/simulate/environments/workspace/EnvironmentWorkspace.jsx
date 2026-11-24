@@ -15,6 +15,7 @@ import {
   harnessJobQuery,
 } from "src/api/simulate-environments/environment";
 import { useBuildProgress } from "src/api/simulate-environments/buildProgress";
+import { toScenarioRow } from "src/api/simulate-environments/harnessDetail";
 import { useWorkspaceChat } from "src/api/simulate-environments/workspaceChat";
 import { harnessIdempotencyKey } from "src/api/harness/harness";
 import { runHarnessEnvironment } from "src/api/simulate-environments/harnessEnvironments";
@@ -23,7 +24,10 @@ import {
   runSimulationTarget,
 } from "src/api/simulate-environments/runs";
 import { listAllScenarioKeys } from "src/api/simulate-environments/scenarioSelection";
-import { environmentVersionsKey } from "src/api/simulate-environments/versions";
+import {
+  environmentVersionsKey,
+  useEnvironmentVersions,
+} from "src/api/simulate-environments/versions";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import { LoadingScreen } from "src/components/loading-screen";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
@@ -54,7 +58,13 @@ import { WORKSPACE_COPY } from "./workspace.constants";
 import { blockedReason } from "./runBlocked";
 import useSimulationAccess from "../hooks/useSimulationAccess";
 import BuildStoppedStrip from "./BuildStoppedStrip";
-import { stepOfStage, stopSentence, stoppedStep, tabWaits } from "./buildSteps";
+import {
+  landedOf,
+  stepOfStage,
+  stopSentence,
+  stoppedStep,
+  tabWaits,
+} from "./buildSteps";
 
 const EXECUTION_PATTERN = {
   path: `${paths.dashboard.simulate.environments.root}/:envId/runs/:testId/:executionId`,
@@ -268,12 +278,21 @@ export default function EnvironmentWorkspace() {
         designApproved: Boolean(env?.designApproved),
       })
     : null;
+  const buildVersions = useEnvironmentVersions(envId, {
+    enabled: backed && building && Boolean(env?.versioning?.enabled),
+  });
+  const landed = landedOf(env, liveStep || stopStep, {
+    versions:
+      Boolean(stopStep) ||
+      Boolean(buildVersions.data && !buildVersions.data.empty),
+  });
   const waitsByTab = liveStep
-    ? tabWaits(liveStep)
+    ? tabWaits(liveStep, { landed })
     : stopStep
       ? tabWaits(stopStep, {
           stopped: true,
           reason: stopSentence(jobStatus, stopStep),
+          landed,
         })
       : {};
   const buildStartedAt = env?.designApproved
@@ -421,7 +440,7 @@ export default function EnvironmentWorkspace() {
               />
             )}
           >
-            <DesignReviewStage envId={env.id} />
+            <DesignReviewStage key={env.id} envId={env.id} />
           </ChatSplitPane>
         </Box>
       </Box>
@@ -555,8 +574,6 @@ export default function EnvironmentWorkspace() {
   // yields its Run/Repeats while one is active ("one primary at a time").
   const selectionActive = (selection.count ?? selection.ids.length) > 0;
 
-  // While the environment is still deriving, the builder can't accept edits —
-  // the console freezes until it goes Live.
   const envLive = env.buildStatus === BUILD_STATUS.READY;
 
   // The tab count, the "no evals" gap and the Runs summary read the
@@ -613,7 +630,8 @@ export default function EnvironmentWorkspace() {
       : undefined;
   // Real capability-graph branches for a backed env: tools names,
   // real_use_cases (flows), world.personas names, hard_constraints (guardrails).
-  // Empty arrays render the graph's honest "none yet" instead of a fixture.
+  // A branch with nothing in it is left out of the graph, never filled with a
+  // fixture.
   const graphData =
     backed && backedDetail
       ? {
@@ -626,6 +644,11 @@ export default function EnvironmentWorkspace() {
             .filter(Boolean),
           guardrails: backedDetail.contract?.hard_constraints ?? [],
         }
+      : undefined;
+
+  const contractScenarios =
+    backed && Array.isArray(backedDetail?.scenarios)
+      ? backedDetail.scenarios.map(toScenarioRow)
       : undefined;
 
   const contractChat =
@@ -711,7 +734,7 @@ export default function EnvironmentWorkspace() {
           step={stopStep}
           counts={{
             tools: backedDetail?.contract?.tools?.length || 0,
-            tables: backedDetail?.world?.stores?.length || 0,
+            tables: backedDetail?.world?.tables?.length || 0,
             scenarios: backedDetail?.overview?.scenario_count || 0,
           }}
           credits={jobQuery.data?.consumption?.ai_credits ?? undefined}
@@ -796,6 +819,7 @@ export default function EnvironmentWorkspace() {
               overviewWorld={overviewWorld}
               graphData={graphData}
               contractChat={contractChat}
+              contractScenarios={contractScenarios}
               tabWaits={waitsByTab}
               onStartRun={startRun}
               runDialogOpen={Boolean(runDialog)}

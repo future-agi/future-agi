@@ -2,8 +2,6 @@ const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
 export const REVIEW_STATUS = {
   AWAITING: "awaiting_approval",
-  APPROVED: "approved",
-  DISCARDED: "discarded",
 };
 
 export const PARK_AFTER_MS = 15 * 60 * 1000;
@@ -11,22 +9,30 @@ export const PARK_AFTER_MS = 15 * 60 * 1000;
 export const SOURCE_LABEL = {
   agent_reading: "From the agent's reading",
   agent_code: "From the agent's code",
+  agent_settings: "From the agent's settings",
   agent_prompt: "From the agent's prompt",
   your_change: "From your change",
 };
+
+export const AGENT_TOOL_SOURCES = new Set(["agent_code", "agent_settings"]);
 
 export const sourceWords = (source) =>
   source ? source.charAt(0).toLowerCase() + source.slice(1) : "";
 
 export const REVIEW_COPY = {
   title: "Review the design",
-  summary: ({ tables, tools, rules, useCases }) =>
-    `${[
-      plural(tables, "record"),
-      plural(tools, "tool"),
-      plural(rules, "rule"),
-      plural(useCases, "use case"),
-    ].join(" · ")}. Nothing is built until you approve.`,
+  summary: ({ tables, tools, rules, useCases }) => {
+    const found = [
+      [tables, "record"],
+      [tools, "tool"],
+      [rules, "rule"],
+      [useCases, "use case"],
+    ]
+      .filter(([count]) => count > 0)
+      .map(([count, noun]) => plural(count, noun));
+    const gate = "Nothing is built until you approve.";
+    return found.length ? `${found.join(" · ")}. ${gate}` : gate;
+  },
   approve: "Approve and build",
   continue: "Continue",
   approved: "Approved. The build is running from this design.",
@@ -79,7 +85,6 @@ export const REVIEW_COPY = {
         : ", spread across these use cases"
     }.`,
   columns: (columns) => plural(columns.length, "column"),
-  noToolUsesIt: "No tool uses it",
   noTable: "No table",
   none: "None",
   tableHeader: {
@@ -94,8 +99,6 @@ export const REVIEW_COPY = {
     unsupported: "can't be built here",
     unknown: "where it runs is not known",
   },
-  noneYet: "None yet",
-  noRecords: "No records. The agent's reading named none",
   caller: "Caller",
   callerRole: "the person the agent serves",
   proposedForScenarios: "Proposed for the scenarios",
@@ -130,7 +133,11 @@ export const REVIEW_COPY = {
 
 export const BUILD_COPY = {
   line: (name, phase, step) =>
-    [name ? `Building environment ${name}` : "Building environment", phase, step]
+    [
+      name ? `Building environment ${name}` : "Building environment",
+      phase,
+      step,
+    ]
       .filter(Boolean)
       .join(" · "),
   count: (no, total) => ` · ${no} of ${total}`,

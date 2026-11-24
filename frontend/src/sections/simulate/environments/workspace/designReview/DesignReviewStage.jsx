@@ -35,6 +35,7 @@ import ReviewLine from "./ReviewLine";
 import ReviewBrief, { ReviewBanner } from "./ReviewBrief";
 import ToolChip from "./ToolChip";
 import {
+  AGENT_TOOL_SOURCES,
   PARK_AFTER_MS,
   REVIEW_COPY,
   REVIEW_STATUS,
@@ -166,7 +167,8 @@ export default function DesignReviewStage({ envId }) {
   const pendingNames = new Set(pending.map((one) => one.tool));
   const mapTools = tools.filter((tool) => !pendingNames.has(tool.name));
   const scenarioTotal = plannedScenarios(useCases);
-  const emptyWorld = !tables.length && !tools.length;
+  const emptyWorld =
+    !tables.length && !tools.length && !rules.length && !useCases.length;
   const parked =
     waiting && isParked(review.created_at, now, continuedAt, PARK_AFTER_MS);
 
@@ -199,7 +201,7 @@ export default function DesignReviewStage({ envId }) {
 
   const remove = async (kind, item, label) => {
     const note =
-      kind === "tool" && item.source === "agent_code"
+      kind === "tool" && AGENT_TOOL_SOURCES.has(item.source)
         ? REVIEW_COPY.agentStillCalls
         : null;
     if (kind !== "tool") {
@@ -426,13 +428,13 @@ export default function DesignReviewStage({ envId }) {
 
   const separateRecordsAndTools = (
     <>
-      <ReviewSection
-        label={REVIEW_COPY.records}
-        count={tables.length}
-        source={tableCommon ? sourceWords(tableCommon) : null}
-      >
-        {tables.length ? (
-          tables.map((table) => (
+      {tables.length > 0 && (
+        <ReviewSection
+          label={REVIEW_COPY.records}
+          count={tables.length}
+          source={tableCommon ? sourceWords(tableCommon) : null}
+        >
+          {tables.map((table) => (
             <ReviewLine key={table.id}>
               <Box component="span" sx={{ fontWeight: 500 }}>
                 {table.name}
@@ -441,18 +443,16 @@ export default function DesignReviewStage({ envId }) {
                 {REVIEW_COPY.columns(table.columns)}
               </Box>
             </ReviewLine>
-          ))
-        ) : (
-          <ReviewLine empty>{REVIEW_COPY.noRecords}</ReviewLine>
-        )}
-      </ReviewSection>
-      <ReviewSection
-        label={REVIEW_COPY.tools}
-        count={mapTools.length}
-        source={toolCommon ? sourceWords(toolCommon) : null}
-      >
-        {mapTools.length ? (
-          mapTools.map((tool) => (
+          ))}
+        </ReviewSection>
+      )}
+      {(mapTools.length > 0 || leftOut.length > 0) && (
+        <ReviewSection
+          label={REVIEW_COPY.tools}
+          count={mapTools.length}
+          source={toolCommon ? sourceWords(toolCommon) : null}
+        >
+          {mapTools.map((tool) => (
             <ReviewLine
               key={tool.id}
               onRemove={editable ? () => removeTool(tool) : undefined}
@@ -471,12 +471,10 @@ export default function DesignReviewStage({ envId }) {
                 </Box>
               )}
             </ReviewLine>
-          ))
-        ) : (
-          <ReviewLine empty>{REVIEW_COPY.noneYet}</ReviewLine>
-        )}
-        {leftOutLines}
-      </ReviewSection>
+          ))}
+          {leftOutLines}
+        </ReviewSection>
+      )}
     </>
   );
 
@@ -565,13 +563,13 @@ export default function DesignReviewStage({ envId }) {
           ? recordsAndTools()
           : separateRecordsAndTools}
 
-        <ReviewSection
-          label={REVIEW_COPY.rules}
-          count={rules.length}
-          source={ruleCommon ? sourceWords(ruleCommon) : null}
-        >
-          {rules.length ? (
-            rules.map((rule) =>
+        {rules.length > 0 && (
+          <ReviewSection
+            label={REVIEW_COPY.rules}
+            count={rules.length}
+            source={ruleCommon ? sourceWords(ruleCommon) : null}
+          >
+            {rules.map((rule) =>
               editingRule === rule.id ? (
                 <RuleEditor
                   key={`${rule.id}-edit`}
@@ -595,11 +593,9 @@ export default function DesignReviewStage({ envId }) {
                   {rule.text}
                 </ReviewLine>
               ),
-            )
-          ) : (
-            <ReviewLine empty>{REVIEW_COPY.noneYet}</ReviewLine>
-          )}
-        </ReviewSection>
+            )}
+          </ReviewSection>
+        )}
 
         <ReviewSection label={REVIEW_COPY.people} count={1 + actors.length}>
           <ReviewLine>
@@ -626,29 +622,32 @@ export default function DesignReviewStage({ envId }) {
           ))}
         </ReviewSection>
 
-        <ReviewSection
-          label={REVIEW_COPY.useCases}
-          count={useCases.length}
-          source={useCaseCommon ? sourceWords(useCaseCommon) : null}
-        >
-          {emptyWorld || !useCases.length ? (
-            <ReviewLine empty>{REVIEW_COPY.noScenarios}</ReviewLine>
-          ) : (
-            useCases.map((useCase) => (
-              <ReviewLine
-                key={useCase.id}
-                onRemove={
-                  editable && useCases.length > 1
-                    ? () => remove("use_case", useCase, REVIEW_COPY.theUseCase)
-                    : undefined
-                }
-                disabled={busy}
-              >
-                {useCase.text}
-              </ReviewLine>
-            ))
-          )}
-        </ReviewSection>
+        {useCases.length > 0 && (
+          <ReviewSection
+            label={REVIEW_COPY.useCases}
+            count={useCases.length}
+            source={useCaseCommon ? sourceWords(useCaseCommon) : null}
+          >
+            {emptyWorld ? (
+              <ReviewLine empty>{REVIEW_COPY.noScenarios}</ReviewLine>
+            ) : (
+              useCases.map((useCase) => (
+                <ReviewLine
+                  key={useCase.id}
+                  onRemove={
+                    editable && useCases.length > 1
+                      ? () =>
+                          remove("use_case", useCase, REVIEW_COPY.theUseCase)
+                      : undefined
+                  }
+                  disabled={busy}
+                >
+                  {useCase.text}
+                </ReviewLine>
+              ))
+            )}
+          </ReviewSection>
+        )}
       </Box>
 
       <ConfirmDialog
