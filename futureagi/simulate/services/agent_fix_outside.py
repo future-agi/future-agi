@@ -76,6 +76,10 @@ def submit_outside_attempt(
     _refuse_unrebuildable(base, files)
     require_agent_fix_usage(str(environment.organization_id))
     fix_run_id = uuid.uuid4()
+    # Storage first, outside the run's lock: trees no fix points at are harmless.
+    store_outside_trees(
+        environment.organization_id, fix_run_id, base=base_body, submitted=files
+    )
     with transaction.atomic():
         # Two submissions at once take their numbers one after the other.
         HostedHarnessJob.no_workspace_objects.select_for_update().get(id=source_run.id)
@@ -94,9 +98,6 @@ def submit_outside_attempt(
         )
         # Here, with the locks the previous attempt leaves this one.
         candidate_patch(base, files, request.locked_paths)
-        store_outside_trees(
-            environment.organization_id, fix_run_id, base=base_body, submitted=files
-        )
         fix_run = create_fix_run(
             source_run,
             base_version_id=previous.base_agent_version_id

@@ -8,7 +8,7 @@ import json
 import math
 import os
 import tarfile
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -42,6 +42,7 @@ from simulate.selectors.agent_fix_outside import (
     outside_attempt_request,
 )
 from simulate.services import agent_fix_engine as engine
+from simulate.services.agent_fix_engine import store_outside_trees
 from simulate.services.agent_fix_runs import close_fix_run
 from simulate.services.hosted_harness import HostedHarnessError
 from simulate.tests.test_agent_fix_api import ENGINE_MODEL, _armed, _engine
@@ -326,6 +327,58 @@ class TestSubmit:
         response = _submit(auth_client, source_run, budget_credits=900)
 
         assert response.json()["request"]["budget_credits"] == 900
+
+    @pytest.mark.parametrize(
+        ("hold", "given", "code"),
+        [
+            # The fixture's $1.00 hold is 100 credits: 99 would refuse its own runs.
+            (None, 99, "fix_budget_below_hold"),
+            # $501 of holds is past the 50,000 credits an Epoch may use, whatever is given.
+            (Decimal("501"), 50_000, "fix_attempt_too_large"),
+        ],
+        ids=["below-the-hold", "past-the-limit"],
+    )
+    def test_a_given_budget_is_held_to_what_the_attempt_needs(
+        self, auth_client, source_run, hold, given, code
+    ):
+        with (
+            patch(
+                "simulate.selectors.agent_fix_outside.outside_attempt_hold_usd",
+                return_value=hold,
+            )
+            if hold is not None
+            else nullcontext()
+        ):
+            response = _submit(auth_client, source_run, budget_credits=given)
+
+        assert (response.status_code, response.json()["error"]) == (422, code)
+        assert not AgentFixRun.no_workspace_objects.exists()
+
+    def test_the_trees_are_stored_before_the_run_is_locked(
+        self, auth_client, source_run
+    ):
+        stored_at = []
+        with CaptureQueriesContext(connection) as queries:
+            real = store_outside_trees
+
+            def store(*args, **kwargs):
+                stored_at.append(len(queries.captured_queries))
+                return real(*args, **kwargs)
+
+            with patch(
+                "simulate.services.agent_fix_outside.store_outside_trees",
+                side_effect=store,
+            ):
+                response = _submit(auth_client, source_run)
+
+        assert response.status_code == 201, response.content
+        locked_at = next(
+            index
+            for index, one in enumerate(queries.captured_queries)
+            if "FOR UPDATE" in one["sql"]
+            and "simulate_hosted_harness_job" in one["sql"]
+        )
+        assert stored_at and stored_at[0] <= locked_at
 
     @pytest.mark.parametrize(
         ("files", "fields", "status", "code"),
@@ -1325,3 +1378,106 @@ class TestEndingWords:
         read = auth_client.get(f"{EPOCHS}/{attempt.id}/").json()
 
         assert verdict["summary"] == read["report"]["summary"] == words
+
+
+# Only the held-back case failed this sub-goal: naming it shows what that case tests.
+HELD_ONLY_SUB_GOAL = "refunded"
+
+
+@pytest.fixture
+def held_everywhere(both_failing):
+    """An outside attempt with its held-back case stored in every place an Epoch keeps
+    one: its request (targets, split, variations, evidence, failing sub-goals), its frozen
+    plan and noise, its report and flaky rows, and its candidate's verdict and override."""
+    attempt = _attempt(both_failing, 1, held=[HELD])
+    AgentFixCandidate.no_workspace_objects.create(
+        fix_run=attempt,
+        attempt=1,
+        agent_version_id=attempt.base_agent_version_id,
+        patch_object_key="k",
+        outcome="rejected",
+        verdict=_verdict(HELD),
+    )
+    AgentFixRun.no_workspace_objects.filter(id=attempt.id).update(
+        request={
+            **attempt.request,
+            "failing_sub_goals": [HELD_ONLY_SUB_GOAL, "greeted"],
+            "variation_parents": {f"{HELD}-v1": HELD},
+            "evidence": [
+                {
+                    "import_id": str(uuid4()),
+                    "source_kind": "session",
+                    "source_ids": [f"trace-of-{HELD}", "trace-of-seen"],
+                    "scenario_keys": [HELD, SEEN],
+                }
+            ],
+        },
+        plan={
+            "target": 1,
+            "held_back": 1,
+            "must_pass": 1,
+            "max_candidates": 1,
+            "repeats": 3,
+            "baseline_spread_pts": 17,
+        },
+        diagnosis={"causes": ["It greets after the order, not before"]},
+        report={
+            "ending": "no_improvement",
+            "summary": f"no_improvement: repeats: {HELD} at 33%, 67%",
+            "winner_candidate_id": None,
+            "flaky_protected": [
+                {
+                    "key": SEEN,
+                    "name": None,
+                    "sub_goal": "greeted",
+                    "passed": 2,
+                    "runs": 3,
+                }
+            ],
+        },
+    )
+    attempt.refresh_from_db()
+    return attempt
+
+
+class TestNoHeldBackCaseInAnyRead:
+    """Every read a coding agent can make, serialized whole: the guard for the next
+    field that carries a held-back case."""
+
+    def _reads(self, client, attempt):
+        source = str(attempt.source_run.test_execution_id)
+        return {
+            "detail": client.get(f"{EPOCHS}/{attempt.id}/"),
+            "list": client.get(
+                f"{EPOCHS}/", {"environment_id": attempt.environment_id}
+            ),
+            "verdict": client.get(f"{EPOCHS}/{attempt.id}/verdict/"),
+            "brief": client.get(
+                f"{EPOCHS}/coding-agent-brief/", {"source_run_id": source}
+            ),
+        }
+
+    @pytest.mark.parametrize(
+        "client", ["auth_client", "key_client"], ids=["mcp", "key"]
+    )
+    def test_a_read_that_is_not_a_session_carries_no_held_back_case(
+        self, request, held_everywhere, client
+    ):
+        reads = self._reads(request.getfixturevalue(client), held_everywhere)
+
+        name = _scenario_name(held_everywhere.source_run, HELD)
+        for read, response in reads.items():
+            assert response.status_code == 200, (read, response.content)
+            text = json.dumps(response.json())
+            assert HELD not in text, read
+            assert f"trace-of-{HELD}" not in text, read
+            assert HELD_ONLY_SUB_GOAL not in text, read
+            assert not name or name not in text, read
+        # The reads still carry the case the coding agent was given.
+        assert SEEN in json.dumps(reads["detail"].json())
+
+    def test_a_signed_in_session_still_sees_them(self, browser_client, held_everywhere):
+        detail = browser_client.get(f"{EPOCHS}/{held_everywhere.id}/").json()
+
+        assert detail["request"]["held_back_scenario_keys"] == [HELD]
+        assert HELD_ONLY_SUB_GOAL in detail["request"]["failing_sub_goals"]

@@ -622,13 +622,13 @@ tools:
     entitlement: fix_my_agent
   - name: make_epoch_candidate_default
     group: epoch
-    description: Make an Epoch candidate the environment's default agent version, so later runs use it. To ship a candidate that only its must-pass check refused, give override_reason.
+    description: Make an Epoch's winning candidate the environment's default agent version, so later runs use it. A candidate its checks refused is shipped only by a person, in Future AGI.
     operation: {method: POST, path: "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/make-default/"}
     access: write
     entitlement: fix_my_agent
   - name: open_epoch_candidate_pull_request
     group: epoch
-    description: Open a pull request with an Epoch candidate's change on a GitHub agent's repository. It is opened once. To ship a candidate that only its must-pass check refused, give override_reason.
+    description: Open a pull request with an Epoch's winning candidate on a GitHub agent's repository. It is opened once. A candidate its checks refused is shipped only by a person, in Future AGI.
     operation: {method: POST, path: "/simulate/api/agent-fix-runs/{id}/candidates/{candidate_id}/pull-request/"}
     access: write
     open_world: true

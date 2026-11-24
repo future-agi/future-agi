@@ -178,11 +178,10 @@ def outside_attempt_request(
     budget_credits: int | None,
 ) -> FixRequest:
     """The request of the next outside attempt on a run. Its locked paths are the previous
-    attempt's and ``locked_paths``: an attempt may lock more, never unlock. Without
-    ``budget_credits`` its budget is default_budget_credits."""
+    attempt's and ``locked_paths``: an attempt may lock more, never unlock. Its budget is
+    attempt_budget_credits."""
     scope = _attempt_scope(source_run, previous)
-    if budget_credits is None:
-        budget_credits = default_budget_credits(source_run, scope, previous)
+    budget_credits = attempt_budget_credits(source_run, scope, previous, budget_credits)
     try:
         return FixRequest.model_validate(
             {
@@ -200,20 +199,34 @@ def outside_attempt_request(
         raise _scope_refused() from exc
 
 
-def default_budget_credits(
-    source_run: HostedHarnessJob, scope: FixRequest, previous: AgentFixRun | None
+def attempt_budget_credits(
+    source_run: HostedHarnessJob,
+    scope: FixRequest,
+    previous: AgentFixRun | None,
+    given: int | None = None,
 ) -> int:
-    """An attempt's default limit in credits: its worst-case hold with BUDGET_HEADROOM on
-    top, since a check run holds its actual cost once that is more than the estimate. An
-    attempt that would need more than an Epoch may use is refused, never cut short."""
-    hold = outside_attempt_hold_usd(source_run, scope, previous)
-    credits = max(1, math.ceil(hold * BUDGET_HEADROOM * 100))
-    if credits > BUDGET_CREDITS_MAX:
+    """An attempt's limit in credits. Left out, its worst-case hold with BUDGET_HEADROOM
+    on top, since a check run holds its actual cost once that is more than the estimate.
+    Given, at least the hold, or the attempt's own check runs would be refused. An
+    attempt that needs more than an Epoch may use is refused, never cut short."""
+    hold = max(
+        1, math.ceil(outside_attempt_hold_usd(source_run, scope, previous) * 100)
+    )
+    credits = max(1, math.ceil(hold * BUDGET_HEADROOM)) if given is None else given
+    if max(hold, credits) > BUDGET_CREDITS_MAX:
+        needed = max(hold, credits) if given is None else hold
         raise HostedHarnessError(
             "fix_attempt_too_large",
-            f"An attempt on this run could need {credits:,} credits, more than the"
+            f"An attempt on this run could need {needed:,} credits, more than the"
             f" {BUDGET_CREDITS_MAX:,} an Epoch may use. Run the environment on fewer"
             " scenarios, then fix the new run.",
+            status_code=422,
+        )
+    if credits < hold:
+        raise HostedHarnessError(
+            "fix_budget_below_hold",
+            f"This attempt's check runs can hold up to {hold:,} credits. Give a budget"
+            " of at least that, or leave it out to use the default.",
             status_code=422,
         )
     return credits
@@ -230,7 +243,7 @@ def coding_agent_brief(source_run: HostedHarnessJob) -> CodingAgentBrief:
     request, files = None, []
     try:
         request = _attempt_scope(source_run, previous)
-        default_budget_credits(source_run, request, previous)
+        attempt_budget_credits(source_run, request, previous)
         files = sorted(archive_files(run_source_archive(source_run)))
     except HostedHarnessError as exc:
         blocked = blocked or LaunchBlocked(code=exc.code, message=exc.message)
@@ -476,6 +489,9 @@ def hidden_epoch(data: Mapping[str, Any], held_back: set[str]) -> dict[str, Any]
                 key for key in request["target_scenario_keys"] if key not in held_back
             ],
             "held_back_scenario_keys": [],
+            # The sub-goals that failed on every target, held-back ones included: one
+            # only a held-back case failed would show what it tests.
+            "failing_sub_goals": [] if held_back else request["failing_sub_goals"],
             # A variation is held back with the case it varies.
             "variation_parents": {
                 key: parent

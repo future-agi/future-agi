@@ -118,6 +118,18 @@ def test_epoch_tools_need_the_entitlement_their_views_check(registry):
     } <= features
 
 
+@pytest.mark.parametrize(
+    "name", ["make_epoch_candidate_default", "open_epoch_candidate_pull_request"]
+)
+def test_shipping_tools_leave_a_refused_candidate_to_a_person(registry, name):
+    """An override reason from MCP is refused (only a signed-in person ships a candidate
+    its checks refused), so the tools never tell an agent to give one."""
+    description = registry.get(name).description
+
+    assert "override_reason" not in description
+    assert "only by a person, in Future AGI" in description
+
+
 def test_discarding_an_import_is_destructive(registry):
     assert registry.get("discard_evidence_import").annotations["destructiveHint"]
 
